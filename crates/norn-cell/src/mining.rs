@@ -205,7 +205,11 @@ mod tests {
             result.supporting_records,
             o.iter().map(|v| v.record.clone()).collect::<Vec<_>>()
         );
-        assert!(result.counterexamples.is_empty());
+        assert!(
+            result.counterexamples.is_empty(),
+            "not empty: {:?}",
+            result.counterexamples
+        );
         assert_eq!(c[0].weight, q(1, 1)); // Discovery cannot edit the input functional.
     }
     #[test]

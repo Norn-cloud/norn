@@ -282,7 +282,8 @@ mod tests {
         assert!(
             perform_refs(&table_payload("[{kind: 'timer', due: 1}]"))
                 .unwrap()
-                .is_empty()
+                .is_empty(),
+            "`perform_refs(&table_payload(\"[{{kind: 'timer', due: 1}}]\")).unwrap()` is not empty"
         );
     }
 

@@ -601,7 +601,11 @@ fn result_reconciliation_applies_destination_cas_in_the_accepting_commit() {
         acceptance.destination,
         Some(expect(("dam.Document", "doc-9", 5)))
     );
-    assert!(acceptance.reads.is_empty());
+    assert!(
+        acceptance.reads.is_empty(),
+        "not empty: {:?}",
+        acceptance.reads
+    );
     assert!(!acceptance.requires_cell_lane);
 
     let thumbnail = |expected: u64| FactWrite {
@@ -1240,7 +1244,7 @@ fn result_reconciliation_binds_only_accepted_results_into_the_vertical_flow() {
         Reconciliation::Refused(refused) => panic!("refused: {refused:?}"),
     };
     let (_, commands) = deliver(&fresh, &case.receipt, &mut run_state);
-    assert!(commands.is_empty());
+    assert!(commands.is_empty(), "not empty: {commands:?}");
     let completed = run_state.clone().expect("run");
     assert_eq!(completed["status"], "completed");
     assert_eq!(

@@ -233,7 +233,10 @@ fn structured_safety_preserves_grades_timing_sources_and_precedence() {
             .expect("declared precedence");
             let obligations = &contexts.first().expect("applicable").obligations;
             assert_eq!(obligations.is_empty(), grade != DeonticModality::Obligation);
-            assert!(contexts.get(1).expect("excepted").survivors.is_empty());
+            assert!(
+                contexts.get(1).expect("excepted").survivors.is_empty(),
+                "`contexts.get(1).expect(\"excepted\").survivors` is not empty"
+            );
         }
     }
 }
@@ -787,7 +790,10 @@ fn ordinary_admission_runs_native_declared_order() {
             && d.message.contains("Query budget:")
     }));
     low.defeated_by.push(high.law.id.clone());
-    assert!(run(&[low.clone(), high.clone()]).is_empty());
+    assert!(
+        run(&[low.clone(), high.clone()]).is_empty(),
+        "`run(&[low.clone(), high.clone()])` is not empty"
+    );
     high.defeated_by.push(low.law.id.clone());
     assert!(
         run(&[low.clone(), high.clone()])
@@ -803,7 +809,10 @@ fn ordinary_admission_runs_native_declared_order() {
         condition: norn_ir::ZenExpression("true".into()),
         source: low.source.clone(),
     });
-    assert!(run(&[low.clone(), high.clone()]).is_empty());
+    assert!(
+        run(&[low.clone(), high.clone()]).is_empty(),
+        "`run(&[low.clone(), high.clone()])` is not empty"
+    );
     let mut missing = low.clone();
     missing.defeated_by = vec!["missing".into()];
     assert!(
@@ -840,7 +849,7 @@ fn ordinary_admission_protects_base_and_refuses_cross_layer_wins() {
         let mut installed = entity.clone();
         installed["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low]});
         let base: norn_ir::ArtifactEnvelope = serde_json::from_value(installed).expect("base");
-        let mut candidate = entity.clone();
+        let mut candidate = entity;
         candidate["artifactId"] = json!("candidate.entity");
         candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
         high.source.artifact_id = "candidate.entity".into();
@@ -1021,7 +1030,8 @@ fn admitted_normative_resolution_survives_installation() {
                 tenant: None
             }
         )
-        .is_empty()
+        .is_empty(),
+        "expected an empty value"
     );
     assert!(
         check_artifact_set(
@@ -1032,7 +1042,8 @@ fn admitted_normative_resolution_survives_installation() {
                 tenant: None
             }
         )
-        .is_empty()
+        .is_empty(),
+        "expected an empty value"
     );
     let (mut unrelated, _, _) = admission_fixture();
     unrelated["artifactId"] = json!("unrelated.entity");
@@ -1047,7 +1058,8 @@ fn admitted_normative_resolution_survives_installation() {
                 tenant: None
             }
         )
-        .is_empty()
+        .is_empty(),
+        "expected an empty value"
     );
     // A candidate cannot redeclare the inherited law under its existing identity.
     let (_, mut replacement, high) = admission_fixture();
@@ -1088,7 +1100,7 @@ fn admitted_normative_resolution_survives_installation() {
     // Changing only the identity reaches conflict diagnosis instead of refusing lowering.
     replacement.law.id = "sales.candidate".into();
     let findings = run(&replacement);
-    assert!(!findings.is_empty());
+    assert!(!findings.is_empty(), "`findings` is empty");
     assert!(
         findings
             .iter()
@@ -1666,7 +1678,7 @@ fn layer_protection_reads_law_exception_trees_in_both_directions() {
         let mut installed = entity.clone();
         installed["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low]});
         let base: norn_ir::ArtifactEnvelope = serde_json::from_value(installed).expect("base");
-        let mut candidate = entity.clone();
+        let mut candidate = entity;
         candidate["artifactId"] = json!("candidate.entity");
         candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
         high.source.artifact_id = "candidate.entity".into();
@@ -1729,7 +1741,10 @@ fn ordinary_admission_upgrades_flat_legacy_exceptions() {
         rules
     };
     // Lifted everywhere: no clash, exactly as the tree form with the law as parent.
-    assert!(run(legacy("true")).is_empty());
+    assert!(
+        run(legacy("true")).is_empty(),
+        "`run(legacy(\"true\"))` is not empty"
+    );
     // Never lifted: the clash stays.
     assert!(
         run(legacy("false"))

@@ -881,16 +881,12 @@ struct LayoutIds {
 
 fn artifact_layout_ids(artifact: &ArtifactEnvelope) -> LayoutIds {
     match &artifact.payload {
-        ArtifactPayload::Rule(payload) => payload
-            .graph
-            .as_value()
-            .map(layout_ids_from_jdm)
-            .unwrap_or_default(),
-        ArtifactPayload::Widget(payload) => payload
-            .ux
-            .as_value()
-            .map(layout_ids_from_widget)
-            .unwrap_or_default(),
+        ArtifactPayload::Rule(payload) => {
+            payload.graph.as_value().map_or_default(layout_ids_from_jdm)
+        }
+        ArtifactPayload::Widget(payload) => {
+            payload.ux.as_value().map_or_default(layout_ids_from_widget)
+        }
         ArtifactPayload::Entity(_)
         | ArtifactPayload::Relation(_)
         | ArtifactPayload::Action(_)

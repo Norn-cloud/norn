@@ -340,7 +340,7 @@ fn an_ungranted_metric_is_the_opaque_denial_never_a_diagnostic() {
     let refused = json_of(&refused);
     assert_eq!(refused["code"], "question.refused");
     let diagnostics = refused["diagnostics"].as_array().unwrap();
-    assert!(!diagnostics.is_empty());
+    assert!(!diagnostics.is_empty(), "`diagnostics` is empty");
     assert!(
         diagnostics
             .iter()

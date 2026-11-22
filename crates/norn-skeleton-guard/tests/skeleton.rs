@@ -56,8 +56,7 @@ fn profile_features(krate: &str) -> Vec<String> {
     zen_pin()
         .profile
         .get(krate)
-        .map(|set| set.iter().cloned().collect())
-        .unwrap_or_default()
+        .map_or_default(|set| set.iter().cloned().collect())
 }
 
 /// The vendored directory of zen crate `krate` in the real workspace, as
@@ -154,7 +153,10 @@ fn required_surface_boundary_files_are_enforced() {
         std::fs::write(path.join("README.md"), "").expect("README");
         std::fs::write(path.join("boundary.json"), "").expect("boundary");
     }
-    assert!(check_layout(dir.path(), &metadata).is_empty());
+    assert!(
+        check_layout(dir.path(), &metadata).is_empty(),
+        "`check_layout(dir.path(), &metadata)` is not empty"
+    );
 }
 
 #[test]
@@ -417,7 +419,10 @@ fn guard_enforces_norn_cell_native_is_default_and_only_native_exposure() {
 #[test]
 fn guard_refuses_temporal_clock_and_locale_features() {
     let base = metadata();
-    assert!(check_dependencies(&base).is_empty());
+    assert!(
+        check_dependencies(&base).is_empty(),
+        "`check_dependencies(&base)` is not empty"
+    );
     let package_name = "norn-expr";
     let rule = "norn-expr-temporal-features";
     for (defaults, features) in [
@@ -474,7 +479,10 @@ fn clippy_bans_jiff_clock_and_host_tz() {
 #[test]
 fn guard_requires_pinned_std_only_timezone_reader() {
     let base = metadata();
-    assert!(check_dependencies(&base).is_empty());
+    assert!(
+        check_dependencies(&base).is_empty(),
+        "`check_dependencies(&base)` is not empty"
+    );
 
     let defaults_on = edit_dependency(&base, "norn-expr", "jiff", |dependency| {
         dependency["uses_default_features"] = json!(true);
@@ -504,7 +512,10 @@ fn guard_requires_pinned_std_only_timezone_reader() {
 
 #[test]
 fn guard_enforces_expr_and_decisions_only_lists() {
-    assert!(check_dependencies(&with_dep("norn-expr", "zen-expression")).is_empty());
+    assert!(
+        check_dependencies(&with_dep("norn-expr", "zen-expression")).is_empty(),
+        "`check_dependencies(&with_dep(\"norn-expr\", \"zen-expression\"))` is not empty"
+    );
     let v = check_dependencies(&with_dep("norn-expr", "serde"));
     assert_eq!(rules_of(&v), ["ring0-unlisted"], "{}", render(&v));
     for ok in ["zen-engine", "serde", "thiserror", "norn-expr"] {
@@ -515,7 +526,10 @@ fn guard_enforces_expr_and_decisions_only_lists() {
     assert_eq!(rules_of(&v), ["ring0-unlisted"], "{}", render(&v));
     let v = check_dependencies(&with_dep("norn-kernel", "zen-engine"));
     assert!(rules_of(&v).contains(&"single-owner"), "{}", render(&v));
-    assert!(check_dependencies(&with_dep("norn-kernel", "norn-decisions")).is_empty());
+    assert!(
+        check_dependencies(&with_dep("norn-kernel", "norn-decisions")).is_empty(),
+        "`check_dependencies(&with_dep(\"norn-kernel\", \"norn-decisions\"))` is not empty"
+    );
 }
 
 #[test]
@@ -524,7 +538,10 @@ fn guard_detects_alternate_ring0_evaluator_and_cedar_leak() {
     assert!(rules_of(&v).contains(&"ring0-evaluator"), "{}", render(&v));
     let v = check_dependencies(&with_dep("norn-kernel", "cedar-policy"));
     assert!(rules_of(&v).contains(&"single-owner"), "{}", render(&v));
-    assert!(check_dependencies(&with_dep("norn-authz", "cedar-policy")).is_empty());
+    assert!(
+        check_dependencies(&with_dep("norn-authz", "cedar-policy")).is_empty(),
+        "`check_dependencies(&with_dep(\"norn-authz\", \"cedar-policy\"))` is not empty"
+    );
 }
 
 #[test]
@@ -551,12 +568,18 @@ fn guard_detects_unlisted_ring0_third_party_dependency() {
         );
     }
     // Listed crates pass; ring-1 third-party is governed by bans + cargo-deny.
-    assert!(check_dependencies(&with_dep("norn-ir", "schemars")).is_empty());
+    assert!(
+        check_dependencies(&with_dep("norn-ir", "schemars")).is_empty(),
+        "`check_dependencies(&with_dep(\"norn-ir\", \"schemars\"))` is not empty"
+    );
     for ok in ["serde", "thiserror"] {
         let v = check_dependencies(&with_dep("norn-kernel", ok));
         assert!(v.is_empty(), "norn-kernel -> {ok}: {}", render(&v));
     }
-    assert!(check_dependencies(&with_dep("norn-cli", "itertools")).is_empty());
+    assert!(
+        check_dependencies(&with_dep("norn-cli", "itertools")).is_empty(),
+        "`check_dependencies(&with_dep(\"norn-cli\", \"itertools\"))` is not empty"
+    );
 }
 
 #[test]
@@ -572,7 +595,8 @@ fn guard_detects_dev_dependency_violations() {
     assert_eq!(rules_of(&v), ["single-owner"], "{}", render(&v));
     // Plain dev tooling in ring 0 is not part of the shipped surface.
     assert!(
-        check_dependencies(&with_dep_as("norn-kernel", "proptest", Some("dev"), None)).is_empty()
+        check_dependencies(&with_dep_as("norn-kernel", "proptest", Some("dev"), None)).is_empty(),
+        "expected an empty value"
     );
 }
 
@@ -699,7 +723,10 @@ fn zen_pin_manifest_source_is_vendored_path() {
 #[test]
 fn zen_pin_rejects_features_outside_profile() {
     let base = with_dep("norn-expr", "zen-expression");
-    assert!(check_dependencies(&base).is_empty());
+    assert!(
+        check_dependencies(&base).is_empty(),
+        "`check_dependencies(&base)` is not empty"
+    );
     for extra in [
         "regex-deprecated",
         "runtime-rng",
@@ -862,7 +889,10 @@ fn vendored_zen_crates_are_classified_and_bounded() {
             "{krate} must be a workspace member"
         );
     }
-    assert!(check_dependencies(&with_dep("zen-engine", "zen-expression")).is_empty());
+    assert!(
+        check_dependencies(&with_dep("zen-engine", "zen-expression")).is_empty(),
+        "`check_dependencies(&with_dep(\"zen-engine\", \"zen-expression\"))` is not empty"
+    );
     let v = check_dependencies(&with_dep("zen-engine", "norn-ir"));
     assert_eq!(rules_of(&v), ["norn-edge"], "{}", render(&v));
     for banned in ["tokio", "rquickjs", "reqwest", "getrandom", "rhai"] {
@@ -875,7 +905,8 @@ fn vendored_zen_crates_are_classified_and_bounded() {
         );
         assert!(
             check_dependencies(&with_dep_as("zen-expression", banned, Some("dev"), None))
-                .is_empty()
+                .is_empty(),
+            "expected an empty value"
         );
     }
     let v = check_dependencies(&with_dep_as(
@@ -957,7 +988,10 @@ fn fake_vendor(name: &str, pin: &ZenPin) -> PathBuf {
 fn zen_vendor_provenance_detects_tampering() {
     let pin = zen_pin();
     let root = fake_vendor("tamper", &pin);
-    assert!(check_zen_vendor(&root, &pin).is_empty());
+    assert!(
+        check_zen_vendor(&root, &pin).is_empty(),
+        "`check_zen_vendor(&root, &pin)` is not empty"
+    );
     let vendor = root.join(&pin.vendor_path);
     let license = vendor.join(&pin.license_file);
     let expression = vendor
@@ -1001,7 +1035,10 @@ fn zen_vendor_provenance_detects_tampering() {
         ["zen-vendor-crate"]
     );
     std::fs::write(&expression, &original_manifest).expect("restore manifest");
-    assert!(check_zen_vendor(&root, &pin).is_empty());
+    assert!(
+        check_zen_vendor(&root, &pin).is_empty(),
+        "`check_zen_vendor(&root, &pin)` is not empty"
+    );
     #[expect(
         clippy::let_underscore_must_use,
         reason = "Best-effort temporary fixture cleanup"
@@ -1468,7 +1505,8 @@ fn test_support_crates_are_dev_dependencies_only() {
             Some("dev"),
             None
         ))
-        .is_empty()
+        .is_empty(),
+        "expected an empty value"
     );
     // Its own third-party dependencies are an exhaustive list.
     for dep in ["reqwest", "tokio", "serde"] {
@@ -1486,7 +1524,8 @@ fn test_support_crates_are_dev_dependencies_only() {
             Some("dev"),
             None
         ))
-        .is_empty()
+        .is_empty(),
+        "expected an empty value"
     );
     // The test-support crate's own `norn-*` edges still follow the table.
     // 2026-10-14: real-cell Quint replay may use cell only in test code.
@@ -1495,7 +1534,8 @@ fn test_support_crates_are_dev_dependencies_only() {
         assert_eq!(rules_of(&v), ["norn-dev-only-edge"], "{}", render(&v));
     }
     assert!(
-        check_dependencies(&with_dep_as("norn-testkit", "norn-cell", Some("dev"), None)).is_empty()
+        check_dependencies(&with_dep_as("norn-testkit", "norn-cell", Some("dev"), None)).is_empty(),
+        "expected an empty value"
     );
 }
 
@@ -1679,7 +1719,10 @@ fn machine_boundaries_match_dependency_policy() {
 
 #[test]
 fn symcc_has_exactly_one_direct_owner() {
-    assert!(check_dependencies(&with_dep("norn-authz", "cedar-policy-symcc")).is_empty());
+    assert!(
+        check_dependencies(&with_dep("norn-authz", "cedar-policy-symcc")).is_empty(),
+        "`check_dependencies(&with_dep(\"norn-authz\", \"cedar-policy-symcc\"))` is not empty"
+    );
     for owner in ["norn-kernel", "norn-checker", "norn-cli", "norn-cell"] {
         let violations = check_dependencies(&with_dep(owner, "cedar-policy-symcc"));
         assert!(

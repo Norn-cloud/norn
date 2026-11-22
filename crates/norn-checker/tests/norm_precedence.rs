@@ -86,7 +86,11 @@ fn every_declared_three_norm_grounding_has_the_expected_survivors() -> Result<()
                             context.survivors.iter().copied().collect::<BTreeSet<_>>(),
                             expected
                         );
-                        assert!(context.conflicts.is_empty());
+                        assert!(
+                            context.conflicts.is_empty(),
+                            "not empty: {:?}",
+                            context.conflicts
+                        );
                         assert!(context.defeats.iter().all(|d| expected.contains(&d.winner)
                             && !expected.contains(&d.loser)
                             && d.reason == PriorityReason::Declared));

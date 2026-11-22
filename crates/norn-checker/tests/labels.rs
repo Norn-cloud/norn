@@ -329,7 +329,10 @@ fn a_required_locale_lists_every_unlabelled_definition_as_a_warning() {
             { "target": invoice_targets()[0], "label": { "ar": "فاتورة" } }
         ] }),
     );
-    assert!(missing_label_findings(&[filled, catalog], &[invoice()]).is_empty());
+    assert!(
+        missing_label_findings(&[filled, catalog], &[invoice()]).is_empty(),
+        "`missing_label_findings(&[filled, catalog], &[invoice()])` is not empty"
+    );
 }
 
 #[test]

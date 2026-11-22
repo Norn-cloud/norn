@@ -1608,14 +1608,12 @@ impl EffectiveKey {
             name: key.name.clone(),
             declared_by: owner.clone(),
             components: key.properties.clone(),
-            normalize: rule
-                .map(|rule| {
-                    rule.normalize
-                        .iter()
-                        .map(|entry| (entry.property.clone(), entry.steps.clone()))
-                        .collect()
-                })
-                .unwrap_or_default(),
+            normalize: rule.map_or_default(|rule| {
+                rule.normalize
+                    .iter()
+                    .map(|entry| (entry.property.clone(), entry.steps.clone()))
+                    .collect()
+            }),
             match_policy: rule.and_then(|rule| rule.match_policy.clone()),
             naming_series: key.naming_series.clone(),
         }
@@ -2105,7 +2103,10 @@ mod tests {
             );
             for (a, b) in [(&omitted, &explicit), (&explicit, &omitted)] {
                 assert!(a.same_contract(b));
-                assert!(a.narrowing_reasons_from(b).is_empty());
+                assert!(
+                    a.narrowing_reasons_from(b).is_empty(),
+                    "`a.narrowing_reasons_from(b)` is not empty"
+                );
             }
         }
     }
@@ -2280,7 +2281,10 @@ mod tests {
             candidate.check_runtime_value_from(&previous, &stored),
             Err(InstanceError::Unsupported(_))
         ));
-        assert!(!candidate.narrowing_reasons_from(&previous).is_empty());
+        assert!(
+            !candidate.narrowing_reasons_from(&previous).is_empty(),
+            "`candidate.narrowing_reasons_from(&previous)` is empty"
+        );
     }
 
     #[test]
@@ -2334,7 +2338,10 @@ mod tests {
         assert_eq!(utc.canonical_runtime_value(&source), canonical);
         assert_eq!(offset.canonical_runtime_value(&source), canonical);
         assert!(utc.same_contract(&offset));
-        assert!(utc.narrowing_reasons_from(&offset).is_empty());
+        assert!(
+            utc.narrowing_reasons_from(&offset).is_empty(),
+            "`utc.narrowing_reasons_from(&offset)` is not empty"
+        );
         for invalid in [
             "2025-02-29T12:30:00Z",
             "2024-02-29T12:30:00",
@@ -2373,11 +2380,15 @@ mod tests {
         }));
 
         assert!(reordered.same_contract(&previous));
-        assert!(reordered.narrowing_reasons_from(&previous).is_empty());
+        assert!(
+            reordered.narrowing_reasons_from(&previous).is_empty(),
+            "`reordered.narrowing_reasons_from(&previous)` is not empty"
+        );
         assert!(
             !partial_replacement
                 .narrowing_reasons_from(&previous)
-                .is_empty()
+                .is_empty(),
+            "unexpectedly empty"
         );
     }
 
@@ -2404,7 +2415,8 @@ mod tests {
         assert!(
             with_equivalent_bound
                 .narrowing_reasons_from(&previous)
-                .is_empty()
+                .is_empty(),
+            "`with_equivalent_bound.narrowing_reasons_from(&previous)` is not empty"
         );
     }
 

@@ -4073,7 +4073,10 @@ fn nullable_clear_findings(value: Value) -> Vec<String> {
 #[test]
 fn a_nullable_form_input_must_stay_clearable() {
     // `comment` is a nullable ActionIR leaf; a free control is clearable to an explicit null.
-    assert!(nullable_clear_findings(with_comment_field(None)).is_empty());
+    assert!(
+        nullable_clear_findings(with_comment_field(None)).is_empty(),
+        "`nullable_clear_findings(with_comment_field(None))` is not empty"
+    );
     // Always required: a cleared value could never be submitted, so there is no real clear path.
     let forced = with_comment_field(Some(json!({ "expression": "true", "inputs": {} })));
     let found = nullable_clear_findings(forced);

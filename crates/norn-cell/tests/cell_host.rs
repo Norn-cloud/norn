@@ -2186,8 +2186,14 @@ fn reopen_recovers_the_ledger_hash_chain_identically_and_runs_are_deterministic(
             values: Some(order("paid")),
         }
     );
-    assert!(a.pending_commands().expect("outbox").is_empty());
-    assert!(a.pending_timers().expect("timers").is_empty());
+    assert!(
+        a.pending_commands().expect("outbox").is_empty(),
+        "`a.pending_commands().expect(\"outbox\")` is not empty"
+    );
+    assert!(
+        a.pending_timers().expect("timers").is_empty(),
+        "`a.pending_timers().expect(\"timers\")` is not empty"
+    );
 }
 
 fn open_hierarchy(path: &Path) -> OrderCell {
@@ -2571,7 +2577,7 @@ fn bounded_link_reads_refuse_phantoms_and_version_changes() {
         .read_link_targets(&source, "rel", 8, 1024)
         .expect("reads bounded adjacency")
         .expect("host supports bounded adjacency");
-    assert!(empty.is_empty());
+    assert!(empty.is_empty(), "not empty: {empty:?}");
     let link = LinkKey::new(source.clone(), "rel", target);
     let add = |expected| LinkWrite {
         key: link.clone(),

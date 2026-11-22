@@ -292,7 +292,7 @@ fn a_first_page_counts_visible_links_by_type_and_direction() {
     }
     let all = pages(&host, "few", &params(None, Some("1")));
     let later = &all[1..];
-    assert!(!later.is_empty());
+    assert!(!later.is_empty(), "`later` is empty");
     assert!(later.iter().all(|page| page.counts.is_none()));
     let wire = serde_json::to_value(&later[0]).unwrap();
     assert!(wire.get("counts").is_none(), "{wire}");

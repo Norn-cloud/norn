@@ -503,9 +503,19 @@ fn mapped_core_order_catches_up_and_same_state_reimport_is_a_consuming_noop() {
     )
     .unwrap();
     assert_eq!(cell.load(&key).unwrap(), before);
-    assert!(receipt.written.is_empty());
-    assert!(cell.ledger()[1].events.is_empty());
-    assert!(cell.ledger()[1].written.is_empty());
+    assert!(
+        receipt.written.is_empty(),
+        "not empty: {:?}",
+        receipt.written
+    );
+    assert!(
+        cell.ledger()[1].events.is_empty(),
+        "`cell.ledger()[1].events` is not empty"
+    );
+    assert!(
+        cell.ledger()[1].written.is_empty(),
+        "`cell.ledger()[1].written` is not empty"
+    );
     assert!(cell.observe().unwrap().is_none());
 }
 
@@ -1192,7 +1202,10 @@ fn an_observed_delete_without_a_declared_path_tombstones_and_a_recreate_lifts_it
     // The object keeps its values: nothing is erased.
     assert_eq!(state(&cell, &key, "amount"), JsonValue::from(5_i64));
     // Deleting again is a no-op; observing the record again recreates it.
-    assert!(observe_delete(&mut cell, &object_type, &key, None).is_empty());
+    assert!(
+        observe_delete(&mut cell, &object_type, &key, None).is_empty(),
+        "`observe_delete(&mut cell, &object_type, &key, None)` is not empty"
+    );
     let catalog = TypeCatalog::new([&object_type]);
     let values: JsonObject = serde_json::from_value(json!({ "amount": 7 })).unwrap();
     let provenance = provenance("snapshot.subject");
@@ -1230,7 +1243,10 @@ fn deleting_an_unknown_object_changes_nothing() {
     let object_type = model(&json!([]));
     let key = FactKey::new("test.SnapshotOrder", "SO-404");
     let mut cell = cell();
-    assert!(observe_delete(&mut cell, &object_type, &key, None).is_empty());
+    assert!(
+        observe_delete(&mut cell, &object_type, &key, None).is_empty(),
+        "`observe_delete(&mut cell, &object_type, &key, None)` is not empty"
+    );
     assert!(!cell.load(&tombstone_key(&key)).unwrap().exists());
 }
 

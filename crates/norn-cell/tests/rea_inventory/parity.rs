@@ -202,7 +202,10 @@ fn observe_case(trace: &Value, fixture: &Fixture) -> (Value, Vec<Value>) {
         let (quantity, value) = balance(&cell);
         assert_eq!(quantity - previous_balance.0, quantity_delta);
         assert_eq!(value - previous_balance.1, value_delta);
-        assert!(cell.store().read().pending_commands().unwrap().is_empty());
+        assert!(
+            cell.store().read().pending_commands().unwrap().is_empty(),
+            "`cell.store().read().pending_commands().unwrap()` is not empty"
+        );
         stock.push(json!({"id":event_id,"requestId":request,"line":format!("{request}:1"),"warehouse":"a","quantityDelta":decimal(quantity_delta,3),"valueDelta":decimal(value_delta,2),"quantity":decimal(quantity,3),"value":decimal(value,2),"incomingRate":null,"valuationRate":null,"fifo":null,"cancelled":false}));
         let mut gross_balance = 0;
         let gl: Vec<_> = legs.iter().map(|(id, leg)| {
@@ -306,6 +309,7 @@ fn unsupported_profile_cannot_be_reported_as_parity() {
         dump["versions"]["durability"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .is_empty(),
+        "`dump[\"versions\"][\"durability\"].as_array().unwrap()` is not empty"
     );
 }

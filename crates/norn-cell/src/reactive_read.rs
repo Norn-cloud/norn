@@ -2471,7 +2471,7 @@ mod binding_read_tests {
                 &mut budget,
             )
             .expect("unsupported lookup falls back");
-        assert!(fallback.is_empty());
+        assert!(fallback.is_empty(), "not empty: {fallback:?}");
         assert!(!fallback_complete);
         assert_eq!(budget.remaining_rows(), before_rows);
         assert_eq!(budget.remaining_bytes(), before_bytes);

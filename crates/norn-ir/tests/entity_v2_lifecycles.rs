@@ -70,7 +70,7 @@ fn invalid_lifecycle_fixtures_decode() {
     let manifest: serde_json::Value =
         serde_json::from_str(&read("lifecycles/invalid/manifest.json")).expect("manifest");
     let fixtures = manifest["fixtures"].as_array().expect("fixture list");
-    assert!(!fixtures.is_empty());
+    assert!(!fixtures.is_empty(), "`fixtures` is empty");
     for fixture in fixtures {
         let file = fixture["file"].as_str().expect("file");
         let document: serde_json::Value =

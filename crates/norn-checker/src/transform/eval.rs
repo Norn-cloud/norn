@@ -549,15 +549,14 @@ fn join(
             for row in left {
                 let targets: Vec<&Row> = text(row.values.get(column))
                     .and_then(|source| edges.and_then(|edges| edges.get(source)))
-                    .map(|targets| {
+                    .map_or_default(|targets| {
                         let mut ids: Vec<&String> = targets.iter().collect();
                         ids.sort();
                         ids.dedup();
                         ids.into_iter()
                             .filter_map(|id| by_id.get(id.as_str()).copied())
                             .collect()
-                    })
-                    .unwrap_or_default();
+                    });
                 if targets.is_empty() {
                     if kind == JoinKind::Left {
                         push(joined(row, None, renames))?;

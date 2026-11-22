@@ -285,8 +285,14 @@ fn assert_refusals(
             cell.commits().expect("refusal leaves ledger unchanged"),
             committed
         );
-        assert!(cell.pending_commands().expect("outbox").is_empty());
-        assert!(cell.pending_timers().expect("timers").is_empty());
+        assert!(
+            cell.pending_commands().expect("outbox").is_empty(),
+            "`cell.pending_commands().expect(\"outbox\")` is not empty"
+        );
+        assert!(
+            cell.pending_timers().expect("timers").is_empty(),
+            "`cell.pending_timers().expect(\"timers\")` is not empty"
+        );
     }
 }
 

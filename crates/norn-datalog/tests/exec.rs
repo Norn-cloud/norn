@@ -307,7 +307,10 @@ fn the_overlap_pack_runs_as_data() {
         result.tuples("member_collision").to_vec(),
         vec![vec![scope.clone(), text("Child"), text("lines")]]
     );
-    assert!(result.tuples("inheritance_cycle").is_empty());
+    assert!(
+        result.tuples("inheritance_cycle").is_empty(),
+        "`result.tuples(\"inheritance_cycle\")` is not empty"
+    );
 }
 
 #[test]

@@ -1594,7 +1594,7 @@ fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
         .into_iter()
         .filter_map(|perform| perform.name)
         .collect();
-    assert!(!pairs.is_empty());
+    assert!(!pairs.is_empty(), "`pairs` is empty");
     assert!(
         pairs
             .iter()

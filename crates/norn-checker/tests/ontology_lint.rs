@@ -168,7 +168,7 @@ fn edit_object_type(
 
 #[test]
 fn every_rule_has_a_positive_and_a_negative_fixture() {
-    assert!(!RULES.is_empty());
+    assert!(!RULES.is_empty(), "`RULES` is empty");
     for rule in RULES {
         let registered = codes::lookup(rule.code)
             .unwrap_or_else(|| panic!("{} code {} is unregistered", rule.id, rule.code));
@@ -237,7 +237,7 @@ fn rules_have_both_warning_and_error_severities() {
 fn gating_is_separate_from_severity() {
     // NORN-NAME-001 emits only warnings: reported, but not failing by default.
     let findings = lint_fixture("NORN-NAME-001", "positive");
-    assert!(!findings.is_empty());
+    assert!(!findings.is_empty(), "`findings` is empty");
     assert!(findings.iter().all(|finding| !finding.is_error()));
     assert!(!FailSeverity::default().fails(&findings));
     assert!(FailSeverity::Warning.fails(&findings));

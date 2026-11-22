@@ -1194,7 +1194,8 @@ fn conjunctive_layer_reuses_only_current_safety_records() {
         result_sha256: &"b".repeat(64),
         record: &record,
     }];
-    assert!(run(&extension, &stale).reused.is_empty());
+    let reused = run(&extension, &stale).reused;
+    assert!(reused.is_empty(), "{reused:?}");
     // A new writer declaration, including opaque writers, never qualifies.
     let mut writer = documents[2].clone();
     writer["artifactId"] = json!("jewelry.writer.entity");
@@ -1207,19 +1208,17 @@ fn conjunctive_layer_reuses_only_current_safety_records() {
         base.body()["assumptions"].clone(),
         base.body()["assurance"].clone(),
     ) {
-        assert!(
-            contract
-                .challenge_under_specialisation(
-                    &changed,
-                    &BTreeSet::new(),
-                    &base_contract,
-                    &base_source,
-                    &prior
-                )
-                .expect("fallback")
-                .reused
-                .is_empty()
-        );
+        let reused = contract
+            .challenge_under_specialisation(
+                &changed,
+                &BTreeSet::new(),
+                &base_contract,
+                &base_source,
+                &prior,
+            )
+            .expect("fallback")
+            .reused;
+        assert!(reused.is_empty(), "{reused:?}");
     }
 }
 

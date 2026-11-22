@@ -155,7 +155,8 @@ fn property_and_computed_markings_accumulate_from_shared_types_and_interfaces() 
             .property("email")
             .expect("stored property")
             .computed_inputs
-            .is_empty()
+            .is_empty(),
+        "`person.property(\"email\").expect(\"stored property\").computed_inputs` is not empty"
     );
     assert_eq!(
         person

@@ -1173,7 +1173,7 @@ fn declared_transfer_return_and_cancellation_vectors_preserve_original_allocatio
                 assert!(
                     average_result(vec![
                         receipt.clone(),
-                        transfer.clone(),
+                        transfer,
                         movement(2, "more", "receipt", quantity, amount, ""),
                         movement(3, "t", "delivery", 1, 0, "")
                     ])

@@ -319,7 +319,8 @@ fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
         reader
             .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
             .expect("one source")
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
     load(&mut cell, "shopify");
     let flipped = cell

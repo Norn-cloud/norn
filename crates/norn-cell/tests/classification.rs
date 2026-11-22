@@ -314,7 +314,8 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
             .read(&query, &limits, &denied, &request, scope)
             .expect("capability denial")
             .items
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
     let mut wrong = request.clone();
     wrong.action_id = "norn.write".into();

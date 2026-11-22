@@ -649,7 +649,10 @@ mod tests {
             read("len(map(self.lines, map(#.parts, #.x))) > 0"),
             one("lines", &["", "parts"])
         );
-        assert!(read("len(self.lines) > 0").is_empty());
+        assert!(
+            read("len(self.lines) > 0").is_empty(),
+            "`read(\"len(self.lines) > 0\")` is not empty"
+        );
     }
 
     fn fields(values: &[&str]) -> ExpressionReads {

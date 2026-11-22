@@ -1644,7 +1644,7 @@ fn link_protection_is_refused_for_definitions_and_extensions_until_authority_exi
         }]);
         let defined = findings(&serde_json::json!({"objectTypes":[{
             "name":"test.Thing", "links":[{"id":"owner","target":"crm.Customer",
-                "cardinality":one_of_many(), "properties":properties.clone()}]
+                "cardinality":one_of_many(), "properties":properties}]
         }]}));
         assert_eq!(
             defined,

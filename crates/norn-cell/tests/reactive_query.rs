@@ -167,12 +167,14 @@ fn a_change_entering_or_leaving_a_slice_invalidates_it_and_others_do_not() {
                 &model,
                 &[change("commerce.SalesOrder", "SO-2", Some("draft"))]
             )
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
     assert!(
         registry
             .invalidated(&model, &[change("crm.Customer", "C-1", Some("on_hold"))])
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
 
     // Leaving: an order in the last result changes status or is deleted.
@@ -387,7 +389,8 @@ fn a_subtype_deleted_through_its_supertype_invalidates_the_subtype_slice() {
     assert!(
         registry
             .invalidated(&model, &[change("crm.Customer", "C-9", Some("draft"))])
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
 }
 
@@ -402,7 +405,10 @@ fn stale_and_incomplete_slices_are_invalidated_by_any_related_change() {
     let unrelated_status = [change("commerce.SalesOrder", "SO-9", Some("draft"))];
 
     registry.record(&key, result_with(&[], true));
-    assert!(registry.invalidated(&model, &unrelated_status).is_empty());
+    assert!(
+        registry.invalidated(&model, &unrelated_status).is_empty(),
+        "`registry.invalidated(&model, &unrelated_status)` is not empty"
+    );
 
     registry.record(&key, result_with(&[], false));
     assert_eq!(
@@ -425,7 +431,8 @@ fn stale_and_incomplete_slices_are_invalidated_by_any_related_change() {
     assert!(
         registry
             .invalidated(&model, &[change("crm.Customer", "C-1", Some("on_hold"))])
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
 }
 
@@ -457,7 +464,7 @@ fn the_scan_bound_counts_every_examined_row() {
         ..limits()
     };
     let result = evaluate(&store.read(), MAIN_WORLD, &on_hold(), &bounded, 1).expect("evaluates");
-    assert!(result.items.is_empty());
+    assert!(result.items.is_empty(), "not empty: {:?}", result.items);
     assert!(
         !result.complete,
         "the match past the scan bound is not claimed absent"
@@ -492,14 +499,16 @@ fn an_incomplete_slice_is_invalidated_by_sibling_changes_sharing_its_scan() {
     assert!(
         registry
             .invalidated(&model, &[change("crm.Prospect", "P-1", None)])
-            .is_empty()
+            .is_empty(),
+        "`registry.invalidated(&model, &[change(\"crm.Prospect\", \"P-1\", None)])` is not empty"
     );
     // Other hierarchies never touch it.
     registry.record(&key, result_with(&[], false));
     assert!(
         registry
             .invalidated(&model, &[change("commerce.SalesOrder", "SO-1", None)])
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
 }
 
@@ -545,7 +554,7 @@ fn nonmatching_candidates_consume_the_decode_budget() {
         &mut budget,
     )
     .expect("evaluates");
-    assert!(result.items.is_empty());
+    assert!(result.items.is_empty(), "not empty: {:?}", result.items);
     assert!(
         !result.complete,
         "no-match decoding still exhausts the budget"
@@ -590,7 +599,7 @@ fn candidate_budget_is_shared_across_slices_in_one_turn() {
         &mut budget,
     )
     .expect("evaluates");
-    assert!(second.items.is_empty());
+    assert!(second.items.is_empty(), "not empty: {:?}", second.items);
     assert!(
         !second.complete,
         "a second slice cannot start a fresh turn budget"
@@ -632,7 +641,7 @@ fn per_item_authorization_budget_exhaustion_makes_the_result_incomplete() {
     )
     .expect("evaluates");
 
-    assert!(result.items.is_empty());
+    assert!(result.items.is_empty(), "not empty: {:?}", result.items);
     assert!(!result.complete, "an indeterminate authorization is stale");
 }
 
@@ -972,7 +981,7 @@ fn deleting_a_tombstone_restores_root_row_visibility() {
         .read()
         .untombstoned_root_rows_with_budget(MAIN_WORLD, "test.Node", 2, &mut budget)
         .expect("scans tombstoned row");
-    assert!(rows.is_empty());
+    assert!(rows.is_empty(), "not empty: {rows:?}");
     assert!(complete);
 
     store
@@ -1084,7 +1093,7 @@ fn long_scan_ids_are_bounded_before_owned_metadata_is_allocated() {
             .saturating_sub(metadata_bytes)
     );
     let result = evaluate(&store.read(), MAIN_WORLD, &on_hold(), &bounded, 1).expect("evaluates");
-    assert!(result.items.is_empty());
+    assert!(result.items.is_empty(), "not empty: {:?}", result.items);
     assert!(
         !result.complete,
         "long nonmatching IDs still consume candidate bytes"
@@ -1146,7 +1155,7 @@ fn an_individual_id_larger_than_the_budget_is_not_fetched() {
         "rejected metadata was not allocated or charged"
     );
     let result = evaluate(&store.read(), MAIN_WORLD, &on_hold(), &bounded, 1).expect("evaluates");
-    assert!(result.items.is_empty());
+    assert!(result.items.is_empty(), "not empty: {:?}", result.items);
     assert!(!result.complete);
 }
 
@@ -1285,7 +1294,11 @@ fn dependency_capture_refuses_entry_and_byte_overflow_without_truncation() {
         }),
         Err(norn_cell::CellError::DependencyBudgetExceeded)
     ));
-    assert!(dependencies.entries.is_empty());
+    assert!(
+        dependencies.entries.is_empty(),
+        "not empty: {:?}",
+        dependencies.entries
+    );
 }
 
 /// #613 QUERY-FANOUT (COMPUTE-DETERMINISTIC-1, QUERY-GRAIN-1, QUERY-FRESH-1): the exact

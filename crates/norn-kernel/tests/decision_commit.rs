@@ -2813,7 +2813,7 @@ proptest! {
         let catalog = TypeCatalog::new(&definitions);
         for name in [ORDER, BIG] {
             let key = FactKey::new(name, "existing");
-            let slice = FactSlice::from([(key.clone(), FactState { version: FactVersion(1),
+            let slice = FactSlice::from([(key, FactState { version: FactVersion(1),
                 values: Some(record(json!({"order_no":"existing", "amount":1, "status":"draft", "approver":""}))) })]);
             let result = prepare_decision::<Infallible>(&catalog, &slice, &turn("property"),
                 &output(json!({"facts":[set(name, "existing", "amount", &json!(amount))],"commands":[],"timers":[]})));

@@ -49,7 +49,10 @@ fn authored_sparse_contract_accepts_extra_fields_only_in_tenant_discovery() {
     extra.name = "unmapped".into();
     extra.ordinal = norn_ir::WholeNumber(1);
     discovered.fields.push(extra);
-    assert!(check_vendor_mapping(&mapping, &expected).is_empty());
+    assert!(
+        check_vendor_mapping(&mapping, &expected).is_empty(),
+        "`check_vendor_mapping(&mapping, &expected)` is not empty"
+    );
     validate_discovered_schema(&mapping, &expected, &discovered).expect("sparse subset");
     assert!(
         !check_vendor_mapping(&mapping, &discovered).is_empty(),
@@ -84,7 +87,10 @@ fn missing_patch_malformed_and_unsupported_versions_fail_closed() {
         wire["extensions"][VENDOR_MAPPING_SLOT]["versions"] = versions;
         let mapping =
             serde_json::from_value(wire).expect("extension remains unchecked data until checker");
-        assert!(!check_vendor_mapping(&mapping, &schema()).is_empty());
+        assert!(
+            !check_vendor_mapping(&mapping, &schema()).is_empty(),
+            "`check_vendor_mapping(&mapping, &schema())` is empty"
+        );
     }
 }
 
@@ -122,10 +128,16 @@ fn removed_changed_nullable_identity_and_wrong_source_are_refused() {
 fn opaque_reads_and_expressive_schema_metadata_cannot_hide_in_sparse_packs() {
     let mut opaque = mapping();
     opaque.maps[0].subject = norn_ir::ZenExpression("input".into());
-    assert!(!check_vendor_mapping(&opaque, &schema()).is_empty());
+    assert!(
+        !check_vendor_mapping(&opaque, &schema()).is_empty(),
+        "`check_vendor_mapping(&opaque, &schema())` is empty"
+    );
     let mut expected = schema();
     expected.fields[0].description = Some("vendor prose".into());
-    assert!(!check_vendor_mapping(&mapping(), &expected).is_empty());
+    assert!(
+        !check_vendor_mapping(&mapping(), &expected).is_empty(),
+        "`check_vendor_mapping(&mapping(), &expected)` is empty"
+    );
 }
 
 #[test]
@@ -134,7 +146,10 @@ fn generic_authored_mappings_do_not_assert_vendor_version_parity() {
     mapping.extensions = None;
     let mut schema = schema();
     schema.source.version = None;
-    assert!(check_vendor_mapping(&mapping, &schema).is_empty());
+    assert!(
+        check_vendor_mapping(&mapping, &schema).is_empty(),
+        "`check_vendor_mapping(&mapping, &schema)` is not empty"
+    );
     validate_discovered_schema(&mapping, &schema, &schema).expect("generic mapping unchanged");
 }
 
@@ -143,7 +158,10 @@ fn arbitrary_extensions_cannot_carry_a_hidden_schema_dump() {
     let mut wire = serde_json::to_value(mapping()).expect("wire");
     wire["extensions"]["hidden.schema/1.0.0"] = json!({"fullSchema":schema()});
     let mapping = serde_json::from_value(wire).expect("mapping");
-    assert!(!check_vendor_mapping(&mapping, &schema()).is_empty());
+    assert!(
+        !check_vendor_mapping(&mapping, &schema()).is_empty(),
+        "`check_vendor_mapping(&mapping, &schema())` is empty"
+    );
 }
 
 #[test]
@@ -152,13 +170,19 @@ fn explicit_generic_registry_contract_remains_unqualified_and_cannot_mix_with_ve
     wire["extensions"][norn_checker::mapping::vendor::GENERIC_MAPPING_SLOT] =
         json!({"parity":"unqualified"});
     let mixed = serde_json::from_value(wire.clone()).expect("mapping");
-    assert!(!check_vendor_mapping(&mixed, &schema()).is_empty());
+    assert!(
+        !check_vendor_mapping(&mixed, &schema()).is_empty(),
+        "`check_vendor_mapping(&mixed, &schema())` is empty"
+    );
     wire["extensions"]
         .as_object_mut()
         .expect("extensions")
         .remove(VENDOR_MAPPING_SLOT);
     let generic = serde_json::from_value(wire).expect("mapping");
-    assert!(check_vendor_mapping(&generic, &schema()).is_empty());
+    assert!(
+        check_vendor_mapping(&generic, &schema()).is_empty(),
+        "`check_vendor_mapping(&generic, &schema())` is not empty"
+    );
 }
 
 #[test]
@@ -177,7 +201,10 @@ fn nested_mapping_requires_the_discovered_parent_child_identity() {
     let mut wire = serde_json::to_value(mapping()).expect("mapping");
     wire["maps"][0]["properties"] = json!([{"property":"label","value":"input.label","nested":{"dataset":"Lines","field":"children","where":"input.label != ''"}}]);
     let mapping = serde_json::from_value(wire).expect("nested mapping");
-    assert!(check_vendor_mapping(&mapping, &expected).is_empty());
+    assert!(
+        check_vendor_mapping(&mapping, &expected).is_empty(),
+        "`check_vendor_mapping(&mapping, &expected)` is not empty"
+    );
     validate_discovered_schema(&mapping, &expected, &expected)
         .expect("mapped ownership fields are structural requirements");
     let mut changed = expected.clone();

@@ -412,7 +412,11 @@ fn budgeted_link_page_preflights_capacity_for_empty_normal_and_oversized_neighbo
     let oversized_page = budgeted_incoming_page(&oversized, &mut oversized_candidate_budget, 4096)
         .expect("positive capacity returns a page after skipping the oversized candidate");
     assert_eq!(oversized_page.candidate_count, 1);
-    assert!(oversized_page.items.is_empty());
+    assert!(
+        oversized_page.items.is_empty(),
+        "not empty: {:?}",
+        oversized_page.items
+    );
 }
 
 #[test]
@@ -424,7 +428,7 @@ fn zero_capacity_root_scan_is_incomplete_for_empty_and_nonempty_tables() {
         .read()
         .root_rows_with_budget(MAIN_WORLD, "test.Node", 1, &mut empty_budget)
         .expect("reads empty zero-capacity root page");
-    assert!(empty_rows.is_empty());
+    assert!(empty_rows.is_empty(), "not empty: {empty_rows:?}");
     assert!(!empty_complete);
 
     store
@@ -441,7 +445,7 @@ fn zero_capacity_root_scan_is_incomplete_for_empty_and_nonempty_tables() {
         .read()
         .root_rows_with_budget(MAIN_WORLD, "test.Node", 1, &mut nonempty_budget)
         .expect("reads nonempty zero-capacity root page");
-    assert!(nonempty_rows.is_empty());
+    assert!(nonempty_rows.is_empty(), "not empty: {nonempty_rows:?}");
     assert!(!nonempty_complete);
 
     let header_bytes =
@@ -457,8 +461,11 @@ fn zero_capacity_root_scan_is_incomplete_for_empty_and_nonempty_tables() {
             .read()
             .root_rows_with_budget(MAIN_WORLD, "test.Node", 1, &mut nonempty_byte_budget)
             .expect("reads nonempty root page below the header byte floor");
-        assert!(empty_byte_rows.is_empty());
-        assert!(nonempty_byte_rows.is_empty());
+        assert!(empty_byte_rows.is_empty(), "not empty: {empty_byte_rows:?}");
+        assert!(
+            nonempty_byte_rows.is_empty(),
+            "not empty: {nonempty_byte_rows:?}"
+        );
         assert!(!empty_byte_complete);
         assert!(!nonempty_byte_complete);
         assert_eq!(
@@ -498,7 +505,10 @@ fn creation_survives_replacement_reopen_and_resets_after_removal_or_cascade() {
         CellStore::open(&path, model, norn_cell::StoreOptions::default()).expect("reopen");
     assert_eq!(creation(&store).expect("durable creation"), vec![first]);
     link_commit(&mut store, related(false));
-    assert!(creation(&store).expect("removed").is_empty());
+    assert!(
+        creation(&store).expect("removed").is_empty(),
+        "`creation(&store).expect(\"removed\")` is not empty"
+    );
     link_commit(&mut store, related(false));
     let recreated = link_commit(&mut store, related(true));
     assert_eq!(creation(&store).expect("recreated"), vec![recreated]);
@@ -539,7 +549,10 @@ fn creation_survives_replacement_reopen_and_resets_after_removal_or_cascade() {
             ..recreate
         })
         .expect("embedding recreation");
-    assert!(creation(&store).expect("cascaded link").is_empty());
+    assert!(
+        creation(&store).expect("cascaded link").is_empty(),
+        "`creation(&store).expect(\"cascaded link\")` is not empty"
+    );
     let after_cascade = link_commit(&mut store, related(true));
     assert_eq!(
         creation(&store).expect("new incarnation"),
@@ -737,7 +750,7 @@ fn finding_candidates_skip_unrelated_payloads_and_refuse_oversized_evidence() {
         .expect("end of history")
         .expect("empty page needs no scan credit");
     assert_eq!(end.scanned_rows, 0);
-    assert!(end.entries.is_empty());
+    assert!(end.entries.is_empty(), "not empty: {:?}", end.entries);
 }
 
 #[test]

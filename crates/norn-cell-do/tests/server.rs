@@ -274,7 +274,10 @@ fn object_links_and_lineage_routes_dispatch() {
     );
     assert_eq!(status, 200, "{page}");
     assert_eq!(page["id"], "SYN-PARTY-01");
-    assert!(page["items"].as_array().unwrap().is_empty());
+    assert!(
+        page["items"].as_array().unwrap().is_empty(),
+        "`page[\"items\"].as_array().unwrap()` is not empty"
+    );
     assert!(page["next"].is_null());
     // The demo rows were seeded, not mapped from a source: no lineage to show.
     let (status, lineage) = get(

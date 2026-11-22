@@ -492,7 +492,10 @@ mod pdp {
         assert_eq!(explanation.capability, ConjunctOutcome::Allow);
         assert_eq!(explanation.delegation, ConjunctOutcome::Allow);
         assert_eq!(explanation.access, ConjunctOutcome::Allow);
-        assert!(!explanation.determining_policies.is_empty());
+        assert!(
+            !explanation.determining_policies.is_empty(),
+            "`explanation.determining_policies` is empty"
+        );
 
         let deny = approve(&["intruder"], true);
         let explanation = pdp.explain(&deny);
@@ -520,7 +523,10 @@ mod pdp {
             PdpDecision::Deny(DenyReason::AccessError)
         );
         assert_eq!(explanation.access, ConjunctOutcome::Error);
-        assert!(!explanation.diagnostics.is_empty());
+        assert!(
+            !explanation.diagnostics.is_empty(),
+            "`explanation.diagnostics` is empty"
+        );
 
         let delegated = AccessRequest {
             delegation: Delegation::Biscuit("token".to_owned()),
@@ -721,7 +727,10 @@ mod pdp {
             PdpDecision::Deny(DenyReason::AccessError)
         );
         assert_eq!(explanation.access, ConjunctOutcome::Error);
-        assert!(!explanation.diagnostics.is_empty());
+        assert!(
+            !explanation.diagnostics.is_empty(),
+            "`explanation.diagnostics` is empty"
+        );
         assert!(explanation.determining_policies.iter().any(|policy| {
             policy.cedar_policy_id == "policy/always_allow"
                 && policy.policy_id.as_deref() == Some("policy")

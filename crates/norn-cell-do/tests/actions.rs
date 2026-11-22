@@ -568,7 +568,7 @@ fn the_catalog_lists_each_action_as_a_form_reads_it() {
         Some(OPERATOR),
         &format!("{SCOPE}&objectKind=constitution.Other"),
     );
-    assert!(listed(&other).is_empty());
+    assert!(listed(&other).is_empty(), "`listed(&other)` is not empty");
     let (_, melts) = catalog(&cell, Some(OPERATOR), &format!("{SCOPE}&objectKind={MELT}"));
     assert_eq!(listed(&melts), [MELT_ACTION]);
 }
@@ -610,7 +610,7 @@ fn the_catalog_is_the_call_gate_and_never_a_grant() {
     };
     let (status, viewer) = catalog(&gated, Some(VIEWER), SCOPE);
     assert_eq!(status, 200);
-    assert!(listed(&viewer).is_empty());
+    assert!(listed(&viewer).is_empty(), "`listed(&viewer)` is not empty");
     let (status, refused) = post(
         &gated,
         Some(VIEWER),

@@ -235,7 +235,7 @@ fn pull(
                     mapping: format!("{system}.rest.mapping"),
                     dataset: row.dataset.clone(),
                     connector_instance: "sandbox".into(),
-                    partition: row.dataset.clone(),
+                    partition: row.dataset,
                     recorded_at: norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
                 },
             ));

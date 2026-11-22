@@ -106,8 +106,7 @@ pub fn check(
     let named: Vec<&str> = decider
         .and_then(|decider| decider.get("roles"))
         .and_then(Value::as_array)
-        .map(|roles| roles.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
+        .map_or_default(|roles| roles.iter().filter_map(Value::as_str).collect());
     let shaped = decider.is_some_and(|decider| {
         decider.keys().all(|key| key == "roles" || key == "law")
             && decider.get("law").is_none_or(Value::is_string)
@@ -232,8 +231,7 @@ pub fn restate(canonical: &str) -> Result<String, String> {
     let roles: Vec<&str> = value
         .pointer("/decider/roles")
         .and_then(Value::as_array)
-        .map(|roles| roles.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
+        .map_or_default(|roles| roles.iter().filter_map(Value::as_str).collect());
     let property = text("/when/property");
     let first = match (value.get("when").and_then(when_words), property) {
         // APPROVAL-WHEN-1 fails closed: a condition it cannot evaluate parks.
@@ -284,7 +282,10 @@ mod tests {
     #[test]
     fn a_threshold_admits_and_is_restated_in_words() {
         let payload = approval(&json!({ "property": "amount", "op": "gt", "value": 1000 }));
-        assert!(findings(&payload).is_empty());
+        assert!(
+            findings(&payload).is_empty(),
+            "`findings(&payload)` is not empty"
+        );
         let words = restate(&payload.to_string()).unwrap_or_default();
         assert!(
             words.starts_with(
@@ -300,14 +301,20 @@ mod tests {
     #[test]
     fn a_decimal_threshold_stays_exact() {
         let payload = approval(&json!({ "property": "amount", "op": "gt", "value": "1000.10" }));
-        assert!(findings(&payload).is_empty());
+        assert!(
+            findings(&payload).is_empty(),
+            "`findings(&payload)` is not empty"
+        );
         let words = restate(&payload.to_string()).unwrap_or_default();
         assert!(
             words.contains(r#"with amount > "1000.10" waits"#),
             "{words}"
         );
         let integer = approval(&json!({ "property": "amount", "op": "gt", "value": 1000 }));
-        assert!(findings(&integer).is_empty());
+        assert!(
+            findings(&integer).is_empty(),
+            "`findings(&integer)` is not empty"
+        );
         let fractional = approval(&json!({ "property": "amount", "op": "gt", "value": 1000.1 }));
         let found = findings(&fractional);
         assert_eq!(found.len(), 1);

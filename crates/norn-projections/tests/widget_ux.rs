@@ -236,7 +236,10 @@ fn child_grid_schema_is_closed_and_requires_its_ordered_collection_contract() {
         "label": { "en": "Item name" },
         "control": "text"
     }));
-    assert!(validation_errors(&schema, &payload).is_empty());
+    assert!(
+        validation_errors(&schema, &payload).is_empty(),
+        "`validation_errors(&schema, &payload)` is not empty"
+    );
 
     payload["ux"]["pages"][0]["root"]["children"][1]["component"]["unexpected"] = json!(true);
     assert_rejected(&schema, &payload, "unknown child grid member");

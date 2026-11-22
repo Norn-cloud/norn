@@ -189,7 +189,11 @@ fn legacy_interfaces_decode_unchanged_and_empty_invariants_are_omitted() {
         "properties": [{ "id": "name", "type": { "kind": "text" } }]
     });
     let interface: InterfaceDef = serde_json::from_value(legacy.clone()).expect("decodes");
-    assert!(interface.invariants.is_empty());
+    assert!(
+        interface.invariants.is_empty(),
+        "not empty: {:?}",
+        interface.invariants
+    );
     assert_eq!(serde_json::to_value(&interface).expect("encodes"), legacy);
 }
 

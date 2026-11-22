@@ -312,7 +312,8 @@ fn the_access_document_tells_each_roles_reads_of_one_collection() {
         document["roles"][0]["actions"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .is_empty(),
+        "`document[\"roles\"][0][\"actions\"].as_array().unwrap()` is not empty"
     );
     let unknown = access(&demo, &format!("{SCOPE}&objectType=no.Such"), Some(&member));
     assert_eq!(unknown.status, 403, "{}", unknown.body);

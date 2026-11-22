@@ -51,16 +51,13 @@ fn payload(artifact: &ArtifactEnvelope) -> Value {
 }
 
 fn strings(value: Option<&Value>) -> Vec<String> {
-    value
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
+    value.and_then(Value::as_array).map_or_default(|items| {
+        items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect()
+    })
 }
 
 /// One way a marking reaches an input: the marking and the path, in words.
@@ -391,6 +388,9 @@ mod tests {
             input_fields("lower(input.first_name) + ' ' + input.last_name"),
             ["first_name", "last_name"]
         );
-        assert!(input_fields("myinput.email").is_empty());
+        assert!(
+            input_fields("myinput.email").is_empty(),
+            "`input_fields(\"myinput.email\")` is not empty"
+        );
     }
 }

@@ -153,16 +153,14 @@ fn infer_principal_attributes_with_projection(
     let mut inferred: BTreeMap<String, CedarPrincipalAttribute> = BTreeMap::new();
     let mut diagnostics = Vec::new();
     for document in documents {
-        if !document.generic_rules.is_empty() {
-            for name in ["entitlement_kinds"] {
-                if let Some(diagnostic) = register_principal_attribute(
-                    &mut inferred,
-                    name,
-                    CedarPrincipalAttribute::StringSet,
-                ) {
-                    diagnostics.push(diagnostic.for_policy(&document.policy_id));
-                }
-            }
+        if !document.generic_rules.is_empty()
+            && let Some(diagnostic) = register_principal_attribute(
+                &mut inferred,
+                "entitlement_kinds",
+                CedarPrincipalAttribute::StringSet,
+            )
+        {
+            diagnostics.push(diagnostic.for_policy(&document.policy_id));
         }
         for rule in &document.rules {
             for condition in &rule.all_of {

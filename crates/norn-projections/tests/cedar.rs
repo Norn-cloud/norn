@@ -147,7 +147,11 @@ fn minimal_schema_matches_its_golden() {
     let golden = std::fs::read_to_string(fixtures().join(MINIMAL_GOLDEN))
         .expect("minimal Cedar golden exists");
     assert_eq!(projection.schema, golden);
-    assert!(projection.losses.is_empty());
+    assert!(
+        projection.losses.is_empty(),
+        "not empty: {:?}",
+        projection.losses
+    );
     assert!(projection.attributes["demo.Note"].is_empty());
     assert!(!projection.attributes.contains_key("Norn::Actor"));
 }

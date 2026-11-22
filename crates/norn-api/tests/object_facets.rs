@@ -252,7 +252,10 @@ fn a_row_the_caller_cannot_see_or_whose_values_are_withheld_is_never_counted() {
     let pop = facets(&host, "pop", Some("status"), None).unwrap();
     assert_eq!(pop.rows, 0);
     assert_eq!(pop.withheld_rows, 5);
-    assert!(read(&pop, "status").0.is_empty());
+    assert!(
+        read(&pop, "status").0.is_empty(),
+        "`read(&pop, \"status\").0` is not empty"
+    );
 }
 
 #[test]

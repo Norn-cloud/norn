@@ -316,7 +316,7 @@ fn a_mapping_observes_members_and_declares_gaps() {
         ]
     );
     // Observation is not authorship: a mapping adds no write.
-    assert!(catalog.writes.is_empty());
+    assert!(catalog.writes.is_empty(), "not empty: {:?}", catalog.writes);
 }
 
 #[test]
@@ -857,7 +857,7 @@ fn two_installed_versions_of_one_type_bind_only_what_admission_binds() {
     let catalog = catalog(&[action], &base);
     // `approve` is inherited from `shop.Request`; with no admitted lineage
     // it binds nothing.
-    assert!(catalog.writes.is_empty());
+    assert!(catalog.writes.is_empty(), "not empty: {:?}", catalog.writes);
 }
 
 #[test]
@@ -932,15 +932,12 @@ fn case_artifact(entry: &Value) -> ArtifactEnvelope {
 fn admitted_write_types(writer: &ArtifactEnvelope) -> BTreeSet<String> {
     let payload = serde_json::to_value(writer.payload.to_json_value()).expect("payload encodes");
     let strings = |value: &Value| -> Vec<String> {
-        value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default()
+        value.as_array().map_or_default(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
     };
     if payload.get("effectProgram").is_some() {
         payload["writes"]
@@ -1070,7 +1067,10 @@ fn entity_projection_preserves_identity_declarations_and_order() {
         base: &[],
         tenant: None,
     };
-    assert!(norn_checker::check_artifact_set(std::slice::from_ref(&artifact), &context).is_empty());
+    assert!(
+        norn_checker::check_artifact_set(std::slice::from_ref(&artifact), &context).is_empty(),
+        "expected an empty value"
+    );
     let catalog =
         project(std::slice::from_ref(&artifact), &[], &BTreeSet::new()).expect("projection");
     let at = |member| MemberRef {
@@ -1109,7 +1109,11 @@ fn ambiguous_installed_mapping_targets_never_select_a_version() {
         &BTreeSet::new(),
     )
     .expect("read-only projection");
-    assert!(projection.mappings.is_empty());
+    assert!(
+        projection.mappings.is_empty(),
+        "not empty: {:?}",
+        projection.mappings
+    );
     let old = sales_order();
     let mut new = serde_json::to_value(&old).expect("envelope");
     new["version"] = json!("2.0.0");
@@ -1121,7 +1125,7 @@ fn ambiguous_installed_mapping_targets_never_select_a_version() {
         &BTreeSet::new(),
     )
     .expect("pinned projection");
-    assert!(!pinned.mappings.is_empty());
+    assert!(!pinned.mappings.is_empty(), "`pinned.mappings` is empty");
     assert!(
         pinned
             .mappings
@@ -1227,7 +1231,11 @@ fn graph_catalog_retains_semantics_and_refuses_projection_writes() {
         source["from"]
     );
     assert_eq!(transition.to, source["to"].as_str().expect("state"));
-    assert!(transition.guards.is_empty());
+    assert!(
+        transition.guards.is_empty(),
+        "not empty: {:?}",
+        transition.guards
+    );
     assert!(
         retained
             .facets
@@ -1299,7 +1307,10 @@ fn graph_catalog_roles_follow_declarations_not_lifecycle_shape() {
         base: &[],
         tenant: None,
     };
-    assert!(check_artifact_set(&artifacts, &context).is_empty());
+    assert!(
+        check_artifact_set(&artifacts, &context).is_empty(),
+        "`check_artifact_set(&artifacts, &context)` is not empty"
+    );
     assert!(
         catalog(&artifacts, &[])
             .types
@@ -1321,7 +1332,10 @@ fn defined_concept_wire_distinguishes_malformed_and_unsupported_semantics() {
             "bounds": norn_ir::ResourceLimitProfile::norn_limits_v1()
         }
     }));
-    assert!(norn_checker::check_artifact(&declaration).is_empty());
+    assert!(
+        norn_checker::check_artifact(&declaration).is_empty(),
+        "`norn_checker::check_artifact(&declaration)` is not empty"
+    );
     let wire = serde_json::to_value(&declaration).expect("wire");
     let positional = json!(["test.Item.entity", "1.0.0", {"kind":"type", "typeName":"test.Item"}]);
     let mut budget = wire["payload"]["bounds"].clone();

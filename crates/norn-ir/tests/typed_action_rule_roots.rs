@@ -143,7 +143,11 @@ fn action_commands_are_typed_and_empty_commands_are_omitted() {
     let mut payload = payload_json(ACTION_FIXTURE);
     let action: ActionRoot =
         serde_json::from_value(payload.clone()).expect("legacy action has no commands");
-    assert!(action.commands.is_empty());
+    assert!(
+        action.commands.is_empty(),
+        "not empty: {:?}",
+        action.commands
+    );
     assert!(
         serde_json::to_value(action)
             .expect("action should serialize")
@@ -279,7 +283,7 @@ fn legacy_action_payload_decodes_into_the_typed_root() {
     });
     let action: ActionRoot = assert_typed_roundtrip("legacy action", &payload);
     assert!(action.effect_program.is_some());
-    assert!(action.writes.is_empty());
+    assert!(action.writes.is_empty(), "not empty: {:?}", action.writes);
 }
 
 #[test]

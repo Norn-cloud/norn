@@ -64,7 +64,7 @@ fn pairs(findings: Vec<Diagnostic>) -> Vec<(String, String)> {
         .map(|Diagnostic { code, span, .. }| {
             (
                 code.as_str().to_owned(),
-                span.map(|span| span.pointer).unwrap_or_default(),
+                span.map_or_default(|span| span.pointer),
             )
         })
         .collect()

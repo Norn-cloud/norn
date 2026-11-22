@@ -145,7 +145,7 @@ fn v2_entity_fixture_decodes_into_the_v2_root() {
     // that replaces the v1 relation fixture.
     let mut expected: ObjectTypeDef =
         serde_json::from_str(SKU_OBJECT_TYPE).expect("sku object type should decode");
-    assert!(expected.links.is_empty());
+    assert!(expected.links.is_empty(), "not empty: {:?}", expected.links);
     expected.links = v2.object_type.links.clone();
     assert_eq!(v2.object_type, expected);
     let [link] = v2.object_type.links.as_slice() else {

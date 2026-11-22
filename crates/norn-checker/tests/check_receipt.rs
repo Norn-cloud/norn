@@ -386,7 +386,8 @@ fn flow_source_map_checks_rule_rows_and_graph_references() {
         vec!["large".to_owned()],
     );
     assert!(
-        norn_checker::validate_flow_source_map(&map, std::slice::from_ref(&rule), &[]).is_empty()
+        norn_checker::validate_flow_source_map(&map, std::slice::from_ref(&rule), &[]).is_empty(),
+        "expected an empty value"
     );
 
     let mut invalid = map;
@@ -444,7 +445,8 @@ fn flow_source_map_containment_has_one_parent_and_no_cycles() {
     };
     map.flows[0].edges = vec![edge("step-1", "step-2"), edge("step-2", "step-3")];
     assert!(
-        norn_checker::validate_flow_source_map(&map, std::slice::from_ref(&rule), &[]).is_empty()
+        norn_checker::validate_flow_source_map(&map, std::slice::from_ref(&rule), &[]).is_empty(),
+        "expected an empty value"
     );
 
     let mut cyclic = map.clone();
@@ -587,7 +589,10 @@ fn a_set_with_errors_binds_no_env_and_is_not_admitted() {
     let mut artifacts = registry_layer();
     artifacts.push(json_of(UNKNOWN_SUPERTYPE));
     let checked = check(&artifacts);
-    assert!(!checked.diagnostics.is_empty());
+    assert!(
+        !checked.diagnostics.is_empty(),
+        "`checked.diagnostics` is empty"
+    );
     let receipt = checked.receipt;
     assert!(!receipt.admitted);
     assert_eq!(receipt.type_env, None);
@@ -852,7 +857,10 @@ fn inherited_law_enrollment_binds_pack_digest_and_stable_member() {
     );
     assert!(checked.receipt.admitted);
     let receipt = checked.receipt;
-    assert!(!receipt.law_enrollment.is_empty());
+    assert!(
+        !receipt.law_enrollment.is_empty(),
+        "`receipt.law_enrollment` is empty"
+    );
     for enrollment in &receipt.law_enrollment {
         let origin = &enrollment.inherited_from;
         let law = base
@@ -928,7 +936,11 @@ fn candidate_pack_laws_are_not_labeled_as_inherited() {
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let receipt = checked.receipt;
     assert!(receipt.admitted);
-    assert!(receipt.law_enrollment.is_empty());
+    assert!(
+        receipt.law_enrollment.is_empty(),
+        "not empty: {:?}",
+        receipt.law_enrollment
+    );
     let value: Value =
         serde_json::from_slice(&receipt.canonical_json().expect("receipt")).expect("JSON");
     assert_eq!(value["format"], RECEIPT_FORMAT);
@@ -960,7 +972,11 @@ fn unresolved_pack_members_preserve_admission_and_legacy_recovery() {
             assert_eq!(checked.receipt.law_enrollment, enrolled);
             continue;
         }
-        assert!(checked.receipt.law_enrollment.is_empty());
+        assert!(
+            checked.receipt.law_enrollment.is_empty(),
+            "not empty: {:?}",
+            checked.receipt.law_enrollment
+        );
         let mut historical = checked.receipt;
         historical.type_env = Some(historical_env(&[], &envelopes(&base), &limits));
         historical.checker_version = "0.1.0".to_owned();

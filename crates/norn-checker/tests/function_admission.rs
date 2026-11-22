@@ -303,7 +303,10 @@ fn function_admission_manifest_rules() {
         evidence.qualified = true;
     }
     qualified.cache = CachePolicy::ActionCache;
-    assert!(manifest_findings(&qualified).is_empty());
+    assert!(
+        manifest_findings(&qualified).is_empty(),
+        "`manifest_findings(&qualified)` is not empty"
+    );
 
     let mut networked = manifest("container");
     if let DeterminismProfile::HermeticContainer(evidence) = &mut networked.determinism {
@@ -689,7 +692,10 @@ fn function_admission_detects_credentials_by_name_and_shape() {
     }
     let mut host = manifest("effectful");
     host.capabilities[0].scope = "https://api.example.com/v1/*".to_owned();
-    assert!(manifest_findings(&host).is_empty());
+    assert!(
+        manifest_findings(&host).is_empty(),
+        "`manifest_findings(&host)` is not empty"
+    );
 }
 
 #[test]

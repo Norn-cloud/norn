@@ -2475,30 +2475,26 @@ impl<'m, 'a> AdmittedType<'m, 'a> {
 
     /// The effective supertype names, nearest first.
     pub(crate) fn supertypes(self) -> Vec<&'m str> {
-        self.effective()
-            .map(|effective| {
-                effective
-                    .lineage
-                    .iter()
-                    .skip(1)
-                    .map(ObjectTypeName::as_str)
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.effective().map_or_default(|effective| {
+            effective
+                .lineage
+                .iter()
+                .skip(1)
+                .map(ObjectTypeName::as_str)
+                .collect()
+        })
     }
 
     /// The child type names of every effective owned collection, inherited
     /// ones included.
     pub(crate) fn owned_child_types(self) -> Vec<&'m str> {
-        self.effective()
-            .map(|effective| {
-                effective
-                    .owned_collections
-                    .iter()
-                    .map(|collection| collection.child_type.as_str())
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.effective().map_or_default(|effective| {
+            effective
+                .owned_collections
+                .iter()
+                .map(|collection| collection.child_type.as_str())
+                .collect()
+        })
     }
 }
 
@@ -2782,7 +2778,10 @@ mod synchronous_rule_tests {
     #[test]
     fn missing_ambiguous_or_uncovered_rule_pins_refuse() {
         let (action, mut root, rule) = fixture("1.0.0");
-        assert!(!synchronous_rule_findings(&action, &root, &[], &[]).is_empty());
+        assert!(
+            !synchronous_rule_findings(&action, &root, &[], &[]).is_empty(),
+            "`synchronous_rule_findings(&action, &root, &[], &[])` is empty"
+        );
         assert!(
             !synchronous_rule_findings(
                 &action,
@@ -2790,10 +2789,14 @@ mod synchronous_rule_tests {
                 std::slice::from_ref(&rule),
                 std::slice::from_ref(&rule)
             )
-            .is_empty()
+            .is_empty(),
+            "unexpectedly empty"
         );
         root.scope_required.clear();
-        assert!(!synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty());
+        assert!(
+            !synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty(),
+            "`synchronous_rule_findings(&action, &root, &[rule], &[])` is empty"
+        );
     }
 }
 
@@ -2873,20 +2876,32 @@ mod writer_footprint_tests {
             object_type: "commerce.SalesOrder".into(),
             id_field: "so_number".into(),
         });
-        assert!(create_link_findings(action, &root, &model).is_empty());
+        assert!(
+            create_link_findings(action, &root, &model).is_empty(),
+            "`create_link_findings(action, &root, &model)` is not empty"
+        );
         root.writes.clear();
-        assert!(!create_link_findings(action, &root, &model).is_empty());
+        assert!(
+            !create_link_findings(action, &root, &model).is_empty(),
+            "`create_link_findings(action, &root, &model)` is empty"
+        );
         root.writes.push(norn_ir::ActionWrite {
             entity_kind: "commerce.SalesOrder".into(),
             change: WriteChange::Modified,
         });
-        assert!(!create_link_findings(action, &root, &model).is_empty());
+        assert!(
+            !create_link_findings(action, &root, &model).is_empty(),
+            "`create_link_findings(action, &root, &model)` is empty"
+        );
         root.create_links[0]
             .source
             .as_mut()
             .expect("source")
             .id_field = "undeclared".into();
-        assert!(!create_link_findings(action, &root, &model).is_empty());
+        assert!(
+            !create_link_findings(action, &root, &model).is_empty(),
+            "`create_link_findings(action, &root, &model)` is empty"
+        );
     }
 
     #[test]

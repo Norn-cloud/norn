@@ -76,7 +76,7 @@ fn hierarchy_cycles_refuse_atomically_including_same_commit_and_existing_paths()
                 })
                 .expect_err("a final-graph cycle refuses");
             assert!(refusal.to_string().contains("cycle"));
-            assert!(cell.ledger().is_empty());
+            assert!(cell.ledger().is_empty(), "`cell.ledger()` is not empty");
             assert!(!cell.load(&FactKey::new(ty, "a")).expect("load").exists());
         }
         let mut cell = cell();
@@ -192,7 +192,7 @@ fn required_owner_checks_final_graph_and_inherited_concrete_contract() {
         })
         .expect_err("ownerless inherited Brand refuses");
     assert!(refusal.to_string().contains("required link `legal_entity`"));
-    assert!(cell.ledger().is_empty());
+    assert!(cell.ledger().is_empty(), "`cell.ledger()` is not empty");
     let owner = |id| LinkWrite {
         // A base-type spelling still uses the concrete subtype's contract.
         key: LinkKey::new(
@@ -295,7 +295,7 @@ fn hierarchy_same_commit_target_keys_spend_the_traversal_byte_budget() {
     assert!(refusal.to_string().contains("byte budget"));
     assert_eq!(refusal.code(), "commit.traversal_limit_exceeded");
     assert_eq!(refusal.category(), norn_kernel::RefusalCategory::Limit);
-    assert!(cell.ledger().is_empty());
+    assert!(cell.ledger().is_empty(), "`cell.ledger()` is not empty");
 }
 
 #[test]
@@ -1050,7 +1050,7 @@ fn obs_link_extension_defaults_seal_and_redeliver_but_changed_defaults_require_m
         norn_ir::RuntimeValue::from("reviewed")
     );
     let (commit, authority) = claimed_commit(&catalog, &cell, &claim);
-    assert!(commit.writes.is_empty());
+    assert!(commit.writes.is_empty(), "not empty: {:?}", commit.writes);
     cell.commit_observed(commit, authority)
         .expect("retained extended claim");
     let mut evolved = extension;

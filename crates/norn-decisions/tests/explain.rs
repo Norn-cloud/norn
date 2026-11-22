@@ -119,6 +119,10 @@ fn explained_evaluation_reports_the_matched_row() {
 fn plain_evaluation_is_unchanged_and_reports_no_rows() {
     let plain = run(500, false);
     let explained = run(500, true);
-    assert!(plain.matched_rows.is_empty());
+    assert!(
+        plain.matched_rows.is_empty(),
+        "not empty: {:?}",
+        plain.matched_rows
+    );
     assert_eq!(plain.output, explained.output);
 }

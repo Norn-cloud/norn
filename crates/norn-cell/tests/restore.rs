@@ -694,9 +694,13 @@ async fn unknown_external_outcomes_are_fenced_across_reopen_and_generation_repla
                 .read()
                 .pending_observations()
                 .expect("inbox")
-                .is_empty()
+                .is_empty(),
+            "`restored.read().pending_observations().expect(\"inbox\")` is not empty"
         );
-        assert!(restored.read().runs("command").expect("runs").is_empty());
+        assert!(
+            restored.read().runs("command").expect("runs").is_empty(),
+            "`restored.read().runs(\"command\").expect(\"runs\")` is not empty"
+        );
         if replace {
             restored
                 .commit(&CommitBatch {

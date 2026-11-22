@@ -523,7 +523,8 @@ fn propertyless_occurrences_and_canonical_noop_sets_keep_lineage() {
             .effective_markings(MAIN_WORLD, "proof.Item", "item", Some(2))
             .expect("markings")
             .expect("complete")["value"]
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
 }
 
@@ -678,7 +679,8 @@ fn canonical_noop_set_compares_engine_normalized_values() {
             .effective_markings(MAIN_WORLD, "proof.Number", "number", Some(2))
             .expect("labels")
             .expect("complete")["value"]
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
 }
 

@@ -129,7 +129,7 @@ fn lifecycle_findings(
     lifecycle_diagnostics(lifecycle, edit)
         .into_iter()
         .map(|finding| {
-            let pointer = finding.span.map(|span| span.pointer).unwrap_or_default();
+            let pointer = finding.span.map_or_default(|span| span.pointer);
             (finding.code.as_str().to_owned(), pointer, finding.message)
         })
         .collect()

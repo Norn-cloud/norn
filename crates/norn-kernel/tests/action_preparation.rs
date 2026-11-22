@@ -161,7 +161,10 @@ fn action_actor_noncanonical_principal_refuses_before_any_write() {
             .code(),
         "action.invalid_input"
     );
-    assert!(storage.ledger().is_empty());
+    assert!(
+        storage.ledger().is_empty(),
+        "`storage.ledger()` is not empty"
+    );
     assert!(
         !storage
             .load(&FactKey::new("test.Target", "C26"))
@@ -327,7 +330,10 @@ fn action_actor_decimal_derivation_commits_and_forged_actor_refuses() {
         matches!(error, norn_kernel::ActionRefusal::InvalidInput { ref field } if field == "actor"),
         "{error:?}"
     );
-    assert!(storage.ledger().is_empty());
+    assert!(
+        storage.ledger().is_empty(),
+        "`storage.ledger()` is not empty"
+    );
 }
 
 /// #1469 S7: a field the action derives from the actor refuses when the
@@ -649,7 +655,11 @@ fn underived_twenty_kib_input_is_retained_once_and_commits_a_small_transition() 
     };
     assert_eq!(record.input, raw);
     assert_eq!(record.effective_input, None);
-    assert!(record.derived_values.is_empty());
+    assert!(
+        record.derived_values.is_empty(),
+        "not empty: {:?}",
+        record.derived_values
+    );
     assert_eq!(record.precondition_outcomes.len(), 1);
     assert!(
         record

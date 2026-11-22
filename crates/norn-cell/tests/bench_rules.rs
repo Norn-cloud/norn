@@ -100,7 +100,10 @@ fn selected_rules_admit_commit_and_refuse_with_atomicity_and_controls() {
     let mut tested = 0;
     for rule in rules {
         if rule.get("expression").is_none() {
-            assert!(!rule["evidence"].as_str().expect("evidence").is_empty());
+            assert!(
+                !rule["evidence"].as_str().expect("evidence").is_empty(),
+                "`rule[\"evidence\"].as_str().expect(\"evidence\")` is empty"
+            );
             continue;
         }
         let artifacts = declarations(rule);

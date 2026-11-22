@@ -89,7 +89,11 @@ fn inline_editor_layout_is_admitted_by_json_and_typed_single_artifact_entries() 
         &limits,
     )
     .expect("ordinary receipt accepts decomposed editor text");
-    assert!(checked.diagnostics.is_empty());
+    assert!(
+        checked.diagnostics.is_empty(),
+        "not empty: {:?}",
+        checked.diagnostics
+    );
     assert_eq!(
         checked.receipt,
         check_artifact_set_with_receipt(

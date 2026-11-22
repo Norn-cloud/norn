@@ -2416,7 +2416,8 @@ fn guarded_maps_skip_nullable_subjects_and_guarded_deletes_refuse_partial_record
                 &UtcTimestamp("2026-10-01T00:00:00Z".to_owned())
             )
             .expect("the false guard skips before the nullable subject")
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
     assert!(
         compiled
@@ -2909,7 +2910,7 @@ fn decimal_text_conforms_and_a_refusal_explains_its_field() {
         assert_eq!(field.value.as_deref(), Some(format!("{bad:?}").as_str()));
         assert!(field.expected.contains("decimal"), "{field:?}");
         assert!(field.reason.contains("JSON decimal"), "{field:?}");
-        assert!(!refusal.map.is_empty());
+        assert!(!refusal.map.is_empty(), "`refusal.map` is empty");
         assert_eq!(refusal.document, 0);
         // The diagnostic `apply` reports is the same refusal, in words.
         let diagnostic = refusal.diagnostic();

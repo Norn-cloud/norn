@@ -629,7 +629,7 @@ mod tests {
         let mut listed = admitted.verify(admitted.artifacts.clone()).unwrap();
         listed.sort();
         assert_eq!(listed, expected);
-        assert!(!listed.is_empty());
+        assert!(!listed.is_empty(), "`listed` is empty");
         let mut reordered = admitted.artifacts.clone();
         reordered.reverse();
         let mut listed = admitted.verify(reordered).unwrap();

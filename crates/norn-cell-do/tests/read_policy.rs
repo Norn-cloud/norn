@@ -244,7 +244,10 @@ fn undeclared_roles_and_other_subjects_get_no_grant() {
         );
     }
     assert_eq!(DEMO_GRANTS.version, "norn-cell-do-grants/3");
-    assert!(DEMO_GRANTS.capabilities(&["analyst".into()]).is_empty());
+    assert!(
+        DEMO_GRANTS.capabilities(&["analyst".into()]).is_empty(),
+        "`DEMO_GRANTS.capabilities(&[\"analyst\".into()])` is not empty"
+    );
     assert_eq!(
         DEMO_GRANTS.capabilities(&["viewer".into()]),
         [ReadCapability::Population]

@@ -265,7 +265,10 @@ fn object_set_traversal_filters_source_and_aggregates_the_distinct_terminal_popu
     question["filter"] =
         json!([{"path":{"property":"docstatus"},"operator":"eq","value":"Submitted"}]);
     let typed: QuestionIR = serde_json::from_str(&question.to_string()).expect("query");
-    assert!(check_metrics_and_questions(&[definition(SALES)], &[typed], &catalog()).is_empty());
+    assert!(
+        check_metrics_and_questions(&[definition(SALES)], &[typed], &catalog()).is_empty(),
+        "expected an empty value"
+    );
     question["filter"][0]["path"]["property"] = json!("net_amount");
     let typed: QuestionIR = serde_json::from_str(&question.to_string()).expect("query");
     assert!(
@@ -279,7 +282,10 @@ fn object_set_traversal_filters_source_and_aggregates_the_distinct_terminal_popu
     question["filter"] = json!([]);
     question["aggregate"] = json!([{"metric":"erpnext.inline_count","inline":{"name":"erpnext.inline_count","agg":"count","aggTimeDimension":policy.time_dimension,"x-norn":policy}}]);
     let typed: QuestionIR = serde_json::from_str(&question.to_string()).expect("inline query");
-    assert!(check_metrics_and_questions(&[], &[typed], &catalog()).is_empty());
+    assert!(
+        check_metrics_and_questions(&[], &[typed], &catalog()).is_empty(),
+        "`check_metrics_and_questions(&[], &[typed], &catalog())` is not empty"
+    );
 }
 
 #[test]
@@ -367,7 +373,8 @@ fn inline_output_names_are_local_and_other_questions_cannot_reference_them() {
         mapping: vec![],
     });
     assert!(
-        check_metrics_and_questions(&[], &[first.clone(), second.clone()], &catalog()).is_empty()
+        check_metrics_and_questions(&[], &[first.clone(), second.clone()], &catalog()).is_empty(),
+        "expected an empty value"
     );
     second.metrics[0].inline = None;
     assert!(
@@ -401,7 +408,10 @@ fn metricflow_non_additive_dimensions_keep_snapshot_governance_and_resolve_serie
         window_choice: norn_ir::metric::WindowChoice::Max,
         window_groupings: vec!["name".into()],
     });
-    assert!(check_metrics_and_questions(std::slice::from_ref(&metric), &[], &catalog()).is_empty());
+    assert!(
+        check_metrics_and_questions(std::slice::from_ref(&metric), &[], &catalog()).is_empty(),
+        "expected an empty value"
+    );
     let question: QuestionIR = serde_json::from_str(include_str!(
         "../../../fixtures/ir/metrics/sales-by-store-day.question.json"
     ))

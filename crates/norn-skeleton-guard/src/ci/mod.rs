@@ -1371,8 +1371,7 @@ mod tests {
         let block = VALIDATOR
             .split_once("\nPULL_REQUEST_CONCURRENCY_CASES = {\n")
             .and_then(|(_, rest)| rest.split_once("\n}\n"))
-            .map(|(block, _)| block)
-            .unwrap_or_default();
+            .map_or_default(|(block, _)| block);
         let entries = block
             .lines()
             .map(|line| line.trim().trim_end_matches(','))
@@ -1613,7 +1612,8 @@ mod tests {
                 ".github/workflows/codeql.yml",
                 &super::yaml::Value::Map(Vec::new())
             )
-            .is_empty()
+            .is_empty(),
+            "expected an empty value"
         );
     }
 
@@ -1701,12 +1701,18 @@ mod tests {
         let contract =
             || vec!["scripts/ci/core.sh: gate contract differs from the trusted base".to_owned()];
         assert_eq!(contract_errors(contract(), None), contract());
-        assert!(contract_errors(contract(), Some(Ok("maintainer".to_owned()))).is_empty());
+        assert!(
+            contract_errors(contract(), Some(Ok("maintainer".to_owned()))).is_empty(),
+            "`contract_errors(contract(), Some(Ok(\"maintainer\".to_owned())))` is not empty"
+        );
         assert_eq!(
             contract_errors(contract(), Some(Err("fork".to_owned()))).len(),
             2
         );
-        assert!(contract_errors(Vec::new(), Some(Err("fork".to_owned()))).is_empty());
+        assert!(
+            contract_errors(Vec::new(), Some(Err("fork".to_owned()))).is_empty(),
+            "`contract_errors(Vec::new(), Some(Err(\"fork\".to_owned())))` is not empty"
+        );
     }
 
     const IR: &str = "pub enum ArtifactKind { Entity, SourceSchema, Law }";

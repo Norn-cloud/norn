@@ -5305,7 +5305,8 @@ fn purity_quality_host_with_severity(
                 tenant: None
             }
         )
-        .is_empty()
+        .is_empty(),
+        "expected an empty value"
     );
     let model =
         Model::from_definitions(&[serde_json::from_value(object).expect("measurement")], &[])
@@ -6233,8 +6234,11 @@ fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics(
     let bundle: norn_cell::mapping_bundle::MappingBundle =
         norn_ir::runtime::decode(&observed.input).expect("bundle");
     assert_eq!(bundle.raw, raw.input);
-    assert!(bundle.records.is_empty());
-    assert!(!bundle.diagnostics.is_empty());
+    assert!(bundle.records.is_empty(), "not empty: {:?}", bundle.records);
+    assert!(
+        !bundle.diagnostics.is_empty(),
+        "`bundle.diagnostics` is empty"
+    );
     assert!(bundle.diagnostics.iter().all(|d| d.get("code").is_some()
         && d.get("span").is_some()
         && d.get("severity").is_some()));
@@ -7494,7 +7498,10 @@ fn source_dispute_index_retries_churn_and_returns_a_distinct_retryable_refusal()
             .read()
             .observation_findings(MAIN_WORLD, "quality.Measurement", "clean");
         if churn < 7 {
-            assert!(result.expect("bounded retry stabilizes").is_empty());
+            assert!(
+                result.expect("bounded retry stabilizes").is_empty(),
+                "`result.expect(\"bounded retry stabilizes\")` is not empty"
+            );
         } else {
             assert!(matches!(result, Err(CellError::SourceEvidenceChanged)));
         }

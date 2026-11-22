@@ -95,7 +95,10 @@ fn lawful_projection_round_trips_original_non_nfc_source_keys() {
         record.insert(key.into(), complement);
     }
     let mapping = serde_json::from_value(raw).expect("typed mapping");
-    assert!(check_mapping_local(&mapping).is_empty());
+    assert!(
+        check_mapping_local(&mapping).is_empty(),
+        "`check_mapping_local(&mapping)` is not empty"
+    );
     let lens = admit(&mapping, &source_schema(key))
         .expect("checked")
         .expect("declared");
@@ -165,7 +168,10 @@ fn unknown_evaluation_or_fragment_never_passes() {
         LENS_SLOT.into(),
         serde_json::from_value(json!({})).expect("JSON"),
     );
-    assert!(!check_mapping_local(&mapping).is_empty());
+    assert!(
+        !check_mapping_local(&mapping).is_empty(),
+        "`check_mapping_local(&mapping)` is empty"
+    );
 }
 
 #[test]

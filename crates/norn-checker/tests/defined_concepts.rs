@@ -43,9 +43,18 @@ fn cycles(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<Str
 fn forward_dependencies_are_acyclic() {
     let a = declaration("test.a", "1.0.0", &[("test.b", "1.0.0")]);
     let b = declaration("test.b", "1.0.0", &[]);
-    assert!(cycles(&[a.clone(), b.clone()], &[]).is_empty());
-    assert!(cycles(&[b, a.clone()], &[]).is_empty());
-    assert!(norn_checker::check_artifact(&a).is_empty());
+    assert!(
+        cycles(&[a.clone(), b.clone()], &[]).is_empty(),
+        "`cycles(&[a.clone(), b.clone()], &[])` is not empty"
+    );
+    assert!(
+        cycles(&[b, a.clone()], &[]).is_empty(),
+        "`cycles(&[b, a.clone()], &[])` is not empty"
+    );
+    assert!(
+        norn_checker::check_artifact(&a).is_empty(),
+        "`norn_checker::check_artifact(&a)` is not empty"
+    );
 }
 #[test]
 fn self_and_retained_classification_cycles_refuse() {
@@ -64,9 +73,15 @@ fn retained_versions_and_ambiguous_identities_never_select_a_cycle_target() {
     let a = declaration("test.a", "2.0.0", &[("test.b", "1.0.0")]);
     let b = declaration("test.b", "1.0.0", &[("test.a", "1.0.0")]);
     let old = declaration("test.a", "1.0.0", &[]);
-    assert!(cycles(&[a.clone(), b], &[old]).is_empty());
+    assert!(
+        cycles(&[a.clone(), b], &[old]).is_empty(),
+        "`cycles(&[a.clone(), b], &[old])` is not empty"
+    );
     let b = declaration("test.b", "1.0.0", &[("test.a", "2.0.0")]);
-    assert!(cycles(&[a, b.clone(), b], &[]).is_empty());
+    assert!(
+        cycles(&[a, b.clone(), b], &[]).is_empty(),
+        "`cycles(&[a, b.clone(), b], &[])` is not empty"
+    );
 }
 proptest::proptest! {
     // Sparse edges and no self-loops: with uniform bits nearly every non-DAG
@@ -120,7 +135,10 @@ fn findings(
 fn cross_artifact_admission_types_a_pure_boolean_over_the_exact_base() {
     let base = item();
     let class = qualified();
-    assert!(findings(std::slice::from_ref(&class), std::slice::from_ref(&base)).is_empty());
+    assert!(
+        findings(std::slice::from_ref(&class), std::slice::from_ref(&base)).is_empty(),
+        "`findings(std::slice::from_ref(&class), std::slice::from_ref(&base))` is not empty"
+    );
     let mut newer = serde_json::to_value(&base).expect("wire");
     newer["version"] = json!("2.0.0");
     newer["payload"]["objectType"]["properties"][0]["type"] = json!({"kind":"text"});
@@ -132,7 +150,8 @@ fn cross_artifact_admission_types_a_pure_boolean_over_the_exact_base() {
                 serde_json::from_value(newer).expect("new version")
             ]
         )
-        .is_empty()
+        .is_empty(),
+        "expected an empty value"
     );
     let mut with_member = serde_json::to_value(&class).expect("wire");
     with_member["payload"]["dependencies"] = json!([{"artifactId":"test.Item.entity", "version":"1.0.0",
@@ -142,9 +161,13 @@ fn cross_artifact_admission_types_a_pure_boolean_over_the_exact_base() {
             &[serde_json::from_value(with_member).expect("member")],
             std::slice::from_ref(&base)
         )
-        .is_empty()
+        .is_empty(),
+        "expected an empty value"
     );
-    assert!(findings(&[base, class], &[]).is_empty());
+    assert!(
+        findings(&[base, class], &[]).is_empty(),
+        "`findings(&[base, class], &[])` is not empty"
+    );
     let mut interface = serde_json::to_value(item()).expect("wire");
     let definition = interface["payload"]
         .as_object_mut()
@@ -157,7 +180,8 @@ fn cross_artifact_admission_types_a_pure_boolean_over_the_exact_base() {
             &[qualified()],
             &[serde_json::from_value(interface).expect("interface")]
         )
-        .is_empty()
+        .is_empty(),
+        "expected an empty value"
     );
 }
 #[test]
@@ -191,9 +215,15 @@ fn missing_pins_members_types_and_unbounded_or_impure_predicates_refuse() {
             "{pointer}"
         );
     }
-    assert!(!findings(&[qualified()], &[]).is_empty());
+    assert!(
+        !findings(&[qualified()], &[]).is_empty(),
+        "`findings(&[qualified()], &[])` is empty"
+    );
     let base = item();
-    assert!(!findings(&[qualified()], &[base.clone(), base]).is_empty());
+    assert!(
+        !findings(&[qualified()], &[base.clone(), base]).is_empty(),
+        "`findings(&[qualified()], &[base.clone(), base])` is empty"
+    );
     let mut pinned = serde_json::to_value(item()).expect("wire");
     pinned["dependencies"] =
         json!([{"artifactId":"test.amounts", "version":"1.0.0", "kind":"entity", "required":true}]);

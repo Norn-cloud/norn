@@ -150,7 +150,6 @@ impl Failure {
 }
 
 /// Run the loop until the worker exits or the process is stopped.
-#[must_use]
 pub fn execute(args: &DevArgs) -> ExitCode {
     let mut out = Events { json: args.json };
     match run(args, &mut out) {
@@ -954,14 +953,13 @@ fn lock(state: &Path) -> Result<File, Failure> {
             let running = std::fs::read_to_string(state.join("dev.json"))
                 .ok()
                 .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                .map(|session| {
+                .map_or_default(|session| {
                     format!(
                         " (pid {}, {})",
                         session.get("pid").and_then(Value::as_u64).unwrap_or(0),
                         session.get("url").and_then(Value::as_str).unwrap_or("?")
                     )
-                })
-                .unwrap_or_default();
+                });
             Err(Failure::setup(
                 "norn.cell.locked",
                 format!("norn dev is already running for this project{running}; stop it first"),

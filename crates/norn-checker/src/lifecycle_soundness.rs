@@ -389,9 +389,8 @@ pub(crate) fn check_machine(machine: &Machine<'_>) -> Vec<Finding> {
             continue;
         }
         let name = state_name(state);
-        let trace = soundness::witness(&net, state)
-            .map(|edges| run(machine, &net, &edges))
-            .unwrap_or_default();
+        let trace =
+            soundness::witness(&net, state).map_or_default(|edges| run(machine, &net, &edges));
         match outcome.completion {
             Completion::Must => {}
             Completion::None => {
@@ -584,17 +583,15 @@ fn check_compensation(machine: &Machine<'_>, out: &mut Vec<Finding>) {
                     .get(owed)
                     .is_some_and(|outcome| outcome.reachable)
             {
-                let trace = soundness::witness(&product, owed)
-                    .map(|edges| {
-                        edges
-                            .iter()
-                            .filter_map(|edge| product.edges.get(*edge))
-                            .filter_map(|edge| machine.transitions.get(edge.label))
-                            .map(|transition| transition.id.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
-                    .unwrap_or_default();
+                let trace = soundness::witness(&product, owed).map_or_default(|edges| {
+                    edges
+                        .iter()
+                        .filter_map(|edge| product.edges.get(*edge))
+                        .filter_map(|edge| machine.transitions.get(edge.label))
+                        .map(|transition| transition.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                });
                 out.push(finding(
                     codes::COMPENSATION_NOT_CLOSED,
                     format!(
@@ -910,7 +907,10 @@ mod tests {
         if let Some(ship) = legacy["transitions"][2].as_object_mut() {
             ship.remove("mode");
         }
-        assert!(check_machine(&Machine::declared(&lifecycle(legacy), ORDER.to_vec())).is_empty());
+        assert!(
+            check_machine(&Machine::declared(&lifecycle(legacy), ORDER.to_vec())).is_empty(),
+            "`check_machine(&Machine::declared(&lifecycle(legacy), ORDER.to_vec()))` is not empty"
+        );
     }
 
     #[test]
@@ -1094,7 +1094,11 @@ mod tests {
         };
         assert_eq!(failure.states, ["review"]);
         assert_eq!(failure.unreachable, ["review"]);
-        assert!(failure.blocking.is_empty());
+        assert!(
+            failure.blocking.is_empty(),
+            "not empty: {:?}",
+            failure.blocking
+        );
         // a guarded refund leaves review Unknown: the guard is the smallest blocking set.
         let mut guarded = chart();
         guarded["transitions"][3]["guards"] = json!(["self.paid"]);
@@ -1104,7 +1108,11 @@ mod tests {
             panic!("review ends well only through a guard");
         };
         assert_eq!(failure.states, ["review"]);
-        assert!(failure.unreachable.is_empty());
+        assert!(
+            failure.unreachable.is_empty(),
+            "not empty: {:?}",
+            failure.unreachable
+        );
         assert_eq!(failure.blocking, ["refund"]);
         assert!(failure.message().contains("smallest blocking set"));
         // An unclassified terminal is not a declared good ending.
@@ -1216,7 +1224,10 @@ mod tests {
         }));
         let states = ["active", "building"];
         // D84: a chart that declares no LIFE-SOUND member keeps its admission output.
-        assert!(check_machine(&Machine::declared(&chart, states.to_vec())).is_empty());
+        assert!(
+            check_machine(&Machine::declared(&chart, states.to_vec())).is_empty(),
+            "`check_machine(&Machine::declared(&chart, states.to_vec()))` is not empty"
+        );
         let mut opted = chart;
         opted.events = vec![norn_ir::LifecycleEvent {
             id: "audit".into(),
@@ -1233,6 +1244,9 @@ mod tests {
             state: "active".into(),
             outcome: LifecycleOutcome::Resting,
         }];
-        assert!(check_machine(&Machine::declared(&resting, states.to_vec())).is_empty());
+        assert!(
+            check_machine(&Machine::declared(&resting, states.to_vec())).is_empty(),
+            "`check_machine(&Machine::declared(&resting, states.to_vec()))` is not empty"
+        );
     }
 }

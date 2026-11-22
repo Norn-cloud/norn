@@ -641,7 +641,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let result = documents(&source, &batch, &shared, &goals).expect("documents");
-        assert!(!result.is_empty());
+        assert!(!result.is_empty(), "`result` is empty");
         for document in result {
             let actual: serde_json::Value =
                 serde_json::from_str(&document.bounds_json).expect("bounds");

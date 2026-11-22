@@ -569,8 +569,7 @@ impl<'a, 'r> Checker<'a, 'r> {
                 .map(|resolved| {
                     let markings = property_markings
                         .get(resolved.property.id.as_str())
-                        .map(|markings| markings.iter().cloned().collect())
-                        .unwrap_or_default();
+                        .map_or_default(|markings| markings.iter().cloned().collect());
                     let mut property = crate::entity_instance::EffectiveProperty::from_resolved(
                         resolved, markings,
                     );

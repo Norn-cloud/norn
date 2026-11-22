@@ -109,7 +109,8 @@ fn agreeing_observations_are_clean() {
     assert!(
         find_divergences(&observations, &[by_number()], ChaseBudget::default())
             .unwrap()
-            .is_empty()
+            .is_empty(),
+        "expected an empty value"
     );
 }
 

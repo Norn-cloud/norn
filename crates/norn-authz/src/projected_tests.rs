@@ -1018,7 +1018,9 @@ fn shadow_entitlements_never_grant_but_explain_the_enforced_counterfactual() {
         explanation
             .entitlement_evaluation
             .enforced_matches
-            .is_empty()
+            .is_empty(),
+        "not empty: {:?}",
+        explanation.entitlement_evaluation.enforced_matches
     );
     assert_eq!(explanation.entitlement_evaluation.shadow_matches.len(), 1);
     assert_eq!(

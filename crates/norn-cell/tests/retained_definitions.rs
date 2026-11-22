@@ -267,7 +267,8 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         reader
             .retained_definitions("agent", true, None, 10)
             .expect("kind")
-            .is_empty()
+            .is_empty(),
+        "`reader.retained_definitions(\"agent\", true, None, 10).expect(\"kind\")` is not empty"
     );
 
     // The export journal carries each revision; a restore rebuilds them.

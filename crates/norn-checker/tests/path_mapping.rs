@@ -585,7 +585,10 @@ fn runtime_admission_enforces_required_paths_and_budget() {
             && d.message.contains("whole-admission")),
         "{exhausted:?}"
     );
-    assert!(runtime_check(&runtime_set(&[])).is_empty());
+    assert!(
+        runtime_check(&runtime_set(&[])).is_empty(),
+        "`runtime_check(&runtime_set(&[]))` is not empty"
+    );
 }
 
 #[test]

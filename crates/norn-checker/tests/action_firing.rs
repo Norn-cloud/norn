@@ -105,7 +105,7 @@ fn run(name: &str, case: &Value) -> Vec<Vec<String>> {
         .map(|finding| {
             vec![
                 finding.code.as_str().to_owned(),
-                finding.span.map(|span| span.pointer).unwrap_or_default(),
+                finding.span.map_or_default(|span| span.pointer),
             ]
         })
         .collect()
@@ -214,15 +214,15 @@ fn receipt_effect_admits_reference_and_writer_closure_but_refuses_invalid_bindin
     let mut identity = action.clone();
     identity["payload"]["effectProgram"]["acceptReceipt"]["digestProperty"] =
         serde_json::json!("so_number");
-    assert!(!check(&identity).is_empty());
+    assert!(!check(&identity).is_empty(), "`check(&identity)` is empty");
     let mut null = action.clone();
     null["payload"]["effectProgram"]["acceptReceipt"] = Value::Null;
-    assert!(!check(&null).is_empty());
+    assert!(!check(&null).is_empty(), "`check(&null)` is empty");
     let mut body = action.clone();
     body["payload"]["inputSchema"]["properties"]["receipt"] =
         serde_json::json!({"type":"object", "properties":{}, "additionalProperties":false});
-    assert!(!check(&body).is_empty());
+    assert!(!check(&body).is_empty(), "`check(&body)` is empty");
     let mut open = action.clone();
     open["payload"]["writes"] = serde_json::json!([]);
-    assert!(!check(&open).is_empty());
+    assert!(!check(&open).is_empty(), "`check(&open)` is empty");
 }

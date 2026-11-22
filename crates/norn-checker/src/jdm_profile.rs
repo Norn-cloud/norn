@@ -1883,7 +1883,10 @@ mod tests {
     fn a_unique_table_is_admitted_only_when_proved_disjoint() {
         // Disjoint and total: admitted.
         let disjoint = unique_payload(&["tier == 'a'", "tier == 'b' or tier == 'c'"], &finite());
-        assert!(unique_codes(&disjoint).is_empty());
+        assert!(
+            unique_codes(&disjoint).is_empty(),
+            "`unique_codes(&disjoint)` is not empty"
+        );
         // tier a and vip overlap at {tier: a, vip: true}: refused with the witness.
         let overlapping = unique_payload(&["tier == 'a'", "vip"], &finite());
         let mut found = Vec::new();

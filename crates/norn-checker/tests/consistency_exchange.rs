@@ -161,12 +161,18 @@ fn a_clean_exchange_is_compatible_and_its_data_valid() {
         mapping: &mapping,
         target: &target,
     };
-    assert!(check_schema_compatibility(&exchange, ChaseBudget::default()).is_empty());
+    assert!(
+        check_schema_compatibility(&exchange, ChaseBudget::default()).is_empty(),
+        "`check_schema_compatibility(&exchange, ChaseBudget::default())` is not empty"
+    );
     let data = [
         fact("SInvoice", &["inv1", "acme", "paid"]),
         fact("SLine", &["l1", "inv1"]),
     ];
-    assert!(check_instance(&exchange, &data, ChaseBudget::default()).is_empty());
+    assert!(
+        check_instance(&exchange, &data, ChaseBudget::default()).is_empty(),
+        "`check_instance(&exchange, &data, ChaseBudget::default())` is not empty"
+    );
 }
 
 #[test]
@@ -207,7 +213,10 @@ fn a_source_without_the_key_permits_what_the_canon_forbids_as_a_warning() {
     );
     // Overlap, not contradiction: one customer per invoice is still valid data.
     let data = [fact("SInvoice", &["inv1", "acme", "paid"])];
-    assert!(check_instance(&exchange, &data, ChaseBudget::default()).is_empty());
+    assert!(
+        check_instance(&exchange, &data, ChaseBudget::default()).is_empty(),
+        "`check_instance(&exchange, &data, ChaseBudget::default())` is not empty"
+    );
 }
 
 #[test]
@@ -331,7 +340,10 @@ fn unmapped_relations_and_columns_are_reported_unless_declared_gaps() {
     );
     assert!(findings.iter().all(|f| f.code == codes::NON_TOTAL));
     let gaps = BTreeSet::from(["SNote".to_owned(), "SInvoice.status".to_owned()]);
-    assert!(check_mapping_totality(&exchange, &gaps).is_empty());
+    assert!(
+        check_mapping_totality(&exchange, &gaps).is_empty(),
+        "`check_mapping_totality(&exchange, &gaps)` is not empty"
+    );
 }
 
 #[test]
@@ -590,7 +602,10 @@ fn a_mapping_unknown_value_is_not_a_false_unpreserved_witness() {
     let messages: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
     assert!(messages.iter().all(|m| !m.contains("SA(")), "{messages:?}");
     let data = [fact("SA", &["x"]), fact("SB", &["x", "acme"])];
-    assert!(check_instance(&exchange, &data, ChaseBudget::default()).is_empty());
+    assert!(
+        check_instance(&exchange, &data, ChaseBudget::default()).is_empty(),
+        "`check_instance(&exchange, &data, ChaseBudget::default())` is not empty"
+    );
 }
 
 #[test]

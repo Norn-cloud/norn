@@ -749,7 +749,10 @@ pub(super) mod tests {
         let host = host(dir.path());
         let metrics = DevMetrics::new([7_u8; 32], scope());
         let questions = metrics.questions(&host).expect("runtime");
-        assert!(!AdHocQuestions::<NativeEngine>::definitions(&questions).is_empty());
+        assert!(
+            !AdHocQuestions::<NativeEngine>::definitions(&questions).is_empty(),
+            "`AdHocQuestions::<NativeEngine>::definitions(&questions)` is empty"
+        );
         // Every derived sum answers, on whichever engine lowered it.
         for definition in AdHocQuestions::<NativeEngine>::definitions(&questions)
             .iter()

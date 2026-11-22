@@ -793,7 +793,7 @@ fn generated_restatement_sequence(changes: Vec<(i64, u8, bool, bool, bool)>) {
         let head = store.verified_head().expect("head");
         if redeliver {
             store.commit(&batch).expect("redelivery");
-            assert_eq!(store.verified_head().expect("head"), head.clone());
+            assert_eq!(store.verified_head().expect("head"), head);
         }
         progress(&mut context, at, head.commits);
         let point = cutoff(&store, &context);
@@ -815,7 +815,7 @@ fn generated_restatement_sequence(changes: Vec<(i64, u8, bool, bool, bool)>) {
             drop(build);
             drop(store);
             store = open(&path, &model);
-            assert_eq!(view(&store, &context).generation, old.clone());
+            assert_eq!(view(&store, &context).generation, old);
         }
         let build = store
             .resume_restatement(ID, context.clone())

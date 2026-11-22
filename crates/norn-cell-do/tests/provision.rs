@@ -378,7 +378,10 @@ fn only_the_owner_of_the_scopes_organization_provisions_it() {
     assert_eq!(receipt["outcome"], "provisioned");
     assert_eq!(receipt["definitionsVersion"], 1);
     assert_eq!(receipt["baseSha256"], cell.tenant.base_sha256());
-    assert!(!receipt["cellId"].as_str().unwrap().is_empty());
+    assert!(
+        !receipt["cellId"].as_str().unwrap().is_empty(),
+        "`receipt[\"cellId\"].as_str().unwrap()` is empty"
+    );
     assert_eq!(receipt["receiptSha256"].as_str().unwrap().len(), 64);
     assert!(cell.tenant.is_provisioned());
     // The cell serves its organization's roles through the declared tables.
@@ -472,7 +475,8 @@ fn a_refused_submission_is_typed_and_writes_nothing() {
         !json_of(&response)["diagnostics"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .is_empty(),
+        "unexpectedly empty"
     );
     // Shape, bound, method and query.
     let large = format!("{}{}", submission(&full()), " ".repeat(MAX_PROVISION_BYTES));
@@ -1772,7 +1776,7 @@ fn a_completed_upload_survives_a_restart() {
         .expect("the kept record");
     assert_eq!(kept.sha256, norn_api::uploads::sha256_hex(csv));
     assert_eq!(kept.file_name, "sales.csv");
-    assert!(!kept.owner.is_empty());
+    assert!(!kept.owner.is_empty(), "`kept.owner` is empty");
     let mut connect = Connect::new("[]", &vars).unwrap();
     let define = format!("/v1/uploads/{upload_id}:define");
     let mut define_with = |body: &str| {

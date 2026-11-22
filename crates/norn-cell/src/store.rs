@@ -4065,7 +4065,8 @@ mod identity_history_tests {
                 .read()
                 .governing_laws_at(2, "identity.Legacy")
                 .expect("public retained lookup")
-                .is_empty()
+                .is_empty(),
+            "expected an empty value"
         );
         let expected = store.read().dump().expect("before retry");
         drop(store);
@@ -4255,7 +4256,10 @@ mod journal_proof_tests {
             "{outcome:?}"
         );
         assert_eq!(store.export_commit_count().expect("journal head"), 0);
-        assert!(store.read().ledger(0).expect("ledger").is_empty());
+        assert!(
+            store.read().ledger(0).expect("ledger").is_empty(),
+            "`store.read().ledger(0).expect(\"ledger\")` is not empty"
+        );
 
         // Untouched, the same commit lands and its record exports.
         let store = self::store();

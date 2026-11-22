@@ -137,8 +137,14 @@ fn executor_cycles(parents: &[Option<usize>]) -> BTreeSet<usize> {
     let mut derived = result.tuples("ancestor").to_vec();
     derived.sort_by_key(|tuple| format!("{tuple:?}"));
     assert_eq!(derived, ancestors, "{parents:?}");
-    assert!(result.tuples("member_collision").is_empty());
-    assert!(result.tuples("cardinality_widening").is_empty());
+    assert!(
+        result.tuples("member_collision").is_empty(),
+        "`result.tuples(\"member_collision\")` is not empty"
+    );
+    assert!(
+        result.tuples("cardinality_widening").is_empty(),
+        "`result.tuples(\"cardinality_widening\")` is not empty"
+    );
     let cyclic = result.tuples("inheritance_cycle");
     (0..parents.len())
         .filter(|index| cyclic.contains(&vec![scope.clone(), name(*index)]))

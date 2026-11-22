@@ -93,7 +93,10 @@ fn codes_of(diagnostics: &[norn_checker::Diagnostic]) -> Vec<&str> {
 #[test]
 fn clean_theory_has_a_witness_for_every_relation() {
     let theory = invoice_mapping();
-    assert!(check_non_vacuity(&theory, ChaseBudget::default()).is_empty());
+    assert!(
+        check_non_vacuity(&theory, ChaseBudget::default()).is_empty(),
+        "`check_non_vacuity(&theory, ChaseBudget::default())` is not empty"
+    );
     let ChaseOutcome::Model(model) =
         non_vacuity_witness(&theory, "Line", ChaseBudget::default()).unwrap()
     else {

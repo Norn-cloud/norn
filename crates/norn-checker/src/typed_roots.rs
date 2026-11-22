@@ -3089,7 +3089,10 @@ mod tests {
         let (mut action, _) = action_with_nested_input_field("recorded_by", &[]);
         action["payload"]["outputSchema"] = json!({"type":"object","additionalProperties":false,
             "properties":{"actor":{"type":"string"},"approved":{"type":"boolean"}}});
-        assert!(findings(action).is_empty());
+        assert!(
+            findings(action).is_empty(),
+            "`findings(action)` is not empty"
+        );
     }
 
     proptest::proptest! {
@@ -3404,7 +3407,8 @@ mod tests {
                 BTreeMap::new(),
                 None,
             )
-            .is_empty()
+            .is_empty(),
+            "expected an empty value"
         );
 
         let mut invalid = root;
@@ -3582,7 +3586,10 @@ mod tests {
         action["payload"]["outputSchema"] = json!({
             "type": "object", "properties": {}, "additionalProperties": false
         });
-        assert!(findings(action.clone()).is_empty());
+        assert!(
+            findings(action.clone()).is_empty(),
+            "`findings(action.clone())` is not empty"
+        );
         action["payload"]["inputSchema"] = json!({
             "type": ["null", "boolean", "number", "string", "array", "object"]
         });

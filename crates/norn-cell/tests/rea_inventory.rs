@@ -823,7 +823,10 @@ fn cp1(
         "0",
         "1",
     );
-    assert!(cell.store().read().pending_commands().unwrap().is_empty());
+    assert!(
+        cell.store().read().pending_commands().unwrap().is_empty(),
+        "`cell.store().read().pending_commands().unwrap()` is not empty"
+    );
     let before = cell.store().read().dump().unwrap();
     let head = cell.store().read().verify_ledger().unwrap();
     drop(cell);
@@ -860,8 +863,14 @@ fn inv_one_lot_fifo_delivery_has_no_placeholder_and_reopens() {
     let path = directory.path().join("single-lot.sqlite");
     let mut cell = open(&path, &fixture);
     seed_book(&mut cell, false);
-    assert!(rows(&cell, "Holding").is_empty());
-    assert!(rows(&cell, "Leg").is_empty());
+    assert!(
+        rows(&cell, "Holding").is_empty(),
+        "`rows(&cell, \"Holding\")` is not empty"
+    );
+    assert!(
+        rows(&cell, "Leg").is_empty(),
+        "`rows(&cell, \"Leg\")` is not empty"
+    );
     fixture
         .invoke(
             &mut cell,
@@ -1207,7 +1216,10 @@ fn inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens() {
             ("COGS", "60"),
         ],
     );
-    assert!(cell.store().read().pending_commands().unwrap().is_empty());
+    assert!(
+        cell.store().read().pending_commands().unwrap().is_empty(),
+        "`cell.store().read().pending_commands().unwrap()` is not empty"
+    );
     let final_dump = cell.store().read().dump().unwrap();
     let head = cell.store().read().verify_ledger().unwrap();
     drop(cell);
