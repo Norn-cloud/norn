@@ -97,7 +97,7 @@ fn fixture_corpus_ddl_matches_its_golden() {
     }
     assert!(
         golden == sql,
-        "{GOLDEN} is stale or missing; regenerate with {UPDATE_ENV}=1 cargo test -p norn-projections --test sqlite_ddl"
+        "{GOLDEN} is stale or missing; regenerate with {UPDATE_ENV}=1 cargo test -p norn-projections --test suites sqlite_ddl::"
     );
 }
 

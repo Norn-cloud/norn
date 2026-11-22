@@ -45,7 +45,7 @@ fn source_schema_ir_schema_is_checked_in_and_current() {
         serde_json::from_str(&rendered).expect("rendered schema should parse");
     assert!(
         checked_in.as_ref() == Some(&current),
-        "{} is stale; regenerate with {UPDATE_ENV}=1 cargo test -p norn-ir --test source_schema_ir\n\
+        "{} is stale; regenerate with {UPDATE_ENV}=1 cargo test -p norn-ir --test suites source_schema_ir::\n\
          ---BEGIN source_schema_ir.schema.json---\n{rendered}---END source_schema_ir.schema.json---",
         path.display()
     );

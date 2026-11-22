@@ -27,70 +27,8 @@ name = "constitution"
 test = true
 
 [[test]]
-name = "bench_clauses"
-
-[[test]]
-name = "bench_import"
-
-[[test]]
-name = "bench_mapping"
-
-[[test]]
-name = "bench_rules"
-
-[[test]]
-name = "cell_host"
-
-[[test]]
-name = "commit_path"
-
-[[test]]
-name = "explorer_documents"
-
-[[test]]
-name = "jewelry_pricing"
-
-[[test]]
-name = "label_identity"
-
-[[test]]
-name = "mapping_links"
-
-[[test]]
-name = "model_interfaces"
-
-[[test]]
-name = "ontology_lending"
-
-[[test]]
-name = "parent_rows"
-
-[[test]]
-name = "query_envelope"
-
-[[test]]
-name = "query_lineage_sources"
-
-[[test]]
-name = "rea_inventory"
-
-[[test]]
-name = "read_envelope"
-
-[[test]]
-name = "receipt_consume"
-
-[[test]]
-name = "retained_definitions"
-
-[[test]]
-name = "source_agreement"
-
-[[test]]
-name = "stress_purchase"
-
-[[test]]
-name = "synchronous_action"
+name = "suites"
+path = "tests/suites.rs"
 
 [features]
 default = ["native"]

@@ -1310,7 +1310,7 @@ fn a_fault_anywhere_in_provisioning_leaves_nothing_half_made() {
 
 /// [`fault_sweep`] at every statement of both transactions and their commit
 /// points. Minutes in a release build:
-/// `cargo test --release -p norn-cell-do --test provision -- --ignored`.
+/// `cargo test --release -p norn-cell-do --test suites provision:: -- --ignored`.
 #[test]
 #[ignore = "exhaustive host-level sweep; run on demand in release mode"]
 fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {

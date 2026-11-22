@@ -16,6 +16,18 @@ cargo xtask ci <gate>
 
 `xtask` runs the typed CI gate runner from the skeleton guard, which is its own Cargo workspace: `run --locked --quiet --manifest-path crates/norn-skeleton-guard/Cargo.toml --bin xtask --`. The manifest path is relative, so run `cargo xtask` from the repository root.
 
+## Integration test binaries
+
+Crates with multiple foldable integration targets compile those tests as modules of
+`tests/suites.rs`. Run `python3 scripts/codemods/fold_integration_tests.py` to enroll a
+new integration test file in those crates.
+
+On a cold 4-vCPU Boat VM, mean `cargo test --no-run --workspace --locked` time fell
+from 316 s to 177 s. Test executables fell from 304 to 77 and the target directory
+shrank from 37 GB to 8.3 GB. With Wild, the same comparison was 317 s to 174 s.
+The linker difference was within measurement noise, so the workspace keeps its
+default linker.
+
 ## Profiles (`Cargo.toml`)
 
 | Profile | Settings | Why |

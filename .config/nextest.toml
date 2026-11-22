@@ -13,19 +13,19 @@ path = "junit.xml"
 command = { command-line = ["env"], env = { PROPTEST_RNG_SEED = "21320261103", PROPTEST_RNG_ALGORITHM = "cc", PROPTEST_CASES = "256" } }
 
 [profile.drop-11]
-default-filter = '''binary_id(norn-kernel::invariant_commit) & (
-  test(=law_invariant_runtime_valid_response_admits) |
-  test(=law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin) |
-  test(=law_invariant_runtime_other_responses_still_refuse_before_activation) |
-  test(=law_invariant_runtime_misbound_missing_and_negated_references_refuse) |
-  test(=law_invariant_runtime_resolves_the_retained_subjects_interface_member) |
-  test(=law_invariant_runtime_exhausted_budget_refuses) |
-  test(=law_invariant_runtime_decision_and_action_refusals_journal_and_consume) |
-  test(=law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin) |
-  test(=law_invariant_runtime_matches_the_existing_evaluator) |
-  test(=law_interface_transitive_and_diamond_implementors_govern_once_with_the_interface_pin) |
-  test(=law_interface_mixed_scopes_and_misowned_invariants_refuse) |
-  test(=law_interface_runtime_matches_the_shared_evaluator_for_implementors))'''
+default-filter = '''binary_id(norn-kernel::suites) & (
+  test(=invariant_commit::law_invariant_runtime_valid_response_admits) |
+  test(=invariant_commit::law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin) |
+  test(=invariant_commit::law_invariant_runtime_other_responses_still_refuse_before_activation) |
+  test(=invariant_commit::law_invariant_runtime_misbound_missing_and_negated_references_refuse) |
+  test(=invariant_commit::law_invariant_runtime_resolves_the_retained_subjects_interface_member) |
+  test(=invariant_commit::law_invariant_runtime_exhausted_budget_refuses) |
+  test(=invariant_commit::law_invariant_runtime_decision_and_action_refusals_journal_and_consume) |
+  test(=invariant_commit::law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin) |
+  test(=invariant_commit::law_invariant_runtime_matches_the_existing_evaluator) |
+  test(=invariant_commit::law_interface_transitive_and_diamond_implementors_govern_once_with_the_interface_pin) |
+  test(=invariant_commit::law_interface_mixed_scopes_and_misowned_invariants_refuse) |
+  test(=invariant_commit::law_interface_runtime_matches_the_shared_evaluator_for_implementors))'''
 
 [[profile.drop-11.scripts]]
 filter = "all()"
@@ -75,7 +75,7 @@ command = ["target/demo-kani-0.68/bin/kani", "verification/canonical-values-v1/d
 slow-timeout = { period = "300s", terminate-after = 1 }
 
 [profile.drop-01]
-default-filter = '''(binary_id(norn-cell) & test(/^suites::exact_values::/)) | binary_id(norn-expr::profile_conformance) | binary_id(norn-checker::core_units) | (binary_id(norn-checker) & (test(/^property_codec::tests::/) | test(/^quantity_ledger::decimal::tests::/)))'''
+default-filter = '''(binary_id(norn-cell) & test(/^suites::exact_values::/)) | (binary_id(norn-expr::suites) & test(/^profile_conformance::/)) | (binary_id(norn-checker::suites) & test(/^core_units::/)) | (binary_id(norn-checker) & (test(/^property_codec::tests::/) | test(/^quantity_ledger::decimal::tests::/)))'''
 
 [[profile.drop-01.scripts]]
 filter = "all()"
@@ -99,13 +99,13 @@ setup = ["authored-profile", "jewelry-authoring"]
 run-wrapper = "sampled-evidence"
 
 [profile.drop-04]
-default-filter = '''binary_id(norn-decisions::evaluate) & (test(=fold_capacity_complete_allocate_matches_the_core_spec) |
-  test(=declared_fifo_matches_all_retained_reference_histories_and_cp1) |
-  test(=declared_average_matches_every_retained_prefix_with_original_cost_returns) |
-  test(=declared_average_cp1_and_delivery_to_transfer_identity_collision) |
-  test(=fold_boundaries_refuse_without_a_partial_decision) |
-  test(=fold_order_is_numeric_with_identity_ties_and_independent_of_enumeration) |
-  test(=cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations))'''
+default-filter = '''binary_id(norn-decisions::suites) & (test(=evaluate::fold_capacity_complete_allocate_matches_the_core_spec) |
+  test(=evaluate::declared_fifo_matches_all_retained_reference_histories_and_cp1) |
+  test(=evaluate::declared_average_matches_every_retained_prefix_with_original_cost_returns) |
+  test(=evaluate::declared_average_cp1_and_delivery_to_transfer_identity_collision) |
+  test(=evaluate::fold_boundaries_refuse_without_a_partial_decision) |
+  test(=evaluate::fold_order_is_numeric_with_identity_ties_and_independent_of_enumeration) |
+  test(=evaluate::cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations))'''
 
 [[profile.drop-04.scripts]]
 filter = "all()"
@@ -131,7 +131,7 @@ filter = "all()"
 run-wrapper = "quarantine-evidence"
 
 [profile.drop-06]
-default-filter = '''binary_id(norn-cell::jewelry_pricing) & (test(=jewel_price_sell_and_scrap_commit_exactly_once_and_reopen) | test(=jewel_price_milligram_denominator_refuses_before_execution))'''
+default-filter = '''binary_id(norn-cell::suites) & (test(=jewelry_pricing::jewel_price_sell_and_scrap_commit_exactly_once_and_reopen) | test(=jewelry_pricing::jewel_price_milligram_denominator_refuses_before_execution))'''
 
 [[profile.drop-06.scripts]]
 filter = "all()"
@@ -164,14 +164,14 @@ filter = "all()"
 run-wrapper = "sampled-evidence"
 
 [profile.drop-09]
-default-filter = '''binary_id(norn-checker::three_systems) & (test(=mvp_map_three_artifact_set_is_admitted) |
-  test(=mvp_map_three_aliases_roles_and_one_economic_identity) |
-  test(=mvp_item_holding_catalog_and_owner_location_partitions) |
-  test(=mvp_map_gap_shopify_price_is_never_stock_cost_or_gl) |
-  test(=mvp_map_three_ambiguous_identity_refuses_without_sku_guessing) |
-  test(=mvp_map_three_odoo_snapshot_incremental_and_replay_are_synthetic) |
-  test(=mvp_map_three_unresolved_units_and_draft_postings_refuse) |
-  test(=mvp_map_three_generated_aliases_never_guess_catalog_identity))'''
+default-filter = '''binary_id(norn-checker::suites) & (test(=three_systems::mvp_map_three_artifact_set_is_admitted) |
+  test(=three_systems::mvp_map_three_aliases_roles_and_one_economic_identity) |
+  test(=three_systems::mvp_item_holding_catalog_and_owner_location_partitions) |
+  test(=three_systems::mvp_map_gap_shopify_price_is_never_stock_cost_or_gl) |
+  test(=three_systems::mvp_map_three_ambiguous_identity_refuses_without_sku_guessing) |
+  test(=three_systems::mvp_map_three_odoo_snapshot_incremental_and_replay_are_synthetic) |
+  test(=three_systems::mvp_map_three_unresolved_units_and_draft_postings_refuse) |
+  test(=three_systems::mvp_map_three_generated_aliases_never_guess_catalog_identity))'''
 
 [[profile.drop-09.scripts]]
 filter = "all()"

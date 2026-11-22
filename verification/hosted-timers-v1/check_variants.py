@@ -42,8 +42,7 @@ def require(condition: bool, message: str) -> None:
         raise CanaryError(message)
 
 
-CONFORMANCE_COMMAND = ("cargo test --locked -p norn-cell-do --test hosted_timers_quint "
-                       "--test approval_fencing_quint")
+CONFORMANCE_COMMAND = ("cargo test --locked -p norn-cell-do --test suites -- hosted_timers_quint:: approval_fencing_quint::")
 
 
 def check_command(model: dict, check: dict) -> str:

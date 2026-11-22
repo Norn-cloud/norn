@@ -230,7 +230,7 @@ fn check_invalid_corpus(dir: &str, snapshot_dir: &str) -> std::collections::BTre
         assert!(
             checked_in.as_ref() == Some(&output),
             "snapshot {} is stale; regenerate with `{UPDATE_ENV}=1 cargo test -p norn-checker \
-             --test diagnostic_snapshots` and review the diff\n--- rendered ---\n{rendered}",
+             --test suites diagnostic_snapshots::` and review the diff\n--- rendered ---\n{rendered}",
             snapshot.display()
         );
     }

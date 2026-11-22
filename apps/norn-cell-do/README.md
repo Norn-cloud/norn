@@ -257,7 +257,7 @@ wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/examples/wor
 cp apps/norn-cell-do/{worker.mjs,subscribe.mjs} "$P/"
 cp apps/norn-cell-do/conformance/worker.mjs "$P/conformance.mjs"
 cp apps/norn-cell-do/conformance/wrangler.json "$P/"
-NORN_CELL_DO_CONFORMANCE_OUT="$P/reference.json" cargo test --locked -p norn-cell-do --test conformance_reference
+NORN_CELL_DO_CONFORMANCE_OUT="$P/reference.json" cargo test --locked -p norn-cell-do --test suites conformance_reference::
 (cd apps/norn-cell-do/conformance && bun install --frozen-lockfile)   # open-orange 1.0.3, test-only; runs on Node 22+
 python3 apps/norn-cell-do/conformance/conformance.py --reference "$P/reference.json" --host rivet --project "$P"
 ```
