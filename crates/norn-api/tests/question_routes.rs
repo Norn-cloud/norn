@@ -1989,8 +1989,7 @@ fn a_historical_sum_whose_default_filter_reads_a_deleted_labelled_field_is_refus
     assert!(
         refused.diagnostics.iter().any(|d| {
             d.code == norn_api::question_routes::MARKED_HISTORY
-                && d
-                    .span
+                && d.span
                     .as_ref()
                     .is_some_and(|span| span.pointer.ends_with("/norn/defaultFilters/0"))
         }),
