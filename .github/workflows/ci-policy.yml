@@ -123,31 +123,18 @@ jobs:
           disable_annotations: true
       # The shared cache's R2 keys live in Infisical, never in GitHub secrets (credential policy,
       # norn-skeleton-guard ci::credentials), and only the reviewed helper scripts/ci/infisical-oidc.sh
-      # reads them, over OIDC. A push to main (Boat only, inside `ci-cache-writer-boat`) logs in as the
-      # writer identity its environment variables name, in the writer's own Infisical project; every
-      # other run logs in as the reader, in the reader's project, which holds only the read-only key.
-      # Without the variables, on a fork, or on any failure, Boat keeps its local cache: a cache
-      # outage never fails a build.
+      # reads them, over OIDC, as this step's one command. A push to main (Boat only, inside
+      # `ci-cache-writer-boat`) logs in as the writer its environment variables name, in the writer's
+      # own Infisical project; every other run as the reader, in the reader's project, which holds only
+      # the read-only key. An unset variable yields '' (never the other role). With `--optional`, unset
+      # variables, a fork or any failure keep Boat on its local cache: a cache outage never fails a build.
       - name: Read the shared cache keys from Infisical over OIDC
         id: sccache-keys
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          READER_IDENTITY_ID: ${{ vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID }}
-          READER_PROJECT_ID: ${{ vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID }}
-          WRITER_IDENTITY_ID: ${{ vars.NORN_SCCACHE_WRITER_INFISICAL_IDENTITY_ID }}
-          WRITER_PROJECT_ID: ${{ vars.NORN_SCCACHE_WRITER_INFISICAL_PROJECT_ID }}
-        run: |
-          set -uo pipefail
-          role=READER
-          [ "$GITHUB_EVENT_NAME:$GITHUB_REF" != push:refs/heads/main ] || role=WRITER
-          identity_var=${role}_IDENTITY_ID project_var=${role}_PROJECT_ID
-          if [ -z "${!identity_var:-}" ] || [ -z "${!project_var:-}" ]; then
-            echo "::notice::shared cache off: the NORN_SCCACHE_${role}_INFISICAL_* variables are not set"
-            exit 0
-          fi
-          INFISICAL_IDENTITY_ID=${!identity_var} INFISICAL_PROJECT_ID=${!project_var} bash scripts/ci/infisical-oidc.sh \
-            prod /sccache NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET ||
-            echo "::warning::shared cache off: the Infisical read failed (above)"
+          INFISICAL_IDENTITY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_IDENTITY_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || '' }}
+          INFISICAL_PROJECT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_PROJECT_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || '' }}
+        run: bash scripts/ci/infisical-oidc.sh --optional prod /sccache NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET
       - name: Start sccache or compile without it
         env:
           NORN_SCCACHE_BUCKET: ${{ steps.sccache-keys.outputs.norn_sccache_bucket }}
@@ -329,31 +316,18 @@ jobs:
           disable_annotations: true
       # The shared cache's R2 keys live in Infisical, never in GitHub secrets (credential policy,
       # norn-skeleton-guard ci::credentials), and only the reviewed helper scripts/ci/infisical-oidc.sh
-      # reads them, over OIDC. A push to main (Boat only, inside `ci-cache-writer-boat`) logs in as the
-      # writer identity its environment variables name, in the writer's own Infisical project; every
-      # other run logs in as the reader, in the reader's project, which holds only the read-only key.
-      # Without the variables, on a fork, or on any failure, Boat keeps its local cache: a cache
-      # outage never fails a build.
+      # reads them, over OIDC, as this step's one command. A push to main (Boat only, inside
+      # `ci-cache-writer-boat`) logs in as the writer its environment variables name, in the writer's
+      # own Infisical project; every other run as the reader, in the reader's project, which holds only
+      # the read-only key. An unset variable yields '' (never the other role). With `--optional`, unset
+      # variables, a fork or any failure keep Boat on its local cache: a cache outage never fails a build.
       - name: Read the shared cache keys from Infisical over OIDC
         id: sccache-keys
         if: ${{ runner.environment == 'self-hosted' }}
         env:
-          READER_IDENTITY_ID: ${{ vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID }}
-          READER_PROJECT_ID: ${{ vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID }}
-          WRITER_IDENTITY_ID: ${{ vars.NORN_SCCACHE_WRITER_INFISICAL_IDENTITY_ID }}
-          WRITER_PROJECT_ID: ${{ vars.NORN_SCCACHE_WRITER_INFISICAL_PROJECT_ID }}
-        run: |
-          set -uo pipefail
-          role=READER
-          [ "$GITHUB_EVENT_NAME:$GITHUB_REF" != push:refs/heads/main ] || role=WRITER
-          identity_var=${role}_IDENTITY_ID project_var=${role}_PROJECT_ID
-          if [ -z "${!identity_var:-}" ] || [ -z "${!project_var:-}" ]; then
-            echo "::notice::shared cache off: the NORN_SCCACHE_${role}_INFISICAL_* variables are not set"
-            exit 0
-          fi
-          INFISICAL_IDENTITY_ID=${!identity_var} INFISICAL_PROJECT_ID=${!project_var} bash scripts/ci/infisical-oidc.sh \
-            prod /sccache NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET ||
-            echo "::warning::shared cache off: the Infisical read failed (above)"
+          INFISICAL_IDENTITY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_IDENTITY_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || '' }}
+          INFISICAL_PROJECT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_PROJECT_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || '' }}
+        run: bash scripts/ci/infisical-oidc.sh --optional prod /sccache NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET
       - name: Start sccache or compile without it
         env:
           NORN_SCCACHE_BUCKET: ${{ steps.sccache-keys.outputs.norn_sccache_bucket }}

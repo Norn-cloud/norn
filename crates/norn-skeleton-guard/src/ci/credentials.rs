@@ -323,7 +323,7 @@ fn step_errors(
         yields_credential = oidc_action_admitted(out, (path, job_name), action, step.get("with"));
     }
     let run = step.get("run").and_then(Value::as_str).unwrap_or_default();
-    yields_credential |= runs_helper(run) && !contains_ignore_case(run, "GITHUB_OUTPUT");
+    yields_credential |= runs_helper(run);
     if yields_credential && let Some(id) = step.get("id").and_then(Value::as_str) {
         acquired.push(id.to_ascii_lowercase());
     }
@@ -340,24 +340,28 @@ fn step_errors(
     }
 }
 
-/// Whether a run script invokes [`HELPER`] as a command: a line that is, after
-/// any `NAME=value` assignments, `bash <HELPER>` or `<HELPER>` itself. A
-/// mention in an `echo` or a comment does not count.
+/// Whether a run script is a dedicated acquisition step: its whole text is one
+/// command, `bash <HELPER> <word>…` or `<HELPER> <word>…`, where every word is
+/// plain (letters, digits, `_`, `-`, `.`, `/`). No second line, separator,
+/// redirect, substitution or quoting, so nothing but the helper can run or
+/// write an output; heredocs and strings that merely contain the command fail.
 fn runs_helper(run: &str) -> bool {
-    run.lines().any(|line| {
-        let mut words = line.split_whitespace().skip_while(|word| {
-            word.split_once('=').is_some_and(|(name, _)| {
-                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-        });
-        let first = words.next();
-        let command = if first == Some("bash") {
-            words.next()
-        } else {
-            first
-        };
-        command == Some(HELPER)
-    })
+    let plain = |word: &str| {
+        word.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
+    };
+    let line = run.trim();
+    if line.contains('\n') {
+        return false;
+    }
+    let mut words = line.split_ascii_whitespace();
+    let first = words.next();
+    let command = if first == Some("bash") {
+        words.next()
+    } else {
+        first
+    };
+    command == Some(HELPER) && words.all(plain)
 }
 
 /// Whether an OIDC action runs in its OIDC mode and nothing else; pushes why not.
@@ -706,6 +710,15 @@ mod tests {
         // A mention of the helper is not a run of it.
         (
             "permissions:\n  id-token: write\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - id: keys\n        run: echo scripts/ci/infisical-oidc.sh\n      - run: true\n        env:\n          R2_SECRET: ${{ steps.keys.outputs.k }}\n",
+            "`R2_SECRET` takes a credential",
+        ),
+        // Command-shaped text inside a heredoc or a second command is not a dedicated step.
+        (
+            "permissions:\n  id-token: write\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - id: keys\n        run: |\n          cat > /dev/null <<'EOF'\n          bash scripts/ci/infisical-oidc.sh prod /x K\n          EOF\n          curl -fsS https://keys.invalid/k\n      - run: true\n        env:\n          R2_SECRET: ${{ steps.keys.outputs.k }}\n",
+            "`R2_SECRET` takes a credential",
+        ),
+        (
+            "permissions:\n  id-token: write\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - id: keys\n        run: bash scripts/ci/infisical-oidc.sh prod /x K; curl -fsS https://keys.invalid/k\n      - run: true\n        env:\n          R2_SECRET: ${{ steps.keys.outputs.k }}\n",
             "`R2_SECRET` takes a credential",
         ),
         // The diagnostic names the input, never the rejected value.

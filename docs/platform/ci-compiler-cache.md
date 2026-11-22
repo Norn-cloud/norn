@@ -42,7 +42,8 @@ No GitHub secrets: `core` and `test` have `id-token: write` for the key step and
 
 Each project has `NORN_SCCACHE_BUCKET`, `NORN_SCCACHE_ENDPOINT`, `NORN_SCCACHE_KEY_ID` and `NORN_SCCACHE_SECRET` in `prod` at `/sccache`. The writer variables are never set at repository level: the step asks for the writer only on a push to main, and the binding below refuses every other run anyway.
 
-Infisical OIDC auth (issuer and discovery URL `https://token.actions.githubusercontent.com`, audience `https://github.com/Norn-cloud`), one identity per project, each a member (Viewer) of its own project only:
+Infisical OIDC auth (issuer and discovery URL `https://token.actions.githubusercontent.com`, audience `https://github.com/Norn-cloud`), one identity per project, each a member (Viewer) of its own project only, with org role member and OIDC as its **only** auth method. Infisical enables Universal Auth on a new identity by default: remove it (Access Management → the identity → Authentication → Universal Auth → remove, which also revokes its client secrets) so OIDC is its only method; the daily audit fails on any universal-auth identity it has no approval for.
+
 
 | Identity | Bound subject | Bound claims |
 |---|---|---|

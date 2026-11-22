@@ -24,11 +24,11 @@ rules:
       - ci-policy.yml:8
   template-injection:
     ignore:
-      - ci-policy.yml:572
-      - ci-policy.yml:608
-      - ci-policy.yml:617
-      - ci-policy.yml:634
-      - ci-policy.yml:640
+      - ci-policy.yml:516
+      - ci-policy.yml:552
+      - ci-policy.yml:561
+      - ci-policy.yml:578
+      - ci-policy.yml:584
       - trusted-merge-group.yml:56
       - trusted-merge-group.yml:57
       - trusted-merge-group.yml:105

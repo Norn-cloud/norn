@@ -134,21 +134,15 @@ CORE_RUNNER = ROOT / "scripts/ci/core.sh"
 SCCACHE_SECRETS = {"NORN_SCCACHE_%s" % name: "${{ steps.sccache-keys.outputs.norn_sccache_%s }}" % name.lower()
                    for name in ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")}
 # The reader and the writer have their own variables (the writer's are set only in the
-# `ci-cache-writer-boat` environment) and their own Infisical projects; only a push to main asks for the writer.
-SCCACHE_KEY_VARS = {"%s_%s" % (role, what): "${{ vars.NORN_SCCACHE_%s_INFISICAL_%s }}" % (role, what)
-                    for role in ("READER", "WRITER") for what in ("IDENTITY_ID", "PROJECT_ID")}
-SCCACHE_KEYS = r"""set -uo pipefail
-role=READER
-[ "$GITHUB_EVENT_NAME:$GITHUB_REF" != push:refs/heads/main ] || role=WRITER
-identity_var=${role}_IDENTITY_ID project_var=${role}_PROJECT_ID
-if [ -z "${!identity_var:-}" ] || [ -z "${!project_var:-}" ]; then
-  echo "::notice::shared cache off: the NORN_SCCACHE_${role}_INFISICAL_* variables are not set"
-  exit 0
-fi
-INFISICAL_IDENTITY_ID=${!identity_var} INFISICAL_PROJECT_ID=${!project_var} bash scripts/ci/infisical-oidc.sh \
-  prod /sccache NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET ||
-  echo "::warning::shared cache off: the Infisical read failed (above)"
-"""
+# `ci-cache-writer-boat` environment) and their own Infisical projects; only a push to main asks for
+# the writer, and an unset variable yields '' rather than the other role's.
+SCCACHE_ROLE = ("${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_%s"
+                " || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_%s"
+                " || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_%s || '' }}")
+SCCACHE_KEY_VARS = {"INFISICAL_%s" % what: SCCACHE_ROLE % (what, what, what) for what in ("IDENTITY_ID", "PROJECT_ID")}
+# The step's one command is the reviewed helper (the credential lint admits its outputs only then).
+SCCACHE_KEYS = ("bash scripts/ci/infisical-oidc.sh --optional prod /sccache"
+                " NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET")
 SCCACHE_KEYS_STEP = {"name": "Read the shared cache keys from Infisical over OIDC", "id": "sccache-keys",
                      "if": "${{ runner.environment == 'self-hosted' }}", "env": SCCACHE_KEY_VARS, "run": SCCACHE_KEYS}
 # core and test may mint an OIDC token, for that step; no other job may.
