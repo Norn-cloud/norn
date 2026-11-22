@@ -25,7 +25,7 @@ const HOST = new TextEncoder().encode("#!/bin/sh\necho norn-dev-host\n")
 const CLI_VERSION = (JSON.parse(readFileSync(join(TOOL_ROOT, "package.json"), "utf8")) as { version: string }).version
 
 function build(hosts: BuildInfo["hosts"]): BuildInfo {
-  return { version: "0.1.0-alpha.7", commit: "0123456789abcdef0123456789abcdef01234567", toolchain: "1.98.0",
+  return { version: "0.1.0-alpha.7", commit: "0123456789abcdef0123456789abcdef01234567", toolchain: "1.100.0",
     packages: { "@norn/cli": "0.1.0-alpha.7", "@norn/authoring": "0.1.0-alpha.7" }, hosts }
 }
 
@@ -151,7 +151,7 @@ test("dev host: neither an override nor a prebuilt host says how to build it fro
     // A release without this platform (macOS in the alpha) names what it has and the toolchain to build with.
     const mac = await refusal(hostBinary(lookup(root, { platform: "darwin-arm64" })))
     expect(mac.message).toContain("no prebuilt host for darwin-arm64 (it has linux-x64)")
-    expect(mac.message).toContain("at commit 0123456789abcdef0123456789abcdef01234567 (`git checkout 0123456789abcdef0123456789abcdef01234567`; Rust 1.98.0)")
+    expect(mac.message).toContain("at commit 0123456789abcdef0123456789abcdef01234567 (`git checkout 0123456789abcdef0123456789abcdef01234567`; Rust 1.100.0)")
   } finally { rmSync(root, { recursive: true }) }
 })
 

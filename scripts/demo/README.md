@@ -20,7 +20,7 @@ preserve historical evidence; they add no delivered capability. Detach at the
 release's recorded main SHA for historical reproduction. The profiles below
 arrive with this conversion and are not retroactively present in older tags.
 
-Use Rust 1.98, cargo-nextest 0.9.150 and Bun with frozen authoring dependencies:
+Use Rust 1.100, cargo-nextest 0.9.150 and Bun with frozen authoring dependencies:
 
 ```sh
 (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile)

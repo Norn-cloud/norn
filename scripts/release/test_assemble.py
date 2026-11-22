@@ -77,7 +77,7 @@ class Release(unittest.TestCase):
     def inputs(self, channel="tarball", base_url=None):
         """The release inputs a caller passes; verify takes them from the caller, not from the files."""
         url = self.BASE_URL if channel == "tarball" and base_url is None else (base_url or "")
-        return ["--channel", channel, "--toolchain", "1.98.0", *(["--base-url", url] if url else [])]
+        return ["--channel", channel, "--toolchain", "1.100.0", *(["--base-url", url] if url else [])]
 
     def build(self, channel="tarball"):
         self.channel = channel
@@ -111,7 +111,7 @@ class Release(unittest.TestCase):
         authoring = json.loads((self.package("@norn/authoring") / "package.json").read_text())
         self.assertNotIn("./schema/norn-project.schema.json", authoring["exports"])
         info = json.loads((cli / "generated/build.json").read_text())
-        self.assertEqual((info["version"], info["commit"], info["toolchain"]), ("0.1.0-alpha.3", self.commit, "1.98.0"))
+        self.assertEqual((info["version"], info["commit"], info["toolchain"]), ("0.1.0-alpha.3", self.commit, "1.100.0"))
         self.assertEqual(info["packages"]["@norn/cli"], "https://example.invalid/releases/v0.1.0-alpha.3/norn-cli-0.1.0-alpha.3.tgz")
         self.assertEqual(sorted(info["hosts"]), sorted(assemble.PLATFORMS))
         host = self.package("@norn/dev-host-linux-x64")
@@ -259,7 +259,7 @@ class Release(unittest.TestCase):
 
     def test_verify_refuses_inputs_it_cannot_build(self):
         self.build()
-        self.refused("takes no --base-url", "--channel", "registry", "--toolchain", "1.98.0", "--base-url", self.BASE_URL)
+        self.refused("takes no --base-url", "--channel", "registry", "--toolchain", "1.100.0", "--base-url", self.BASE_URL)
         self.refused("is not an exact Rust version", *self.inputs()[:2], "--toolchain", "stable", "--base-url", self.BASE_URL)
 
     def test_canary_a_release_tarball_that_is_not_gzip(self):
@@ -300,12 +300,12 @@ class Release(unittest.TestCase):
     def test_builds_refuse_what_they_cannot_name(self):
         (self.hosts / "x86_64-pc-windows-msvc").mkdir()
         result = self.run_script("build", "--wasm", str(self.wasm), "--hosts", str(self.hosts), "--third-party", str(self.licenses),
-                                 "--channel", "registry", "--toolchain", "1.98.0")
+                                 "--channel", "registry", "--toolchain", "1.100.0")
         self.assertEqual(result.returncode, 1)
         self.assertIn("known targets only", result.stderr)
         (self.hosts / "x86_64-pc-windows-msvc").rmdir()
         result = self.run_script("build", "--wasm", str(self.wasm), "--hosts", str(self.hosts), "--third-party", str(self.licenses),
-                                 "--channel", "tarball", "--toolchain", "1.98.0")
+                                 "--channel", "tarball", "--toolchain", "1.100.0")
         self.assertEqual(result.returncode, 1)
         self.assertIn("--base-url", result.stderr)
 

@@ -1,5 +1,5 @@
 # cargo nextest run --config-file .config/economist-nextest.toml --profile economist-rehearsal
-# Requires Rust 1.98, nextest 0.9.150, Bun 1.3.14 and frozen dependencies
+# Requires Rust 1.100, nextest 0.9.150, Bun 1.3.14 and frozen dependencies
 # in apps/studio and tools/norn-ts.
 # Proof screen: not yet #784 / #772; show a recorded model-check result once landed.
 # Focused witnesses from published drops; no drop's complete selection is replaced.
