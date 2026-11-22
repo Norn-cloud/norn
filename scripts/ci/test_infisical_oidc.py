@@ -44,6 +44,7 @@ for name, secrets, kwargs in (
     ("missing", [entry("A_KEY", "alpha")], {}),
     ("empty", [entry("A_KEY", "alpha"), entry("B_KEY", "")], {}),
     ("line feed", [entry("A_KEY", "alpha"), entry("B_KEY", "beta\nc_key=injected")], {}),
+    ("trailing line feed", [entry("A_KEY", "alpha"), entry("B_KEY", "beta\n")], {}),
     ("carriage return", [entry("A_KEY", "alpha"), entry("B_KEY", "beta\rx")], {}),
     ("duplicate", [entry("A_KEY", "alpha"), entry("B_KEY", "beta"), entry("B_KEY", "other")], {}),
     ("not a string", [entry("A_KEY", "alpha"), entry("B_KEY", 7)], {}),

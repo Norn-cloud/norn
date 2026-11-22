@@ -1,6 +1,6 @@
 """Negative tests for scripts/ci/secret-scan.sh: each way of hiding a committed secret must fail.
 
-The fixture token is assembled at run time, so this file holds no literal the scan would flag.
+The fixture is a GitHub-token-shaped string assembled at run time, so this file holds no literal the scan would flag.
 """
 import os
 import pathlib
@@ -8,8 +8,8 @@ import subprocess
 import tempfile
 
 SCAN = pathlib.Path(__file__).resolve().parent / "secret-scan.sh"
-TOKEN = "ghp_" + "R8x2Qm7Lp4Vz9Kc1" + "Wt6Yb3Nd5Hf0Js8Ge2Ua"
-assert len(TOKEN) == 40
+FIXTURE = "ghp_" + "R8x2Qm7Lp4Vz9Kc1" + "Wt6Yb3Nd5Hf0Js8Ge2Ua"
+assert len(FIXTURE) == 40
 
 
 def repo(root: pathlib.Path, files: dict[str, str]) -> pathlib.Path:
@@ -53,12 +53,12 @@ def fake_gitleaks(root: pathlib.Path) -> dict[str, str]:
     return {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
 
 
-secret = f"token = \"{TOKEN}\"\n"
+leaky = f"value = \"{FIXTURE}\"\n"
 case("clean tree", {"a.txt": "nothing here\n"}, want_fail=False)
-case("plain secret", {"a.txt": secret}, want_fail=True)
-case("export-ignored secret", {".gitattributes": "hidden.txt export-ignore\n", "hidden.txt": secret}, want_fail=True)
-case("secret behind a GITLEAKS_CONFIG allowlist", {"a.txt": secret}, want_fail=True, env_for=allow_all)
-case("secret with a fake gitleaks on PATH", {"a.txt": secret}, want_fail=True, env_for=fake_gitleaks)
+case("plain secret", {"a.txt": leaky}, want_fail=True)
+case("export-ignored secret", {".gitattributes": "hidden.txt export-ignore\n", "hidden.txt": leaky}, want_fail=True)
+case("secret behind a GITLEAKS_CONFIG allowlist", {"a.txt": leaky}, want_fail=True, env_for=allow_all)
+case("secret with a fake gitleaks on PATH", {"a.txt": leaky}, want_fail=True, env_for=fake_gitleaks)
 case("tracked .gitleaksignore", {"a.txt": "x\n", ".gitleaksignore": "a.txt\n"}, want_fail=True)
-case("inline allow comment", {"a.txt": f"token = \"{TOKEN}\" # gitleaks:allow\n"}, want_fail=True)
+case("inline allow comment", {"a.txt": f"value = \"{FIXTURE}\" # gitleaks:allow\n"}, want_fail=True)
 print("secret-scan negative tests: ok")

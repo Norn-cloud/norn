@@ -175,6 +175,8 @@ pub const OIDC_ACTIONS: &[OidcAction] = &[
             "aws-secret-access-key",
             "aws-session-token",
             "web-identity-token-file",
+            "role-chaining",
+            "use-existing-credentials",
         ],
     },
     OidcAction {
@@ -321,7 +323,7 @@ fn step_errors(
         yields_credential = oidc_action_admitted(out, (path, job_name), action, step.get("with"));
     }
     let run = step.get("run").and_then(Value::as_str).unwrap_or_default();
-    yields_credential |= run.contains(HELPER) && !contains_ignore_case(run, "GITHUB_OUTPUT");
+    yields_credential |= runs_helper(run) && !contains_ignore_case(run, "GITHUB_OUTPUT");
     if yields_credential && let Some(id) = step.get("id").and_then(Value::as_str) {
         acquired.push(id.to_ascii_lowercase());
     }
@@ -336,6 +338,26 @@ fn step_errors(
             ));
         }
     }
+}
+
+/// Whether a run script invokes [`HELPER`] as a command: a line that is, after
+/// any `NAME=value` assignments, `bash <HELPER>` or `<HELPER>` itself. A
+/// mention in an `echo` or a comment does not count.
+fn runs_helper(run: &str) -> bool {
+    run.lines().any(|line| {
+        let mut words = line.split_whitespace().skip_while(|word| {
+            word.split_once('=').is_some_and(|(name, _)| {
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+        });
+        let first = words.next();
+        let command = if first == Some("bash") {
+            words.next()
+        } else {
+            first
+        };
+        command == Some(HELPER)
+    })
 }
 
 /// Whether an OIDC action runs in its OIDC mode and nothing else; pushes why not.
@@ -440,7 +462,7 @@ fn source_error(
     };
     if !reviewed {
         out.push(format!(
-            "{path}::{scope}: `{key}` takes a credential from `{text}`; a credential input comes only from the run token or the outputs of an earlier step that runs {HELPER} (or an OIDC action), never from vars, matrix, inputs, env or a literal"
+            "{path}::{scope}: `{key}` takes a credential from an unreviewed source; a credential input comes only from the run token or the outputs of an earlier step that runs {HELPER} (or an OIDC action), never from vars, matrix, inputs, env or a literal"
         ));
     }
 }
@@ -673,6 +695,24 @@ mod tests {
             "permissions:\n  id-token: write\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: aws-actions/configure-aws-credentials@v4\n        with:\n          role-to-assume: arn:aws:iam::1:role/ci\n          web-identity-token-file: /tmp/t\n",
             "`web-identity-token-file` is a non-OIDC credential",
         ),
+        (
+            "permissions:\n  id-token: write\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: aws-actions/configure-aws-credentials@v4\n        with:\n          role-to-assume: arn:aws:iam::1:role/ci\n          role-chaining: true\n",
+            "`role-chaining` is a non-OIDC credential",
+        ),
+        (
+            "permissions:\n  id-token: write\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: aws-actions/configure-aws-credentials@v4\n        with:\n          role-to-assume: arn:aws:iam::1:role/ci\n          use-existing-credentials: true\n",
+            "`use-existing-credentials` is a non-OIDC credential",
+        ),
+        // A mention of the helper is not a run of it.
+        (
+            "permissions:\n  id-token: write\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - id: keys\n        run: echo scripts/ci/infisical-oidc.sh\n      - run: true\n        env:\n          R2_SECRET: ${{ steps.keys.outputs.k }}\n",
+            "`R2_SECRET` takes a credential",
+        ),
+        // The diagnostic names the input, never the rejected value.
+        (
+            "jobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: true\n        env:\n          DEPLOY_TOKEN: literal-value-42\n",
+            "`DEPLOY_TOKEN` takes a credential from an unreviewed source",
+        ),
         // A credential input from vars, matrix, inputs, env or a literal.
         (
             "jobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: ./deploy\n        env:\n          CLOUDFLARE_API_TOKEN: ${{ vars.CF_TOKEN }}\n",
@@ -750,6 +790,20 @@ mod tests {
                 "expected `{expected}` in {errors:?} for\n{source}"
             );
         }
+    }
+
+    #[test]
+    fn diagnostics_never_echo_a_value() {
+        let errors = check(
+            "jobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: true\n        env:\n          DEPLOY_TOKEN: literal-value-42\n",
+        );
+        assert!(
+            !errors.is_empty()
+                && errors
+                    .iter()
+                    .all(|error| !error.contains("literal-value-42")),
+            "{errors:?}"
+        );
     }
 
     #[test]

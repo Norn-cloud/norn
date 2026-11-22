@@ -33,16 +33,23 @@ echo "::add-mask::$token"
 secrets=$(printf 'header = "Authorization: Bearer %s"\n' "$token" |
   curl -fsS --max-time 30 -K - -G --data-urlencode "workspaceId=$INFISICAL_PROJECT_ID" --data-urlencode "environment=$environment" \
     --data-urlencode "secretPath=$path" "$api/v3/secrets/raw") || fail "the Infisical read of $environment $path failed"
+# The whole set is checked in jq on the raw JSON first: each name exactly once, a non-empty string
+# with no CR or LF. Nothing is masked or written unless every value passes, and no value can be
+# changed by the shell (command substitution would strip a trailing LF).
+jq -e --args '. as $raw | ($raw.secrets | type) == "array" and all($ARGS.positional[];
+  . as $key | [$raw.secrets[] | select(.secretKey == $key) | .secretValue]
+  | length == 1 and (.[0] | type) == "string" and (.[0] | length) > 0 and (.[0] | test("[\r\n]") | not))' \
+  "$@" <<<"$secrets" > /dev/null ||
+  fail "each of $* must be in Infisical $environment $path exactly once, a non-empty single line"
 outputs=''
+values=()
 for name in "$@"; do
-  # Exactly one string value per name: a duplicate, a non-string, an empty value or a CR/LF fails
-  # before anything is masked or written.
-  value=$(jq -er --arg key "$name" '[.secrets[] | select(.secretKey == $key) | .secretValue]
-    | if length == 1 and (.[0] | type) == "string" then .[0] else error("not exactly one string") end' <<<"$secrets") ||
-    fail "$name is not in Infisical $environment $path exactly once"
-  one_line "$value" || fail "$name in Infisical $environment $path is empty or not one line"
-  echo "::add-mask::$value"
-  outputs+="$(tr '[:upper:]' '[:lower:]' <<<"$name")=$value"$'\n'
+  values+=("$(jq -r --arg key "$name" '.secrets[] | select(.secretKey == $key) | .secretValue' <<<"$secrets")")
+done
+for value in "${values[@]}"; do echo "::add-mask::$value"; done
+for i in "${!values[@]}"; do
+  name=${@:i+1:1}
+  outputs+="$(tr '[:upper:]' '[:lower:]' <<<"$name")=${values[i]}"$'\n'
 done
 printf '%s' "$outputs" >> "${GITHUB_OUTPUT:?}"
 echo "infisical-oidc: read $# secret(s) from $environment $path"

@@ -51,6 +51,9 @@ Infisical OIDC auth (issuer and discovery URL `https://token.actions.githubuserc
 
 The `ci-cache-writer-boat` environment exists with one deployment branch rule, `main` (`gh api repos/Norn-cloud/norn/environments/ci-cache-writer-boat/deployment-branch-policies` lists exactly `main`).
 
-The check that the reader is refused on the writer project: `GET /api/v2/workspace/<writer project id>/identity-memberships` (Infisical admin) lists the writer identity and no other, and the reader identity's memberships (`GET /api/v1/identities/<reader id>`, its projects) list only the reader project. Run both after any change to either identity; the writer key is reachable only through the writer project.
+The check that the reader is refused on the writer project, run after any change to either identity, by an Infisical org admin:
+1. Both identities have the org role **member** (`GET /api/v2/organizations/<org id>/identity-memberships`, each one's `role`), never admin: an org admin reaches every project, whatever the project memberships say.
+2. `GET /api/v2/workspace/<writer project id>/identity-memberships` lists the writer identity and no other; `GET /api/v2/workspace/<reader project id>/identity-memberships` lists the reader and no other.
+3. Live: a pull request run on Boat logs `infisical-oidc: read 4 secret(s) from prod /sccache` as the reader. The reader's binding accepts only this repository's `ci-policy.yml` tokens, so a login outside Actions can't test it; with 1 and 2 it holds no path to the writer project.
 
 Without the variables, or when any read fails, Boat keeps its local cache, as before. The old `NORN_SCCACHE_*` repository and environment secrets are drift: the daily credential audit in `Norn-cloud/norn-ops` fails until they are deleted.
