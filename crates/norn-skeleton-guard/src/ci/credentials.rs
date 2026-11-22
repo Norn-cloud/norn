@@ -672,7 +672,7 @@ mod tests {
         // Acquisition is the reviewed helper's: no inline OIDC mint or Infisical read, and a
         // credential comes only from an earlier helper step that writes no output of its own.
         (
-            "permissions:\n  id-token: write\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: curl -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \"$ACTIONS_ID_TOKEN_REQUEST_URL\"\n",
+            "permissions:\n  id-token: write\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: 'curl -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \"$ACTIONS_ID_TOKEN_REQUEST_URL\"'\n",
             "mints a GitHub OIDC token outside the reviewed helper",
         ),
         (

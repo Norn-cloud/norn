@@ -18,7 +18,7 @@ cache=${XDG_CACHE_HOME:-$HOME/.cache}/norn-ci
 archive="$cache/gitleaks_${version}_linux_x64.tar.gz"
 mkdir -p "$cache"
 # A cached download is re-verified on every run; a mismatch is fetched again, then must verify.
-if ! printf '%s  %s\n' "$digest" "$archive" | sha256sum -c --quiet - 2> /dev/null; then
+if ! { [[ -f $archive ]] && printf '%s  %s\n' "$digest" "$archive" | sha256sum -c --quiet - > /dev/null 2>&1; }; then
   curl -fsSL --retry 3 -o "$archive.part" "https://github.com/gitleaks/gitleaks/releases/download/v$version/gitleaks_${version}_linux_x64.tar.gz"
   mv -f "$archive.part" "$archive"
   printf '%s  %s\n' "$digest" "$archive" | sha256sum -c --quiet -
