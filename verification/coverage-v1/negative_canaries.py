@@ -133,10 +133,13 @@ def condition_value(expression: str, names: dict | None = None):
             left = value(node.left)
             for operator, right in zip(node.ops, node.comparators):
                 right = value(right)
+                # Actions compares strings ignoring case: 'BoAt' == 'boat' is true.
+                same = (left.casefold() == right.casefold() if isinstance(left, str) and isinstance(right, str)
+                        else left == right)
                 if isinstance(operator, ast.Eq):
-                    ok = left == right
+                    ok = same
                 elif isinstance(operator, ast.NotEq):
-                    ok = left != right
+                    ok = not same
                 else:
                     raise AssertionError(f"unsupported comparison in {expression!r}")
                 if not ok:
@@ -1564,7 +1567,14 @@ def workflow_context_canaries(source: str) -> None:
                     ("post-job stats re-enabled", lambda job: next(step for step in job["steps"]
                         if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].__setitem__(
                         "disable_annotations", False)),
-                    ("cache writer for every event", lambda job: job.__setitem__("environment", "ci-cache-writer")),
+                    ("cache writer for every event", lambda job: job.__setitem__("environment", "ci-cache-writer-boat")),
+                    ("retired cache-writer environment", lambda job: job.__setitem__("environment",
+                        job["environment"].replace("'ci-cache-writer-boat'", "'ci-cache-writer'"))),
+                    # A human's push or re-run of main runs hosted: it must not receive the key.
+                    ("cache writer for human pushes", lambda job: job.__setitem__("environment",
+                        job["environment"].replace(" && github.actor == 'github-merge-queue[bot]'", ""))),
+                    ("cache writer for human re-runs", lambda job: job.__setitem__("environment",
+                        job["environment"].replace(" && github.triggering_actor == 'github-merge-queue[bot]'", ""))),
                     ("cache writer for pull requests", lambda job: job.__setitem__("environment",
                         job["environment"].replace("github.event_name == 'push' && github.ref == 'refs/heads/main'",
                                                    "(github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request')"))),
@@ -1664,17 +1674,18 @@ def workflow_context_canaries(source: str) -> None:
         merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
         same_repo = "github.event.pull_request.head.repo.full_name == github.repository && "
         legacy = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
-        expression = runner.removeprefix("${{ ").removesuffix(" }}")
         boat_users = ("Youssef-Tarek-Ali-26", "github-merge-queue[bot]", "dependabot[bot]")
         for event in ("merge_group", "pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
             # Boat CI runs public-repository jobs only for its allowlisted users: any other
             # PR author, actor or re-runner (Dependabot included) stays hosted, and a main push
             # reaches Boat only when the merge queue made and started it (#1369).
             for merge_variable, pr_variable, main_variable, ref, head_repository, author, actor, rerunner in itertools.product(
-                    ("", "boat", "other"), ("", "boat", "other"), ("", "boat", "other"),
+                    ("", "boat", "BoAt", "other"), ("", "boat", "BoAt", "other"), ("", "boat", "BoAt", "other"),
                     ("refs/heads/main", "refs/heads/demo/robin"),
                     ("Norn-cloud/norn", "attacker/norn"), *[boat_users] * 3):
-                concrete = (expression.replace("github.event_name", repr(event))
+                def concrete(text: str) -> str:
+                    return (text.removeprefix("${{ ").removesuffix(" }}")
+                            .replace("github.event_name", repr(event))
                             .replace("vars.NORN_MERGE_RUNNER", repr(merge_variable))
                             .replace("vars.NORN_PR_RUNNER", repr(pr_variable))
                             .replace("vars.NORN_MAIN_RUNNER", repr(main_variable))
@@ -1685,15 +1696,22 @@ def workflow_context_canaries(source: str) -> None:
                             .replace("github.actor", repr(actor))
                             .replace("github.repository", repr("Norn-cloud/norn"))
                             .replace("&&", " and ").replace("||", " or "))
-                expected = ("boat" if (event == "merge_group" and merge_variable == "boat")
-                            or (event == "pull_request" and pr_variable == "boat"
+                main_push = (event == "push" and ref == "refs/heads/main" and main_variable.casefold() == "boat"
+                             and actor == rerunner == "github-merge-queue[bot]")
+                expected = ("boat" if (event == "merge_group" and merge_variable.casefold() == "boat")
+                            or (event == "pull_request" and pr_variable.casefold() == "boat"
                                 and head_repository == "Norn-cloud/norn"
                                 and author == actor == rerunner == "Youssef-Tarek-Ali-26")
-                            or (event == "push" and ref == "refs/heads/main" and main_variable == "boat"
-                                and actor == rerunner == "github-merge-queue[bot]") else "ubuntu-24.04")
-                if condition_value(concrete) != expected:
-                    raise AssertionError("Boat runner evaluation drift: " + "/".join(
-                        (event, merge_variable, pr_variable, main_variable, ref, head_repository, author, actor, rerunner)))
+                            or main_push else "ubuntu-24.04")
+                case = "/".join((event, merge_variable, pr_variable, main_variable, ref, head_repository, author, actor, rerunner))
+                if condition_value(concrete(runner)) != expected:
+                    raise AssertionError("Boat runner evaluation drift: " + case)
+                # The writable cache key goes exactly to the runs the main-push arm sends to Boat:
+                # never a hosted run (a human's push or re-run), a pull request or a merge group.
+                for job in ("core", "test"):
+                    environment = condition_value(concrete(workflow["jobs"][job]["environment"]))
+                    if environment != ("ci-cache-writer-boat" if main_push else ""):
+                        raise AssertionError(f"{job} cache-writer environment drift: " + case)
         for name in ("core", "test", "full", "trusted-policy"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",

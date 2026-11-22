@@ -125,11 +125,12 @@ CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 CORE_RUNNER = ROOT / "scripts/ci/core.sh"
 # The keys of the shared Boat cache (R2) reach only the sccache start step. The writable key is a
-# secret of the `ci-cache-writer` environment, which only a push to main that runs on Boat enters
-# (#1369): a hosted main push uses the Actions cache and never receives the key.
+# secret of the `ci-cache-writer-boat` environment, which a push to main enters exactly when it
+# runs on Boat (#1369): made and started by the merge queue's bot, with NORN_MAIN_RUNNER set. A
+# hosted main push (a human's push or re-run included) never receives the key.
 SCCACHE_SECRETS = {name: "${{ secrets.%s }}" % name for name in
                    ("NORN_SCCACHE_BUCKET", "NORN_SCCACHE_ENDPOINT", "NORN_SCCACHE_KEY_ID", "NORN_SCCACHE_SECRET")}
-CACHE_WRITER_ENVIRONMENT = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer' || '' }}"
+CACHE_WRITER_ENVIRONMENT = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}"
 SCCACHE_START = r"""set -uo pipefail
 # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
 # egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,
