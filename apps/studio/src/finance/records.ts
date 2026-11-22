@@ -70,7 +70,7 @@ export const RECORDS: readonly FinanceRecord[] = [
   ...PEOPLE.flatMap(({ ref, name, net, due, score, relationshipManager, city }): FinanceRecord[] => [
     { id: `CL-${ref}`, type: "client", name, status: "Active", summary: city, facts: [
       fact("Client name", name, "salesforce", "Client__c.cust_nm", "Client.name", "Client identity join"),
-      fact("LMS client ID", `LMS-${ref}`, "postgres", "lms.clients.client_id", "Client.lmsClientId", "Client identity join"),
+      fact("LMS client ID", `LMS-${ref}`, "postgres", "lms.loans.client_id", "Client.lmsClientId", "Client identity join"),
       fact("National ID", `DEMO-NID-${ref}`, "iscore", "$.subject.national_id", "Client.nationalId", "Client identity join"),
       fact("Payer reference", `PAY-${ref}`, "fawry", "$.collection.payer_ref", "Client.payerRef", "Client identity join"),
     ] },
@@ -105,6 +105,11 @@ export const RECORDS: readonly FinanceRecord[] = [
     ] },
   ]),
   ...loanSet("1042", "B", CLIENT.name, 375_000, 13_500),
+  { id: "FWR-SET-1027", type: "payment", name: "Fawry settlement batch", status: "Reclassified", summary: egp(150_000), facts: [
+    fact("Settlement amount", egp(150_000), "fawry", "$.settlement.batch_amount_egp", "Payment.amount", "Fawry cash collection"),
+    fact("Bank value date", "16 Nov 2026", "fawry", "$.settlement.value_date", "Payment.settledOn"),
+    fact("Previously reported in", "Week of 9 Nov 2026", "fawry", "$.settlement.reporting_week", "Payment.reportingWeek"),
+  ] },
   ...["Jun", "Jul", "Aug", "Sep", "Oct", "Nov"].map((month, i): FinanceRecord => ({
     id: `FRA-2026-${String(i + 6).padStart(2, "0")}`, type: "regulatory-return", name: `${month} 2026 lending return`,
     status: i === 5 ? "Draft" : "Filed", summary: `${month} reporting period`, facts: [

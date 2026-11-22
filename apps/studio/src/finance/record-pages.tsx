@@ -1,4 +1,4 @@
-import { Link, useParams } from "@tanstack/react-router"
+import { Link, Navigate, useParams } from "@tanstack/react-router"
 import { ArrowRight, ChevronRight, Clock3, GitMerge, Network, Search, Waypoints } from "lucide-react"
 import { useState } from "react"
 import { Chip } from "@/components/chip"
@@ -24,8 +24,9 @@ export function RecordLink({ record, children, className }: {
 export function FinanceRecordRoute() {
   const { concept, _splat, type } = useParams({ strict: false })
   const name = concept ?? type
-  if (!isFinanceType(name)) return <section className="space-y-3"><FinanceHeading title="Object type unavailable" description="Open a type from the mapped finance model." /><Link to="/sources" className="text-sm font-medium text-tone-blue">Sources</Link></section>
+  if (!isFinanceType(name)) return <Navigate to="/sources" replace />
   const record = typeof _splat === "string" ? BY_ID.get(_splat) : undefined
+  if (_splat && record?.type !== name) return <Navigate to="/sources/$concept" params={{ concept: name }} replace />
   return record?.type === name ? <RecordDetail key={record.id} record={record} /> : <TypeList key={name} type={name} />
 }
 
@@ -126,6 +127,7 @@ export function Neighbourhood({ record }: { readonly record: FinanceRecord }) {
 
 export function RecordDetail({ record }: { readonly record: FinanceRecord }) {
   const [active, setActive] = useState<Fact>(record.facts[0]!)
+  const history = record.history
   return <section className="space-y-4">
     <nav aria-label="Record breadcrumbs" className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
       <Link to="/sources" className="hover:text-foreground">Sources</Link><ChevronRight className="size-3" />
@@ -150,9 +152,9 @@ export function RecordDetail({ record }: { readonly record: FinanceRecord }) {
       </section>
       <Lineage fact={active} />
     </div>
-    {record.history && <section aria-label="Score history" className="rounded-2xl border bg-card p-4">
+    {history && <section aria-label="Score history" className="rounded-2xl border bg-card p-4">
       <h2 className="mb-3 text-sm font-semibold">I-Score history</h2>
-      <ol className="grid max-w-lg grid-cols-3 gap-2">{record.history.map(({ date, score }, index) => <li key={date} className={cn("rounded-lg border bg-surface-subtle p-3", index === record.history!.length - 1 && "border-data-accent bg-data-accent/10")}>
+      <ol className="grid max-w-lg grid-cols-3 gap-2">{history.map(({ date, score }, index) => <li key={date} className={cn("rounded-lg border bg-surface-subtle p-3", index === history.length - 1 && "border-data-accent bg-data-accent/10")}>
         <div className="text-[11px] text-muted-foreground">{date}</div><div className="text-lg font-semibold tabular-nums">{score}</div>
       </li>)}</ol>
     </section>}
