@@ -142,8 +142,8 @@ class EnrollmentTests(unittest.TestCase):
         for mutation in ("ref", "depth", "credentials", "extra-step", "base", "head", "command", "verdict"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
                 candidate = copy.deepcopy(workflow)
-                # The gate plan is core's step before cheap, after core's candidate checkout.
-                steps = candidate["jobs"]["core"]["steps"]
+                # The gate plan is the plan job's step after its candidate checkout.
+                steps = candidate["jobs"]["plan"]["steps"]
                 checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
                 planner = next(step for step in steps if step.get("id") == "plan")
                 if mutation == "ref":

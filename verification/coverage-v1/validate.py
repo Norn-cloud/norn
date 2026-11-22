@@ -635,8 +635,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
                     f"{name}: shared cache keys may reach only the sccache start step")
     require(source.count("secrets.NORN_SCCACHE_") == 2 * len(SCCACHE_SECRETS),
             "shared cache keys may appear only in the two sccache start steps")
-    # The gate plan is a step of core (one Boat start fewer per run), not a job of its own.
-    require(set(jobs) == {"core", "test", "full", "trusted-policy"}, "workflow job inventory changed")
+    # The gate plan is a hosted job of its own (no Boat start), so bundles start alongside core.
+    require(set(jobs) == {"plan", "core", "test", "full", "trusted-policy"}, "workflow job inventory changed")
     check_names = {"core": "core", "full": "full", "trusted-policy": "trusted-policy evaluation"}
     require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
             "control and required check names must remain stable")
@@ -685,10 +685,10 @@ await github.rest.repos.createCommitStatus({
     job_env = {
         "core": cache_env,
         "test": {**cache_env,
-                 "NORN_CI_PACKAGES": "${{ fromJSON(needs.core.outputs.plan).packages }}",
-                 "NORN_CI_REST_SHARDS": "${{ fromJSON(needs.core.outputs.plan).rest_shards }}",
+                 "NORN_CI_PACKAGES": "${{ fromJSON(needs.plan.outputs.plan).packages }}",
+                 "NORN_CI_REST_SHARDS": "${{ fromJSON(needs.plan.outputs.plan).rest_shards }}",
                  "NORN_CI_BASE": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}",
-                 "PLAN": "${{ needs.core.outputs.plan }}", "BUNDLE_ID": "${{ matrix.bundle.id }}"},
+                 "PLAN": "${{ needs.plan.outputs.plan }}", "BUNDLE_ID": "${{ matrix.bundle.id }}"},
     }
 
     def has_execution_override(job: dict, step: dict) -> bool:
@@ -699,7 +699,7 @@ await github.rest.repos.createCommitStatus({
         "core": "bash scripts/ci/core.sh cheap",
         "test": 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"',
     }
-    # core's step before cheap computes the gate plan that the bundles and the verdict read.
+    # The plan job computes the gate plan that the bundles and the verdict read.
     plan_command = '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
 plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
 echo "plan=$plan" >> "$GITHUB_OUTPUT"
@@ -781,7 +781,7 @@ df -h /
         job = jobs.get(name, {})
         # A draft head runs core only; its bundles wait until it is ready for review.
         condition = (candidate_condition if name == "core" else
-                     "fromJSON(needs.core.outputs.plan).bundle[0] != null"
+                     "fromJSON(needs.plan.outputs.plan).bundle[0] != null"
                      " && !(github.event_name == 'pull_request' && github.event.pull_request.draft)")
         require(job.get("if") == condition,
                 f"{name}: candidate gate condition changed")
@@ -803,8 +803,6 @@ df -h /
         preparation.insert(1, copy.deepcopy(boat_cleanup))
         after_checkout = preparation.index(checkout) + 1
         preparation[after_checkout:after_checkout] = ([hosted_warning] if name == "core" else []) + [libclang]
-        if name == "core":
-            preparation.append({"id": "plan", "env": plan_env, "run": plan_command + "\n"})
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
@@ -814,7 +812,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == {"core": 7, "test": 5}[name],
+        require(len([step for step in job_steps if "run" in step]) == {"core": 6, "test": 5}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
@@ -826,24 +824,23 @@ df -h /
                 f"{name}: step environment must not override gate inputs")
         require(job_steps.index(checkouts[0]) < job_steps.index(steps[0]),
                 f"{name}: candidate checkout must precede the gate")
-        if name == "core":
-            planners = [step for step in job_steps if step.get("run", "").strip() == plan_command]
-            require(len(planners) == 1 and planners[0].get("id") == "plan" and "if" not in planners[0]
-                    and not planners[0].get("continue-on-error") and not has_execution_override(job, planners[0])
-                    and job.get("outputs") == {"plan": "${{ steps.plan.outputs.plan }}"},
-                    "core: gate plan output must bind the producer step")
-            require(planners[0].get("env") == plan_env,
-                    "core: affected selection must bind the event base and head")
-            require(job_steps.index(checkouts[0]) < job_steps.index(planners[0]),
-                    "core: candidate checkout must precede the gate plan")
+        require("outputs" not in job and job.get("needs") == {"core": None, "test": ["plan"]}[name],
+                f"{name}: the gate plan comes only from the plan job")
+    # The plan job is exactly: the candidate checkout, then the planner, whose output the bundles and
+    # the verdict read. Hosted and step-for-step pinned, it runs nothing but core.sh's planner.
+    require(json.dumps(jobs["plan"], sort_keys=True) == json.dumps({
+        "if": candidate_condition, "runs-on": "ubuntu-24.04", "timeout-minutes": 10,
+        "outputs": {"plan": "${{ steps.plan.outputs.plan }}"},
+        "steps": [checkout, {"id": "plan", "env": plan_env, "run": plan_command + "\n"}],
+    }, sort_keys=True), "plan: the gate plan must be the candidate checkout and the pinned planner only")
     job = jobs["test"]
-    require(job.get("needs") == ["core"] and job.get("strategy") == {
-        "fail-fast": False, "matrix": {"bundle": "${{ fromJSON(needs.core.outputs.plan).bundle }}"}
+    require(job.get("needs") == ["plan"] and job.get("strategy") == {
+        "fail-fast": False, "matrix": {"bundle": "${{ fromJSON(needs.plan.outputs.plan).bundle }}"}
     }, "test: matrix must execute the complete bundle plan without queued surplus jobs")
     require(job.get("name") == "bundle (${{ matrix.bundle.id }})" and job.get("timeout-minutes") == 110,
             "test: bundle identity and time budget must be pinned")
     full = jobs.get("full", {})
-    require(full.get("needs") == ["core", "test"], "full: verdict must depend on every gate")
+    require(full.get("needs") == ["plan", "core", "test"], "full: verdict must depend on every gate")
     require(len(full.get("steps", [])) == 1 and not full.get("env"),
             "full: verdict must be the only step and cannot inherit shell or gate-input overrides")
     require(" ".join(full.get("if", "").split()) == "always() && " + candidate_condition
@@ -852,6 +849,7 @@ df -h /
             "full: verdict must run and fail closed")
     verdict = '''set -euo pipefail
 [ "$EVENT" != pull_request ] || [ "$DRAFT" = false ] || { echo "Draft head is not admitted for full qualification"; exit 1; }
+[ "$PLANNER" = success ] || { echo "plan $PLANNER"; exit 1; }
 jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
   type == "object" and (.mode == "full" or .mode == "affected") and
   .base_sha == $base and .head_sha == $head and
@@ -876,8 +874,8 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
         "DRAFT": "${{ github.event.pull_request.draft || false }}",
         "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}",
         "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}",
-        "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.core.outputs.plan }}",
-        "CORE": "${{ needs.core.result }}",
+        "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.plan.outputs.plan }}",
+        "PLANNER": "${{ needs.plan.result }}", "CORE": "${{ needs.core.result }}",
         "TEST": "${{ needs.test.result }}",
     }
     require(any(step.get("run", "").strip() == verdict and "if" not in step

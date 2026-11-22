@@ -63,8 +63,8 @@ const GATE_FILES: [&str; 28] = [
 /// another user's pull request runs hosted instead of queueing forever. The main-push arm
 /// (#1369) gives the shared compiler cache, which only a push to main may write, a writer on
 /// Boat: a push of `refs/heads/main` made and started by the merge queue's bot, only while
-/// `NORN_MAIN_RUNNER` is `boat`. Trusted-policy jobs stay hosted. The gate plan is a step of
-/// `core`, so no `plan` job may take a Boat start.
+/// `NORN_MAIN_RUNNER` is `boat`. Trusted-policy jobs stay hosted. The gate plan is a hosted job
+/// of its own: it needs only git and Python, so no `plan` job may take a Boat start.
 const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
 
 fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
@@ -1195,7 +1195,7 @@ mod tests {
                 "{job}: {changed}"
             );
         };
-        // The gate plan runs inside core: a separate plan job on Boat is one start too many.
+        // The gate plan is a hosted job: a plan job on Boat is one start too many.
         assert!(!super::runner_is_admitted(
             path,
             "plan",
