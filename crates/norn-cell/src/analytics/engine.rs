@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use duckdb::types::Value as Sql;
 use duckdb::{Connection, params_from_iter};
+use serde_json::value::RawValue;
 use transparency_sha2::{Digest as _, Sha256};
 
 use super::{
@@ -128,10 +129,133 @@ fn store_contract(request: &StoreRequest) -> StoreRequest {
 /// OLAP-02 (Sol r4): the receipt of a store, kept by tenant and attempt: the
 /// immutable request it was made by ([`store_contract`]) and the answer it
 /// gave. A replay answers this answer, and only for this request.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 struct StoreReceipt {
+    version: u8,
     request: StoreRequest,
     response: LandResponse,
+}
+
+const STORE_RECEIPT_VERSION: u8 = 1;
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordedStore {
+    // Unversioned receipts are from before the introduction of row laws.
+    #[serde(default)]
+    version: u8,
+    request: Box<RawValue>,
+    response: Box<RawValue>,
+}
+
+/// A store body from either the current cell or a cell replaying a
+/// pre-law store. Legacy bodies can only replay a legacy receipt.
+#[derive(serde::Deserialize)]
+#[serde(try_from = "Box<RawValue>")]
+pub struct StoreBody {
+    request: StoreRequest,
+    legacy: bool,
+}
+
+impl StoreBody {
+    /// The decoded request, including the scope and object digests.
+    #[must_use]
+    pub fn request(&self) -> &StoreRequest {
+        &self.request
+    }
+}
+
+impl TryFrom<Box<RawValue>> for StoreBody {
+    type Error = serde_json::Error;
+
+    fn try_from(body: Box<RawValue>) -> Result<Self, Self::Error> {
+        match serde_json::from_str(body.get()) {
+            Ok(request) => Ok(Self {
+                request,
+                legacy: false,
+            }),
+            Err(error) => legacy_store_request(&body)
+                .map(|request| Self {
+                    request,
+                    legacy: true,
+                })
+                .map_err(|_old_shape_error| error),
+        }
+    }
+}
+
+// This is the original receipt contract. A versioned receipt is decoded
+// directly into the current types, with all its required fields intact.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyLanding {
+    load: LoadRequest,
+    pins: crate::dataset_manifest::ManifestPins,
+    #[serde(default)]
+    landing: String,
+    #[serde(default)]
+    attempt: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyLandingAnswer {
+    landing: String,
+    attempt: String,
+    load: LoadResponse,
+    data: LandedFile,
+    held: LandedFile,
+    valid_time: Vec<ValidRange>,
+    stored: Option<String>,
+}
+
+impl From<LegacyLandingAnswer> for LandResponse {
+    fn from(old: LegacyLandingAnswer) -> Self {
+        Self {
+            landing: old.landing,
+            attempt: old.attempt,
+            load: old.load,
+            data: Some(old.data),
+            held: Some(old.held),
+            valid_time: old.valid_time,
+            stored: old.stored,
+            findings: BTreeMap::new(),
+            held_by_rules: 0,
+            residue_total: 0,
+            residue: Vec::new(),
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyStore {
+    land: LegacyLanding,
+    landed: LegacyLandingAnswer,
+    data: super::StoredObject,
+    held: super::StoredObject,
+}
+
+fn legacy_store_request(raw: &RawValue) -> serde_json::Result<StoreRequest> {
+    let old: LegacyStore = serde_json::from_str(raw.get())?;
+    Ok(StoreRequest {
+        land: LandRequest {
+            load: old.land.load,
+            pins: old.land.pins,
+            landing: old.land.landing,
+            attempt: old.land.attempt,
+            checks: Vec::new(),
+            residue_page: RESIDUE_PAGE_ROWS,
+        },
+        landed: old.landed.into(),
+        data: old.data,
+        held: old.held,
+    })
+}
+
+struct StoreAnswer {
+    answer: LandResponse,
+    recorded: Option<Box<RawValue>>,
 }
 
 fn json_text(value: &impl serde::Serialize) -> Outcome<String> {
@@ -929,6 +1053,39 @@ impl Engine {
         request: &StoreRequest,
         send: impl FnOnce(&Path, &Path) -> Outcome<()>,
     ) -> Outcome<LandResponse> {
+        self.store_answer(request, send).map(|result| result.answer)
+    }
+
+    /// Store a call's landed files or return the exact recorded JSON body.
+    ///
+    /// # Errors
+    /// The same refusals as [`Self::store`], a legacy body with no matching
+    /// legacy receipt, or a response serialization failure.
+    pub fn store_json(
+        &self,
+        body: &StoreBody,
+        send: impl FnOnce(&Path, &Path) -> Outcome<()>,
+    ) -> Outcome<Box<RawValue>> {
+        let result = if body.legacy {
+            self.replayed(&body.request, true)?
+                .ok_or_else(|| refusal(ATTEMPT_UNKNOWN, "the legacy receipt does not exist"))?
+        } else {
+            self.store_answer(&body.request, send)?
+        };
+        result.recorded.map_or_else(
+            || {
+                serde_json::value::to_raw_value(&result.answer)
+                    .map_err(|error| refusal("analytics.engine", error.to_string()))
+            },
+            Ok,
+        )
+    }
+
+    fn store_answer(
+        &self,
+        request: &StoreRequest,
+        send: impl FnOnce(&Path, &Path) -> Outcome<()>,
+    ) -> Outcome<StoreAnswer> {
         let land = &request.land;
         let tenant = &land.load.tenant;
         let table = &land.load.table;
@@ -945,7 +1102,7 @@ impl Engine {
         let (lease, answer) = match leased {
             Ok(leased) => leased,
             Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
-                return self.replayed(request)?.ok_or(unknown);
+                return self.replayed(request, false)?.ok_or(unknown);
             }
             Err(refused) => return Err(refused),
         };
@@ -990,6 +1147,7 @@ impl Engine {
             ..answer
         };
         let receipt = json_text(&StoreReceipt {
+            version: STORE_RECEIPT_VERSION,
             request: store_contract(request),
             response: response.clone(),
         })?;
@@ -1010,14 +1168,17 @@ impl Engine {
             db(conn.execute_batch("COMMIT"))
         })?;
         drop(lease);
-        Ok(response)
+        Ok(StoreAnswer {
+            answer: response,
+            recorded: None,
+        })
     }
 
     /// OLAP-02 (Sol r4): the answer of a store of `request` that already
     /// happened, from the receipt kept for its tenant and attempt. Reads
     /// only. `None` when no store of the attempt happened; stale when one
     /// did, of any other request than this one ([`store_contract`]).
-    fn replayed(&self, request: &StoreRequest) -> Outcome<Option<LandResponse>> {
+    fn replayed(&self, request: &StoreRequest, legacy: bool) -> Outcome<Option<StoreAnswer>> {
         let land = &request.land;
         let Some(text) = self.with(&land.load.tenant, |conn| {
             meta(conn, &receipt_key(&land.attempt))
@@ -1025,12 +1186,31 @@ impl Engine {
         else {
             return Ok(None);
         };
-        let receipt: StoreReceipt = serde_json::from_str(&text)
-            .map_err(|error| refusal("analytics.engine", error.to_string()))?;
-        if receipt.request != store_contract(request) {
+        let decode_error =
+            |error: serde_json::Error| refusal("analytics.engine", error.to_string());
+        let receipt: RecordedStore = serde_json::from_str(&text).map_err(decode_error)?;
+        let recorded_request: StoreRequest = match receipt.version {
+            0 => legacy_store_request(&receipt.request).map_err(decode_error)?,
+            STORE_RECEIPT_VERSION if !legacy => {
+                serde_json::from_str(receipt.request.get()).map_err(decode_error)?
+            }
+            STORE_RECEIPT_VERSION => return Err(refusal(STALE, "the store is another request's")),
+            _ => return Err(refusal("analytics.engine", "unknown store receipt version")),
+        };
+        if recorded_request != store_contract(request) {
             return Err(refusal(STALE, "the store is another request's"));
         }
-        Ok(Some(receipt.response))
+        let answer = if receipt.version == 0 {
+            serde_json::from_str::<LegacyLandingAnswer>(receipt.response.get())
+                .map_err(decode_error)?
+                .into()
+        } else {
+            serde_json::from_str(receipt.response.get()).map_err(decode_error)?
+        };
+        Ok(Some(StoreAnswer {
+            answer,
+            recorded: Some(receipt.response),
+        }))
     }
 
     /// One records page of a source (HOST-READ-3 on the engine): the rows
@@ -3559,7 +3739,8 @@ fn check_rules(conn: &Connection, table: &TableSchema, request: &LandRequest) ->
 
 /// MANIFEST-LAWS-1 / LAW-04: record the per-row findings of the residue
 /// rows up to `through` and remove those rows from the residue. A finding
-/// must name a rule the engine left to that row, once.
+/// must name a rule the engine left to that row, once, and match the
+/// metadata the landing pinned for that rule.
 fn settle_rows(conn: &Connection, table: &TableSchema, request: &SettleRequest) -> Outcome<()> {
     let quarantine = quarantine_table(&table.name);
     let residue = residue_table(&table.name);
@@ -3569,8 +3750,23 @@ fn settle_rows(conn: &Connection, table: &TableSchema, request: &SettleRequest) 
     let mut statement = db(conn.prepare(&format!(
         "SELECT count(*) FROM {residue} WHERE \":row\" = ? AND \":rule\" = ? AND \":row\" <= ?"
     )))?;
+    let checks: BTreeMap<_, _> = request
+        .land
+        .checks
+        .iter()
+        .map(|check| (check.rule.as_str(), check))
+        .collect();
     let mut seen = std::collections::BTreeSet::new();
     for finding in &request.findings {
+        let Some(check) = checks
+            .get(finding.rule.as_str())
+            .filter(|check| check.label == finding.label && check.holds == finding.holds)
+        else {
+            return Err(refusal(
+                "bulk.invalid_finding",
+                "the finding does not match the landed rule's label and hold",
+            ));
+        };
         let present: u64 = db(statement.query_row(
             params_from_iter([
                 Sql::UBigInt(finding.row),
@@ -3596,9 +3792,9 @@ fn settle_rows(conn: &Connection, table: &TableSchema, request: &SettleRequest) 
             params_from_iter([
                 Sql::UBigInt(finding.row),
                 Sql::Text(request.land.load.load.clone()),
-                Sql::Text(finding.label.clone()),
-                Sql::Text(finding.rule.clone()),
-                Sql::Boolean(finding.holds),
+                Sql::Text(check.label.clone()),
+                Sql::Text(check.rule.clone()),
+                Sql::Boolean(check.holds),
                 Sql::UBigInt(finding.row),
             ]),
         ))?;
@@ -4239,6 +4435,71 @@ fn outliers(
 #[allow(clippy::expect_used, reason = "a test of the residue page's queries")]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unversioned_store_receipt_replays_its_original_bytes() {
+        const TENANT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const COUNTS: &str =
+            r#"{"load":"load-1","rows":1,"rejected":0,"reasons":{},"bytes":40,"millis":1}"#;
+        const FILES: &str = concat!(
+            r#""data":{"sha256":"data-digest","rows":1,"bytes":60},"#,
+            r#""held":{"sha256":"held-digest","rows":0,"bytes":20},"validTime":[]"#,
+        );
+        let landed = format!(r#""landing":"landing-1","attempt":"aOld","load":{COUNTS},{FILES}"#);
+        let answer = format!(r#"{{{landed},"stored":"old-cache"}}"#);
+        let original = format!(
+            r#"{{
+                "land":{{"load":{{"tenant":"{TENANT}",
+                    "table":{{"name":"t.Row","columns":[],"pin":"table-pin"}},"load":"load-1",
+                    "file":{{"url":"","uri":"s3://synthetic/source","sha256":"source-digest","format":"csv"}},
+                    "headers":{{}}}},
+                    "pins":{{"definitionsVersion":1,"modelHash":"model","binding":"binding",
+                        "mapping":"mapping","laws":"laws"}},
+                    "landing":"landing-1","attempt":"aOld"}},
+                "landed":{{{landed}}},
+                "data":{{"uri":"s3://synthetic/data","url":""}},
+                "held":{{"uri":"s3://synthetic/held","url":""}}
+            }}"#
+        );
+        let receipt = format!(r#"{{"request":{original},"response":{answer}}}"#);
+        let dir = tempfile::tempdir().expect("engine directory");
+        let settings = || Settings {
+            root: dir.path().to_path_buf(),
+            memory_limit: "128MB".into(),
+            threads: 1,
+        };
+        let tenant = TenantId::try_from(TENANT.to_owned()).expect("tenant");
+        let key = receipt_key("aOld");
+        Engine::new(settings())
+            .expect("old engine")
+            .with(&tenant, |conn| set_meta(conn, &key, &receipt))
+            .expect("stored receipt");
+        let reopened = Engine::new(settings()).expect("reopened engine");
+        let refreshed = original.replace(r#""url":"""#, r#""url":"https://synthetic/refreshed""#);
+        let request: StoreBody = serde_json::from_str(&refreshed).expect("old store request");
+        let replayed = reopened
+            .store_json(&request, |_, _| panic!("a replay sends nothing"))
+            .expect("replayed");
+        assert_eq!(
+            serde_json::to_string(&replayed).expect("wire answer"),
+            answer
+        );
+        assert_eq!(
+            reopened
+                .with(&tenant, |conn| meta(conn, &key))
+                .expect("receipt"),
+            Some(receipt)
+        );
+        let changed = refreshed.replace("s3://synthetic/data", "s3://synthetic/other");
+        let mismatch: StoreBody = serde_json::from_str(&changed).expect("changed object");
+        assert_eq!(
+            reopened
+                .store_json(&mismatch, |_, _| panic!("a refusal sends nothing"))
+                .expect_err("another store body")
+                .code,
+            STALE
+        );
+    }
 
     /// MANIFEST-LAWS-1 (Sol r2 S6): `DuckDB` materializes a query's whole
     /// result before its first row is read, so the candidate query of a

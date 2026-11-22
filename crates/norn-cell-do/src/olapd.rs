@@ -47,11 +47,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use norn_api::clock::Clock;
 use norn_api::olap_credential::{Denied, Keyring, body_digest};
-use norn_cell::analytics::engine::{Engine, Outcome, Settings};
+use norn_cell::analytics::engine::{Engine, Outcome, Settings, StoreBody};
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LandRequest, LandResponse,
-    MembersRequest, PageRequest, ProfileRequest, SettleRequest, StoreRequest, SyncRequest,
-    TenantId,
+    MembersRequest, PageRequest, ProfileRequest, SettleRequest, SyncRequest, TenantId,
 };
 use norn_kernel::LogicalTime;
 use serde::Serialize;
@@ -384,9 +383,9 @@ impl Scoped for LandRequest {
     }
 }
 
-impl Scoped for StoreRequest {
+impl Scoped for StoreBody {
     fn tenant(&self) -> &TenantId {
-        &self.land.load.tenant
+        &self.request().land.load.tenant
     }
 }
 
@@ -467,7 +466,7 @@ fn connection(stream: &TcpStream, engine: &Engine, gate: &Gate) -> std::io::Resu
         "/v1/page" => call.answer(|r: PageRequest| engine.page(&r)),
         "/v1/land" => call.answer(|r: LandRequest| land(engine, &r)),
         "/v1/settle" => call.answer(|r: SettleRequest| settle(engine, &r)),
-        "/v1/store" => call.answer(|r: StoreRequest| {
+        "/v1/store" => call.answer(|r: StoreBody| {
             let stored = store(engine, &r);
             gate.seam.stored(&tenant, stored.is_ok());
             stored
@@ -692,16 +691,17 @@ fn settle(engine: &Engine, request: &SettleRequest) -> Outcome<LandResponse> {
 /// objects, each only if the bytes sent are its answered digest, then keep
 /// them for the dataset's cache identity. The engine's store owns the
 /// attempt's cleanup; nothing here removes anything.
-fn store(engine: &Engine, request: &StoreRequest) -> Outcome<LandResponse> {
+fn store(engine: &Engine, body: &StoreBody) -> Outcome<Box<serde_json::value::RawValue>> {
+    let request = body.request();
     // The engine sends only files whose answer names both digests.
     let sha256 = |file: Option<&norn_cell::analytics::LandedFile>| {
-        file.map(|file| file.sha256.clone()).unwrap_or_default()
+        file.map_or_default(|file| file.sha256.clone())
     };
     let (data_sha256, held_sha256) = (
         sha256(request.landed.data.as_ref()),
         sha256(request.landed.held.as_ref()),
     );
-    engine.store(request, |data, held| {
+    engine.store_json(body, |data, held| {
         let agent = agent();
         upload(&agent, &request.data.url, data, &data_sha256)?;
         upload(&agent, &request.held.url, held, &held_sha256)

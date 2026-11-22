@@ -186,7 +186,7 @@ fn per_row(cell: &mut Cell, lines: &[Line]) -> (BTreeSet<Finding>, BTreeSet<u64>
                 observed_at: LogicalTime::from_millis(1_793_750_400_000),
             },
             input: norn_ir::runtime_object! {"contract"=>"norn.raw_observation/v1", "source"=>"Bench",
-            "source_id"=>id.clone(), "event_id"=>format!("row-{row}"), "source_version"=>"2",
+            "source_id"=>id, "event_id"=>format!("row-{row}"), "source_version"=>"2",
             "pipeline_version"=>"pipeline/1", "kind"=>"upsert", "extracted_at"=>1_793_750_400_000u64,
             "payload"=>payload,
             "payload_digest"=>norn_ir::canonical::HashProfile::Norn1.hash_json(&text).expect("digest")},
@@ -1090,6 +1090,42 @@ fn a_settle_past_the_answered_page_is_refused() {
         (settled.data, settled.held, settled.findings),
         (clean.data, clean.held, clean.findings)
     );
+}
+
+#[test]
+fn a_settle_cannot_change_a_rules_label_or_hold() {
+    let (_dir, cell) = cell(&laws(&[FUNCTION]));
+    let (engine_dir, engine) = engine();
+    let mut row = plain(Some("ann"));
+    row.quantity = 0;
+    let bytes = csv(&[row]);
+    for forge_hold in [false, true] {
+        let (request, pending) = land(&engine, &cell, bytes.as_bytes(), FileFormat::Csv);
+        let mut findings = cell
+            .store()
+            .residue_findings(TYPE, &request.load.table, &pending.residue)
+            .expect("per-row residue");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].holds);
+        if forge_hold {
+            findings[0].holds = false;
+        } else {
+            findings[0].label = "another rule".into();
+        }
+        let through = pending.residue.last().expect("a residue row").row;
+        assert_eq!(
+            engine
+                .settle(&SettleRequest {
+                    land: request,
+                    through,
+                    findings,
+                })
+                .expect_err("forged finding metadata")
+                .code,
+            "bulk.invalid_finding"
+        );
+        assert_eq!(attempts_left(engine_dir.path()), 0);
+    }
 }
 
 /// MANIFEST-LAWS-1 (Sol S6): a residue page is bounded in bytes as well as
