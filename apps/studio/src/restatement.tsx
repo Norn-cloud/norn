@@ -42,7 +42,7 @@ export function RestatementCard() {
     <Card id="corrections" className="scroll-mt-4">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="text-xl">Corrections to {headline(declared.question).toLowerCase()}</CardTitle>
+          <CardTitle role="heading" aria-level={2} className="text-xl">Corrections to {headline(declared.question).toLowerCase()}</CardTitle>
           {recorded && <Badge variant="outline" title="Documents the engine produced, replayed exactly. Not a live connection.">Recorded</Badge>}
         </div>
         <CardDescription>

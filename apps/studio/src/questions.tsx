@@ -319,11 +319,12 @@ export function QuestionPage() {
 export function QuestionsPage() {
   const mode = useMode()
   const live = mode.data?.kind === "live"
-  const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard, enabled: mode.data?.kind === "recorded" })
+  const recorded = mode.data?.kind === "recorded"
+  const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard, enabled: recorded })
   return (
     <section className="space-y-6">
-      <PageHeader title="Metrics" description="The numbers your records add up to, answered exactly by the server. Every number opens to the records behind it."
-        actions={<><Button asChild variant="outline" size="sm"><Link to="/metrics/build">Step by step</Link></Button><Button asChild size="sm"><Link to="/metrics/new"><Plus />Explore a metric</Link></Button></>} />
+      <PageHeader title="Metrics" description={recorded ? "See how the cell calculated weekly yield and what changed when a source record was corrected." : "The numbers your records add up to, answered exactly by the server. Every number opens to the records behind it."}
+        actions={live && <><Button asChild variant="outline" size="sm"><Link to="/metrics/build">Step by step</Link></Button><Button asChild size="sm"><Link to="/metrics/new"><Plus />Explore a metric</Link></Button></>} />
       {mode.isError && <p className="text-destructive">{mode.error.message}</p>}
       {live ? <LiveQuestionsBoard /> : mode.data && <>
         {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}

@@ -24,8 +24,6 @@ import { words } from "./lib/format.ts"
 import type { Envelope } from "./lib/transport.ts"
 import { EditorShortcuts } from "@/components/keys"
 
-export const SAVE_BLOCKED = "Saving to the server needs its admission and governed-install route, which is not live yet."
-
 type StateNode = Node<{ label: string; flags: string; issues: readonly Issue[] }, "state">
 
 /** The definitions, from the connected cell or else the recording, loaded with the query so importing this page needs no Vite (the transport finds recordings with import.meta.glob). */
@@ -192,7 +190,7 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
     draftKey: `lifecycle:${lifecycle.artifactId}:${lifecycle.index}`,
     label: `${words(lifecycle.objectType)}: ${words(lifecycle.property).toLowerCase()}`,
     // A status canvas opens tidy: the main row straight, side states in a band, the fewest crossings.
-    initial: tidyLifecycle(decompile(envelope, lifecycle), STATE_SPACING), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues, saveBlocked: SAVE_BLOCKED,
+    initial: tidyLifecycle(decompile(envelope, lifecycle), STATE_SPACING), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
     empty: "This lifecycle has no states. Add one to start.",
     nodeSize: () => ({ width: CARD.state, height: cardHeight({}) }),
     tidy: (graph) => tidyLifecycle(graph, STATE_SPACING),
@@ -277,7 +275,7 @@ export function CanvasPageView({ definitions }: { readonly definitions: Definiti
     <section className="space-y-6">
       <div className="space-y-2">
         <h1 className="text-title font-semibold tracking-tight">Canvas</h1>
-        <p className="max-w-2xl text-muted-foreground">Draw how a process moves. Every change is checked as you make it; saving asks the server, which checks again and decides.</p>
+        <p className="max-w-2xl text-muted-foreground">Draw how a process moves. The checker validates edits as you make them. Drafts stay in this browser.</p>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={kind === "lifecycle" && index === chosen ? "default" : "outline"} onClick={() => { setKind("lifecycle"); setChosen(index) }}>{words(ref.objectType)}</Button>)}

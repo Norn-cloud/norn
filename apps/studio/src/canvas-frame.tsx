@@ -68,8 +68,6 @@ export interface CanvasFrameProps {
   readonly palette: (editing: Editing) => ReactNode
   readonly inspector: (editing: Editing, issues: readonly Issue[]) => ReactNode
   readonly empty: ReactNode
-  /** Why the server save is not available, until the admission route is live. */
-  readonly saveBlocked: string
   /** Shown under the canvas for the current selection (a decision's preview). */
   readonly below?: (editing: Editing) => ReactNode
   /** Open with these selected (a link to a finding, or a contact-sheet state). */
@@ -180,7 +178,7 @@ function Frame(props: CanvasFrameProps) {
   const saveDraft = () => {
     const at = new Date().toISOString()
     setNotice(writeDraft(draftKey, dirty ? { graph, at } : undefined)
-      ? { tone: "info", text: `Draft saved in this browser. ${props.saveBlocked}` }
+      ? { tone: "info", text: "Draft saved in this browser." }
       : { tone: "refusal", text: "This browser does not allow saving a draft here." })
     if (dirty) setDraftAt(at)
   }
@@ -362,7 +360,6 @@ function Frame(props: CanvasFrameProps) {
                   <Sep />
                   <Button size="sm" variant="ghost" title={`Save a draft (${keysText("⌘S")})`} onClick={saveDraft}><Save />Save draft</Button>
                   {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
-                  <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
                 </div>
               </FlowPanel>
             </ReactFlow>}

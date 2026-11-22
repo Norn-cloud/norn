@@ -42,8 +42,10 @@ export interface Section {
   readonly foot?: boolean
   /** Other route prefixes that belong to this applet, e.g. `/objects` (a type's records) under Sources. */
   readonly paths?: readonly string[]
+  /** This applet needs a live cell to offer any work. */
+  readonly liveOnly?: boolean
   /** The applet's primary action, shown under its title. */
-  readonly action?: { readonly label: string; readonly to: string }
+  readonly action?: { readonly label: string; readonly to: string; readonly liveOnly?: boolean }
 }
 
 export interface MenuEntry {
@@ -259,7 +261,7 @@ const OVERVIEW = "__overview"
 const focusRow = "outline-none focus-visible:[&>[data-slot=tree-label]]:ring-2 focus-visible:[&>[data-slot=tree-label]]:ring-ring"
 
 /** The selected applet's sidebar: its title, the scope, its primary action, and its pages grouped with their counts. */
-function AppletPanel({ section, pathname }: { readonly section: Section; readonly pathname: string }) {
+function AppletPanel({ section, pathname, live }: { readonly section: Section; readonly pathname: string; readonly live: boolean }) {
   const { setOpenMobile, toggleSidebar } = useSidebar()
   const entries = (section.useMenu ?? none)() ?? []
   const badge = shown((section.useBadge ?? none)())
@@ -277,7 +279,7 @@ function AppletPanel({ section, pathname }: { readonly section: Section; readonl
           <h2 className="truncate text-xl font-semibold tracking-tight">{section.label}</h2>
           <ScopeSwitcher />
         </div>
-        {section.action && (
+        {section.action && (!section.action.liveOnly || live) && (
           <Button asChild className="w-full rounded-full">
             <Link to={section.action.to} onClick={close}><Plus aria-hidden />{section.action.label}</Link>
           </Button>
@@ -360,12 +362,13 @@ function Crumbs({ section, pathname }: { readonly section: Section; readonly pat
 }
 
 /** "Search… ⌘K": every applet and every page the applets list. */
-function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
+function CommandMenu({ sections, live }: { readonly sections: readonly Section[]; readonly live: boolean }) {
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
   const lists = sections.map((section) => ({ section, entries: (section.useMenu ?? none)() ?? [] }))
+    .filter(({ section }) => !section.liveOnly || live)
   const routes = new Map<string, { to: string; hash?: string }>([
-    ...sections.map(({ path }) => [`section:${path}`, { to: path }] as const),
+    ...lists.map(({ section: { path } }) => [`section:${path}`, { to: path }] as const),
     ...lists.flatMap(({ section, entries }) => entries.map(({ href }) => [`entry:${section.path}:${href}`, target(section, href)] as const)),
   ])
   return (
@@ -385,7 +388,7 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
           <CommandList className="max-h-[min(24rem,60vh)] overflow-y-auto p-1.5">
             <CommandGroup>
               <CommandGroupLabel className="px-2 pt-2 pb-1 text-xs text-muted-foreground">Applets</CommandGroupLabel>
-              {sections.map(({ path, label, icon: Icon }) => (
+              {lists.map(({ section: { path, label, icon: Icon } }) => (
                 <CommandItem key={path} value={`section:${path}`} label={label} className="flex cursor-default items-center gap-2 rounded-lg px-2 py-1.5 text-sm data-highlighted:bg-accent">
                   <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Icon /></CommandItemIcon>{label}
                 </CommandItem>
@@ -499,6 +502,8 @@ function useHashScroll() {
 function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
   const { locale } = useLocale()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const live = useMode().data?.kind === "live"
+  const applets = sections.filter((section) => !section.liveOnly || live)
   const current = sectionOf(sections, pathname)
   useHashScroll()
   return (
@@ -507,11 +512,11 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
         <Sidebar collapsible="icon" variant="inset" side={directionOf(locale) === "rtl" ? "right" : "left"}
           className="overflow-hidden p-0! group-data-[collapsible=icon]:w-(--sidebar-width-icon)!">
           <div className="flex size-full min-w-0 flex-row bg-shell">
-          <Rail sections={sections} account={account} onSignOut={onSignOut} assistant={assistant} />
+          <Rail sections={applets} account={account} onSignOut={onSignOut} assistant={assistant} />
           <div className="flex min-w-0 flex-1 py-2 max-md:pe-2">
             <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl bg-sidebar ring-1 ring-sidebar-border">
               {current
-                ? <AppletPanel key={current.path} section={current} pathname={pathname} />
+                ? <AppletPanel key={current.path} section={current} pathname={pathname} live={live} />
                 : <div className="min-w-0 space-y-1 px-4 pt-5"><h2 className="text-xl font-semibold tracking-tight">Studio</h2><ScopeSwitcher /></div>}
             </div>
           </div>
@@ -524,7 +529,7 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
                 <SidebarTrigger className={cn("-ms-1 text-muted-foreground")} />
                 <div className="min-w-0">{current && <Crumbs key={current.path} section={current} pathname={pathname} />}</div>
               </div>
-              <div className="flex justify-center md:w-[min(28rem,40vw)]"><CommandMenu sections={sections} /></div>
+              <div className="flex justify-center md:w-[min(28rem,40vw)]"><CommandMenu sections={sections} live={live} /></div>
               <div className="flex justify-end"><BarButtons tools={tools} /></div>
             </header>
             <ConnectionBanner />

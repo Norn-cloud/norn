@@ -33,10 +33,10 @@ test("state: create, view, edit, delete, duplicate, move, undo/redo, validate, s
   await expect(node(page, "review_copy")).toBeVisible()
   await press(page, "Shift+z")
   await expect(node(page, "review_copy")).toHaveCount(0)
-  // save: a draft in this browser; the server save says why it is not available.
+  // Save a draft in this browser. The canvas offers local storage only.
   await press(page, "s")
   await expect(page.getByText(/Draft saved in this browser/)).toBeVisible()
-  await expect(page.getByRole("button", { name: "Save to server" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Save to server" })).toHaveCount(0)
   // reopen: the draft comes back after a reload, then discard returns the admitted definition.
   await page.reload()
   await expect(page.getByText(/Restored your unsaved draft/)).toBeVisible()

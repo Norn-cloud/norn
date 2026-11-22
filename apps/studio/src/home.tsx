@@ -22,6 +22,15 @@ const KEY_NUMBERS = 4
 
 /** "What do I do now": ask, what needs you, and the numbers that matter, each one click from where to act. */
 export function HomePage() {
+  const assistant = useAssistant()
+  const recorded = useMode().data?.kind === "recorded"
+  if (recorded) return (
+    <section className="space-y-8">
+      <PageHeader title="Home" description="Explore how two sample systems map into one business model. Follow a value back to its source or compare a corrected metric with its original answer."
+        actions={<Button asChild><Link to="/sources">Explore sources <ArrowRight aria-hidden /></Link></Button>} />
+      {assistant.available && <AskBar />}
+    </section>
+  )
   return (
     <section className="space-y-8">
       <PageHeader title="Home" description="Ask, act on what needs you, and read the numbers that matter. Every item opens where you act on it." />

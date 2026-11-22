@@ -38,19 +38,20 @@ export function DenseTable({ head, children }: { readonly head: ReactNode; reado
 
 export const RECORDED_HINT = "Documents the engine produced, replayed exactly. Not a live connection."
 
-function Systems({ catalog }: { readonly catalog: Catalog }) {
+function Systems({ catalog, recorded }: { readonly catalog: Catalog; readonly recorded: boolean }) {
   const concepts = catalog.concepts.filter(({ definition }) => definition === "object type")
   const relationships = concepts.reduce((total, { relationships }) => total + relationships.length, 0)
   const outside = catalog.systems.filter((system) => !cellOwned(system))
   const own = catalog.systems.filter(cellOwned)
+  const systemsLabel = recorded ? "Mapped sample systems" : "Mapped systems"
   return (
     <div className="space-y-3">
       <StatStrip>
-        <KpiTile icon={Database} label="Connected systems" value={outside.length} sub={outside.map(({ name }) => name).join(" · ") || "none mapped yet"} />
+        <KpiTile icon={Database} label={systemsLabel} value={outside.length} sub={outside.map(({ name }) => name).join(" · ") || "none mapped yet"} />
         <KpiTile icon={Shapes} label="One business model" value={concepts.length} sub={`object types, built on ${catalog.concepts.length - concepts.length} shared interfaces`} />
         <KpiTile icon={ArrowRight} label="Links between them" value={relationships} sub="declared once, read the same from every system" />
       </StatStrip>
-      <Panel icon={Database} label="Connected systems">
+      <Panel icon={Database} label={systemsLabel}>
         <Well className="divide-y divide-border/70">
           {outside.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
           {outside.map((system, index) => (
@@ -103,7 +104,7 @@ function ConceptCard({ concept }: { readonly concept: Concept }) {
           <CardDescription lang={about(concept, view)?.lang} className="line-clamp-2 min-h-[2lh]">{about(concept, view)?.text}</CardDescription>
         </CardHeader>
         <CardContent className="mt-auto space-y-3 text-sm">
-          <p className="text-muted-foreground tabular-nums">{concept.fields.length} facts · {concept.relationships.length} links</p>
+          <p className="text-muted-foreground tabular-nums">{concept.fields.length} {concept.fields.length === 1 ? "fact" : "facts"} · {concept.relationships.length} {concept.relationships.length === 1 ? "link" : "links"}</p>
           {systems.length > 0 && <div className="flex flex-wrap gap-1">{systems.map((system) => <Badge key={system} variant="secondary">{system}</Badge>)}</div>}
         </CardContent>
       </Card>
@@ -196,7 +197,9 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
                   </span>
                 )
               })}</span>
-              : <span>{field.type}</span>}
+              : field.scalar.kind === "enum" && field.scalar.values.length > 12
+                ? <details><summary className="cursor-pointer">One of {field.scalar.values.length} values</summary><div className="pt-1">{field.type}</div></details>
+                : <span>{field.type}</span>}
           </TableCell>
         </TableRow>
       ))}
@@ -294,17 +297,20 @@ export function useCatalog() {
 
 export function SourcesPage() {
   const { read, catalog } = useCatalog()
+  const recorded = read.data?.origin === "recorded"
   const [search, setSearch] = useState("")
   const { view } = useView()
   const matches = (concept: Concept) => `${concept.title} ${about(concept, view)?.text ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
   return (
     <section className="space-y-5">
-      <PageHeader title="Sources" meta={read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
-        description="Each connected system keeps its own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered." />
+      <PageHeader title="Sources" meta={recorded && <Badge variant="outline" title={RECORDED_HINT}>Recorded demo</Badge>}
+        description={recorded
+          ? "This snapshot uses synthetic ERPNext and Shopify records. Both systems map into the same business model for holdings, orders, and deliveries."
+          : "Each source system keeps its own records. Norn maps them into the same business model for holdings, orders, and deliveries."} />
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && <>
-        <Systems catalog={catalog} />
+        <Systems catalog={catalog} recorded={recorded} />
         {read.data?.origin === "live" && <SourceConnections />}
         <Panel icon={Shapes} label="The business model">
           <Tabs defaultValue="cards" className="p-1">

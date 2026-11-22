@@ -46,7 +46,7 @@ test("a record page names its type and copyable id, and offers every tab", async
   // Who may act is the cell's decision: the rail is there, and the recorded demo says no role was decided.
   expect(html).not.toContain(">Access</button>")
   expect(html).toContain("Who can see or act")
-  expect(html).toContain("The recorded demo has no sign-in, so the cell decided no role&#x27;s access.")
+  expect(html).toContain("This snapshot contains no live access decision.")
   expect(html).toContain("Rules it keeps")
 })
 

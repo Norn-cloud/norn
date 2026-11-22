@@ -97,7 +97,7 @@ export function bucketProvenance(answer: Answer, bucket: Pick<Bucket, "members">
   return {
     sources,
     transform: { kind: "question", metrics: labels, records: bucket.members.length, engine },
-    receipt: { kind: "head", seq: answer.revision.seq, hash: answer.revision.hash },
+    receipt: answer.revision.seq === 0 ? null : { kind: "head", seq: answer.revision.seq, hash: answer.revision.hash },
     digests: [],
     asOf: [
       { label: "Known", value: `after ${answer.knownAsOf} ${answer.knownAsOf === 1 ? "commit" : "commits"}` },

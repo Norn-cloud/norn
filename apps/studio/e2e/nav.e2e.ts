@@ -22,7 +22,8 @@ test("nav: every rail applet and every sidebar entry navigates and renders", asy
   await page.goto("/sources")
   await settled(page)
   const applets = await page.getByRole("toolbar", { name: "Applets" }).locator("a[href]:not([href='/'])").evaluateAll((links) => links.map((link) => link.getAttribute("href") ?? ""))
-  expect(applets.length).toBeGreaterThan(5)
+  expect(applets).toEqual(["/sources", "/metrics", "/workflows", "/canvas", "/guarantees"])
+  await expect(page.getByRole("link", { name: "Connect a source" })).toHaveCount(0)
   let entries = 0
   for (const applet of applets) {
     await page.getByRole("toolbar", { name: "Applets" }).locator(`a[href="${applet}"]`).click()
