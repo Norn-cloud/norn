@@ -255,18 +255,7 @@ pub fn get_object_page<E: SqlEngine>(
     let mut within = |read: &mut dyn FnMut(&StoreReader<'_, E>) -> Result<(), Refusal>| {
         let cell = host.cell()?;
         let reader = cell.store().read();
-        let version = || {
-            let revision = match reader.read_isolation() {
-                ReadIsolation::Revisioned => Some(
-                    reader
-                        .database_revision()
-                        .map_err(Refusal::host)?
-                        .ok_or_else(snapshot_unavailable)?,
-                ),
-                ReadIsolation::ExclusiveSynchronous => None,
-            };
-            Ok::<_, Refusal>((reader.head_commit_seq().map_err(Refusal::host)?, revision))
-        };
+        let version = || cell_version(&reader);
         let start = match snapshot {
             Some(start) => start,
             None => *snapshot.insert(version()?),
@@ -335,6 +324,28 @@ pub fn get_object_page<E: SqlEngine>(
             return Ok(page);
         }
     }
+}
+
+/// The version of the cell `reader` sees: its head commit and, on an engine
+/// whose reads are not exclusive, the database revision, which moves on any
+/// commit by another connection. Two equal versions bracket one snapshot.
+///
+/// # Errors
+/// `object.snapshot_unavailable` when a revisioned engine offers no revision,
+/// or a host failure.
+pub(crate) fn cell_version<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+) -> Result<(u64, Option<(u64, u64)>), Refusal> {
+    let revision = match reader.read_isolation() {
+        ReadIsolation::Revisioned => Some(
+            reader
+                .database_revision()
+                .map_err(Refusal::host)?
+                .ok_or_else(snapshot_unavailable)?,
+        ),
+        ReadIsolation::ExclusiveSynchronous => None,
+    };
+    Ok((reader.head_commit_seq().map_err(Refusal::host)?, revision))
 }
 
 fn snapshot_unavailable() -> Refusal {

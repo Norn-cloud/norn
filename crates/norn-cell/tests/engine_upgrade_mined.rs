@@ -390,6 +390,13 @@ impl SqlEngine for Racing {
     fn read_isolation(&self) -> ReadIsolation {
         self.inner.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }
@@ -415,6 +422,13 @@ impl SqlEngine for Shared {
     fn read_isolation(&self) -> ReadIsolation {
         self.0.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.0.execute(sql, params)
     }

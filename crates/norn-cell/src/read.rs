@@ -1782,6 +1782,45 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         Ok(Some(labels))
     }
 
+    /// Whether any version, current, past or deleted, of `object_type` or a
+    /// subtype in `world` holds a label on `property` (S2, #1547). A question
+    /// that reads history groups or filters on retained values, which the
+    /// live [`Self::property_marking_summary`] does not see once a row is
+    /// deleted or relabelled. One seek of the partial nonempty version index
+    /// per concrete type, which `INDEXED BY` holds to: a plan that could not
+    /// use it fails, never scans.
+    ///
+    /// # Errors
+    /// Unknown type or a SQL-engine error.
+    pub fn property_history_marked(
+        &self,
+        world: &str,
+        object_type: &str,
+        property: &str,
+    ) -> Result<bool, CellError> {
+        if self.model.tables(object_type)?.is_empty() {
+            return Err(CellError::UnknownObjectType(object_type.to_owned()));
+        }
+        for definition in self.model.object_types() {
+            let concrete_type = definition.name.as_str();
+            if !self.model.is_a(concrete_type, object_type) {
+                continue;
+            }
+            let held: Option<i64> = self.conn.query_optional(
+                &format!(
+                    "SELECT 1 FROM \"{MARKING_VERSION}\" INDEXED BY \"{}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"property\" = ?3 AND \"markings\" != '[]' LIMIT 1",
+                    crate::system::MARKING_VERSION_NONEMPTY
+                ),
+                params![world, concrete_type, property],
+                |row| row.get(0),
+            )?;
+            if held.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Effective identity properties of the requested object type. These
     /// components can be embedded directly in the opaque public key.
     ///
@@ -3301,6 +3340,61 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// SQL errors or a dangling active-version pointer.
     pub fn active_definitions_version(&self) -> Result<Option<u64>, CellError> {
         validate_active_definition_pointer(self.conn)
+    }
+
+    /// ADMIT-CACHE-1 (#1533): the active definitions' identity, its version
+    /// and admission receipt digest, without loading its payload: what a host
+    /// keys the work it does once per definitions version by.
+    ///
+    /// # Errors
+    /// SQL errors or a dangling active-version pointer.
+    pub fn active_definitions_identity(&self) -> Result<Option<(u64, String)>, CellError> {
+        let Some(version) = validate_active_definition_pointer(self.conn)? else {
+            return Ok(None);
+        };
+        let digest: Option<String> = self.conn.query_optional(
+            &format!(
+                "SELECT \"receipt_sha256\" FROM \"{DEFINITION_VERSION}\" WHERE \"version\" = ?1"
+            ),
+            params![to_i64(version, "definitions version")?],
+            |row| row.get(0),
+        )?;
+        let Some(digest) = digest else {
+            return Err(CellError::LedgerCorrupt {
+                seq: version,
+                reason: "active definitions pointer has no retained version".to_owned(),
+            });
+        };
+        Ok(Some((version, digest)))
+    }
+
+    /// Whether any object version, current or past, holds a marking label.
+    /// A cell that holds none serves every field as itself whatever its
+    /// catalog; one that holds any projects them, and a label its catalog
+    /// does not resolve withholds its field (S2, S3, #1547). A declassified
+    /// current label leaves the labels of the versions before it, so both
+    /// tables count. One probe of each partial nonempty index, which
+    /// `INDEXED BY` holds to: a plan that could not use it fails, never scans.
+    ///
+    /// # Errors
+    /// SQL errors.
+    pub fn stores_markings(&self) -> Result<bool, CellError> {
+        for (table, index) in [
+            (MARKING_CURRENT, crate::system::MARKING_CURRENT_NONEMPTY),
+            (MARKING_VERSION, crate::system::MARKING_VERSION_NONEMPTY),
+        ] {
+            let held: Option<i64> = self.conn.query_optional(
+                &format!(
+                    "SELECT 1 FROM \"{table}\" INDEXED BY \"{index}\" WHERE \"markings\" != '[]' LIMIT 1"
+                ),
+                params![],
+                |row| row.get(0),
+            )?;
+            if held.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether a retained definition set is installed at `version`, without

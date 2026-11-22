@@ -2790,10 +2790,12 @@ fn tampered_definition_history_fails_closed_on_reopen() {
 
     let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine opens");
     tamper
-        .execute(
-            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
-            &[SqlValue::from("[]")],
-        )
+        .definition_writes(|| {
+            tamper.execute(
+                "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
+                &[SqlValue::from("[]")],
+            )
+        })
         .expect("tamper retained artifact bytes");
     drop(tamper);
 
@@ -2990,6 +2992,13 @@ impl SqlEngine for CountedEngine {
         Ok(Some((writes, remote)))
     }
 
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.record_write();
         self.inner.execute(sql, params)
@@ -3055,6 +3064,13 @@ impl SqlEngine for ExplainEngine {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.inner.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }
@@ -6044,10 +6060,12 @@ fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
     drop(cold);
     let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
     tamper
-        .execute(
-            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1",
-            &[SqlValue::from("[]")],
-        )
+        .definition_writes(|| {
+            tamper.execute(
+                "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1",
+                &[SqlValue::from("[]")],
+            )
+        })
         .expect("tamper retained artifact bytes");
     drop(tamper);
     assert!(
@@ -6141,7 +6159,9 @@ fn mapping_plan_hit_refuses_like_a_fresh_store() {
     for (name, tamper) in cases {
         let (warm, cold) = warm_and_fresh_refusals(|_, engine, version| {
             engine
-                .execute(&tamper.replace("?V", &version.to_string()), &[])
+                .definition_writes(|| {
+                    engine.execute(&tamper.replace("?V", &version.to_string()), &[])
+                })
                 .expect("tamper");
         });
         assert_eq!(warm, cold, "{name}: warm and cold refusals differ");
@@ -6592,6 +6612,13 @@ impl SqlEngine for ProvisionFault {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.inner.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)?;
         self.boundary()
@@ -7776,4 +7803,68 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
         norn_testkit::proptest::prop_assert_eq!(findings[0].severity, norn_ir::DataQualitySeverity::Warning);
     }
+}
+
+/// S1 (#1547): inside its scope an install writes only the tables its own
+/// statements name. Another connection to the cell file (an out-of-process
+/// editor) gives the retained admission receipts a foreign key to the active
+/// definitions pointer, with `ON DELETE CASCADE`. The next install deletes and
+/// re-inserts the pointer row; the cascade would delete the earlier version's
+/// receipt on the install's own commit. The install is refused, and the cell
+/// is left exactly as it was: the same active version, the same receipt, the
+/// same ledger.
+#[test]
+fn an_install_whose_pointer_cascades_into_the_receipts_is_refused_and_writes_nothing() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let original = model(false);
+    let mut store =
+        CellStore::open(&path, original.clone(), StoreOptions::default()).expect("store opens");
+    let (receipt, digest) = admission_receipt("0.1.0", "norn-zen/4");
+    let mut first = install_input("v1", 1, &original);
+    first.receipt_sha256 = digest;
+    first.admission_receipt = Some(receipt.clone());
+    store
+        .install_definitions(original.clone(), first, Some(0), "org_demo/dev")
+        .expect("the first install");
+    rusqlite::Connection::open(&path)
+        .expect("editor connection")
+        .execute_batch(
+            r#"ALTER TABLE "_norn_definition_admission_receipt" ADD COLUMN "editor_pointer" INTEGER REFERENCES "_norn_definition_active" ("id") ON DELETE CASCADE;
+            UPDATE "_norn_definition_admission_receipt" SET "editor_pointer" = 1;"#,
+        )
+        .expect("the editor's cascade");
+    let receipts = |store: &CellStore| -> Vec<String> {
+        store
+            .read()
+            .installed_definitions(Some(1))
+            .expect("version 1")
+            .expect("retained")
+            .admission_receipt
+            .into_iter()
+            .collect()
+    };
+    let before = store.read().verify_ledger().expect("ledger before");
+    assert_eq!(receipts(&store), vec![receipt.clone()]);
+    let (second_receipt, second_digest) = admission_receipt("0.1.0", "norn-zen/6");
+    let mut second = install_input("v2", 2, &original);
+    second.receipt_sha256 = second_digest;
+    second.admission_receipt = Some(second_receipt);
+    assert!(
+        store
+            .install_definitions(original, second, Some(1), "org_demo/dev")
+            .is_err(),
+        "the install's pointer delete would cascade into a retained receipt"
+    );
+    assert_eq!(store.read().verify_ledger().expect("ledger after"), before);
+    assert_eq!(receipts(&store), vec![receipt]);
+    let editor = rusqlite::Connection::open(&path).expect("editor connection");
+    let (active, receipt_rows): (i64, i64) = editor
+        .query_row(
+            r#"SELECT (SELECT "version" FROM "_norn_definition_active" WHERE "id" = 1), (SELECT COUNT(*) FROM "_norn_definition_admission_receipt")"#,
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("the cell as left");
+    assert_eq!((active, receipt_rows), (1, 1));
 }

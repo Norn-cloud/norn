@@ -171,6 +171,13 @@ impl<S: SqlEngine> SqlEngine for FaultEngine<S> {
         self.inner.admitted()
     }
 
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.statement()?;
         self.inner.execute(sql, params)
@@ -287,6 +294,19 @@ pub trait DoStorage: super::Transact {
     /// # Errors
     /// Backend or host-subset errors.
     fn exec_batch(&self, sql: &str) -> Result<(), CellError>;
+
+    /// [`SqlEngine::definition_writes`] on the storage's connection. A
+    /// Durable Object's own storage guards nothing and runs `f`; the
+    /// emulator opens its native connection's scope.
+    ///
+    /// # Errors
+    /// `f`'s own, or the connection's refusal.
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        f()
+    }
 }
 
 /// The rollback marker [`DoStorageEmulator`]'s glue throws (as the Workers
@@ -417,6 +437,13 @@ impl DoStorage for DoStorageEmulator {
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.native.execute_batch(sql)
     }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.native.definition_writes(f)
+    }
 }
 
 /// The Durable Object engine natively: the Workers engine's transaction glue
@@ -457,6 +484,13 @@ impl<S: DoStorage> SqlEngine for DoEngine<S> {
     }
 
     /// As on Workers: one connection, every read path synchronous.
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.storage.definition_writes(f)
+    }
+
     fn read_isolation(&self) -> ReadIsolation {
         ReadIsolation::ExclusiveSynchronous
     }
