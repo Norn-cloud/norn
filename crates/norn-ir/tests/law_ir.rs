@@ -246,7 +246,7 @@ fn repository_laws() -> Vec<(String, Value)> {
 /// canonical bytes of its source JSON, and keeps the Norn1 pin recorded in
 /// `tests/golden/law-pins.json` (generated from the code before the field
 /// existed). Regenerate only for a deliberate fixture change:
-/// `NORN_UPDATE_LAW_PINS=1 cargo test -p norn-ir --test law_ir`.
+/// `NORN_UPDATE_LAW_PINS=1 cargo test -p norn-ir --test suites law_ir::`.
 #[test]
 fn every_repository_law_keeps_its_canonical_bytes_and_pin() {
     use norn_ir::canonical::{HashProfile, canonical_json_of, canonicalize_json};

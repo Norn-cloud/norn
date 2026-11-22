@@ -272,7 +272,7 @@ fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
     let expected = std::fs::read_to_string(&path).expect("read golden");
     assert_eq!(
         actual, expected,
-        "{GOLDEN} is stale; regenerate with `{UPDATE_ENV}=1 cargo test -p norn-checker --test check_receipt`"
+        "{GOLDEN} is stale; regenerate with `{UPDATE_ENV}=1 cargo test -p norn-checker --test suites check_receipt::`"
     );
     assert_eq!(
         receipt.content_sha256().expect("hash"),

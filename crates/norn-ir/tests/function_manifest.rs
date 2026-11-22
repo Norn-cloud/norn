@@ -88,7 +88,7 @@ fn function_manifest_schemas_are_checked_in_and_current() {
     }
     assert!(
         stale.is_empty(),
-        "stale schemas; regenerate with {UPDATE_ENV}=1 cargo test -p norn-ir --test function_manifest\n{}",
+        "stale schemas; regenerate with {UPDATE_ENV}=1 cargo test -p norn-ir --test suites function_manifest::\n{}",
         stale.join("\n")
     );
 }

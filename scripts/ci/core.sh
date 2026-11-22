@@ -15,12 +15,12 @@ phases=(cheap test doctest features duckdb wasm clippy doc guards integration br
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
-  'binary_id(norn-expr::check) & test(=generated_accepted_expressions_are_total_and_typed)'
+  'binary_id(norn-expr::suites) & test(=check::generated_accepted_expressions_are_total_and_typed)'
   'binary_id(norn-cell) & test(=suites::kernel_quint::quantity_v2_quint_traces)'
   'binary_id(norn-cell) & test(=suites::quantity_reservations::partial_resolution_interleaved_lots_conserve_independent_scalar_fold)'
   'binary_id(norn-cell) & test(=suites::definitions_install::first_overflow_column_charges_the_same_empty_object_bytes_in_check_and_install)'
   'binary_id(norn-cell) & (test(=suites::definitions_install::overflow_backfill_refuses_more_than_the_row_limit_in_check_and_install) | test(=suites::definitions_install::removing_an_empty_overflow_property_refuses_an_incomplete_row_scan))'
-  '(binary_id(norn-cell) & test(=suites::quantity_reservations::generated_reservation_sequences_match_independent_scalar_fold)) | (binary_id(norn-cell::cell_host) & test(=cell_host_laws_hold_across_reopen_for_the_restricted_engine))'
+  '(binary_id(norn-cell) & test(=suites::quantity_reservations::generated_reservation_sequences_match_independent_scalar_fold)) | (binary_id(norn-cell::suites) & test(=cell_host::cell_host_laws_hold_across_reopen_for_the_restricted_engine))'
 )
 rest_shards=3
 # Selection comes only from here: every run ignores nextest's configurable
@@ -221,6 +221,8 @@ run_phase() {
       # TIMER-ALARM-1: the Durable Object's wake rules; OLAP-01: what connections receive (no dependencies).
       (cd apps/norn-cell-do && bun test ./wake.test.mjs ./worker.test.mjs ./connect_vars.test.mjs)
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
+      # A new tests/<name>.rs builds nowhere until it is a module of its crate's tests/suites.rs.
+      python3 scripts/codemods/fold_integration_tests.py --check
       python3 scripts/ci/frontier.py self-test
       python3 scripts/ci/python_isolation.py
       python3 scripts/ci/test_python_isolation.py

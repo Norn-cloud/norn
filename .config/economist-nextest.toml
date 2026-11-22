@@ -62,7 +62,7 @@ command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [profile.economist-rehearsal]
-default-filter = "binary_id(norn-kernel::invariant_commit) & test(=law_invariant_runtime_valid_response_admits)"
+default-filter = "binary_id(norn-kernel::suites) & test(=invariant_commit::law_invariant_runtime_valid_response_admits)"
 test-threads = 1
 retries = 0
 fail-fast = true

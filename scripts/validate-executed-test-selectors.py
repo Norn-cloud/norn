@@ -130,8 +130,19 @@ def artifact_matches(artifact: str, test: ObservedTest) -> bool:
             and test.binary_hint.startswith(f"{crate_binary}-")
             and test.qualified_name.startswith(f"suites::{expected_binary}::")
         )
-        return in_crate or (
-            test.source_hint == source_relative
+        # A crate's top-level integration tests are one binary, `tests/suites.rs`,
+        # each former binary its module `<stem>::`
+        # (scripts/codemods/fold_integration_tests.py).
+        folded = (
+            Path(source_relative).parent.as_posix() == "tests"
+            and test.source_hint == "tests/suites.rs"
+            and test.binary_hint.startswith("suites-")
+            and test.qualified_name.startswith(f"{expected_binary}::")
+        )
+        # `tests/suites.rs` itself holds no tests, only the module list.
+        return in_crate or folded or (
+            expected_binary != "suites"
+            and test.source_hint == source_relative
             and test.binary_hint.startswith(f"{expected_binary}-")
         )
     if source_relative == "src/lib.rs":
@@ -215,6 +226,23 @@ def run_canaries() -> None:
     ):
         raise SelectorEvidenceError(
             "Rust selector parser misattributed a suite compiled in its crate"
+        )
+    folded = rust_passes(
+        "     Running tests/suites.rs (target/debug/deps/suites-0123abcd)\n"
+        "test canary_bin::folded_case ... ok\n"
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured\n"
+    )
+    if not selector_observed(
+        "crates/norn-engine/tests/canary_bin.rs", "folded_case", folded
+    ) or selector_observed(
+        "crates/norn-engine/tests/other_bin.rs", "folded_case", folded
+    ) or selector_observed(
+        "crates/norn-engine/tests/nested/canary_bin.rs", "folded_case", folded
+    ) or selector_observed(
+        "crates/norn-engine/tests/suites.rs", "folded_case", folded
+    ):
+        raise SelectorEvidenceError(
+            "Rust selector parser misattributed a suite folded into tests/suites.rs"
         )
     wrong_crate = [
         ObservedTest(
