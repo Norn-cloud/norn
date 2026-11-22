@@ -131,7 +131,7 @@ CORE_RUNNER = ROOT / "scripts/ci/core.sh"
 # The keys live in Infisical, never in GitHub secrets (norn-skeleton-guard ci::credentials): the
 # step before the start step reads them over OIDC with the reviewed helper
 # scripts/ci/infisical-oidc.sh and hands them over as its outputs.
-SCCACHE_SECRETS = {"NORN_SCCACHE_%s" % name: "${{ steps.sccache-keys.outputs.norn_sccache_%s }}" % (name, name.lower())
+SCCACHE_SECRETS = {"NORN_SCCACHE_%s" % name: "${{ steps.sccache-keys.outputs.norn_sccache_%s }}" % name.lower()
                    for name in ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")}
 # The reader and the writer have their own variables (the writer's are set only in the
 # `ci-cache-writer-boat` environment) and their own Infisical projects; only a push to main asks for the writer.

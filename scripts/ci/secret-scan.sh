@@ -27,8 +27,10 @@ mkdir "$work/bin" "$work/tree"
 tar -xzf "$archive" -C "$work/bin" gitleaks
 configs=$(git -C "$repo" ls-tree -r --name-only HEAD | grep -E '(^|/)\.gitleaks(\.toml|ignore)$' || true)
 [[ -z $configs ]] || { printf 'secret scan: no gitleaks allowlist may be tracked: %s\n' "$configs" >&2; exit 1; }
-# Raw blobs of HEAD's tree (submodule commits have no blob; a symlink's blob is its target).
-git -C "$repo" ls-tree -r -z HEAD | python3 -I -c '
+# Raw blobs of HEAD's tree (submodule commits have no blob; a symlink's blob is its target). Python
+# runs from the empty work directory, so nothing beside it can shadow a module.
+cd "$work"
+git -C "$repo" ls-tree -r -z HEAD | python3 -c '
 import os, subprocess, sys
 repo, tree = sys.argv[1], sys.argv[2]
 entries = [line.split(b"\t", 1) for line in sys.stdin.buffer.read().split(b"\0") if line]
@@ -45,6 +47,5 @@ for sha, path in blobs:
 cat.stdin.close()
 sys.exit(cat.wait())
 ' "$repo" "$work/tree"
-cd "$work"
 env -i PATH=/usr/bin:/bin HOME="$work" "$work/bin/gitleaks" dir "$work/tree" --no-banner --redact \
   --ignore-gitleaks-allow --gitleaks-ignore-path "$work" --exit-code 1

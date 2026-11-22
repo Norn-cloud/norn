@@ -210,7 +210,7 @@ lint_workflows() {
 # negative tests (an export-ignored secret, a GITLEAKS_CONFIG allowlist, a fake gitleaks on PATH)
 # run first.
 scan_secrets() {
-  python3 -I scripts/ci/test_secret_scan.py
+  python3 scripts/ci/test_secret_scan.py
   scripts/ci/secret-scan.sh .
 }
 run_phase() {
@@ -243,7 +243,7 @@ run_phase() {
       python3 scripts/test_standards_atlas.py
       python3 scripts/importers/test_owl_sources.py
       python3 scripts/metrics/test_metrics.py
-      python3 -I scripts/ci/test_infisical_oidc.py
+      python3 scripts/ci/test_infisical_oidc.py
       lint_workflows
       scan_secrets
       cargo xtask ci policy
