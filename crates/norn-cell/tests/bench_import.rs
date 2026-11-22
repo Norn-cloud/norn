@@ -445,9 +445,9 @@ fn real_rows_through_retained_mapping_and_cell() {
                 observed_at: LogicalTime::from_millis(1_793_750_400_000),
             },
             input: norn_ir::runtime_object! {"contract"=>"norn.raw_observation/v1", "source"=>"Retail",
-            "source_id"=>id.clone(), "event_id"=>format!("row-{index}"), "source_version"=>"2",
+            "source_id"=>id, "event_id"=>format!("row-{index}"), "source_version"=>"2",
             "pipeline_version"=>"pipeline/1", "kind"=>"upsert", "extracted_at"=>1_793_750_400_000u64,
-            "payload"=>payload.clone(), "payload_digest"=>hash},
+            "payload"=>payload, "payload_digest"=>hash},
         };
         let at = Instant::now();
         let bundle = match store.inject_mapping_bundle(&observed, &input) {
@@ -477,7 +477,7 @@ fn real_rows_through_retained_mapping_and_cell() {
             .read()
             .object("main", target.entity, &id)
             .expect("read");
-        ids.push(id.clone());
+        ids.push(id);
         let expected = (target.entity == "bench.RetailLine" && actual.is_some())
             || target.properties.iter().all(|(property, source)| {
                 let wanted = source.strip_prefix("input.").map_or_else(

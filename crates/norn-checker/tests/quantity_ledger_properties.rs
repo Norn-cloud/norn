@@ -776,7 +776,7 @@ fn cross_leg_prefix_overflow_is_rejected_by_production_and_independent_oracle() 
     );
     let validation = validate_ledger_pack(&pack);
     assert!(!validation.ok);
-    assert!(validation.certificates.is_empty());
+    assert_eq!(validation.certificates, []);
     assert!(validation.diagnostics.iter().any(|diagnostic| {
         diagnostic.code == diagnostic_codes::BOUND_OVERFLOW
             && diagnostic

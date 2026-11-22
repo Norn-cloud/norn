@@ -827,7 +827,7 @@ impl<'m> MachineChecker<'m> {
                     "a page machine's guards are ZEN expressions; only a catalog entry's machine leaves a guard to its component".to_owned(),
                 );
             }
-            let payload = event.map(event_payload).unwrap_or_default();
+            let payload = event.map_or_default(event_payload);
             let env = (&field_types, &payload);
             if let Some(guard) = &transition.guard {
                 self.check_expression(guard.as_str(), env, &Type::Bool, format!("{pointer}/guard"));

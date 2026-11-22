@@ -284,7 +284,7 @@ mod tests {
         .expect("model");
         let mut store = CellStore::open_in_memory(model).expect("store");
         let rows = k1_rows().expect("fixture rows");
-        assert!(!rows.is_empty());
+        assert_ne!(rows, []);
         let outcome = k1_conversions(&mut store, "org_k1/dev").expect("K1");
         assert_eq!(outcome.receipt().body.written.len(), rows.len());
         assert!(

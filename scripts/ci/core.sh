@@ -15,12 +15,12 @@ phases=(cheap test doctest features duckdb wasm clippy doc guards integration br
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
-  'binary_id(norn-expr::check) & test(=generated_accepted_expressions_are_total_and_typed)'
+  'binary_id(norn-expr::suites) & test(=check::generated_accepted_expressions_are_total_and_typed)'
   'binary_id(norn-cell) & test(=suites::kernel_quint::quantity_v2_quint_traces)'
   'binary_id(norn-cell) & test(=suites::quantity_reservations::partial_resolution_interleaved_lots_conserve_independent_scalar_fold)'
   'binary_id(norn-cell) & test(=suites::definitions_install::first_overflow_column_charges_the_same_empty_object_bytes_in_check_and_install)'
   'binary_id(norn-cell) & (test(=suites::definitions_install::overflow_backfill_refuses_more_than_the_row_limit_in_check_and_install) | test(=suites::definitions_install::removing_an_empty_overflow_property_refuses_an_incomplete_row_scan))'
-  '(binary_id(norn-cell) & test(=suites::quantity_reservations::generated_reservation_sequences_match_independent_scalar_fold)) | (binary_id(norn-cell::cell_host) & test(=cell_host_laws_hold_across_reopen_for_the_restricted_engine))'
+  '(binary_id(norn-cell) & test(=suites::quantity_reservations::generated_reservation_sequences_match_independent_scalar_fold)) | (binary_id(norn-cell::suites) & test(=cell_host::cell_host_laws_hold_across_reopen_for_the_restricted_engine))'
 )
 rest_shards=3
 # Selection comes only from here: every run ignores nextest's configurable
@@ -221,6 +221,8 @@ run_phase() {
       # TIMER-ALARM-1: the Durable Object's wake rules; OLAP-01: what connections receive (no dependencies).
       (cd apps/norn-cell-do && bun test ./wake.test.mjs ./worker.test.mjs ./connect_vars.test.mjs)
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
+      # With Cargo autodiscovery disabled, a new test file must be enrolled in suites.rs.
+      python3 scripts/codemods/fold_integration_tests.py --check
       python3 scripts/ci/frontier.py self-test
       python3 scripts/ci/python_isolation.py
       python3 scripts/ci/test_python_isolation.py
@@ -494,10 +496,12 @@ known = {"test/" + shard for shard in shards.split()} | {
 # The weights these replace (2026-11-14..18) mostly undercounted today's tasks: integration
 # was 920 against 1841 observed. Replaying today's p50s through the old weights gives one
 # bundle 52 min while the others get 33-36.
+# Folded test names rehash the rest shards. Use the old rest total divided evenly
+# until the new shards have timing samples. The heavy shards still run the same tests.
 weights = {
     "test/heavy-1": 13, "test/heavy-2": 244, "test/heavy-3": 90,
     "test/heavy-4": 35, "test/heavy-5": 26, "test/heavy-6": 57,
-    "test/rest-1": 521, "test/rest-2": 266, "test/rest-3": 257,
+    "test/rest-1": 348, "test/rest-2": 348, "test/rest-3": 348,
     "phase/doctest": 48, "phase/features": 791, "phase/duckdb": 630, "phase/wasm": 239,
     "phase/clippy": 119, "phase/doc": 88, "phase/guards": 532,
     "phase/integration": 1841, "phase/provenance": 13, "phase/test-shards": 14,
@@ -506,7 +510,8 @@ weights = {
 # A bundle's test build on a Boat VM: p50 of cargo's "Finished `test` profile" time in the
 # first test task of a bundle (n=189, p90 470 s). The shared compiler cache has no writer yet
 # (#1369), so every such build is cold.
-compile_seconds = 386
+# Scale the historical p50 by the cold build ratio from docs/platform/build.md.
+compile_seconds = 216
 def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
 def cold_cost(task):

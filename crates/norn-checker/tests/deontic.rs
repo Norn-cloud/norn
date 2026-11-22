@@ -233,7 +233,7 @@ fn structured_safety_preserves_grades_timing_sources_and_precedence() {
             .expect("declared precedence");
             let obligations = &contexts.first().expect("applicable").obligations;
             assert_eq!(obligations.is_empty(), grade != DeonticModality::Obligation);
-            assert!(contexts.get(1).expect("excepted").survivors.is_empty());
+            assert_eq!(contexts.get(1).expect("excepted").survivors.len(), 0);
         }
     }
 }
@@ -708,7 +708,7 @@ fn native_order_preserves_explicit_defeat_and_own_exception() {
     let excepted = lower_declared_order(&[low.clone(), high], &norn_expr::schema::Schema::Boolean)
         .expect("explicit exceptions lower");
     assert_eq!(excepted.norms[0].excepted, excepted.norms[0].applicable);
-    assert!(excepted.norms[1].excepted.is_empty());
+    assert_eq!(excepted.norms[1].excepted.len(), 0);
     low.defeated_by.push("missing".into());
     assert!(lower_declared_order(&[low], &norn_expr::schema::Schema::Boolean).is_err());
 }
@@ -774,7 +774,7 @@ fn ordinary_admission_runs_native_declared_order() {
             },
         )
     };
-    assert!(run(&[]).is_empty(), "no declarations unchanged");
+    assert_eq!(run(&[]), [], "no declarations unchanged");
     let tie = run(&[low.clone(), high.clone()]);
     assert!(
         tie.iter()
@@ -787,7 +787,7 @@ fn ordinary_admission_runs_native_declared_order() {
             && d.message.contains("Query budget:")
     }));
     low.defeated_by.push(high.law.id.clone());
-    assert!(run(&[low.clone(), high.clone()]).is_empty());
+    assert_eq!(run(&[low.clone(), high.clone()]), []);
     high.defeated_by.push(low.law.id.clone());
     assert!(
         run(&[low.clone(), high.clone()])
@@ -803,7 +803,7 @@ fn ordinary_admission_runs_native_declared_order() {
         condition: norn_ir::ZenExpression("true".into()),
         source: low.source.clone(),
     });
-    assert!(run(&[low.clone(), high.clone()]).is_empty());
+    assert_eq!(run(&[low.clone(), high.clone()]), []);
     let mut missing = low.clone();
     missing.defeated_by = vec!["missing".into()];
     assert!(
@@ -840,7 +840,7 @@ fn ordinary_admission_protects_base_and_refuses_cross_layer_wins() {
         let mut installed = entity.clone();
         installed["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low]});
         let base: norn_ir::ArtifactEnvelope = serde_json::from_value(installed).expect("base");
-        let mut candidate = entity.clone();
+        let mut candidate = entity;
         candidate["artifactId"] = json!("candidate.entity");
         candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
         high.source.artifact_id = "candidate.entity".into();
@@ -1012,7 +1012,7 @@ fn admitted_normative_resolution_survives_installation() {
     entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low,high]});
     let installed: norn_ir::ArtifactEnvelope = serde_json::from_value(entity).expect("installed");
     let registry = BTreeSet::new();
-    assert!(
+    assert_eq!(
         check_artifact_set(
             std::slice::from_ref(&installed),
             &EntityArtifactSetContext {
@@ -1020,10 +1020,10 @@ fn admitted_normative_resolution_survives_installation() {
                 base: &[],
                 tenant: None
             }
-        )
-        .is_empty()
+        ),
+        []
     );
-    assert!(
+    assert_eq!(
         check_artifact_set(
             &[],
             &EntityArtifactSetContext {
@@ -1031,14 +1031,14 @@ fn admitted_normative_resolution_survives_installation() {
                 base: std::slice::from_ref(&installed),
                 tenant: None
             }
-        )
-        .is_empty()
+        ),
+        []
     );
     let (mut unrelated, _, _) = admission_fixture();
     unrelated["artifactId"] = json!("unrelated.entity");
     unrelated["payload"]["objectType"]["name"] = json!("unrelated.Subject");
     let unrelated = serde_json::from_value(unrelated).expect("unrelated");
-    assert!(
+    assert_eq!(
         check_artifact_set(
             &[unrelated],
             &EntityArtifactSetContext {
@@ -1046,8 +1046,8 @@ fn admitted_normative_resolution_survives_installation() {
                 base: std::slice::from_ref(&installed),
                 tenant: None
             }
-        )
-        .is_empty()
+        ),
+        []
     );
     // A candidate cannot redeclare the inherited law under its existing identity.
     let (_, mut replacement, high) = admission_fixture();
@@ -1088,7 +1088,7 @@ fn admitted_normative_resolution_survives_installation() {
     // Changing only the identity reaches conflict diagnosis instead of refusing lowering.
     replacement.law.id = "sales.candidate".into();
     let findings = run(&replacement);
-    assert!(!findings.is_empty());
+    assert_ne!(findings, []);
     assert!(
         findings
             .iter()
@@ -1621,8 +1621,8 @@ fn native_order_folds_a_law_exception_tree() {
     low.law.exceptions.remove(1);
     let reenabled = lower_declared_order(&[low.clone()], &norn_expr::schema::Schema::Boolean)
         .expect("nested tree lowers");
-    assert!(reenabled.norms[0].excepted.is_empty());
-    assert!(!reenabled.norms[0].applicable.is_empty());
+    assert_eq!(reenabled.norms[0].excepted.len(), 0);
+    assert_ne!(reenabled.norms[0].applicable.len(), 0);
     // A malformed tree or two homes never ground.
     let mut dangling = low.clone();
     dangling.law.exceptions[1].overrides = "missing".into();
@@ -1666,7 +1666,7 @@ fn layer_protection_reads_law_exception_trees_in_both_directions() {
         let mut installed = entity.clone();
         installed["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low]});
         let base: norn_ir::ArtifactEnvelope = serde_json::from_value(installed).expect("base");
-        let mut candidate = entity.clone();
+        let mut candidate = entity;
         candidate["artifactId"] = json!("candidate.entity");
         candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
         high.source.artifact_id = "candidate.entity".into();
@@ -1729,7 +1729,7 @@ fn ordinary_admission_upgrades_flat_legacy_exceptions() {
         rules
     };
     // Lifted everywhere: no clash, exactly as the tree form with the law as parent.
-    assert!(run(legacy("true")).is_empty());
+    assert_eq!(run(legacy("true")), []);
     // Never lifted: the clash stays.
     assert!(
         run(legacy("false"))

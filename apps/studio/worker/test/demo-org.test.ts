@@ -185,8 +185,10 @@ test("Wrangler is reaped after success and each failure exit", async () => {
 
 test("D1 discovery obeys its deadline", async () => {
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Promise<Response>(() => {}) })
+  // The typed client's request, sent to a local server that never answers.
+  const stalled = ((url: RequestInfo | URL, init?: RequestInit) => fetch(`http://127.0.0.1:${server.port}${new URL(String(url)).pathname}`, init)) as typeof fetch
   try {
-    await expect(discoverD1(`http://127.0.0.1:${server.port}/d1`, {}, 40)).rejects.toMatchObject({ exitCode: SEED_EXIT.timeout })
+    await expect(discoverD1({ credentials: { accountId: "account", apiToken: "token" }, fetch: stalled }, "norn-studio-auth-preview", 40)).rejects.toMatchObject({ exitCode: SEED_EXIT.timeout, message: "D1 discovery timed out" })
   } finally { server.stop(true) }
 })
 

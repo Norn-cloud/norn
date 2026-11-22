@@ -26,10 +26,10 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCALE = ["cargo", "test", "--release", "--locked", "-p", "norn-formats", "--test", "owl_scale", "--",
-         "--ignored", "--exact", "owl_scale_admission", "--nocapture", "--test-threads", "1"]
-LENDING = ["cargo", "test", "--release", "--locked", "-p", "norn-cell", "--test", "ontology_lending", "--",
-           "--ignored", "--exact", "owl_lending_cell", "--nocapture", "--test-threads", "1"]
+SCALE = ["cargo", "test", "--release", "--locked", "-p", "norn-formats", "--test", "suites", "--",
+         "--ignored", "--exact", "owl_scale::owl_scale_admission", "--nocapture", "--test-threads", "1"]
+LENDING = ["cargo", "test", "--release", "--locked", "-p", "norn-cell", "--test", "suites", "--",
+           "--ignored", "--exact", "ontology_lending::owl_lending_cell", "--nocapture", "--test-threads", "1"]
 
 
 def run(emit_dir: Path, scale_set: str) -> dict:

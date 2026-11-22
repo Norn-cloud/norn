@@ -392,7 +392,7 @@ fn replay_transcript() -> Value {
                 "event": entry.event, "prevHash": entry.prev_hash, "hash": entry.hash})
         })
         .collect();
-    assert!(!ledger.is_empty(), "the sequence exercises ledger chaining");
+    assert_ne!(ledger.len(), 0, "the sequence exercises ledger chaining");
     json!({"steps": steps, "receipts": receipts, "ledger": ledger})
 }
 

@@ -55,10 +55,6 @@ fn every_reference_vector_canonicalizes_to_its_exact_output() {
         names.len().saturating_sub(failures.len()),
         failures.len()
     );
-    assert!(
-        failures.is_empty(),
-        "JCS failures:\n{}",
-        failures.join("\n")
-    );
+    assert_eq!(failures.len(), 0, "JCS failures:\n{}", failures.join("\n"));
     assert_eq!(names.len(), 6, "the six pinned reference vectors ran");
 }

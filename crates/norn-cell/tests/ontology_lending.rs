@@ -592,8 +592,9 @@ fn run(vocabulary: &Vocabulary, example: &Example, ontology: bool, loans: usize)
     let plan = Plan::new(vocabulary, example);
     let set = definitions(vocabulary, &plan, example, ontology);
     let installed = install(&set);
-    assert!(
-        installed.errors.is_empty(),
+    assert_eq!(
+        installed.errors.len(),
+        0,
         "the {} set is admitted: {:#?}",
         if ontology { "ontology" } else { "plain" },
         installed.errors
@@ -684,7 +685,7 @@ fn ledger_lending_cell_admits_and_refuses() {
         let record = run(&vocabulary, &LEDGER, ontology, 3);
         assert_eq!(record["objectTypes"], json!(2), "{record}");
         let code = record["refusals"][0]["code"].as_str().expect("code");
-        assert!(!code.is_empty(), "{record}");
+        assert_ne!(code.len(), 0, "{record}");
     }
 }
 
