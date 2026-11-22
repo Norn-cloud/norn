@@ -1,17 +1,22 @@
 import alchemy from "alchemy"
 import { createCloudflareApi, D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { authDeploy, cellHost, deployTarget, otelSettings, requireWorkerScript, scanState } from "./deploy-target.ts"
+import { authDeploy, cellHost, cloudflareCredentials, deployTarget, otelSettings, requireSignInRecipe, requireWorkerScript, scanState, useCloudflareCredentials } from "./deploy-target.ts"
 import { billingModeStatement } from "./worker/billing.ts"
 import { polarConfig } from "./worker/polar-config.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
 // (comma-separated); browser navigations to
-// client-side routes fall back to index.html. Credentials are the Norn Cloudflare
-// account's API token: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from Infisical prod
-// /norn/cloudflare (never the Global API Key). State lives in ALCHEMY_STATE_DIR (outside
-// the repository) or the ignored `.alchemy`.
+// client-side routes fall back to index.html. Credentials: the Norn account's workers token,
+// CLOUDFLARE_WORKERS_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from Infisical prod /norn/cloudflare,
+// checked before any API call (deploy-target.ts cloudflareCredentials). The Global API Key
+// variables refuse the run, and another account refuses it. State lives in ALCHEMY_STATE_DIR
+// (outside the repository) or the ignored `.alchemy`.
+// This entry point builds the sign-in Studio only. Production (studio, studio-demo) is the
+// recorded-demo Studio with the /api/agent assistant and no sign-in; it is refused here
+// (deploy-target.ts Recipe, requireSignInRecipe) so a prod run can never delete its AgentBudget
+// Durable Object class or put sign-in on it.
 // ALCHEMY_STAGE must name the stage: unset, the deploy refuses rather than
 // meaning production, and prod also needs NORN_DEPLOY_PROD=1.
 // Each stage has its own Worker (production keeps the live one), and a fresh
@@ -24,10 +29,13 @@ import { polarConfig } from "./worker/polar-config.ts"
 // Operators load BETTER_AUTH_SECRET and ALCHEMY_PASSWORD by name from the secret store
 // (path /auth: NORN_STUDIO_<STAGE>_BETTER_AUTH_SECRET, NORN_STUDIO_<STAGE>_ALCHEMY_PASSWORD).
 const target = deployTarget(process.env)
+requireSignInRecipe(target)
+const credentials = cloudflareCredentials(process.env)
+useCloudflareCredentials(process.env, credentials)
 const auth = authDeploy(process.env, target)
 // Preview binds the Norn cell Worker as NORN_HOST by script name; the script must already exist.
 const host = cellHost(target)
-if (host !== undefined) await requireWorkerScript(host, process.env)
+if (host !== undefined) await requireWorkerScript(host, credentials)
 // The scan below must see the secret's value, so keep a copy before taking it out of the environment.
 const scanEnv = { ...process.env }
 delete process.env.BETTER_AUTH_SECRET
@@ -76,6 +84,8 @@ export const studio = await Vite("studio", {
     // Cloudflare sets cf-connecting-ip itself; the Worker refuses auth without this (#1328).
     STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
+    // Invite-only sign-up (worker/index.ts signUpEmails): required on every stage.
+    STUDIO_SIGNUP_EMAILS: auth.signUpEmails.join(","),
     ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },
     BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify(auth.origins),
     ...otel === undefined ? {} : {

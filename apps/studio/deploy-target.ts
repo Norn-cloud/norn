@@ -2,11 +2,59 @@ import { existsSync, readFileSync, readdirSync, type Dirent } from "node:fs"
 import { join } from "node:path"
 import { exportConfig } from "../norn-cell-do/otlp.mjs"
 
+/**
+ * Which Studio a stage runs:
+ * - `recorded-demo`: production (studio, studio-demo). The static recorded Studio plus the assistant
+ *   at /api/agent (AGENT_BUDGET Durable Object, class AgentBudget; AI_GATEWAY_URL/AI_GATEWAY_TOKEN),
+ *   no sign-in. Built from 7009fd0e0b (branch studio/promote), live as norn-studio-recorded. This
+ *   entry point (alchemy.run.ts) does not build it and refuses it: deploying the sign-in Studio
+ *   over it would delete the AgentBudget class and put sign-in on studio and studio-demo.
+ * - `sign-in`: every other stage. Better Auth with its own D1, invite-only sign-up.
+ */
+export type Recipe = "recorded-demo" | "sign-in"
+
 /** Where one deploy goes: production keeps the live Worker and domains; any other stage gets its own Worker and must name its domains. */
 export interface DeployTarget {
   readonly stage: string
   readonly worker: string
   readonly domains: readonly string[]
+  readonly recipe: Recipe
+}
+
+/**
+ * What production must keep, read from the live Worker's metadata (scripts/prod-parity.ts checks a
+ * deployed Worker against it): the bindings by name and type, the Durable Object class, the
+ * compatibility settings, and no sign-in bindings.
+ */
+export const PROD_RECORDED_DEMO = {
+  worker: "norn-studio-recorded",
+  compatibilityDate: "2026-11-01",
+  compatibilityFlags: ["nodejs_compat"],
+  bindings: { AGENT_BUDGET: "durable_object_namespace", AI_GATEWAY_URL: "secret_text", AI_GATEWAY_TOKEN: "secret_text", ASSETS: "assets" },
+  durableObjectClass: { AGENT_BUDGET: "AgentBudget" },
+  forbidden: ["AUTH_DB", "BETTER_AUTH_SECRET", "BETTER_AUTH_URL"],
+} as const
+
+export interface LiveBinding { readonly name: string; readonly type: string; readonly class_name?: string | null }
+export interface LiveSettings { readonly compatibility_date?: string; readonly compatibility_flags?: readonly string[]; readonly bindings?: readonly LiveBinding[] }
+
+/** How a deployed Worker differs from the production recipe; empty when it matches. */
+export function prodParity(live: LiveSettings): string[] {
+  const issues: string[] = []
+  const bindings = live.bindings ?? []
+  for (const [name, type] of Object.entries(PROD_RECORDED_DEMO.bindings)) {
+    const found = bindings.find((binding) => binding.name === name)
+    if (found === undefined) issues.push(`missing binding ${name} (${type})`)
+    else if (found.type !== type) issues.push(`binding ${name} is ${found.type}, expected ${type}`)
+  }
+  for (const [name, className] of Object.entries(PROD_RECORDED_DEMO.durableObjectClass)) {
+    const found = bindings.find((binding) => binding.name === name)
+    if (found !== undefined && found.class_name !== className) issues.push(`${name} binds class ${found.class_name ?? "none"}, expected ${className}`)
+  }
+  for (const name of PROD_RECORDED_DEMO.forbidden) if (bindings.some((binding) => binding.name === name)) issues.push(`sign-in binding ${name} on production`)
+  if (live.compatibility_date !== PROD_RECORDED_DEMO.compatibilityDate) issues.push(`compatibility date ${live.compatibility_date ?? "none"}, expected ${PROD_RECORDED_DEMO.compatibilityDate}`)
+  for (const flag of PROD_RECORDED_DEMO.compatibilityFlags) if (!(live.compatibility_flags ?? []).includes(flag)) issues.push(`missing compatibility flag ${flag}`)
+  return issues
 }
 
 const PRODUCTION_DOMAINS = "studio.norn.cloud,studio-demo.norn.cloud"
@@ -31,7 +79,61 @@ export function deployTarget(env: Readonly<Record<string, string | undefined>>):
   if (!domains.every(hostname)) throw new Error(`STUDIO_DOMAINS must be comma-separated hostnames, got ${JSON.stringify(listed)}`)
   const taken = domains.filter((domain) => !production && PRODUCTION_DOMAINS.split(",").includes(domain))
   if (taken.length > 0) throw new Error(`Stage ${stage} cannot take the production domains ${taken.join(", ")}`)
-  return { stage, worker: production ? "norn-studio-recorded" : `norn-studio-recorded-${stage}`, domains }
+  return { stage, worker: production ? "norn-studio-recorded" : `norn-studio-recorded-${stage}`, domains, recipe: production ? "recorded-demo" : "sign-in" }
+}
+
+/** This entry point builds the sign-in Studio only; production's recipe is refused before anything runs. */
+export function requireSignInRecipe(target: DeployTarget): void {
+  if (target.recipe !== "sign-in") {
+    throw new Error(`Stage ${target.stage} runs the recorded-demo Studio (${PROD_RECORDED_DEMO.worker}: /api/agent with the AgentBudget Durable Object, no sign-in), which this entry point does not build. Deploying the sign-in Studio there would delete the AgentBudget class and put sign-in on ${target.domains.join(" and ")}. Deploy production from the recorded-demo recipe (7009fd0e0b) and check it with scripts/prod-parity.ts.`)
+  }
+}
+
+/** The Norn Cloudflare account; every deploy and script refuses any other. */
+export const NORN_CLOUDFLARE_ACCOUNT_ID = "bcf71bcfcfd886ae15ece17dfe87228d"
+
+/** Global API Key variables; any of them set refuses the run, whatever else is set. */
+export const LEGACY_CLOUDFLARE_VARIABLES = ["CLOUDFLARE_API_KEY", "CLOUDFLARE_EMAIL", "CLOUDFLARE_ACCOUNT_EMAIL"] as const
+
+export interface CloudflareCredentials { readonly accountId: string; readonly apiToken: string }
+
+/**
+ * The only Cloudflare credential Studio accepts: the Norn account's workers token,
+ * CLOUDFLARE_WORKERS_API_TOKEN from Infisical prod /norn/cloudflare, with CLOUDFLARE_ACCOUNT_ID the
+ * Norn account. Checked before any API call or spawn. The Global API Key variables refuse the run;
+ * a CLOUDFLARE_API_TOKEN from elsewhere (the combined token, a shell value) is never used.
+ */
+export function cloudflareCredentials(env: Readonly<Record<string, string | undefined>>): CloudflareCredentials {
+  const legacy = LEGACY_CLOUDFLARE_VARIABLES.filter((name) => env[name] !== undefined && env[name] !== "")
+  if (legacy.length > 0) throw new Error(`${legacy.join(", ")} set: Studio deploys use the Norn workers token only (Infisical prod /norn/cloudflare); unset ${legacy.length === 1 ? "it" : "them"}`)
+  const apiToken = env.CLOUDFLARE_WORKERS_API_TOKEN?.trim()
+  if (!apiToken) throw new Error("CLOUDFLARE_WORKERS_API_TOKEN is required (Infisical prod /norn/cloudflare)")
+  if (env.CLOUDFLARE_ACCOUNT_ID?.trim() !== NORN_CLOUDFLARE_ACCOUNT_ID) throw new Error("CLOUDFLARE_ACCOUNT_ID must be the Norn account (Infisical prod /norn/cloudflare)")
+  return { accountId: NORN_CLOUDFLARE_ACCOUNT_ID, apiToken }
+}
+
+/**
+ * Point this process's Cloudflare variables at the checked credentials, for libraries that read
+ * them (Alchemy): CLOUDFLARE_API_TOKEN becomes the workers token, every other CLOUDFLARE_* goes.
+ */
+export function useCloudflareCredentials(env: Record<string, string | undefined>, credentials: CloudflareCredentials): void {
+  for (const name of Object.keys(env)) if (name.startsWith("CLOUDFLARE_")) delete env[name]
+  env.CLOUDFLARE_API_TOKEN = credentials.apiToken
+  env.CLOUDFLARE_ACCOUNT_ID = credentials.accountId
+}
+
+/** Variables a spawned tool (Wrangler) may inherit besides its credentials: the toolchain only. */
+const TOOL_ENV = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"] as const
+
+/**
+ * A sanitized environment for Wrangler: the toolchain variables, the checked token and account,
+ * and its config in `configDir` (so a stored `wrangler login` or another account's cache is never
+ * read). Nothing else from the parent: no Global API Key, no other secret.
+ */
+export function wranglerEnv(env: Readonly<Record<string, string | undefined>>, credentials: CloudflareCredentials, configDir: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const name of TOOL_ENV) { const value = env[name]; if (value !== undefined) out[name] = value }
+  return { ...out, XDG_CONFIG_HOME: configDir, WRANGLER_SEND_METRICS: "false", CLOUDFLARE_API_TOKEN: credentials.apiToken, CLOUDFLARE_ACCOUNT_ID: credentials.accountId }
 }
 
 /** Better Auth's deploy-time inputs. Every stage signs users in; there is no unauthenticated Studio. */
@@ -46,6 +148,8 @@ export interface AuthDeploy {
   readonly emailFrom?: string
   /** Optional organization members' sessions start in, e.g. `org_demo` on preview. */
   readonly defaultOrg?: string
+  /** The invited addresses; nobody else can create an account. */
+  readonly signUpEmails: readonly string[]
 }
 
 export function authDeploy(env: Readonly<Record<string, string | undefined>>, target: DeployTarget): AuthDeploy {
@@ -56,7 +160,11 @@ export function authDeploy(env: Readonly<Record<string, string | undefined>>, ta
   if (emailFrom !== undefined && !/^[^@\s]+@[a-z0-9.-]+$/.test(emailFrom)) throw new Error("STUDIO_EMAIL_FROM must be an email address")
   const defaultOrg = env.STUDIO_DEFAULT_ORG
   if (defaultOrg !== undefined && !/^[A-Za-z0-9_-]{1,64}$/.test(defaultOrg)) throw new Error("STUDIO_DEFAULT_ORG must be an organization id")
-  return { secret, url: `https://${target.domains[0]}`, origins: target.domains.map((domain) => `https://${domain}`), ...emailFrom === undefined ? {} : { emailFrom }, ...defaultOrg === undefined ? {} : { defaultOrg } }
+  // Invite-only on every stage: without the list the Worker would take any sign-up.
+  const signUpEmails = [...new Set((env.STUDIO_SIGNUP_EMAILS ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean))]
+  if (signUpEmails.length === 0) throw new Error(`STUDIO_SIGNUP_EMAILS is required: the invited addresses (Infisical prod /auth/NORN_STUDIO_${target.stage.toUpperCase().replace(/-/g, "_")}_SIGNUP_EMAILS); sign-up is invite-only`)
+  if (!signUpEmails.every((email) => /^[^@\s,]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(email))) throw new Error("STUDIO_SIGNUP_EMAILS must be comma-separated email addresses")
+  return { secret, url: `https://${target.domains[0]}`, origins: target.domains.map((domain) => `https://${domain}`), ...emailFrom === undefined ? {} : { emailFrom }, ...defaultOrg === undefined ? {} : { defaultOrg }, signUpEmails }
 }
 
 /** The OpenTelemetry export a deploy passes to the Worker (worker/telemetry.ts); none when the endpoint is unset. */
@@ -131,12 +239,9 @@ export const cellHost = (target: DeployTarget): string | undefined => CELL_HOSTS
  * Fail the deploy, naming the script, unless the cell Worker the stage binds to
  * already exists on the account: a binding to a missing script must not deploy.
  */
-export async function requireWorkerScript(script: string, env: Readonly<Record<string, string | undefined>>, fetcher: typeof fetch = fetch): Promise<void> {
-  const account = env.CLOUDFLARE_ACCOUNT_ID
-  if (account === undefined) throw new Error("CLOUDFLARE_ACCOUNT_ID is required to check the cell Worker binding")
-  // API tokens only (Infisical prod /norn/cloudflare): the Global API Key is never accepted.
-  const token = env.CLOUDFLARE_API_TOKEN
-  if (token === undefined || token === "") throw new Error("CLOUDFLARE_API_TOKEN is required to check the cell Worker binding (Infisical prod /norn/cloudflare)")
+export async function requireWorkerScript(script: string, credentials: CloudflareCredentials, fetcher: typeof fetch = fetch): Promise<void> {
+  // The workers token for the Norn account only (cloudflareCredentials), checked before the request.
+  const { accountId: account, apiToken: token } = credentials
   const headers: Record<string, string> = { authorization: `Bearer ${token}` }
   // Bounded: a stalled connection fails the deploy instead of hanging it.
   const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${script}/settings`, { headers, signal: AbortSignal.timeout(30_000) })
