@@ -1,4 +1,4 @@
-import { Database } from "lucide-react"
+import { Building2, Database, Landmark } from "lucide-react"
 import { useState } from "react"
 import { siApacheairflow, siApachekafka, siApachespark, siErpnext, siFastapi, siGitlab, siGrafana, siKubernetes, siLanggraph, siMlflow, siOdoo, siOllama, siPostgresql, siPython, siRedhatopenshift, siScikitlearn, siShopify } from "simple-icons"
 import { Chip, IconTile } from "@/components/chip"
@@ -31,6 +31,8 @@ function SourceMark({ system, monogram }: { readonly system: string; readonly mo
   const image = Object.hasOwn(OFFICIAL_MARKS, key) ? OFFICIAL_MARKS[key] : undefined
   const [failed, setFailed] = useState<string>()
   if (image && failed !== image) return <img alt="" referrerPolicy="no-referrer" src={image} width={16} height={16} className="object-contain" onError={() => setFailed(image)} />
+  if (key === "lms") return <Building2 aria-hidden />
+  if (key === "bank-settlement") return <Landmark aria-hidden />
   if (path) return <svg aria-hidden focusable="false" viewBox="0 0 24 24" fill="currentColor"><path d={path} /></svg>
   if (monogram) return <span aria-hidden className="text-[8px] font-bold uppercase">{systemName(system).slice(0, 4)}</span>
   return <Database aria-hidden />

@@ -41,7 +41,7 @@ export function DenseTable({ head, children }: { readonly head: ReactNode; reado
 export const RECORDED_HINT = financeDemo ? "Synthetic finance examples from recorded data." : "Documents the engine produced, replayed exactly. Not a live connection."
 
 const EXAMPLE_STACK = [
-  "aws", "python", "postgresql", "fastapi", "langgraph", "grafana", "kafka", "iceberg", "mlflow",
+  "lms", "bank-settlement", "aws", "python", "postgresql", "fastapi", "langgraph", "grafana", "kafka", "iceberg", "mlflow",
   "spark", "airflow", "scikit-learn", "gitlab", "kubernetes", "openshift", "ollama", "pgvector",
   "power-bi", "tableau", "salesforce", "i-score", "instapay", "fawry", "egx", "mcdr", "fra",
 ]
@@ -310,7 +310,7 @@ export function SourcesPage() {
     <section className="space-y-5">
       <PageHeader title="Sources" meta={recorded && <Badge variant="outline" title={RECORDED_HINT}>Recorded demo</Badge>}
         description={recorded
-          ? (financeDemo ? "Synthetic ERPNext and Shopify records map into the same model for clients, loans, and repayments." : "This snapshot uses synthetic ERPNext and Shopify records. Both systems map into the same business model for holdings, orders, and deliveries.")
+          ? (financeDemo ? "Synthetic core lending and bank settlement records map into the same model for clients, loans, and repayments." : "This snapshot uses synthetic ERPNext and Shopify records. Both systems map into the same business model for holdings, orders, and deliveries.")
           : "Each source system keeps its own records. Norn maps them into the same business model for holdings, orders, and deliveries."} />
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}

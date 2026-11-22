@@ -15,7 +15,7 @@ export interface Workspace {
 
 const NOT_YET = "No recorded run in Studio yet"
 
-export const WORKSPACES: readonly Workspace[] = [
+const configured: readonly Workspace[] = [
   { id: "class-demos", name: "Notebook demos", group: "Class demos", detail: "Coming soon", recorded: false },
   // Recorded runs of the two CC BY benchmarks are a later unit; their harnesses (scripts/bench_*.py) fetch the data at test time.
   { id: "uci-online-retail", name: "UCI Online Retail", group: "Industry benchmarks", detail: NOT_YET, recorded: false },
@@ -27,5 +27,7 @@ export const WORKSPACES: readonly Workspace[] = [
     ? { id: "financial-services", name: "Financial services", group: "First-party", detail: "Synthetic example", recorded: true }
     : { id: "jewelry", name: "Jewelry", group: "First-party", detail: "Recorded · synthetic gold-scrap data", recorded: true },
 ]
+
+export const WORKSPACES = financeDemo ? configured.filter(({ recorded }) => recorded) : configured
 
 export const WORKSPACE_GROUPS = [...new Set(WORKSPACES.map(({ group }) => group))]

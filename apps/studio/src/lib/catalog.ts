@@ -1,3 +1,4 @@
+import { financeDemo } from "./finance-demo.ts"
 import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
 import type { Artifact } from "./transport.ts"
 import { labelIndex, pick } from "./labels.ts"
@@ -153,6 +154,8 @@ export interface Catalog {
 }
 
 const SYSTEMS = {
+  lms: { name: "Core lending (LMS)", tone: "blue" },
+  "bank-settlement": { name: "Bank settlement", tone: "green" },
   erpnext: { name: "ERPNext", tone: "blue" },
   shopify: { name: "Shopify", tone: "green" },
   odoo: { name: "Odoo", tone: "violet" },
@@ -191,7 +194,10 @@ const aliases: Readonly<Record<string, string>> = { erp: "erpnext", postgres: "p
 
 export function systemKey(system: string): string {
   const key = system.replace(/^synthetic-/i, "").toLowerCase()
-  return Object.hasOwn(aliases, key) ? aliases[key]! : key
+  const canonical = Object.hasOwn(aliases, key) ? aliases[key]! : key
+  if (financeDemo && /^(erpnext|odoo|frappe|erp|core lending \(lms\))$/.test(canonical)) return "lms"
+  if (financeDemo && /^(shopify|woocommerce|magento|bigcommerce|prestashop|opencart|bank settlement)$/.test(canonical)) return "bank-settlement"
+  return canonical
 }
 
 const systemStyle = (system: string) => {
