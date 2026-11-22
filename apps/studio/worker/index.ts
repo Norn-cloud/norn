@@ -222,10 +222,10 @@ async function accessPreview(request: Request, env: Env, pathname: string): Prom
   if (pathname === "/api/me") {
     const authInstance = auth(env)
     const { adapter } = await authInstance.$context
-    const user = await adapter.findOne<{ id: string; name: string; email: string; emailVerified: boolean }>({
+    const user = await adapter.findOne<{ id: string; name: string; email: string }>({
       model: "user", where: [{ field: "email", value: ACCESS_DEMO_EMAIL }],
     })
-    if (!user?.emailVerified) return refuse(503, "The demo analyst is unavailable.")
+    if (user === null) return refuse(503, "The demo analyst is unavailable.")
     const member = await activeMembership(authInstance, user.id, ACCESS_DEMO_ORG)
     if (member === null || member.environmentId !== null) return refuse(503, "The demo analyst workspace is unavailable.")
     // The shared demo identity has no workspace administration in Access mode.
