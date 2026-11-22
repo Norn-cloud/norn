@@ -210,6 +210,10 @@ function demoBrand(setting: string | undefined): { name: string; logoUrl: string
     const config: unknown = JSON.parse(setting)
     if (!config || typeof config !== "object" || !("name" in config) || !("logoUrl" in config)) return undefined
     if (typeof config.name !== "string" || !config.name.trim() || config.name.length > 80 || typeof config.logoUrl !== "string") return undefined
+    // A small private PNG also works when the original host disallows embedding.
+    if (/^data:image\/png;base64,[A-Za-z0-9+/]{1,6000}={0,2}$/.test(config.logoUrl)) {
+      return { name: config.name.trim(), logoUrl: config.logoUrl }
+    }
     const logo = new URL(config.logoUrl)
     if (logo.protocol !== "https:" || logo.username || logo.password) return undefined
     return { name: config.name.trim(), logoUrl: logo.href }

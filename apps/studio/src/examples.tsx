@@ -80,7 +80,7 @@ function ObjectExplorer() {
           const [x, y] = slots.get(index) ?? POSITIONS[0]
           const current = index === focus
           return (
-            <button key={record.id} type="button" aria-pressed={current} onClick={() => setFocus(index)} className={cn("z-20 flex min-w-0 items-center gap-2 rounded-xl border bg-card p-3 text-start shadow-sm outline-none transition-shadow hover:shadow-md focus-visible:ring-2 focus-visible:ring-data-accent sm:absolute sm:w-[29%] sm:max-w-52 sm:-translate-x-1/2 sm:-translate-y-1/2", current && "border-data-accent bg-data-accent/8 ring-4 ring-data-accent/15")} style={{ left: `${x}%`, top: `${y}%` }}>
+            <button key={record.id} type="button" aria-pressed={current} onClick={() => setFocus(index)} className={cn("z-20 flex min-w-0 items-center gap-2 rounded-xl border bg-card p-3 text-start shadow-sm outline-none transition-shadow hover:shadow-md focus-visible:ring-2 focus-visible:ring-data-accent sm:absolute sm:w-[29%] sm:max-w-52 sm:-translate-x-1/2 sm:-translate-y-1/2", current && "border-data-accent bg-[color-mix(in_oklab,var(--card)_92%,var(--data-accent))] ring-4 ring-data-accent/15")} style={{ left: `${x}%`, top: `${y}%` }}>
               <ObjectTile name={record.type} />
               <span className="min-w-0"><span className="block text-sm font-semibold">{labelOf(record.type)}</span><span className="block truncate font-mono text-[10px] text-muted-foreground">{record.id}</span></span>
             </button>
