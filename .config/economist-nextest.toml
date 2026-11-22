@@ -14,15 +14,15 @@ command = ["bun", "test", "./apps/studio/test/catalog.test.ts", "--test-name-pat
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-1-native-run-three-systems"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "three_systems", "-E", "test(=mvp_map_three_aliases_roles_and_one_economic_identity)"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "suites", "-E", "test(=three_systems::mvp_map_three_aliases_roles_and_one_economic_identity)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-1-native-run-ambiguous-identity-refuses"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "three_systems", "-E", "test(=mvp_map_three_ambiguous_identity_refuses_without_sku_guessing)"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "suites", "-E", "test(=three_systems::mvp_map_three_ambiguous_identity_refuses_without_sku_guessing)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-1-native-run-sales-price-is-not-stock-cost"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "three_systems", "-E", "test(=mvp_map_gap_shopify_price_is_never_stock_cost_or_gl)"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "suites", "-E", "test(=three_systems::mvp_map_gap_shopify_price_is_never_stock_cost_or_gl)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-1-native-run-quarantine-reason"]
@@ -50,7 +50,7 @@ command = ["bun", "test", "./tools/norn-ts/test/inventory-fixture.test.ts", "--t
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-3-native-run-receive-transfer-fifo-sell"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "rea_inventory", "-E", "test(=inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens)"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "suites", "-E", "test(=rea_inventory::inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-4-native-run-refused-conservation-transaction"]
@@ -58,7 +58,7 @@ command = ["cargo", "run", "--locked", "-p", "norn-cell", "--example", "constitu
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-4-native-run-retained-invariant-responses"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-kernel", "--test", "invariant_commit", "-E", "test(=law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin)"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-kernel", "--test", "suites", "-E", "test(=invariant_commit::law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [profile.economist-rehearsal]
