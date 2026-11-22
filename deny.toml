@@ -46,10 +46,18 @@ allow = [
   # norn-engine's typed Function call) uses MIT No Attribution: MIT without
   # even the attribution duty, the same no-obligation class as CC0 above.
   "MIT-0",
+  # Owner policy D134 (2026-11-22). BSL-1.0 is the Boost Software License, not
+  # the Business Source License; bzip2-1.0.6 is BSD-style. Both are permissive.
+  "BSL-1.0",
+  "bzip2-1.0.6",
+  # MPL-2.0 is file-level copyleft, allowed for dependencies used unmodified.
+  # If we ever patch an MPL-licensed file, publish that file's changes under
+  # MPL-2.0.
+  "MPL-2.0",
 ]
-# Copyleft (GPL/LGPL/AGPL/MPL/...) is intentionally absent from the allowlist:
-# any dependency carrying it fails `cargo deny check licenses` and must be
-# explicitly discussed before an exception is added here.
+# Strong copyleft (GPL/LGPL/AGPL/...) and source-available licences (Business
+# Source, SSPL, ELv2, FSL) stay absent: any dependency carrying one fails
+# `cargo deny check licenses` and needs an owner decision.
 confidence-threshold = 0.8
 
 [bans]
