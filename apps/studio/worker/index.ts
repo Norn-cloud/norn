@@ -227,8 +227,9 @@ async function accessPreview(request: Request, env: Env, pathname: string): Prom
     })
     if (!user?.emailVerified) return refuse(503, "The demo analyst is unavailable.")
     const member = await activeMembership(authInstance, user.id, ACCESS_DEMO_ORG)
-    if (member?.role !== "member" || member.environmentId !== null) return refuse(503, "The demo analyst workspace is unavailable.")
-    return account(env, user, member, true)
+    if (member === null || member.environmentId !== null) return refuse(503, "The demo analyst workspace is unavailable.")
+    // The shared demo identity has no workspace administration in Access mode.
+    return account(env, user, { ...member, role: "viewer" }, true)
   }
   if (pathname.toLowerCase().startsWith("/api/") || pathname === MCP_PATH || OAUTH_DISCOVERY.has(pathname)) {
     return refuse(404, "No such demo endpoint.")
