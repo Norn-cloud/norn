@@ -579,8 +579,8 @@ PY
 }
 
 case "${1:-all}" in
-  # PRs and merge groups share the dependency closure. Main/manual runs and
-  # unplannable changes run every shard and phase; formal remains a Boat gate.
+  # Pull requests get the dependency closure of their diff. Merge groups, main and manual runs
+  # (no base) and unplannable changes run every shard and phase; formal remains a Boat gate.
   plan)
     others=()
     for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test || $phase == formal ]] || others+=("$phase"); done
