@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { activeVersion, agentAnswerIssue, agentTailIssue, authDeploy, cellHost, cloudflareCredentials, deployTarget, domainParity, NORN_CLOUDFLARE_ACCOUNT_ID, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, requireSignInRecipe, requireWorkerScript, useCloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
+import { activeVersion, agentAnswerIssue, agentTailIssue, authDeploy, deploymentStableIssue, cellHost, cloudflareCredentials, deployTarget, domainParity, NORN_CLOUDFLARE_ACCOUNT_ID, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, requireSignInRecipe, requireWorkerScript, useCloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
 
 const preview = deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-preview.norn.cloud" })
 const prod = deployTarget({ ALCHEMY_STAGE: "prod", NORN_DEPLOY_PROD: "1" })
@@ -107,6 +107,7 @@ test("cutover: /api/agent must give the assistant's own answer, nothing else", (
   expect(script).toContain('process.argv.includes("--cutover")')
   expect(script).toContain("domainParity(")
   expect(script).toContain("agentTailIssue(probeUrl, events, version)")
+  expect(script.indexOf("deploymentStableIssue(before, await readDeployments())")).toBeGreaterThan(script.lastIndexOf("agentTailIssue(probeUrl"))
 })
 
 test("cutover: the answer is tied to the production Worker at its active version", () => {
@@ -123,6 +124,13 @@ test("cutover: the answer is tied to the production Worker at its active version
   expect(activeVersion([d("a", "2026-11-01T00:00:00Z", [{ version_id: "v1", percentage: 100 }]), d("b", "2026-11-02T00:00:00Z", [{ version_id: "v2", percentage: 100 }])])).toBe("v2")
   expect(activeVersion([d("b", "2026-11-02T00:00:00Z", [{ version_id: "v2", percentage: 50 }, { version_id: "v1", percentage: 50 }])])).toBeUndefined()
   expect(activeVersion([])).toBeUndefined()
+  // Re-read after both probes: the same deployment, one version at 100%, or the cutover fails.
+  const one = [d("a", "2026-11-01T00:00:00Z", [{ version_id: "v1", percentage: 100 }])]
+  expect(deploymentStableIssue(one, one)).toBeUndefined()
+  expect(deploymentStableIssue(one, [...one, d("b", "2026-11-02T00:00:00Z", [{ version_id: "v2", percentage: 100 }])])).toMatch(/changed during the probes \(a → b\)/)
+  expect(deploymentStableIssue(one, [d("a", "2026-11-01T00:00:00Z", [{ version_id: "v1", percentage: 90 }, { version_id: "v2", percentage: 10 }])])).toMatch(/one version at 100%/)
+  expect(deploymentStableIssue(one, [])).toMatch(/no deployment/)
+  expect(deploymentStableIssue([d("a", "2026-11-01T00:00:00Z", [{ version_id: "v1", percentage: 50 }, { version_id: "v2", percentage: 50 }])], one)).toMatch(/one version at 100%/)
 })
 
 test("Cloudflare credentials: the Norn workers token and account only, and never the Global key", () => {

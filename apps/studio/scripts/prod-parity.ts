@@ -9,8 +9,9 @@
  * unauthenticated POST (400 "Missing session.", no model call), and ties that answer to the
  * destination Worker: a Workers Tail opened on the production Worker must show the probe's own
  * request (a one-time nonce as its query key) run by that Worker at its active deployment version. A 400
- * from another Worker or a stale version fails. Run it right after the custom domains move. The
- * tail is deleted afterwards.
+ * from another Worker or a stale version fails. The deployments are read again after both probes:
+ * the same deployment, with one version at 100%, or it fails. Run it right after the custom domains
+ * move. The tail is deleted afterwards.
  *
  *   bun scripts/prod-parity.ts --account norn [--cutover]  # CLOUDFLARE_WORKERS_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
  *   bun scripts/prod-parity.ts --account legacy [--cutover] # LEGACY_CLOUDFLARE_CLEANUP_TOKEN, LEGACY_CLOUDFLARE_ACCOUNT_ID
@@ -19,7 +20,7 @@
  * the tail is read in memory only (never printed: its events carry request headers);
  * exits 1 when there are any (or the Worker is missing).
  */
-import { activeVersion, agentAnswerIssue, agentTailIssue, cloudflareCredentials, domainParity, LEGACY_CLOUDFLARE_VARIABLES, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, type LiveDeployment, type LiveDomain, type LiveSettings, type TailEvent } from "../deploy-target.ts"
+import { activeVersion, agentAnswerIssue, agentTailIssue, cloudflareCredentials, deploymentStableIssue, domainParity, LEGACY_CLOUDFLARE_VARIABLES, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, type LiveDeployment, type LiveDomain, type LiveSettings, type TailEvent } from "../deploy-target.ts"
 
 const which = process.argv[process.argv.indexOf("--account") + 1]
 if (which !== "norn" && which !== "legacy") throw new Error("--account norn or --account legacy is required")
@@ -70,9 +71,13 @@ async function tailDuring(probeUrl: string, probe: () => Promise<void>): Promise
 }
 
 if (process.argv.includes("--cutover")) {
-  const deployments = await get(`/workers/scripts/${PROD_RECORDED_DEMO.worker}/deployments`)
-  if (!deployments.ok) throw new Error(`${which}: Cloudflare answered ${deployments.status} for the deployments`)
-  const version = activeVersion(((await deployments.json()) as { result: { deployments: LiveDeployment[] } }).result.deployments)
+  const readDeployments = async () => {
+    const deployments = await get(`/workers/scripts/${PROD_RECORDED_DEMO.worker}/deployments`)
+    if (!deployments.ok) throw new Error(`${which}: Cloudflare answered ${deployments.status} for the deployments`)
+    return ((await deployments.json()) as { result: { deployments: LiveDeployment[] } }).result.deployments
+  }
+  const before = await readDeployments()
+  const version = activeVersion(before)
   for (const hostname of PROD_DOMAINS) {
     // The nonce is the query key: Tail redacts query values, never keys.
     const probeUrl = `https://${hostname}/api/agent?norn-parity-${crypto.randomUUID().replaceAll("-", "")}`
@@ -83,6 +88,8 @@ if (process.argv.includes("--cutover")) {
     })
     for (const issue of [answer, agentTailIssue(probeUrl, events, version)]) if (issue !== undefined) issues.push(issue)
   }
+  const stable = deploymentStableIssue(before, await readDeployments())
+  if (stable !== undefined) issues.push(stable)
 }
 console.log(issues.length === 0 ? `${which}: ${PROD_RECORDED_DEMO.worker} matches the recorded-demo recipe${process.argv.includes("--cutover") ? ", and /api/agent answers on both domains from it at its active version (tail-verified)" : ""}` : `${which}: ${PROD_RECORDED_DEMO.worker} differs:\n  ${issues.join("\n  ")}`)
 process.exit(issues.length === 0 ? 0 : 1)

@@ -96,6 +96,20 @@ export function activeVersion(deployments: readonly LiveDeployment[]): string | 
   return newest.versions[0]!.version_id
 }
 
+/**
+ * The cutover probes count only if the Worker did not change under them: the deployments read
+ * before and after both probes must have the same newest deployment, with one version at 100%.
+ */
+export function deploymentStableIssue(before: readonly LiveDeployment[], after: readonly LiveDeployment[]): string | undefined {
+  const newest = (ds: readonly LiveDeployment[]) => [...ds].sort((a, b) => Date.parse(b.created_on) - Date.parse(a.created_on))[0]
+  const [b, a] = [newest(before), newest(after)]
+  if (b === undefined || a === undefined) return "no deployment before or after the probes"
+  if (a.id !== b.id) return `the active deployment changed during the probes (${b.id} → ${a.id})`
+  const version = activeVersion(after)
+  if (version === undefined || version !== activeVersion(before)) return `deployment ${a.id} does not serve one version at 100% throughout the probes`
+  return undefined
+}
+
 /** One event from a Workers Tail (trace-v1), as far as the parity check reads it. */
 export interface TailEvent {
   readonly scriptName?: string
