@@ -145,13 +145,11 @@ impl Daemon {
     /// The landing attempts of `of` on disk.
     fn attempts(&self, of: &TenantId) -> Vec<String> {
         let scratch = self.root.join("t").join(of.as_str()).join("scratch");
-        let mut names: Vec<String> = std::fs::read_dir(scratch)
-            .map(|entries| {
-                entries
-                    .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut names: Vec<String> = std::fs::read_dir(scratch).map_or_default(|entries| {
+            entries
+                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                .collect()
+        });
         names.sort();
         names
     }
@@ -178,9 +176,7 @@ fn send_to(
     body: &str,
 ) -> Vec<u8> {
     let mut stream = TcpStream::connect(addr).unwrap();
-    let authorization = authorization
-        .map(|value| format!("authorization: {value}\r\n"))
-        .unwrap_or_default();
+    let authorization = authorization.map_or_default(|value| format!("authorization: {value}\r\n"));
     write!(
         stream,
         "{method} /v1/{op} HTTP/1.1\r\nhost: olapd\r\n{authorization}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -199,8 +195,7 @@ fn status(response: &[u8]) -> &str {
 fn body(response: &[u8]) -> String {
     let text = String::from_utf8_lossy(response);
     text.split_once("\r\n\r\n")
-        .map(|(_, body)| body.to_owned())
-        .unwrap_or_default()
+        .map_or_default(|(_, body)| body.to_owned())
 }
 
 fn frontier(of: &TenantId) -> String {
@@ -806,7 +801,7 @@ fn a_store_never_removes_a_landing_made_while_it_finishes() {
     let answer = daemon.by(&host, &of, "land", &serde_json::to_string(&land_a).unwrap());
     assert_eq!(status(&answer), "200", "{}", body(&answer));
     let landed_a: LandResponse = serde_json::from_str(&body(&answer)).unwrap();
-    assert!(!landed_a.attempt.is_empty(), "the daemon names the attempt");
+    assert_ne!(landed_a.attempt.len(), 0, "the daemon names the attempt");
     // Landing B, run inside store A's window.
     let land_b = land_request(&of, format!("http://{}/b.csv", store.addr), &bytes_b);
     let reused = LandRequest {
@@ -859,7 +854,7 @@ fn a_store_never_removes_a_landing_made_while_it_finishes() {
     assert_eq!(status(&stored_b), "200", "{}", body(&stored_b));
     let puts = store.puts.lock().unwrap();
     assert!(puts.contains_key(&format!("/put/{}", landed_b.data.as_ref().unwrap().sha256)));
-    assert!(daemon.attempts(&of).is_empty());
+    assert_eq!(daemon.attempts(&of).len(), 0);
 }
 
 /// OLAP-02: a store of an attempt whose download is still running, first
@@ -954,5 +949,5 @@ fn a_store_during_a_download_leaves_the_download_intact() {
         (status(&replayed), body(&replayed)),
         (status(&stored), body(&stored))
     );
-    assert!(daemon.attempts(&of).is_empty());
+    assert_eq!(daemon.attempts(&of).len(), 0);
 }

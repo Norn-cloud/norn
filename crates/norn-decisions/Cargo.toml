@@ -5,9 +5,16 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "zen-engine JDM evaluator; decide(slice,event) output (ring 0; see AGENTS.md)"
+# Every integration test is a module of tests/suites.rs, one binary
+# (scripts/codemods/fold_integration_tests.py).
+autotests = false
 
 [lib]
 path = "src/lib.rs"
+
+[[test]]
+name = "suites"
+path = "tests/suites.rs"
 
 [dependencies]
 # RuleIR v2 (the JDM graph, its contract and closed schemas) and the canonical

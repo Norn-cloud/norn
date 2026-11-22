@@ -6,7 +6,7 @@ ERPNext export mapped in. The commands run from the repository root; the
 fixture's test (`tools/norn-ts/test/purchase-requests.test.ts`) runs the same
 steps.
 
-Prerequisites: Rust 1.98.0, Bun 1.3.14, `bun install --frozen-lockfile` in
+Prerequisites: Rust 1.100.0, Bun 1.3.14, `bun install --frozen-lockfile` in
 `tools/norn-ts`, and the dev host:
 
 ```sh

@@ -6779,7 +6779,7 @@ mod tests {
             json!({ "type": ["null", "boolean", "number", "string", "array", "object"], "title": "x" }),
             json!({ "type": ["string", "integer"] }),
         ] {
-            assert!(!check(refused.clone()).is_empty(), "{refused}");
+            assert_ne!(check(refused.clone()).len(), 0, "{refused}");
         }
     }
 
@@ -7095,7 +7095,7 @@ mod tests {
         for path in malformed_paths {
             let mut invalid_record_key = source.clone();
             invalid_record_key["payload"]["extensions"]["norn.poll/1"]["feeds"][1]["recordKeyPath"] =
-                json!(path.clone());
+                json!(path);
             let artifact: ArtifactEnvelope =
                 serde_json::from_value(invalid_record_key).expect("record key fixture");
             let diagnostics = artifact
@@ -7110,7 +7110,7 @@ mod tests {
 
             let mut invalid_fanout_key = source.clone();
             invalid_fanout_key["payload"]["extensions"]["norn.poll/1"]["feeds"][3]["fanout"]["keyPath"] =
-                json!(path.clone());
+                json!(path);
             let artifact: ArtifactEnvelope =
                 serde_json::from_value(invalid_fanout_key).expect("fanout key fixture");
             let diagnostics = artifact

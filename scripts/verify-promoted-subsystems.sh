@@ -281,6 +281,10 @@ run_gate() {
         printf '[fail] %s executed zero Rust tests\n' "$gate_id" | tee -a "$log_path" >&2
         return 1
       fi
+      if [[ "$gate_id" == "hosted-timers-conformance" ]]; then
+        python3 scripts/validate-executed-test-selectors.py \
+          --hosted-timers-log "$log_path" --cargo-command "$executed_command" || return 1
+      fi
       ;;
     bun-tests)
       observed_test_count="$({
@@ -448,8 +452,8 @@ run_gate fast transition-domain-authority-lean \
   command \
   lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean
 run_gate full artifact-direct-write-predicate-runtime \
-  "cargo test --locked -p norn-ir --test artifact_governance" rust-tests \
-  cargo test --locked -p norn-ir --test artifact_governance
+  "cargo test --locked -p norn-ir --test suites artifact_governance::" rust-tests \
+  cargo test --locked -p norn-ir --test suites artifact_governance::
 run_gate fast artifact-governance-quint-typecheck \
   "quint typecheck verification/stripmine-2026-08-22/models/artifact-promotion.qnt" \
   command \
@@ -536,16 +540,13 @@ run_gate fast authorization-scope-exactness-quint \
     --out "$result_root/authorization-scope-exactness-quint.json"
 
 run_gate full quantity-runtime \
-  "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary" \
+  "cargo test --locked -p norn-checker --test suites -- quantity_ledger:: quantity_ledger_properties:: quantity_ledger_expression:: quantity_ledger_boundary::" \
   rust-tests \
   cargo test --locked -p norn-checker \
-    --test quantity_ledger \
-    --test quantity_ledger_properties \
-    --test quantity_ledger_expression \
-    --test quantity_ledger_boundary
+    --test suites -- quantity_ledger:: quantity_ledger_properties:: quantity_ledger_expression:: quantity_ledger_boundary::
 run_gate full generic-posting-runtime \
-  "cargo test --locked -p norn-kernel --test accounting_commit" rust-tests \
-  cargo test --locked -p norn-kernel --test accounting_commit
+  "cargo test --locked -p norn-kernel --test suites accounting_commit::" rust-tests \
+  cargo test --locked -p norn-kernel --test suites accounting_commit::
 
 run_gate full quantity-authority-runtime-unit \
   "cargo test --locked -p norn-cell --lib suites::quantity_reservations::" \
@@ -672,12 +673,10 @@ run_gate full quantity-kani \
     verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs
 
 run_gate full ontology-runtime-rust \
-  "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack" \
+  "cargo test --locked -p norn-checker --test suites -- ontology_pack:: ontology_registry:: quantity_unit_ontology_pack::" \
   rust-tests \
   cargo test --locked -p norn-checker \
-    --test ontology_pack \
-    --test ontology_registry \
-    --test quantity_unit_ontology_pack
+    --test suites -- ontology_pack:: ontology_registry:: quantity_unit_ontology_pack::
 run_gate full ontology-closed-entity-ir-rust \
   "cargo test --locked -p norn-ir -p norn-checker entity_" \
   rust-tests \
@@ -722,8 +721,8 @@ run_gate fast ontology-authority-lean \
   command \
   lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean
 
-run_gate full cala-boundary "cargo test --locked -p norn-checker --test quantity_ledger_boundary" rust-tests \
-  cargo test --locked -p norn-checker --test quantity_ledger_boundary
+run_gate full cala-boundary "cargo test --locked -p norn-checker --test suites quantity_ledger_boundary::" rust-tests \
+  cargo test --locked -p norn-checker --test suites quantity_ledger_boundary::
 
 run_gate fast verification-proof-hole-audit-fast \
   "python3 scripts/check-proof-holes.py" command \
@@ -791,8 +790,8 @@ run_gate full hosted-timers-variants \
 
 # The real run_due/next_due and the DO approval dispatch, driven by the models' traces.
 run_gate full hosted-timers-conformance \
-  "cargo test --locked -p norn-cell-do --test hosted_timers_quint --test approval_fencing_quint" rust-tests \
-  cargo test --locked -p norn-cell-do --test hosted_timers_quint --test approval_fencing_quint
+  "cargo test --locked -p norn-cell-do --test suites -- hosted_timers_quint:: approval_fencing_quint::" rust-tests \
+  cargo test --locked -p norn-cell-do --test suites -- hosted_timers_quint:: approval_fencing_quint::
 
 
 run_gate full kernel-l1-reference \

@@ -301,11 +301,12 @@ fn owl_unpinned_graph_fails_closed_with_complete_inventory() {
             .iter()
             .any(|d| d.code == "format.owl.invalid")
     );
-    assert!(
+    assert_eq!(
         import
             .loss_report
             .validate_inventory(&OwlReader.inventory(graph(), &config))
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(import.loss_report.summary().unexplained, 0);
 }

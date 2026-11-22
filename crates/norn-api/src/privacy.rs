@@ -350,8 +350,7 @@ fn text_of(value: &RuntimeValue) -> String {
         || {
             value
                 .canonical_json()
-                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-                .unwrap_or_default()
+                .map_or_default(|bytes| String::from_utf8_lossy(&bytes).into_owned())
         },
         str::to_owned,
     )

@@ -107,8 +107,9 @@ fn new_envelope_fixtures_roundtrip_with_pinned_hashes() {
         let envelope: ArtifactEnvelope = serde_json::from_str(source)
             .unwrap_or_else(|error| panic!("{name} should deserialize: {error}"));
         assert_eq!(envelope.kind(), kind, "{name} kind");
-        assert!(
-            envelope.payload.unknown_fields().is_empty(),
+        assert_eq!(
+            envelope.payload.unknown_fields().len(),
+            0,
             "{name} has undeclared members: {:?}",
             envelope.payload.unknown_fields()
         );
@@ -143,7 +144,7 @@ fn action_commands_are_typed_and_empty_commands_are_omitted() {
     let mut payload = payload_json(ACTION_FIXTURE);
     let action: ActionRoot =
         serde_json::from_value(payload.clone()).expect("legacy action has no commands");
-    assert!(action.commands.is_empty());
+    assert_eq!(action.commands, []);
     assert!(
         serde_json::to_value(action)
             .expect("action should serialize")
@@ -279,7 +280,7 @@ fn legacy_action_payload_decodes_into_the_typed_root() {
     });
     let action: ActionRoot = assert_typed_roundtrip("legacy action", &payload);
     assert!(action.effect_program.is_some());
-    assert!(action.writes.is_empty());
+    assert_eq!(action.writes, []);
 }
 
 #[test]

@@ -129,7 +129,7 @@ fn lifecycle_findings(
     lifecycle_diagnostics(lifecycle, edit)
         .into_iter()
         .map(|finding| {
-            let pointer = finding.span.map(|span| span.pointer).unwrap_or_default();
+            let pointer = finding.span.map_or_default(|span| span.pointer);
             (finding.code.as_str().to_owned(), pointer, finding.message)
         })
         .collect()
@@ -179,7 +179,7 @@ fn submit_sync() -> Value {
 #[test]
 fn a_page_synced_with_a_transition_its_decision_emits_composes_cleanly() {
     let found = lifecycle_findings(&submit_sync(), |_| {});
-    assert!(found.is_empty(), "{found:#?}");
+    assert_eq!(found, [], "{found:#?}");
 }
 
 #[test]

@@ -799,7 +799,7 @@ fn describe_case(
     coordinates: &[Coordinate],
     case: &[(Vec<usize>, Option<usize>)],
 ) -> Vec<AliasedCell> {
-    let id = |i: usize| coordinates.get(i).map(|c| c.id.clone()).unwrap_or_default();
+    let id = |i: usize| coordinates.get(i).map_or_default(|c| c.id.clone());
     case.iter()
         .map(|(cell, survivor)| AliasedCell {
             coordinates: cell.iter().map(|&i| id(i)).collect(),

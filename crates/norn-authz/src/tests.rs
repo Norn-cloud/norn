@@ -271,7 +271,7 @@ fn directional_rel_and_role_rules() {
 #[test]
 fn empty_policy_denies_everything() {
     let policies = compiled(r#"{ "accessVersion": "0.1", "policyId": "p", "rules": [] }"#);
-    assert!(policies.is_empty());
+    assert_eq!(policies.len(), 0);
     assert_eq!(Case::approve().decide(&policies), Decision::Deny);
     let view = Case {
         action: "commerce.order.view",
@@ -492,7 +492,7 @@ mod pdp {
         assert_eq!(explanation.capability, ConjunctOutcome::Allow);
         assert_eq!(explanation.delegation, ConjunctOutcome::Allow);
         assert_eq!(explanation.access, ConjunctOutcome::Allow);
-        assert!(!explanation.determining_policies.is_empty());
+        assert_ne!(explanation.determining_policies, []);
 
         let deny = approve(&["intruder"], true);
         let explanation = pdp.explain(&deny);
@@ -520,7 +520,7 @@ mod pdp {
             PdpDecision::Deny(DenyReason::AccessError)
         );
         assert_eq!(explanation.access, ConjunctOutcome::Error);
-        assert!(!explanation.diagnostics.is_empty());
+        assert_ne!(explanation.diagnostics.len(), 0);
 
         let delegated = AccessRequest {
             delegation: Delegation::Biscuit("token".to_owned()),
@@ -721,7 +721,7 @@ mod pdp {
             PdpDecision::Deny(DenyReason::AccessError)
         );
         assert_eq!(explanation.access, ConjunctOutcome::Error);
-        assert!(!explanation.diagnostics.is_empty());
+        assert_ne!(explanation.diagnostics.len(), 0);
         assert!(explanation.determining_policies.iter().any(|policy| {
             policy.cedar_policy_id == "policy/always_allow"
                 && policy.policy_id.as_deref() == Some("policy")

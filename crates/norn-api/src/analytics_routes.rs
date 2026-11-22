@@ -119,9 +119,7 @@ fn decode<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, CellError> {
 
 /// A Core 03 refusal the engine reported, as the cell's own.
 fn refused(body: &str) -> CellError {
-    let code = decode::<EngineRefusal>(body)
-        .map(|r| r.code)
-        .unwrap_or_default();
+    let code = decode::<EngineRefusal>(body).map_or_default(|r| r.code);
     for known in [
         UNSUPPORTED_ENGINE,
         "core.compute.bound_exceeded",
@@ -925,7 +923,7 @@ fn bulk_contract<E: SqlEngine>(
         artifact
             .pointer("/payload/maps")
             .and_then(serde_json::Value::as_array)
-            .map(|maps| {
+            .map_or_default(|maps| {
                 maps.iter()
                     .filter(|map| {
                         map.pointer("/target/entity")
@@ -935,7 +933,6 @@ fn bulk_contract<E: SqlEngine>(
                     .cloned()
                     .collect()
             })
-            .unwrap_or_default()
     };
     let candidates: Vec<&serde_json::Value> = set
         .iter()

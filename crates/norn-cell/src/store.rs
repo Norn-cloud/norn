@@ -4060,12 +4060,12 @@ mod identity_history_tests {
             .expect("inactive metadata lookup");
         assert_eq!(lookup.definitions_snapshot(), snapshot(17));
         assert_eq!(lookup.model_hash(), legacy.model_hash());
-        assert!(
+        assert_eq!(
             store
                 .read()
                 .governing_laws_at(2, "identity.Legacy")
-                .expect("public retained lookup")
-                .is_empty()
+                .expect("public retained lookup"),
+            []
         );
         let expected = store.read().dump().expect("before retry");
         drop(store);
@@ -4255,7 +4255,7 @@ mod journal_proof_tests {
             "{outcome:?}"
         );
         assert_eq!(store.export_commit_count().expect("journal head"), 0);
-        assert!(store.read().ledger(0).expect("ledger").is_empty());
+        assert_eq!(store.read().ledger(0).expect("ledger"), []);
 
         // Untouched, the same commit lands and its record exports.
         let store = self::store();

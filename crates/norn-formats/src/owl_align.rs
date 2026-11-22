@@ -357,13 +357,12 @@ fn classes(interfaces: &[ArtifactEnvelope]) -> Result<BTreeMap<String, Class>, S
         let extends = interface
             .get("extends")
             .and_then(Value::as_array)
-            .map(|parents| {
+            .map_or_default(|parents| {
                 parents
                     .iter()
                     .filter_map(|parent| parent.as_str().map(str::to_owned))
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         let description = interface
             .get("description")
             .and_then(Value::as_str)

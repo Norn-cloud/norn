@@ -308,7 +308,7 @@ impl<E: SqlEngine> AdHocQuestions<E> for DerivedRuntime<'_> {
             .candidates()
             .iter()
             .find(|candidate| candidate.definition.name == metric)
-            .map(|candidate| {
+            .map_or_default(|candidate| {
                 candidate
                     .unit_partition
                     .iter()
@@ -322,7 +322,6 @@ impl<E: SqlEngine> AdHocQuestions<E> for DerivedRuntime<'_> {
                     })
                     .collect()
             })
-            .unwrap_or_default()
     }
     fn catalog(&self) -> &EffectiveCatalog {
         &self.derived.catalog

@@ -537,7 +537,7 @@ fn f2_dynamic_key_counterexample_is_rejected() {
         .with_strict(true)
         .analyze("o[k] - 1", &upstream_env);
     assert_eq!(analysis.return_type, VariableType::Number);
-    assert!(analysis.diagnostics.is_empty());
+    assert_eq!(analysis.diagnostics.len(), 0);
 
     let model = Model::retail();
     let mut object_types: Vec<ObjectTypeDef> = model.object_types.clone();
@@ -1218,7 +1218,7 @@ fn generated_accepted_expressions_are_total_and_typed() {
     .into_iter()
     .filter(|sample| !admitted.contains(*sample))
     .collect::<Vec<_>>();
-    assert!(missing.is_empty(), "not admitted: {missing:?}");
+    assert_eq!(missing.len(), 0, "not admitted: {missing:?}");
     assert!(accepted > 1_000, "only {accepted} accepted");
     assert!(rejected > 1_000, "only {rejected} rejected");
 }
@@ -1615,7 +1615,7 @@ fn generated_accepted_unary_tests_are_total() {
     .into_iter()
     .filter(|sample| !admitted.contains(*sample))
     .collect::<Vec<_>>();
-    assert!(missing.is_empty(), "not admitted: {missing:?}");
+    assert_eq!(missing.len(), 0, "not admitted: {missing:?}");
     assert!(accepted > 200, "only {accepted} accepted");
     assert!(rejected > 1_000, "only {rejected} rejected");
 }
