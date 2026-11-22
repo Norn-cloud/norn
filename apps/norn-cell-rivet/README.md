@@ -47,7 +47,7 @@ Rivet Cloud Free plan also cannot demonstrate a three-node quorum.
 
 `durability/durability.py` runs on a Boat VM. It brings this stack up with an
 S3 request meter in front of the bucket (`durability/compose.meter.yaml`, an
-HAProxy that logs every request, counted the way S3 and R2 bill them) and
+HAProxy that logs every request and estimates R2 operation counts) and
 runs the `norn-cell-rivet` runners (a `conformance` build) on the machine:
 
 ```sh

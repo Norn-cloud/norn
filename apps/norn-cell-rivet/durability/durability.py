@@ -30,6 +30,8 @@ cache survives them.
 """
 import argparse
 import concurrent.futures
+from contextlib import contextmanager
+import http.client
 import json
 import os
 from pathlib import Path
@@ -53,6 +55,8 @@ ADMIN = "Bearer fixture:admin@demo"
 SCOPE = "orgId=org_demo&environmentId=analytics"
 NOW_HEADER = "x-norn-conformance-now"
 ENGINES = ["engine-1", "engine-2", "engine-3"]
+WRITE_PROGRESS_SECONDS = 300
+WRITE_BATCH_SECONDS = 900
 
 
 def log(message):
@@ -217,9 +221,9 @@ class Cluster:
 
 
 def classify(requests):
-    """Count S3 requests the way R2 and S3 bill them: class A writes and lists, class B reads."""
-    counts = {}
-    for method, path, _status in requests:
+    """Count all requests and estimate R2 operation counts for the observed responses."""
+    counts, chargeable = {}, {}
+    for method, path, status in requests:
         query = path.split("?", 1)[1] if "?" in path else ""
         key_part = path.split("?", 1)[0].strip("/").split("/", 1)
         is_bucket = len(key_part) < 2 or key_part[1] == ""
@@ -238,15 +242,17 @@ def classify(requests):
         else:
             op = {"PUT": "PutObject", "GET": "GetObject", "HEAD": "HeadObject", "DELETE": "DeleteObject", "POST": "PostObject"}.get(method, method)
         counts[op] = counts.get(op, 0) + 1
+        if status not in {"401", "403"}:
+            chargeable[op] = chargeable.get(op, 0) + 1
     # Where the requests went: the object path with ids and sequence numbers folded.
     paths = {}
     for method, path, _status in requests:
         key = re.sub(r"[0-9a-f]{8}-[0-9a-f-]{27,}|\d{6,}", "*", path.split("?", 1)[0])
         key = f"{method} {'/'.join(key.split('/')[:6])}"
         paths[key] = paths.get(key, 0) + 1
-    class_a = sum(n for op, n in counts.items() if op in {"ListObjects", "ListMultipartUploads", "CreateMultipartUpload", "UploadPart", "CompleteMultipartUpload", "PutObject", "PostObject", "DeleteObjects"})
-    class_b = sum(n for op, n in counts.items() if op in {"GetObject", "HeadObject"})
-    return {"byPath": dict(sorted(paths.items(), key=lambda kv: -kv[1])[:15]), "byOperation": dict(sorted(counts.items())), "classA": class_a, "classB": class_b, "free": counts.get("DeleteObject", 0), "total": len(requests)}
+    class_a = sum(n for op, n in chargeable.items() if op in {"ListObjects", "ListMultipartUploads", "CreateMultipartUpload", "UploadPart", "CompleteMultipartUpload", "PutObject", "PostObject"})
+    class_b = sum(n for op, n in chargeable.items() if op in {"GetObject", "HeadObject"})
+    return {"byPath": dict(sorted(paths.items(), key=lambda kv: -kv[1])[:15]), "byOperation": dict(sorted(counts.items())), "classA": class_a, "classB": class_b, "free": counts.get("DeleteObject", 0) + counts.get("DeleteObjects", 0), "total": len(requests)}
 
 
 class Writers:
@@ -262,10 +268,9 @@ class Writers:
         self.acked = {cell: [] for cell in self.cells}
         self.inflight = {cell: set() for cell in self.cells}
         self.sent = {cell: set() for cell in self.cells}
-        self.ack_log = open(state / f"acks-{tag}.jsonl", "a")
-        self.lock = threading.Lock()
+        self.ack_path = state / f"acks-{tag}.jsonl"
+        self.lock = threading.Condition()
         self.stop = threading.Event()
-        self.threads = []
         self.errors = 0
 
     def install(self, cell, ident, base):
@@ -277,7 +282,7 @@ class Writers:
         for cell in self.cells:
             head(self.cluster.urls()[0], cell, timeout=300)
 
-    def loop(self, index, cell, limit=None):
+    def loop(self, index, cell, limit, ack_log):
         seq = 0
         while not self.stop.is_set():
             if limit is not None and len(self.acked[cell]) >= limit:
@@ -290,33 +295,57 @@ class Writers:
                 self.inflight[cell].add(ident)
             try:
                 status, _, ms = self.install(cell, ident, base)
-            except OSError:
+            except (OSError, http.client.IncompleteRead):
                 status, ms = None, None
             with self.lock:
                 if status == 200:
+                    ack_log.write(json.dumps({"cell": cell, "id": ident, "ms": ms}) + "\n")
+                    ack_log.flush()
+                    os.fsync(ack_log.fileno())
                     self.inflight[cell].discard(ident)
                     self.acked[cell].append(ident)
-                    self.ack_log.write(json.dumps({"cell": cell, "id": ident, "ms": ms}) + "\n")
-                    self.ack_log.flush()
-                    os.fsync(self.ack_log.fileno())
+                    self.lock.notify_all()
                 else:
                     self.errors += 1
             if status != 200:
-                time.sleep(0.5)
+                self.stop.wait(0.5)
 
-    def start(self, limit=None):
-        self.stop.clear()
-        self.threads = [threading.Thread(target=self.loop, args=(i, cell, limit), daemon=True) for i, cell in enumerate(self.cells)]
-        for thread in self.threads:
-            thread.start()
+    @contextmanager
+    def running(self, limit=None):
+        with self.ack_path.open("a") as ack_log, concurrent.futures.ThreadPoolExecutor(max_workers=len(self.cells)) as pool:
+            self.futures = [pool.submit(self.loop, i, cell, limit, ack_log) for i, cell in enumerate(self.cells)]
+            try:
+                yield
+            finally:
+                self.stop.set()
+            for future in self.futures:
+                future.result()
 
-    def halt(self):
-        self.stop.set()
-        for thread in self.threads:
-            thread.join(timeout=300)
+    def commit_batch(self, limit):
+        if limit <= 0:
+            raise ValueError("each writer needs a positive target")
+        with self.running(limit):
+            for future in concurrent.futures.as_completed(self.futures, timeout=WRITE_BATCH_SECONDS):
+                future.result()
+
+    def counts(self):
+        with self.lock:
+            return {cell: len(ids) for cell, ids in self.acked.items()}
+
+    def wait_for_progress(self, before):
+        with self.lock:
+            deadline = time.monotonic() + WRITE_PROGRESS_SECONDS
+            while pending := [cell for cell, count in before.items() if len(self.acked[cell]) <= count]:
+                for future in self.futures:
+                    if future.done():
+                        future.result()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"no acknowledged write from {', '.join(pending)}")
+                self.lock.wait(min(1, remaining))
 
     def total(self):
-        return sum(len(ids) for ids in self.acked.values())
+        return sum(self.counts().values())
 
 
 def head(base, cell, timeout=120):
@@ -380,42 +409,45 @@ def verify(cluster, writers):
 
 
 def phase_kill(cluster, reference, state, rounds):
+    if rounds <= 0:
+        raise ValueError("the kill phase needs at least one round")
     writers = Writers(cluster, reference, state, tag="k")
     writers.open_cells()
-    writers.start()
-    kinds = ["runner", "engine", "engine+runner", "everything"]
-    rows, failures, recoveries = [], [], []
-    for round_index in range(rounds):
-        time.sleep(random.uniform(6, 14))
-        kind = kinds[round_index % len(kinds)]
-        engine = random.choice(ENGINES)
-        before = writers.total()
-        if kind in ("runner", "engine+runner", "everything"):
-            for index in range(len(cluster.children)):
-                cluster.kill_runner(index)
-        if kind in ("engine", "engine+runner"):
-            cluster.kill_engine(engine)
-        if kind == "everything":
-            for service in ENGINES:
-                cluster.kill_engine(service)
-        killed_at = time.perf_counter()
-        time.sleep(1)
-        if kind in ("engine", "engine+runner"):
-            cluster.start_engine(engine)
-        if kind == "everything":
-            for service in ENGINES:
-                cluster.start_engine(service)
-        if kind != "engine":
-            for index in range(len(cluster.children)):
-                cluster.start_runner(index)
-        waited = recovered(cluster, writers.cells)
-        recoveries.append({"kind": kind, "ms": round((time.perf_counter() - killed_at) * 1000)})
-        lost, phantom, landed = verify(cluster, writers)
-        rows.append({"round": round_index + 1, "killed": kind if "engine" not in kind or kind == "everything" else f"{kind} ({engine})", "ackedSoFar": writers.total(), "ackedThisRound": writers.total() - before, "lost": len(lost), "phantom": len(phantom), "inFlightLanded": landed, "recoveryMs": round(waited)})
-        log(f"kill round {round_index + 1}/{rounds}: {rows[-1]}")
-        if lost or phantom:
-            failures.append({"round": round_index + 1, "lost": lost[:10], "phantom": phantom[:10]})
-    writers.halt()
+    with writers.running():
+        kinds = ["runner", "engine", "engine+runner", "everything"]
+        rows, failures, recoveries = [], [], []
+        writers.wait_for_progress(dict.fromkeys(writers.cells, 0))
+        for round_index in range(rounds):
+            time.sleep(random.uniform(6, 14))
+            kind = kinds[round_index % len(kinds)]
+            engine = random.choice(ENGINES)
+            before = writers.total()
+            if kind in ("runner", "engine+runner", "everything"):
+                for index in range(len(cluster.children)):
+                    cluster.kill_runner(index)
+            if kind in ("engine", "engine+runner"):
+                cluster.kill_engine(engine)
+            if kind == "everything":
+                for service in ENGINES:
+                    cluster.kill_engine(service)
+            killed_at = time.perf_counter()
+            time.sleep(1)
+            if kind in ("engine", "engine+runner"):
+                cluster.start_engine(engine)
+            if kind == "everything":
+                for service in ENGINES:
+                    cluster.start_engine(service)
+            if kind != "engine":
+                for index in range(len(cluster.children)):
+                    cluster.start_runner(index)
+            waited = recovered(cluster, writers.cells)
+            recoveries.append({"kind": kind, "ms": round((time.perf_counter() - killed_at) * 1000)})
+            writers.wait_for_progress(writers.counts())
+            lost, phantom, landed = verify(cluster, writers)
+            rows.append({"round": round_index + 1, "killed": kind if "engine" not in kind or kind == "everything" else f"{kind} ({engine})", "ackedSoFar": writers.total(), "ackedThisRound": writers.total() - before, "lost": len(lost), "phantom": len(phantom), "inFlightLanded": landed, "recoveryMs": round(waited)})
+            log(f"kill round {round_index + 1}/{rounds}: {rows[-1]}")
+            if lost or phantom:
+                failures.append({"round": round_index + 1, "lost": lost[:10], "phantom": phantom[:10]})
     lost, phantom, landed = verify(cluster, writers)
     by_kind = {}
     for row in recoveries:
@@ -435,25 +467,29 @@ def phase_kill(cluster, reference, state, rounds):
 def phase_disk(cluster, reference, state, rebuild_wait):
     writers = Writers(cluster, reference, state, tag="d")
     writers.open_cells()
-    writers.start()
-    steps = []
+    with writers.running():
+        steps = []
 
-    def check(label):
-        lost, phantom, landed = verify(cluster, writers)
-        steps.append({"step": label, "acked": writers.total(), "lost": len(lost), "phantom": len(phantom), "inFlightLanded": landed, "lostIds": lost[:10]})
-        log(f"disk: {steps[-1]}")
+        def check(label):
+            lost, phantom, landed = verify(cluster, writers)
+            steps.append({"step": label, "acked": writers.total(), "lost": len(lost), "phantom": len(phantom), "inFlightLanded": landed, "lostIds": lost[:10]})
+            log(f"disk: {steps[-1]}")
 
-    time.sleep(20)
-    check("before any loss")
-    cluster.lose_disk("engine-2")
-    time.sleep(30)
-    check("engine-2's disk lost and restarted empty, writes continued 30 s")
-    time.sleep(rebuild_wait)
-    check(f"after {rebuild_wait} s for replicas to rebuild")
-    cluster.lose_disk("engine-3")
-    time.sleep(30)
-    check("then engine-3's disk lost and restarted empty, writes continued 30 s")
-    writers.halt()
+        time.sleep(20)
+        writers.wait_for_progress(dict.fromkeys(writers.cells, 0))
+        check("before any loss")
+        cluster.lose_disk("engine-2")
+        time.sleep(30)
+        recovered(cluster, writers.cells)
+        writers.wait_for_progress(writers.counts())
+        check("engine-2's disk lost and restarted empty, writes resumed")
+        time.sleep(rebuild_wait)
+        check(f"after {rebuild_wait} s for replicas to rebuild")
+        cluster.lose_disk("engine-3")
+        time.sleep(30)
+        recovered(cluster, writers.cells)
+        writers.wait_for_progress(writers.counts())
+        check("then engine-3's disk lost and restarted empty, writes resumed")
     for index in range(len(cluster.children)):
         cluster.kill_runner(index)
     for service in ENGINES:
@@ -475,15 +511,14 @@ def phase_load(cluster, reference, state, commits, settle):
     time.sleep(settle)
     before = cluster.meter()
     started = time.perf_counter()
-    writers.start(limit=commits // len(writers.cells))
-    for thread in writers.threads:
-        thread.join()
+    writers.commit_batch(commits // len(writers.cells))
     elapsed = time.perf_counter() - started
     after_commits = cluster.meter()
     time.sleep(settle)
     after_settle = cluster.meter()
     lost, phantom, _ = verify(cluster, writers)
     return {
+        "status": "fail" if lost or phantom else "pass",
         "commits": writers.total(), "cells": len(writers.cells), "seconds": round(elapsed, 1), "commitsPerSecond": round(writers.total() / elapsed, 1),
         "s3DuringCommits": classify(after_commits[len(before):]),
         "s3IncludingOffload": classify(after_settle[len(before):]),
@@ -494,9 +529,7 @@ def phase_load(cluster, reference, state, commits, settle):
 def phase_idle(cluster, reference, state, seconds, settle):
     writers = Writers(cluster, reference, state, count=10, tag="i")
     writers.open_cells()
-    writers.start(limit=1)
-    for thread in writers.threads:
-        thread.join()
+    writers.commit_batch(1)
     log(f"idle: {len(writers.cells)} cells committed once; settling {settle} s")
     time.sleep(settle)
     before = cluster.meter()
@@ -530,6 +563,8 @@ def phase_rehearsal(cluster, reference, state, commits):
     """The alpha's life on the cluster: cells are created, commit, the cluster crashes (a runner;
     one engine; everything at once), restarts, and every cell answers again with the same head
     and listing bytes, then commits on the chain it had."""
+    if commits <= 0:
+        raise ValueError("the rehearsal needs at least one commit per cell")
     writers = Writers(cluster, reference, state, count=3, tag="r")
     base = cluster.urls()[0]
     created = []
@@ -599,9 +634,7 @@ def phase_storage(cluster, reference, state, cells, commits, settle):
     before = {volume: volume_bytes(cluster, volume) for volume in volumes}
     writers = Writers(cluster, reference, state, count=cells, tag="s")
     writers.open_cells()
-    writers.start(limit=commits)
-    for thread in writers.threads:
-        thread.join()
+    writers.commit_batch(commits)
     time.sleep(settle)
     after = {volume: volume_bytes(cluster, volume) for volume in volumes}
     grown = {volume: after[volume] - before[volume] for volume in volumes}
