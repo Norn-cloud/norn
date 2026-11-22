@@ -8,6 +8,9 @@ import { DashboardBoardPage, DashboardEditorPage, DashboardsPage } from "./dashb
 import { GuaranteesPage } from "./guarantees.tsx"
 import { ExamplePage } from "./examples.tsx"
 import { FinanceSources } from "./finance/workspace.tsx"
+import { FinanceRecordRoute } from "./finance/record-pages.tsx"
+import { FinanceExamples } from "./finance/examples.tsx"
+import { FinanceMetrics } from "./finance/metrics.tsx"
 import { financeDemo } from "./lib/finance-demo.ts"
 import { MarkingsPage } from "./markings.tsx"
 import { PAGES, type PagePath } from "./lib/pages.ts"
@@ -69,6 +72,12 @@ export function routeTree<R extends AnyRootRoute>(root: R) {
       getParentRoute: () => root, path: "/sources", component: FinanceSources,
       validateSearch: (search: Record<string, unknown>) => ({ view: search.view === "graph" ? "graph" as const : undefined }),
     }),
+    createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: FinanceRecordRoute }),
+    createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: FinanceRecordRoute }),
+    createRoute({ getParentRoute: () => root, path: "/objects/$type", component: FinanceRecordRoute }),
+    createRoute({ getParentRoute: () => root, path: "/metrics", component: FinanceMetrics }),
+    createRoute({ getParentRoute: () => root, path: "/examples", beforeLoad: () => { throw redirect({ href: "/examples/explorer", replace: true }) } }),
+    createRoute({ getParentRoute: () => root, path: "/examples/$scene", component: FinanceExamples }),
     createRoute({ getParentRoute: () => root, path: "/$", beforeLoad: () => { throw redirect({ href: "/sources", replace: true }) } }),
   ])
   return root.addChildren([

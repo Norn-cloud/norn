@@ -18,9 +18,10 @@ export function TypeTile({ type }: { readonly type: FinanceType }) {
 
 export function Mark({ id, className }: { readonly id: MarkId; readonly className?: string }) {
   const { name, tone, file, letters } = MARKS[id]
-  const [unavailable, setUnavailable] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   return <span title={name} aria-label={name} role="img" className={cn("relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border bg-card text-[9px] font-semibold", className)} style={{ color: `var(--tone-${tone})`, background: `color-mix(in oklab,var(--tone-${tone}) 13%,var(--card))` }}>
-    {file && !unavailable ? <img src={`/finance-marks/${file}`} alt="" className="size-[68%] object-contain" onError={() => setUnavailable(true)} /> : (letters ?? name.slice(0, 2).toUpperCase())}
+    <span aria-hidden className={loaded ? "invisible" : undefined}>{letters ?? name.slice(0, 2).toUpperCase()}</span>
+    {file && <img src={`/finance-marks/${file}`} alt="" className={cn("absolute inset-0 size-full object-contain p-[12%]", !loaded && "opacity-0")} onLoad={() => setLoaded(true)} />}
   </span>
 }
 
@@ -58,18 +59,18 @@ function ModelGraph() {
     {EDGES.map(({ text, label: [x, y] }) => <span key={text} className="pointer-events-none absolute z-10 hidden -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border bg-card px-1.5 py-0.5 text-[9px] text-muted-foreground md:block" style={{ left: `${x}%`, top: `${y}%` }}>{text}</span>)}
     <article className="z-20 space-y-3 rounded-2xl border border-data-accent bg-card p-3 shadow-sm ring-4 ring-data-accent/15 md:absolute md:top-1/2 md:left-1/2 md:w-[26%] md:-translate-1/2">
       <div className="flex flex-wrap items-center justify-between gap-1.5">
-        <div className="flex items-center gap-2"><TypeTile type="client" /><h3 className="text-sm font-semibold">Borrower</h3></div>
-        <div aria-label="Four source systems" className="flex -space-x-1.5">{CLIENT_FIELDS.map(({ mark }) => <Mark key={mark} id={mark} className="size-6 text-[7px] ring-1 ring-card" />)}</div>
+        <div className="flex items-center gap-2"><TypeTile type="client" /><h3 className="text-sm font-semibold"><Link to="/sources/$concept" params={{ concept: "client" }} className="hover:text-tone-blue">Borrower</Link></h3></div>
+        <div aria-label="Four source systems" className="flex -space-x-1">{CLIENT_FIELDS.map(({ mark }) => <Mark key={mark} id={mark} className="size-7 text-[8px] ring-1 ring-card" />)}</div>
       </div>
       <Chip tone="blue" icon={GitMerge} className="rounded-full">Merged</Chip>
       <ul className="grid gap-1.5">
-        {CLIENT_FIELDS.map(({ mark, field }) => <li key={field} className="flex items-center gap-1.5"><Mark id={mark} className="size-5 text-[7px]" /><code className="text-xs">{field}</code></li>)}
+        {CLIENT_FIELDS.map(({ mark, field }) => <li key={field} className="flex items-center gap-1.5"><Mark id={mark} className="size-6 text-[8px]" /><code className="text-xs">{field}</code></li>)}
       </ul>
       <div className="border-t pt-2 text-[10px] text-muted-foreground">Matching key · National ID</div>
     </article>
     {NODES.map(({ type, x, y, field }) => <article key={type} className="rounded-xl border bg-card p-3 shadow-sm md:absolute md:w-[26%] md:-translate-1/2" style={{ left: `${x}%`, top: `${y}%` }}>
-      <div className="flex items-center gap-2"><TypeTile type={type} /><h3 className="truncate text-xs font-semibold md:text-sm">{TYPES[type].name}</h3></div>
-      <div className="mt-1.5 flex items-center gap-1.5"><Mark id={TYPES[type].mark} className="size-5 rounded-md text-[7px]" /><code className="truncate text-[10px] text-muted-foreground">{field}</code></div>
+      <div className="flex items-center gap-2"><TypeTile type={type} /><h3 className="truncate text-xs font-semibold md:text-sm"><Link to="/sources/$concept" params={{ concept: type }} className="hover:text-tone-blue">{TYPES[type].name}</Link></h3></div>
+      <div className="mt-1.5 flex items-center gap-1.5"><Mark id={TYPES[type].mark} className="size-6 rounded-md text-[8px]" /><code className="truncate text-[10px] text-muted-foreground">{field}</code></div>
     </article>)}
   </section>
 }
@@ -89,7 +90,7 @@ export function FinanceSources() {
     {graph ? <>
       <div className="space-y-1"><h2 className="text-section font-semibold">How your lending data fits together</h2><p className="text-xs text-muted-foreground">Four feeds resolve to one borrower on National ID.</p></div>
       <ModelGraph />
-      <div className="flex flex-wrap gap-1.5">{Object.entries(TYPES).map(([type, item]) => <Chip key={type} tone={item.tone} className="rounded-full">{item.name}</Chip>)}</div>
+      <div className="flex flex-wrap gap-1.5">{Object.entries(TYPES).map(([type, item]) => <Link key={type} to="/sources/$concept" params={{ concept: type }}><Chip tone={item.tone} className="rounded-full hover:ring-1 hover:ring-border">{item.name}</Chip></Link>)}</div>
     </> : <>
       <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-xl border bg-surface-subtle px-3.5 py-2.5 text-xs text-muted-foreground">
         <span><strong className="font-semibold text-foreground">7</strong> mapped systems</span>

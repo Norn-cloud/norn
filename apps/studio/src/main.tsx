@@ -14,6 +14,9 @@ import { routeTree } from "./routes.tsx"
 import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
 import { Shell, type Section } from "./shell.tsx"
 import { financeDemo } from "./lib/finance-demo.ts"
+import { financeSourceMenu } from "./finance/record-pages.tsx"
+import { financeExampleMenu } from "./finance/examples.tsx"
+import { financeMetricMenu } from "./finance/metrics.tsx"
 import { useSourcesMenu } from "./sources.tsx"
 import { useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
@@ -33,7 +36,9 @@ const SECTIONS: readonly Section[] = [
 ]
 
 const FINANCE_SECTIONS: readonly Section[] = [
-  { path: "/sources", label: "Sources", icon: Database, summary: "Mapped lending, brokerage, and payment systems.", kind: "source", group: "Model" },
+  { path: "/sources", label: "Sources", icon: Database, summary: "Mapped lending, brokerage, and payment systems.", kind: "source", group: "Model", useMenu: financeSourceMenu, paths: ["/objects"] },
+  { path: "/metrics", label: "Metrics", icon: ChartLine, summary: "Repayment reconciliation and corrections.", kind: "question", group: "Model", useMenu: financeMetricMenu },
+  { path: "/examples", label: "Examples", icon: Network, summary: "Object explorer, document mapping and dataset mapping.", group: "Model", useMenu: financeExampleMenu },
 ]
 
 /**
