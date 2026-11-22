@@ -27,8 +27,8 @@ const NODE_TYPES = { type: TypeCard }
 
 /**
  * Lay the object types out top to bottom by the links they declare: a type sits one row
- * below the farthest type linking to it (cycles stop at the first visit), and each row
- * lines its types up in name order.
+ * below the farthest type linking to it (cycles stop at the first visit). Types without
+ * a graph edge sit beside the linked types so they don't stretch the first row.
  */
 export function layout(concepts: readonly Concept[]): ReadonlyMap<string, { readonly x: number; readonly y: number }> {
   const names = new Set(concepts.map(({ name }) => name))
@@ -40,15 +40,26 @@ export function layout(concepts: readonly Concept[]): ReadonlyMap<string, { read
     for (const { target } of concept?.relationships ?? []) if (names.has(target)) place(target, depth + 1, new Set([...path, name]))
   }
   const targeted = new Set(concepts.flatMap(({ relationships }) => relationships.map(({ target }) => target)))
-  for (const { name } of concepts) if (!targeted.has(name)) place(name, 0, new Set())
-  for (const { name } of concepts) if (!column.has(name)) place(name, 0, new Set())
+  const sorted = [...concepts].sort((a, b) => a.title.localeCompare(b.title))
+  const linked = sorted.filter(({ name, relationships }) => targeted.has(name) || relationships.some(({ target }) => names.has(target)))
+  for (const { name } of linked) if (!targeted.has(name)) place(name, 0, new Set())
+  for (const { name } of linked) if (!column.has(name)) place(name, 0, new Set())
   const rows = new Map<number, number>()
   const positions = new Map<string, { x: number; y: number }>()
-  for (const { name } of [...concepts].sort((a, b) => a.title.localeCompare(b.title))) {
+  for (const { name } of linked) {
     const at = column.get(name) ?? 0
     const row = rows.get(at) ?? 0
     rows.set(at, row + 1)
     positions.set(name, { x: row * (WIDTH + GAP_X), y: at * (HEIGHT + GAP_Y) })
+  }
+  const linkedColumns = Math.max(0, ...rows.values())
+  const isolatedColumns = linkedColumns === 0 ? 3 : 1
+  const isolated = sorted.filter(({ name }) => !positions.has(name))
+  for (const [index, { name }] of isolated.entries()) {
+    positions.set(name, {
+      x: (linkedColumns + index % isolatedColumns) * (WIDTH + GAP_X),
+      y: Math.floor(index / isolatedColumns) * (HEIGHT + GAP_Y),
+    })
   }
   return positions
 }
