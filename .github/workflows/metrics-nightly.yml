@@ -19,9 +19,9 @@ jobs:
     timeout-minutes: 30
     permissions:
       # The token pushes only the metrics branch: main's ruleset refuses direct pushes.
-      contents: write
-      actions: read
-      checks: read
+      contents: write # Append measurements to the metrics branch.
+      actions: read # Read CI run metadata and artifacts.
+      checks: read # Read check timings for the metrics record.
     env:
       GIT_AUTHOR_NAME: github-actions[bot]
       GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
