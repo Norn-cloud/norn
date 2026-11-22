@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   watch:
+    if: github.repository == 'Norn-cloud/norn'
     permissions:
       contents: read
       issues: write
@@ -77,19 +78,7 @@ jobs:
             echo
             echo "${advisories_note}"
             echo
-            echo "Prioritize security fixes. Close this issue after recording the review or updating the vendored pin."
+            echo "Prioritize security fixes. Record review decisions in this issue so the weekly updates share one tracker."
           } > "${body_file}"
-          # Issue lookup and updates through the REST API (`gh api` only).
-          existing="$(gh api --paginate "repos/${GH_REPO}/issues?state=open&per_page=100" \
-            --jq '.[] | select(.pull_request | not) | select(.title | startswith("zen upstream watch")) | .number' \
-            | sed -n 1p)"
-          if [[ -n "${existing}" ]]; then
-            gh api -X PATCH "repos/${GH_REPO}/issues/${existing}" \
-              -f title="${title}" -F body=@"${body_file}" --jq .html_url
-            echo "Updated #${existing}"
-          elif [[ -n "${releases}${advisories}" ]]; then
-            gh api -X POST "repos/${GH_REPO}/issues" \
-              -f title="${title}" -F body=@"${body_file}" --jq .html_url
-          else
-            echo "Nothing new upstream; no issue opened."
-          fi
+          gh api -X PATCH "repos/${GH_REPO}/issues/1571" \
+            -f title="${title}" -F body=@"${body_file}" --jq .html_url
