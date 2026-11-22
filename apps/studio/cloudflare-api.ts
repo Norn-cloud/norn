@@ -35,14 +35,28 @@ export interface CloudflareClient {
 }
 
 export type Answer<A, E> =
-  | { readonly ok: true; readonly value: A }
+  | { readonly ok: true; readonly value: A; readonly response: Response }
   | { readonly ok: false; readonly status: number; readonly error: E | undefined; readonly response: Response }
+
+type Operation<A, E> = Effect.Effect<A, E, Credentials.Credentials | HttpClient.HttpClient>
 
 /**
  * Run one distilled operation: one request, no retry, bounded by `timeoutMs`. `headers` are added
  * to the request (the D1 lookup sent `content-type: application/json` on its GET).
  */
-export async function call<A, E>(client: CloudflareClient, operation: Effect.Effect<A, E, Credentials.Credentials | HttpClient.HttpClient>, timeoutMs = 30_000, headers: Readonly<Record<string, string>> = {}): Promise<Answer<A, E>> {
+export async function call<A, E>(client: CloudflareClient, operation: Operation<A, E>, timeoutMs = 30_000, headers: Readonly<Record<string, string>> = {}): Promise<Answer<A, E>> {
+  return run(client, operation, timeoutMs, headers, false)
+}
+
+/**
+ * The HTTP status of one distilled operation's request, decided from the status line alone as the
+ * old existence check did: the body is never read, so a 2xx passes as soon as its headers arrive.
+ */
+export async function callStatus<A, E>(client: CloudflareClient, operation: Operation<A, E>, timeoutMs = 30_000): Promise<number> {
+  return (await run(client, operation, timeoutMs, {}, true)).response.status
+}
+
+async function run<A, E>(client: CloudflareClient, operation: Operation<A, E>, timeoutMs: number, headers: Readonly<Record<string, string>>, statusOnly: boolean): Promise<Answer<A, E>> {
   const send = client.fetch ?? globalThis.fetch
   const deadline = AbortSignal.timeout(timeoutMs)
   let reply: Response | undefined
@@ -52,8 +66,8 @@ export async function call<A, E>(client: CloudflareClient, operation: Effect.Eff
     const merged = new Headers(init?.headers)
     for (const [name, value] of Object.entries(headers)) merged.set(name, value)
     const response = await send(input, { ...init, headers: merged, signal: deadline })
-    if (response.ok) { reply = response.clone(); return response }
-    // Not 2xx: distilled decides from the status alone, and the body is left for the caller.
+    if (response.ok && !statusOnly) { reply = response.clone(); return response }
+    // Not 2xx (or status only): distilled decides from the status alone; the body is left unread.
     reply = response
     return new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers })
   }) as typeof fetch
@@ -63,14 +77,14 @@ export async function call<A, E>(client: CloudflareClient, operation: Effect.Eff
     Credentials.fromApiToken({ apiToken: Redacted.make(client.credentials.apiToken) }),
   )
   const exit = await Effect.runPromiseExit(operation.pipe(Retry.none, Effect.provide(layer)), { signal: deadline })
-  if (deadline.aborted && reply === undefined) throw new DOMException("The operation timed out.", "TimeoutError")
+  if (deadline.aborted) throw new DOMException("The operation timed out.", "TimeoutError")
   const failure = Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason) : undefined
-  if (reply !== undefined && (!reply.ok || Exit.isFailure(exit))) {
-    if (Exit.isFailure(exit) && failure === undefined && deadline.aborted) throw new DOMException("The operation timed out.", "TimeoutError")
-    return { ok: false, status: reply.status, error: failure?.error, response: reply }
-  }
-  if (Exit.isSuccess(exit)) return { ok: true, value: exit.value }
-  throw failure !== undefined ? transportError(failure.error) : Cause.squash(exit.cause)
+  if (reply === undefined) throw failure !== undefined ? transportError(failure.error) : Exit.isFailure(exit) ? Cause.squash(exit.cause) : new Error("Cloudflare did not answer")
+  if (statusOnly) return reply.ok ? { ok: true, value: undefined as A, response: reply } : { ok: false, status: reply.status, error: failure?.error, response: reply }
+  // An interruption or defect while decoding is not Cloudflare's answer: it propagates.
+  if (Exit.isFailure(exit) && failure === undefined) throw Cause.squash(exit.cause)
+  if (!reply.ok || Exit.isFailure(exit)) return { ok: false, status: reply.status, error: failure?.error, response: reply }
+  return { ok: true, value: (exit as Exit.Success<A, E>).value, response: reply }
 }
 
 /** The error fetch itself raised, when distilled wrapped it. */
@@ -94,6 +108,10 @@ export function liveSettings(settings: Settings): LiveSettings {
   }
 }
 
+/** GET /accounts/{account}/workers/scripts/{script}/settings: the status only (requireWorkerScript) */
+export const workerSettingsStatus = (client: CloudflareClient, script: string) =>
+  callStatus(client, workers.getScriptScriptAndVersionSetting({ accountId: client.credentials.accountId, scriptName: script }))
+
 /** GET /accounts/{account}/workers/scripts/{script}/settings */
 export const workerSettings = (client: CloudflareClient, script: string) =>
   call(client, workers.getScriptScriptAndVersionSetting({ accountId: client.credentials.accountId, scriptName: script }))
@@ -102,7 +120,7 @@ export const workerSettings = (client: CloudflareClient, script: string) =>
 export async function workerDomains(client: CloudflareClient): Promise<Answer<LiveDomain[], workers.ListDomainsError>> {
   const answer = await call(client, workers.listDomains({ accountId: client.credentials.accountId }))
   if (!answer.ok) return answer
-  return { ok: true, value: answer.value.result.map(({ hostname, service, environment, enabled }) => ({ hostname, service, environment, enabled })) }
+  return { ok: true, response: answer.response, value: answer.value.result.map(({ hostname, service, environment, enabled }) => ({ hostname, service, environment, enabled })) }
 }
 
 /** GET /accounts/{account}/workers/scripts/{script}/deployments */
@@ -111,6 +129,7 @@ export async function workerDeployments(client: CloudflareClient, script: string
   if (!answer.ok) return answer
   return {
     ok: true,
+    response: answer.response,
     value: answer.value.deployments.map((deployment) => ({
       id: deployment.id,
       created_on: deployment.createdOn,

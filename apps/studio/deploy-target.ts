@@ -344,9 +344,10 @@ export async function requireWorkerScript(script: string, credentials: Cloudflar
   // The workers token for the Norn account only (cloudflareCredentials), checked before the request.
   // Bounded (30 s, cloudflare-api.ts call): a stalled connection fails the deploy instead of hanging it.
   // Loaded here, not at the top: celld-deploy-cell imports this module without Studio's packages.
-  const { workerSettings } = await import("./cloudflare-api.ts")
-  const answer = await workerSettings({ credentials, fetch: fetcher }, script)
-  if (answer.ok) return
-  if (answer.status === 404) throw new Error(`The cell Worker ${script} does not exist on this account; deploy it before binding Studio to it as NORN_HOST`)
-  throw new Error(`Could not check the cell Worker ${script}: Cloudflare answered ${answer.status}`)
+  const { workerSettingsStatus } = await import("./cloudflare-api.ts")
+  // Decided from the status line alone, as before: a 2xx passes when its headers arrive.
+  const status = await workerSettingsStatus({ credentials, fetch: fetcher }, script)
+  if (status >= 200 && status < 300) return
+  if (status === 404) throw new Error(`The cell Worker ${script} does not exist on this account; deploy it before binding Studio to it as NORN_HOST`)
+  throw new Error(`Could not check the cell Worker ${script}: Cloudflare answered ${status}`)
 }

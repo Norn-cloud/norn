@@ -89,23 +89,17 @@ export async function seedWhenReady(exited: Promise<number>, base: string, token
 
 /**
  * Find the stage's D1 database through the control plane (GET /d1/database?name=), under a
- * cancellable deadline. A refusal prints Cloudflare's own `errors` envelope; an unreadable reply
- * is a failed discovery.
+ * cancellable deadline. Decided from Cloudflare's own envelope, as before: without `success` it is
+ * a refusal that prints the envelope's `errors`; an unreadable reply is a failed discovery.
  */
 export async function discoverD1(client: CloudflareClient, name: string, timeoutMs = 15_000): Promise<{ uuid: string; name: string } | undefined> {
   const fail = (error: unknown) => new SeedFailure(timedOut(error) ? "D1 discovery timed out" : "D1 discovery failed", timedOut(error) ? SEED_EXIT.timeout : SEED_EXIT.refused)
-  let found: Awaited<ReturnType<typeof d1Databases>>
-  try { found = await d1Databases(client, name, timeoutMs) }
+  let envelope: { success?: unknown; result?: unknown; errors?: unknown }
+  try { envelope = await (await d1Databases(client, name, timeoutMs)).response.json() as typeof envelope }
   catch (error) { throw fail(error) }
-  if (!found.ok) {
-    let envelope: { errors?: unknown }
-    try { envelope = await found.response.json() as { errors?: unknown } }
-    catch (error) { throw fail(error) }
-    throw new SeedFailure(`could not list D1 databases: ${JSON.stringify(envelope?.errors)}`, SEED_EXIT.refused)
-  }
-  const result: unknown = found.value.result
-  if (!Array.isArray(result)) throw fail(undefined)
-  return (result as { uuid?: string | null; name?: string | null }[]).flatMap(({ uuid, name: named }) => uuid != null && named != null ? [{ uuid, name: named }] : []).find((db) => db.name === name)
+  if (envelope === null || typeof envelope !== "object" || envelope.success !== true) throw new SeedFailure(`could not list D1 databases: ${JSON.stringify(envelope?.errors)}`, SEED_EXIT.refused)
+  if (!Array.isArray(envelope.result)) throw fail(undefined)
+  return (envelope.result as { uuid?: unknown; name?: unknown }[]).flatMap(({ uuid, name: named }) => typeof uuid === "string" && typeof named === "string" ? [{ uuid, name: named }] : []).find((db) => db.name === name)
 }
 
 /** Reap Wrangler on success, error, SIGINT and SIGTERM before returning. */

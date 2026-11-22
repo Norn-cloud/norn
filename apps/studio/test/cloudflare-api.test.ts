@@ -35,15 +35,15 @@ test("each operation sends the request the hand-written fetch sent", async () =>
   expect(settings.sent).toEqual([get(`/workers/scripts/${worker}/settings`)])
 
   const domains = recording(envelope([], { page: 1, per_page: 20, count: 0, total_count: 0 }))
-  expect(await workerDomains(domains.client)).toEqual({ ok: true, value: [] })
+  expect(await workerDomains(domains.client)).toMatchObject({ ok: true, value: [] })
   expect(domains.sent).toEqual([get("/workers/domains")])
 
   const deployments = recording(envelope({ deployments: [] }))
-  expect(await workerDeployments(deployments.client, worker)).toEqual({ ok: true, value: [] })
+  expect(await workerDeployments(deployments.client, worker)).toMatchObject({ ok: true, value: [] })
   expect(deployments.sent).toEqual([get(`/workers/scripts/${worker}/deployments`)])
 
   const tail = recording(envelope({ id: "tail-1", url: "wss://tail.example/1", expires_at: "2026-11-22T00:00:00Z" }), envelope(null))
-  expect(await openTail(tail.client, worker)).toEqual({ ok: true, value: { id: "tail-1", url: "wss://tail.example/1", expiresAt: "2026-11-22T00:00:00Z" } })
+  expect(await openTail(tail.client, worker)).toMatchObject({ ok: true, value: { id: "tail-1", url: "wss://tail.example/1", expiresAt: "2026-11-22T00:00:00Z" } })
   await closeTail(tail.client, worker, "tail-1")
   expect(tail.sent).toEqual([
     { method: "POST", url: `${API}/workers/scripts/${worker}/tails`, authorization: "Bearer workers-token", contentType: "application/json", body: "{}" },
@@ -117,6 +117,26 @@ test("D1 discovery prints Cloudflare's own errors envelope; an unreadable reply 
   for (const reply of [{ status: 502, body: "<html>bad gateway</html>" }, { status: 200, body: "<html>not json</html>" }]) {
     await expect(discoverD1(recording(reply).client, "norn-studio-auth-preview")).rejects.toMatchObject({ exitCode: SEED_EXIT.refused, message: "D1 discovery failed" })
   }
+})
+
+test("D1 discovery needs the envelope's success: a matching database without it is a refusal", async () => {
+  const noSuccess = { body: { errors: [{ code: 1, message: "partial" }], result: [{ uuid: "db-1", name: "norn-studio-auth-preview" }] } }
+  await expect(discoverD1(recording(noSuccess).client, "norn-studio-auth-preview")).rejects.toMatchObject({ exitCode: SEED_EXIT.refused, message: 'could not list D1 databases: [{"code":1,"message":"partial"}]' })
+  const stalled200: CloudflareClient = { credentials, fetch: ((_url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(new Response(new ReadableStream({ start(controller) { init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason)) } }), { status: 200 }))) as typeof fetch }
+  await expect(discoverD1(stalled200, "norn-studio-auth-preview", 40)).rejects.toMatchObject({ exitCode: SEED_EXIT.timeout, message: "D1 discovery timed out" })
+})
+
+test("the cell Worker check passes any 2xx at its headers, whatever the body", async () => {
+  const stalledOk = ((_url: RequestInfo | URL, _init?: RequestInit) => Promise.resolve(new Response(new ReadableStream({ start() {} }), { status: 200 }))) as typeof fetch
+  const started = Date.now()
+  await requireWorkerScript("norn-cell-preview", credentials, stalledOk)
+  await requireWorkerScript("norn-cell-preview", credentials, recording({ body: "<html>not json</html>" }).client.fetch)
+  expect(Date.now() - started).toBeLessThan(5_000)
+})
+
+test("a 2xx whose body outlives the deadline is a timeout, not an answer", async () => {
+  const stalledOk: CloudflareClient = { credentials, fetch: ((_url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(new Response(new ReadableStream({ start(controller) { init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason)) } }), { status: 200 }))) as typeof fetch }
+  await expect(call(stalledOk, workers.getScriptScriptAndVersionSetting({ accountId: NORN_CLOUDFLARE_ACCOUNT_ID, scriptName: worker }), 40)).rejects.toMatchObject({ name: "TimeoutError" })
 })
 
 test("no call retries: a throttled or failing answer is one request", async () => {
