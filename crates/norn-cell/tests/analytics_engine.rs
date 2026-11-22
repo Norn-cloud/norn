@@ -2211,19 +2211,17 @@ fn land(engine: &Engine, request: &LandRequest) -> norn_cell::analytics::LandRes
 /// The attempt directories of `tenant()` under `root`.
 fn attempts(root: &std::path::Path) -> Vec<String> {
     let scratch = root.join("t").join(tenant().as_str()).join("scratch");
-    let mut names: Vec<String> = std::fs::read_dir(scratch)
-        .map(|entries| {
-            entries
-                .map(|entry| {
-                    entry
-                        .expect("entry")
-                        .file_name()
-                        .into_string()
-                        .expect("name")
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut names: Vec<String> = std::fs::read_dir(scratch).map_or_default(|entries| {
+        entries
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .into_string()
+                    .expect("name")
+            })
+            .collect()
+    });
     names.sort();
     names
 }
@@ -2284,7 +2282,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
             .code,
         "analytics.invalid"
     );
-    assert!(attempts(dir.path()).is_empty(), "nothing was begun");
+    assert_eq!(attempts(dir.path()).len(), 0, "nothing was begun");
     let response = land(&engine, &request);
     assert_eq!(response.landing, "landing-1");
     assert_eq!(attempts(dir.path()), vec![response.attempt.clone()]);
@@ -2348,7 +2346,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
     }
     let stored = store(&engine, &store_request(&request, &response)).expect("stored");
     assert_eq!(stored.stored.as_deref(), Some(cache.as_str()));
-    assert!(attempts(dir.path()).is_empty(), "the attempt is removed");
+    assert_eq!(attempts(dir.path()).len(), 0, "the attempt is removed");
     // A replayed store answers what the store answered and touches nothing.
     assert_eq!(
         engine
@@ -2504,7 +2502,7 @@ fn a_store_never_removes_an_attempt_it_does_not_hold() {
     assert_eq!(attempts(dir.path()), vec![other.attempt.clone()]);
     let stored = store(&engine, &store_request(&request, &other)).expect("stored");
     assert!(stored.stored.is_some());
-    assert!(attempts(dir.path()).is_empty());
+    assert_eq!(attempts(dir.path()).len(), 0);
 }
 
 /// OLAP-02 (Sol r4 S1): a store answers from the engine's own record of the
@@ -2539,7 +2537,7 @@ fn a_store_answers_its_own_receipt_and_refuses_any_other_body() {
     assert_eq!(attempts(dir.path()), vec![landed.attempt], "intact");
     let stored = store(&engine, &honest).expect("stored");
     assert!(stored.stored.is_some());
-    assert!(attempts(dir.path()).is_empty());
+    assert_eq!(attempts(dir.path()).len(), 0);
     let replay =
         |body: &StoreRequest| engine.store(body, |_data, _held| panic!("a replay sends nothing"));
     // Changed row counts.

@@ -896,7 +896,7 @@ fn bulk_contract<E: SqlEngine>(
         artifact
             .pointer("/payload/maps")
             .and_then(serde_json::Value::as_array)
-            .map(|maps| {
+            .map_or_default(|maps| {
                 maps.iter()
                     .filter(|map| {
                         map.pointer("/target/entity")
@@ -906,7 +906,6 @@ fn bulk_contract<E: SqlEngine>(
                     .cloned()
                     .collect()
             })
-            .unwrap_or_default()
     };
     let candidates: Vec<&serde_json::Value> = set
         .iter()
