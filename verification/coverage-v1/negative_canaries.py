@@ -1623,6 +1623,12 @@ def workflow_context_canaries(source: str) -> None:
                 document = copy.deepcopy(workflow)
                 change(document["jobs"][name])
                 rejected(f"{name} sccache {label}", document)
+        # Outside core and test no job mints an OIDC token, `write-all` included.
+        for name in ("full", "trusted-policy"):
+            for label, permissions in (("write-all", "write-all"), ("id-token", {"id-token": "write"})):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["permissions"] = permissions
+                rejected(f"{name} OIDC token by {label}", document)
         # The bundle may drop only the cargo target dir, between tasks that share no build.
         source_runner = validator.CORE_RUNNER
         core = source_runner.read_text(encoding="utf-8")

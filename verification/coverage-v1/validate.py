@@ -646,7 +646,9 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         require(name in {"core", "test"} or "environment" not in job,
                 f"{name}: only core and test may name the cache-writer environment")
         permissions = job.get("permissions") or {}
-        require(permissions == OIDC_PERMISSIONS if name in {"core", "test"} else "id-token" not in permissions,
+        # `write-all` grants id-token: write too (and `"id-token" in "write-all"` is a substring test).
+        require(permissions == OIDC_PERMISSIONS if name in {"core", "test"}
+                else permissions != "write-all" and "id-token" not in permissions,
                 f"{name}: only core and test mint an OIDC token, with contents: read beside it")
         for step in job.get("steps", []):
             in_cache_job = name in {"core", "test"}
