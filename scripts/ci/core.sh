@@ -11,7 +11,7 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # `all` runs every phase, in this order, in one checkout. CI packs its
 # selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
-phases=(cheap test doctest features duckdb wasm clippy doc guards integration browser formal provenance)
+phases=(cheap test doctest features duckdb wasm clippy doc guards integration-authoring integration-wasm integration-clients browser formal provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
@@ -204,6 +204,52 @@ lint_workflows() {
     if length == 0 then true else .[], false end
   ' "$dir/findings.json"
 }
+# Split by file in separate Bun processes so module mocks and environment
+# changes within one shard cannot affect the other.
+run_authoring_tests() (
+  cd tools/norn-ts
+  bun install --frozen-lockfile --backend copyfile
+  bun run typecheck
+  bun test --timeout 60000 --shard=1/2 --reporter=junit --reporter-outfile="$upstream/authoring-1.xml" &
+  first=$!
+  bun test --timeout 60000 --shard=2/2 --reporter=junit --reporter-outfile="$upstream/authoring-2.xml" &
+  second=$!
+  status=0
+  wait "$first" || status=1
+  wait "$second" || status=1
+  (( status == 0 )) || exit "$status"
+  # Update the inventory whenever an authoring test file is added or removed.
+  python3 - ../../scripts/ci/authoring-test-files.txt "$upstream/authoring-1.xml" "$upstream/authoring-2.xml" <<'PYTHON'
+import collections
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+# A line `path skip-allowed` names a file whose every test may be skipped (a gated test).
+inventory = [line.split() for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
+if any(len(fields) not in (1, 2) or fields[1:] not in ([], ["skip-allowed"]) for fields in inventory):
+    sys.exit("authoring inventory: each line is `path` or `path skip-allowed`")
+expected = collections.Counter(fields[0] for fields in inventory)
+skip_allowed = {fields[0] for fields in inventory if fields[1:]}
+actual, executed = collections.Counter(), set()
+for report in sys.argv[2:]:
+    suites = ET.parse(report).getroot().findall("./testsuite")
+    # Bun nests each describe block as an inner testsuite: count cases at any depth.
+    if not any(case.find("skipped") is None for suite in suites for case in suite.iter("testcase")):
+        sys.exit(f"{report}: no authoring tests executed")
+    actual.update(suite.attrib["file"] for suite in suites)
+    executed.update(suite.attrib["file"] for suite in suites
+                    if any(case.find("skipped") is None for case in suite.iter("testcase")))
+if not expected or actual != expected:
+    sys.exit(f"Authoring shard coverage differs: missing={list(expected - actual)}, extra or repeated={list(actual - expected)}")
+# A file counts only when one of its tests ran: a suite of skipped cases is not coverage.
+idle = sorted(set(expected) - executed - skip_allowed)
+if idle:
+    sys.exit(f"Authoring files with no executed test: {idle}")
+print(f"Authoring shards covered exactly the {len(expected)} inventoried test files, {len(executed)} with executed tests")
+PYTHON
+)
+
 run_phase() {
   if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
@@ -354,7 +400,7 @@ PY
       # The guards phase runs in every plan, full or affected.
       "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"
       ;;
-    integration)
+    integration-authoring)
       cargo build --locked -p norn-cli
       cargo build --locked -p norn-cell-do --bin norn-dev-host
       ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
@@ -366,6 +412,17 @@ PY
       bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
+      # runnable-docs runs each release test the status matrix names; build
+      # them first so its bounded runs only execute (#1171 integrated gate).
+      grep -oE 'cargo test --locked -p [a-z-]+ (--test [a-z_]+|--lib)' docs/authoring/runnable/status.md | sort -u |
+        while read -r build; do $build --no-run; done
+      run_authoring_tests
+      ;;
+    integration-wasm)
+      export CI=true
+      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
+      crates/norn-checker-wasm/scripts/build-pkg.sh
+      export NORN_CHECKER_WASM_PKG="$CARGO_TARGET_DIR/norn-checker-wasm/pkg"
       cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
       # TENANT-ISOLATION-1 (S8): the cell Worker's boundary over its real Wasm gate, built as it ships.
@@ -373,16 +430,16 @@ PY
       wasm-bindgen "${CARGO_TARGET_DIR:-$PWD/target}/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
         --target web --out-name norn_cell_do --out-dir "$upstream/norn-cell-do-pkg"
       (cd apps/norn-cell-do && NORN_CELL_DO_PKG="$upstream/norn-cell-do-pkg" bun test ./worker.wasm.test.mjs)
-      # runnable-docs runs each release test the status matrix names; build
-      # them first so its bounded runs only execute (#1171 integrated gate).
-      grep -oE 'cargo test --locked -p [a-z-]+ (--test [a-z_]+|--lib)' docs/authoring/runnable/status.md | sort -u |
-        while read -r build; do $build --no-run; done
       # The ZEN-only engine package pages load (#1325): pages and the checker share one
       # evaluator so they cannot disagree, so it answers every evaluation of the shared
       # corpus exactly as the checker package does.
       NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh
       node crates/norn-checker-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/engine"
-      (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
+      ;;
+    integration-clients)
+      export CI=true
+      cargo build --locked -p norn-cell-do --bin norn-dev-host
+      export NORN_DEV_HOST_BIN="$CARGO_TARGET_DIR/debug/norn-dev-host"
       # The SDK and demo UI typecheck and tests run in `cheap`; the diff below proves
       # the regenerated SDK is the committed one those runs checked.
       (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile)
@@ -504,7 +561,9 @@ weights = {
     "test/rest-1": 348, "test/rest-2": 348, "test/rest-3": 348,
     "phase/doctest": 48, "phase/features": 791, "phase/duckdb": 630, "phase/wasm": 239,
     "phase/clippy": 119, "phase/doc": 88, "phase/guards": 532,
-    "phase/integration": 1841, "phase/provenance": 13, "phase/test-shards": 14,
+    # Split integration timings from run 45037150223; authoring includes an estimate for two concurrent Bun shards.
+    "phase/integration-authoring": 1030, "phase/integration-wasm": 707,
+    "phase/integration-clients": 170, "phase/provenance": 13, "phase/test-shards": 14,
     "phase/browser": 596,
 }
 # A bundle's test build on a Boat VM: p50 of cargo's "Finished `test` profile" time in the
