@@ -31,14 +31,17 @@ jobs:
     # re-runner are all Boat CI's public-repository user (`boat ci public`). Every
     # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
-    # The writable cache key is an environment secret of `ci-cache-writer` (deployment branch:
-    # main only). Merge groups and pull requests see only the read-only repository key.
-    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ci-cache-writer' || '' }}
+    # The writable cache key is an environment secret of `ci-cache-writer-boat` (deployment
+    # branch: main only). Merge groups and pull requests see only the read-only repository key.
+    # A main push enters the environment exactly when the runner's main-push arm sends it to Boat
+    # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
+    # push runs hosted, uses the Actions cache and never receives the key.
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     # The gate plan is computed on the core VM, not a VM of its own: each Boat job is one
     # sandbox start, and the plan takes seconds. Bundles read it from here.
@@ -190,10 +193,10 @@ jobs:
           tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
       # The full gate is `core.sh all` split into parallel bundle jobs. The plan comes from
       # core.sh itself, so CI runs exactly its shards and phases (all but formal).
-      # Pull requests and merge groups use affected plans; main runs the full set.
+      # Pull requests use affected plans; merge groups and main run the full set.
       - id: plan
         env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
         run: |
           if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
@@ -206,9 +209,12 @@ jobs:
     name: bundle (${{ matrix.bundle.id }})
     needs: [core]
     if: fromJSON(needs.core.outputs.plan).bundle[0] != null && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
-    # The writable cache key is an environment secret of `ci-cache-writer` (deployment branch:
-    # main only). Merge groups and pull requests see only the read-only repository key.
-    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ci-cache-writer' || '' }}
+    # The writable cache key is an environment secret of `ci-cache-writer-boat` (deployment
+    # branch: main only). Merge groups and pull requests see only the read-only repository key.
+    # A main push enters the environment exactly when the runner's main-push arm sends it to Boat
+    # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
+    # push runs hosted, uses the Actions cache and never receives the key.
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -218,7 +224,7 @@ jobs:
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
       PLAN: ${{ needs.core.outputs.plan }}
       BUNDLE_ID: ${{ matrix.bundle.id }}
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     strategy:
       fail-fast: false
@@ -372,7 +378,7 @@ jobs:
       - env:
           EVENT: ${{ github.event_name }}
           DRAFT: ${{ github.event.pull_request.draft || false }}
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
           PLAN: ${{ needs.core.outputs.plan }}
           CORE: ${{ needs.core.result }}
@@ -395,9 +401,9 @@ jobs:
           ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
           [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
           mode=$(jq -er .mode <<<"$PLAN")
-          [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
-          # An affected merge-group plan must keep the always-run phases (core.sh plan).
-          [ "$EVENT" != merge_group ] || [ "$mode" = full ] || jq -e '(["guards", "provenance", "clippy"] - .phase) == []' <<<"$PLAN" >/dev/null || { echo "merge_group affected plan dropped an always-run phase"; exit 1; }
+          # Only pull-request feedback is narrowed; the merge queue, main and manual runs run every shard
+          # and phase, so nothing reaches main without the full suite (#1348).
+          [ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
           ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
   trusted-policy:

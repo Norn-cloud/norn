@@ -7,6 +7,7 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
+    clippy::too_many_lines,
     missing_docs,
     reason = "QUERY-ENGINE-1 engine correspondence"
 )]
@@ -20,10 +21,12 @@ use proptest::strategy::Strategy as _;
 
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
-    EvaluateResponse, FileFormat, FileSource, GroupKey, LoadRequest, MembersRequest,
-    MembershipDigest, Source, SyncRequest, TenantId, bucket_value, lower, table_schema,
+    EvaluateResponse, FileFormat, FileSource, GroupKey, LandRequest, LoadRequest, MembersRequest,
+    MembershipDigest, Source, StoreRequest, StoredObject, SyncRequest, TenantId, bucket_value,
+    lower, table_schema,
 };
 use norn_cell::compute::{QueryContext, QueryResult};
+use norn_cell::dataset_manifest::ManifestPins;
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model};
 use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::{QuestionPlan, admit};
@@ -2159,4 +2162,564 @@ mod known_at {
             Err("core.compute.unsupported_engine".to_owned())
         );
     }
+}
+
+const LANDED_CSV: [&str; 5] = [
+    "metal,occurred_at,input,recovered,loss",
+    "gold,2026-10-23T12:00:00Z,1.5,1.25,0",
+    "silver,2026-10-21T08:00:00+02:00,2,1,0",
+    "gold,not-a-time,1,1,0",
+    "gold,2026-10-25T00:00:00Z,abc,1,0",
+];
+
+/// The bytes of `LANDED_CSV`.
+fn landed_csv() -> String {
+    LANDED_CSV.iter().fold(String::new(), |mut out, line| {
+        out.push_str(line);
+        out.push('\n');
+        out
+    })
+}
+
+/// A landing of `LANDED_CSV`. It names no attempt: the engine mints one.
+fn landing_request(plan: &QuestionPlan) -> LandRequest {
+    let sha256 = norn_cell::analytics::hex_digest(landed_csv().as_bytes());
+    LandRequest {
+        load: load_request(plan, "land-1", sha256),
+        pins: ManifestPins {
+            definitions_version: 1,
+            model_hash: "m".into(),
+            binding: "b".into(),
+            mapping: "test.mapping@x".into(),
+            laws: "l".into(),
+        },
+        landing: "landing-1".into(),
+        attempt: String::new(),
+    }
+}
+
+/// Land `request`, its download writing `LANDED_CSV` into the attempt's file.
+fn land(engine: &Engine, request: &LandRequest) -> norn_cell::analytics::LandResponse {
+    engine
+        .land(request, |mut file| {
+            file.write_all(landed_csv().as_bytes()).expect("written");
+            Ok(())
+        })
+        .expect("landed")
+}
+
+/// The attempt directories of `tenant()` under `root`.
+fn attempts(root: &std::path::Path) -> Vec<String> {
+    let scratch = root.join("t").join(tenant().as_str()).join("scratch");
+    let mut names: Vec<String> = std::fs::read_dir(scratch)
+        .map(|entries| {
+            entries
+                .map(|entry| {
+                    entry
+                        .expect("entry")
+                        .file_name()
+                        .into_string()
+                        .expect("name")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// Store `request`'s landing, its files sent nowhere.
+fn store(
+    engine: &Engine,
+    request: &StoreRequest,
+) -> Result<norn_cell::analytics::LandResponse, norn_cell::analytics::EngineRefusal> {
+    engine.store(request, |_data, _held| Ok(()))
+}
+
+fn store_request(
+    request: &LandRequest,
+    landed: &norn_cell::analytics::LandResponse,
+) -> StoreRequest {
+    let object = |sha: &str| StoredObject {
+        uri: format!("s3://synthetic/datasets/{sha}.parquet"),
+        url: String::new(),
+    };
+    StoreRequest {
+        land: LandRequest {
+            attempt: landed.attempt.clone(),
+            ..request.clone()
+        },
+        landed: landed.clone(),
+        data: object(&landed.data.sha256),
+        held: object(&landed.held.sha256),
+    }
+}
+
+/// MANIFEST-02 / MANIFEST-LAND-1 / MANIFEST-CACHE-1: a landing runs in its
+/// own attempt (minted by the engine, in the tenant's private directory;
+/// a caller-named attempt refuses), writes
+/// read-only Parquet named by content, and changes nothing a reader sees: a
+/// dataset is read only at a stored cache identity, which a cache miss
+/// rebuilds from the kept files after checking their digests. A changed
+/// kept file refuses; an engine reopened on the same files answers alike.
+#[test]
+fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
+    let dir = tempfile::tempdir().expect("dir");
+    let settings = Settings {
+        root: dir.path().to_path_buf(),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    };
+    let engine = Engine::new(settings.clone()).expect("engine");
+    let (_store, plan, _context) = by_metal(true, 100);
+    let request = landing_request(&plan);
+    let named = LandRequest {
+        attempt: "a1".into(),
+        ..request.clone()
+    };
+    assert_eq!(
+        engine
+            .land(&named, |_file| panic!("nothing is fetched"))
+            .expect_err("a caller names no attempt")
+            .code,
+        "analytics.invalid"
+    );
+    assert!(attempts(dir.path()).is_empty(), "nothing was begun");
+    let response = land(&engine, &request);
+    assert_eq!(response.landing, "landing-1");
+    assert_eq!(attempts(dir.path()), vec![response.attempt.clone()]);
+    assert_eq!((response.load.rows, response.load.rejected), (2, 2));
+    assert_eq!((response.data.rows, response.held.rows), (2, 2));
+    let attempt_dir = dir
+        .path()
+        .join("t")
+        .join(tenant().as_str())
+        .join("scratch")
+        .join(&response.attempt);
+    let (data, held) = (
+        attempt_dir.join("data.parquet"),
+        attempt_dir.join("held.parquet"),
+    );
+    for (path, file) in [(&data, &response.data), (&held, &response.held)] {
+        let bytes = std::fs::read(path).expect("landed file");
+        assert_eq!(norn_cell::analytics::hex_digest(&bytes), file.sha256);
+        assert_eq!(u64::try_from(bytes.len()).expect("size"), file.bytes);
+        assert!(bytes.starts_with(b"PAR1"), "a Parquet file");
+        assert!(
+            std::fs::metadata(path)
+                .expect("meta")
+                .permissions()
+                .readonly(),
+            "sealed before it was hashed"
+        );
+    }
+    // The valid time spans the admitted rows by instant, not by text.
+    assert_eq!(
+        response.valid_time,
+        vec![norn_cell::analytics::ValidRange {
+            column: "occurred_at".into(),
+            from: "2026-10-21T08:00:00+02:00".into(),
+            to: "2026-10-23T12:00:00Z".into(),
+        }]
+    );
+    let cache = norn_cell::analytics::dataset_cache_id(
+        &request.load.table,
+        &response.data.sha256,
+        &response.held.sha256,
+    );
+    let source = |load: &str| Source::Dataset {
+        table: TYPE.into(),
+        load: load.into(),
+    };
+    let ask = |engine: &Engine, load: &str| {
+        engine.evaluate(&norn_cell::analytics::EvaluateRequest {
+            tenant: tenant(),
+            source: source(load),
+            query: lower(&plan).expect("lowered"),
+            inline_members: 100,
+        })
+    };
+    // Landed but not stored: no reader sees the rows, at any identity.
+    for load in [cache.as_str(), "land-1"] {
+        assert_eq!(
+            ask(&engine, load).expect_err("not stored").code,
+            norn_cell::analytics::engine::DATASET_COLD
+        );
+    }
+    let stored = store(&engine, &store_request(&request, &response)).expect("stored");
+    assert_eq!(stored.stored.as_deref(), Some(cache.as_str()));
+    assert!(attempts(dir.path()).is_empty(), "the attempt is removed");
+    // A replayed store answers what the store answered and touches nothing.
+    assert_eq!(
+        engine
+            .store(&store_request(&request, &response), |_data, _held| panic!(
+                "a replay sends nothing"
+            ))
+            .expect("replayed"),
+        stored
+    );
+    // A kept file that changed refuses before it is read.
+    let kept = dir
+        .path()
+        .join("t")
+        .join(tenant().as_str())
+        .join("objects")
+        .join(format!("{}.parquet", response.data.sha256));
+    let original = std::fs::read(&kept).expect("kept");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&kept, std::fs::Permissions::from_mode(0o600)).expect("writable");
+    }
+    std::fs::write(&kept, b"PAR1 tampered").expect("tampered");
+    assert_eq!(
+        ask(&engine, &cache).expect_err("a changed file").code,
+        "bulk.digest_mismatch"
+    );
+    std::fs::write(&kept, &original).expect("restored");
+    let landed_answer = ask(&engine, &cache).expect("dataset answer");
+    let profile = |engine: &Engine| {
+        engine
+            .profile(&norn_cell::analytics::ProfileRequest {
+                tenant: tenant(),
+                source: source(&cache),
+                columns: vec!["input".into()],
+            })
+            .expect("profile")
+    };
+    assert_eq!(profile(&engine).rows, 2);
+    let landed_profile = profile(&engine);
+    drop(engine);
+    // An engine reopened on the same files answers exactly as before.
+    let reopened = Engine::new(settings).expect("reopened");
+    let rebuilt = ask(&reopened, &cache).expect("rebuilt answer");
+    assert_eq!(totals(&rebuilt), totals(&landed_answer));
+    assert_eq!(rebuilt.buckets, landed_answer.buckets);
+    assert_eq!(profile(&reopened), landed_profile);
+    // Another landing of the same file is its own attempt and changes nothing read.
+    let second = land(&reopened, &request);
+    assert_ne!(
+        second.attempt, response.attempt,
+        "each landing is its own attempt"
+    );
+    assert_eq!(
+        (second.data.sha256.as_str(), second.held.sha256.as_str()),
+        (response.data.sha256.as_str(), response.held.sha256.as_str()),
+        "the same rows land as the same bytes"
+    );
+    assert_eq!(
+        totals(&ask(&reopened, &cache).expect("answer")),
+        totals(&landed_answer)
+    );
+}
+
+/// OLAP-02: an attempt has one owner at a time. A store of an attempt whose
+/// download is still running, first or replayed, is refused and removes
+/// nothing, so the download lands; a store that fails removes only the
+/// attempt it took, and its replay touches nothing; a store of an attempt
+/// the engine never minted is refused alike.
+#[test]
+fn a_store_never_removes_an_attempt_it_does_not_hold() {
+    use norn_cell::analytics::engine::{ATTEMPT_BUSY, ATTEMPT_UNKNOWN};
+    let (dir, engine) = engine();
+    let (_store, plan, _context) = by_metal(true, 100);
+    let request = landing_request(&plan);
+    let bytes = landed_csv();
+    // A store naming the downloading attempt, built from what is on disk:
+    // the only thing a racing caller could know of it.
+    let racing = |token: &str| {
+        let file = |sha: &str| norn_cell::analytics::LandedFile {
+            sha256: sha.repeat(32),
+            rows: 1,
+            bytes: 1,
+        };
+        store_request(
+            &request,
+            &norn_cell::analytics::LandResponse {
+                landing: request.landing.clone(),
+                attempt: token.to_owned(),
+                load: norn_cell::analytics::LoadResponse {
+                    load: request.load.load.clone(),
+                    rows: 1,
+                    rejected: 0,
+                    reasons: BTreeMap::new(),
+                    bytes: 1,
+                    millis: 0,
+                },
+                data: file("ab"),
+                held: file("cd"),
+                valid_time: Vec::new(),
+                stored: None,
+            },
+        )
+    };
+    let landed = engine
+        .land(&request, |mut file| {
+            let half = bytes.len() / 2;
+            file.write_all(&bytes.as_bytes()[..half])
+                .expect("first half");
+            let [token] = <[String; 1]>::try_from(attempts(dir.path())).expect("one attempt");
+            let early = racing(&token);
+            for _replay in 0..2 {
+                assert_eq!(
+                    engine
+                        .store(&early, |_data, _held| panic!("nothing is sent"))
+                        .expect_err("the download holds the attempt")
+                        .code,
+                    ATTEMPT_BUSY
+                );
+            }
+            assert_eq!(attempts(dir.path()), vec![token], "the attempt is intact");
+            file.write_all(&bytes.as_bytes()[half..])
+                .expect("second half");
+            Ok(())
+        })
+        .expect("the download lands");
+    assert_eq!((landed.load.rows, landed.load.rejected), (2, 2));
+    // A store that fails is the attempt's owner and removes it, alone.
+    let other = land(&engine, &request);
+    let failing = store_request(&request, &landed);
+    assert_eq!(
+        engine
+            .store(&failing, |_data, _held| Err(
+                norn_cell::analytics::EngineRefusal {
+                    code: "bulk.unwritable".into(),
+                    detail: "the object store is down".into(),
+                }
+            ))
+            .expect_err("the upload failed")
+            .code,
+        "bulk.unwritable"
+    );
+    assert_eq!(attempts(dir.path()), vec![other.attempt.clone()]);
+    assert_eq!(
+        store(&engine, &failing).expect_err("replayed").code,
+        ATTEMPT_UNKNOWN
+    );
+    assert_eq!(
+        store(&engine, &racing("aNeverMinted"))
+            .expect_err("not minted")
+            .code,
+        ATTEMPT_UNKNOWN
+    );
+    assert_eq!(attempts(dir.path()), vec![other.attempt.clone()]);
+    let stored = store(&engine, &store_request(&request, &other)).expect("stored");
+    assert!(stored.stored.is_some());
+    assert!(attempts(dir.path()).is_empty());
+}
+
+/// OLAP-02 (Sol r4 S1): a store answers from the engine's own record of the
+/// attempt, never from the caller's body. The first store takes only the
+/// answer its landing gave; a replay is the saved receipt of exactly that
+/// store (only the presigned URLs, minted per call, may differ) and answers
+/// what the store answered. A replay that changes the row counts, the
+/// landing, the load or the attempt is refused, and a refused replay
+/// changes nothing a later honest replay reads.
+#[test]
+fn a_store_answers_its_own_receipt_and_refuses_any_other_body() {
+    use norn_cell::analytics::engine::ATTEMPT_UNKNOWN;
+    let (dir, engine) = engine();
+    let (_store, plan, _context) = by_metal(true, 100);
+    let request = landing_request(&plan);
+    let landed = land(&engine, &request);
+    let honest = store_request(&request, &landed);
+    let stale = "core.compute.stale_input";
+    // The first store takes only the answer the landing gave.
+    let mut inflated = honest.clone();
+    inflated.landed.load.rows += 1;
+    inflated.landed.data.rows += 1;
+    assert_eq!(
+        engine
+            .store(&inflated, |_data, _held| panic!(
+                "a refused store sends nothing"
+            ))
+            .expect_err("counts the landing never answered")
+            .code,
+        stale
+    );
+    assert_eq!(attempts(dir.path()), vec![landed.attempt], "intact");
+    let stored = store(&engine, &honest).expect("stored");
+    assert!(stored.stored.is_some());
+    assert!(attempts(dir.path()).is_empty());
+    let replay =
+        |body: &StoreRequest| engine.store(body, |_data, _held| panic!("a replay sends nothing"));
+    // Changed row counts.
+    let mut counts = honest.clone();
+    counts.landed.load.rows = 1_000;
+    counts.landed.load.rejected = 0;
+    counts.landed.data.rows = 1_000;
+    counts.landed.held.rows = 0;
+    assert_eq!(replay(&counts).expect_err("changed counts").code, stale);
+    // A changed landing identity, consistent across the body.
+    let mut other_landing = honest.clone();
+    other_landing.land.landing = "landing-2".into();
+    other_landing.landed.landing = "landing-2".into();
+    assert_eq!(
+        replay(&other_landing).expect_err("changed landing").code,
+        stale
+    );
+    // A changed load identity.
+    let mut other_load = honest.clone();
+    other_load.land.load.load = "land-2".into();
+    other_load.landed.load.load = "land-2".into();
+    assert_eq!(replay(&other_load).expect_err("changed load").code, stale);
+    // A changed object URI.
+    let mut other_uri = honest.clone();
+    other_uri.data.uri = "s3://synthetic/elsewhere.parquet".into();
+    assert_eq!(replay(&other_uri).expect_err("changed object").code, stale);
+    // Another attempt token, never stored: no receipt names it.
+    let mut other_attempt = honest.clone();
+    other_attempt.land.attempt = "aNeverStored".into();
+    other_attempt.landed.attempt = "aNeverStored".into();
+    assert_eq!(
+        replay(&other_attempt).expect_err("unknown attempt").code,
+        ATTEMPT_UNKNOWN
+    );
+    // Refreshed presigned URLs (PUT and GET) replay as the saved answer.
+    let mut refreshed = honest.clone();
+    refreshed.data.url = "https://synthetic/put-data?sig=2".into();
+    refreshed.held.url = "https://synthetic/put-held?sig=2".into();
+    refreshed.land.load.file.url = "https://synthetic/get?sig=2".into();
+    assert_eq!(replay(&refreshed).expect("refreshed URLs replay"), stored);
+    assert_eq!(replay(&honest).expect("replayed"), stored);
+}
+
+/// MANIFEST-COMMIT-1 / MANIFEST-PIN-1 / MANIFEST-CURRENT-1 / MANIFEST-04: a
+/// manifest commits as one governed command with one receipt; its cache
+/// identity must be the one its digests make; stale pins or a malformed
+/// manifest refuse; a request key binds one commit (a retry is that
+/// receipt, another manifest under the key conflicts), and a manifest
+/// without a key commits each time; the latest manifest of a type is its
+/// current dataset.
+#[test]
+fn a_manifest_commits_once_per_request_and_is_the_current_dataset() {
+    use norn_cell::dataset_manifest::{
+        DatasetManifest, DatasetRequest, MANIFEST_VERSION, ManifestCounts, ManifestFile,
+        ManifestSource,
+    };
+    let (_dir, engine) = engine();
+    let (mut store, plan, _context) = by_metal(true, 100);
+    let request = landing_request(&plan);
+    let response = land(&engine, &request);
+    let binding = BTreeMap::new();
+    let file_of = |landed: &norn_cell::analytics::LandedFile| ManifestFile {
+        uri: format!("s3://synthetic/datasets/{}.parquet", landed.sha256),
+        sha256: landed.sha256.clone(),
+        rows: landed.rows,
+        bytes: landed.bytes,
+    };
+    let table = store.analytics_table(TYPE).expect("table");
+    let manifest = DatasetManifest {
+        version: MANIFEST_VERSION.into(),
+        object_type: TYPE.into(),
+        load: norn_cell::analytics::dataset_cache_id(
+            &table,
+            &response.data.sha256,
+            &response.held.sha256,
+        ),
+        source: ManifestSource {
+            uri: request.load.file.uri.clone(),
+            sha256: request.load.file.sha256,
+            format: FileFormat::Csv,
+            bytes: response.load.bytes,
+        },
+        binding: binding.clone(),
+        table,
+        pins: store
+            .dataset_pins(TYPE, &binding, "test.mapping@x")
+            .expect("pins"),
+        data: file_of(&response.data),
+        held: file_of(&response.held),
+        counts: ManifestCounts {
+            source: 4,
+            admitted: response.load.rows,
+            held: response.load.reasons.clone(),
+        },
+        valid_time: response.valid_time,
+    };
+    assert!(store.dataset_manifest(WORLD, TYPE).expect("read").is_none());
+    let head = store.verified_head().expect("head").commits;
+    let keyed = DatasetRequest {
+        key: "load-1".into(),
+        fingerprint: "f1".into(),
+    };
+    let (hash, receipt) = store
+        .commit_dataset_manifest(WORLD, "synthetic", CLOCK, &manifest, Some(&keyed))
+        .expect("committed");
+    assert_eq!(hash, manifest.hash().expect("hash"));
+    assert_eq!(receipt.body.commit_seq, head + 1);
+    assert_eq!(receipt.body.event_count, 1, "exactly one ledger event");
+    let (again, replayed) = store
+        .commit_dataset_manifest(WORLD, "synthetic", CLOCK, &manifest, Some(&keyed))
+        .expect("replayed");
+    assert_eq!(
+        (again.as_str(), replayed.hash.as_str()),
+        (hash.as_str(), receipt.hash.as_str())
+    );
+    assert_eq!(store.verified_head().expect("head").commits, head + 1);
+    let (found, bound, found_receipt) = store
+        .dataset_request(WORLD, "load-1")
+        .expect("read")
+        .expect("the key's commit");
+    assert_eq!(
+        (found.hash.as_str(), bound, found_receipt.hash.as_str()),
+        (hash.as_str(), keyed.clone(), receipt.hash.as_str())
+    );
+    let mut other = manifest.clone();
+    other.valid_time.clear();
+    assert!(matches!(
+        store
+            .commit_dataset_manifest(WORLD, "synthetic", CLOCK, &other, Some(&keyed))
+            .expect_err("another manifest under the key"),
+        CellError::IdempotencyConflict(_)
+    ));
+    let current = store
+        .dataset_manifest(WORLD, TYPE)
+        .expect("read")
+        .expect("current");
+    assert_eq!(
+        (current.hash.as_str(), current.commit_seq, &current.manifest),
+        (hash.as_str(), head + 1, &manifest)
+    );
+    let refused = |manifest: &DatasetManifest, store: &mut CellStore| {
+        let error = store
+            .commit_dataset_manifest(WORLD, "synthetic", CLOCK, manifest, None)
+            .expect_err("refused");
+        let CellError::DatasetRefused { code, .. } = error else {
+            panic!("{error}");
+        };
+        code
+    };
+    let mut stale = manifest.clone();
+    stale.pins.laws = "0".repeat(64);
+    assert_eq!(refused(&stale, &mut store), "dataset.stale_pins");
+    let mut versioned = manifest.clone();
+    versioned.pins.definitions_version += 1;
+    assert_eq!(refused(&versioned, &mut store), "dataset.stale_pins");
+    let mut retyped = manifest.clone();
+    retyped.table.pin = "other".into();
+    assert_eq!(
+        refused(&retyped, &mut store),
+        "dataset.invalid",
+        "its cache identity is not its own"
+    );
+    let mut miscounted = manifest.clone();
+    miscounted.counts.admitted += 1;
+    assert_eq!(refused(&miscounted, &mut store), "dataset.invalid");
+    let mut renamed = manifest.clone();
+    renamed.load = "land-1".into();
+    assert_eq!(refused(&renamed, &mut store), "dataset.invalid");
+    // Without a key a manifest commits each time; the latest is current.
+    let (next_hash, next) = store
+        .commit_dataset_manifest(WORLD, "synthetic", CLOCK + 2, &manifest, None)
+        .expect("committed");
+    assert_eq!(next.body.commit_seq, head + 2);
+    assert_eq!(
+        store
+            .dataset_manifest(WORLD, TYPE)
+            .expect("read")
+            .expect("current")
+            .commit_seq,
+        head + 2
+    );
+    assert_eq!(next_hash, hash);
 }

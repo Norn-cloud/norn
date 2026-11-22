@@ -125,10 +125,12 @@ CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 CORE_RUNNER = ROOT / "scripts/ci/core.sh"
 # The keys of the shared Boat cache (R2) reach only the sccache start step. The writable key is a
-# secret of the `ci-cache-writer` environment, which only a push to main enters.
+# secret of the `ci-cache-writer-boat` environment, which a push to main enters exactly when it
+# runs on Boat (#1369): made and started by the merge queue's bot, with NORN_MAIN_RUNNER set. A
+# hosted main push (a human's push or re-run included) never receives the key.
 SCCACHE_SECRETS = {name: "${{ secrets.%s }}" % name for name in
                    ("NORN_SCCACHE_BUCKET", "NORN_SCCACHE_ENDPOINT", "NORN_SCCACHE_KEY_ID", "NORN_SCCACHE_SECRET")}
-CACHE_WRITER_ENVIRONMENT = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ci-cache-writer' || '' }}"
+CACHE_WRITER_ENVIRONMENT = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}"
 SCCACHE_START = r"""set -uo pipefail
 # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
 # egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,
@@ -673,11 +675,11 @@ await github.rest.repos.createCommitStatus({
         "uses": "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
         "with": {"retries": 3, "script": trusted_reporter + "\n"},
     }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
-    boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+    boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
         expected_runner = boat_runner if name in {"core", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
-                f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
+                f"{name}: runner must preserve the merge-group, same-repository pull-request and merge-queue main-push Boat opt-ins and hosted fallback")
     cache_env = {"SCCACHE_CACHE_SIZE": "10G", "SCCACHE_IGNORE_SERVER_IO_ERROR": "1",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
     job_env = {
@@ -702,7 +704,7 @@ await github.rest.repos.createCommitStatus({
 plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
 echo "plan=$plan" >> "$GITHUB_OUTPUT"
 echo "$plan"'''
-    plan_env = {"BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
+    plan_env = {"BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}",
                 "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}"}
     checkout = {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
                 "with": {"persist-credentials": False, "fetch-depth": 0}}
@@ -865,14 +867,14 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
 ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
 [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
 mode=$(jq -er .mode <<<"$PLAN")
-[ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
-# An affected merge-group plan must keep the always-run phases (core.sh plan).
-[ "$EVENT" != merge_group ] || [ "$mode" = full ] || jq -e '(["guards", "provenance", "clippy"] - .phase) == []' <<<"$PLAN" >/dev/null || { echo "merge_group affected plan dropped an always-run phase"; exit 1; }
+# Only pull-request feedback is narrowed; the merge queue, main and manual runs run every shard
+# and phase, so nothing reaches main without the full suite (#1348).
+[ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
 ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
 echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"'''
     verdict_env = {
         "DRAFT": "${{ github.event.pull_request.draft || false }}",
-        "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
+        "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}",
         "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}",
         "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.core.outputs.plan }}",
         "CORE": "${{ needs.core.result }}",

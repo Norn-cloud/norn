@@ -279,7 +279,7 @@ test("undo: a lost answer reads as unconfirmed, Retry undo re-sends it under the
   await expect(form.getByLabel("Holding id")).toHaveValue("")
 })
 
-test("refused by a law with no detail (a hosted cell's reason: null): says so plainly, claims no law, and lists the record's open findings as their own facts", async ({ page }) => {
+test("refused by a law with no detail (a hosted cell's reason: null): says so plainly, claims no law, and reads nothing but the refusal, though the record's page holds an open finding", async ({ page }) => {
   await open(page)
   // The hosted refusal: 422 core.laws.violated, no reason, the generic message, for every role (#1353).
   await page.route("**/api/host/v1/actions/canon.holding.adjust**", (route) => route.request().method() === "POST"
@@ -299,8 +299,9 @@ test("refused by a law with no detail (a hosted cell's reason: null): says so pl
   const card = form.locator('[data-refusal="redacted"]')
   await expect(card).toContainText("Refused by a law. Nothing was written.")
   await expect(card).toContainText("“a declared precondition does not hold”")
-  await expect(card.locator("[data-open-findings]")).toContainText("Open findings on this record")
-  await expect(card.locator("[data-open-findings]")).toContainText("Counted grams disagree with the vault ledger.")
+  // What the page read before (an open finding) is not the cell's answer to this call: the card shows none of it.
+  await expect(card.locator("[data-open-findings]")).toHaveCount(0)
+  await expect(card).not.toContainText("Counted grams disagree with the vault ledger.")
   // No law is named as the refuser, and no "use this value" is offered: the cell disclosed none.
   await expect(card).not.toContainText("This change breaks a rule")
   await expect(card.getByRole("button", { name: /^Use / })).toHaveCount(0)

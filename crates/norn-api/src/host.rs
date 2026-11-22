@@ -35,9 +35,33 @@ pub struct DevHost<E: SqlEngine> {
     /// PRIVACY-1: the key this cell's pseudonyms are computed under; without
     /// one a pseudonym projection redacts.
     pseudonyms: Option<crate::privacy::PseudonymKey>,
-    /// The marking catalog of the active definitions, by definitions version.
-    markings: Mutex<Option<(Option<u64>, crate::privacy::MarkingCatalog)>>,
+    /// The marking catalog of the active definitions, keyed as
+    /// [`Self::retained`] is: by definitions identity and foreign-write
+    /// revision (S2, #1547).
+    markings: Mutex<Option<CachedCatalog>>,
+    /// ADMIT-CACHE-1 (#1533): the active definitions' verified retained
+    /// actions, keyed by their version and admission receipt digest and by
+    /// the store's foreign-write revision when they were verified. Filled
+    /// only by a verification this process ran ([`RetainedActions::load`]);
+    /// any other identity or revision misses and verifies again, and an
+    /// install clears it.
+    ///
+    /// [`RetainedActions::load`]: crate::action_admission::RetainedActions::load
+    retained: Mutex<Option<CachedRetained>>,
 }
+
+/// One verified retained set ([`DevHost::retained`]): the identity it was
+/// verified under, the foreign-write revision it was read at, and what the
+/// verification admitted.
+type CachedRetained = (
+    (u64, String),
+    u64,
+    std::sync::Arc<crate::action_admission::RetainedActions>,
+);
+
+/// One marking catalog ([`DevHost::marking_catalog`]): the definitions
+/// identity and foreign-write revision it was read at, and the catalog.
+type CachedCatalog = (Option<(u64, String)>, u64, crate::privacy::MarkingCatalog);
 
 /// A read in progress ([`DevHost::reading`]): no load commits until it ends.
 pub struct Reading<'a> {
@@ -195,6 +219,7 @@ impl<E: SqlEngine> DevHost<E> {
             reads: RwLock::new(()),
             pseudonyms: None,
             markings: Mutex::new(None),
+            retained: Mutex::new(None),
         })
     }
     /// Supply the trusted server policy before sharing this host.
@@ -229,21 +254,120 @@ impl<E: SqlEngine> DevHost<E> {
     pub(crate) fn reveals(&self, actor: &str, marking_id: &str) -> bool {
         self.authorizer.reveal(actor, marking_id)
     }
-    /// The marking catalog of the active definitions `reader` sees.
+    /// The marking catalog of the active definitions `reader` sees, with the
+    /// kernel's own markings, reused under the same definitions identity and
+    /// foreign-write revision as [`Self::retained`] (S2, #1547).
+    ///
+    /// Empty only when nothing needs projecting: the definitions declare no
+    /// marking and no object version, current or past, holds a label (one
+    /// bounded probe of each partial index). A cell that declares none but
+    /// holds labels (a `norn.RuleRun`'s kernel label, a declassified field's
+    /// earlier versions) gets the kernel's markings, so every read projects
+    /// and a label the catalog does not resolve withholds its field instead
+    /// of refusing the read (S2, S3, #1547).
+    ///
+    /// # Errors
+    /// A store failure.
     pub(crate) fn marking_catalog(
         &self,
         reader: &norn_cell::StoreReader<'_, E>,
     ) -> Result<crate::privacy::MarkingCatalog, Refusal> {
-        let version = reader.active_definitions_version().map_err(Refusal::host)?;
-        let mut cached = self.markings.lock().map_err(Refusal::host)?;
-        if let Some((at, catalog)) = cached.as_ref()
-            && *at == version
-        {
-            return Ok(std::sync::Arc::clone(catalog));
+        let foreign = reader
+            .database_revision()
+            .map_err(Refusal::host)?
+            .map(|(_local, foreign)| foreign);
+        let identity = reader
+            .active_definitions_identity()
+            .map_err(Refusal::host)?;
+        let catalog = {
+            let mut cached = self.markings.lock().map_err(Refusal::host)?;
+            match (foreign, cached.as_ref()) {
+                (Some(foreign), Some((at, seen, catalog)))
+                    if *at == identity && *seen == foreign =>
+                {
+                    std::sync::Arc::clone(catalog)
+                }
+                _ => {
+                    *cached = None;
+                    let (_version, catalog) = crate::privacy::catalog_of(reader)?;
+                    if let Some(foreign) = foreign {
+                        *cached = Some((identity, foreign, std::sync::Arc::clone(&catalog)));
+                    }
+                    catalog
+                }
+            }
+        };
+        if catalog.is_empty() && reader.stores_markings().map_err(Refusal::host)? {
+            return Ok(crate::privacy::built_in_catalog());
         }
-        let (at, catalog) = crate::privacy::catalog_of(reader)?;
-        *cached = Some((at, std::sync::Arc::clone(&catalog)));
         Ok(catalog)
+    }
+    /// ADMIT-CACHE-1 (#1533): the verified retained actions of the active
+    /// definitions `reader` sees, with their version, or `None` with nothing
+    /// installed. The receipt is verified against the retained set once per
+    /// definitions identity (version and receipt digest) and foreign-write
+    /// revision in this process; a call under the same identity and revision
+    /// reuses that verification, and a refused verification is never kept,
+    /// so the next call verifies again.
+    ///
+    /// The revision is the engine's count of commits by any other connection
+    /// or process (`PRAGMA data_version` on native SQLite; constant on an
+    /// engine that is its database's only writer), read before anything it
+    /// covers. This connection writes the retained tables only by an install,
+    /// which clears the cache ([`Self::model_changed`]). So an in-place edit
+    /// of the retained set or its receipt, with the digest column held
+    /// constant, misses here and is verified, and refused, exactly as a fresh
+    /// host would. An engine that offers no revision (inside a transaction)
+    /// verifies on every call and keeps nothing.
+    /// # Errors
+    /// The retained set does not verify, or a store failure.
+    pub(crate) fn retained(
+        &self,
+        reader: &norn_cell::StoreReader<'_, E>,
+    ) -> Result<
+        Option<(
+            u64,
+            std::sync::Arc<crate::action_admission::RetainedActions>,
+        )>,
+        Refusal,
+    > {
+        // C1 (#1547): read before the identity and the set it covers, so a
+        // foreign commit after this read is seen by the next call.
+        let foreign = reader
+            .database_revision()
+            .map_err(Refusal::host)?
+            .map(|(_local, foreign)| foreign);
+        let Some(identity) = reader
+            .active_definitions_identity()
+            .map_err(Refusal::host)?
+        else {
+            return Ok(None);
+        };
+        let mut cached = self.retained.lock().map_err(Refusal::host)?;
+        if let (Some(foreign), Some((at, seen, actions))) = (foreign, cached.as_ref())
+            && *at == identity
+            && *seen == foreign
+        {
+            return Ok(Some((identity.0, std::sync::Arc::clone(actions))));
+        }
+        // A miss drops what it misses: nothing verified at another identity
+        // or revision is served again.
+        *cached = None;
+        let installed = reader
+            .installed_definitions(Some(identity.0))
+            .map_err(Refusal::host)?
+            .ok_or_else(|| Refusal::host("the active definitions are not retained"))?;
+        if installed.receipt_sha256 != identity.1 {
+            return Err(Refusal::host("the active definitions changed while read"));
+        }
+        let actions = std::sync::Arc::new(crate::action_admission::RetainedActions::load(
+            &installed,
+            self.scope(),
+        )?);
+        if let Some(foreign) = foreign {
+            *cached = Some((identity, foreign, std::sync::Arc::clone(&actions)));
+        }
+        Ok(Some((installed.version, actions)))
     }
     /// Physical scope, never taken from client claims.
     #[must_use]
@@ -328,7 +452,11 @@ impl<E: SqlEngine> DevHost<E> {
     /// the same [`MappingInput`](norn_cell::mapping_bundle::MappingInput),
     /// split at [`PAGE_ROWS`] and before a repeated source record, are
     /// captured by `inject_mapping_page` and committed by
-    /// `process_mapping_page`. The trusted host's sync calls this; no caller
+    /// `process_mapping_page`. A page over the cell's byte bound is delivered
+    /// as two halves, and a page the cell refuses because it would capture a
+    /// dispute after a record it commits (OBS-LINK-DISPUTE-1) as one page per
+    /// record; each smaller page is captured and committed before the next
+    /// is captured. The trusted host's sync calls this; no caller
     /// supplies facts, and a refused row stays in the inbox as quarantined
     /// evidence with its reasons. Rows already captured are captured once.
     /// Returns one outcome per row, in row order.
@@ -380,7 +508,7 @@ impl<E: SqlEngine> DevHost<E> {
         // is used only for inputs proven independent, and never under a
         // budget, whose continuation point needs batch order.
         let independent = budget.is_none() && groupable(rows) && self.independent_inputs(rows)?;
-        let framed = pages(rows, independent);
+        let mut framed: std::collections::VecDeque<Page<'_>> = pages(rows, independent).into();
         let mut report = IngestReport {
             outcomes: Vec::with_capacity(rows.len()),
             next: None,
@@ -394,7 +522,7 @@ impl<E: SqlEngine> DevHost<E> {
             budget.is_some_and(|budget| work.saturating_add(more) > budget.total_ms)
         };
         let commit_ms = budget.map_or(0, |budget| budget.commit_ms);
-        for (input, page) in framed {
+        while let Some((input, page)) = framed.pop_front() {
             let first = page.first().map_or(0, |(at, _)| *at);
             let row_ms = budget.map_or(0, |budget| {
                 budget
@@ -405,14 +533,14 @@ impl<E: SqlEngine> DevHost<E> {
                 report.next = Some(first);
                 break;
             }
-            let delivered: Vec<Observed<RuntimeValue>> =
-                page.iter().map(|(_, raw)| (*raw).clone()).collect();
-            let captured = self.capture_page(&delivered, input)?;
+            let Some(captured) = self.capture_page(input, page.clone(), &mut framed)? else {
+                continue;
+            };
             report.work_ms = report.work_ms.saturating_add(row_ms);
-            let records: Vec<String> = captured
-                .iter()
-                .flat_map(|part| part.records.iter().cloned())
-                .collect();
+            let norn_cell::mapping_page::CapturedPage {
+                pages: captured,
+                records,
+            } = captured;
             // Each run member's own page position ([`member_position`]).
             let mut cursor = 0_usize;
             let mut locate = |id: &str| member_position(&records, &mut cursor, id);
@@ -424,7 +552,7 @@ impl<E: SqlEngine> DevHost<E> {
             let mut settled = 0_usize;
             let mut stop: Option<usize> = None;
             let mut outcomes = std::collections::BTreeMap::new();
-            'runs: for (page_id, _new) in captured.iter().flat_map(|part| &part.pages) {
+            'runs: for (page_id, _new) in &captured {
                 if committed && spent(report.work_ms, commit_ms) {
                     stop = Some(settled);
                     break;
@@ -520,21 +648,35 @@ impl<E: SqlEngine> DevHost<E> {
         Ok(answers)
     }
 
-    /// Capture one page, halving a page over the cell's byte bound; the parts
-    /// in row order.
-    fn capture_page(
+    /// Capture one framed page; `None` when the cell captured nothing and
+    /// the page went back to the front of `framed` as smaller pages, each
+    /// captured and committed before the next is captured: two halves of a
+    /// page over the cell's byte bound, or one page per record of a page
+    /// that would capture a dispute after a record it commits
+    /// (OBS-LINK-DISPUTE-1), which is the one-by-one path itself.
+    fn capture_page<'a>(
         &self,
-        raws: &[Observed<RuntimeValue>],
-        input: &norn_cell::mapping_bundle::MappingInput,
-    ) -> Result<Vec<norn_cell::mapping_page::CapturedPage>, Refusal> {
-        match self.observing_raw(|cell| cell.inject_mapping_page(raws, input))? {
-            Err(CellError::OutOfRange("mapping page bytes")) if raws.len() > 1 => {
-                let (first, second) = raws.split_at(raws.len() / 2);
-                let mut parts = self.capture_page(first, input)?;
-                parts.extend(self.capture_page(second, input)?);
-                Ok(parts)
+        input: &'a norn_cell::mapping_bundle::MappingInput,
+        mut page: Vec<(usize, &'a Observed<RuntimeValue>)>,
+        framed: &mut std::collections::VecDeque<Page<'a>>,
+    ) -> Result<Option<norn_cell::mapping_page::CapturedPage>, Refusal> {
+        let delivered: Vec<Observed<RuntimeValue>> =
+            page.iter().map(|(_, raw)| (*raw).clone()).collect();
+        match self.observing_raw(|cell| cell.inject_mapping_page(&delivered, input))? {
+            Ok(captured) => Ok(Some(captured)),
+            Err(CellError::OutOfRange("mapping page bytes")) if page.len() > 1 => {
+                let rest = page.split_off(page.len() / 2);
+                framed.push_front((input, rest));
+                framed.push_front((input, page));
+                Ok(None)
             }
-            other => Ok(vec![other.map_err(Refusal::host)?]),
+            Err(CellError::MappingPageSpansDispute) if page.len() > 1 => {
+                for row in page.into_iter().rev() {
+                    framed.push_front((input, vec![row]));
+                }
+                Ok(None)
+            }
+            Err(error) => Err(Refusal::host(error)),
         }
     }
 
@@ -764,6 +906,18 @@ impl<E: SqlEngine> DevHost<E> {
             .collect())
     }
 
+    /// The engine table schema of every object type the model holds, as a
+    /// dataset load of it is typed by (MANIFEST-LAND-1). A schema is the
+    /// model's, not data: no row is read, and every read is still authorized.
+    /// # Errors
+    /// Poisoned synchronization or a type the engine cannot lower refuses.
+    pub fn analytics_tables(&self) -> Result<Vec<norn_cell::analytics::TableSchema>, Refusal> {
+        self.cell()?
+            .store()
+            .analytics_tables()
+            .map_err(Refusal::host)
+    }
+
     /// The current revision of the retained definition `id`, if any, read
     /// under the definitions read epoch. The host's own authority checks
     /// (`/v1/access:decide` reads a binding's `runRole`) read it here; no
@@ -921,6 +1075,11 @@ impl<E: SqlEngine> DevHost<E> {
     /// Tell the authorizer the model changed, under the write epoch the
     /// caller holds, with the cell it just installed into.
     pub(crate) fn model_changed(&self, cell: &ActionCell<E>) {
+        // ADMIT-CACHE-1: the next call verifies the new revision.
+        match self.retained.lock() {
+            Ok(mut cached) => *cached = None,
+            Err(poisoned) => *poisoned.into_inner() = None,
+        }
         let types: Vec<norn_ir::ObjectTypeDef> =
             cell.store().model().object_types().cloned().collect();
         self.authorizer.model_changed(&types);

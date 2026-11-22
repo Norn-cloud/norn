@@ -657,8 +657,8 @@
         "tags": [
           "crate::analytics_routes"
         ],
-        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one; each row\ntraces to `(uri, sha256, row)`. Decided like any upload load\n(`SyncSource(\"upload\")`); the load is reported as a run of the type's\n`upload` connection, as the cell's own observations (SYNC-REPORT-1).",
-        "description": "# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), or an unreachable engine.",
+        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one when its\nmanifest commits; each row traces to `(uri, sha256, row)`. The load is\nreported as a run of the type's `upload` connection, as the cell's own\nobservations (SYNC-REPORT-1).",
+        "description": "MANIFEST-03: a load is decided exactly as an observation load of the\nsame rows: `SyncSource(\"upload\")` and the destination connection's own\ngrant (`SyncSource(\"upload.<type>\")`), an admitted mapping onto the type\nthat the load binds its columns by, and the markings a write of those\nrows would carry. A mapping or marking bulk ingest cannot enforce is\nrefused, never loaded unchecked.\n\n# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), a mapping or marking bulk\ningest cannot enforce (422), stale pins or a reused request key (409), or\nan unreachable engine.",
         "operationId": "load_dataset",
         "parameters": [
           {
@@ -723,6 +723,16 @@
           },
           "404": {
             "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The definitions changed while the dataset landed, or the request key names another request.",
             "content": {
               "application/json": {
                 "schema": {
@@ -984,6 +994,92 @@
           },
           "422": {
             "description": "The choice or note was refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/decisions:requested": {
+      "get": {
+        "tags": [
+          "crate::decisions"
+        ],
+        "summary": "`GET /v1/decisions:requested`: the caller's own approval-gated calls, as\ntheir requester sees them (APPROVAL-1, APPROVAL-RECOVERY-1). A requester\nnever decides their call and never lists it among the decisions waiting\non them; this is where they learn that it was approved and retry it\n(`canRun`), with the exact input and key it parked with. Without `id`:\nthe calls pending a decider before their deadline and those approved and\nnot yet run. With `id`: that decision in any state, or no item when it is\nnot the caller's direct call (the cell does not say which).",
+        "description": "The caller is the host's verified principal, compared as the dispatch\ncompares it (subject, actor kind and role table): the same subject under\nanother kind or role table is someone else, and reads nothing. Its calls\nare found by that identity before any parked payload is loaded, so\nanother requester's id costs what an id that exists nowhere costs.\n\n# Errors\nMissing or foreign scope; a missing caller (one opaque 403); an invalid\nid; a host failure.",
+        "operationId": "requested_decisions",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "description": "Only this decision, in whatever state it stands (the id a parked\ncall's `202` answer named). Without it, the calls that wait: those\npending a decider and those approved and not yet run.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's own approval-gated calls.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestedPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5234,9 +5330,23 @@
           "objectType"
         ],
         "properties": {
+          "mapping": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MANIFEST-03: the admitted mapping onto the type the load binds its\ncolumns by; needed only when more than one maps onto it."
+          },
           "objectType": {
             "type": "string",
             "description": "The admitted object type the rows are typed by."
+          },
+          "requestKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MANIFEST-04: the caller's key for this load. A retry with the same\nkey and the same request answers with the first load's receipt; the\nsame key with another request is refused (409\n`dataset.request_conflict`). A load without a key always commits."
           },
           "uploadId": {
             "type": "string",
@@ -7890,6 +8000,38 @@
           }
         }
       },
+      "NornDatasetFile": {
+        "type": "object",
+        "description": "One landed dataset file, named by content.",
+        "required": [
+          "uri",
+          "sha256",
+          "rows",
+          "bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes in it.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows in it.",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Its SHA-256."
+          },
+          "uri": {
+            "type": "string",
+            "description": "The object's durable URI."
+          }
+        }
+      },
       "NornDatasetLoad": {
         "type": "object",
         "description": "The outcome of `POST /v1/datasets:load`.",
@@ -7897,8 +8039,13 @@
           "objectType",
           "connectionId",
           "load",
+          "manifest",
+          "receipt",
+          "commitSeq",
           "uri",
           "sha256",
+          "data",
+          "held",
           "rows",
           "rejected",
           "reasons",
@@ -7909,16 +8056,34 @@
           "bytes": {
             "type": "integer",
             "format": "int64",
-            "description": "File size in bytes.",
+            "description": "Source file size in bytes.",
+            "minimum": 0
+          },
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "That commit's sequence number.",
             "minimum": 0
           },
           "connectionId": {
             "type": "string",
             "description": "The `upload` connection the load is reported under (SYNC-REPORT-1)."
           },
+          "data": {
+            "$ref": "#/components/schemas/NornDatasetFile",
+            "description": "The landed data file: every admitted row, columnar."
+          },
+          "held": {
+            "$ref": "#/components/schemas/NornDatasetFile",
+            "description": "The landed held-set file: every held-back row and its reason."
+          },
           "load": {
             "type": "string",
-            "description": "The load identity; answers over the dataset name it."
+            "description": "The landing identity; answers over the dataset name it."
+          },
+          "manifest": {
+            "type": "string",
+            "description": "MANIFEST-1: the committed manifest's identity."
           },
           "millis": {
             "type": "integer",
@@ -7942,6 +8107,10 @@
               "type": "string"
             }
           },
+          "receipt": {
+            "type": "string",
+            "description": "The receipt of the one commit that admitted the manifest."
+          },
           "rejected": {
             "type": "integer",
             "format": "int64",
@@ -7956,11 +8125,11 @@
           },
           "sha256": {
             "type": "string",
-            "description": "The file's SHA-256, verified by the engine."
+            "description": "The source file's SHA-256, verified by the engine."
           },
           "uri": {
             "type": "string",
-            "description": "The file's durable URI."
+            "description": "The source file's durable URI."
           }
         }
       },
@@ -35264,6 +35433,153 @@
             "description": "RFC 6901 JSON pointer into the submitted document."
           }
         }
+      },
+      "RequestedCall": {
+        "type": "object",
+        "description": "The parked call itself, exactly as it waits: retrying it means calling\n`action` with `encodedInput` as the input and `idempotencyKey` as the key.",
+        "required": [
+          "action",
+          "definition",
+          "input",
+          "encodedInput",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "The action called."
+          },
+          "definition": {
+            "type": "string",
+            "description": "The approval definition that gates it."
+          },
+          "encodedInput": {
+            "type": "string",
+            "description": "The same input as canonical JSON text, numbers digit for digit, so a\nclient that parses JSON into binary floats can still send it back\nexactly."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The call's idempotency key."
+          },
+          "input": {
+            "type": "object",
+            "description": "The call's admitted input.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecidedCall",
+                "description": "Once it is approved, where the call stands (APPROVAL-RECOVERY-1)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RequestedDecision": {
+        "type": "object",
+        "description": "One approval-gated call the caller made, as its requester sees it\n(APPROVAL-1): never a decider's view, and never anyone else's call.",
+        "required": [
+          "id",
+          "question",
+          "risk",
+          "requestedAtMs",
+          "expiresAtMs",
+          "status",
+          "call",
+          "canRun"
+        ],
+        "properties": {
+          "call": {
+            "$ref": "#/components/schemas/RequestedCall",
+            "description": "The call."
+          },
+          "canRun": {
+            "type": "boolean",
+            "description": "The cell offers the caller to run it now: it is approved, not yet\nexecuted, a direct call (a flow step's call runs by retrying its\nrun), and the caller is its requester. An offer, not a grant: the\nretry is decided again under the caller's current authority."
+          },
+          "expiresAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the decision expires (logical milliseconds).",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The opaque decision id."
+          },
+          "question": {
+            "type": "string",
+            "description": "The approval's question."
+          },
+          "requestedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the call parked (logical milliseconds).",
+            "minimum": 0
+          },
+          "resolvedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When it was resolved (logical milliseconds), once it was.",
+            "minimum": 0
+          },
+          "risk": {
+            "$ref": "#/components/schemas/DecisionRisk",
+            "description": "How much is at stake."
+          },
+          "status": {
+            "$ref": "#/components/schemas/RequestedStatus",
+            "description": "Where it stands."
+          }
+        }
+      },
+      "RequestedPage": {
+        "type": "object",
+        "description": "The caller's own approval-gated calls.",
+        "required": [
+          "items",
+          "serverNowMs"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestedDecision"
+            },
+            "description": "Soonest deadline first, ties to the oldest request, then id."
+          },
+          "serverNowMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The cell's clock when the page was read (logical milliseconds).",
+            "minimum": 0
+          },
+          "totalCapped": {
+            "type": "boolean",
+            "description": "More calls were not examined."
+          }
+        }
+      },
+      "RequestedStatus": {
+        "type": "string",
+        "description": "Where the caller's parked call stands with its approval.",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "expired",
+          "withdrawn"
+        ]
       },
       "RetireDefinitionRequest": {
         "type": "object",

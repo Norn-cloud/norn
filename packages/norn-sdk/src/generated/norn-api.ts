@@ -149,13 +149,22 @@ export interface paths {
          *     dataset `objectType`, typed by that admitted definition. The engine reads
          *     the object through a presigned URL, verifies its SHA-256, types every row,
          *     and quarantines a row it cannot type (or that misses a required value)
-         *     with its reason. The load becomes the dataset's current one; each row
-         *     traces to `(uri, sha256, row)`. Decided like any upload load
-         *     (`SyncSource("upload")`); the load is reported as a run of the type's
-         *     `upload` connection, as the cell's own observations (SYNC-REPORT-1).
-         * @description # Errors
+         *     with its reason. The load becomes the dataset's current one when its
+         *     manifest commits; each row traces to `(uri, sha256, row)`. The load is
+         *     reported as a run of the type's `upload` connection, as the cell's own
+         *     observations (SYNC-REPORT-1).
+         * @description MANIFEST-03: a load is decided exactly as an observation load of the
+         *     same rows: `SyncSource("upload")` and the destination connection's own
+         *     grant (`SyncSource("upload.<type>")`), an admitted mapping onto the type
+         *     that the load binds its columns by, and the markings a write of those
+         *     rows would carry. A mapping or marking bulk ingest cannot enforce is
+         *     refused, never loaded unchecked.
+         *
+         *     # Errors
          *     A denied caller (one opaque 403), an unknown upload or type (404), a
-         *     changed file (`bulk.digest_mismatch`, 422), or an unreachable engine.
+         *     changed file (`bulk.digest_mismatch`, 422), a mapping or marking bulk
+         *     ingest cannot enforce (422), stale pins or a reused request key (409), or
+         *     an unreachable engine.
          */
         post: operations["load_dataset"];
         delete?: never;
@@ -216,6 +225,41 @@ export interface paths {
          *     run's result turn; a host failure.
          */
         post: operations["decide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/decisions:requested": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/decisions:requested`: the caller's own approval-gated calls, as
+         *     their requester sees them (APPROVAL-1, APPROVAL-RECOVERY-1). A requester
+         *     never decides their call and never lists it among the decisions waiting
+         *     on them; this is where they learn that it was approved and retry it
+         *     (`canRun`), with the exact input and key it parked with. Without `id`:
+         *     the calls pending a decider before their deadline and those approved and
+         *     not yet run. With `id`: that decision in any state, or no item when it is
+         *     not the caller's direct call (the cell does not say which).
+         * @description The caller is the host's verified principal, compared as the dispatch
+         *     compares it (subject, actor kind and role table): the same subject under
+         *     another kind or role table is someone else, and reads nothing. Its calls
+         *     are found by that identity before any parked payload is loaded, so
+         *     another requester's id costs what an id that exists nowhere costs.
+         *
+         *     # Errors
+         *     Missing or foreign scope; a missing caller (one opaque 403); an invalid
+         *     id; a host failure.
+         */
+        get: operations["requested_decisions"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1169,8 +1213,20 @@ export interface components {
         };
         /** @description `POST /v1/datasets:load` body. */
         DatasetLoadRequest: {
+            /**
+             * @description MANIFEST-03: the admitted mapping onto the type the load binds its
+             *     columns by; needed only when more than one maps onto it.
+             */
+            mapping?: string | null;
             /** @description The admitted object type the rows are typed by. */
             objectType: string;
+            /**
+             * @description MANIFEST-04: the caller's key for this load. A retry with the same
+             *     key and the same request answers with the first load's receipt; the
+             *     same key with another request is refused (409
+             *     `dataset.request_conflict`). A load without a key always commits.
+             */
+            requestKey?: string | null;
             /** @description A completed upload of this cell. */
             uploadId: string;
         };
@@ -2283,17 +2339,45 @@ export interface components {
             diagnostics: components["schemas"]["RefusalDiagnostic"][];
             plan: components["schemas"]["NornTransformPlan"] | null;
         };
+        /** @description One landed dataset file, named by content. */
+        NornDatasetFile: {
+            /**
+             * Format: int64
+             * @description Bytes in it.
+             */
+            bytes: number;
+            /**
+             * Format: int64
+             * @description Rows in it.
+             */
+            rows: number;
+            /** @description Its SHA-256. */
+            sha256: string;
+            /** @description The object's durable URI. */
+            uri: string;
+        };
         /** @description The outcome of `POST /v1/datasets:load`. */
         NornDatasetLoad: {
             /**
              * Format: int64
-             * @description File size in bytes.
+             * @description Source file size in bytes.
              */
             bytes: number;
+            /**
+             * Format: int64
+             * @description That commit's sequence number.
+             */
+            commitSeq: number;
             /** @description The `upload` connection the load is reported under (SYNC-REPORT-1). */
             connectionId: string;
-            /** @description The load identity; answers over the dataset name it. */
+            /** @description The landed data file: every admitted row, columnar. */
+            data: components["schemas"]["NornDatasetFile"];
+            /** @description The landed held-set file: every held-back row and its reason. */
+            held: components["schemas"]["NornDatasetFile"];
+            /** @description The landing identity; answers over the dataset name it. */
             load: string;
+            /** @description MANIFEST-1: the committed manifest's identity. */
+            manifest: string;
             /**
              * Format: int64
              * @description Load time in milliseconds.
@@ -2305,6 +2389,8 @@ export interface components {
             reasons: {
                 [key: string]: number;
             };
+            /** @description The receipt of the one commit that admitted the manifest. */
+            receipt: string;
             /**
              * Format: int64
              * @description Rows quarantined.
@@ -2315,9 +2401,9 @@ export interface components {
              * @description Rows admitted.
              */
             rows: number;
-            /** @description The file's SHA-256, verified by the engine. */
+            /** @description The source file's SHA-256, verified by the engine. */
             sha256: string;
-            /** @description The file's durable URI. */
+            /** @description The source file's durable URI. */
             uri: string;
         };
         /** @description An admitted document; source and receipt travel as exact JSON text. */
@@ -12926,6 +13012,84 @@ export interface components {
             /** @description RFC 6901 JSON pointer into the submitted document. */
             pointer: string;
         };
+        /**
+         * @description The parked call itself, exactly as it waits: retrying it means calling
+         *     `action` with `encodedInput` as the input and `idempotencyKey` as the key.
+         */
+        RequestedCall: {
+            /** @description The action called. */
+            action: string;
+            /** @description The approval definition that gates it. */
+            definition: string;
+            /**
+             * @description The same input as canonical JSON text, numbers digit for digit, so a
+             *     client that parses JSON into binary floats can still send it back
+             *     exactly.
+             */
+            encodedInput: string;
+            /** @description The call's idempotency key. */
+            idempotencyKey: string;
+            /** @description The call's admitted input. */
+            input: {
+                [key: string]: unknown;
+            };
+            state?: components["schemas"]["DecidedCall"] | null;
+        };
+        /**
+         * @description One approval-gated call the caller made, as its requester sees it
+         *     (APPROVAL-1): never a decider's view, and never anyone else's call.
+         */
+        RequestedDecision: {
+            /** @description The call. */
+            call: components["schemas"]["RequestedCall"];
+            /**
+             * @description The cell offers the caller to run it now: it is approved, not yet
+             *     executed, a direct call (a flow step's call runs by retrying its
+             *     run), and the caller is its requester. An offer, not a grant: the
+             *     retry is decided again under the caller's current authority.
+             */
+            canRun: boolean;
+            /**
+             * Format: int64
+             * @description When the decision expires (logical milliseconds).
+             */
+            expiresAtMs: number;
+            /** @description The opaque decision id. */
+            id: string;
+            /** @description The approval's question. */
+            question: string;
+            /**
+             * Format: int64
+             * @description When the call parked (logical milliseconds).
+             */
+            requestedAtMs: number;
+            /**
+             * Format: int64
+             * @description When it was resolved (logical milliseconds), once it was.
+             */
+            resolvedAtMs?: number | null;
+            /** @description How much is at stake. */
+            risk: components["schemas"]["DecisionRisk"];
+            /** @description Where it stands. */
+            status: components["schemas"]["RequestedStatus"];
+        };
+        /** @description The caller's own approval-gated calls. */
+        RequestedPage: {
+            /** @description Soonest deadline first, ties to the oldest request, then id. */
+            items: components["schemas"]["RequestedDecision"][];
+            /**
+             * Format: int64
+             * @description The cell's clock when the page was read (logical milliseconds).
+             */
+            serverNowMs: number;
+            /** @description More calls were not examined. */
+            totalCapped?: boolean;
+        };
+        /**
+         * @description Where the caller's parked call stands with its approval.
+         * @enum {string}
+         */
+        RequestedStatus: "pending" | "approved" | "rejected" | "expired" | "withdrawn";
         /** @description `POST /v1/definitions/{id}:retire`. */
         RetireDefinitionRequest: {
             /**
@@ -13618,6 +13782,15 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The definitions changed while the dataset landed, or the request key names another request. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
             /** @description The file was refused. */
             422: {
                 headers: {
@@ -13775,6 +13948,64 @@ export interface operations {
             };
             /** @description The choice or note was refused. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    requested_decisions: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /**
+                 * @description Only this decision, in whatever state it stands (the id a parked
+                 *     call's `202` answer named). Without it, the calls that wait: those
+                 *     pending a decider and those approved and not yet run.
+                 */
+                id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's own approval-gated calls. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestedPage"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

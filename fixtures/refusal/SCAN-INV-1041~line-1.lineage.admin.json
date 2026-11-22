@@ -1,0 +1,146 @@
+{
+  "status": 200,
+  "body": {
+    "bundleDigest": "2e6d351844b29e4fe67098a5fbd444b46faeb86da905c583364df696bd008437",
+    "sourceRecordRef": {
+      "system": "synthetic-scans",
+      "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+    },
+    "documentRef": {
+      "system": "synthetic-scans",
+      "record": "SCAN-INV-1041"
+    },
+    "documentDigest": "7372c5c313bdc273f3e8bdcb7f2236d01ff8d7e8a51369d3b8f2ab812ce57490",
+    "mappingPin": {
+      "artifactId": "docs.scans.mapping",
+      "version": "0.1.0",
+      "sha256": "68b60e9cd01279675df084c46f168f206053578bb309d6b3b0fc982f1621f4ec"
+    },
+    "fieldProvenance": {
+      "amount": {
+        "source": {
+          "system": "synthetic-scans",
+          "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+        },
+        "mappingVersion": "docs.scans.mapping@0.1.0",
+        "transform": "line.amount",
+        "recordedAt": "2026-11-02T12:00:00Z",
+        "sourceFields": [
+          "name",
+          "amount"
+        ]
+      },
+      "corrected_by": {
+        "source": {
+          "system": "synthetic-scans",
+          "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+        },
+        "mappingVersion": "docs.scans.mapping@0.1.0",
+        "transform": "line.corrected_by",
+        "recordedAt": "2026-11-02T12:00:00Z",
+        "sourceFields": [
+          "name"
+        ]
+      },
+      "correction_evidence": {
+        "source": {
+          "system": "synthetic-scans",
+          "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+        },
+        "mappingVersion": "docs.scans.mapping@0.1.0",
+        "transform": "line.correction_evidence",
+        "recordedAt": "2026-11-02T12:00:00Z",
+        "sourceFields": [
+          "name"
+        ]
+      },
+      "correction_reason": {
+        "source": {
+          "system": "synthetic-scans",
+          "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+        },
+        "mappingVersion": "docs.scans.mapping@0.1.0",
+        "transform": "line.correction_reason",
+        "recordedAt": "2026-11-02T12:00:00Z",
+        "sourceFields": [
+          "name"
+        ]
+      },
+      "currency": {
+        "source": {
+          "system": "synthetic-scans",
+          "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+        },
+        "mappingVersion": "docs.scans.mapping@0.1.0",
+        "transform": "line.currency",
+        "recordedAt": "2026-11-02T12:00:00Z",
+        "sourceFields": [
+          "name"
+        ]
+      },
+      "description": {
+        "source": {
+          "system": "synthetic-scans",
+          "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+        },
+        "mappingVersion": "docs.scans.mapping@0.1.0",
+        "transform": "line.description",
+        "recordedAt": "2026-11-02T12:00:00Z",
+        "sourceFields": [
+          "name",
+          "description"
+        ]
+      },
+      "document_id": {
+        "source": {
+          "system": "synthetic-scans",
+          "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+        },
+        "mappingVersion": "docs.scans.mapping@0.1.0",
+        "transform": "line.document_id",
+        "recordedAt": "2026-11-02T12:00:00Z",
+        "sourceFields": [
+          "name",
+          "parent"
+        ]
+      },
+      "id": {
+        "source": {
+          "system": "synthetic-scans",
+          "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+        },
+        "mappingVersion": "docs.scans.mapping@0.1.0",
+        "transform": "line.id",
+        "recordedAt": "2026-11-02T12:00:00Z",
+        "sourceFields": [
+          "name"
+        ]
+      },
+      "line_no": {
+        "source": {
+          "system": "synthetic-scans",
+          "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+        },
+        "mappingVersion": "docs.scans.mapping@0.1.0",
+        "transform": "line.line_no",
+        "recordedAt": "2026-11-02T12:00:00Z",
+        "sourceFields": [
+          "name",
+          "line_no"
+        ]
+      },
+      "review": {
+        "source": {
+          "system": "synthetic-scans",
+          "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-1"
+        },
+        "mappingVersion": "docs.scans.mapping@0.1.0",
+        "transform": "line.review",
+        "recordedAt": "2026-11-02T12:00:00Z",
+        "sourceFields": [
+          "name"
+        ]
+      }
+    }
+  }
+}

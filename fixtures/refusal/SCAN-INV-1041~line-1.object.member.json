@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "body": {
+    "objectType": "docs.DocumentLine",
+    "id": "SCAN-INV-1041~line-1",
+    "scope": "org_a/prod",
+    "version": 1,
+    "values": {
+      "amount": 18.5,
+      "corrected_by": null,
+      "correction_evidence": null,
+      "correction_reason": null,
+      "currency": "USD",
+      "description": "Casting flux",
+      "document_id": "SCAN-INV-1041",
+      "id": "SCAN-INV-1041~line-1",
+      "line_no": 1,
+      "review": "extracted"
+    },
+    "withheld": false,
+    "withheldProperties": []
+  }
+}

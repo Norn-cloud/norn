@@ -18,12 +18,12 @@ test("production refuses without its confirmation", () => {
 })
 
 test("production keeps the live Worker and both demo domains", () => {
-  expect(deployTarget(PROD)).toEqual({ stage: "prod", worker: "norn-studio-recorded", domains: ["studio.norn.cloud", "studio-demo.norn.cloud"] })
+  expect(deployTarget(PROD)).toEqual({ stage: "prod", worker: "norn-studio-recorded", domains: ["studio.norn.cloud", "studio-demo.norn.cloud"], recipe: "recorded-demo" })
 })
 
 test("any other stage gets its own Worker and only the domains it names", () => {
   expect(deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-preview.norn.cloud" }))
-    .toEqual({ stage: "preview", worker: "norn-studio-recorded-preview", domains: ["studio-preview.norn.cloud"] })
+    .toEqual({ stage: "preview", worker: "norn-studio-recorded-preview", domains: ["studio-preview.norn.cloud"], recipe: "sign-in" })
 })
 
 test("a non-production stage never falls back to the production domains", () => {
