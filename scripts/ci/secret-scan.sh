@@ -16,4 +16,11 @@ if ! { [[ -f $archive ]] && printf '%s  %s\n' "$digest" "$archive" | sha256sum -
   printf '%s  %s\n' "$digest" "$archive" | sha256sum -c --quiet -
 fi
 tar -xzf "$archive" -C "$work" gitleaks
-"$work/gitleaks" dir "$repo" --no-banner --redact --ignore-gitleaks-allow
+# Select the embedded stock rules. Gitleaks also reads a source-root ignore file automatically.
+printf '[extend]\nuseDefault = true\n' > "$work/stock.toml"
+if [[ -e $repo/.gitleaksignore || -L $repo/.gitleaksignore ]]; then
+  printf 'secret scan: checkout-root .gitleaksignore is forbidden\n' >&2
+  exit 1
+fi
+"$work/gitleaks" dir "$repo" --config "$work/stock.toml" --gitleaks-ignore-path "$work" \
+  --no-banner --redact --ignore-gitleaks-allow
