@@ -14,7 +14,7 @@ Boat never uses the GitHub Actions cache: its egress limit is account-wide, and 
 
 A compiler cache maps an input hash to an output. Anyone who can write it can make a later build pick up an output they chose, so only code that has landed on `main` writes. A merge group does not: it runs the queued pull request's own build scripts, proc macros and tests before that code lands, and a pull request enters the queue on green checks alone.
 
-- The `core` and `test` jobs enter the `ci-cache-writer` environment only for `push` to `main`. The environment's only deployment branch is `main`.
+- The `core` and `test` jobs enter the `ci-cache-writer-boat` environment only for a `push` to `main` that runs on Boat: made and started by `github-merge-queue[bot]`, with `NORN_MAIN_RUNNER=boat` (#1369). A human's push or re-run of main runs hosted and never receives the key. The environment's only deployment branch is `main`. The retired `ci-cache-writer` environment holds no secrets, so a re-run of a workflow from before #1369 gets no writable key.
 - `NORN_SCCACHE_KEY_ID` and `NORN_SCCACHE_SECRET` are repository secrets holding a **read-only** R2 token. The environment overrides them with a read-write token. Every other run, merge groups and pull requests included, gets only the read-only token.
 - The start step also sets `SCCACHE_S3_RW_MODE=READ_ONLY` for every event except a `push` to `refs/heads/main`.
 - The keys are in the environment of the "Start sccache or compile without it" step and of the server it starts. They are never written to `GITHUB_ENV`, but that server runs as the same user as every later step, so same-repository pull-request code on Boat can read the read-only key. What stops a pull request or a merge group from writing is the read-only token's scope and the environment's branch rule, not step scoping.
@@ -36,6 +36,6 @@ A cache outage never fails a build: the wrapper falls back to plain `rustc` when
 | `NORN_SCCACHE_BUCKET` | repository | bucket name |
 | `NORN_SCCACHE_ENDPOINT` | repository | `https://<account>.r2.cloudflarestorage.com` |
 | `NORN_SCCACHE_KEY_ID`, `NORN_SCCACHE_SECRET` | repository | read-only R2 token |
-| `NORN_SCCACHE_KEY_ID`, `NORN_SCCACHE_SECRET` | `ci-cache-writer` environment | read-write R2 token |
+| `NORN_SCCACHE_KEY_ID`, `NORN_SCCACHE_SECRET` | `ci-cache-writer-boat` environment | read-write R2 token |
 
 Without the bucket secrets, Boat keeps its local cache, as before.
