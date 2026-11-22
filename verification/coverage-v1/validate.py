@@ -926,11 +926,12 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                     f"{phase}: integration check must run exactly once: {check}")
     authoring = re.findall(r"^run_authoring_tests\(\) \(\n(.*?)^\)$", runner, re.MULTILINE | re.DOTALL)
     require(len(authoring) == 1 and all(
-        authoring[0].count(command) == 1 for command in (
-            'bun test --timeout 60000 --shard=1/2 --reporter=junit --reporter-outfile="$upstream/authoring-1.xml" &',
-            'bun test --timeout 60000 --shard=2/2 --reporter=junit --reporter-outfile="$upstream/authoring-2.xml" &',
-            'wait "$first" || status=1',
-            'wait "$second" || status=1',
+        authoring[0].splitlines().count(command) == 1 for command in (
+            '  bun test --timeout 60000 --shard=1/2 --reporter=junit --reporter-outfile="$upstream/authoring-1.xml" &',
+            '  bun test --timeout 60000 --shard=2/2 --reporter=junit --reporter-outfile="$upstream/authoring-2.xml" &',
+            '  wait "$first" || status=1',
+            '  wait "$second" || status=1',
+            '  (( status == 0 )) || exit "$status"',
             'if not expected or actual != expected:',
         )), "authoring shards must execute and check coverage exactly once")
     # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so

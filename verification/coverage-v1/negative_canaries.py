@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
@@ -788,6 +789,8 @@ def integration_partition_canaries() -> None:
                 (core.replace(command, command * 2), "integration check must run exactly once"),
                 (core.replace("--shard=2/2", "--shard=1/2"),
                  "authoring shards must execute and check coverage exactly once"),
+                (core.replace('  (( status == 0 )) || exit "$status"\n', ""),
+                 "authoring shards must execute and check coverage exactly once"),
                 (core.replace("if not expected or actual != expected:", "if False:"),
                  "authoring shards must execute and check coverage exactly once")):
             validator.CORE_RUNNER.write_text(mutated, encoding="utf-8")
@@ -798,6 +801,26 @@ def integration_partition_canaries() -> None:
                     continue
                 raise
             raise AssertionError(f"integration partition mutation passed: {diagnostic}")
+
+        inventory = ROOT / "scripts/ci/authoring-test-files.txt"
+        files = inventory.read_text(encoding="utf-8").splitlines()
+        checker = core.split("<<'PYTHON'\n", 1)[1].split("\nPYTHON\n", 1)[0]
+        reports = [Path(directory) / f"authoring-{shard}.xml" for shard in (1, 2)]
+        for label, first_files, first_case, diagnostic in (
+                ("complete reports", files[:2], True, ""),
+                ("silent deletion", files[:1], True, f"missing={[files[1]]}"),
+                ("empty shard with suite headers", files[:2], False, "no authoring tests executed")):
+            for report, shard_files, has_cases in zip(reports, (first_files, files[2:]), (first_case, True)):
+                root = ET.Element("testsuites")
+                for file in shard_files:
+                    suite = ET.SubElement(root, "testsuite", file=file)
+                    if has_cases:
+                        ET.SubElement(suite, "testcase", name="example")
+                ET.ElementTree(root).write(report, encoding="utf-8")
+            result = subprocess.run([sys.executable, "-c", checker, str(inventory), *map(str, reports)],
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode != bool(diagnostic) or diagnostic not in result.stderr:
+                raise AssertionError(f"authoring shard coverage drift ({label}): {result.returncode} {result.stderr}")
 
 
 def workflow_cleanup_canaries(source: str) -> None:

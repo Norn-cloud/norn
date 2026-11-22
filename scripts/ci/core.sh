@@ -219,26 +219,23 @@ run_authoring_tests() (
   wait "$first" || status=1
   wait "$second" || status=1
   (( status == 0 )) || exit "$status"
-  python3 - "$upstream/authoring-1.xml" "$upstream/authoring-2.xml" <<'PYTHON'
+  # Update the inventory whenever an authoring test file is added or removed.
+  python3 - ../../scripts/ci/authoring-test-files.txt "$upstream/authoring-1.xml" "$upstream/authoring-2.xml" <<'PYTHON'
 import collections
-import os
-import re
-import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
-tracked = subprocess.check_output(["git", "ls-files", "-z", "--", "."]).split(b"\0")
-pattern = re.compile(r"(?:^|[./_-])(?:test|spec)\.[cm]?[jt]sx?$")
-expected = collections.Counter(path for raw in tracked if pattern.search(path := os.fsdecode(raw)))
+expected = collections.Counter(Path(sys.argv[1]).read_text(encoding="utf-8").splitlines())
 actual = collections.Counter()
-for report in sys.argv[1:]:
+for report in sys.argv[2:]:
     suites = ET.parse(report).getroot().findall("./testsuite")
-    if not suites:
-        sys.exit(f"{report}: no authoring tests reported")
+    if not any(case.find("skipped") is None for suite in suites for case in suite.findall("testcase")):
+        sys.exit(f"{report}: no authoring tests executed")
     actual.update(suite.attrib["file"] for suite in suites)
 if not expected or actual != expected:
     sys.exit(f"Authoring shard coverage differs: missing={list(expected - actual)}, extra or repeated={list(actual - expected)}")
-print(f"Authoring shards ran exactly the {len(expected)} tracked test files")
+print(f"Authoring shards covered exactly the {len(expected)} inventoried test files")
 PYTHON
 )
 
