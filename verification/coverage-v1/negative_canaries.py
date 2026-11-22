@@ -803,6 +803,20 @@ def integration_partition_canaries() -> None:
                     continue
                 raise
             raise AssertionError(f"integration partition mutation passed: {diagnostic}")
+        # A skip-allowed marker on a second file is refused by the validator's pinned set.
+        lines = (ROOT / "scripts/ci/authoring-test-files.txt").read_text(encoding="utf-8").splitlines()
+        other = next(i for i, line in enumerate(lines) if len(line.split()) == 1)
+        marked = lines[:other] + [lines[other] + " skip-allowed"] + lines[other + 1:]
+        validator.AUTHORING_INVENTORY = Path(directory) / "authoring-test-files.txt"
+        validator.AUTHORING_INVENTORY.write_text("\n".join(marked) + "\n", encoding="utf-8")
+        validator.CORE_RUNNER.write_text(core, encoding="utf-8")
+        try:
+            validator.validate_workflow_integrity([])
+        except validator.InvalidCoverage as error:
+            if "only test/engine-alpha.test.ts may be skip-allowed" not in str(error):
+                raise
+        else:
+            raise AssertionError("a second skip-allowed authoring file passed")
 
         inventory = ROOT / "scripts/ci/authoring-test-files.txt"
         files = [line.split()[0] for line in inventory.read_text(encoding="utf-8").splitlines()]
