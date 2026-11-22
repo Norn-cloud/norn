@@ -1894,8 +1894,8 @@ fn a_historical_question_on_a_deleted_labelled_field_is_refused() {
 }
 
 /// S2a (#1547): a metric's default filter is a predicate on row values too.
-/// The question neither groups nor filters by `metal`; its sums carry
-/// `metal = gold` as their metrics' default. Every conversion's `metal` was
+/// The question neither groups nor filters by anything; its sums carry
+/// `metal = gold` as their metrics' default, the only predicate it reads. Every conversion's `metal` was
 /// labelled and then deleted, so the as-of total at the cutoff before the
 /// delete would still reveal whether a deleted labelled value matched. It
 /// refuses with `question.marked_history`, pointing at the default filter.
@@ -1954,13 +1954,15 @@ fn a_historical_sum_whose_default_filter_reads_a_deleted_labelled_field_is_refus
         }
     }
     let mut question = base.question().clone();
+    question.dimensions.clear();
     question.filters.clear();
     question.freshness = norn_ir::metric::FreshnessPolicy::AsOf {
         at: norn_ir::UtcTimestamp("2026-10-26T00:00:00Z".into()),
     };
     let historical = admit_on(&store, &definitions, &question);
     assert!(
-        historical.question().filters.is_empty()
+        historical.question().dimensions.is_empty()
+            && historical.question().filters.is_empty()
             && historical.sums().iter().all(|sum| sum.filters == gold),
         "the predicate is the metrics' default, not the question's"
     );
