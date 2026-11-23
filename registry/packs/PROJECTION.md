@@ -8,6 +8,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 | Link | Terms | Mapped | Residual | Canon gaps | Non-conforming |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `norn.link.erpnext.canon` | 59 | 40 | 8 | 11 | 0 |
+| `norn.link.frappe-hr.canon` | 27 | 15 | 3 | 8 | 1 |
 | `norn.link.odoo.canon` | 42 | 27 | 3 | 11 | 1 |
 | `norn.link.shopify.canon` | 35 | 14 | 5 | 16 | 0 |
 
@@ -86,6 +87,49 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 ### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
 
 None.
+
+## `norn.link.frappe-hr.canon`
+
+`norn.ontology-pack.frappe-hr` → `norn.ontology-pack.canon`
+
+### Maps
+
+- `norn.frappe-hr.attendance` subsumed_by `norn.hr.attendance.event`
+- `norn.frappe-hr.department` subsumed_by `norn.org.unit`
+- `norn.frappe-hr.designation` subsumed_by `norn.org.post`
+- `norn.frappe-hr.employee` derived `norn.core.agent`, `norn.hr.employment`
+- `norn.frappe-hr.guard.leave.insufficient.balance` subsumed_by `norn.hr.guard.leave.insufficient.balance`
+- `norn.frappe-hr.guard.leave.overlap` equivalent `norn.hr.guard.leave.overlap`
+- `norn.frappe-hr.guard.shift.overlap` equivalent `norn.hr.guard.shift.overlap`
+- `norn.frappe-hr.holiday.list` subsumed_by `norn.time.calendar`
+- `norn.frappe-hr.holiday.list.holiday` subsumed_by `norn.time.calendar.exception`
+- `norn.frappe-hr.leave.allocation` subsumed_by `norn.hr.leave.balance`
+- `norn.frappe-hr.leave.allocation.new.leaves.allocated` subsumed_by `norn.core.resource.quantity`
+- `norn.frappe-hr.leave.application` equivalent `norn.hr.leave.request`
+- `norn.frappe-hr.leave.application.submit` subsumed_by `norn.hr.leave.request.approve`
+- `norn.frappe-hr.shift.assignment` subsumed_by `norn.hr.shift.commitment`
+- `norn.frappe-hr.shift.type` subsumed_by `norn.time.working.window`
+
+### Residual (system-specific)
+
+- `norn.frappe-hr.attendance.status`
+- `norn.frappe-hr.employee.department`
+- `norn.frappe-hr.employee.designation`
+
+### Missing from the canon
+
+- `norn.frappe-hr.attendance.request`
+- `norn.frappe-hr.employee.date.of.joining`
+- `norn.frappe-hr.leave.application.cancel`
+- `norn.frappe-hr.leave.application.from.date`
+- `norn.frappe-hr.leave.application.to.date`
+- `norn.frappe-hr.leave.application.total.leave.days`
+- `norn.frappe-hr.shift.assignment.end.date`
+- `norn.frappe-hr.shift.assignment.start.date`
+
+### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
+
+- `norn.frappe-hr.attendance.cancel.amend`
 
 ## `norn.link.odoo.canon`
 

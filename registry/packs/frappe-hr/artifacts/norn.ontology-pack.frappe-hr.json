@@ -1,0 +1,550 @@
+{
+  "artifactId": "norn.ontology-pack.frappe-hr",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Frappe HR v15 system pack (map-only, clean-room)",
+  "namespace": "norn.ontology",
+  "payload": {
+    "mappings": [
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee",
+        "justification": "Public Frappe HR Employee concept.",
+        "mappingId": "map.frappe-hr.employee",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/department"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/department",
+        "justification": "Public Frappe HR Department concept.",
+        "mappingId": "map.frappe-hr.department",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.department"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/designation"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/designation",
+        "justification": "Public Frappe HR Designation concept.",
+        "mappingId": "map.frappe-hr.designation",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.designation"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/holiday-list"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/holiday-list",
+        "justification": "Public Frappe HR Holiday List concept.",
+        "mappingId": "map.frappe-hr.holiday.list",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.holiday.list"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/leave-allocation"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/leave-allocation",
+        "justification": "Public Frappe HR Leave Allocation concept.",
+        "mappingId": "map.frappe-hr.leave.allocation",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.leave.allocation"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/leave-application"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/leave-application",
+        "justification": "Public Frappe HR Leave Application concept.",
+        "mappingId": "map.frappe-hr.leave.application",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.leave.application"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/shift-type"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/shift-type",
+        "justification": "Public Frappe HR Shift Type concept.",
+        "mappingId": "map.frappe-hr.shift.type",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.shift.type"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/shift-assignment"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/shift-assignment",
+        "justification": "Public Frappe HR Shift Assignment concept.",
+        "mappingId": "map.frappe-hr.shift.assignment",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.shift.assignment"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/attendance"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/attendance",
+        "justification": "Public Frappe HR Attendance concept.",
+        "mappingId": "map.frappe-hr.attendance",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.attendance"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/attendance-request"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/attendance-request",
+        "justification": "Public Frappe HR Attendance Request concept.",
+        "mappingId": "map.frappe-hr.attendance.request",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.attendance.request"
+      }
+    ],
+    "packId": "norn.ontology-pack.frappe-hr",
+    "packKind": "ontology",
+    "packVersion": "0.1",
+    "shapes": [
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee",
+        "termId": "norn.frappe-hr.employee"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.department",
+        "termId": "norn.frappe-hr.department"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.designation",
+        "termId": "norn.frappe-hr.designation"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.holiday.list",
+        "termId": "norn.frappe-hr.holiday.list"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "holidayDate",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.holiday.list.holiday",
+        "termId": "norn.frappe-hr.holiday.list.holiday"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.leave.allocation",
+        "termId": "norn.frappe-hr.leave.allocation"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.leave.application",
+        "termId": "norn.frappe-hr.leave.application"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.shift.type",
+        "termId": "norn.frappe-hr.shift.type"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.shift.assignment",
+        "termId": "norn.frappe-hr.shift.assignment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.attendance",
+        "termId": "norn.frappe-hr.attendance"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.attendance.request",
+        "termId": "norn.frappe-hr.attendance.request"
+      }
+    ],
+    "sources": [
+      {
+        "canonicalUrl": "https://github.com/frappe/hrms/tree/46b389047bb12fb9c86c1300c3d7bfd5f897f171",
+        "importMode": "map_only",
+        "license": "GPL-3.0-only",
+        "redistribution": "reference_only",
+        "releaseId": "version-15@46b389047bb12fb9c86c1300c3d7bfd5f897f171",
+        "releasedAt": "2026-11-23",
+        "retrievedAt": "2026-11-23",
+        "sourceId": "source.frappe-hr"
+      }
+    ],
+    "terms": [
+      {
+        "definition": "Frappe HR employee master record combining person identity and active employment.",
+        "label": "Employee",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR hierarchical organizational department.",
+        "label": "Department",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.department",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR job title or post designation.",
+        "label": "Designation",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.designation",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR calendar of public holidays and weekly off days.",
+        "label": "Holiday List",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.holiday.list",
+        "termKind": "class"
+      },
+      {
+        "definition": "One holiday or weekly-off date row inside a Holiday List.",
+        "label": "Holiday",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.holiday.list.holiday",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR period entitlement of leave days allocated to an employee.",
+        "label": "Leave Allocation",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.allocation",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR employee request for leave over a date interval.",
+        "label": "Leave Application",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.application",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR recurring local wall-clock shift window definition.",
+        "label": "Shift Type",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.type",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR scheduled shift assigned to an employee over a date range.",
+        "label": "Shift Assignment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.assignment",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR posted daily attendance record for an employee.",
+        "label": "Attendance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.attendance",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR employee request to regularize or submit missed attendance.",
+        "label": "Attendance Request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.attendance.request",
+        "termKind": "class"
+      },
+      {
+        "definition": "Department linked to an Employee record.",
+        "domainTermId": "norn.frappe-hr.employee",
+        "label": "department (employee)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.department",
+        "termKind": "property"
+      },
+      {
+        "definition": "Designation linked to an Employee record.",
+        "domainTermId": "norn.frappe-hr.employee",
+        "label": "designation (employee)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.designation",
+        "termKind": "property"
+      },
+      {
+        "definition": "Employment start date recorded on the Employee master.",
+        "domainTermId": "norn.frappe-hr.employee",
+        "label": "date_of_joining (employee)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.date.of.joining",
+        "termKind": "property"
+      },
+      {
+        "definition": "Number of leave days newly granted in a Leave Allocation.",
+        "domainTermId": "norn.frappe-hr.leave.allocation",
+        "label": "new_leaves_allocated (leave.allocation)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.allocation.new.leaves.allocated",
+        "termKind": "property"
+      },
+      {
+        "definition": "Start date of a Leave Application.",
+        "domainTermId": "norn.frappe-hr.leave.application",
+        "label": "from_date (leave.application)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.application.from.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "End date of a Leave Application.",
+        "domainTermId": "norn.frappe-hr.leave.application",
+        "label": "to_date (leave.application)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.application.to.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Calculated leave days excluding non-working holidays.",
+        "domainTermId": "norn.frappe-hr.leave.application",
+        "label": "total_leave_days (leave.application)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.application.total.leave.days",
+        "termKind": "property"
+      },
+      {
+        "definition": "First effective date of a Shift Assignment.",
+        "domainTermId": "norn.frappe-hr.shift.assignment",
+        "label": "start_date (shift.assignment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.assignment.start.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Optional last effective date of a Shift Assignment.",
+        "domainTermId": "norn.frappe-hr.shift.assignment",
+        "label": "end_date (shift.assignment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.assignment.end.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Daily attendance classification (Present, Absent, On Leave, Half Day, Work From Home).",
+        "domainTermId": "norn.frappe-hr.attendance",
+        "label": "status (attendance)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.attendance.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "Submit and approve a Leave Application, posting a leave ledger debit.",
+        "domainTermId": "norn.frappe-hr.leave.application",
+        "label": "Submit Leave Application",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.application.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Cancel a submitted Leave Application and reverse its leave ledger entry.",
+        "domainTermId": "norn.frappe-hr.leave.application",
+        "label": "Cancel Leave Application",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.application.cancel",
+        "termKind": "action"
+      },
+      {
+        "definition": "Cancel a submitted Attendance document and amend a replacement copy in place of an immutable reversing event.",
+        "domainTermId": "norn.frappe-hr.attendance",
+        "label": "Cancel and amend Attendance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.attendance.cancel.amend",
+        "termKind": "action"
+      },
+      {
+        "definition": "Refuses a Leave Application when requested days exceed available balance (unless negative balance is allowed).",
+        "label": "Insufficient leave balance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.leave.insufficient.balance",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses overlapping Leave Applications for the same employee.",
+        "label": "Overlapping leave application",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.leave.overlap",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses overlapping Shift Assignments for the same employee.",
+        "label": "Overlapping shift assignment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.shift.overlap",
+        "termKind": "predicate"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/frappe-hr/artifacts/norn.ontology-pack.frappe-hr.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

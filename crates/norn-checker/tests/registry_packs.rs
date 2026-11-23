@@ -202,3 +202,18 @@ fn odoo_moves_give_rise_to_transactions_and_draft_reset_is_non_conforming() {
             .contains("norn.odoo.account.move.button.draft")
     );
 }
+
+#[test]
+fn frappe_hr_link_accounts_for_every_term_and_flags_cancel_amend() {
+    let coverage = coverage("norn.link.frappe-hr.canon");
+    let accounted = coverage.mapped.len()
+        + coverage.residual.len()
+        + coverage.canon_gaps.len()
+        + coverage.non_conforming.len();
+    assert_eq!(accounted, coverage.active_terms);
+    assert!(
+        coverage
+            .non_conforming
+            .contains("norn.frappe-hr.attendance.cancel.amend")
+    );
+}

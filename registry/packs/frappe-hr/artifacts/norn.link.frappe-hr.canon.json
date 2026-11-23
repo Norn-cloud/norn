@@ -1,0 +1,318 @@
+{
+  "artifactId": "norn.link.frappe-hr.canon",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Frappe HR v15 to the Norn canon",
+  "namespace": "norn.ontology",
+  "payload": {
+    "correspondences": [
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe-hr.employee",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.employee",
+        "justification": "Frappe HR collapses natural person and active employment into Employee; Norn separates core.Agent from effective-dated hr.Employment.",
+        "relation": "derived",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.core.agent",
+          "norn.hr.employment"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe-hr.department",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.department",
+        "justification": "A Frappe HR Department is a hierarchical organizational unit (org.OrgUnit).",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.org.unit"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.frappe-hr.designation",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.designation",
+        "justification": "A Frappe HR Designation maps onto a budgeted role/position (org.Post).",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.org.post"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe-hr.holiday.list",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.holiday.list",
+        "justification": "A Holiday List acts as an operating calendar; Norn's time.Calendar also pins IANA tzdb and DST rules.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.time.calendar"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe-hr.holiday.list.holiday",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.holiday.list.holiday",
+        "justification": "Each holiday or weekly-off date row is a calendar exception attached to a calendar.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.time.calendar.exception"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe-hr.leave.allocation",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.leave.allocation",
+        "justification": "A Leave Allocation grants days into a conserved employee leave balance.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.leave.balance"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe-hr.leave.application",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.leave.application",
+        "justification": "A Leave Application is an employee leave request over a date interval.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.leave.request"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe-hr.shift.type",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.shift.type",
+        "justification": "A Shift Type defines a recurring local wall-clock operating window materialized to UTC intervals.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.time.working.window"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe-hr.shift.assignment",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.shift.assignment",
+        "justification": "A Shift Assignment is a promised labor commitment assigned to an employee.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.shift.commitment"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe-hr.attendance",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.attendance",
+        "justification": "Posted Attendance records actual work fulfilling a shift commitment.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.attendance.event"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe-hr.leave.allocation.new.leaves.allocated",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.leave.allocation.new.leaves.allocated",
+        "justification": "Allocated leave days are a conserved resource quantity in UCUM days.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.core.resource.quantity"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.frappe-hr.leave.application.submit",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.leave.application.submit",
+        "justification": "Submitting an approved Leave Application debits the leave ledger; Norn enforces independent-approver authority.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.leave.request.approve"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe-hr.guard.leave.insufficient.balance",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.guard.leave.insufficient.balance",
+        "justification": "Both refuse leave exceeding available balance; Norn never permits silent negative-balance bypass without an explicit policy.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.guard.leave.insufficient.balance"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe-hr.guard.leave.overlap",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.guard.leave.overlap",
+        "justification": "Refuses overlapping leave intervals for the same employee.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.guard.leave.overlap"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe-hr.guard.shift.overlap",
+        "evidenceRefs": [
+          "source.frappe-hr"
+        ],
+        "fromTermId": "norn.frappe-hr.guard.shift.overlap",
+        "justification": "Refuses overlapping scheduled shifts for the same employee.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.guard.shift.overlap"
+        ]
+      }
+    ],
+    "fromPack": {
+      "packId": "norn.ontology-pack.frappe-hr",
+      "version": "0.1.0"
+    },
+    "packId": "norn.link.frappe-hr.canon",
+    "packKind": "link",
+    "packVersion": "0.1",
+    "residuals": [
+      {
+        "note": "Self-service attendance regularization workflow is owned by the HR domain pack rather than the minimal canon.",
+        "reason": "canon_gap",
+        "termId": "norn.frappe-hr.attendance.request"
+      },
+      {
+        "note": "Projected through org.Membership.unit rather than a single mutable column on Employee.",
+        "reason": "system_specific",
+        "termId": "norn.frappe-hr.employee.department"
+      },
+      {
+        "note": "Projected through org.Membership.post rather than a single mutable column on Employee.",
+        "reason": "system_specific",
+        "termId": "norn.frappe-hr.employee.designation"
+      },
+      {
+        "note": "Effective-dated employment start lives on hr.Employment.effective_from in the HR domain pack.",
+        "reason": "canon_gap",
+        "termId": "norn.frappe-hr.employee.date.of.joining"
+      },
+      {
+        "note": "Leave date interval boundaries live on hr.LeaveRequest in the HR domain pack.",
+        "reason": "canon_gap",
+        "termId": "norn.frappe-hr.leave.application.from.date"
+      },
+      {
+        "note": "Leave date interval boundaries live on hr.LeaveRequest in the HR domain pack.",
+        "reason": "canon_gap",
+        "termId": "norn.frappe-hr.leave.application.to.date"
+      },
+      {
+        "note": "Holiday-adjusted leave day count is derived against time.CalendarException in the HR domain pack.",
+        "reason": "canon_gap",
+        "termId": "norn.frappe-hr.leave.application.total.leave.days"
+      },
+      {
+        "note": "Canon shift commitment uses half-open UTC [starts_at, ends_at) intervals rather than multi-day date ranges.",
+        "reason": "canon_gap",
+        "termId": "norn.frappe-hr.shift.assignment.start.date"
+      },
+      {
+        "note": "Canon shift commitment uses half-open UTC [starts_at, ends_at) intervals rather than multi-day date ranges.",
+        "reason": "canon_gap",
+        "termId": "norn.frappe-hr.shift.assignment.end.date"
+      },
+      {
+        "note": "Frappe HR combines presence, leave, and half-day flags into one Attendance status enum.",
+        "reason": "system_specific",
+        "termId": "norn.frappe-hr.attendance.status"
+      },
+      {
+        "note": "Reversing an approved leave posts an explicit adjustment event rather than cancelling a posted record.",
+        "reason": "canon_gap",
+        "termId": "norn.frappe-hr.leave.application.cancel"
+      },
+      {
+        "note": "Cancelling and amending a posted Attendance document replaces history in place; Norn requires immutable AttendanceEvent records corrected only by a linked reversing event (HR-AT-01).",
+        "reason": "non_conforming",
+        "termId": "norn.frappe-hr.attendance.cancel.amend"
+      }
+    ],
+    "toPack": {
+      "packId": "norn.ontology-pack.canon",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/frappe-hr/artifacts/norn.link.frappe-hr.canon.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
