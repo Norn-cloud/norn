@@ -16,8 +16,9 @@ use crate::limits::SliceMeter;
 use super::host_failure;
 use super::input::action_expression_context;
 use super::types::{
-    ActionAuthorizer, ActionCall, ActionPreconditionOutcome, ActionPreconditionOutcomeRef,
-    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionReferenceReads, ActionRefusal,
+    ActionAuthorizer, ActionCall, ActionParameterPin, ActionPreconditionOutcome,
+    ActionPreconditionOutcomeRef, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
+    ActionReferenceReads, ActionRefusal,
 };
 
 fn reference_action(
@@ -191,6 +192,8 @@ pub(super) struct LoadedActionSlice {
     pub(super) aggregates: JsonObject,
     /// The predicate reads that pin each aggregate's members.
     pub(super) predicate_reads: Vec<PredicateReadExpectation>,
+    /// Effective-dated parameter pins resolved in declaration order.
+    pub(super) parameter_pins: Vec<ActionParameterPin>,
 }
 
 pub(super) struct ActionSliceContext<'a, 'model, 'call, H: CellHost + ?Sized> {
@@ -207,7 +210,9 @@ struct ActionSliceState {
     link_reads: Vec<LinkReadExpectation>,
     precondition_keys: BTreeSet<FactKey>,
     entry_keys: BTreeMap<String, Option<FactKey>>,
+    entry_list_keys: BTreeMap<String, Vec<FactKey>>,
     entry_depths: BTreeMap<String, u32>,
+    parameter_pins: Vec<ActionParameterPin>,
     observed_records: u32,
     meter: SliceMeter,
     read_types: BTreeSet<ObjectTypeName>,
@@ -253,11 +258,29 @@ fn action_slice_key<X>(
                 .saturating_add(1);
             (depth, None)
         }
-        SliceKey::Parameter { .. } => {
-            return Err(ActionRefusal::SliceUnavailable {
-                entry: entry.name.clone(),
-                reason: "parameter slice execution is not qualified in this cut".to_owned(),
-            });
+        SliceKey::Parameter {
+            from, default_from, ..
+        } => {
+            let from_depth =
+                entry_depths
+                    .get(from)
+                    .copied()
+                    .ok_or_else(|| ActionRefusal::SliceUnavailable {
+                        entry: entry.name.clone(),
+                        reason: format!("parameter source entry {from:?} has no readable depth"),
+                    })?;
+            let default_depth = match default_from.as_deref() {
+                None => 0,
+                Some(default_name) => entry_depths.get(default_name).copied().ok_or_else(|| {
+                    ActionRefusal::SliceUnavailable {
+                        entry: entry.name.clone(),
+                        reason: format!(
+                            "parameter defaultFrom {default_name:?} has no readable depth"
+                        ),
+                    }
+                })?,
+            };
+            (from_depth.max(default_depth), None)
         }
         SliceKey::TriggerObject
         | SliceKey::TriggerBefore
@@ -288,6 +311,9 @@ fn load_action_slice_entry<H: CellHost + ?Sized>(
         action_slice_key(entry, effective_input, &state.values, &state.entry_depths)?;
     if matches!(entry.key, SliceKey::Link { .. }) {
         return load_action_slice_links(context, state, entry, depth);
+    }
+    if matches!(entry.key, SliceKey::Parameter { .. }) {
+        return load_action_slice_parameter(context, state, entry, depth);
     }
     let ActionSliceState {
         facts,
@@ -375,6 +401,60 @@ fn load_action_slice_entry<H: CellHost + ?Sized>(
     Ok(())
 }
 
+fn load_action_slice_parameter<H: CellHost + ?Sized>(
+    context: &ActionSliceContext<'_, '_, '_, H>,
+    state: &mut ActionSliceState,
+    entry: &SliceDeclaration,
+    depth: u32,
+) -> Result<(), ActionRefusal<H::Error>> {
+    if depth > state.limits.max_relation_depth {
+        return Err(ActionRefusal::SliceUnavailable {
+            entry: entry.name.clone(),
+            reason: format!(
+                "relation depth {depth} exceeds {}",
+                state.limits.max_relation_depth
+            ),
+        });
+    }
+    if state.read_types.insert(entry.object_type.clone()) {
+        authorize_slice_type(
+            context.call,
+            context.effective_input,
+            context.authorizer,
+            &entry.object_type,
+        )?;
+    }
+    let resolved = super::parameter::resolve_parameter_slice(
+        &super::parameter::ParameterSliceInput {
+            call: context.call,
+            effective_input: context.effective_input,
+            facts: &state.facts,
+            entry_keys: &state.entry_keys,
+            entry_list_keys: &state.entry_list_keys,
+        },
+        entry,
+    )?;
+    if !context
+        .catalog
+        .lineage(&resolved.key.object_type)
+        .contains(&entry.object_type)
+    {
+        return Err(ActionRefusal::SliceUnavailable {
+            entry: entry.name.clone(),
+            reason: "selected parameter fact has a type outside the admitted entry type".to_owned(),
+        });
+    }
+    state
+        .values
+        .insert(entry.name.clone(), RuntimeValue::Object(resolved.values));
+    state
+        .entry_keys
+        .insert(entry.name.clone(), Some(resolved.key));
+    state.entry_depths.insert(entry.name.clone(), depth);
+    state.parameter_pins.push(resolved.pin);
+    Ok(())
+}
+
 fn load_action_slice_links<H: CellHost + ?Sized>(
     context: &ActionSliceContext<'_, '_, '_, H>,
     state: &mut ActionSliceState,
@@ -394,11 +474,13 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
         link_reads,
         precondition_keys,
         entry_keys,
+        entry_list_keys,
         entry_depths,
         observed_records,
         meter,
         read_types,
         limits,
+        ..
     } = state;
     let SliceKey::Link { from, link } = &entry.key else {
         return Ok(());
@@ -408,6 +490,7 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
         // list; there is no existing source whose adjacency can change.
         values.insert(entry.name.clone(), RuntimeValue::Array(Vec::new()));
         entry_keys.insert(entry.name.clone(), None);
+        entry_list_keys.insert(entry.name.clone(), Vec::new());
         entry_depths.insert(entry.name.clone(), depth);
         return Ok(());
     };
@@ -424,6 +507,7 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
         meter.bytes(),
     )?;
     let mut items = Vec::with_capacity(targets.len());
+    let mut item_keys = Vec::with_capacity(targets.len());
     for target in &targets {
         if !catalog
             .lineage(&target.key.target.object_type)
@@ -451,17 +535,20 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
             read_types,
             false,
         )?;
-        precondition_keys.insert(known_fact_key(facts, catalog, &target.key.target));
+        let concrete_key = known_fact_key(facts, catalog, &target.key.target);
+        precondition_keys.insert(concrete_key.clone());
         let Some(object) = state.values.as_ref() else {
             return Err(ActionRefusal::SliceObjectMissing {
                 entry: entry.name.clone(),
             });
         };
         items.push(RuntimeValue::Object(object.clone()));
+        item_keys.push(concrete_key);
     }
     record_action_link_read(link_reads, source_key, link, targets)?;
     values.insert(entry.name.clone(), RuntimeValue::Array(items));
     entry_keys.insert(entry.name.clone(), None);
+    entry_list_keys.insert(entry.name.clone(), item_keys);
     entry_depths.insert(entry.name.clone(), depth);
     Ok(())
 }
@@ -563,7 +650,9 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     let link_reads = Vec::new();
     let precondition_keys = BTreeSet::new();
     let entry_keys = BTreeMap::<String, Option<FactKey>>::new();
+    let entry_list_keys = BTreeMap::<String, Vec<FactKey>>::new();
     let entry_depths = BTreeMap::<String, u32>::new();
+    let parameter_pins = Vec::new();
     let observed_records = meter.records();
     let read_types = BTreeSet::<ObjectTypeName>::new();
     let mut state = ActionSliceState {
@@ -572,7 +661,9 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
         link_reads,
         precondition_keys,
         entry_keys,
+        entry_list_keys,
         entry_depths,
+        parameter_pins,
         observed_records,
         meter,
         read_types,
@@ -603,6 +694,7 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
         values,
         link_reads,
         precondition_keys,
+        parameter_pins,
         limits,
         ..
     } = state;
@@ -638,6 +730,7 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
         precondition_keys,
         aggregates,
         predicate_reads,
+        parameter_pins,
     })
 }
 

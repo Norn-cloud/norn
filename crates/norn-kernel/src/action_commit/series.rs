@@ -150,6 +150,7 @@ where
             effective_input: Some(generated_input.clone()),
             derived_values: preparation.derived_values.clone(),
             precondition_outcomes,
+            parameter_pins: slice.parameter_pins.clone(),
             actor: call.actor.clone(),
             turn: call.turn.id.clone(),
             transition: String::new(),

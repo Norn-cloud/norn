@@ -24,6 +24,7 @@ import * as OP from "../builder/ontology-pack.ts"
 import * as PL from "../builder/pack-link.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
+import * as ST from "../builder/setting.ts"
 import * as T from "../builder/transform.ts"
 import type { DeonticRule } from "../builder/deontic.ts"
 import type { CompiledExample, ExampleExpectation } from "../examples.ts"
@@ -85,7 +86,7 @@ function parsedTemporal(expr: X.Expr, temporal: ReadonlyMap<string, "date" | "ti
 }
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef | LB.LabelsDef | MD.ModelDef | T.TransformDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef | LB.LabelsDef | MD.ModelDef | T.TransformDef | ST.SettingDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -143,6 +144,7 @@ const DECISION = "@norn/authoring#Norn.decision"
 const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
+const SETTING = "@norn/authoring#Norn.setting"
 const TRANSFORM = "@norn/authoring#Norn.transform"
 const EXAMPLE = "@norn/authoring#Norn.example"
 const OBLIGATION = "@norn/authoring#Norn.obligation"
@@ -157,7 +159,7 @@ const QUESTION = "@norn/authoring#Norn.question"
 const DASHBOARD = "@norn/authoring#Norn.dashboard"
 const APPROVAL = "@norn/authoring#Norn.approval"
 const CALLER_ID = "@norn/authoring#Norn.callerId"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS, MODEL, TRANSFORM])
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS, MODEL, TRANSFORM, SETTING])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
@@ -268,6 +270,7 @@ export function compileDefinitionFiles(
         : def._tag === "Mapping" ? M.lowerMapping(def, envelopeOptions)
         : def._tag === "Law" ? L.lowerLaw(def, envelopeOptions)
         : def._tag === "Transform" ? T.lowerTransform(def, envelopeOptions)
+        : def._tag === "Setting" ? ST.lowerSetting(def, envelopeOptions)
         : def._tag === "SourceSchema" ? SS.lowerSourceSchema(def, envelopeOptions)
         : def._tag === "OntologyPack" ? OP.lowerOntologyPack(def, envelopeOptions)
         : def._tag === "PackLink" ? PL.lowerPackLink(def, envelopeOptions)
@@ -434,6 +437,7 @@ class DefinitionCompiler {
           : id === MAPPING ? this.mapping(init)
           : id === LAW ? this.law(init)
           : id === TRANSFORM ? this.transform(init)
+          : id === SETTING ? this.setting(init)
           : id === LABELS ? this.labels(init)
           : id === MODEL ? this.model(init)
           : this.decision(init)
@@ -1640,6 +1644,175 @@ class DefinitionCompiler {
       }
     })()
     return { id: this.string(m.get("id")!), output: this.string(m.get("output")!), rule: parsed }
+  }
+
+  /**
+   * `Norn.setting({ id, title, version, settingKey, valueType, value, effectiveFrom, effectiveTo?, supersedes?, review, scopeRequired })`
+   * (SettingRoot, PARAM-EXACT-1 / PARAM-BOUND-1 / VAL-EXACT-1): numeric settings
+   * require exact `DecimalLiteral` strings and refuse binary JS numbers.
+   */
+  private setting(call: ts.CallExpression): ST.SettingDef {
+    const members = this.meta(call, [
+      "id",
+      "title",
+      "version",
+      "settingKey",
+      "valueType",
+      "value",
+      "effectiveFrom",
+      "effectiveTo",
+      "supersedes",
+      "review",
+      "scopeRequired",
+    ])
+    const need = (key: string): ts.Expression => this.member(members, key, call)
+    const nonBlank = (node: ts.Expression, label: string): string => {
+      const value = this.string(node)
+      if (value.trim().length === 0) throw new CompileError("NORN-FLOW-LITERAL", `${label} must be a non-empty string`, node)
+      return value
+    }
+    const idNode = need("id")
+    const id = nonBlank(idNode, "setting id")
+    const idSegments = id.split(".")
+    if (
+      id !== id.trim() ||
+      idSegments.length < 2 ||
+      idSegments.some((segment) => segment.trim().length === 0 || segment !== segment.trim())
+    ) {
+      throw new CompileError(
+        "NORN-FLOW-LITERAL",
+        `setting id ${JSON.stringify(id)} must be a dotted identifier with non-empty segments and no leading or trailing whitespace`,
+        idNode,
+      )
+    }
+    const title = nonBlank(need("title"), "setting title")
+    const version = nonBlank(need("version"), "setting version")
+    const settingKey = nonBlank(need("settingKey"), "settingKey")
+    const valueTypeNode = need("valueType")
+    const valueType = this.string(valueTypeNode)
+    if (!ST.SETTING_VALUE_TYPES.has(valueType)) {
+      throw new CompileError("NORN-FLOW-LITERAL", `valueType must be "text", "number", "boolean", or "json"`, valueTypeNode)
+    }
+    const valueNode = need("value")
+    const valueExpr = this.deref(valueNode)
+    let value: Json
+    if (valueType === "text") {
+      value = this.string(valueNode)
+    } else if (valueType === "number") {
+      const isJsNumber =
+        ts.isNumericLiteral(valueExpr) ||
+        (ts.isPrefixUnaryExpression(valueExpr) &&
+          (valueExpr.operator === ts.SyntaxKind.MinusToken || valueExpr.operator === ts.SyntaxKind.PlusToken) &&
+          ts.isNumericLiteral(this.unwrap(valueExpr.operand)))
+      if (isJsNumber) {
+        throw new CompileError(
+          "NORN-FLOW-LITERAL",
+          `numeric settings require an exact DecimalLiteral string (e.g. "0.12"), not a binary JavaScript number (VAL-EXACT-1)`,
+          valueNode,
+        )
+      }
+      if (!ts.isStringLiteral(valueExpr) && !ts.isNoSubstitutionTemplateLiteral(valueExpr)) {
+        throw new CompileError("NORN-FLOW-LITERAL", "numeric settings require an exact DecimalLiteral string literal", valueNode)
+      }
+      if (!ST.isValidDecimalLiteral(valueExpr.text)) {
+        throw new CompileError(
+          "NORN-FLOW-LITERAL",
+          `numeric setting value ${JSON.stringify(valueExpr.text)} is not a valid exact DecimalLiteral`,
+          valueNode,
+        )
+      }
+      value = valueExpr.text
+    } else if (valueType === "boolean") {
+      value = this.boolean(valueNode)
+    } else {
+      value = this.json(valueNode)
+    }
+
+    const effectiveFromNode = need("effectiveFrom")
+    const effectiveFrom = nonBlank(effectiveFromNode, "effectiveFrom")
+    const fromInstant = ST.parseRfc3339Instant(effectiveFrom)
+    if (fromInstant === undefined) {
+      throw new CompileError("NORN-FLOW-LITERAL", `effectiveFrom ${JSON.stringify(effectiveFrom)} must be a valid RFC 3339 timestamp`, effectiveFromNode)
+    }
+    const effectiveToNode = members.get("effectiveTo")
+    let effectiveTo: string | undefined
+    if (effectiveToNode !== undefined) {
+      effectiveTo = nonBlank(effectiveToNode, "effectiveTo")
+      const toInstant = ST.parseRfc3339Instant(effectiveTo)
+      if (toInstant === undefined) {
+        throw new CompileError("NORN-FLOW-LITERAL", `effectiveTo ${JSON.stringify(effectiveTo)} must be a valid RFC 3339 timestamp`, effectiveToNode)
+      }
+      if (toInstant <= fromInstant) {
+        throw new CompileError("NORN-FLOW-LITERAL", "effectiveTo must be strictly after effectiveFrom", effectiveToNode)
+      }
+    }
+
+    const supersedesNode = members.get("supersedes")
+    let supersedes: ST.SettingSupersedes | undefined
+    if (supersedesNode !== undefined) {
+      const s = this.closedRecord(supersedesNode, ["artifactId", "version"], ["artifactId", "version"])
+      supersedes = {
+        artifactId: nonBlank(s.get("artifactId")!, "supersedes.artifactId"),
+        version: nonBlank(s.get("version")!, "supersedes.version"),
+      }
+    }
+
+    const reviewNode = need("review")
+    const r = this.closedRecord(reviewNode, ["state", "reviewedBy", "reviewedAt", "reason"], ["state"])
+    const reviewStateNode = r.get("state")!
+    const reviewState = this.string(reviewStateNode)
+    if (!ST.SETTING_REVIEW_STATES.has(reviewState)) {
+      throw new CompileError(
+        "NORN-FLOW-LITERAL",
+        `review.state must be "draft", "proposed", "approved", "active", "rejected", or "superseded"`,
+        reviewStateNode,
+      )
+    }
+    const reviewedBy = r.get("reviewedBy")
+    const reviewedAt = r.get("reviewedAt")
+    const reason = r.get("reason")
+    if (reviewedAt !== undefined && ST.parseRfc3339Instant(nonBlank(reviewedAt, "review.reviewedAt")) === undefined) {
+      throw new CompileError("NORN-FLOW-LITERAL", "review.reviewedAt must be a valid RFC 3339 timestamp", reviewedAt)
+    }
+    const review: ST.SettingReview = {
+      state: reviewState as ST.SettingReviewState,
+      ...(reviewedBy !== undefined ? { reviewedBy: nonBlank(reviewedBy, "review.reviewedBy") } : {}),
+      ...(reviewedAt !== undefined ? { reviewedAt: nonBlank(reviewedAt, "review.reviewedAt") } : {}),
+      ...(reason !== undefined ? { reason: nonBlank(reason, "review.reason") } : {}),
+    }
+
+    const scopeNode = need("scopeRequired")
+    const scopeRequired = this.list(scopeNode).map((item) => {
+      const dim = nonBlank(item, "scopeRequired entry")
+      if (!ST.SETTING_SCOPE_DIMENSIONS.has(dim)) {
+        throw new CompileError(
+          "NORN-FLOW-LITERAL",
+          `scopeRequired entry ${JSON.stringify(dim)} must be one of orgId, tenantId, workspaceId, environmentId, businessUnitId`,
+          item,
+        )
+      }
+      return dim
+    })
+    if (scopeRequired.length === 0) {
+      throw new CompileError("NORN-FLOW-LITERAL", "scopeRequired must contain at least one scope dimension", scopeNode)
+    }
+    if (new Set(scopeRequired).size !== scopeRequired.length) {
+      throw new CompileError("NORN-FLOW-LITERAL", "scopeRequired must not contain duplicate scope dimensions", scopeNode)
+    }
+
+    return ST.setting({
+      id,
+      title,
+      version,
+      settingKey,
+      valueType: valueType as ST.SettingValueType,
+      value,
+      effectiveFrom,
+      ...(effectiveTo !== undefined ? { effectiveTo } : {}),
+      ...(supersedes !== undefined ? { supersedes } : {}),
+      review,
+      scopeRequired,
+    })
   }
 
   /**

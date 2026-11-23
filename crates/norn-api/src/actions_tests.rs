@@ -1306,3 +1306,315 @@ fn action_request_and_receipt_thread_optional_trace_and_refuse_invalid_trace() {
     }
     assert_eq!(dump(&host), before, "malformed trace must mutate nothing");
 }
+
+fn parameter_entity_documents() -> Vec<Value> {
+    let scope = json!({"orgId": "org_demo", "environmentId": "dev"});
+    let provenance = json!({"source": "authoring_sdk", "sourcePath": "test/parameter.ts"});
+    vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "billing.setting.vat_rate",
+            "kind": "setting", "namespace": "billing", "name": "VAT Rate",
+            "version": "1.0.0", "lifecycle": "draft", "scope": scope,
+            "dependencies": [], "provenance": provenance,
+            "payload": {
+                "settingVersion": "0.1", "settingKey": "billing.vat_rate",
+                "valueType": "number", "value": "0.10",
+                "effectiveFrom": "2026-06-01T00:00:00Z", "effectiveTo": "2026-07-01T00:00:00Z",
+                "review": {"state": "approved"}, "scopeRequired": ["orgId", "environmentId"]
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "billing.NumericSetting.entity",
+            "kind": "entity", "namespace": "billing", "name": "Numeric Setting",
+            "version": "1.0.0", "lifecycle": "draft", "scope": scope,
+            "dependencies": [], "provenance": provenance,
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "billing.NumericSetting",
+                    "properties": [
+                        {"id": "id", "type": {"kind": "text"}},
+                        {"id": "setting_key", "type": {"kind": "text"}},
+                        {"id": "value", "type": {"kind": "decimal", "scale": 4}},
+                        {"id": "effective_from", "type": {"kind": "timestamp", "timezone": "utc"}},
+                        {"id": "effective_to", "type": {"kind": "timestamp", "timezone": "utc"}, "constraints": {"nullable": true}},
+                        {"id": "review_state", "type": {"kind": "text"}},
+                        {"id": "org_id", "type": {"kind": "text"}, "constraints": {"nullable": true}},
+                        {"id": "tenant_id", "type": {"kind": "text"}, "constraints": {"nullable": true}},
+                        {"id": "workspace_id", "type": {"kind": "text"}, "constraints": {"nullable": true}},
+                        {"id": "environment_id", "type": {"kind": "text"}, "constraints": {"nullable": true}},
+                        {"id": "business_unit_id", "type": {"kind": "text"}, "constraints": {"nullable": true}}
+                    ],
+                    "identity": [{"name": "primary", "properties": ["id"]}]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "billing.SettingRegistry.entity",
+            "kind": "entity", "namespace": "billing", "name": "Setting Registry",
+            "version": "1.0.0", "lifecycle": "draft", "scope": scope,
+            "dependencies": [{"artifactId": "billing.NumericSetting.entity", "kind": "entity", "version": "1.0.0", "required": true}],
+            "provenance": provenance,
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "billing.SettingRegistry",
+                    "properties": [{"id": "id", "type": {"kind": "text"}}],
+                    "identity": [{"name": "primary", "properties": ["id"]}],
+                    "links": [{"id": "settings", "target": "billing.NumericSetting", "cardinality": {"to": "many", "from": "many"}}]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "billing.TaxReceipt.entity",
+            "kind": "entity", "namespace": "billing", "name": "Tax Receipt",
+            "version": "1.0.0", "lifecycle": "draft", "scope": scope,
+            "dependencies": [], "provenance": provenance,
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "billing.TaxReceipt",
+                    "properties": [
+                        {"id": "id", "type": {"kind": "text"}},
+                        {"id": "registry_id", "type": {"kind": "text"}},
+                        {"id": "tax_rate", "type": {"kind": "decimal", "scale": 4}},
+                        {"id": "effective_at", "type": {"kind": "text"}}
+                    ],
+                    "identity": [{"name": "primary", "properties": ["id"]}]
+                }
+            }
+        }),
+    ]
+}
+
+fn parameter_action_document() -> Value {
+    json!({
+        "irVersion": "0.1", "artifactId": "billing.tax_receipt.record.action",
+        "kind": "action", "namespace": "billing", "name": "Record Tax Receipt",
+        "version": "1.0.0", "lifecycle": "draft",
+        "scope": {"orgId": "org_demo", "environmentId": "dev"},
+        "dependencies": [
+            {"artifactId": "billing.TaxReceipt.entity", "kind": "entity", "version": "1.0.0", "required": true},
+            {"artifactId": "billing.SettingRegistry.entity", "kind": "entity", "version": "1.0.0", "required": true},
+            {"artifactId": "billing.NumericSetting.entity", "kind": "entity", "version": "1.0.0", "required": true}
+        ],
+        "provenance": {"source": "authoring_sdk", "sourcePath": "test/parameter.ts"},
+        "payload": {
+            "actionId": "billing.tax_receipt.record",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true, "ledgered": true,
+            "inputSchema": {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                    "id": {"type": "string"},
+                    "registry_id": {"type": "string"},
+                    "tax_rate": {"type": "number", "nornType": {"kind": "decimal", "scale": 4}},
+                    "effective_at": {"type": "string"}
+                },
+                "required": ["id", "registry_id", "tax_rate", "effective_at"]
+            },
+            "outputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+            "slice": [
+                {"name": "registry", "objectType": "billing.SettingRegistry", "key": {"property": {"from": "input", "property": "registry_id"}}},
+                {"name": "settings", "objectType": "billing.NumericSetting", "key": {"link": {"from": "registry", "link": "settings"}}},
+                {"name": "tax", "objectType": "billing.NumericSetting", "key": {"parameter": {
+                    "from": "settings", "settingKey": "billing.vat_rate", "effectiveAt": "effective_at",
+                    "precedence": [{"orgId": "org_demo", "environmentId": "dev"}, {"orgId": "org_demo"}, {}]
+                }}}
+            ],
+            "preconditions": ["input.tax_rate == slice.tax.value"],
+            "writes": [{"entityKind": "billing.TaxReceipt", "change": "created"}],
+            "effectProgram": {
+                "kind": "upsert_input_object", "objectKind": "billing.TaxReceipt",
+                "objectIdField": "id", "entityArtifactId": "billing.TaxReceipt.entity",
+                "entityArtifactVersion": "1.0.0", "writeMode": {"kind": "create_only"}
+            }
+        }
+    })
+}
+
+fn api_setting_row(
+    id: &str,
+    value: &str,
+    from: &str,
+    to: Option<&str>,
+) -> BTreeMap<String, RuntimeValue> {
+    BTreeMap::from([
+        ("id".to_owned(), RuntimeValue::String(id.to_owned())),
+        (
+            "setting_key".to_owned(),
+            RuntimeValue::String("billing.vat_rate".to_owned()),
+        ),
+        (
+            "value".to_owned(),
+            RuntimeValue::Number(norn_ir::Decimal::parse(value).unwrap()),
+        ),
+        (
+            "effective_from".to_owned(),
+            RuntimeValue::String(from.to_owned()),
+        ),
+        (
+            "effective_to".to_owned(),
+            to.map_or(RuntimeValue::Null, |s| RuntimeValue::String(s.to_owned())),
+        ),
+        (
+            "review_state".to_owned(),
+            RuntimeValue::String("approved".to_owned()),
+        ),
+        (
+            "org_id".to_owned(),
+            RuntimeValue::String("org_demo".to_owned()),
+        ),
+        ("tenant_id".to_owned(), RuntimeValue::Null),
+        ("workspace_id".to_owned(), RuntimeValue::Null),
+        (
+            "environment_id".to_owned(),
+            RuntimeValue::String("dev".to_owned()),
+        ),
+        ("business_unit_id".to_owned(), RuntimeValue::Null),
+    ])
+}
+
+fn seed_parameter_settings(host: &DevHost<NativeEngine>) {
+    use norn_kernel::{
+        CellCommit, CellHost, FactKey, FactMutation, FactVersion, FactWrite, LinkKey, LinkMutation,
+        LinkWrite,
+    };
+    let mut cell = host.cell().unwrap();
+    let reg = FactKey::new("billing.SettingRegistry", "reg-main");
+    let june = FactKey::new("billing.NumericSetting", "vat-june");
+    let july = FactKey::new("billing.NumericSetting", "vat-july");
+    CellHost::commit(
+        &mut *cell,
+        CellCommit {
+            writes: vec![
+                FactWrite {
+                    key: reg.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: BTreeMap::from([(
+                            "id".to_owned(),
+                            RuntimeValue::String("reg-main".to_owned()),
+                        )]),
+                    },
+                },
+                FactWrite {
+                    key: june.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: api_setting_row(
+                            "vat-june",
+                            "0.10",
+                            "2026-06-01T00:00:00Z",
+                            Some("2026-07-01T00:00:00Z"),
+                        ),
+                    },
+                },
+                FactWrite {
+                    key: july.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: api_setting_row("vat-july", "0.12", "2026-07-01T00:00:00Z", None),
+                    },
+                },
+            ],
+            links: vec![
+                LinkWrite {
+                    key: LinkKey::new(reg.clone(), "settings", june),
+                    expected: FactVersion::ABSENT,
+                    mutation: LinkMutation::Add {
+                        values: BTreeMap::new(),
+                    },
+                },
+                LinkWrite {
+                    key: LinkKey::new(reg, "settings", july),
+                    expected: FactVersion::ABSENT,
+                    mutation: LinkMutation::Add {
+                        values: BTreeMap::new(),
+                    },
+                },
+            ],
+            ..CellCommit::empty()
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn parameter_slice_executes_end_to_end_through_api_and_cell_store() {
+    let mut documents = parameter_entity_documents();
+    documents.push(parameter_action_document());
+    let store = admitted_store(&documents, crate::action_admission::prepare_action_model);
+    let host = host_of(store);
+    let query = scoped("org_demo");
+    seed_parameter_settings(&host);
+
+    // June 30 call succeeds with 0.10 and pins vat-june version 1 in norn.ActionCall.
+    let june_body = json!({
+        "input": {"id": "rec-june", "registry_id": "reg-main", "tax_rate": "0.10", "effective_at": "2026-06-30T23:59:59Z"},
+        "idempotencyKey": "k-june"
+    })
+    .to_string();
+    let june_receipt = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "billing.tax_receipt.record",
+        &june_body,
+    )
+    .unwrap();
+    assert_eq!(june_receipt.outcome, ActionCallOutcome::Committed);
+
+    let stored_record = {
+        let cell = host.cell().unwrap();
+        let row = cell
+            .store()
+            .read()
+            .object(
+                MAIN_WORLD,
+                ACTION_CALL_TYPE,
+                "billing.tax_receipt.record/k-june",
+            )
+            .unwrap()
+            .expect("action call record");
+        ActionCallRecord::from_values(&row.values).expect("decode action call record")
+    };
+    assert_eq!(stored_record.parameter_pins.len(), 1);
+    assert_eq!(stored_record.parameter_pins[0].setting.key, "vat-june");
+    assert_eq!(stored_record.parameter_pins[0].version, 1);
+
+    // Missing window (May 1) refuses 422 core.composition.parameter_missing without mutating state.
+    let before_missing = dump(&host);
+    let missing_body = json!({
+        "input": {"id": "rec-may", "registry_id": "reg-main", "tax_rate": "0.10", "effective_at": "2026-05-01T00:00:00Z"},
+        "idempotencyKey": "k-may"
+    })
+    .to_string();
+    let missing = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "billing.tax_receipt.record",
+        &missing_body,
+    )
+    .unwrap_err();
+    assert_eq!(
+        (missing.status, missing.code.as_str()),
+        (422, "core.composition.parameter_missing")
+    );
+    assert_eq!(dump(&host), before_missing);
+
+    // Unauthorized caller gets opaque 403 authz.denied (fail closed).
+    let hidden = call(
+        &host,
+        &query,
+        Some(HIDDEN),
+        "billing.tax_receipt.record",
+        &missing_body,
+    )
+    .unwrap_err();
+    assert_eq!(
+        (hidden.status, hidden.code.as_str()),
+        (403, codes::AUTHZ_DENIED)
+    );
+}

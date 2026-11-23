@@ -1074,6 +1074,7 @@ where
         effective_input: preparation.recorded_effective_input(),
         derived_values: preparation.derived_values.clone(),
         precondition_outcomes: Vec::new(),
+        parameter_pins: Vec::new(),
         actor: call.actor.clone(),
         turn: call.turn.id.clone(),
         transition: String::new(),
@@ -1162,6 +1163,9 @@ where
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
+    record
+        .parameter_pins
+        .clone_from(&action_slice.parameter_pins);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
 
     // Replays must be resolved before CAS validation: a create retry carries
