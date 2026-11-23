@@ -14,8 +14,8 @@ Boat never uses the GitHub Actions cache: its egress limit is account-wide, and 
 
 A compiler cache maps an input hash to an output. Anyone who can write it can make a later build pick up an output they chose, so only code that has landed on `main` writes. A merge group does not: it runs the queued pull request's own build scripts, proc macros and tests before that code lands, and a pull request enters the queue on green checks alone.
 
-- The `core` and `test` jobs enter the `ci-cache-writer` environment only for `push` to `main`. The environment's only deployment branch is `main`.
-- `NORN_SCCACHE_KEY_ID` and `NORN_SCCACHE_SECRET` are repository secrets holding a **read-only** R2 token. The environment overrides them with a read-write token. Every other run, merge groups and pull requests included, gets only the read-only token.
+- The `core` and `test` jobs enter the `ci-cache-writer-boat` environment only for a `push` to `main` that runs on Boat: made and started by `github-merge-queue[bot]`, with `NORN_MAIN_RUNNER=boat` (#1369). A human's push or re-run of main runs hosted and never receives the key. The environment's only deployment branch is `main`. The retired `ci-cache-writer` environment holds no secrets, so a re-run of a workflow from before #1369 gets no writable key.
+- The R2 keys live in Infisical, never in GitHub secrets (the daily credential audit in `Norn-cloud/norn-ops` requires zero stored Actions secrets), and only the reviewed helper `scripts/ci/infisical-oidc.sh` reads them. On Boat, the step "Read the shared cache keys from Infisical over OIDC" runs it as one of two identities, each in **its own Infisical project**: a `push` to `refs/heads/main` (only inside `ci-cache-writer-boat`) as the writer, which the `NORN_SCCACHE_WRITER_INFISICAL_*` variables of that environment name; every other run as the reader, which the repository's `NORN_SCCACHE_READER_INFISICAL_*` variables name. Each reads `NORN_SCCACHE_{BUCKET,ENDPOINT,KEY_ID,SECRET}` from `prod` `/sccache` of its own project. The reader project holds only the read-only R2 key and the writer project only the read-write one, and neither identity is a member of the other's project, so the reader cannot reach the writer key even with a valid login (Infisical has no folder-level access control on this plan, so a shared project would not do). The writer identity's OIDC binding is this repository's immutable environment subject plus the exact workflow, `main` and `push`, so no other run can log in as it. A fork's run gets no OIDC token at all.
 - The start step also sets `SCCACHE_S3_RW_MODE=READ_ONLY` for every event except a `push` to `refs/heads/main`.
 - The keys are in the environment of the "Start sccache or compile without it" step and of the server it starts. They are never written to `GITHUB_ENV`, but that server runs as the same user as every later step, so same-repository pull-request code on Boat can read the read-only key. What stops a pull request or a merge group from writing is the read-only token's scope and the environment's branch rule, not step scoping.
 
@@ -29,13 +29,35 @@ The bucket has no object expiry configured, so an object stays until it is delet
 
 A cache outage never fails a build: the wrapper falls back to plain `rustc` when sccache itself errors.
 
-## Secrets
+## Credentials
 
-| Name | Where | Holds |
+No GitHub secrets: `core` and `test` have `id-token: write` for the key step and nothing else reads a token. GitHub issues this repository **immutable OIDC subjects** (`use_immutable_subject: true`): the subject prefix is `repo:Norn-cloud@251878045/norn@1438876916` (owner id 251878045, repository id 1438876916), not `repo:Norn-cloud/norn`, so a binding on the legacy subject never matches.
+
+| Variable | Where | Names |
 |---|---|---|
-| `NORN_SCCACHE_BUCKET` | repository | bucket name |
-| `NORN_SCCACHE_ENDPOINT` | repository | `https://<account>.r2.cloudflarestorage.com` |
-| `NORN_SCCACHE_KEY_ID`, `NORN_SCCACHE_SECRET` | repository | read-only R2 token |
-| `NORN_SCCACHE_KEY_ID`, `NORN_SCCACHE_SECRET` | `ci-cache-writer` environment | read-write R2 token |
+| `NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID` | repository | the reader identity |
+| `NORN_SCCACHE_READER_INFISICAL_PROJECT_ID` | repository | the reader project (holds the read-only R2 key) |
+| `NORN_SCCACHE_WRITER_INFISICAL_IDENTITY_ID` | `ci-cache-writer-boat` environment only | the writer identity |
+| `NORN_SCCACHE_WRITER_INFISICAL_PROJECT_ID` | `ci-cache-writer-boat` environment only | the writer project (holds the read-write R2 key) |
 
-Without the bucket secrets, Boat keeps its local cache, as before.
+Each project has `NORN_SCCACHE_BUCKET`, `NORN_SCCACHE_ENDPOINT`, `NORN_SCCACHE_KEY_ID` and `NORN_SCCACHE_SECRET` in `prod` at `/sccache`. The writer variables are never set at repository level: the step asks for the writer only on a push to main, and the binding below refuses every other run anyway.
+
+Infisical OIDC auth (issuer and discovery URL `https://token.actions.githubusercontent.com`, audience `https://github.com/Norn-cloud`), one identity per project, each a member (Viewer) of its own project only, with org role member and OIDC as its **only** auth method. Infisical enables Universal Auth on a new identity by default: remove it (Access Management → the identity → Authentication → Universal Auth → remove, which also revokes its client secrets) so OIDC is its only method; the daily audit fails on any universal-auth identity it has no approval for.
+
+
+| Identity | Bound subject | Bound claims |
+|---|---|---|
+| reader | `repo:Norn-cloud@251878045/norn@1438876916:*` | `repository_id=1438876916`, `workflow_ref=Norn-cloud/norn/.github/workflows/ci-policy.yml@*` |
+| writer | `repo:Norn-cloud@251878045/norn@1438876916:environment:ci-cache-writer-boat` | `repository_id=1438876916`, `environment=ci-cache-writer-boat`, `workflow_ref=Norn-cloud/norn/.github/workflows/ci-policy.yml@refs/heads/main`, `ref=refs/heads/main`, `event_name=push` |
+
+The key step runs in `core` and `test` directly, not in a called reusable workflow, so the bindings use `workflow_ref`, which every job's token carries. GitHub documents `job_workflow_ref` for reusable-workflow jobs only; do not bind on it here.
+
+The `ci-cache-writer-boat` environment exists with one deployment branch rule, `main` (`gh api repos/Norn-cloud/norn/environments/ci-cache-writer-boat/deployment-branch-policies` lists exactly `main`).
+
+The check that the reader is refused on the writer project, run after any change to either identity, by an Infisical org admin:
+1. Both identities have the org role **member** (`GET /api/v2/organizations/<org id>/identity-memberships`, each one's `role`), never admin: an org admin reaches every project, whatever the project memberships say.
+2. `GET /api/v2/workspace/<writer project id>/identity-memberships` lists the writer identity and no other; `GET /api/v2/workspace/<reader project id>/identity-memberships` lists the reader and no other.
+3. No group grants either project: `GET /api/v2/workspace/<writer project id>/groups` and `GET /api/v2/workspace/<reader project id>/groups` both return no group. A group can hold a project membership for its members, so any group on the writer project fails this check, whoever it contains.
+4. Live: a pull request run on Boat logs `infisical-oidc: read 4 secret(s) from prod /sccache` as the reader. The reader's binding accepts only this repository's `ci-policy.yml` tokens, so a login outside Actions can't test it. Checks 1 to 3 cover the org-role, direct and group paths; with them the reader holds no path to the writer project.
+
+Without the variables, or when any read fails, Boat keeps its local cache, as before. The old `NORN_SCCACHE_*` repository and environment secrets are drift: the daily credential audit in `Norn-cloud/norn-ops` fails until they are deleted.

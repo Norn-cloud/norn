@@ -94,6 +94,7 @@ fn call<'a>(action: &'a ActionRoot, input: JsonObject, action_version: &'a str) 
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 
@@ -161,7 +162,7 @@ fn action_actor_noncanonical_principal_refuses_before_any_write() {
             .code(),
         "action.invalid_input"
     );
-    assert!(storage.ledger().is_empty());
+    assert_eq!(storage.ledger(), []);
     assert!(
         !storage
             .load(&FactKey::new("test.Target", "C26"))
@@ -327,7 +328,32 @@ fn action_actor_decimal_derivation_commits_and_forged_actor_refuses() {
         matches!(error, norn_kernel::ActionRefusal::InvalidInput { ref field } if field == "actor"),
         "{error:?}"
     );
-    assert!(storage.ledger().is_empty());
+    assert_eq!(storage.ledger(), []);
+}
+
+/// #1469 S7: a field the action derives from the actor refuses when the
+/// caller sends it at all, `null` included.
+#[test]
+fn a_caller_null_in_an_actor_derived_field_refuses() {
+    let mut action = action();
+    action.derive = vec![norn_ir::ActionInputDerivation {
+        field: "code".into(),
+        expression: ZenExpression("actor.subjectId".into()),
+        input_required: false,
+    }];
+    let raw: JsonObject = serde_json::from_value(json!({ "code": null })).unwrap();
+    let error = prepare_action_input_for_call::<Infallible>(
+        &action,
+        &raw,
+        "test.target.create.action",
+        "1.0.0",
+        "person:authenticated",
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, norn_kernel::ActionRefusal::InvalidInput { ref field } if field == "code"),
+        "{error:?}"
+    );
 }
 
 proptest::proptest! {
@@ -624,7 +650,7 @@ fn underived_twenty_kib_input_is_retained_once_and_commits_a_small_transition() 
     };
     assert_eq!(record.input, raw);
     assert_eq!(record.effective_input, None);
-    assert!(record.derived_values.is_empty());
+    assert_eq!(record.derived_values, []);
     assert_eq!(record.precondition_outcomes.len(), 1);
     assert!(
         record

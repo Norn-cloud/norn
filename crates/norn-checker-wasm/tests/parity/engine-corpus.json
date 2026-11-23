@@ -28,5 +28,5 @@
     "not json",
     "{\"fields\": {\"x\": 1e400}}"
   ],
-  "profiles": ["norn-zen/6", "norn-zen/0"]
+  "profiles": ["norn-zen/7", "norn-zen/0"]
 }

@@ -10,6 +10,7 @@
 
 mod common;
 
+use norn_cell::test_door::TestCommit as _;
 use std::path::Path;
 
 use norn_cell::{
@@ -263,8 +264,9 @@ fn export_journal_reports_a_missing_legacy_batch_instead_of_faking_it() {
         .export_record(2)
         .expect("record reads")
         .expect("new record exists");
-    assert!(
-        tail.previous.is_empty(),
+    assert_eq!(
+        tail.previous.len(),
+        0,
         "the missing predecessor stays explicit"
     );
     assert_eq!(store.export_record(1).expect("record reads"), None);

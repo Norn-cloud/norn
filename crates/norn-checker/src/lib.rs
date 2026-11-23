@@ -21,8 +21,6 @@
 // Deterministic core policy (#3299); host adapters retain their own arithmetic/collections.
 #![deny(clippy::disallowed_types)]
 
-// TODO(rust-safety): these downgrades were moved with the code from norn-ir
-// (docs/platform/rust-safety-baseline.md) and keep the same staged burn-down.
 pub mod action_set;
 pub mod agent;
 pub mod artifact_set;
@@ -39,24 +37,11 @@ pub mod definitions_diff;
 pub mod deontic;
 mod diagnostic;
 pub mod duties;
+pub mod engine_release;
 pub mod entity_artifacts;
 pub mod entity_instance;
 pub mod entity_lowering;
 pub mod entity_model;
-#[allow(
-    missing_docs,
-    clippy::pedantic,
-    reason = "TODO(rust-safety): moved verbatim from norn-ir with its staged lint downgrades"
-)]
-#[deny(
-    clippy::match_wildcard_for_single_variants,
-    clippy::format_collect,
-    clippy::format_push_string,
-    clippy::inefficient_to_string,
-    clippy::large_types_passed_by_value,
-    clippy::needless_pass_by_value,
-    clippy::large_futures
-)]
 pub mod envelope;
 pub mod exact_rational;
 mod finite;
@@ -82,20 +67,6 @@ pub mod metric;
 pub mod metric_interchange;
 mod model;
 mod model_privacy;
-#[allow(
-    missing_docs,
-    clippy::pedantic,
-    reason = "TODO(rust-safety): moved verbatim from norn-ir with its staged lint downgrades"
-)]
-#[deny(
-    clippy::match_wildcard_for_single_variants,
-    clippy::format_collect,
-    clippy::format_push_string,
-    clippy::inefficient_to_string,
-    clippy::large_types_passed_by_value,
-    clippy::needless_pass_by_value,
-    clippy::large_futures
-)]
 pub mod posting;
 mod soundness;
 pub mod source_agreement;
@@ -112,57 +83,15 @@ pub mod naming_series;
 pub mod norm_precedence;
 pub mod object_types;
 pub mod obligations;
-#[allow(
-    missing_docs,
-    clippy::pedantic,
-    reason = "TODO(rust-safety): moved verbatim from norn-ir with its staged lint downgrades"
-)]
-#[deny(
-    clippy::match_wildcard_for_single_variants,
-    clippy::format_collect,
-    clippy::format_push_string,
-    clippy::inefficient_to_string,
-    clippy::large_types_passed_by_value,
-    clippy::needless_pass_by_value,
-    clippy::large_futures
-)]
 pub mod ontology;
 pub mod parameter;
 mod parameter_window;
 mod predicate_property;
 pub mod property_codec;
 pub mod property_types;
-#[allow(
-    missing_docs,
-    clippy::pedantic,
-    reason = "TODO(rust-safety): moved verbatim from norn-ir with its staged lint downgrades"
-)]
-#[deny(
-    clippy::match_wildcard_for_single_variants,
-    clippy::format_collect,
-    clippy::format_push_string,
-    clippy::inefficient_to_string,
-    clippy::large_types_passed_by_value,
-    clippy::needless_pass_by_value,
-    clippy::large_futures
-)]
 pub mod quantity_ledger;
 pub mod receipt;
 pub mod rule_bindings;
-#[allow(
-    missing_docs,
-    clippy::pedantic,
-    reason = "TODO(rust-safety): moved verbatim from norn-ir with its staged lint downgrades"
-)]
-#[deny(
-    clippy::match_wildcard_for_single_variants,
-    clippy::format_collect,
-    clippy::format_push_string,
-    clippy::inefficient_to_string,
-    clippy::large_types_passed_by_value,
-    clippy::needless_pass_by_value,
-    clippy::large_futures
-)]
 pub mod sealing;
 mod source_commands;
 pub mod source_schema;
@@ -191,6 +120,7 @@ pub use diagnostic::{
     DiagnosticWitness, SourceSpan, Span, StructuralEvidence, WitnessMove, WitnessSide, WitnessStep,
     diagnostics_to_json,
 };
+pub use engine_release::{ENGINE_DOWNGRADE, ENGINE_UNKNOWN_VERSION, ENGINE_UPGRADE_UNSUPPORTED};
 pub use entity_artifacts::{
     EntityArtifactSetContext, TenantLayer, check_artifact_set_entity_model, check_entity_artifacts,
     check_property_type_catalog_local,

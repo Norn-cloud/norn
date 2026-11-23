@@ -135,6 +135,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/datasets/{type}/rows/{row}:lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the
+         *     records grid names it, to the manifest that admitted it, the source
+         *     upload and the data file, each by content hash and row offset, with what
+         *     held it back. Held-back rows are traced too. Requires Population, Values
+         *     and Sources on the type; no value is disclosed.
+         * @description # Errors
+         *     A denied gate (one opaque 403), no dataset or no such row (404), or an
+         *     unreachable engine.
+         */
+        get: operations["dataset_lineage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/datasets:load": {
         parameters: {
             query?: never;
@@ -149,13 +175,22 @@ export interface paths {
          *     dataset `objectType`, typed by that admitted definition. The engine reads
          *     the object through a presigned URL, verifies its SHA-256, types every row,
          *     and quarantines a row it cannot type (or that misses a required value)
-         *     with its reason. The load becomes the dataset's current one; each row
-         *     traces to `(uri, sha256, row)`. Decided like any upload load
-         *     (`SyncSource("upload")`); the load is reported as a run of the type's
-         *     `upload` connection, as the cell's own observations (SYNC-REPORT-1).
-         * @description # Errors
+         *     with its reason. The load becomes the dataset's current one when its
+         *     manifest commits; each row traces to `(uri, sha256, row)`. The load is
+         *     reported as a run of the type's `upload` connection, as the cell's own
+         *     observations (SYNC-REPORT-1).
+         * @description MANIFEST-03: a load is decided exactly as an observation load of the
+         *     same rows: `SyncSource("upload")` and the destination connection's own
+         *     grant (`SyncSource("upload.<type>")`), an admitted mapping onto the type
+         *     that the load binds its columns by, and the markings a write of those
+         *     rows would carry. A mapping or marking bulk ingest cannot enforce is
+         *     refused, never loaded unchecked.
+         *
+         *     # Errors
          *     A denied caller (one opaque 403), an unknown upload or type (404), a
-         *     changed file (`bulk.digest_mismatch`, 422), or an unreachable engine.
+         *     changed file (`bulk.digest_mismatch`, 422), a mapping or marking bulk
+         *     ingest cannot enforce (422), stale pins or a reused request key (409), or
+         *     an unreachable engine.
          */
         post: operations["load_dataset"];
         delete?: never;
@@ -200,9 +235,12 @@ export interface paths {
          * `POST /v1/decisions/{id}:decide`.
          * @description For the approval of a parked action call (APPROVAL-1) the decider is
          *     never the call's requester (#618), and no flow turn runs: the answer is
-         *     recorded, and an approved call then commits through the shared action
-         *     dispatch as its requester ([`AsStarter`] makes the requester the host's
-         *     verified caller for that one call), its authority decided again there.
+         *     recorded, and an approved call then runs through the shared action
+         *     dispatch only under the requester's current authority ([`AsStarter`]:
+         *     the host runs it only when it can establish that authority, which a
+         *     decider's request never does). Otherwise the answer's `call` is
+         *     `not_executed` and the requester's own authenticated retry runs it
+         *     (APPROVAL-RECOVERY-1).
          *
          *     # Errors
          *     In this order: 404 `decision.not_found` (also for a caller who may not
@@ -213,6 +251,41 @@ export interface paths {
          *     run's result turn; a host failure.
          */
         post: operations["decide"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/decisions:requested": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/decisions:requested`: the caller's own approval-gated calls, as
+         *     their requester sees them (APPROVAL-1, APPROVAL-RECOVERY-1). A requester
+         *     never decides their call and never lists it among the decisions waiting
+         *     on them; this is where they learn that it was approved and retry it
+         *     (`canRun`), with the exact input and key it parked with. Without `id`:
+         *     the calls pending a decider before their deadline and those approved and
+         *     not yet run. With `id`: that decision in any state, or no item when it is
+         *     not the caller's direct call (the cell does not say which).
+         * @description The caller is the host's verified principal, compared as the dispatch
+         *     compares it (subject, actor kind and role table): the same subject under
+         *     another kind or role table is someone else, and reads nothing. Its calls
+         *     are found by that identity before any parked payload is loaded, so
+         *     another requester's id costs what an id that exists nowhere costs.
+         *
+         *     # Errors
+         *     Missing or foreign scope; a missing caller (one opaque 403); an invalid
+         *     id; a host failure.
+         */
+        get: operations["requested_decisions"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -528,9 +601,9 @@ export interface paths {
         /**
          * HOST-READ-6: an object's proven versions, newest first, with what wrote each.
          * @description # Errors
-         *     A denied gate (the opaque 403); an absent, withheld or source-withheld
-         *     object (one 404); a commit between the reads (409 `object.snapshot_moved`);
-         *     or a host failure.
+         *     A denied gate (the opaque 403); an absent or withheld object (one 404;
+         *     Sources is not needed, and gates only each version's lineage); a commit
+         *     between the reads (409 `object.snapshot_moved`); or a host failure.
          */
         get: operations["get_object_history"];
         put?: never;
@@ -1056,6 +1129,8 @@ export interface components {
             outcome: components["schemas"]["ActionCallOutcome"];
             /** @description The original commit, the same on every replay. */
             receipt: components["schemas"]["ActionCommit"];
+            /** @description Optional provenance trace context retained from the original call. */
+            trace?: components["schemas"]["TraceContext"];
             /**
              * Format: int64
              * @description The target's version as the original commit wrote it.
@@ -1067,6 +1142,8 @@ export interface components {
             /** @description The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes. */
             idempotencyKey: string;
             input: components["schemas"]["NornActionInput"];
+            /** @description Optional provenance trace context persisted on the committed receipt. */
+            trace?: components["schemas"]["TraceContext"];
         };
         /** @description `POST /v1/questions:trace`: one bucket of an ad-hoc question's answer. */
         AdHocTraceRequest: {
@@ -1166,8 +1243,20 @@ export interface components {
         };
         /** @description `POST /v1/datasets:load` body. */
         DatasetLoadRequest: {
+            /**
+             * @description MANIFEST-03: the admitted mapping onto the type the load binds its
+             *     columns by; needed only when more than one maps onto it.
+             */
+            mapping?: string | null;
             /** @description The admitted object type the rows are typed by. */
             objectType: string;
+            /**
+             * @description MANIFEST-04: the caller's key for this load. A retry with the same
+             *     key and the same request answers with the first load's receipt; the
+             *     same key with another request is refused (409
+             *     `dataset.request_conflict`). A load without a key always commits.
+             */
+            requestKey?: string | null;
             /** @description A completed upload of this cell. */
             uploadId: string;
         };
@@ -1208,16 +1297,25 @@ export interface components {
             run: components["schemas"]["DecidedRun"];
         };
         /**
-         * @description What committing an approved call as its requester answered (APPROVAL-1).
-         *     The approval stands either way: the requester's own retry of the call
-         *     commits it.
+         * @description What the approved call is now (APPROVAL-1, APPROVAL-RECOVERY-1). The
+         *     approval stands either way.
          */
         DecidedCall: {
-            /** @description The requester's refusal code when it did not. */
+            /**
+             * @description The refusal code when it did not: its recorded refusal, or why this
+             *     try could not run it.
+             */
             code?: string | null;
             /** @description Whether the call committed. */
             committed: boolean;
+            /** @description Where it stands. */
+            state: components["schemas"]["DecidedCallState"];
         };
+        /**
+         * @description Where an approved action call stands (APPROVAL-RECOVERY-1).
+         * @enum {string}
+         */
+        DecidedCallState: "committed" | "refused" | "not_executed";
         /** @description The decision as decided. */
         DecidedDecision: {
             /** @description The chosen option id. */
@@ -1266,6 +1364,8 @@ export interface components {
             input: {
                 [key: string]: unknown;
             };
+            /** @description Optional provenance trace context carried by the parked call. */
+            trace?: components["schemas"]["TraceContext"];
         };
         /** @description What the decision is about. Empty in this version. */
         DecisionContext: {
@@ -1345,6 +1445,7 @@ export interface components {
             atMs: number;
             /** @description Who, in display words, never an id. */
             by?: string | null;
+            call?: components["schemas"]["DecidedCall"] | null;
             /** @description The chosen option, only for a reader who may read the run. */
             choice?: string | null;
             /** @description How it was resolved. */
@@ -1514,6 +1615,15 @@ export interface components {
         };
         /** @description `POST /v1/cell/definitions:plan` and `:apply`. */
         DefinitionsChangeRequest: {
+            /**
+             * @description The pack's approvals (#1469): admitted against the submitted set's
+             *     actions, and installed with it in one transaction, so a new action
+             *     is never live without its gate. A plan returns each one's
+             *     restatement; an apply carries each one's `signoff` of it and the
+             *     `expectedVersion` (revision) the plan reported. Any refusal installs
+             *     nothing.
+             */
+            approvals?: components["schemas"]["InstallDefinitionRequest"][];
             /** @description The pack's artifact envelopes; none in a reserved namespace (core., std.). Each one is added, or replaces the active artifact of its id. */
             artifacts: components["schemas"]["NornArtifactEnvelope"][];
             /**
@@ -1527,6 +1637,8 @@ export interface components {
         DefinitionsPlan: {
             /** @description Artifacts the change adds. */
             added: components["schemas"]["PlannedArtifact"][];
+            /** @description The approvals the change installs with the set. */
+            approvals?: components["schemas"]["PlannedApproval"][];
             /**
              * Format: int64
              * @description The active definitions version the plan was made against: apply's
@@ -1734,6 +1846,8 @@ export interface components {
             ruleBinding?: string | null;
             /** @description The state it entered. */
             to: string;
+            /** @description Optional provenance trace context supplied by the caller. */
+            trace?: components["schemas"]["NornActionTraceContext"] | null;
             /** @description The fired transition. */
             transition: string;
             /** @description The turn the call committed in. */
@@ -1749,6 +1863,14 @@ export interface components {
             /** @description The callable actions an effect program can run, ordered by identity. */
             items: components["schemas"]["NornActionSummary"][];
         };
+        /**
+         * @description A content digest, `sha256:<64 lower-case hex>`.
+         *
+         *     Decoding accepts any string so that admission can report a mutable
+         *     identity (a tag, URI, or object key) as a finding;
+         *     [`Digest::is_well_formed`] is the rule.
+         */
+        NornActionDigest: string;
         /**
          * @description How an action's admitted effect program changes its target.
          * @enum {string}
@@ -1768,6 +1890,13 @@ export interface components {
         NornActionInput: {
             [key: string]: unknown;
         };
+        /** @description One input field that names a record of `objectKind`. */
+        NornActionInputLink: {
+            /** @description The top-level input field holding the record's id. */
+            field: string;
+            /** @description The object type it names. */
+            objectKind: string;
+        };
         /**
          * @description Qualified name of an object type: dotted lower-case namespace segments and
          *     a PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1
@@ -1783,6 +1912,12 @@ export interface components {
             description?: string | null;
             /** @description How its effect changes that object. */
             effect: components["schemas"]["NornActionEffect"];
+            /**
+             * @description Input fields that name an existing record (a link the action creates
+             *     to it), so a form offers a picker of that type's records
+             *     (ACTION-CATALOG-LINKS-1). Omitted when none.
+             */
+            inputLinks?: components["schemas"]["NornActionInputLink"][];
             /** @description The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies. */
             inputSchema: {
                 [key: string]: unknown;
@@ -1793,8 +1928,40 @@ export interface components {
             objectKind: string;
             /** @description Its title, or its identity when it declares none. */
             title: string;
+            /**
+             * @description For a `fire_transition` action: the lifecycle state its transition
+             *     leaves the object in, so a receipt can say what the record is now.
+             */
+            toState?: string | null;
             /** @description The effects a caller must handle. */
             uiEffects: components["schemas"]["NornActionUiEffects"];
+        };
+        /**
+         * @description Optional provenance trace context attached to an action call and persisted
+         *     on its committed receipt.
+         *
+         *     Strictly optional and additive: callers without trace context are unaffected,
+         *     and raw transcript text is never stored (`sessionDigest` admits only a
+         *     content-addressed SHA-256 digest).
+         */
+        NornActionTraceContext: {
+            /**
+             * @description Optional reference to the goal, prompt, commitment, or decision that
+             *     initiated the action (1 to 512 UTF-8 bytes, no control characters or
+             *     outer whitespace).
+             */
+            intentRef?: string;
+            /**
+             * @description Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)
+             *     of an off-ledger agent or user session transcript. Raw transcript text
+             *     is never stored in the ledger.
+             */
+            sessionDigest?: string;
+            /**
+             * @description Opaque correlation identifier tying multi-step causes and effects
+             *     together (1 to 256 UTF-8 bytes, no control characters or outer whitespace).
+             */
+            traceId: string;
         };
         /** @description The effects a form must handle before it calls, from the action's own definition. */
         NornActionUiEffects: {
@@ -2258,6 +2425,32 @@ export interface components {
             /** @description The object's durable URI. */
             uri: string;
         };
+        /** @description The outcome of `GET /v1/datasets/{type}/rows/{row}:lineage`. */
+        NornDatasetLineage: {
+            /**
+             * Format: int64
+             * @description The commit that admitted it.
+             */
+            commitSeq: number;
+            data?: components["schemas"]["NornLineageFile"] | null;
+            /** @description Every rule the row fails. */
+            findings: components["schemas"]["NornRowFinding"][];
+            /** @description Whether the row is held back (not typed, or failing a rule that holds). */
+            held: boolean;
+            /** @description The manifest that admitted the dataset. */
+            manifest: string;
+            /** @description The dataset's object type. */
+            objectType: string;
+            /** @description Why the row was not typed (`bulk.*`), if it was not. */
+            refused?: string | null;
+            /**
+             * Format: int64
+             * @description The source row offset; dataset answers name rows by it.
+             */
+            row: number;
+            /** @description The source upload, at the row. */
+            source: components["schemas"]["NornLineageFile"];
+        };
         /** @description The outcome of `POST /v1/datasets:load`. */
         NornDatasetLoad: {
             /**
@@ -2282,8 +2475,8 @@ export interface components {
             held: components["schemas"]["NornDatasetFile"];
             /**
              * Format: int64
-             * @description Admitted rows a law or invariant holds back; every other admitted row
-             *     is trusted.
+             * @description Typed rows a law or invariant holds back: in the held-set file, not
+             *     among `rows`.
              */
             heldByRules: number;
             /** @description The landing identity; answers over the dataset name it. */
@@ -2305,12 +2498,12 @@ export interface components {
             receipt: string;
             /**
              * Format: int64
-             * @description Rows quarantined.
+             * @description Rows quarantined because they could not be typed.
              */
             rejected: number;
             /**
              * Format: int64
-             * @description Rows admitted.
+             * @description Rows admitted as trusted: typed, and held back by no rule (LAW-02).
              */
             rows: number;
             /** @description The source file's SHA-256, verified by the engine. */
@@ -11642,6 +11835,19 @@ export interface components {
              */
             seq: number;
         };
+        /** @description One file a dataset row is traced through, and the row's offset in it. */
+        NornLineageFile: {
+            /**
+             * Format: int64
+             * @description The row's source offset (1-based, in source file order); the data
+             *     file carries it as its `:row` column.
+             */
+            row: number;
+            /** @description Its SHA-256. */
+            sha256: string;
+            /** @description The object's durable URI. */
+            uri: string;
+        };
         /** @description The visible links of one declared link type in one direction. */
         NornLinkCount: {
             /**
@@ -11915,7 +12121,11 @@ export interface components {
             objectType: string;
             /** @description True when older versions exist beyond [`MAX_HISTORY_VERSIONS`]. */
             truncated: boolean;
-            /** @description The versions listed, newest first. */
+            /**
+             * @description The versions the caller may read, newest first. A version is listed
+             *     only when the caller holds Population and Values on that version's own
+             *     record, and only when it changed a value the caller may see.
+             */
             versions: components["schemas"]["NornObjectVersion"][];
         };
         /**
@@ -12467,6 +12677,15 @@ export interface components {
             /** @description The stored value, of the property's type; decimals are exact JSON number tokens. */
             value: unknown;
         };
+        /** @description One law or invariant a dataset row fails. */
+        NornRowFinding: {
+            /** @description Whether it holds the row back. */
+            holds: boolean;
+            /** @description The law (`law:<id>`) or invariant (`invariant:<id>`). */
+            label: string;
+            /** @description The rule identity (canonical JSON of its reference). */
+            rule: string;
+        };
         /** @description MANIFEST-LAWS-1: one law or invariant's findings over a dataset. */
         NornRuleFindings: {
             /** @description Whether a failing row is held back. */
@@ -12726,12 +12945,17 @@ export interface components {
             actionId: string;
             /** @description The verified caller the server attributed the call to. */
             actor: string;
-            /** @description The effective input (caller input plus server derivations); decimals are exact JSON number tokens. */
+            /**
+             * @deprecated
+             * @description Deprecated: always the empty object. The call's effective input is never disclosed.
+             */
             input: {
                 [key: string]: unknown;
             };
             /** @enum {string} */
             kind: "action";
+            /** @description Optional provenance trace context recorded on the action call. */
+            trace?: components["schemas"]["TraceContext"];
         } | {
             /** @enum {string} */
             kind: "other";
@@ -12766,6 +12990,25 @@ export interface components {
             expiresAtMs: number;
             /** @description The decision id (`POST /v1/decisions/{id}:decide`). */
             id: string;
+        };
+        /** @description An approval the change installs with the set. */
+        PlannedApproval: {
+            /**
+             * Format: int64
+             * @description The id's current revision, if any: the apply's `expectedVersion`.
+             */
+            fromRevision?: number | null;
+            /** @description The approval id. */
+            id: string;
+            /** @description The server's words for the approval: what the signer signs. */
+            restatement: string;
+            /**
+             * @description Lower-case hex SHA-256 of the restatement: the apply's
+             *     `signoff.restatementSha256`.
+             */
+            restatementSha256: string;
+            /** @description Whether the active revision is already this approval. */
+            unchanged: boolean;
         };
         /** @description One artifact the change adds or replaces. */
         PlannedArtifact: {
@@ -12910,6 +13153,86 @@ export interface components {
             /** @description RFC 6901 JSON pointer into the submitted document. */
             pointer: string;
         };
+        /**
+         * @description The parked call itself, exactly as it waits: retrying it means calling
+         *     `action` with `encodedInput` as the input and `idempotencyKey` as the key.
+         */
+        RequestedCall: {
+            /** @description The action called. */
+            action: string;
+            /** @description The approval definition that gates it. */
+            definition: string;
+            /**
+             * @description The same input as canonical JSON text, numbers digit for digit, so a
+             *     client that parses JSON into binary floats can still send it back
+             *     exactly.
+             */
+            encodedInput: string;
+            /** @description The call's idempotency key. */
+            idempotencyKey: string;
+            /** @description The call's admitted input. */
+            input: {
+                [key: string]: unknown;
+            };
+            state?: components["schemas"]["DecidedCall"] | null;
+            /** @description Optional provenance trace context carried by the parked call. */
+            trace?: components["schemas"]["TraceContext"];
+        };
+        /**
+         * @description One approval-gated call the caller made, as its requester sees it
+         *     (APPROVAL-1): never a decider's view, and never anyone else's call.
+         */
+        RequestedDecision: {
+            /** @description The call. */
+            call: components["schemas"]["RequestedCall"];
+            /**
+             * @description The cell offers the caller to run it now: it is approved, not yet
+             *     executed, a direct call (a flow step's call runs by retrying its
+             *     run), and the caller is its requester. An offer, not a grant: the
+             *     retry is decided again under the caller's current authority.
+             */
+            canRun: boolean;
+            /**
+             * Format: int64
+             * @description When the decision expires (logical milliseconds).
+             */
+            expiresAtMs: number;
+            /** @description The opaque decision id. */
+            id: string;
+            /** @description The approval's question. */
+            question: string;
+            /**
+             * Format: int64
+             * @description When the call parked (logical milliseconds).
+             */
+            requestedAtMs: number;
+            /**
+             * Format: int64
+             * @description When it was resolved (logical milliseconds), once it was.
+             */
+            resolvedAtMs?: number | null;
+            /** @description How much is at stake. */
+            risk: components["schemas"]["DecisionRisk"];
+            /** @description Where it stands. */
+            status: components["schemas"]["RequestedStatus"];
+        };
+        /** @description The caller's own approval-gated calls. */
+        RequestedPage: {
+            /** @description Soonest deadline first, ties to the oldest request, then id. */
+            items: components["schemas"]["RequestedDecision"][];
+            /**
+             * Format: int64
+             * @description The cell's clock when the page was read (logical milliseconds).
+             */
+            serverNowMs: number;
+            /** @description More calls were not examined. */
+            totalCapped?: boolean;
+        };
+        /**
+         * @description Where the caller's parked call stands with its approval.
+         * @enum {string}
+         */
+        RequestedStatus: "pending" | "approved" | "rejected" | "expired" | "withdrawn";
         /** @description `POST /v1/definitions/{id}:retire`. */
         RetireDefinitionRequest: {
             /**
@@ -13086,6 +13409,29 @@ export interface components {
          * @enum {string}
          */
         StepWait: "decision" | "executor" | "timer";
+        /**
+         * @description Optional provenance trace context attached to an action call and retained
+         *     on its committed receipt.
+         */
+        TraceContext: {
+            /**
+             * @description Optional reference to the goal, prompt, commitment, or decision that
+             *     initiated the action (1 to 512 UTF-8 bytes, no control characters or
+             *     outer whitespace).
+             */
+            intentRef?: string;
+            /**
+             * @description Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)
+             *     of an off-ledger agent or user session transcript. Raw transcript text
+             *     is never stored in the ledger.
+             */
+            sessionDigest?: string;
+            /**
+             * @description Opaque correlation identifier tying multi-step causes and effects
+             *     together (1 to 256 UTF-8 bytes, no control characters or outer whitespace).
+             */
+            traceId: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -13104,6 +13450,11 @@ export interface operations {
                 environmentId: string;
                 /** @description Only actions whose effect targets this object type. */
                 objectKind?: string;
+                /**
+                 * @description With `objectKind`: only actions that can act on this object in its
+                 *     current lifecycle state (ACTION-CATALOG-STATE-1).
+                 */
+                objectId?: string;
             };
             header?: never;
             path?: never;
@@ -13543,6 +13894,63 @@ export interface operations {
             };
         };
     };
+    dataset_lineage: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The dataset's object type. */
+                type: string;
+                /** @description The source row offset. */
+                row: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The row's lineage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornDatasetLineage"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     load_dataset: {
         parameters: {
             query: {
@@ -13590,6 +13998,15 @@ export interface operations {
             };
             /** @description The request was refused: not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The definitions changed while the dataset landed, or the request key names another request. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13754,6 +14171,64 @@ export interface operations {
             };
             /** @description The choice or note was refused. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    requested_decisions: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /**
+                 * @description Only this decision, in whatever state it stands (the id a parked
+                 *     call's `202` answer named). Without it, the calls that wait: those
+                 *     pending a decider and those approved and not yet run.
+                 */
+                id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's own approval-gated calls. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestedPage"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14784,7 +15259,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The object's proven versions, newest first, each with its commit and what wrote it. */
+            /** @description The object's proven versions the caller may read, newest first, each with its commit and what wrote it. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -14811,7 +15286,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served. */
+            /** @description The request was refused (`object.not_found`): the object is absent or withheld (no Population or Values); these are not told apart. Sources is not needed: without it no version names its source lineage. A quarantined object is served. */
             404: {
                 headers: {
                     [name: string]: unknown;

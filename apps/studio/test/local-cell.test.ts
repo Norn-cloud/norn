@@ -197,7 +197,7 @@ test("the local Studio's live socket: same-site only, answered as the session, a
     const port = local.server.port
     const base = `http://127.0.0.1:${port}`
     // Another site's upgrade is refused before anything is forwarded.
-    const crossSite = await fetch(`${base}/api/host/v1/subscribe`, { headers: { upgrade: "websocket", connection: "upgrade", origin: "https://evil.example", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } })
+    const crossSite = await fetch(`${base}/api/host/v1/subscribe`, { headers: { upgrade: "websocket", connection: "upgrade", origin: "https://evil.example", "sec-websocket-key": btoa("the sample nonce"), "sec-websocket-version": "13" } })
     expect(crossSite.status).toBe(403)
     expect(seen).toEqual([])
     const ws = new WebSocket(`ws://127.0.0.1:${port}/api/host/v1/subscribe?orgId=local&environmentId=dev`, [LIVE_PROTOCOL])

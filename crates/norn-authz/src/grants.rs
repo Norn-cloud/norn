@@ -81,23 +81,37 @@ pub(crate) struct CapabilityQuery<'a> {
     pub(crate) binding: Option<&'a CommitBinding>,
 }
 
+/// ADMIT-CACHE-1 (#1533): the constant [`CAPABILITY_SCHEMA`], parsed once
+/// per process instead of once per compiled grant set.
+fn capability_schema() -> Result<Schema, AuthzError> {
+    static PARSED: std::sync::OnceLock<Result<Schema, (AuthzCode, String)>> =
+        std::sync::OnceLock::new();
+    PARSED
+        .get_or_init(|| {
+            let (schema, warnings) =
+                Schema::from_cedarschema_str(CAPABILITY_SCHEMA).map_err(|error| {
+                    (
+                        AuthzCode::SchemaParse,
+                        format!("capability schema: {error}"),
+                    )
+                })?;
+            if warnings.count() != 0 {
+                return Err((
+                    AuthzCode::SchemaInvalid,
+                    "capability schema has warnings".to_owned(),
+                ));
+            }
+            Ok(schema)
+        })
+        .clone()
+        .map_err(|(code, message)| AuthzError::one(code, message))
+}
+
 impl CompiledGrants {
     /// Validate and compile `grants` (rules of `norn-engine`'s
     /// `validate_capability_grants`).
     pub(crate) fn compile(grants: &[CapabilityGrant]) -> Result<Self, AuthzError> {
-        let (schema, warnings) =
-            Schema::from_cedarschema_str(CAPABILITY_SCHEMA).map_err(|error| {
-                AuthzError::one(
-                    AuthzCode::SchemaParse,
-                    format!("capability schema: {error}"),
-                )
-            })?;
-        if warnings.count() != 0 {
-            return Err(AuthzError::one(
-                AuthzCode::SchemaInvalid,
-                "capability schema has warnings",
-            ));
-        }
+        let schema = capability_schema()?;
 
         let mut diagnostics = Vec::new();
         let mut policies = PolicySet::new();

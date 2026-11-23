@@ -227,6 +227,13 @@ impl<S: SqlEngine> SqlEngine for CommitsAfterFault<S> {
         self.inner.read_cache_revision()
     }
 
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }
@@ -291,6 +298,13 @@ impl SqlEngine for RestrictedEngine {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.native.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.native.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         validate_do_sql(sql, params)?;
         self.native.execute(sql, params)
@@ -377,6 +391,13 @@ impl<S: SqlEngine> SqlEngine for DoSubset<S> {
 
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
         self.0.read_cache_revision()
+    }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
     }
 
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
@@ -503,6 +524,13 @@ impl DoStorage for HidesFailedCommit {
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.0.exec_batch(sql)
     }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
+    }
 }
 
 impl Transact for MisreadsRollback {
@@ -577,6 +605,13 @@ impl DoStorage for MisreadsRollback {
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.0.exec_batch(sql)
     }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
+    }
 }
 
 impl DoStorage for CommitsOnRollback {
@@ -586,6 +621,13 @@ impl DoStorage for CommitsOnRollback {
 
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.0.exec_batch(sql)
+    }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
     }
 }
 
@@ -2144,8 +2186,8 @@ fn reopen_recovers_the_ledger_hash_chain_identically_and_runs_are_deterministic(
             values: Some(order("paid")),
         }
     );
-    assert!(a.pending_commands().expect("outbox").is_empty());
-    assert!(a.pending_timers().expect("timers").is_empty());
+    assert_eq!(a.pending_commands().expect("outbox"), []);
+    assert_eq!(a.pending_timers().expect("timers"), []);
 }
 
 fn open_hierarchy(path: &Path) -> OrderCell {
@@ -2529,7 +2571,7 @@ fn bounded_link_reads_refuse_phantoms_and_version_changes() {
         .read_link_targets(&source, "rel", 8, 1024)
         .expect("reads bounded adjacency")
         .expect("host supports bounded adjacency");
-    assert!(empty.is_empty());
+    assert_eq!(empty, []);
     let link = LinkKey::new(source.clone(), "rel", target);
     let add = |expected| LinkWrite {
         key: link.clone(),
@@ -2905,6 +2947,82 @@ fn sibling_links_to_unrelated_targets_keep_separate_versions() {
     assert_eq!(cell.load_link(&key).expect("loads").version, FactVersion(1));
 }
 
+/// #1527 S2: a link add reads both ends' adjacency, and a host error on
+/// that read refuses the commit in every build. Here `C`'s existing `A -rel->
+/// C` row in the link index names a link table that does not exist. A
+/// many-to-many add `B -rel-> C` checks no count at either end, yet the read
+/// of `C`'s adjacency fails, so the commit refuses and writes nothing.
+#[test]
+fn a_link_add_refuses_when_an_end_adjacency_read_fails() {
+    let thing = serde_json::from_value(json!({
+        "name": "acme.Thing",
+        "links": [{ "id": "rel", "target": "acme.Thing", "cardinality": { "to": "many", "from": "many" } }]
+    }))
+    .expect("decodes");
+    let model = common::model_of(&[thing]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let open = || -> OrderCell {
+        SqliteCell::open(
+            &path,
+            model.clone(),
+            StoreOptions::default(),
+            "org_demo/dev",
+            charge_responder,
+        )
+        .expect("opens")
+    };
+    let put = |key: &str| FactWrite {
+        key: FactKey::new("acme.Thing", key),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: JsonObject::new(),
+        },
+    };
+    let rel = |source: &str, target: &str| {
+        LinkKey::new(
+            FactKey::new("acme.Thing", source),
+            "rel",
+            FactKey::new("acme.Thing", target),
+        )
+    };
+    let add = |source: &str, target: &str| CellCommit {
+        links: vec![LinkWrite {
+            key: rel(source, target),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    };
+    let mut cell = open();
+    cell.commit(CellCommit {
+        writes: vec![put("A"), put("B"), put("C")],
+        ..CellCommit::empty()
+    })
+    .expect("creates");
+    cell.commit(add("A", "C")).expect("links A to C");
+    drop(cell);
+    let raw = rusqlite::Connection::open(&path).expect("corruption fixture");
+    let rows = raw
+        .execute(
+            "UPDATE _norn_link_version SET link_table = 'missing_link_table' WHERE source = 'A' AND target = 'C'",
+            [],
+        )
+        .expect("points the index at a missing table");
+    assert_eq!(rows, 1);
+    drop(raw);
+
+    let mut cell = open();
+    let refused = cell.commit(add("B", "C"));
+    assert!(matches!(refused, Err(CommitError::Host(_))), "{refused:?}");
+    assert_eq!(
+        cell.load_link(&rel("B", "C")).expect("loads").version,
+        FactVersion::ABSENT
+    );
+}
+
 /// #3013: a subtype that narrows an inherited link's target is honoured:
 /// with `Child.rel` narrowed to `acme.Child`, `Child/S -rel-> Base/T` is
 /// refused while `Base/S -rel-> Base/T` and `Child/S -rel-> Child/U` commit.
@@ -3186,7 +3304,7 @@ fn predicate_reads_conflict_when_a_member_leaves_or_changes_version() {
         "a member deleted"
     );
     let members = read_members(&cell, &predicate);
-    assert!(members.is_empty(), "{members:?}");
+    assert_eq!(members, [], "{members:?}");
     assert_eq!(commit_read(&mut cell, &predicate, &members), Ok(()));
 }
 

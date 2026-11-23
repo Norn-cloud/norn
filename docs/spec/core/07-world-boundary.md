@@ -170,6 +170,90 @@ creates or changes; a transient pending row that never commits is not part of
 the comparison; generated pages mix refusals, identities repeated
 across pages, intra-page links in both orders, and pages refused for framing).
 
+**OBS-LINK-DISPUTE-1** (#1490, #1544; beside OBS-PAGE-1): a FEED-CONFLICT or
+identity dispute freezes the observed link claims of the disputed event. They
+keep their standing (they supersede older claims of their contribution, contest
+rivals and keep their edge) but authorize no new edge. The freeze reads the
+dispute rows that exist when the commit runs, on every path; no inbox position
+dates it. An edge committed before the dispute stays committed (a dispute only
+holds `Add`s), and a delivery processed late (a retried record) commits under
+the disputes of its retry, whatever created its endpoints (a mapping or an
+action). Paged delivery equals one by one because a page never captures a
+new dispute row after a record it commits: one by one commits that record
+before the dispute exists. Such a page captures nothing (its capture
+transaction rolls back) and the host delivers its records one at a time,
+each captured and committed in order, which is the one-by-one path itself.
+Every commit of a page then sees the same disputes, so one page commit equals
+its records' commits, including a page captured by an earlier version.
+(Rounds 2 and 3 of #1544 dated each `Add` by inbox position instead; each
+round found a delivery the dating missed: a legacy page dated by its earliest
+member, a target created by an action. Reading the live state needs no date.)
+An edge the freeze withholds is one open
+`core.boundary.link_held` finding on the disputed source subject (one per
+edge, with every holding claim's lineage), derived from the retained evidence,
+for as long as the dispute lasts. It names the target, so a host discloses it,
+and counts it, only to a caller who may see both endpoints, under the policy
+that lists the link itself; that policy runs outside the cell lock, so the read
+then confirms its snapshot, and a commit meanwhile refuses it
+(`object.snapshot_moved`), as the link route does. Releasing a dispute and re-planning its links is
+the governed review action FEED-CONFLICT names; until it exists, a frozen
+claim stays frozen (#1549).
+
+**Ingest rulings** (2026-11-20, from the distributor-1 deployment test, #1484;
+pending maintainer review; additions beside OBS-PAGE-1, which is unchanged):
+
+- **MAP-DECIMAL-TEXT-1:** a source field declared `decimal` conforms when it
+  arrives as a JSON number or as exact decimal text (`"1234.50"`), read by the
+  one strict wire decoder the action boundary also uses (VAL-EXACT-1,
+  `Decimal::parse_wire`): `-?(0|[1-9][0-9]*)(.[0-9]+)?` within the 96-bit
+  decimal range. Any other text (`"1,234"`, `"1e3"`, `"+5"`, `" 5"`) refuses
+  `mapping.runtime.invalid_record` at a mapping and `action.invalid_input` at
+  an action.
+- **MAP-DERIVATION-1:** a retained bundle records the runtime derivation it
+  was captured under (absent: derivation 1, before MAP-DECIMAL-TEXT-1) and is
+  always verified under that derivation, so a newer parser never changes what
+  retained evidence proves. Every derivation shares the capture address: a
+  replay of a captured event finds the row it already has, and a row an older
+  derivation quarantined stays quarantined on replay.
+- **MAP-REPROCESS-1:** a quarantined row that the current derivation accepts
+  lands only through the explicit reprocessing step a trusted host takes on an
+  operator's decision. The re-derived bundle has its own address, names the
+  row it reprocesses, and the commit that lands it consumes that row. Capture
+  and replay never reprocess.
+- **MAP-EXPLAIN-1:** every quarantined row is explained in structure, never by
+  its code alone: the record, its dataset, the code, the mapping rule (map)
+  and, for a field that does not conform, the field, a preview of the value it
+  held and the declared type, plus the reason in words. The retained
+  diagnostic keeps each text bounded (256 bytes): the value itself is the
+  retained raw evidence, so a malformed field never multiplies a row's size.
+- **SEC-QUARANTINE-1:** a row the cell refused at commit is answered with its
+  stable code and fixed, allowlisted words only. The refusal's own text can
+  name a stored subject's live type or values, which a caller allowed only to
+  sync sources may not read; the quarantined row keeps the evidence for an
+  operator who can.
+- **INGEST-GROUP-1:** a host frames a batch in its own order. It groups rows by
+  mapping input first only when the inputs are proven independent: no
+  identity root both write, no link from one into the other's writes, no link
+  target both name, and no source identity under two inputs. Overlapping
+  writes therefore apply in batch order and the last row wins, as one by one.
+- **INGEST-BATCH-1:** a record whose bundle the mapping refused joins no page
+  row; it is quarantined before any commit, exactly as one by one, and it ends
+  the run, so the records before it and after it each commit together
+  (OBS-PAGE-EQUIV holds: no two records share a commit across a refusal). A
+  hosted load is bounded by rows and by a work budget charged for each row
+  captured and each commit the cell actually attempts (page runs, per-record
+  fallbacks, page consumptions). At the budget it stops at the start of the
+  page it is in, after at least one commit, and answers `next`; resuming from
+  `next` frames that page again, its committed runs commit nothing, and every
+  row is reported once.
+- **INGEST-YIELD-1:** a host holds the cell for one commit at a time during a
+  load (a page's capture, each run, each per-record fallback), never for a
+  page or a batch. A read holds a read pin for its whole request, and each
+  load commit waits for reads in flight, so a multi-step read sees one
+  snapshot and waits for at most one commit. The dev host serves several
+  requests at once (DEV-CONCURRENT-1); each request's verified caller stays
+  its own.
+
 ## Perform and recovery semantics
 
 All Functions, including ML/heavy pure computation, run behind perform and return recorded schema-checked receipts. Pin training/input snapshots, model/code/dependency digests, seeds where relevant, bounds and result blobs. ML confidence is not proof or write authority. Reconcile output with input identity/freshness/current authority and publish only through a guarded action.

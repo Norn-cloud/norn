@@ -766,8 +766,7 @@ fn subject_contributions<E: SqlEngine>(
         return Ok((
             project(plan, &record.values)
                 .map_err(refused)?
-                .map(|value| vec![(record.version, value)])
-                .unwrap_or_default(),
+                .map_or_default(|value| vec![(record.version, value)]),
             false,
         ));
     }

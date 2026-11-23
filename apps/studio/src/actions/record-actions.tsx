@@ -8,17 +8,21 @@ import { ActionSheet, useActions, type OpenAction } from "./action-sheet.tsx"
  * would break, a precondition) shows on the form with the cell's own words.
  */
 export function RecordActions({ objectType, id, onDone }: { readonly objectType: string; readonly id: string; readonly onDone: () => void }) {
-  const catalog = useActions(objectType)
+  // The cell lists what can act on this record now: a transition its state can't take is not offered.
+  const catalog = useActions(objectType, id)
   const [acting, setActing] = useState<OpenAction | null>(null)
-  if (catalog.data?.kind !== "catalog" || catalog.data.items.length === 0) return null
+  const items = catalog.data?.kind === "catalog" ? catalog.data.items : []
+  // The sheet stays mounted while open: a refetch that offers nothing (the record moved on) must
+  // not discard an open form or its receipt.
+  if (items.length === 0 && acting === null) return null
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2" aria-label="Actions on this record">
-        {catalog.data.items.map((action) => (
+      {items.length > 0 && <div className="flex flex-wrap items-center gap-2" aria-label="Actions on this record">
+        {items.map((action) => (
           <Button key={action.actionId} type="button" size="sm" variant="outline" title={action.description ?? action.title}
             onClick={() => setActing({ action, prefill: { [action.objectIdField]: id } })}>{action.title}</Button>
         ))}
-      </div>
+      </div>}
       <ActionSheet open={acting} onClose={() => { setActing(null); onDone() }} />
     </>
   )

@@ -16,11 +16,16 @@
     reason = "privacy correspondence"
 )]
 
+// #1485 S6: fixtures write through the kernel path, never the raw door.
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+use governed::GovernedCommit as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_query::ObjectQueryParams;
+use norn_api::object_review::get_object_history;
 use norn_api::object_routes::{ObjectAccess, get_object_query, get_queried_object};
 use norn_api::privacy::{NornMaskMode, NornRevealRequest, reveal};
 use norn_api::refusal::Refusal;
@@ -124,6 +129,16 @@ fn host(
     mask: &Json,
     secret: Option<&[u8]>,
 ) -> (DevHost<NativeEngine>, tempfile::TempDir) {
+    host_with(org, mask, secret, &[])
+}
+
+/// [`host`], then each of `later` committed in turn, one commit each.
+fn host_with(
+    org: &str,
+    mask: &Json,
+    secret: Option<&[u8]>,
+    later: &[Vec<FactWriteRow>],
+) -> (DevHost<NativeEngine>, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
@@ -173,6 +188,17 @@ fn host(
                 ..CommitBatch::default()
             })
             .unwrap();
+        for (time, writes) in (3..).zip(later) {
+            store
+                .commit(&CommitBatch {
+                    world: MAIN_WORLD.into(),
+                    scope: physical(org).key(),
+                    logical_time: time,
+                    writes: writes.clone(),
+                    ..CommitBatch::default()
+                })
+                .unwrap();
+        }
     }
     let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
     let host = DevHost::from_store(store, physical(org), |command| command.payload.clone())
@@ -376,6 +402,96 @@ fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
     let (value, document) = email(&unkeyed, "org_a", "viewer", "c1");
     assert_eq!(value, V::from("•••"));
     assert_eq!(document["masked"]["email"]["mode"], "redacted");
+}
+
+/// Replace the retained canonical set of `dir`'s cell through another
+/// connection, as an out-of-process editor would; the previous set.
+fn swap_retained_set(dir: &tempfile::TempDir, edit: &dyn Fn(&mut Json)) -> String {
+    use norn_cell::engine::{SqlEngine as _, SqlValue};
+    let raw = NativeEngine::open(
+        &dir.path().join("cell.sqlite"),
+        norn_cell::StoreOptions::default(),
+    )
+    .unwrap();
+    let held = raw
+        .query_row(
+            "SELECT \"canonical_set\" FROM \"_norn_definition_version\" WHERE \"version\" = 1",
+            &[],
+            |row| row.get::<String>(0),
+        )
+        .unwrap();
+    let mut set: Json = serde_json::from_str(&held).unwrap();
+    edit(&mut set);
+    // An out-of-process editor; this engine writes the retained tables only
+    // inside a definition-writes scope (S1, #1547).
+    raw.definition_writes(|| {
+        raw.execute(
+            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
+            &[SqlValue::Text(serde_json::to_string(&set).unwrap())],
+        )
+    })
+    .unwrap();
+    held
+}
+
+#[test]
+fn a_marked_field_is_never_served_clear_from_an_empty_catalog() {
+    // S2 (#1547): a retained set that transiently declares no marking yields
+    // no declared marking. The catalog is keyed by the foreign-write
+    // revision, so the repaired set is read again; and a cell that holds
+    // labels its catalog does not resolve withholds those fields, so the
+    // marked email is masked or withheld, never served in the clear, both
+    // while the set is broken and after it is repaired at the same
+    // definitions version.
+    let (cell, dir) = host("org_a", &json!({"kind": "redacted"}), Some(&SECRET));
+    let clear = V::from("ada@example.com");
+    let read = || get_queried_object(&cell, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping);
+    let held = swap_retained_set(&dir, &|set| {
+        set.as_array_mut()
+            .unwrap()
+            .retain(|artifact| artifact["artifactId"] != "shop.markings.entity");
+    });
+    let document = serde_json::to_value(read().expect("the read is served")).unwrap();
+    assert!(document["values"].get("email").is_none(), "{document}");
+    assert_ne!(document["values"]["email"], json!(clear.as_str()));
+    assert_eq!(document["masked"]["email"]["mode"], "refuse");
+    swap_retained_set(&dir, &|set| *set = serde_json::from_str(&held).unwrap());
+    assert_eq!(email(&cell, "org_a", "viewer", "c1").0, V::from("•••"));
+}
+
+/// #1519 S6: a write that changed only a withheld field is not in the
+/// history: its version, commit and time would tell that a hidden value
+/// changed then. Here the second version changes only the refused email.
+#[test]
+fn a_history_omits_a_write_that_changed_only_a_withheld_field() {
+    let (host, _directory) = host_with(
+        "org_a",
+        &json!({"kind": "refuse"}),
+        Some(&SECRET),
+        &[vec![customer("c1", "Ada", "ada@new.example.com")]],
+    );
+    let history =
+        get_object_history(&host, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping).unwrap();
+    let listed: Vec<u64> = history
+        .versions
+        .iter()
+        .map(|version| version.version)
+        .collect();
+    assert_eq!(listed, [1], "{history:#?}");
+    assert_eq!(
+        history.versions[0]
+            .values
+            .as_ref()
+            .and_then(|values| values.get("name")),
+        Some(&V::from("Ada"))
+    );
+    let document = serde_json::to_string(&history).unwrap();
+    for withheld in ["example.com", "\"version\":2,", "\"logicalTime\":3,"] {
+        assert!(
+            !document.contains(withheld),
+            "{withheld} leaked: {document}"
+        );
+    }
 }
 
 /// The documents Studio's privacy walk replays (`fixtures/privacy`), as
@@ -934,7 +1050,7 @@ fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
         std::slice::from_ref(&by_kind),
         &catalog,
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     assert!(refused(&question(
         json!([{ "path": owner("display_name") }]),
         json!([])
@@ -1046,10 +1162,12 @@ fn an_applied_pack_keeps_the_privacy_markings() {
         .unwrap()
     })
     .collect();
+    let kinds = norn_api::definition_routes::DefinitionKinds::default();
     let plan = plan_definitions(
         &cell,
         &scope,
         Some("owner"),
+        &kinds,
         &json!({ "artifacts": pack }).to_string(),
     )
     .unwrap();
@@ -1057,6 +1175,7 @@ fn an_applied_pack_keeps_the_privacy_markings() {
         &cell,
         &scope,
         Some("owner"),
+        &kinds,
         &json!({ "artifacts": pack, "expectedVersion": plan.base_version }).to_string(),
         10,
     )
@@ -1073,4 +1192,297 @@ fn an_applied_pack_keeps_the_privacy_markings() {
         json!(["pii.contact"]),
         "{document}"
     );
+}
+
+// #1547 round 4 (S2, S3): a cell's labels, not its declarations, decide
+// whether a read projects.
+
+const ITEM: &str = "shop.Item";
+
+/// A cell that declares no marking: a public item, and a `norn.RuleRun`,
+/// whose detail the kernel labels `norn.unknown-lineage` as it commits.
+fn undeclared_cell() -> (DevHost<NativeEngine>, tempfile::TempDir) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let types: Vec<norn_ir::ObjectTypeDef> = [
+        json!({"name": ITEM, "properties": [{"id": "name", "type": {"kind": "text"}}]}),
+        json!({"name": "norn.RuleRun", "properties": [{"id": "detail", "type": {"kind": "text"}}]}),
+    ]
+    .into_iter()
+    .map(|object| serde_json::from_value(object).unwrap())
+    .collect();
+    let model = norn_cell::Model::from_definitions(&types, &[]).unwrap();
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        let put = |object_type: &str, key: &str, property: &str, value: &str| FactWriteRow::Put {
+            object_type: object_type.into(),
+            key: key.into(),
+            values: BTreeMap::from([(property.to_owned(), V::from(value))]),
+        };
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: physical("org_a").key(),
+                logical_time: 2,
+                writes: vec![
+                    put(ITEM, "i1", "name", "Lathe"),
+                    put("norn.RuleRun", "r1", "detail", "rule detail"),
+                ],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let host = DevHost::from_store(store, physical("org_a"), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy)
+        .with_pseudonym_secret(Some(&SECRET));
+    (host, directory)
+}
+
+#[test]
+fn a_kernel_label_in_a_cell_without_markings_leaves_public_reads_served() {
+    // S3 (#1547): a cell with no marking declarations still holds the
+    // kernel's `norn.unknown-lineage` label on a RuleRun. A public object
+    // reads as itself, and the labelled detail is withheld, not served and
+    // not a refused read.
+    let (cell, _dir) = undeclared_cell();
+    let item = get_queried_object(&cell, &scope("org_a"), Some("viewer"), ITEM, "i1", &Mapping)
+        .expect("a public object is served");
+    assert_eq!(item.values.unwrap().get("name"), Some(&V::from("Lathe")));
+    if let Ok(run) = get_queried_object(
+        &cell,
+        &scope("org_a"),
+        Some("viewer"),
+        "norn.RuleRun",
+        "r1",
+        &Mapping,
+    ) {
+        assert_eq!(run.values.unwrap().get("detail"), None);
+    }
+}
+
+#[test]
+fn a_declassified_history_is_never_served_clear_from_an_empty_catalog() {
+    // S2 (#1547): every current label is declassified, so only the earlier
+    // version holds one, and the definitions then declare no marking. The
+    // history still projects that version: its email is withheld, never
+    // served in the clear.
+    let (cell, dir) = host_with(
+        "org_a",
+        &json!({"kind": "redacted"}),
+        Some(&SECRET),
+        &[vec![customer("c1", "Ada B.", "ada@new.example.com")]],
+    );
+    {
+        use norn_cell::engine::SqlEngine as _;
+        // As the declassification flow leaves the current labels.
+        NativeEngine::open(
+            &dir.path().join("cell.sqlite"),
+            norn_cell::StoreOptions::default(),
+        )
+        .unwrap()
+        .execute(
+            "UPDATE \"_norn_marking_current\" SET \"markings\" = '[]'",
+            &[],
+        )
+        .unwrap();
+    }
+    swap_retained_set(&dir, &|set| {
+        set.as_array_mut()
+            .unwrap()
+            .retain(|artifact| artifact["artifactId"] != "shop.markings.entity");
+    });
+    let history =
+        get_object_history(&cell, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping).unwrap();
+    let document = serde_json::to_string(&history).unwrap();
+    assert!(
+        !document.contains("ada@example.com"),
+        "the earlier version's email leaked: {document}"
+    );
+    let first = history
+        .versions
+        .iter()
+        .find(|version| version.version == 1)
+        .expect("the first version is listed");
+    assert_eq!(
+        first.values.as_ref().and_then(|values| values.get("name")),
+        Some(&V::from("Ada"))
+    );
+}
+
+/// A native engine that runs `hook` once, just before the first statement
+/// naming `marker` among its parameters: a commit by another connection at
+/// that point of a request.
+struct Hooked {
+    inner: NativeEngine,
+    marker: String,
+    hook: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Hooked {
+    fn fire(&self, params: &[norn_cell::engine::SqlValue]) {
+        if params
+            .iter()
+            .any(|param| matches!(param, norn_cell::engine::SqlValue::Text(text) if *text == self.marker))
+            && let Some(hook) = self.hook.lock().unwrap().take()
+        {
+            hook();
+        }
+    }
+}
+
+impl norn_cell::engine::SqlEngine for Hooked {
+    fn execute(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<(), norn_cell::CellError> {
+        self.fire(params);
+        self.inner.execute(sql, params)
+    }
+    fn query(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<Vec<Vec<norn_cell::engine::SqlValue>>, norn_cell::CellError> {
+        self.fire(params);
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), norn_cell::CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<norn_cell::CellError>>(
+        &self,
+        f: impl FnOnce() -> Result<T, X>,
+    ) -> Result<T, X> {
+        self.inner.transaction(f)
+    }
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        self.inner.platform_table_globs()
+    }
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, norn_cell::CellError> {
+        self.inner.read_cache_revision()
+    }
+    fn admitted(&self) -> Result<(), norn_cell::CellError> {
+        self.inner.admitted()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, norn_cell::CellError>,
+    ) -> Result<T, norn_cell::CellError> {
+        self.inner.definition_writes(f)
+    }
+}
+
+/// Records every call an export hands the engine, and performs none.
+#[derive(Default)]
+struct Recording(std::sync::Mutex<Vec<String>>);
+impl norn_api::analytics_routes::Transport for Recording {
+    fn resumed(&self) -> Option<norn_api::analytics_routes::EngineAnswer> {
+        None
+    }
+    fn call(
+        &self,
+        call: &norn_api::analytics_routes::EngineCall,
+    ) -> Option<norn_api::analytics_routes::EngineAnswer> {
+        self.0.lock().unwrap().push(call.op.clone());
+        None
+    }
+}
+
+#[test]
+fn an_export_never_carries_a_row_committed_after_its_marking_decision() {
+    // S3 (#1547): the cell holds no label when the export decides that
+    // `norn.RuleRun`'s stored values may leave. Another connection then
+    // commits a RuleRun, whose detail the kernel labels, before the export
+    // chooses its frontier. The frontier would include that labelled row, so
+    // the export decides again at the moved version and is refused: no
+    // engine call is made.
+    const RUN: &str = "norn.RuleRun";
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let types: Vec<norn_ir::ObjectTypeDef> = [
+        json!({"name": ITEM, "properties": [{"id": "name", "type": {"kind": "text"}}]}),
+        json!({"name": RUN, "properties": [{"id": "detail", "type": {"kind": "text"}}]}),
+    ]
+    .into_iter()
+    .map(|object| serde_json::from_value(object).unwrap())
+    .collect();
+    let model = norn_cell::Model::from_definitions(&types, &[]).unwrap();
+    let put = |object_type: &str, key: &str, property: &str, value: &str| FactWriteRow::Put {
+        object_type: object_type.into(),
+        key: key.into(),
+        values: BTreeMap::from([(property.to_owned(), V::from(value))]),
+    };
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: physical("org_a").key(),
+                logical_time: 2,
+                writes: vec![put(ITEM, "i1", "name", "Lathe")],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let export = |hooked: bool| {
+        let foreign = (path.clone(), model.clone());
+        let engine = Hooked {
+            inner: NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap(),
+            // The source read's first query, between the decision and the
+            // frontier: the type's committed dataset manifest, if any.
+            marker: norn_cell::dataset_manifest::MANIFEST_EVENT.to_owned(),
+            hook: std::sync::Mutex::new(hooked.then(|| -> Box<dyn FnOnce() + Send> {
+                Box::new(move || {
+                    let mut store =
+                        CellStore::open(&foreign.0, foreign.1, norn_cell::StoreOptions::default())
+                            .unwrap();
+                    store
+                        .commit(&CommitBatch {
+                            world: MAIN_WORLD.into(),
+                            scope: physical("org_a").key(),
+                            logical_time: 3,
+                            writes: vec![put(RUN, "r1", "detail", "secret rule detail")],
+                            ..CommitBatch::default()
+                        })
+                        .unwrap();
+                })
+            })),
+        };
+        let store = CellStore::from_engine(engine, model.clone()).unwrap();
+        let host = DevHost::from_store(store, physical("org_a"), |command| command.payload.clone())
+            .unwrap()
+            .with_authorizer(Policy);
+        let transport = Recording::default();
+        let outcome = norn_api::analytics_routes::export_objects(
+            &host,
+            &norn_api::analytics_routes::ExportQuery {
+                org_id: Some("org_a".into()),
+                environment_id: Some("dev".into()),
+                columns: "detail".into(),
+                format: Some("jsonl".into()),
+            },
+            Some("viewer"),
+            RUN,
+            &Mapping,
+            &transport,
+        );
+        let calls = transport.0.into_inner().unwrap();
+        (outcome, calls)
+    };
+    // Unlabelled at one version: the export reaches the engine.
+    let (_outcome, calls) = export(false);
+    assert_ne!(calls.len(), 0, "an unlabelled export reaches the engine");
+    // The labelled row lands between the decision and the frontier.
+    let (outcome, calls) = export(true);
+    let refused = outcome.expect_err("the export is refused");
+    assert_eq!(refused.status, 403, "{refused:?}");
+    assert_eq!(calls.len(), 0, "the engine was asked: {calls:?}");
 }

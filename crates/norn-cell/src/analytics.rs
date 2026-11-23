@@ -842,7 +842,61 @@ pub struct RuleCheck {
     pub predicate: Option<RowPredicate>,
     /// The value the predicate must have (`always`: true, `never`: false).
     pub expect: bool,
+    /// MANIFEST-LAWS-1 (S2): a bound on the fuel the per-row evaluator
+    /// charges for the rule's operations, apart from the data they read
+    /// ([`rule_fuel`]). The engine adds what each row's values cost and
+    /// leaves a row whose rules may cost more than [`row_fuel`] to the
+    /// per-row evaluator. A landing's first check also carries the row's
+    /// typed-property charge, paid once per row before any rule.
+    pub fuel: u64,
 }
+
+/// MANIFEST-LAWS-1 (S2): the fuel the per-row evaluator gives one row's
+/// rules: its invariants share one decide budget and its governing laws
+/// another (`snapshot_observe::observation_rule_findings`). The engine
+/// compares the bound of all of a row's rules together against one budget,
+/// so it never decides a row either budget would refuse.
+#[must_use]
+pub fn row_fuel() -> u64 {
+    norn_ir::ResourceLimitProfile::norn_limits_v1()
+        .decide
+        .fuel_units
+}
+
+/// Fuel a rule's evaluation is charged at most beside its nodes: entering
+/// the rule, reading its result, and the checks around it.
+pub const RULE_FUEL: u64 = 64;
+/// Fuel one node of a rule's ZEN source is charged at most beside the data
+/// it reads: every node compiles to a few opcodes of one unit each, and an
+/// exact decimal site to a few more.
+pub const NODE_FUEL: u64 = 16;
+
+/// MANIFEST-LAWS-1 (S2): the static part of a rule's fuel bound: [`RULE_FUEL`]
+/// and [`NODE_FUEL`] for each node of its ZEN sources (the condition's
+/// too), counted before lowering, so a `??` the lowering drops is still
+/// paid for.
+#[must_use]
+pub fn rule_fuel(nodes: u64) -> u64 {
+    RULE_FUEL.saturating_add(NODE_FUEL.saturating_mul(nodes))
+}
+
+/// D102 / MANIFEST-LAWS-1 (S1): engine calls one request may make, on every
+/// host: the Durable Object's Worker takes this bound from the cell, and
+/// the native host's landing loop is bounded by it too.
+pub const MAX_ENGINE_STEPS: u32 = 64;
+/// MANIFEST-LAWS-1 (S1): residue pages one landing may take. A landing is
+/// one land call, a settle per page, and a store, so its calls fit
+/// [`MAX_ENGINE_STEPS`]; the engine refuses a landing whose residue takes
+/// more ([`RESIDUE_EXCEEDED`]) and drops its staging.
+pub const MAX_RESIDUE_PAGES: u32 = MAX_ENGINE_STEPS - 2;
+/// Residue rows one page carries at most.
+pub const RESIDUE_PAGE_ROWS: u32 = 2_000;
+/// MANIFEST-LAWS-1 (S6): serialized bytes one page's residue rows take at
+/// most; a page ends before the row that would pass it.
+pub const RESIDUE_PAGE_BYTES: usize = 4 << 20;
+/// A landing whose residue takes more than [`MAX_RESIDUE_PAGES`] pages, or
+/// holds a row larger than [`RESIDUE_PAGE_BYTES`].
+pub const RESIDUE_EXCEEDED: &str = "bulk.residue_exceeded";
 
 /// One rule a row fails, as the per-row evaluator found it for a residue row.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -858,9 +912,10 @@ pub struct RowFinding {
     pub holds: bool,
 }
 
-/// A row the engine left to the per-row evaluator: a value a rule reads is
-/// absent, a value is out of the exactly computed range, or a rule is
-/// outside the lowered subset.
+/// A row the engine left to the per-row evaluator for some rules: a value
+/// a rule reads is absent, a value is out of the exactly computed range, or
+/// the rule is outside the lowered subset. The engine's own decisions of
+/// the row's other rules stand (LAW-04).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResidueRow {
@@ -868,6 +923,9 @@ pub struct ResidueRow {
     pub row: u64,
     /// Every present value of the row.
     pub values: BTreeMap<String, Value>,
+    /// The rules the engine did not decide for the row, by identity; the
+    /// per-row evaluator decides these, and only these.
+    pub rules: Vec<String>,
 }
 
 /// Findings of one rule over a landing.
@@ -888,7 +946,7 @@ pub struct RuleCount {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SettleRequest {
-    /// The landing, with fresh URLs.
+    /// The landing.
     pub land: LandRequest,
     /// The last residue row these findings cover.
     pub through: u64,
@@ -896,24 +954,92 @@ pub struct SettleRequest {
     pub findings: Vec<RowFinding>,
 }
 
-/// MANIFEST-LAND-1: load a dataset file and land it as columnar files. The
-/// typed rows go to the data file and the held-back rows to the held file,
-/// each written to its presigned PUT URL. The engine table that answers
-/// questions is a cache of the data file.
+/// MANIFEST-LINEAGE-1: one source row of a landing, by its offset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineageRequest {
+    /// The tenant.
+    pub tenant: TenantId,
+    /// The dataset's table.
+    pub table: String,
+    /// The landing the manifest names.
+    pub load: String,
+    /// The source row offset (1-based, in file order).
+    pub row: u64,
+}
+
+/// What the landing holds for one source row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineageResponse {
+    /// Whether the row was admitted to the data file.
+    pub admitted: bool,
+    /// Why it was not, when it was not typed (`bulk.*`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
+    /// Every rule it fails.
+    pub findings: Vec<RowFinding>,
+}
+
+/// MANIFEST-LAND-1: load a dataset file and land it as columnar files in
+/// the attempt's private directory: the typed rows in the data file and the
+/// held-back rows in the held file. Nothing a reader sees changes: the rows
+/// are staged under the attempt alone, and a dataset is read only at a
+/// committed manifest's cache identity ([`dataset_cache_id`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LandRequest {
-    /// The load: the source file, its typing and the landing identity.
+    /// The load: the source file, its typing and its binding (`headers`).
     pub load: LoadRequest,
-    /// A presigned PUT URL for the data file (Parquet).
-    pub data_url: String,
-    /// A presigned PUT URL for the held-set file (Parquet).
-    pub held_url: String,
+    /// MANIFEST-PIN-1: the pins the cell typed and checks this landing by;
+    /// the manifest commits exactly these, or is refused as stale.
+    pub pins: crate::dataset_manifest::ManifestPins,
+    /// The landing identity: the digest of this request without its
+    /// attempt. Every answer of the landing echoes it.
+    #[serde(default)]
+    pub landing: String,
+    /// The attempt: one landing's own staging and files, never another's.
+    /// OLAP-02: the engine mints it, so a landing sends none (an attempt
+    /// named by the caller refuses); a store names the one its landing's
+    /// answer named.
+    #[serde(default)]
+    pub attempt: String,
     /// MANIFEST-LAWS-1: every law and invariant that governs the type.
     #[serde(default)]
     pub checks: Vec<RuleCheck>,
-    /// Residue rows an answer carries at most.
+    /// Residue rows an answer carries at most (the engine takes at most
+    /// [`RESIDUE_PAGE_ROWS`], and at least one).
     pub residue_page: u32,
+}
+
+/// MANIFEST-LAND-1 / MANIFEST-CACHE-1: store an attempt's landed files. Each
+/// is sent to its content-addressed object only if its bytes are the digest
+/// the landing answered, then kept by digest in the tenant's private object
+/// directory, which a cache miss rebuilds the dataset from. The answer is
+/// `landed` with its cache identity ([`LandResponse::stored`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoreRequest {
+    /// The landing whose files are stored.
+    pub land: LandRequest,
+    /// The landing's answer: the files and what they hold.
+    pub landed: LandResponse,
+    /// The data file's object.
+    pub data: StoredObject,
+    /// The held-set file's object.
+    pub held: StoredObject,
+}
+
+/// The content-addressed object a landed file is stored at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoredObject {
+    /// The object's durable URI, named by the file's digest.
+    pub uri: String,
+    /// A presigned PUT URL for exactly that object; minted per call and not
+    /// part of the call's identity.
+    #[serde(default)]
+    pub url: String,
 }
 
 /// One landed file: its content identity as the engine wrote it.
@@ -940,19 +1066,23 @@ pub struct ValidRange {
     pub to: String,
 }
 
-/// The outcome of a landing.
+/// The outcome of a landing step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LandResponse {
+    /// The landing identity the request named.
+    pub landing: String,
+    /// The attempt the engine minted for the landing.
+    pub attempt: String,
     /// The load's counts, as [`LoadResponse`].
     pub load: LoadResponse,
-    /// The data file: every admitted row with its source row offset; absent
-    /// while residue remains.
+    /// The data file: every typed row no rule holds back, with its source
+    /// row offset; absent while residue remains (LAW-02).
     pub data: Option<LandedFile>,
     /// The held-set file: each held-back source row and its reason, and each
     /// finding; absent while residue remains.
     pub held: Option<LandedFile>,
-    /// Each temporal column's range over the admitted rows.
+    /// Each temporal column's range over the data file's rows.
     pub valid_time: Vec<ValidRange>,
     /// Findings by rule.
     pub findings: BTreeMap<String, RuleCount>,
@@ -962,23 +1092,28 @@ pub struct LandResponse {
     pub residue_total: u64,
     /// The next residue rows, in row order.
     pub residue: Vec<ResidueRow>,
+    /// MANIFEST-CACHE-1: once the files are stored, the cache identity a
+    /// manifest of exactly these files reads them at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored: Option<String>,
 }
 
-/// MANIFEST-CACHE-1: rebuild the engine's table of a landing from its
-/// landed files, each checked against the SHA-256 the manifest records.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct HydrateRequest {
-    /// The tenant.
-    pub tenant: TenantId,
-    /// The admitted object type's table, as landed.
-    pub table: TableSchema,
-    /// The landing identity the manifest records.
-    pub load: String,
-    /// The data file.
-    pub data: FileSource,
-    /// The held-set file.
-    pub held: FileSource,
+/// MANIFEST-CACHE-1: the cache identity of a dataset: its table and the
+/// digests of its data and held-set files, and nothing a load chose. A
+/// manifest records it as its `load`; the engine answers a dataset only at
+/// it, rebuilding the table from the files of exactly those digests.
+#[must_use]
+pub fn dataset_cache_id(table: &TableSchema, data_sha256: &str, held_sha256: &str) -> String {
+    format!(
+        "l{}",
+        hex_digest(
+            format!(
+                "{}\n{}\n{data_sha256}\n{held_sha256}",
+                table.name, table.pin
+            )
+            .as_bytes()
+        )
+    )
 }
 
 /// Profile columns of a source.

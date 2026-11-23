@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "one tenant cell per Workers Durable Object over the shared read services (ring 1; see AGENTS.md)"
+# Every integration test is a module of tests/suites.rs, one binary
+# (scripts/codemods/fold_integration_tests.py).
+autotests = false
 
 [lib]
 path = "src/lib.rs"
@@ -13,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "norn-dev-host"
 path = "src/bin/norn-dev-host.rs"
+required-features = ["native"]
 
 # The tenant analytics engine next to the cell host (D102).
 [[bin]]
@@ -21,16 +25,8 @@ path = "src/bin/norn-olapd.rs"
 required-features = ["duckdb"]
 
 [[test]]
-name = "analytics_profile"
-required-features = ["duckdb"]
-
-[[test]]
-name = "analytics_records"
-required-features = ["duckdb"]
-
-[[test]]
-name = "analytics_sources"
-required-features = ["duckdb"]
+name = "suites"
+path = "tests/suites.rs"
 
 [dependencies]
 norn-api = { path = "../norn-api" }
@@ -54,9 +50,11 @@ serde_json = "1.0.150"
 wasm-bindgen = "=0.2.129"
 
 # `norn-dev-host` (#207): the native developer loop over a project's SQLite cell.
+# Behind the default `native` feature: a host that brings its own SQLite (the
+# Rivet host, crates/norn-cell-rivet) builds this crate without it.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
-clap = { version = "4.6.7", features = ["derive"] }
+norn-cell = { path = "../norn-cell", default-features = false, features = ["native"], optional = true }
+clap = { version = "4.6.7", features = ["derive"], optional = true }
 # The per-session dev token and lineage handle key.
 getrandom = "0.3.4"
 # `norn-olapd` reads a dataset from the presigned URL the cell minted; the
@@ -84,17 +82,23 @@ url = { version = "2.5.8", default-features = false, features = ["std"] }
 
 # O_NOFOLLOW for the owner-only session files.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.189"
+libc = { version = "0.2.189", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # The request-layer fault simulator (tests/faults.rs) drives the server over
 # norn-cell's test-only fault-injecting Durable Object engine.
 norn-cell = { path = "../norn-cell", default-features = false, features = ["native", "fault-injection"] }
 tempfile = "3.27.0"
+# Drives the export and restore of a cell in the approval recovery tests.
+tokio = { version = "1.53.1", features = ["rt"] }
 # Signs host tokens in the native correspondence tests.
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
 
 [features]
+default = ["native"]
+# Native SQLite (`norn_cell::engine::NativeEngine`) and the dev host over it.
+# No effect on wasm32, where these dependencies do not exist.
+native = ["dep:norn-cell", "dep:clap", "dep:libc"]
 # Local smoke builds only: lets the Worker accept fixture principals.
 fixtures = []
 # `norn-dev-host` answers questions DuckDB can lower on DuckDB (QUERY-ENGINE-1)

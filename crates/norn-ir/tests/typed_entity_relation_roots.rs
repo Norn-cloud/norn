@@ -145,7 +145,7 @@ fn v2_entity_fixture_decodes_into_the_v2_root() {
     // that replaces the v1 relation fixture.
     let mut expected: ObjectTypeDef =
         serde_json::from_str(SKU_OBJECT_TYPE).expect("sku object type should decode");
-    assert!(expected.links.is_empty());
+    assert_eq!(expected.links, []);
     expected.links = v2.object_type.links.clone();
     assert_eq!(v2.object_type, expected);
     let [link] = v2.object_type.links.as_slice() else {
@@ -163,7 +163,7 @@ fn v2_entity_fixture_decodes_into_the_v2_root() {
         panic!("entity kind selects the entity root");
     };
     assert!(lenient.is_entity_ir_v2());
-    assert!(lenient.unknown_fields().is_empty());
+    assert_eq!(lenient.unknown_fields().len(), 0);
     let ArtifactPayload::Entity(v1) = &serde_json::from_str::<ArtifactEnvelope>(V1_ENTITY_FIXTURE)
         .expect("v1 envelope should decode")
         .payload
@@ -404,6 +404,6 @@ fn v2_definition_forms_decode_into_their_roots_and_are_disjoint() {
             panic!("entity kind selects the entity root");
         };
         assert!(lenient.is_entity_ir_v2());
-        assert!(lenient.unknown_fields().is_empty());
+        assert_eq!(lenient.unknown_fields().len(), 0);
     }
 }

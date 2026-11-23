@@ -69,7 +69,7 @@ fn decision() -> AdmittedDecision {
     }))
     .expect("rule");
     let binding = DecisionBinding {
-        profile_id: "norn-zen/6".to_owned(),
+        profile_id: "norn-zen/7".to_owned(),
         environment_hash: "sha256:test".to_owned(),
     };
     AdmittedDecision::admit(&rule, &BTreeMap::new(), binding).expect("admits")
@@ -119,6 +119,6 @@ fn explained_evaluation_reports_the_matched_row() {
 fn plain_evaluation_is_unchanged_and_reports_no_rows() {
     let plain = run(500, false);
     let explained = run(500, true);
-    assert!(plain.matched_rows.is_empty());
+    assert_eq!(plain.matched_rows, []);
     assert_eq!(plain.output, explained.output);
 }

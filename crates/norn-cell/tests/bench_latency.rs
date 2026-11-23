@@ -22,6 +22,7 @@
 )]
 #[path = "stress_purchase.rs"]
 mod stress;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model, StoreOptions};
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, Decimal, EntityRootV2, ObjectTypeDef, RuntimeValue as V,
@@ -189,7 +190,7 @@ fn governed_commit_and_law_check_latency_by_history_size() {
             let failures =
                 governing_laws::evaluate(&catalog, &key, &values, &mut fuel).expect("law check");
             law_only.push(at.elapsed().as_nanos());
-            assert!(failures.is_empty());
+            assert_eq!(failures, []);
         }
         let size = std::fs::metadata(&path).expect("size").len();
         println!(

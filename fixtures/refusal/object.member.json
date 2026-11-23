@@ -1,0 +1,29 @@
+{
+  "status": 200,
+  "body": {
+    "objectType": "docs.ScannedDocument",
+    "id": "SCAN-INV-1041",
+    "scope": "org_a/prod",
+    "version": 1,
+    "values": {
+      "corrected_by": null,
+      "correction_evidence": null,
+      "correction_reason": null,
+      "currency": "USD",
+      "doc_number": "INV-1041",
+      "document_digest": "51a1562d2801485ffa3b1144d1bbf08459c8d56aea9c04b56c4187b89ea0f26e",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1041.png",
+      "extractor": "tesseract",
+      "extractor_version": "5.3.4+norn-extractor/0.1.0",
+      "id": "SCAN-INV-1041",
+      "issued_on": "2026-03-12",
+      "kind": "invoice",
+      "line_count": 2,
+      "media_type": "image/png",
+      "total": 30.5,
+      "vendor": "Atlas Casting Supply"
+    },
+    "withheld": false,
+    "withheldProperties": []
+  }
+}

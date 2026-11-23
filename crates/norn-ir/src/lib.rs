@@ -104,7 +104,8 @@ pub use action::{
     AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation, ActionCompensation,
     ActionCreateLink, ActionInputDerivation, ActionLinkSource, ActionQuantityEffect,
     ActionQuantityOperation, ActionQuantityParameter, ActionRoot, ActionRuleRef, ActionUiEffect,
-    ActionUiEffects, ActionWrite, McpTool, McpToolAnnotations, WriteChange,
+    ActionUiEffects, ActionWrite, MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, McpTool,
+    McpToolAnnotations, TraceContext, TraceContextError, WriteChange,
 };
 pub use aggregate_input::{ActionAggregateInput, AggregateFunction, AggregateWindow};
 pub use business_pack::{
@@ -191,8 +192,8 @@ pub use layout::{
 };
 pub use limit_profile::{
     DecideBudget, EnvelopeLimits, HelperLimits, LIMIT_PROFILE_HASH_PROFILE, LimitProfileRef,
-    MemoryLimits, NORN_LIMITS_PROFILE_ID, NORN_LIMITS_V1_SHA256, NORN_LIMITS_V1_VERSION,
-    QuestionLimits, ResourceLimitProfile, SliceLimits, TurnBudget,
+    MAX_SQLITE_COLUMNS_PER_TABLE, MemoryLimits, NORN_LIMITS_PROFILE_ID, NORN_LIMITS_V1_SHA256,
+    NORN_LIMITS_V1_VERSION, QuestionLimits, ResourceLimitProfile, SliceLimits, TurnBudget,
 };
 pub use lineage::{
     DecisionRef, LineageCommit, LineageInput, LineageLink, LineageObject, LineageObservation,
@@ -213,7 +214,7 @@ pub use rule::{
     RULE_IR_V1_VERSION, RULE_IR_V2_VERSION, RuleContractV2, RuleDecisionV1, RuleRoot,
     RuleSourceCommand, RuleTrigger, SliceDeclaration, SliceKey,
 };
-pub use runtime::{Decimal, RuntimeObject, RuntimeValue, RuntimeValueError};
+pub use runtime::{Decimal, RuntimeObject, RuntimeValue, RuntimeValueError, WIRE_DECIMAL_GRAMMAR};
 pub use sealing::{
     CustomizationOverlayOperation, ExtensionContributionKind, ExtensionPointDefinition,
     SEAL_PRECEDENCE_LADDER, SEALING_IR_VERSION, SealAnnotation, SealError, SealInput, SealOutcome,
@@ -277,7 +278,8 @@ pub use norn_canonical::counters;
 pub mod canonical {
     pub use norn_canonical::{
         CanonicalJsonError, HashProfile, JsonValue, canonical_json_of, canonicalize_json,
-        domain_hash_hex, legacy_hash_value, nfc, parse_json, parse_json_verbatim, serialize,
+        domain_hash_hex, legacy_hash_value, nfc, parse_json, parse_json_tokens,
+        parse_json_verbatim, serialize, write_canonical_string,
     };
 }
 

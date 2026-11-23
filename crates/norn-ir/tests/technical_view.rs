@@ -65,7 +65,7 @@ fn technical_view_fixture_declares_every_type_once() {
             TechnicalType::of(&def.name).map(TechnicalType::type_name),
             Some(def.name.as_str())
         );
-        assert!(!def.identity.is_empty(), "{} has a key", def.name.0);
+        assert_ne!(def.identity, [], "{} has a key", def.name.0);
     }
 }
 
@@ -73,7 +73,7 @@ fn technical_view_fixture_declares_every_type_once() {
 fn technical_view_business_types_use_both_relation_families() {
     let technical = decode(TECHNICAL);
     let business = decode(BUSINESS);
-    assert!(!business.is_empty());
+    assert_ne!(business, []);
     for def in &business {
         assert!(
             !is_technical_type(&def.name),

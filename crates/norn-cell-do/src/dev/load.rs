@@ -77,55 +77,54 @@ pub(crate) fn load(
     // page, pages read, and page rows captured (more than pages read when a
     // page was split before a canonical object it repeats).
     let mut timing: BTreeMap<(String, String), [u128; 6]> = BTreeMap::new();
-    // OBS-PAGE-1: consecutive rows of one dataset travel as one page, split
-    // before a repeated record identity and at the page bound.
     for snapshot in &snapshots {
         let file = snapshot.path.display().to_string();
-        let mut pages: Vec<(String, Vec<Observed<RuntimeValue>>)> = Vec::new();
-        let mut seen = std::collections::BTreeSet::new();
         let recorded = &snapshot.recorded;
-        for row in &recorded.rows {
-            let dataset = &row.dataset;
-            let observed = recorded
-                .raw(row)
-                .map_err(|error| format!("{file}: {error}"))?;
-            let identity = observed.provenance.source_id.clone();
-            let split = pages.last().is_none_or(|(current, rows)| {
-                current != dataset || rows.len() >= PAGE_ROWS || !seen.insert(identity.clone())
-            });
-            if split {
-                seen = std::collections::BTreeSet::from([identity]);
-                pages.push((dataset.clone(), Vec::new()));
-            }
-            if let Some((_, rows)) = pages.last_mut() {
-                rows.push(observed);
-            }
-        }
-        for (dataset, rows) in &pages {
+        let mut pages = frame(&file, recorded)?;
+        while let Some((framed, page)) = pages.pop_front() {
+            let (dataset, rows) = (&framed, &page);
             let input = recorded.input(dataset);
             let started = std::time::Instant::now();
-            let ids = cell
-                .inject_mapping_page(rows, &input)
-                .map_err(|error| format!("{file}: a {dataset} page was not captured: {error}"))?;
+            let Some(ids) = capture_page(
+                &mut cell,
+                (dataset.as_str(), rows.as_slice()),
+                &input,
+                &mut pages,
+            )
+            .map_err(|error| format!("{file}: a {dataset} page was not captured: {error}"))?
+            else {
+                continue;
+            };
             let captured = started.elapsed().as_micros();
             let started = std::time::Instant::now();
             let entry = mapped.entry(file.clone()).or_default();
             entry.0 = entry.0.saturating_add(rows.len());
+            let mut outcomes = BTreeMap::new();
             for (id, _new) in &ids.pages {
-                for (member, outcome) in cell
-                    .process_mapping_page(id)
-                    .map_err(|error| format!("{file}: a {dataset} page failed: {error}"))?
-                    .unwrap_or_default()
-                {
-                    match outcome {
-                        MappingOutcome::Landed => entry.1 = entry.1.saturating_add(1),
-                        MappingOutcome::AlreadyLanded => {}
-                        MappingOutcome::Quarantined(reasons) => {
-                            return Err(format!(
-                                "{file}: {dataset} {member} was refused by the mapping: {}",
-                                reasons.join(", ")
-                            ));
-                        }
+                outcomes.extend(
+                    cell.process_mapping_page(id)
+                        .map_err(|error| format!("{file}: a {dataset} page failed: {error}"))?
+                        .unwrap_or_default(),
+                );
+            }
+            // A record no page carries (refused by the mapping, or a conflict
+            // or identity finding) answers as it does one by one.
+            for (member, row) in ids.records.iter().zip(rows) {
+                let outcome = match outcomes.remove(member) {
+                    Some(outcome) => outcome,
+                    None => cell
+                        .process_mapping_outcome(member)
+                        .map_err(|error| format!("{file}: a {dataset} row failed: {error}"))?,
+                };
+                match outcome {
+                    MappingOutcome::Landed => entry.1 = entry.1.saturating_add(1),
+                    MappingOutcome::AlreadyLanded => {}
+                    MappingOutcome::Quarantined(reasons) => {
+                        return Err(format!(
+                            "{file}: {dataset} {} was refused by the mapping: {}",
+                            row.provenance.source_id,
+                            explain(&reasons)
+                        ));
                     }
                 }
             }
@@ -158,6 +157,84 @@ pub(crate) fn load(
         })
         .collect();
     Ok((cell.into_store(), Loaded { files }))
+}
+
+/// OBS-PAGE-1: consecutive rows of one dataset travel as one page, split
+/// before a repeated record identity and at the page bound.
+fn frame(file: &str, recorded: &Recorded) -> Result<std::collections::VecDeque<Page>, String> {
+    let mut pages = std::collections::VecDeque::<Page>::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for row in &recorded.rows {
+        let dataset = &row.dataset;
+        let observed = recorded
+            .raw(row)
+            .map_err(|error| format!("{file}: {error}"))?;
+        let identity = observed.provenance.source_id.clone();
+        let split = pages.back().is_none_or(|(current, rows)| {
+            current != dataset || rows.len() >= PAGE_ROWS || !seen.insert(identity.clone())
+        });
+        if split {
+            seen = std::collections::BTreeSet::from([identity]);
+            pages.push_back((dataset.clone(), Vec::new()));
+        }
+        if let Some((_, rows)) = pages.back_mut() {
+            rows.push(observed);
+        }
+    }
+    Ok(pages)
+}
+
+/// One dataset's page of source rows.
+type Page = (String, Vec<Observed<RuntimeValue>>);
+
+/// Capture one page; `None` when the cell captured nothing because the page
+/// would capture a dispute after a record it commits (OBS-LINK-DISPUTE-1):
+/// its records go back to the front of `pages`, one page each, so each is
+/// captured and committed in order, as one by one.
+fn capture_page(
+    cell: &mut SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine>,
+    (dataset, rows): (&str, &[Observed<RuntimeValue>]),
+    input: &norn_cell::mapping_bundle::MappingInput,
+    pages: &mut std::collections::VecDeque<Page>,
+) -> Result<Option<norn_cell::mapping_page::CapturedPage>, norn_cell::CellError> {
+    match cell.inject_mapping_page(rows, input) {
+        Ok(ids) => Ok(Some(ids)),
+        Err(norn_cell::CellError::MappingPageSpansDispute) if rows.len() > 1 => {
+            for row in rows.iter().rev() {
+                pages.push_front((dataset.to_owned(), vec![row.clone()]));
+            }
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// MAP-EXPLAIN-1 in words: each reason's code, map, field, value and
+/// declared type, as a refused `--load` reports them.
+fn explain(reasons: &[norn_cell::QuarantineReason]) -> String {
+    reasons
+        .iter()
+        .map(|reason| {
+            let field = reason.field.as_ref().map_or_else(String::new, |field| {
+                format!(
+                    ", field {field} = {}, expected {}",
+                    reason.value.as_deref().unwrap_or("(absent)"),
+                    reason.expected.as_deref().unwrap_or("?")
+                )
+            });
+            let map = reason
+                .map
+                .as_ref()
+                .map_or_else(String::new, |map| format!(" (map {map}{field})"));
+            // A trusted operator's own report: the cell's refusal text too.
+            let detail = reason
+                .detail
+                .as_ref()
+                .map_or_else(String::new, |detail| format!(" ({detail})"));
+            format!("{}{map}: {}{detail}", reason.code, reason.reason)
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[cfg(test)]
@@ -289,7 +366,7 @@ mod tests {
             let objects = reader
                 .list(norn_cell::MAIN_WORLD, object_type, 100)
                 .unwrap();
-            assert!(!objects.is_empty(), "{object_type} has no records");
+            assert_ne!(objects, [], "{object_type} has no records");
         }
         // The holding's later change is its current state.
         let holdings = reader

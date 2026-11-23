@@ -11,16 +11,16 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # `all` runs every phase, in this order, in one checkout. CI packs its
 # selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
-phases=(cheap test doctest features duckdb wasm clippy doc guards integration browser formal provenance)
+phases=(cheap test doctest features duckdb wasm clippy doc rivet guards integration-authoring integration-wasm integration-clients browser formal rivet-conformance provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
-  'binary_id(norn-expr::check) & test(=generated_accepted_expressions_are_total_and_typed)'
-  'binary_id(norn-testkit::kernel_quint) & test(=quantity_v2_quint_traces)'
-  'binary_id(norn-cell::quantity_reservations) & test(=partial_resolution_interleaved_lots_conserve_independent_scalar_fold)'
-  'binary_id(norn-cell::definitions_install) & test(=first_overflow_column_charges_the_same_empty_object_bytes_in_check_and_install)'
-  'binary_id(norn-cell::definitions_install) & (test(=overflow_backfill_refuses_more_than_the_row_limit_in_check_and_install) | test(=removing_an_empty_overflow_property_refuses_an_incomplete_row_scan))'
-  '(binary_id(norn-cell::quantity_reservations) & test(=generated_reservation_sequences_match_independent_scalar_fold)) | (binary_id(norn-cell::cell_host) & test(=cell_host_laws_hold_across_reopen_for_the_restricted_engine))'
+  'binary_id(norn-expr::suites) & test(=check::generated_accepted_expressions_are_total_and_typed)'
+  'binary_id(norn-cell) & test(=suites::kernel_quint::quantity_v2_quint_traces)'
+  'binary_id(norn-cell) & test(=suites::quantity_reservations::partial_resolution_interleaved_lots_conserve_independent_scalar_fold)'
+  'binary_id(norn-cell) & test(=suites::definitions_install::first_overflow_column_charges_the_same_empty_object_bytes_in_check_and_install)'
+  'binary_id(norn-cell) & (test(=suites::definitions_install::overflow_backfill_refuses_more_than_the_row_limit_in_check_and_install) | test(=suites::definitions_install::removing_an_empty_overflow_property_refuses_an_incomplete_row_scan))'
+  '(binary_id(norn-cell) & test(=suites::quantity_reservations::generated_reservation_sequences_match_independent_scalar_fold)) | (binary_id(norn-cell::suites) & test(=cell_host::cell_host_laws_hold_across_reopen_for_the_restricted_engine))'
 )
 rest_shards=3
 # Selection comes only from here: every run ignores nextest's configurable
@@ -54,6 +54,10 @@ refresh_sources() {
   [[ $previous == "$current" ]] || printf '%s\n' "$current" > "$tree_stamp"
 }
 refresh_sources
+# Keep the hosted planner independent of a Cargo build.
+case "${1:-}" in
+  bundle|bundle-plan|bundle-check) exec cargo xtask ci "$@" ;;
+esac
 # Fails unless binary $1 was built after this tree was stamped.
 require_fresh() {
   [[ -x $1 && $1 -nt $tree_stamp ]] || { echo "core.sh: $1 is older than this tree; rebuild it" >&2; exit 1; }
@@ -174,11 +178,11 @@ use_jsonschema() {
   python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1 PyYAML==6.0.3
 }
 # Workflow lint (#1348 CI-R2): pinned actionlint and zizmor release binaries, checked against
-# their sha256 (a matching binary already on PATH is used as is). Their configs live in the gated
+# their sha256. Their configs live in the gated
 # guard directory and are passed explicitly, so no config elsewhere in the tree can loosen them.
 # actionlint's shellcheck/pyflakes hooks are off: they would depend on whatever the runner has.
 lint_workflows() {
-  local dir="$upstream/workflow-lint" actionlint=actionlint zizmor=zizmor
+  local dir="$upstream/workflow-lint"
   mkdir -p "$dir"
   fetch() {
     [[ $(uname -sm) == 'Linux x86_64' ]] || { printf 'workflow lint: no pinned %s for %s\n' "$1" "$(uname -sm)" >&2; exit 1; }
@@ -186,29 +190,75 @@ lint_workflows() {
     printf '%s  %s\n' "$3" "$dir/$1.tar.gz" | sha256sum -c --quiet -
     tar -xzf "$dir/$1.tar.gz" -C "$dir" "$1"
   }
-  [[ $(actionlint -version 2> /dev/null | head -n 1) == 1.7.12 ]] || {
-    fetch actionlint https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
-      8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
-    actionlint="$dir/actionlint"
-  }
-  [[ $(zizmor --version 2> /dev/null) == 'zizmor 1.32.0' ]] || {
-    fetch zizmor https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
-      bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
-    zizmor="$dir/zizmor"
-  }
-  "$actionlint" -config-file crates/norn-skeleton-guard/actionlint.yaml -no-color -shellcheck= -pyflakes= .github/workflows/*.yml
-  "$zizmor" --quiet --quiet --offline --config crates/norn-skeleton-guard/zizmor.yml --no-progress --format plain .github/workflows
+  fetch actionlint https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+    8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+  fetch zizmor https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+    bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
+  "$dir/actionlint" -config-file crates/norn-skeleton-guard/actionlint.yaml -no-color -shellcheck= -pyflakes=
+  "$dir/zizmor" --quiet --quiet --offline --collect=all --strict-collection --config crates/norn-skeleton-guard/zizmor.yml --no-progress --format plain .github/workflows
   # The baseline only shrinks: every ignore must still cover a finding of the unfiltered report.
-  # zizmor exits 10 or more when it reports findings, and below 10 only on its own errors.
-  local status=0
-  "$zizmor" --quiet --quiet --offline --no-config --no-ignores --format json .github/workflows > "$dir/findings.json" || status=$?
-  ((status == 0 || status >= 10)) || { printf 'workflow lint: zizmor failed (%s)\n' "$status" >&2; exit 1; }
+  "$dir/zizmor" --quiet --quiet --offline --collect=all --strict-collection --no-config --no-ignores \
+    --pedantic --no-exit-codes --format json .github/workflows > "$dir/findings.json"
   cargo xtask ci workflow-lint --findings "$dir/findings.json"
+  # Require every finding of these audits, including pedantic findings and inline ignores.
+  jq -e '
+    map(select(.ident == "overprovisioned-secrets" or .ident == "unredacted-secrets"
+      or .ident == "excessive-permissions" or .ident == "undocumented-permissions"
+      or .ident == "secrets-inherit")) |
+    if length == 0 then true else .[], false end
+  ' "$dir/findings.json"
 }
+# Split by file in separate Bun processes so module mocks and environment
+# changes within one shard cannot affect the other.
+run_authoring_tests() (
+  cd tools/norn-ts
+  bun install --frozen-lockfile --backend copyfile
+  bun run typecheck
+  bun test --timeout 60000 --shard=1/2 --reporter=junit --reporter-outfile="$upstream/authoring-1.xml" &
+  first=$!
+  bun test --timeout 60000 --shard=2/2 --reporter=junit --reporter-outfile="$upstream/authoring-2.xml" &
+  second=$!
+  status=0
+  wait "$first" || status=1
+  wait "$second" || status=1
+  (( status == 0 )) || exit "$status"
+  # Update the inventory whenever an authoring test file is added or removed.
+  python3 - ../../scripts/ci/authoring-test-files.txt "$upstream/authoring-1.xml" "$upstream/authoring-2.xml" <<'PYTHON'
+import collections
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+# A line `path skip-allowed` names a file whose every test may be skipped (a gated test).
+inventory = [line.split() for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
+if any(len(fields) not in (1, 2) or fields[1:] not in ([], ["skip-allowed"]) for fields in inventory):
+    sys.exit("authoring inventory: each line is `path` or `path skip-allowed`")
+expected = collections.Counter(fields[0] for fields in inventory)
+skip_allowed = {fields[0] for fields in inventory if fields[1:]}
+actual, executed = collections.Counter(), set()
+for report in sys.argv[2:]:
+    suites = ET.parse(report).getroot().findall("./testsuite")
+    # Bun nests each describe block as an inner testsuite: count cases at any depth.
+    if not any(case.find("skipped") is None for suite in suites for case in suite.iter("testcase")):
+        sys.exit(f"{report}: no authoring tests executed")
+    actual.update(suite.attrib["file"] for suite in suites)
+    executed.update(suite.attrib["file"] for suite in suites
+                    if any(case.find("skipped") is None for case in suite.iter("testcase")))
+if not expected or actual != expected:
+    sys.exit(f"Authoring shard coverage differs: missing={list(expected - actual)}, extra or repeated={list(actual - expected)}")
+# A file counts only when one of its tests ran: a suite of skipped cases is not coverage.
+idle = sorted(set(expected) - executed - skip_allowed)
+if idle:
+    sys.exit(f"Authoring files with no executed test: {idle}")
+print(f"Authoring shards covered exactly the {len(expected)} inventoried test files, {len(executed)} with executed tests")
+PYTHON
+)
+
 run_phase() {
-  if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
+  if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && $1 != rivet && $1 != rivet-conformance && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
     cheap)
+      bash scripts/ci/secret-scan.sh .
       use_jsonschema
       cargo metadata --locked --format-version 1 > /dev/null
       cargo metadata --locked --format-version 1 "${guard[@]}" > /dev/null
@@ -218,9 +268,11 @@ run_phase() {
       (cd packages/norn-sdk && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test --timeout 60000)
       (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       (cd apps/studio && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test && bun run build)
-      # TIMER-ALARM-1: the Durable Object's wake rules (no dependencies).
-      (cd apps/norn-cell-do && bun test ./wake.test.mjs)
+      # TIMER-ALARM-1: the Durable Object's wake rules; OLAP-01: what connections receive (no dependencies).
+      (cd apps/norn-cell-do && bun test ./wake.test.mjs ./worker.test.mjs ./connect_vars.test.mjs)
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
+      # With Cargo autodiscovery disabled, a new test file must be enrolled in suites.rs.
+      python3 scripts/codemods/fold_integration_tests.py --check
       python3 scripts/ci/frontier.py self-test
       python3 scripts/ci/python_isolation.py
       python3 scripts/ci/test_python_isolation.py
@@ -233,19 +285,21 @@ run_phase() {
       python3 scripts/test_demo_scenarios.py
       python3 scripts/standards_atlas.py --check
       python3 scripts/test_standards_atlas.py
+      python3 scripts/importers/test_owl_sources.py
       python3 scripts/metrics/test_metrics.py
+      python3 scripts/ci/test_infisical_oidc.py
       lint_workflows
       cargo xtask ci policy
       cargo xtask ci provenance
-      # The Rust half of the concurrency parity check runs on every plan, whatever packages the
-      # plan selects, and its two named tests must have run and passed.
+      # The Rust concurrency and bundle checks run on every plan, whatever packages the
+      # plan selects, and all named tests must have run and passed.
       ensure_nextest
       # nextest keeps its reports under the workspace root's target/nextest, whatever
       # CARGO_TARGET_DIR says, and the guard's workspace root is its own directory (#1270).
       parity_report="$(cargo metadata --locked --format-version 1 --no-deps "${guard[@]}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["workspace_root"])')/target/nextest/ci/junit.xml"
       rm -f "$parity_report"
-      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
-      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture
+      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture) | test(=ci::bundle::tests::matches_python_on_real_plans) | test(=ci::bundle::tests::refuses_wrong_inventories_and_ids) | test(=ci::bundle::tests::groups_shared_builds_and_prunes_every_other_boundary) | test(=ci::bundle::tests::prunes_only_workspace_cargo_outputs)'
+      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture ci::bundle::tests::matches_python_on_real_plans ci::bundle::tests::refuses_wrong_inventories_and_ids ci::bundle::tests::groups_shared_builds_and_prunes_every_other_boundary ci::bundle::tests::prunes_only_workspace_cargo_outputs
       ;;
     test)
       select_shard "${2:-all}"
@@ -316,7 +370,10 @@ PY
       # tenant engine's correspondence suite and the transform backend); full plans run this
       # phase, and affected plans run it whenever norn-cell is reached. The in-process
       # `duckdb_question` target was retired with the SQL question path (#1395).
-      cargo test --locked -p norn-cell --features duckdb --test analytics_engine --test duckdb_transform
+      cargo test --locked -p norn-cell --features duckdb --lib -- suites::analytics_engine:: suites::duckdb_transform:: analytics::engine::tests::
+      # MANIFEST-LAWS-1 (#1514): compare set-based laws with the per-row path in the
+      # DuckDB-only dataset_laws module of the integration suite.
+      cargo test --locked -p norn-cell --features duckdb --test suites dataset_laws::
       ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
@@ -331,6 +388,25 @@ PY
     doc)
       RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
       RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps
+      ;;
+    rivet)
+      # crates/norn-cell-rivet is its own Cargo workspace (D131): Rivet's SQLite and the native
+      # engine cannot share the root lockfile. Its .cargo/config.toml (the SQLite flags Rivet's VFS
+      # requires) applies only from its own directory, and it builds in its own target subtree.
+      # A RivetKit change ships only with a storage version bump, judged against the base (#1513).
+      python3 scripts/ci/test_rivetkit_channel.py
+      python3 scripts/ci/rivetkit_channel.py --base "${NORN_CI_BASE:-origin/main}" --require-lock
+      (
+        cd crates/norn-cell-rivet
+        export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/rivet"
+        cargo fmt --check
+        cargo clippy --locked --all-targets -- -D warnings
+        cargo clippy --locked --all-targets --features conformance -- -D warnings
+        RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
+        RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features conformance
+        cargo test --locked
+        cargo test --locked --features conformance
+      )
       ;;
     guards)
       crates/norn-skeleton-guard/scripts/zen-dependency-tree.sh
@@ -350,7 +426,7 @@ PY
       # The guards phase runs in every plan, full or affected.
       "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"
       ;;
-    integration)
+    integration-authoring)
       cargo build --locked -p norn-cli
       cargo build --locked -p norn-cell-do --bin norn-dev-host
       ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
@@ -362,18 +438,34 @@ PY
       bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
-      cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
-      node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
       # runnable-docs runs each release test the status matrix names; build
       # them first so its bounded runs only execute (#1171 integrated gate).
-      grep -oE 'cargo test --locked -p [a-z-]+ --test [a-z_]+' docs/authoring/runnable/status.md | sort -u |
+      grep -oE 'cargo test --locked -p [a-z-]+ (--test [a-z_]+|--lib)' docs/authoring/runnable/status.md | sort -u |
         while read -r build; do $build --no-run; done
+      run_authoring_tests
+      ;;
+    integration-wasm)
+      export CI=true
+      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
+      crates/norn-checker-wasm/scripts/build-pkg.sh
+      export NORN_CHECKER_WASM_PKG="$CARGO_TARGET_DIR/norn-checker-wasm/pkg"
+      cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
+      node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
+      # TENANT-ISOLATION-1 (S8): the cell Worker's boundary over its real Wasm gate, built as it ships.
+      cargo build --locked -p norn-cell-do --lib --target wasm32-unknown-unknown --profile wasm-release
+      wasm-bindgen "${CARGO_TARGET_DIR:-$PWD/target}/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
+        --target web --out-name norn_cell_do --out-dir "$upstream/norn-cell-do-pkg"
+      (cd apps/norn-cell-do && NORN_CELL_DO_PKG="$upstream/norn-cell-do-pkg" bun test ./worker.wasm.test.mjs)
       # The ZEN-only engine package pages load (#1325): pages and the checker share one
       # evaluator so they cannot disagree, so it answers every evaluation of the shared
       # corpus exactly as the checker package does.
       NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh
       node crates/norn-checker-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/engine"
-      (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
+      ;;
+    integration-clients)
+      export CI=true
+      cargo build --locked -p norn-cell-do --bin norn-dev-host
+      export NORN_DEV_HOST_BIN="$CARGO_TARGET_DIR/debug/norn-dev-host"
       # The SDK and demo UI typecheck and tests run in `cheap`; the diff below proves
       # the regenerated SDK is the committed one those runs checked.
       (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile)
@@ -440,6 +532,16 @@ PY
       scripts/bootstrap-rust-extraction-tools.sh
       scripts/verify-promoted-subsystems.sh full
       ;;
+    rivet-conformance)
+      # The host conformance suite on the native Rivet host: Rivet Engine 3.1.1 in Docker (pinned
+      # digest) with two runners of a release `conformance` build, against the native reference.
+      # About 20 minutes on a default VM, past a bundle's 11-minute target, and it needs Docker:
+      # like formal, it is a Boat gate that no CI plan selects.
+      (cd crates/norn-cell-rivet && CARGO_TARGET_DIR="$CARGO_TARGET_DIR/rivet" cargo build --locked --release --features conformance)
+      NORN_CELL_DO_CONFORMANCE_OUT="$upstream/rivet-reference.json" cargo test --locked -p norn-cell-do --test suites conformance_reference::
+      NORN_CELL_RIVET="$CARGO_TARGET_DIR/rivet/release/norn-cell-rivet" python3 apps/norn-cell-do/conformance/conformance.py \
+        --reference "$upstream/rivet-reference.json" --host rivet-native --out "$upstream/rivet-conformance.json"
+      ;;
     provenance)
       export CI=true
       cargo xtask ci provenance
@@ -450,53 +552,43 @@ PY
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
 }
-# Drops Cargo build outputs between bundle tasks (#1059). Only the workspace's own
-# target dir is touched: CARGO_TARGET_DIR is canonicalized (symlinks and `..` resolved)
-# and anything else (empty, /, $HOME, the workspace or an ancestor, a sibling, a
-# symlink out of the workspace) is refused and left in place. Inside it only Cargo's
-# profile and target-triple trees (each holds a `.fingerprint`) and `doc` go;
-# verification evidence and tools (target/verification-*), symlinks and any other
-# content stay.
-prune_target() {
-  local root target entry name
-  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0
-  if [[ $target != "$root/target" ]]; then
-    printf '::warning::refusing to prune %s: only %s/target may be pruned\n' "$target" "$root"
-    return 0
-  fi
-  for entry in "$target"/*; do
-    name=${entry##*/}
-    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue
-    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then
-      rm -rf -- "$entry"
-    fi
-  done
-}
-bundle_plan() {
-  python3 - "$1" "$2" "${3:-}" "$(list_shards)" "${phases[*]}" <<'PY'
+# The hosted plan job has no prebuilt xtask. Keep its packing model in sync
+# with the Rust runner until the planner can use a cached or prebuilt binary.
+hosted_bundle_plan() {
+  python3 - "$1" "$(list_shards)" "${phases[*]}" <<'PY'
 import json, sys
-mode, raw, selected, shards, phases = sys.argv[1:]
+raw, shards, phases = sys.argv[1:]
 plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
-    if phase not in {"cheap", "test", "formal"}}
+    if phase not in {"cheap", "test", "formal", "rivet-conformance"}}
 # Task seconds on Boat, where merge groups and allowlisted pull requests run (#1348): p50 of
-# green tasks over 24 recorded runs with all 20 tasks, 2026-11-14..18, net of the test build.
-# Each Boat VM starts with an empty compiler cache, so a test task that builds alone carries
-# that build: heavy-1 p50 230 s on its own build, 31 s on a build an earlier task made (n=4).
-# The hosted p50s these replace (warm shared cache) packed 2071 s of tasks into one bundle.
+# green tasks over 287 Boat bundle jobs of 80 green runs (40 merge groups, 40 pull requests,
+# runs 44493680372..44951869655, 2026-11-19..21). A test task's seconds are net of the test
+# build it carries, read from cargo's own "Finished `test` profile" lines of that task.
+# The weights these replace (2026-11-14..18) mostly undercounted today's tasks: integration
+# was 920 against 1841 observed. Replaying today's p50s through the old weights gives one
+# bundle 52 min while the others get 33-36.
+# Folded test names rehash the rest shards. Use the old rest total divided evenly
+# until the new shards have timing samples. The heavy shards still run the same tests.
 weights = {
-    "test/heavy-1": 31, "test/heavy-2": 293, "test/heavy-3": 203,
-    "test/heavy-4": 142, "test/heavy-5": 32, "test/heavy-6": 47,
-    "test/rest-1": 656, "test/rest-2": 315, "test/rest-3": 165,
-    "phase/doctest": 26, "phase/features": 618, "phase/duckdb": 363, "phase/wasm": 139,
-    "phase/clippy": 81, "phase/doc": 56, "phase/guards": 434,
-    "phase/integration": 920, "phase/provenance": 10, "phase/test-shards": 10,
-    "phase/browser": 304,
+    "test/heavy-1": 13, "test/heavy-2": 244, "test/heavy-3": 90,
+    "test/heavy-4": 35, "test/heavy-5": 26, "test/heavy-6": 57,
+    "test/rest-1": 348, "test/rest-2": 348, "test/rest-3": 348,
+    "phase/doctest": 48, "phase/features": 791, "phase/duckdb": 630, "phase/wasm": 239,
+    "phase/clippy": 119, "phase/doc": 88, "phase/guards": 532,
+    # Not yet recorded in CI: one Boat run on an empty target (default VM), 2026-11-21.
+    "phase/rivet": 496,
+    # Split integration timings from run 45037150223; authoring includes an estimate for two concurrent Bun shards.
+    "phase/integration-authoring": 1030, "phase/integration-wasm": 707,
+    "phase/integration-clients": 170, "phase/provenance": 13, "phase/test-shards": 14,
+    "phase/browser": 596,
 }
-# A bundle's test build on a cold Boat VM: p50 of a test task on its own build minus the
-# same task on a shared one (heavy-1 199 s, heavy-5 190 s, heavy-6 167 s, test-shards 184 s).
-compile_seconds = 190
+# A bundle's test build on a Boat VM: p50 of cargo's "Finished `test` profile" time in the
+# first test task of a bundle (n=189, p90 470 s). The shared compiler cache has no writer yet
+# (#1369), so every such build is cold.
+# Scale the historical p50 by the cold build ratio from docs/platform/build.md.
+compile_seconds = 216
 def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
 def cold_cost(task):
@@ -519,10 +611,15 @@ if len(tasks) != len(set(tasks)) or set(tasks) - known:
 if plan["mode"] == "full" and set(tasks) != known:
     raise SystemExit("full bundle plan omitted a registered task")
 target_seconds = 11 * 60
+# Every bundle is one Boat VM start, and the account allows 840 starts per rolling 24 h for
+# CI and every work lane together: at 6 bundles CI alone spent the cap on 2026-11-19 (720
+# jobs). Three bundles keep a push at 4 starts (core + 3) for about 14 more minutes of wall
+# time; each bundle still runs its tasks one after another on a default VM.
+max_bundles = 3
 # Use the fewest jobs that meet the service target. If an indivisible task
 # exceeds it, minimize the critical path before allocating additional VMs.
 candidates = []
-maximum = min(6, max(1, len(tasks) // 2)) if tasks else 0
+maximum = min(max_bundles, max(1, len(tasks) // 2)) if tasks else 0
 for count in range(1, maximum + 1):
     bins, costs, compiled = [[] for _ in range(count)], [0] * count, [False] * count
     for task in sorted(tasks, key=lambda task: (-cold_cost(task), task)):
@@ -548,28 +645,18 @@ bins = min(candidates, default=(0, 0, []))[2]
 bundles = [{"id": f"b{index}", "tasks": tasks} for index, tasks in enumerate(bins) if tasks]
 if sorted(task for bundle in bundles for task in bundle["tasks"]) != sorted(tasks):
     raise SystemExit("bundle inventory dropped a planned task")
-if mode == "pack":
-    plan["bundle"] = bundles
-    print(json.dumps(plan))
-elif mode in {"check", "tasks"}:
-    if plan.get("bundle") != bundles:
-        raise SystemExit("bundle inventory differs from the deterministic plan")
-    if mode == "tasks":
-        matching = [bundle for bundle in bundles if bundle["id"] == selected]
-        if len(matching) != 1:
-            raise SystemExit("unknown bundle identity")
-        print("\n".join(matching[0]["tasks"]))
-else:
-    raise SystemExit("unknown bundle operation")
+plan["bundle"] = bundles
+print(json.dumps(plan))
 PY
 }
 
 case "${1:-all}" in
-  # PRs and merge groups share the dependency closure. Main/manual runs and
-  # unplannable changes run every shard and phase; formal remains a Boat gate.
+  # Pull requests get the dependency closure of their diff. Merge groups, main and manual runs
+  # (no base) and unplannable changes run every shard and phase; formal and rivet-conformance
+  # remain Boat gates.
   plan)
     others=()
-    for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test || $phase == formal ]] || others+=("$phase"); done
+    for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test || $phase == formal || $phase == rivet-conformance ]] || others+=("$phase"); done
     case "${2:-}" in
       '') [[ $# -le 1 ]] || run_phase usage; changed='' ;;
       --affected) [[ $# -ge 3 && $# -le 4 && $3 =~ ^[0-9a-f]{40}$ && ${4:-HEAD} =~ ^([0-9a-f]{40}|HEAD)$ ]] || run_phase usage; changed=$(git diff --name-only --no-renames "$3" "${4:-HEAD}" --) || exit 2 ;;
@@ -640,51 +727,21 @@ else:
     reason = f"changed: {', '.join(sorted(touched)) or 'Markdown only'}"
 parts = rest if "norn-cell" in reached else 1
 selected_heavy = [f"heavy-{i}" for i, expression in enumerate(heavy, 1)
-                  if set(re.findall(r"binary_id\(([^:]+)::", expression)) & reached]
+                  if set(re.findall(r"binary_id\(([^:)]+)(?:::[^)]*)?\)", expression)) & reached]
 # Studio changes already plan in full; a checker change reaches the Studio's WASM package.
 browser = ["browser"] if "norn-checker-wasm" in reached else []
 # The DuckDB backend lives in norn-cell: a change that reaches it builds and tests it (#1206).
 duckdb = ["duckdb"] if "norn-cell" in reached else []
+# The Rivet host's own workspace builds these root crates by path; its own files plan in full.
+rivet = ["rivet"] if reached & {"norn-api", "norn-cell", "norn-cell-do"} else []
 # A plan that reaches no workspace package (Markdown only) runs no test shard: empty packages
 # would not narrow a shard, and the guard's own suite runs in the guards phase (#1270).
 rest_names = [f"rest-{i}" for i in range(1, parts + 1)] if reached else []
-done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + browser + duckdb,
+done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + browser + duckdb + rivet,
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
 PY
 )
-    bundle_plan pack "$plan"
-    ;;
-  bundle-plan) [[ $# -eq 2 ]] || run_phase usage; bundle_plan pack "$2" ;;
-  bundle-check) [[ $# -eq 2 ]] || run_phase usage; bundle_plan check "$2" ;;
-  bundle)
-    [[ $# -eq 3 ]] || run_phase usage
-    task_lines=$(bundle_plan tasks "$2" "$3")
-    [[ $task_lines == phase/test-shards ]] || prepare_inputs
-    # One test build per bundle (#1348 CI2): every test shard of a plan builds the same test
-    # binaries (same packages, same features), and so does `test-shards` in a plan that
-    # names no packages. Those tasks run first and back to back, and no prune separates
-    # them, so the first builds and the rest reuse it. Same tasks, only their order changes.
-    shares_build() { [[ $1 == test/* || ( $1 == phase/test-shards && -z ${NORN_CI_PACKAGES:-} ) ]]; }
-    task_lines=$(while read -r task; do if shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines"
-                 while read -r task; do if ! shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines")
-    pruned='' previous=''
-    while IFS=/ read -r kind item; do
-      task="$kind/$item"
-      # Other bundle tasks never share build outputs (the planner packs them freely), so a
-      # task may drop the previous task's target dir when disk runs low (#1059).
-      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; } && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
-        prune_target
-        printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
-      fi
-      pruned=1 previous=$task
-      printf '::group::%s\n' "$task"
-      (
-        task_start=$SECONDS
-        span_begin "$task"
-        trap 'task_status=$?; span_end "$task_status"; result=failure; [[ $task_status -ne 0 ]] || result=success; printf "::notice::task=%s result=%s seconds=%s\n::endgroup::\n" "$task" "$result" "$((SECONDS-task_start))"; exit "$task_status"' EXIT
-        if [[ $kind == test ]]; then run_phase test "$item"; else run_phase "$item"; fi
-      )
-    done <<<"$task_lines"
+    hosted_bundle_plan "$plan"
     ;;
   all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do timed_phase "$phase"; done ;;
   shards) list_shards ;;

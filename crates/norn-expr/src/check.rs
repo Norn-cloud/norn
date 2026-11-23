@@ -1,7 +1,7 @@
 //! The static type check of one ZEN standard expression against a closed
 //! [`ZenTypeEnv`] (T1-EXPR-2, #2519), and of one unary test against a typed
 //! subject (T1-EXPR-3b, #2521), under the `norn-expr/4` structural grammar,
-//! published as `norn-zen/6`, and its structural and cost bounds
+//! published as `norn-zen/7`, and its structural and cost bounds
 //! (T1-EXPR-4, #2522).
 //!
 //! The checker admits a small positive grammar with explicit typed runtime
@@ -13,7 +13,7 @@
 //! converge. Norn types the admitted grammar itself, and then runs zen's
 //! strict analysis as a cross-check (any upstream error rejects).
 //!
-//! # `norn-zen/6`
+//! # `norn-zen/7`
 //!
 //! | construct | admitted form |
 //! | --- | --- |
@@ -26,7 +26,7 @@
 //! | comparison | `==`/`!=` on two non-null scalars of one type (strings and enum values are one type; raw date/timestamp wire values compare for same-kind equality; parsed date/timestamp values compare semantically); `< <= > >=` on numbers or two parsed values of one temporal kind |
 //! | membership | `x in list` / `x not in list` with `x` a non-null bool, number, or string and `list` a non-null list of that scalar kind (disjoint literal sets and `[]` are always-constant); `n in [a..b]` (any brackets) with number `n`, `a`, `b`. A range is admitted only as the right side of `in` |
 //! | logic | `and`, `or`, `not` on booleans; `c ? a : b` with a boolean condition and branches of one type |
-//! | builtins | `len(string or list)`; `split(string, "")` (Unicode scalars plus empty ends); `lower`/`upper`/`trim(string)`; `contains`/`startsWith`/`endsWith(string, string)`; `tokens(text, 'alnum', maxCount, maxLength)` with literal integer caps 0..=256; `take(text, maxScalars)` with a literal integer cap 0..=16384; `join(list of strings, separator)` with a literal separator of at most 256 bytes; `abs`/`floor`/`ceil(number)`; `round`/`trunc(number[, p])` with `p` an integer literal 0..=28; `sum(list of numbers)`; `date(text)` / `timestamp(text)`; `days_between(date, date)` / `add_days(date, integer)`; `seconds_between(timestamp, timestamp)` / `add_seconds(timestamp, integer)` |
+//! | builtins | `len(string or list)`; `split(string, "")` (Unicode scalars plus empty ends); `lower`/`upper`/`trim(string)`; `contains`/`startsWith`/`endsWith(string, string)`; `tokens(text, 'alnum', maxCount, maxLength)` with literal integer caps 0..=256; `take(text, maxScalars)` with a literal integer cap 0..=16384; `join(list of strings, separator)` with a literal separator of at most 256 bytes; `abs`/`floor`/`ceil(number)`; `round`/`trunc(number[, p])` with `p` an integer literal 0..=28; `sum(list of numbers)`; `date(text)` / `timestamp(text)`; `days_between(date, date)` / `add_days(date, integer)`; `seconds_between(timestamp, timestamp)` / `add_seconds(timestamp, integer)`; `intervals_overlap` / `interval_gap_seconds` / `interval_intersection_seconds`; `resolve_local_timestamp` |
 //! | closures | `some`/`all`/`none`/`one`/`filter`/`count(list, bool body)`, `map(list, body)` with a non-null body, `flatMap(list, list body)`; the body is itself `norn-expr/4` |
 //! | unary tests | ([`check_unary`]) parts joined by `,`/`or`/`and`; each part, as zen desugars it (`> 5` is `$ > 5`, `'a'` is `$ == 'a'`, `[1..5]` and `[1, 2]` are `$ in ...`, a boolean part is used as is), a non-null `bool` under the rules above. `""` is the wildcard |
 //! | result | representable as a Norn [`Value`](crate::Value): semantic dates and timestamps are typed JSON strings; checked ZEN temporal values project to canonical JSON strings; intervals are not admitted |
@@ -47,10 +47,10 @@
 //! scalar values. `join` refuses output above 16 KiB. The bounded string
 //! builtins are unconditional in the vendored engine (#3404).
 //!
-//! Not in `norn-zen/6`: user-defined functions and recursion (zen has
+//! Not in `norn-zen/7`: user-defined functions and recursion (zen has
 //! neither beyond assignments, which are rejected), string templates, slices, indexing other than the
-//! in-bounds literal form, dynamic reads, date/time operations (`d()`, date
-//! methods, date ranges), a range anywhere but the right of `in`, conversions
+//! in-bounds literal form, dynamic reads, ambient date/time operations (`d()`, date
+//! methods, date ranges, epoch-seconds/millis builtins), a range anywhere but the right of `in`, conversions
 //! (`string`/`number`/`bool`), `merge`/`mergeDeep`/`values`/`keys`, regex,
 //! aggregates over possibly-empty lists other than `sum`/`count`, `in` on a
 //! record (key test), `%`/`^`, assignments, `$root`, `$` outside a unary
@@ -112,13 +112,13 @@ pub use bounds::StructuralLimits;
 /// The checker profile: the admitted grammar documented in this module, its
 /// structural bounds ([`StructuralLimits::NORN_EXPR_4`]), and the static cost
 /// bound against the limit profile's decide budget.
-pub const CHECKER_PROFILE: &str = "norn-zen/6";
+pub const CHECKER_PROFILE: &str = "norn-zen/7";
 
 /// Stable diagnostic codes of [`check_expression`].
 pub mod codes {
     /// The source does not lex or parse.
     pub const SYNTAX: &str = "expr.syntax.invalid";
-    /// A construct or builtin outside the `norn-zen/6` profile.
+    /// A construct or builtin outside the `norn-zen/7` profile.
     pub const UNSUPPORTED_CONSTRUCT: &str = "expr.construct.unsupported";
     /// Operand or branch types that the admitted rules do not accept.
     pub const TYPE_ERROR: &str = "expr.type.error";
@@ -552,6 +552,258 @@ pub fn validate_unary_evaluation_source(
     limits: &ResourceLimitProfile,
 ) -> Result<(), Vec<Diagnostic>> {
     validate_source(source, limits, true)
+}
+
+/// Validates source-level bounds AND the [`CHECKER_PROFILE`] construct/operator/builtin
+/// allowlist without requiring a closed type environment.
+///
+/// Used when single-artifact (T2) validation defers member typing (for example
+/// on an unresolved `PropertyType::Ref` or external supertype) so disallowed
+/// builtins (`rand()`, `d()`, `keys(...)`, etc.) and unsupported constructs
+/// still fail closed locally.
+///
+/// # Errors
+///
+/// Every source-level or unsupported-construct diagnostic found.
+pub fn validate_profile_constructs(
+    source: &str,
+    limits: &ResourceLimitProfile,
+) -> Result<(), Vec<Diagnostic>> {
+    validate_source(source, limits, false)?;
+    let mut intellisense = IntelliSense::new().with_strict(true);
+    let outcome = intellisense.with_ast(source, false, |ast, metadata| {
+        check_profile_constructs(ast, metadata)
+    });
+    match outcome {
+        Some(diagnostics) if diagnostics.is_empty() => Ok(()),
+        Some(diagnostics) => Err(diagnostics),
+        None => Err(vec![Diagnostic {
+            code: codes::SYNTAX,
+            message: "expression does not parse".to_owned(),
+            span: (0, 0),
+        }]),
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "exhaustive AST and builtin allowlist match without wildcards"
+)]
+fn check_profile_constructs(root: &Node<'_>, metadata: &AstMetadata) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
+    let mut stack: Vec<(&Node<'_>, bool)> = vec![(root, false)];
+    while let Some((node, in_closure)) = stack.pop() {
+        let mut unsupported = |what: &str| {
+            diagnostics.push(Diagnostic {
+                code: codes::UNSUPPORTED_CONSTRUCT,
+                message: format!("{what} is not in {CHECKER_PROFILE}"),
+                span: span(node),
+            });
+        };
+        match node {
+            Node::Null
+            | Node::Bool(_)
+            | Node::Number(_)
+            | Node::String(_)
+            | Node::Identifier(_) => {}
+            Node::Parenthesized(inner) => stack.push((inner, in_closure)),
+            Node::Array(items) => {
+                for item in *items {
+                    stack.push((item, in_closure));
+                }
+            }
+            Node::Object(entries) => {
+                for (key, value) in *entries {
+                    if !matches!(key, Node::String(_)) {
+                        diagnostics.push(Diagnostic {
+                            code: codes::UNSUPPORTED_CONSTRUCT,
+                            message: format!("a computed record key is not in {CHECKER_PROFILE}"),
+                            span: span(key),
+                        });
+                    }
+                    stack.push((value, in_closure));
+                }
+            }
+            Node::Member { node, property } => {
+                stack.push((node, in_closure));
+                stack.push((property, in_closure));
+            }
+            Node::Conditional {
+                condition,
+                on_true,
+                on_false,
+            } => {
+                stack.push((condition, in_closure));
+                stack.push((on_true, in_closure));
+                stack.push((on_false, in_closure));
+            }
+            Node::Unary {
+                node: inner,
+                operator,
+            } => match operator {
+                Operator::Logical(LogicalOperator::Not)
+                | Operator::Arithmetic(ArithmeticOperator::Add | ArithmeticOperator::Subtract) => {
+                    stack.push((inner, in_closure));
+                }
+                other @ (Operator::Arithmetic(_)
+                | Operator::Logical(_)
+                | Operator::Comparison(_)
+                | Operator::Range
+                | Operator::Comma
+                | Operator::Slice
+                | Operator::Dot
+                | Operator::QuestionMark
+                | Operator::Assign
+                | Operator::Semi) => unsupported(&format!("the unary operator `{other}`")),
+            },
+            Node::Binary {
+                left,
+                operator,
+                right,
+            } => match operator {
+                Operator::Arithmetic(
+                    ArithmeticOperator::Add
+                    | ArithmeticOperator::Subtract
+                    | ArithmeticOperator::Multiply
+                    | ArithmeticOperator::Divide,
+                )
+                | Operator::Logical(
+                    LogicalOperator::And | LogicalOperator::Or | LogicalOperator::NullishCoalescing,
+                )
+                | Operator::Comparison(
+                    ComparisonOperator::Equal
+                    | ComparisonOperator::NotEqual
+                    | ComparisonOperator::LessThan
+                    | ComparisonOperator::LessThanOrEqual
+                    | ComparisonOperator::GreaterThan
+                    | ComparisonOperator::GreaterThanOrEqual,
+                ) => {
+                    stack.push((left, in_closure));
+                    stack.push((right, in_closure));
+                }
+                Operator::Comparison(ComparisonOperator::In | ComparisonOperator::NotIn) => {
+                    stack.push((left, in_closure));
+                    if let Node::Interval {
+                        left: low,
+                        right: high,
+                        ..
+                    } = unparenthesized(right)
+                    {
+                        stack.push((low, in_closure));
+                        stack.push((high, in_closure));
+                    } else {
+                        stack.push((right, in_closure));
+                    }
+                }
+                other @ (Operator::Arithmetic(_)
+                | Operator::Logical(_)
+                | Operator::Range
+                | Operator::Comma
+                | Operator::Slice
+                | Operator::Dot
+                | Operator::QuestionMark
+                | Operator::Assign
+                | Operator::Semi) => unsupported(&format!("the operator `{other}`")),
+            },
+            Node::FunctionCall { kind, arguments } => match kind {
+                FunctionKind::Internal(function) => {
+                    use InternalFunction as F;
+                    match function {
+                        F::CalendarDate
+                        | F::Timestamp
+                        | F::DaysBetween
+                        | F::AddDays
+                        | F::SecondsBetween
+                        | F::AddSeconds
+                        | F::IntervalsOverlap
+                        | F::IntervalGapSeconds
+                        | F::IntervalIntersectionSeconds
+                        | F::ResolveLocalTimestamp
+                        | F::Len
+                        | F::Tokens
+                        | F::Take
+                        | F::Join
+                        | F::Lower
+                        | F::Upper
+                        | F::Trim
+                        | F::Contains
+                        | F::StartsWith
+                        | F::EndsWith
+                        | F::Abs
+                        | F::Floor
+                        | F::Ceil
+                        | F::Round
+                        | F::Trunc
+                        | F::Sum => {
+                            for argument in *arguments {
+                                stack.push((argument, in_closure));
+                            }
+                        }
+                        F::Split => {
+                            if !matches!(arguments.get(1), Some(Node::String(""))) {
+                                unsupported("`split` with a non-empty separator");
+                            }
+                            for argument in *arguments {
+                                stack.push((argument, in_closure));
+                            }
+                        }
+                        other @ (F::Flatten
+                        | F::Merge
+                        | F::MergeDeep
+                        | F::Matches
+                        | F::Extract
+                        | F::FuzzyMatch
+                        | F::Avg
+                        | F::Min
+                        | F::Max
+                        | F::Rand
+                        | F::Median
+                        | F::Mode
+                        | F::IsNumeric
+                        | F::String
+                        | F::Number
+                        | F::Bool
+                        | F::Type
+                        | F::Keys
+                        | F::Values
+                        | F::Date) => unsupported(&format!("the builtin `{other}`")),
+                    }
+                }
+                FunctionKind::Closure(_) => {
+                    if let Some(list) = arguments.first().copied() {
+                        stack.push((list, in_closure));
+                    }
+                    match arguments.get(1).copied() {
+                        Some(Node::Closure { body, .. }) => stack.push((body, true)),
+                        Some(_) => unsupported("a closure argument that is not a closure"),
+                        None => {}
+                    }
+                }
+                FunctionKind::Deprecated(function) => {
+                    unsupported(&format!("the builtin `{function}`"));
+                }
+            },
+            Node::Pointer => {
+                if !in_closure {
+                    unsupported("`#` outside a closure");
+                }
+            }
+            Node::Error { error, .. } => diagnostics.push(Diagnostic {
+                code: codes::SYNTAX,
+                message: error.to_string(),
+                span: span(node),
+            }),
+            Node::TemplateString(_) => unsupported("a string template"),
+            Node::Slice { .. } => unsupported("a slice"),
+            Node::Interval { .. } => unsupported("an interval"),
+            Node::MethodCall { .. } => unsupported("a date method"),
+            Node::Assignments { .. } => unsupported("an assignment"),
+            Node::Root => unsupported("`$root`"),
+            Node::Closure { .. } => unsupported("a closure outside an admitted builtin"),
+        }
+    }
+    diagnostics
 }
 
 fn validate_source(
@@ -1340,7 +1592,7 @@ impl<'a> ZenEnv<'a> {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// The checker for the norn-expr/4 grammar / norn-zen/6 profile
+// The checker for the norn-expr/4 grammar / norn-zen/7 profile
 // ---------------------------------------------------------------------------
 
 /// A checker type: the admitted value shapes.
@@ -2014,6 +2266,50 @@ impl<'a> Checker<'a> {
                 },
             ),
         }
+    }
+
+    fn local_timestamp_text(&mut self, node: &Node<'_>) -> Option<()> {
+        self.string(node)?;
+        if let Node::String(text) = unparenthesized(node)
+            && crate::temporal::validate_local_timestamp(text).is_err()
+        {
+            return self.report(
+                node,
+                codes::TYPE_ERROR,
+                "`resolve_local_timestamp` needs a valid offset-free local wall timestamp literal YYYY-MM-DDTHH:MM:SS[.f{1..9}] in years 0001..9999".to_owned(),
+            );
+        }
+        Some(())
+    }
+
+    fn iana_timezone_text(&mut self, node: &Node<'_>) -> Option<()> {
+        self.string(node)?;
+        if let Node::String(text) = unparenthesized(node)
+            && crate::temporal::validate_timezone(text).is_err()
+        {
+            return self.report(
+                node,
+                codes::TYPE_ERROR,
+                "`resolve_local_timestamp` needs a canonical IANA timezone in the pinned database"
+                    .to_owned(),
+            );
+        }
+        Some(())
+    }
+
+    fn dst_policy_text(&mut self, node: &Node<'_>) -> Option<()> {
+        self.string(node)?;
+        if let Node::String(text) = unparenthesized(node)
+            && crate::temporal::DstPolicy::parse(text).is_err()
+        {
+            return self.report(
+                node,
+                codes::TYPE_ERROR,
+                "`resolve_local_timestamp` needs DST policy 'reject', 'earlier', or 'later'"
+                    .to_owned(),
+            );
+        }
+        Some(())
     }
 
     fn boolean(&mut self, node: &Node<'_>) -> Option<()> {
@@ -2762,6 +3058,39 @@ impl<'a> Checker<'a> {
                 let timestamp = self.parsed_temporal(first?, false);
                 let amount = self.temporal_amount(arguments.get(1)?);
                 timestamp.and(amount).map(|()| T::ParsedTimestamp)
+            }
+            F::IntervalsOverlap => {
+                self.arity(node, arguments, 4)?;
+                let a_start = self.parsed_temporal(first?, false);
+                let a_end = self.parsed_temporal(arguments.get(1)?, false);
+                let b_start = self.parsed_temporal(arguments.get(2)?, false);
+                let b_end = self.parsed_temporal(arguments.get(3)?, false);
+                a_start.and(a_end).and(b_start).and(b_end).map(|()| T::Bool)
+            }
+            F::IntervalGapSeconds | F::IntervalIntersectionSeconds => {
+                self.arity(node, arguments, 4)?;
+                let a_start = self.parsed_temporal(first?, false);
+                let a_end = self.parsed_temporal(arguments.get(1)?, false);
+                let b_start = self.parsed_temporal(arguments.get(2)?, false);
+                let b_end = self.parsed_temporal(arguments.get(3)?, false);
+                a_start
+                    .and(a_end)
+                    .and(b_start)
+                    .and(b_end)
+                    .map(|()| T::Number(Operand::Dimensionless))
+            }
+            F::ResolveLocalTimestamp => {
+                self.arity(node, arguments, 3)?;
+                let local_arg = first?;
+                let tz_arg = arguments.get(1)?;
+                let policy_arg = arguments.get(2)?;
+                let local_ok = self.local_timestamp_text(local_arg);
+                let tz_ok = self.iana_timezone_text(tz_arg);
+                let policy_ok = self.dst_policy_text(policy_arg);
+                local_ok
+                    .and(tz_ok)
+                    .and(policy_ok)
+                    .map(|()| T::ParsedTimestamp)
             }
             F::Len => {
                 self.arity(node, arguments, 1)?;

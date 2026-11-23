@@ -223,17 +223,188 @@ about. `GET /v1/decisions` lists it with its `call` to holders of a decider role
 never to its requester, who cannot decide it either (#618). Deciding records the
 resolution in DECISION-LEDGER-1 and runs no flow turn. The resolution is the
 record the dispatch consults: an approved call commits through the same dispatch
-under the requester's own authority, with everything (including the laws the
-cell checks at commit) decided again there; the approver's decide commits it by
-calling it as the requester, and reports `call: {committed, code?}`; the
-requester's retry replays it. A rejected call's retry refuses
+under the authority of the requester's own verified token on that request,
+with everything (including the laws the cell checks at commit) decided again
+there. That authority is established only by the requester's own verified
+credential on the request, never by the roles recorded when the call parked, so the approver's decide runs nothing and
+reports `call: {committed: false, state: "not_executed"}`; the requester's
+retry commits it once (APPROVAL-RECOVERY-1). A rejected call's retry refuses
 `approval.rejected` (409), an expired one's `approval.expired` (410); neither
-ever commits. A flow step's call parks the same way; the step waits, and the
-decision moves its run. Named scenarios (`crates/norn-cell-do/tests/approvals.rs`):
+ever commits. A flow step's call parks the same way; the step waits, and once
+the call is approved the starter's own retry of the run (the exact start
+retry drives it) runs the call and moves the run. Named scenarios (`crates/norn-cell-do/tests/approvals.rs`):
 **APPROVAL-NO-RIGHT-NO-PARK**, **APPROVAL-COMMITS-AS-REQUESTER**,
 **APPROVAL-BINDS-INPUT**, **APPROVAL-REJECTED**, **APPROVAL-EXPIRED**,
 **APPROVAL-STEP-PARKS**, **APPROVAL-STEP-REJECTED**, and on hosts serving MCP
 **APPROVAL-MCP-PARKS** (a tool call answers the same pending decision).
+
+**APPROVAL-REQUESTED-1** (#1531): a requester never lists their call among
+the decisions waiting on them, so `GET /v1/decisions:requested` is where they
+read it: their own direct parked calls (never a flow step's, which its run's
+retry drives, and never anyone else's), each with its `status` (`pending`,
+`approved`, `rejected`, `expired`, `withdrawn`), the call exactly as it waits
+(`action`, `input`, `encodedInput` as canonical JSON text, `idempotencyKey`)
+and, once approved, its `state` as the decide answer reports it. The caller
+is the host's verified principal, matched as the dispatch matches the
+requester (subject, actor kind and role table): the same subject under
+another kind or role table reads nothing. The cell finds the caller's calls
+by that identity before it loads any parked payload, so another requester's
+id costs what an id that exists nowhere costs. Without `id` it lists the
+calls pending a decider before their deadline and those approved and not yet
+executed, its limit counting only the caller's own; with `id` it reads that
+decision in any state (`expired` once its deadline passed, recorded or not),
+and answers no item for one that is not the caller's. `canRun` is the cell's offer to retry it now
+(approved, `not_executed`, a direct call of the caller's); it grants nothing:
+sending back exactly the served call is the requester's retry, decided again
+under their current authority, so a role revoked after parking is refused
+there. Named scenario (`crates/norn-cell-do/tests/approvals.rs`):
+**APPROVAL-REQUESTED-1**.
+
+**APPROVAL-RIDES-SET-1** (#1469): a pack's approvals ride its definitions
+apply (`POST /v1/cell/definitions:apply`, and MCP's `norn_apply_definitions`,
+which forwards the same `approvals`): each is admitted against the candidate
+set's actions, signed against the restatement the plan returned, and committed
+in the set's one store transaction and definitions version, so a new action is
+never live without its gate and a refused approval publishes nothing. A plan
+reports each approval changed or unchanged by its own payload; a gate-only
+change plans the next version. `norn dev` commits its sources' approvals the
+same way, with the retirement of every approval the sources dropped in the
+same commit and the action policy recompiled before any call is served again
+(DEV-DEFINITIONS-ATOMIC-1), so a renamed approval never leaves its action
+ungated. The install's export-journal record carries the revisions in
+`riding`, and the retained-definition index admits one revision per id per
+definitions version. **Forward-only (pre-beta):** a cell file written with
+`riding` revisions, or migrated to the new index, is not supported by a build
+from before this change; cells roll forward only, and no downgrade reader is
+provided.
+
+### APPROVAL-RECOVERY-1 — an approved call survives a crash
+
+PARKED-CRASH for approvals (#1481). The approved call commits after the commit
+that records its approval, so a host can stop in between. Nothing ever runs
+an action call without a request: no wake, alarm or cold open dispatches one.
+
+The commit that records an approval of a parked call also records the call
+(`_norn_approved_call`, derived from the decision ledger in the same
+transaction). The commit that runs an approved call carries one
+`norn.approval.consumed` ledger event naming the approval it consumed, in the
+same transaction, so every commit is attributed to exactly one approval. Where
+the call stands is derived, never a log line: **refused** once a refusal is
+recorded for it (final: no later commit under the same key, under another
+gate revision's approval or not, turns it into committed); **committed** when
+the commit that consumed this approval wrote its idempotency record (a cell's
+approvals recorded before consumption was are matched by their exact record:
+action, requester and input); `action.idempotency_conflict` when another
+commit used the key; and otherwise **not executed** (approved, not yet
+executed). The decide answer carries it as `call: {committed, code?, state}`
+(`state` is `committed`, `refused` or `not_executed`), on a first decide and on
+every replay; the approver's decide with another key answers
+`decision.resolved` with the same `call`, read only.
+
+An approved call that is not executed runs only on the requester's own
+request, under the authority that request's verified token carries: the
+requester's retry of the call (for a flow step, the starter's retry of the
+run). A request by anyone else, the approver's decide and its replay
+included, cannot establish that authority and runs nothing: the call stays
+`not_executed` for the requester's authenticated retry, so a role revoked
+after the call parked is revoked for it once the requester's token no longer
+carries it. The authority is as of that token, not the issuer's state at the
+commit: the cell keeps no membership store, the token's roles are resolved
+before the dispatch takes the definition epoch, and the dispatch decides on
+that request's verified principal only. The bound on revocation is the
+token verifier's, as it is for live reads (UI-LIVE-1): the verifier refuses a
+token whose signed lifetime (`exp` minus `iat`) exceeds 300 s
+(`MAX_LIFETIME_SECONDS`), but accepts it until 30 s past its `exp`
+(`LEEWAY_SECONDS`, on the cell's clock); the token is verified once, at
+request entry, and the dispatch decides on that principal without checking
+expiry again at the commit. An issuer revocation therefore reaches an
+approved call at most 330 s after the `iat` of the newest token minted before
+it (300 s signed lifetime plus 30 s leeway), plus the duration of any request
+verified before `exp` + 30 s (the verifier rejects at equality): such a request may still commit the call after its
+token has expired. A retry under a token verified before the revocation can
+run the call. The approval fencing model checks exactly this guarantee
+(verification/hosted-timers-v1, `noStaleApprovedExecution`); it does not
+model time, so the 300 s, the leeway and the request duration are the code's
+bound, not the model's. The dispatch takes the request's authenticated principal apart
+from the subject the call runs as, and consumes an approval only when that
+principal is the parked requester (the same subject, actor kind and role
+table), compared under its own hold; any other principal gets the opaque
+action denial and nothing is recorded. A flow drive chooses whose credentials
+try a step's call before it holds the cell, so a try under the starter's
+recorded authority carries no authenticated principal and never consumes an
+approval recorded meanwhile: the step stays pending for its requester. The try runs through the shared dispatch, and only as exactly
+the approved call: its command id (requester, input, idempotency key, action
+digest, gate definition and revision, definitions pin) must be the approved
+one, compared inside the dispatch's epoch and cell hold (APPROVAL-REVISION-1,
+APPROVAL-PIN-1); a flow step's call carries the exact step attempt it was made
+for (its run, its parked command and generation) from the moment it parks,
+named by the flow's own dispatch and never derived from the idempotency key,
+and runs only by that dispatch and only while that attempt waits on it
+(`approval.attempt_ended` otherwise, also when the attempt ended before anyone
+decided). A step's call parked before attempts were recorded is bound, under
+the dispatch's hold, to its approval's recorded run's pending attempt that
+makes exactly that call, so that attempt's own dispatch consumes it and no
+other run's or step's does. A step attempt's call key (`step-` and 48 hex
+digits) is the host's own: a direct call under it is refused `request.invalid`
+before anything parks or commits, and the dispatch itself refuses a call under
+it for any invocation but the trusted dispatch of the step attempt that makes
+it now, so a direct call held under such a key before the fence never commits
+through its approval (that refusal is recorded for the approval). The commit a
+step attempt's own dispatch makes names that attempt as its owner (one
+`norn.step.call_owned` ledger event), and a record under a step's call key is
+that step's outcome, on a replay or an approval's recovery, only when its
+attempt owns it; any other (a direct call's, or one committed before
+ownership was recorded) is the step's `Refused` failure
+`action.idempotency_conflict`, never its output. A refusal that decides the
+call there (anything but a host failure or a denial of authority, which is
+decided again on every try) is recorded in its own commit, under the same
+cell hold, as one `norn.approval.refused` ledger event carrying its status,
+code and category, so it is final: a later try gets the recorded refusal,
+served with its recorded category, without anything being decided again, and
+export replay rebuilds it, so a restored cell never makes a refused call due
+again. Before recording, the dispatch reads the call again under that hold:
+an exact commit is never masked by a later refusal. A replay of a committed or
+refused call answers its recorded outcome and runs nothing. A cell whose
+approvals were recorded before approved calls were gains their records from
+its decision rows when it opens, exactly as export replay rebuilds them. The
+commit that runs an approved call names the approval it consumed, and whether
+a commit consumed an approval is read from those ledger-derived records alone,
+so an opened file and its restored export answer alike: the exact call's commit
+that consumed no approval (one made before consumption was recorded, or an
+ungated one) is the approved call's commit; one that consumed another approval
+never is. One commit never both refuses and consumes the same approval.
+
+A flow step's approved call is the same call. An approval binds a step only
+when its parked call is exactly the call the step attempt makes (parked for
+that attempt, under its idempotency key, the action, the input, no definitions
+pin, and the run's starter, its whole recorded identity, as requester);
+another call under the same key never delivers its result to the step, and of
+several bound approvals the one the ledger committed last supersedes. A call
+that commits without rewriting its target reports the target's version as of
+its own commit, on its replay and its recovery alike. A step whose call
+already has an outcome (committed, or refused other than
+`approval.definition_changed`) takes that outcome without the action being
+called again: the run's drive and the host's wake (TIMER-ALARM-1) deliver it
+the same way, as due work until the run consumes it, including a result
+recorded but not consumed. A denial of authority on the starter's try leaves
+the step pending and its approval executable. What a try of a step's call ends
+with is reconciled with the step's approval and recorded under one cell hold:
+an approved call that has its outcome by then (another request committed it)
+gives the step that outcome, never the try's denial.
+A step whose approval no longer covers the call (`approval.definition_changed`)
+parks anew for a fresh approval on its next drive. Named scenarios
+(`crates/norn-cell-do/tests/approval_recovery.rs`): **APPROVAL-RECOVERY-BEFORE**
+(a restart before the commit: visible as not executed, nothing due, the
+requester's retry commits it once), **APPROVAL-RECOVERY-REPLAY** (the
+approver's replay runs nothing), **APPROVAL-RECOVERY-REVOKED** (a requester
+revoked after parking never gets the call run), **APPROVAL-RECOVERY-CONFLICT**
+(another call under the key is a conflict, never a commit),
+**APPROVAL-RECOVERY-REFUSED** (a recorded refusal keeps its category and stays
+final after a restore), **APPROVAL-RECOVERY-UPGRADE** (an in-place upgrade
+backfills approved calls as a restore does), **APPROVAL-RECOVERY-STEP-BEFORE**
+(a step's call runs once on the starter's retry) and
+**APPROVAL-RECOVERY-STEP-AFTER** (a committed step call's outcome reaches its
+run on the wake or the drive, with no second call).
 
 ### DECISION-LEDGER-1 — resolved decisions
 

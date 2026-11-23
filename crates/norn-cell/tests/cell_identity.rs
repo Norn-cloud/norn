@@ -8,6 +8,7 @@
 use norn_cell::cell_identity::CellId;
 use norn_cell::engine::NativeEngine;
 use norn_cell::export::Exporter;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, Model, RestoreError, StoreOptions};
 use std::collections::BTreeMap;
 
@@ -525,6 +526,13 @@ impl norn_cell::engine::SqlEngine for NoIdentityFunctions {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.inner.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[norn_cell::engine::SqlValue]) -> Result<(), CellError> {
         self.admit(sql)?;
         self.inner.execute(sql, params)

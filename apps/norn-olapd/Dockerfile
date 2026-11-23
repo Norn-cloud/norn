@@ -1,9 +1,10 @@
 # norn-olapd, the tenant analytics engine next to the cell host (D102).
 # Build from the repository root:
 #   docker build -f apps/norn-olapd/Dockerfile -t norn-olapd .
-# Run with NORN_SECRET_DUCKDB_TOKEN set and a volume at /data; it listens on
-# 8790 and answers only the cell (see crates/norn-cell-do/src/olapd.rs).
-FROM rust:1.98.0-bookworm AS build
+# Run with NORN_OLAP_KEYS_FILE naming a mounted keyring of the cells' public
+# keys and a volume at /data; it listens on 8790 and answers each cell for its
+# own tenant only (OLAP-CRED-1, see crates/norn-cell-do/src/olapd.rs).
+FROM rust:1.100.0-bookworm AS build
 WORKDIR /src
 COPY . .
 RUN cargo build --locked --release -p norn-cell-do --features duckdb --bin norn-olapd \

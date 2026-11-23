@@ -236,12 +236,43 @@ pub trait SqlEngine {
     /// Hosts without this capability return `None`; no cache survives their read boundary.
     /// Return `None` while uncommitted state could later roll back without
     /// changing the token. Native engines only offer revisions in autocommit mode.
+    /// The second component alone counts commits by every other connection or
+    /// process (native SQLite's `PRAGMA data_version`), and is constant on an
+    /// engine whose connection is its database's only writer: equal values
+    /// mean nothing but this connection wrote in between (ADMIT-CACHE-1).
     /// This is a host optimization, not an extension of admitted SQL.
     ///
     /// # Errors
     /// Backend revision-read failures refuse cached access.
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
         Ok(None)
+    }
+
+    /// A store has accepted this engine's database. A host applies here the
+    /// persistent settings it deferred at open, so that a refused open
+    /// leaves the file exactly as found (ENGINE-UPGRADE-1, #1504).
+    ///
+    /// # Errors
+    /// Backend errors applying the deferred settings.
+    fn admitted(&self) -> Result<(), CellError> {
+        Ok(())
+    }
+
+    /// Run `f`, the trusted writes of one definitions install, as the only
+    /// statements this engine lets write the retained definitions
+    /// (`_norn_definition_*`, `_norn_retained_*`). Outside it a native engine
+    /// refuses every such write, whichever statement, trigger or foreign-key
+    /// action carries it (S1, #1547). An engine whose connection is its
+    /// database's only writer guards nothing and runs `f`; a wrapping engine
+    /// forwards to the engine it wraps.
+    ///
+    /// # Errors
+    /// `f`'s own, or a nested call.
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        f()
     }
 
     /// Decode the first row; absence is an error.
@@ -502,33 +533,56 @@ impl SqlEngine for NoEngine {
 pub struct NativeEngine {
     conn: rusqlite::Connection,
     user_sql: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Set only inside [`SqlEngine::definition_writes`]: the retained
+    /// definitions are writable while it is.
+    definitions: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Inside [`SqlEngine::definition_writes`], the table the statement being
+    /// prepared writes: the first write SQLite reports for it. Every later
+    /// write it reports to another table (a foreign-key action, a REPLACE's
+    /// cascade) is refused (S1, #1547). Cleared before each statement.
+    target: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// The journal mode an open asked for, applied once a store admits the file.
+    journal_mode: std::cell::Cell<Option<&'static str>>,
 }
 
 #[cfg(feature = "native")]
 impl NativeEngine {
     /// Open a file with the existing native journal and cache options.
     ///
+    /// ENGINE-UPGRADE-1 (#1494, #1504): the journal mode is stored in the
+    /// file, so it is set only once a store accepts the file
+    /// ([`SqlEngine::admitted`]): a cell refused for its storage version,
+    /// ledger or any other check keeps the mode it was found in.
+    ///
     /// # Errors
-    /// SQLite open or configuration errors.
+    /// SQLite open or configuration errors, or the storage-version refusals
+    /// of [`crate::engine_release::admission`].
     pub fn open(
         path: &std::path::Path,
         options: crate::store::StoreOptions,
     ) -> Result<Self, CellError> {
-        let conn = rusqlite::Connection::open(path)?;
-        let mode = match options.journal_mode {
+        let engine = Self::configured(rusqlite::Connection::open(path)?)?;
+        crate::engine_release::admission(&engine)?;
+        let conn = &engine.conn;
+        engine.journal_mode.set(Some(match options.journal_mode {
             crate::store::JournalMode::Delete => "DELETE",
             crate::store::JournalMode::Wal => "WAL",
-        };
-        let _applied: String =
-            conn.query_row(&format!("PRAGMA journal_mode = {mode}"), [], |row| {
-                row.get(0)
-            })?;
+        }));
         conn.execute_batch("PRAGMA synchronous = FULL")?;
-        if let Some(pages) = options.cache_pages {
-            conn.execute_batch(&format!("PRAGMA cache_size = {pages}"))?;
+        match options.cache_pages {
+            Some(pages) => conn.execute_batch(&format!("PRAGMA cache_size = {pages}"))?,
+            // INGEST-CACHE-1: a page of an import writes megabytes (its
+            // journal record alone is about 2 MB for 87 rows); in SQLite's
+            // default 2 MiB cache that transaction spilled pages to the file
+            // before its commit and read them back. The cache only grows to
+            // what the cell touches.
+            None => conn.execute_batch(&format!(
+                "PRAGMA cache_size = -{}",
+                crate::store::DEFAULT_CACHE_KIB
+            ))?,
         }
         conn.execute_batch("PRAGMA foreign_keys = ON")?;
-        Self::configured(conn)
+        Ok(engine)
     }
 
     /// Open an existing file read-only, for an operator's diagnosis (#1423):
@@ -595,21 +649,83 @@ impl NativeEngine {
         conn.set_prepared_statement_cache_capacity(512);
         let user_sql = Arc::new(AtomicBool::new(false));
         let authorizer_flag = Arc::clone(&user_sql);
+        let definitions = Arc::new(AtomicBool::new(false));
+        let installing = Arc::clone(&definitions);
+        let target = Arc::new(std::sync::Mutex::new(None::<String>));
+        let statement_target = Arc::clone(&target);
         // Let SQLite parse transaction controls, including quoted SQL and
         // multi-statement batches. Only the adapter may control transactions.
         conn.authorizer(Some(move |context: AuthContext<'_>| {
-            if authorizer_flag.load(Ordering::Relaxed)
-                && matches!(
-                    context.action,
-                    AuthAction::Transaction { .. } | AuthAction::Savepoint { .. }
-                )
+            // S1 (#1547): the retained definitions are written by an install
+            // alone, inside `definition_writes`. Any other write to them
+            // (a statement, a trigger, or a foreign-key action, which SQLite
+            // reports with no accessor) was added from outside: the schema is
+            // shared by every connection to the file, and such a write would
+            // ride this connection's own commit, which `data_version` does
+            // not count, past the retained-actions cache. A trigger is never
+            // the install's, so it is refused even then. SQLite names tables
+            // case-insensitively, and so does this check.
+            //
+            // Inside the scope, a statement writes only the table it names:
+            // SQLite reports a statement's own write before any it codes on
+            // the statement's behalf, so the first write reported while the
+            // statement is prepared is its target, and every write to
+            // another table (a foreign-key action into a retained table, or
+            // anywhere else) is refused, as is any trigger.
+            let written = if let AuthAction::Insert { table_name }
+            | AuthAction::Update { table_name, .. }
+            | AuthAction::Delete { table_name } = context.action
+            {
+                Some(table_name)
+            } else {
+                None
+            };
+            let refused_write = written.is_some_and(|table| {
+                if !installing.load(Ordering::Relaxed) {
+                    return retained_table(table);
+                }
+                if context.accessor.is_some() {
+                    return true;
+                }
+                // SQLite's own schema tables, which DDL writes as it runs,
+                // carry no row of a statement's: they neither name nor
+                // break its target.
+                if table
+                    .get(..7)
+                    .is_some_and(|head| head.eq_ignore_ascii_case("sqlite_"))
+                {
+                    return false;
+                }
+                let Ok(mut target) = statement_target.lock() else {
+                    return true;
+                };
+                match target.as_deref() {
+                    None => {
+                        *target = Some(table.to_owned());
+                        false
+                    }
+                    Some(own) => !own.eq_ignore_ascii_case(table),
+                }
+            });
+            if refused_write
+                || (authorizer_flag.load(Ordering::Relaxed)
+                    && matches!(
+                        context.action,
+                        AuthAction::Transaction { .. } | AuthAction::Savepoint { .. }
+                    ))
             {
                 Authorization::Deny
             } else {
                 Authorization::Allow
             }
         }))?;
-        Ok(Self { conn, user_sql })
+        Ok(Self {
+            conn,
+            user_sql,
+            definitions,
+            target,
+            journal_mode: std::cell::Cell::new(None),
+        })
     }
 
     /// Close the native file before publishing a staged restore.
@@ -661,6 +777,52 @@ impl NativeEngine {
             Err(CellError::Engine(
                 "backup did not complete in one step".to_owned(),
             ))
+        }
+    }
+}
+
+/// Whether `table` is one of the retained definition tables, named in any
+/// ASCII case, as SQLite resolves it.
+#[cfg(feature = "native")]
+fn retained_table(table: &str) -> bool {
+    ["_norn_definition_", "_norn_retained_"]
+        .iter()
+        .any(|prefix| {
+            table
+                .get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        })
+}
+
+/// Ends a [`SqlEngine::definition_writes`] scope, also on unwinding: the
+/// retained definitions are refused again, and every statement prepared
+/// inside the scope (authorized while they were writable) leaves the cache,
+/// so none is reused outside it.
+#[cfg(feature = "native")]
+struct DefinitionWrites<'a> {
+    engine: &'a NativeEngine,
+}
+
+#[cfg(feature = "native")]
+impl Drop for DefinitionWrites<'_> {
+    fn drop(&mut self) {
+        self.engine
+            .definitions
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.engine.next_statement();
+        self.engine.conn.flush_prepared_statement_cache();
+    }
+}
+
+#[cfg(feature = "native")]
+impl NativeEngine {
+    /// Inside a definition-writes scope, forget the previous statement's
+    /// target before the next statement is prepared (S1, #1547).
+    fn next_statement(&self) {
+        if self.definitions.load(std::sync::atomic::Ordering::Relaxed)
+            && let Ok(mut target) = self.target.lock()
+        {
+            *target = None;
         }
     }
 }
@@ -762,6 +924,34 @@ impl SqlEngine for NativeEngine {
         ReadIsolation::Revisioned
     }
 
+    fn admitted(&self) -> Result<(), CellError> {
+        if let Some(mode) = self.journal_mode.take() {
+            let _applied: String =
+                self.conn
+                    .query_row(&format!("PRAGMA journal_mode = {mode}"), [], |row| {
+                        row.get(0)
+                    })?;
+        }
+        Ok(())
+    }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        if self
+            .definitions
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(CellError::Engine(
+                "nested definition writes refused".to_owned(),
+            ));
+        }
+        let _scope = DefinitionWrites { engine: self };
+        self.next_statement();
+        f()
+    }
+
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
         if !self.conn.is_autocommit() {
             return Ok(None);
@@ -779,8 +969,10 @@ impl SqlEngine for NativeEngine {
         let _counted = StatementCount::start(&self.conn, params);
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);
+        self.next_statement();
         // Every statement is prepared under the same authorizer state (the
-        // user-SQL flag is set for every call), so a cached statement was
+        // user-SQL flag is set for every call; a definition-writes scope
+        // flushes what it prepared when it ends), so a cached statement was
         // authorized exactly as a fresh one would be; a denied statement
         // fails to prepare and is never cached.
         self.conn
@@ -793,6 +985,7 @@ impl SqlEngine for NativeEngine {
         let _counted = StatementCount::start(&self.conn, params);
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);
+        self.next_statement();
         let mut statement = self.conn.prepare_cached(sql)?;
         let width = statement.column_count();
         let mut rows = statement.query(rusqlite::params_from_iter(params))?;
@@ -824,8 +1017,23 @@ impl SqlEngine for NativeEngine {
         let _counted = StatementCount::start(&self.conn, &[]);
         validate_bindings(sql, &[])?;
         let _user_sql = UserSql::enter(&self.user_sql);
-        self.conn.execute_batch(sql)?;
-        Ok(())
+        if !self.definitions.load(std::sync::atomic::Ordering::Relaxed) {
+            self.conn.execute_batch(sql)?;
+            return Ok(());
+        }
+        // Inside a definition-writes scope each statement of the batch is
+        // prepared with its own target, as `execute_batch` steps it: once.
+        let mut batch = rusqlite::Batch::new(&self.conn, sql);
+        loop {
+            self.next_statement();
+            let Some(mut statement) =
+                rusqlite::fallible_iterator::FallibleIterator::next(&mut batch)?
+            else {
+                return Ok(());
+            };
+            let mut rows = statement.raw_query();
+            rows.next()?;
+        }
     }
 
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
@@ -858,3 +1066,131 @@ mod fault;
 pub use fault::{DoEngine, DoStorage, DoStorageEmulator, Thrown};
 #[cfg(feature = "fault-injection")]
 pub use fault::{EngineFault, EngineFaultKind, FaultEngine, FaultSwitch};
+
+/// S1 (#1547): the retained definitions are written by an install alone,
+/// whatever carries the write.
+#[cfg(all(test, feature = "native"))]
+mod retained_writes {
+    #![allow(clippy::expect_used, reason = "test")]
+
+    use super::{NativeEngine, SqlEngine as _};
+
+    /// A native cell file and, through another connection to it (an
+    /// out-of-process editor), a parent table whose rows a foreign-key action
+    /// cascades into a retained receipt table, and a retained table the
+    /// editor created under a mixed-case name (SQLite reports the name as
+    /// stored), which a trigger writes.
+    fn edited() -> (tempfile::TempDir, NativeEngine) {
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("cell.sqlite");
+        let engine =
+            NativeEngine::open(&path, crate::store::StoreOptions::default()).expect("engine opens");
+        rusqlite::Connection::open(&path)
+            .expect("editor connection")
+            .execute_batch(
+                r#"CREATE TABLE "editor_parent" ("id" INTEGER PRIMARY KEY);
+                CREATE TABLE "editor_log" ("id" INTEGER PRIMARY KEY);
+                CREATE TABLE "_norn_definition_admission_receipt" (
+                  "version" INTEGER PRIMARY KEY,
+                  "receipt" TEXT NOT NULL,
+                  "parent" INTEGER REFERENCES "editor_parent" ("id") ON DELETE CASCADE
+                );
+                INSERT INTO "editor_parent" VALUES (1);
+                INSERT INTO "_norn_definition_admission_receipt" VALUES (1, 'receipt', 1);
+                CREATE TABLE "_NORN_Retained_Definition" ("id" TEXT PRIMARY KEY);
+                INSERT INTO "_NORN_Retained_Definition" VALUES ('kept');
+                CREATE TRIGGER "editor_rewrite" AFTER INSERT ON "editor_log" BEGIN
+                  DELETE FROM "_norn_retained_definition";
+                END;"#,
+            )
+            .expect("editor schema");
+        (dir, engine)
+    }
+
+    fn receipts(engine: &NativeEngine) -> i64 {
+        engine
+            .query_row(
+                r#"SELECT COUNT(*) FROM "_norn_definition_admission_receipt""#,
+                &[],
+                |row| row.get(0),
+            )
+            .expect("count")
+    }
+
+    #[test]
+    fn a_foreign_key_cascade_into_a_retained_table_is_refused() {
+        let (_dir, engine) = edited();
+        assert!(
+            engine
+                .execute(r#"DELETE FROM "editor_parent""#, &[])
+                .is_err(),
+            "the cascade would delete a retained receipt on this connection"
+        );
+        assert_eq!(receipts(&engine), 1);
+    }
+
+    #[test]
+    fn a_retained_table_named_in_another_case_is_refused() {
+        let (_dir, engine) = edited();
+        assert!(
+            engine
+                .execute(r#"INSERT INTO "editor_log" VALUES (1)"#, &[])
+                .is_err(),
+            "the trigger writes a retained table stored under a mixed-case name"
+        );
+        assert!(
+            engine
+                .execute(r#"DELETE FROM "_norn_retained_definition""#, &[])
+                .is_err()
+        );
+        let kept: i64 = engine
+            .query_row(
+                r#"SELECT COUNT(*) FROM "_norn_retained_definition""#,
+                &[],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(kept, 1);
+    }
+}
+
+/// S1 (#1547): an install's own writes, and only while it runs.
+#[cfg(all(test, feature = "native"))]
+mod definition_writes {
+    #![allow(clippy::expect_used, reason = "test")]
+
+    use super::{NativeEngine, SqlEngine as _, SqlValue};
+
+    #[test]
+    fn only_a_definition_writes_scope_writes_and_its_statements_are_not_reused() {
+        let engine = NativeEngine::open_in_memory().expect("engine");
+        engine
+            .execute_batch(
+                r#"CREATE TABLE "_norn_definition_active" ("id" INTEGER PRIMARY KEY, "version" INTEGER NOT NULL)"#,
+            )
+            .expect("table");
+        let write = r#"INSERT INTO "_norn_definition_active" ("id", "version") VALUES (?1, 1)"#;
+        assert!(engine.execute(write, &[SqlValue::Integer(1)]).is_err());
+        engine
+            .definition_writes(|| engine.execute(write, &[SqlValue::Integer(1)]))
+            .expect("an install writes");
+        // The statement prepared inside the scope is not served from the
+        // cache outside it: it is authorized again, and refused.
+        assert!(engine.execute(write, &[SqlValue::Integer(2)]).is_err());
+        assert!(
+            engine
+                .definition_writes(|| engine.definition_writes(|| Ok(())))
+                .is_err(),
+            "scopes do not nest"
+        );
+        assert!(engine.execute(write, &[SqlValue::Integer(3)]).is_err());
+        let rows: i64 = engine
+            .query_row(
+                r#"SELECT COUNT(*) FROM "_norn_definition_active""#,
+                &[],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(rows, 1);
+    }
+}

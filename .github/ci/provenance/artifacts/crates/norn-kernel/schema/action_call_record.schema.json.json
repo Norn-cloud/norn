@@ -1,5 +1,5 @@
 {
-  "sha256": "08954a214cd9d045f842adfefa089e9ec7b83b26023372a00a492322f70570c1",
+  "sha256": "46bb63f769a22665d0ff7e3d3f2a9f6e875bcfd406d3a2956fd72a6b8893298c",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -8,10 +8,11 @@
   "parents": [
     "Cargo.lock",
     "crates/norn-kernel/Cargo.toml",
-    "crates/norn-kernel/src/action_commit.rs",
+    "crates/norn-kernel/src/action_commit/types.rs",
     "crates/norn-kernel/src/cell_host.rs",
     "crates/norn-ir/src/runtime.rs",
-    "crates/norn-ir/src/lib.rs"
+    "crates/norn-ir/src/lib.rs",
+    "crates/norn-ir/src/action.rs"
   ],
   "rights_evidence": [
     {

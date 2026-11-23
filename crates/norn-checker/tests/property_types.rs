@@ -339,7 +339,7 @@ fn val_round_declarations_activate_the_shared_exact_site_binding() {
             ty["rounding"] = mode.into();
         }
         let result = findings(&serde_json::json!([{"name":"a.amount","type":ty}]));
-        assert!(result.is_empty(), "{result:?}");
+        assert_eq!(result, [], "{result:?}");
     }
 }
 

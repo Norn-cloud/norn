@@ -274,6 +274,12 @@ pub struct Model {
     ddl_hash: String,
     definitions_hash: String,
     law_artifacts: Vec<ArtifactEnvelope>,
+    /// ADMIT-CACHE-1 (#1533): the kernel's definition work over this model's
+    /// object types, interfaces and property types, shared by every catalog
+    /// [`Self::type_catalog`] builds (and by clones of this model), so the
+    /// effective model and compiled invariants are derived once per model,
+    /// not once per commit.
+    definition_work: std::sync::Arc<norn_kernel::DefinitionWork>,
 }
 
 impl Model {
@@ -410,6 +416,7 @@ impl Model {
             ddl_hash,
             definitions_hash,
             law_artifacts,
+            definition_work: std::sync::Arc::default(),
         })
     }
 
@@ -509,6 +516,18 @@ impl Model {
             ));
         }
         Ok(())
+    }
+
+    /// ADMIT-CACHE-1 (#1533): the kernel catalog over this model's object
+    /// types, interfaces and property types, sharing this model's definition
+    /// work. Bind laws or action rules after it as needed; another
+    /// definition builder starts its own work.
+    #[must_use]
+    pub fn type_catalog(&self) -> norn_kernel::TypeCatalog<'_> {
+        norn_kernel::TypeCatalog::new(self.object_types())
+            .with_interfaces(self.interfaces())
+            .with_property_types(self.property_types())
+            .with_definition_work(std::sync::Arc::clone(&self.definition_work))
     }
 
     /// LAW-COMPLETE-1 / LAW-SUPPORTED-1: CP2 resolves exact direct entity laws only.
@@ -697,7 +716,13 @@ impl Model {
         Ok(markings)
     }
 
-    pub(crate) fn effective_property_markings(
+    /// The declared markings of each property of `object_type`, from the
+    /// property, its type and the object type (MANIFEST-MARK-1 reads them for
+    /// a dataset's columns).
+    ///
+    /// # Errors
+    /// An unknown type.
+    pub fn effective_property_markings(
         &self,
         object_type: &str,
     ) -> Result<BTreeMap<String, Vec<String>>, CellError> {

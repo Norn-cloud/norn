@@ -24,7 +24,7 @@ const MAX_REFUSAL_TEXT = 8192;
 const REFUSAL_CODES = new Set(Object.entries({
   action:
     "aggregate_bound_exceeded aggregate_bytes_exceeded aggregate_stale_read aggregate_unavailable " +
-    "authorized_binding_mismatch blank_field derivation_failed duplicate_precondition " +
+    "authorized_binding_mismatch blank_field conflict derivation_failed duplicate_precondition " +
     "expression_budget_exceeded id_too_long idempotency_conflict idempotency_key_too_long " +
     "idempotency_without_receipt input_bound_exceeded invalid_input invalid_transition_identity " +
     "legacy_receipt logical_time_rollback missing_precondition missing_scope owner_version_conflict " +
@@ -35,9 +35,11 @@ const REFUSAL_CODES = new Set(Object.entries({
     "slice_unavailable target_not_found transition_binding_mismatch transition_protocol_conflict " +
     "unsupported_effect write_mode_failed effect_kind_mismatch",
   analytics:
-    "engine frontier_behind frontier_moved invalid too_large unauthorized unavailable unconfigured " +
-    "unknown unsettled",
-  approval: "definition_changed expired rejected would_commit",
+    "dataset_cold engine frontier_behind frontier_moved invalid too_large unauthorized unavailable " +
+    "unconfigured unknown unsettled",
+  approval:
+    "attempt_ended consumption_invalid definition_changed expired refusal_invalid refused rejected " +
+    "would_commit",
   artifact_set: "action.effect_kind_mismatch",
   authn: "required",
   authz:
@@ -55,7 +57,10 @@ const REFUSAL_CODES = new Set(Object.entries({
     "entitlement.scope_invalid entitlement.target_type_mismatch entitlement.value_invalid " +
     "grant.invalid policy.invalid policy.lint policy.parse schema.invalid schema.parse " +
     "schema.scope_type",
-  bulk: "above_max below_min digest_mismatch missing_column invalid_finding unreadable unsupported_law unwritable",
+  bulk:
+    "above_max attempt_busy attempt_unknown below_min digest_mismatch invalid_finding " +
+    "missing_column out_of_range residue_exceeded unmapped unreadable unsupported_encoding " +
+    "unsupported_law unsupported_mapping unsupported_marking unwritable",
   cell:
     "base_mismatch not_provisioned provision_conflict provision_refused reserved_artifact " +
     "scope_conflict sqlite unopenable",
@@ -70,7 +75,7 @@ const REFUSAL_CODES = new Set(Object.entries({
     "conflict egress grant_forbidden invalid not_found oauth_callback oauth_pending oauth_received " +
     "oauth_state provider_refused provider_unsupported reconnect_needed unavailable vault vault_key",
   connector: "bind read run",
-  dataset: "invalid manifest not_found stale_pins uploads_unconfigured",
+  dataset: "invalid manifest not_found request_conflict stale_landing stale_pins uploads_unconfigured",
   decision:
     "envelope_exceeded expired guard_error guard_false host idempotency_conflict invalid_output " +
     "invariant_budget_exceeded invariant_violation law_not_satisfied not_found not_in_slice " +
@@ -101,10 +106,11 @@ const REFUSAL_CODES = new Set(Object.entries({
     "upgrade_required",
   object: "not_found scan_bound_exceeded snapshot_moved snapshot_unavailable unknown_type",
   observations: "too_large",
+  privacy: "marked_column",
   query:
     "cursor_invalid invalid limit_invalid op_invalid property_unknown sort_invalid too_many " +
     "value_invalid",
-  question: "bucket_bound_exceeded not_found refused",
+  question: "bucket_bound_exceeded marked_history not_found refused",
   request: "invalid too_large",
   reveal: "idempotency_conflict",
   route: "method_not_allowed not_found",

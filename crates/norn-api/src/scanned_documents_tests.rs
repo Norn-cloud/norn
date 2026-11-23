@@ -270,7 +270,7 @@ fn loaded_by_pages() -> CellStore<NativeEngine> {
     let mut pages: Vec<(String, Vec<Observed<RuntimeValue>>)> = Vec::new();
     for (dataset, record) in snapshot_rows() {
         if pages.last().is_none_or(|(current, _)| *current != dataset) {
-            pages.push((dataset.clone(), Vec::new()));
+            pages.push((dataset, Vec::new()));
         }
         if let Some((_, rows)) = pages.last_mut() {
             rows.push(raw(&record));
@@ -426,6 +426,71 @@ impl crate::object_routes::ObjectAccess for Access {
             request.resource.id.clone_from(&row.id);
         }
         Ok(request)
+    }
+}
+
+/// [`Access`], except that action-call records are never mapped: a caller
+/// whose read grants do not cover who called which action, with which input.
+struct NoCallRecords;
+impl crate::object_routes::ObjectAccess for NoCallRecords {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        if object_type == norn_kernel::ACTION_CALL_TYPE {
+            return Err(read_denied());
+        }
+        Access.access(scope, actor, capability, object_type, row)
+    }
+}
+
+/// [`Access`], except that Sources is never mapped: a member's grants
+/// (Population and Values).
+struct NoSources;
+impl crate::object_routes::ObjectAccess for NoSources {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        if capability == ReadCapability::Sources {
+            return Err(read_denied());
+        }
+        Access.access(scope, actor, capability, object_type, row)
+    }
+}
+
+/// [`Access`] under a row-level rule: a document is read only once a
+/// steward has corrected it (its `corrected_by` names one). The rule reads the
+/// row it is asked about, so a document's earlier versions, written before
+/// the field was set, stay denied after it is.
+struct CorrectedOnly;
+impl crate::object_routes::ObjectAccess for CorrectedOnly {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        if let Some(row) = row
+            && row.object_type == DOCUMENT
+            && !matches!(
+                row.values.get("corrected_by"),
+                Some(RuntimeValue::String(_))
+            )
+        {
+            return Err(read_denied());
+        }
+        Access.access(scope, actor, capability, object_type, row)
     }
 }
 
@@ -700,6 +765,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
             org_id: Some("org_demo".into()),
             environment_id: Some("dev".into()),
             object_kind: None,
+            object_id: None,
         },
         Some(STEWARD),
     )
@@ -787,27 +853,41 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
     .expect("history");
     assert_eq!(history.versions.len(), 2, "{history:#?}");
     let (newest, oldest) = (&history.versions[0], &history.versions[1]);
-    match &newest.writer {
-        Action {
-            action_id,
-            actor,
-            input,
-        } => {
-            assert_eq!(action_id, CORRECT);
-            assert_eq!(actor, STEWARD);
-            assert_eq!(
-                input
-                    .get("correction_reason")
-                    .and_then(RuntimeValue::as_str),
-                Some("The scan reads 72.0; the import dropped the decimal point.")
-            );
-        }
-        other @ (Mapping { .. } | Other) => panic!("the correction is the action's: {other:?}"),
-    }
+    // The writer is the action and its verified actor, and nothing of the
+    // call's effective input: the kernel stores that as one plain value even
+    // when preparation or a derivation put restricted values in it. The
+    // deprecated `input` stays in the frozen contract, always empty.
+    let named =
+        serde_json::json!({ "kind": "action", "actionId": CORRECT, "actor": STEWARD, "input": {} });
+    assert_eq!(
+        serde_json::to_value(&newest.writer).expect("writer"),
+        named,
+        "{history:#?}"
+    );
+    // The writer is the call record's to disclose: a caller who may read the
+    // document but not its call records is told no writer: no actor, and none
+    // of the call's input (its free-text reason among it). The row's own
+    // values stay governed by the row's read.
+    let undisclosed = crate::object_review::get_object_history(
+        host,
+        &scope_query(),
+        Some(STEWARD),
+        DOCUMENT,
+        "SCAN-RPT-1117",
+        &NoCallRecords,
+    )
+    .expect("history");
+    assert_eq!(
+        serde_json::to_value(&undisclosed.versions[0].writer).expect("writer"),
+        serde_json::json!({ "kind": "other" }),
+        "{undisclosed:#?}"
+    );
     match &oldest.writer {
         Mapping { lineage } => assert_eq!(lineage.mapping_pin.artifact_id, "docs.scans.mapping"),
         other @ (Action { .. } | Other) => panic!("the import is the mapping's: {other:?}"),
     }
+    without_sources(host, slipped, &history, named);
+    granted_later(host, slipped, &history);
     let value = |version: &crate::object_review::NornObjectVersion| match version
         .values
         .as_ref()
@@ -828,6 +908,104 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         &Access,
     )
     .expect("the imported version keeps its lineage");
+}
+
+/// A caller whose row-level grant opened only with the correction (#1519 S5)
+/// is listed the corrected version alone: the imported version's values,
+/// lineage, version, commit and time were written under the row's denial, and
+/// stay withheld.
+fn granted_later(
+    host: &DevHost<NativeEngine>,
+    slipped: u64,
+    history: &crate::object_review::NornObjectHistory,
+) {
+    let later = crate::object_review::get_object_history(
+        host,
+        &scope_query(),
+        Some(STEWARD),
+        DOCUMENT,
+        "SCAN-RPT-1117",
+        &CorrectedOnly,
+    )
+    .expect("the corrected row is readable");
+    let versions: Vec<u64> = later
+        .versions
+        .iter()
+        .map(|version| version.version)
+        .collect();
+    assert_eq!(versions, [history.versions[0].version], "{later:#?}");
+    let imported = history
+        .versions
+        .iter()
+        .find(|version| version.version == slipped)
+        .expect("the import is listed to a caller who may read it");
+    let document = serde_json::to_string(&later).expect("history");
+    for withheld in [
+        "docs.scans.mapping".to_owned(),
+        format!("\"commit\":{},", imported.commit),
+        format!("\"logicalTime\":{},", imported.logical_time),
+    ] {
+        assert!(
+            !document.contains(&withheld),
+            "{withheld} leaked: {document}"
+        );
+    }
+    assert!(
+        !later.versions.iter().any(|version| version.values.as_ref().is_some_and(|values| {
+            matches!(values.get("total"), Some(RuntimeValue::Number(total)) if total.to_string() == "720")
+        })),
+        "{later:#?}"
+    );
+}
+
+/// A caller with Population and Values but no Sources (a member) reads the
+/// history: every version and its values, the action's writer (`named`), and
+/// no version's source lineage, which stays Sources' as `/lineage` keeps it.
+fn without_sources(
+    host: &DevHost<NativeEngine>,
+    slipped: u64,
+    history: &crate::object_review::NornObjectHistory,
+    named: serde_json::Value,
+) {
+    let without_sources = crate::object_review::get_object_history(
+        host,
+        &scope_query(),
+        Some(STEWARD),
+        DOCUMENT,
+        "SCAN-RPT-1117",
+        &NoSources,
+    )
+    .expect("the history is served without Sources");
+    let writers: Vec<serde_json::Value> = without_sources
+        .versions
+        .iter()
+        .map(|version| serde_json::to_value(&version.writer).expect("writer"))
+        .collect();
+    assert_eq!(
+        writers,
+        [named, serde_json::json!({ "kind": "other" })],
+        "{without_sources:#?}"
+    );
+    assert_eq!(
+        without_sources
+            .versions
+            .iter()
+            .map(|version| version.values.clone())
+            .collect::<Vec<_>>(),
+        history
+            .versions
+            .iter()
+            .map(|version| version.values.clone())
+            .collect::<Vec<_>>()
+    );
+    crate::object_review::get_object_lineage_at(
+        host,
+        &scope_query(),
+        Some(STEWARD),
+        (DOCUMENT, "SCAN-RPT-1117", slipped),
+        &NoSources,
+    )
+    .expect_err("the lineage is not served without Sources");
 }
 
 #[test]

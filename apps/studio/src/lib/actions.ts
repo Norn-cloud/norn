@@ -23,7 +23,8 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  *            envelope carries one today (`/input` not an object, `/idempotencyKey`). Input the
  *            action's schema refuses is one 400 `action.invalid_input` with no field pointers, so
  *            Studio shows it on the form, not on a field; a rule, law or precondition refusal
- *            carries none either.
+ *            carries none either. A diagnostic at `/input/<field>` (nested: `/input/lines/0/sku`)
+ *            reads on that field's row; one at `/input` itself, or at no pointer, reads on the form.
  *        202 { outcome: "pending", decision: { id, expiresAtMs } }: an approval-gated action
  *            (APPROVAL-1); nothing is committed until a decider approves it in the inbox.
  *        409 `action.idempotency_conflict` when the key was used for a different call.
@@ -54,6 +55,10 @@ export interface ActionSummary {
   readonly inputSchema: unknown
   /** The kernel's effective effects: destructive can be true without being declared. */
   readonly uiEffects: UiEffects
+  /** Input fields that name an existing record of `objectKind`: the form offers a picker (ACTION-CATALOG-LINKS-1). */
+  readonly inputLinks?: readonly { readonly field: string; readonly objectKind: string }[]
+  /** A transition's target state, so the receipt says what the record is now. */
+  readonly toState?: string
 }
 
 /** Whether an action writes a record whole (creating it when the id is new): offered as "New …". */
@@ -130,11 +135,15 @@ async function scoped(fetcher: Fetch) {
   return scope === null ? null : scopedHostFetch(fetcher, "/api/host", async () => scope)
 }
 
-export async function listActions(objectKind: string | undefined, fetcher: Fetch = defaultFetch): Promise<CatalogRead> {
+/**
+ * The catalog for `objectKind`; with `objectId`, only what can act on that record in its current
+ * state (ACTION-CATALOG-STATE-1). The cell decides the list; Studio filters nothing.
+ */
+export async function listActions(objectKind: string | undefined, fetcher: Fetch = defaultFetch, objectId?: string): Promise<CatalogRead> {
   let call
   try { call = await scoped(fetcher) } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
   if (call === null) return { kind: "no-cell" }
-  const query = objectKind === undefined ? "" : `?${new URLSearchParams({ objectKind })}`
+  const query = objectKind === undefined ? "" : `?${new URLSearchParams({ objectKind, ...objectId === undefined ? {} : { objectId } })}`
   const response = await call(`/v1/actions${query}`, { headers: { accept: "application/json" } })
   const text = await response.text()
   if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
@@ -175,6 +184,14 @@ export async function callAction(actionId: string, input: string, idempotencyKey
 
 export type Spec =
   | { readonly kind: "text" }
+  /**
+   * A string input the schema gives a JSON Schema `format`: a calendar date (`YYYY-MM-DD`), an
+   * instant (RFC 3339 with an offset) or a time of day (`HH:MM:SS`). The form offers a picker and
+   * sends the picker's value as that text; the cell decodes and decides it.
+   */
+  | { readonly kind: "date" }
+  | { readonly kind: "date-time" }
+  | { readonly kind: "time" }
   | { readonly kind: "integer" }
   | { readonly kind: "number" }
   | { readonly kind: "decimal"; readonly scale: number | null; readonly unit: string | null }
@@ -226,6 +243,8 @@ function specOf(schema: unknown, pointer: string): { spec: Spec; nullable: boole
       if (Array.isArray(values) && values.length > 0 && values.every((v) => typeof v === "string")) {
         return values.length === 1 ? { spec: { kind: "fixed", value: values[0] as string }, nullable: false } : { spec: { kind: "choice", values: values as string[] }, nullable: false }
       }
+      const format = node["format"]
+      if (format === "date" || format === "date-time" || format === "time") return { spec: { kind: format }, nullable: false }
       return { spec: { kind: "text" }, nullable: false }
     }
     case "integer": return { spec: { kind: "integer" }, nullable: false }
@@ -294,6 +313,161 @@ export function emptyFor(spec: Spec): Draft {
   }
 }
 
+/** `+02:00` for 120 minutes east of UTC, `-05:30` for 330 west; `Z` for UTC. */
+export function offsetText(minutesEast: number): string {
+  if (minutesEast === 0) return "Z"
+  const sign = minutesEast > 0 ? "+" : "-"
+  const abs = Math.abs(minutesEast)
+  return `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`
+}
+
+const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?$/
+const RFC3339_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+
+/** Wall-clock parts of a local date-time (`month` is 1..12). */
+export interface WallParts {
+  readonly year: number
+  readonly month: number
+  readonly day: number
+  readonly hour: number
+  readonly minute: number
+  readonly second: number
+}
+
+/**
+ * Resolves a local wall time in one time zone into every valid UTC offset (in minutes east of UTC)
+ * that displays that exact wall time:
+ * - `[]` for a spring-forward DST gap (that wall time does not exist in the zone),
+ * - `[offset]` for an unambiguous wall time,
+ * - `[earlierOffset, laterOffset]` for a fall-back DST repeat (chronological order).
+ */
+export type LocalWallOffsets = (parts: WallParts) => readonly number[]
+
+const sameWall = (at: Date, p: WallParts): boolean =>
+  at.getFullYear() === p.year
+  && at.getMonth() === p.month - 1
+  && at.getDate() === p.day
+  && at.getHours() === p.hour
+  && at.getMinutes() === p.minute
+  && at.getSeconds() === p.second
+
+/** The runtime's local time zone resolver, detecting both spring-forward gaps and fall-back repeats. */
+export function runtimeWallOffsets(parts: WallParts): readonly number[] {
+  const wall = new Date(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second)
+  if (!sameWall(wall, parts)) return []
+  const matches = new Map<number, number>()
+  const add = (at: Date) => {
+    if (!sameWall(at, parts)) return
+    const offset = -at.getTimezoneOffset()
+    if (!matches.has(offset)) matches.set(offset, at.getTime())
+  }
+  add(wall)
+  // Probe half-hour steps across ±3 hours around `wall` to discover sibling occurrences on any DST
+  // fall-back transition (including 30m shifts like Australia/Lord_Howe and 2h shifts like Antarctica/Troll).
+  for (let half = -6; half <= 6; half += 1) {
+    if (half !== 0) add(new Date(wall.getTime() + half * 1_800_000))
+  }
+  return [...matches.entries()].sort(([, ta], [, tb]) => ta - tb).map(([offset]) => offset)
+}
+
+/**
+ * Match `sent` (which may carry `Z` or any equivalent offset) against `alternatives` by epoch
+ * instant, so a restored instant like `2026-11-01T06:30:00Z` in `America/New_York` selects the
+ * second occurrence (`2026-11-01T01:30:00-05:00`) rather than falling back to the first.
+ */
+export function selectedAlternative(sent: string | null, alternatives: readonly string[]): string {
+  if (sent !== null) {
+    const at = Date.parse(sent)
+    if (!Number.isNaN(at)) {
+      const match = alternatives.find((iso) => Date.parse(iso) === at)
+      if (match !== undefined) return match
+    }
+  }
+  return alternatives[0] ?? ""
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0")
+const formatWall = (p: WallParts, offsetMinutes: number, fraction = "") =>
+  `${String(p.year).padStart(4, "0")}-${pad2(p.month)}-${pad2(p.day)}T${pad2(p.hour)}:${pad2(p.minute)}:${pad2(p.second)}${fraction}${offsetText(offsetMinutes)}`
+
+/** Extract the trailing RFC 3339 offset (`Z` or `±HH:MM`) regardless of fractional seconds. */
+export const offsetSuffix = (iso: string): string => /(Z|[+-]\d{2}:\d{2})$/.exec(iso)?.[1] ?? iso.slice(19)
+
+export type DateTimeResolution =
+  | { readonly kind: "ok"; readonly text: string; readonly alternatives: readonly string[] }
+  | { readonly kind: "nonexistent"; readonly text: string }
+  | { readonly kind: "passthrough"; readonly text: string }
+
+/**
+ * Resolve a draft date-time value to what will be sent, detecting DST gaps and repeats while
+ * preserving any sub-second fraction (e.g. `.250`).
+ * - A zoneless picker value (`YYYY-MM-DDTHH:MM[:SS[.fff]]`): resolves against `wallOffsets`
+ *   (default: the reader's local zone). A spring-forward gap returns `nonexistent` (leaving `text`
+ *   zoneless rather than silently shifting an hour); a fall-back repeat returns both valid RFC 3339
+ *   instants in `alternatives`.
+ * - Text that already carries an RFC 3339 offset (a prefilled/restored instant, or an explicitly
+ *   disambiguated fall-back instant): preserves its exact offset and fractional seconds in `text`
+ *   and in `alternatives` so epoch comparison and occurrence switching never lose precision.
+ */
+export function resolveDateTime(value: string, wallOffsets: LocalWallOffsets = runtimeWallOffsets): DateTimeResolution {
+  const trimmed = value.trim()
+  const local = LOCAL_DATE_TIME.exec(trimmed)
+  if (local !== null) {
+    const parts: WallParts = {
+      year: Number(local[1]), month: Number(local[2]), day: Number(local[3]),
+      hour: Number(local[4]), minute: Number(local[5]), second: Number(local[6] ?? "0"),
+    }
+    const fraction = local[7] ?? ""
+    const offsets = wallOffsets(parts)
+    if (offsets.length === 0) return { kind: "nonexistent", text: value }
+    const alternatives = offsets.map((offset) => formatWall(parts, offset, fraction))
+    return { kind: "ok", text: alternatives[0]!, alternatives }
+  }
+  const zoned = RFC3339_OFFSET.exec(trimmed)
+  if (zoned !== null) {
+    const at = Date.parse(trimmed)
+    if (!Number.isNaN(at)) {
+      const asLocal = new Date(at)
+      const parts: WallParts = {
+        year: asLocal.getFullYear(), month: asLocal.getMonth() + 1, day: asLocal.getDate(),
+        hour: asLocal.getHours(), minute: asLocal.getMinutes(), second: asLocal.getSeconds(),
+      }
+      const fraction = zoned[7] ?? ""
+      const offsets = wallOffsets(parts)
+      const alternatives = offsets.map((offset) => formatWall(parts, offset, fraction))
+      return { kind: "ok", text: trimmed, alternatives }
+    }
+  }
+  return { kind: "passthrough", text: value }
+}
+
+/**
+ * The RFC 3339 text for what a date-time picker holds. A picker gives a wall time with no zone
+ * (`2026-11-23T09:30`); it is sent with the offset the reader's own zone has at that wall time
+ * (`2026-11-23T09:30:00+02:00`), so the instant is the one the reader meant. A nonexistent local
+ * time in a spring DST gap stays as typed (never shifted to another hour) so the cell refuses it;
+ * text that already carries an offset (a prefilled value) is sent as it is. `offsetAt` is the
+ * zone's offset east of UTC, in minutes (for deterministic tests).
+ */
+export function instantText(value: string, offsetAt?: (local: Date) => number): string {
+  if (offsetAt === undefined) return resolveDateTime(value).text
+  const local = LOCAL_DATE_TIME.exec(value.trim())
+  if (local === null) return value
+  const [, y, mo, d, h, mi, sec = "00", frac = ""] = local
+  const wall = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec))
+  return `${y}-${mo}-${d}T${h}:${mi}:${sec}${frac}${offsetText(offsetAt(wall))}`
+}
+
+/** What a date-time picker shows for a draft value: a zoneless wall time as is; an instant in the reader's zone. */
+export function pickerDateTime(value: string): string {
+  if (value === "" || LOCAL_DATE_TIME.test(value)) return value
+  const at = Date.parse(value)
+  if (Number.isNaN(at)) return ""
+  const local = new Date(at)
+  const two = (n: number) => String(n).padStart(2, "0")
+  return `${local.getFullYear()}-${two(local.getMonth() + 1)}-${two(local.getDate())}T${two(local.getHours())}:${two(local.getMinutes())}${local.getSeconds() === 0 ? "" : `:${two(local.getSeconds())}`}`
+}
+
 const NUMBER_TOKEN = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/
 
 function encodeLeaf(spec: Spec, value: string): string {
@@ -307,6 +481,8 @@ function encodeLeaf(spec: Spec, value: string): string {
       return JSON.stringify(value.trim())
     case "boolean": return value === "true" ? "true" : value === "false" ? "false" : JSON.stringify(value)
     case "json": try { JSON.parse(value); return value.trim() } catch { return JSON.stringify(value) }
+    case "date-time": return JSON.stringify(instantText(value))
+    case "time": return JSON.stringify(/^\d{2}:\d{2}$/.test(value) ? `${value}:00` : value)
     default: return JSON.stringify(value)
   }
 }
@@ -320,6 +496,52 @@ function encodeValue(spec: Spec, draft: Draft): string | undefined {
   }
   const text = draft as string
   return text === "" ? undefined : encodeLeaf(spec, text)
+}
+
+/**
+ * The members of an encoded `input` object, each as the text that was sent: a string as its text, any
+ * other value (a number, `null`, a list, an object) as its JSON, byte for byte, so no digit is
+ * rounded. Null when the text is not one JSON object.
+ */
+export function sentMembers(input: string): readonly { readonly name: string; readonly text: string }[] | null {
+  let parsed: unknown
+  try { parsed = JSON.parse(input) } catch { return null }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  const members: { name: string; text: string }[] = []
+  let at = 0
+  const space = () => { while (at < input.length && " \t\n\r".includes(input[at]!)) at++ }
+  // One JSON value's extent from `at`: a string, a nested list or object, or a bare token.
+  const value = (): string => {
+    const start = at
+    if (input[at] === "\"") { string(); return input.slice(start, at) }
+    if (input[at] === "{" || input[at] === "[") {
+      let depth = 0
+      do {
+        const char = input[at]
+        if (char === "\"") { string(); continue }
+        if (char === "{" || char === "[") depth++
+        else if (char === "}" || char === "]") depth--
+        at++
+      } while (depth > 0 && at < input.length)
+      return input.slice(start, at)
+    }
+    while (at < input.length && !",}] \t\n\r".includes(input[at]!)) at++
+    return input.slice(start, at)
+  }
+  const string = () => { at++; while (at < input.length && input[at] !== "\"") at += input[at] === "\\" ? 2 : 1; at++ }
+  space(); at++ // {
+  for (;;) {
+    space()
+    if (input[at] === "}") break
+    const name = JSON.parse(value()) as string
+    space(); at++ // :
+    space()
+    const raw = value()
+    members.push({ name, text: raw.startsWith("\"") ? JSON.parse(raw) as string : raw })
+    space()
+    if (input[at] === ",") at++
+  }
+  return members
 }
 
 /** The draft as the `input` object's JSON text. Fields left empty are omitted; the cell says which it requires. */
@@ -346,14 +568,53 @@ export function inputPointer(diagnostic: Diagnostic): string | null {
 export const problemsAt = (diagnostics: readonly Diagnostic[], pointer: string): readonly Diagnostic[] =>
   diagnostics.filter((d) => { const at = inputPointer(d); return at !== null && (at === pointer || at.startsWith(`${pointer}/`)) })
 
+/** Fields of a record item re-pointed from the schema's item `0` to the item they edit. */
+export const rebaseFields = (fields: readonly FormField[], from: string, to: string): readonly FormField[] =>
+  fields.map((f) => ({ ...f, pointer: to + f.pointer.slice(from.length), spec: f.spec.kind === "object" ? { ...f.spec, fields: rebaseFields(f.spec.fields, from, to) } : f.spec }))
+
+const ARRAY_INDEX = /^(0|[1-9]\d*)$/
+
+/**
+ * Whether an input pointer (`inputPointer(d)`) is actually rendered by a `FieldRow` in `fields`.
+ * Mirrors `FieldRow`: an object (or array of objects) only renders diagnostics at its own exact
+ * pointer, while its declared children render theirs; leaf fields (and arrays of primitives) render
+ * any pointer at or below them. Unmatched nested pointers (e.g. `/location/unknown` or an
+ * out-of-range array element) return `false` so they surface in the form-level refusal alert.
+ */
+export function isDiagnosticPlaced(at: string, fields: readonly FormField[], draft?: Draft): boolean {
+  for (const field of fields) {
+    if (at === field.pointer) return true
+    if (field.spec.kind === "object") {
+      // Nullable hides an object's child FieldRows when its value is explicitly null.
+      if (draft !== undefined && draftAt(draft, field.pointer) === null) continue
+      if (at.startsWith(`${field.pointer}/`) && isDiagnosticPlaced(at, field.spec.fields, draft)) return true
+      continue
+    }
+    if (field.spec.kind === "array" && field.spec.item.kind === "object") {
+      if (!at.startsWith(`${field.pointer}/`)) continue
+      const rest = at.slice(field.pointer.length + 1)
+      const slash = rest.indexOf("/")
+      if (slash < 0) continue // array item object itself has no FieldRow; only its child fields do
+      const indexText = rest.slice(0, slash)
+      if (!ARRAY_INDEX.test(indexText)) continue
+      if (draft !== undefined) {
+        const items = draftAt(draft, field.pointer)
+        if (!Array.isArray(items) || Number(indexText) >= items.length) continue
+      }
+      const rebased = rebaseFields(field.spec.item.fields, `${field.pointer}/0`, `${field.pointer}/${indexText}`)
+      if (isDiagnosticPlaced(at, rebased, draft)) return true
+      continue
+    }
+    if (at.startsWith(`${field.pointer}/`)) return true
+  }
+  return false
+}
+
 /** Diagnostics that land on no field the form shows: they read at the top of the form. */
-export function unplaced(diagnostics: readonly Diagnostic[], fields: readonly FormField[]): readonly Diagnostic[] {
-  const pointers: string[] = []
-  const walk = (list: readonly FormField[]) => { for (const f of list) { pointers.push(f.pointer); if (f.spec.kind === "object") walk(f.spec.fields) } }
-  walk(fields)
+export function unplaced(diagnostics: readonly Diagnostic[], fields: readonly FormField[], draft?: Draft): readonly Diagnostic[] {
   return diagnostics.filter((d) => {
     const at = inputPointer(d)
-    return at === null || !pointers.some((p) => at === p || at.startsWith(`${p}/`))
+    return at === null || !isDiagnosticPlaced(at, fields, draft)
   })
 }
 
@@ -376,6 +637,16 @@ export const decimalExample = (scale: number | null) => scale === null || scale 
 const IRREGULAR: Readonly<Record<string, string>> = { send: "sent", make: "made", pay: "paid", set: "set", put: "put", run: "ran", take: "taken", give: "given", get: "got", hold: "held", sell: "sold", buy: "bought", split: "split", write: "written", begin: "begun", shut: "shut", cut: "cut", reset: "reset" }
 
 /** The past tense of an action's leading verb ("Open a holding" → "opened"), for the business sentence; null when it isn't a plain verb. */
+/**
+ * What the record is after a committed call, from the cell's own answer: a transition's target
+ * state ("is now submitted"), a first version ("created") or a later one ("updated"). Never a
+ * verb guessed from the action's title.
+ */
+export function receiptVerb(action: ActionSummary, version: number): string {
+  if (action.effect === "fire_transition") return action.toState === undefined ? "updated" : `is now ${action.toState.replaceAll("_", " ")}`
+  return version === 1 ? "created" : "updated"
+}
+
 export function pastTense(title: string): string | null {
   const verb = title.trim().split(/\s+/)[0]?.toLowerCase() ?? ""
   if (!/^[a-z]{2,}$/.test(verb)) return null

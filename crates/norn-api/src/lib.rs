@@ -18,6 +18,7 @@ pub mod authz;
 pub mod clock;
 pub mod contracts;
 pub mod decisions;
+pub mod olap_credential;
 pub mod openapi;
 /// Stable host refusal wire contract.
 pub mod refusal;

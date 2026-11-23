@@ -362,7 +362,9 @@ fn outliers(rows: &[(&str, Decimal)]) -> Option<NornOutliers> {
     let iqr = q3.checked_sub(q1)?;
     let span = (1..OUTLIER_K).try_fold(iqr, |total, _| total.checked_add(iqr))?;
     let (lower, upper) = (q1.checked_sub(span)?, q3.checked_add(span)?);
-    let mut found: Vec<(Decimal, &str, Decimal)> = rows
+    // Every value past a fence counts; only an example whose distance from
+    // its fence cannot be held exactly is left unranked, and so unlisted.
+    let crossed: Vec<(Option<Decimal>, &str, Decimal)> = rows
         .iter()
         .filter_map(|(id, value)| {
             let distance = if *value < lower {
@@ -372,8 +374,13 @@ fn outliers(rows: &[(&str, Decimal)]) -> Option<NornOutliers> {
             } else {
                 return None;
             };
-            distance.map(|distance| (distance, *id, *value))
+            Some((distance, *id, *value))
         })
+        .collect();
+    let crossings = crossed.len();
+    let mut found: Vec<(Decimal, &str, Decimal)> = crossed
+        .into_iter()
+        .filter_map(|(distance, id, value)| distance.map(|distance| (distance, id, value)))
         .collect();
     found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
     Some(NornOutliers {
@@ -383,7 +390,7 @@ fn outliers(rows: &[(&str, Decimal)]) -> Option<NornOutliers> {
         q3: RuntimeValue::Number(q3),
         lower_fence: RuntimeValue::Number(lower),
         upper_fence: RuntimeValue::Number(upper),
-        count: count(found.len()),
+        count: count(crossings),
         examples: found
             .into_iter()
             .take(MAX_OUTLIER_EXAMPLES)
@@ -533,6 +540,24 @@ mod tests {
         assert_eq!(found.examples[0].id, "row-11");
         assert_eq!(found.examples[1].id, "row-12");
         assert!(outliers(&[]).is_none());
+    }
+
+    /// #1526 S2: a value past a fence counts even when its distance from the
+    /// fence overflows the exact decimal; only its ranked example is dropped.
+    #[test]
+    fn a_crossing_whose_distance_overflows_still_counts() {
+        let decimal = |text: &str| Decimal::parse(text).unwrap();
+        let half = decimal("-0.5");
+        let rows = [
+            ("a", half),
+            ("b", half),
+            ("c", half),
+            ("d", decimal("7922816251426433759354395033.5")),
+        ];
+        let found = outliers(&rows).unwrap();
+        assert_eq!(found.upper_fence, RuntimeValue::Number(half));
+        assert_eq!(found.count, 1, "the overflowing crossing is counted");
+        assert_eq!(found.examples, [], "its distance cannot be ranked");
     }
 
     #[test]

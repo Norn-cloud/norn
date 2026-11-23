@@ -20,8 +20,8 @@ export const WORKSPACES: readonly Workspace[] = [
   { id: "bpi-2019", name: "BPI Challenge 2019", group: "Industry benchmarks", detail: NOT_YET, recorded: false },
   // CC BY-NC-SA: nothing derived from it is committed here.
   { id: "olist", name: "Olist e-commerce", group: "Industry benchmarks", detail: "Benchmark run offline (licence NC)", recorded: false, results: "https://github.com/Norn-cloud/norn/issues/531" },
-  // The synthetic recorded world is the jewelry business: gold scrap, its yield and the three systems that feed it.
-  { id: "jewelry", name: "Jewelry", group: "First-party", detail: "Recorded · synthetic gold-scrap data", recorded: true },
+  // The synthetic recorded world: one recorded question, its answers and the three systems that feed it (fixtures/demo).
+  { id: "recorded-demo", name: "Recorded demo", group: "First-party", detail: "Recorded · synthetic data", recorded: true },
 ]
 
 export const WORKSPACE_GROUPS = [...new Set(WORKSPACES.map(({ group }) => group))]

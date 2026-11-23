@@ -59,6 +59,10 @@ use crate::JsonValue;
 #[derive(Clone, Copy)]
 pub struct Decimal(rust_decimal::Decimal);
 
+/// The wire decimal grammar, in words ([`Decimal::parse_wire`]).
+pub const WIRE_DECIMAL_GRAMMAR: &str =
+    "a JSON decimal `-?(0|[1-9][0-9]*)(.[0-9]+)?` without exponent, `+` or whitespace";
+
 /// A runtime object: properties in key order.
 pub type RuntimeObject = BTreeMap<String, RuntimeValue>;
 
@@ -144,6 +148,39 @@ impl Decimal {
         }
     }
 
+    /// VAL-EXACT-1 / MAP-DECIMAL-TEXT-1: the one strict decoder for decimal
+    /// text on the wire, shared by the action boundary and source mappings:
+    /// the JSON decimal grammar `-?(0|[1-9][0-9]*)(.[0-9]+)?` exactly (no
+    /// exponent, `+`, leading zero or whitespace), then [`Self::parse`]'s
+    /// precision bound (96-bit mantissa, at most 28 fractional digits).
+    ///
+    /// # Errors
+    ///
+    /// [`RuntimeValueError::InvalidJson`] for text outside the grammar;
+    /// [`RuntimeValueError::Inexact`] for a value outside the decimal range.
+    pub fn parse_wire(text: &str) -> Result<Self, RuntimeValueError> {
+        if !Self::is_wire_decimal(text) {
+            return Err(RuntimeValueError::InvalidJson {
+                message: format!("{text:?} is not {WIRE_DECIMAL_GRAMMAR}"),
+            });
+        }
+        Self::parse(text)
+    }
+
+    /// Whether `text` is in the strict wire decimal grammar
+    /// ([`Self::parse_wire`]), before any precision bound.
+    #[must_use]
+    pub fn is_wire_decimal(text: &str) -> bool {
+        let unsigned = text.strip_prefix('-').unwrap_or(text);
+        let (int, frac) = match unsigned.split_once('.') {
+            Some((int, frac)) => (int, Some(frac)),
+            None => (unsigned, None),
+        };
+        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        let int_ok = digits(int) && (int == "0" || !int.starts_with('0'));
+        int_ok && frac.is_none_or(digits)
+    }
+
     /// The decimal of a Norn1 canonical number string (already normalized:
     /// plain digits, no exponent). `original` names the input in errors.
     fn from_canonical_text(canonical: &str, original: &str) -> Result<Self, RuntimeValueError> {
@@ -178,21 +215,29 @@ impl Decimal {
         self.0.is_integer()
     }
 
-    /// The exact sum, or `None` when it cannot be held without rounding.
+    /// The exact sum, normalized, or `None` when it cannot be held without
+    /// rounding (and, at the 96-bit limit, when the exact sum would need its
+    /// trailing zeros dropped to fit).
     #[must_use]
     pub fn checked_add(self, other: Self) -> Option<Self> {
-        let sum = self.0.checked_add(other.0)?;
-        // The 96-bit mantissa can force a rescale on overflow; an exact sum
-        // subtracts back to its operand.
-        (sum.checked_sub(other.0) == Some(self.0)).then_some(Self(sum))
+        self.exact(other, self.0.checked_add(other.0)?)
     }
 
-    /// The exact difference, or `None` when it cannot be held without rounding.
+    /// The exact difference, normalized, or `None` as for [`Self::checked_add`].
     #[must_use]
     pub fn checked_sub(self, other: Self) -> Option<Self> {
-        let difference = self.0.checked_sub(other.0)?;
-        // As for a sum: an exact difference adds back to its operand.
-        (difference.checked_add(other.0) == Some(self.0)).then_some(Self(difference))
+        self.exact(other, self.0.checked_sub(other.0)?)
+    }
+
+    /// `result` of a sum or difference of `self` and `other`, normalized, or
+    /// `None` when it was rounded. The exact result has the operands' larger
+    /// scale; when its 96-bit mantissa overflows, the engine rescales to fewer
+    /// digits, rounding (dectest `dqadd75034`: a back-subtraction rounds too,
+    /// so it cannot detect this). A result that lost only trailing zeros to
+    /// that rescale is refused as well: near the 96-bit limit the scale is
+    /// the only exact witness.
+    fn exact(self, other: Self, result: rust_decimal::Decimal) -> Option<Self> {
+        (result.scale() == self.0.scale().max(other.0.scale())).then(|| Self(result.normalize()))
     }
 
     /// The value as an `i64`, when it is an integer in range.

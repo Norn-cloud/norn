@@ -45,6 +45,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "objectId",
+            "in": "query",
+            "description": "With `objectKind`: only actions that can act on this object in its\ncurrent lifecycle state (ACTION-CATALOG-STATE-1).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -643,13 +652,110 @@
         ]
       }
     },
+    "/v1/datasets/{type}/rows/{row}:lineage": {
+      "get": {
+        "tags": [
+          "crate::analytics_routes"
+        ],
+        "summary": "MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the\nrecords grid names it, to the manifest that admitted it, the source\nupload and the data file, each by content hash and row offset, with what\nheld it back. Held-back rows are traced too. Requires Population, Values\nand Sources on the type; no value is disclosed.",
+        "description": "# Errors\nA denied gate (one opaque 403), no dataset or no such row (404), or an\nunreachable engine.",
+        "operationId": "dataset_lineage",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The dataset's object type.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "row",
+            "in": "path",
+            "description": "The source row offset.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row's lineage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornDatasetLineage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/datasets:load": {
       "post": {
         "tags": [
           "crate::analytics_routes"
         ],
-        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one; each row\ntraces to `(uri, sha256, row)`. Decided like any upload load\n(`SyncSource(\"upload\")`); the load is reported as a run of the type's\n`upload` connection, as the cell's own observations (SYNC-REPORT-1).",
-        "description": "# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), or an unreachable engine.",
+        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one when its\nmanifest commits; each row traces to `(uri, sha256, row)`. The load is\nreported as a run of the type's `upload` connection, as the cell's own\nobservations (SYNC-REPORT-1).",
+        "description": "MANIFEST-03: a load is decided exactly as an observation load of the\nsame rows: `SyncSource(\"upload\")` and the destination connection's own\ngrant (`SyncSource(\"upload.<type>\")`), an admitted mapping onto the type\nthat the load binds its columns by, and the markings a write of those\nrows would carry. A mapping or marking bulk ingest cannot enforce is\nrefused, never loaded unchecked.\n\n# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), a mapping or marking bulk\ningest cannot enforce (422), stale pins or a reused request key (409), or\nan unreachable engine.",
         "operationId": "load_dataset",
         "parameters": [
           {
@@ -714,6 +820,16 @@
           },
           "404": {
             "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The definitions changed while the dataset landed, or the request key names another request.",
             "content": {
               "application/json": {
                 "schema": {
@@ -871,7 +987,7 @@
           "crate::decisions"
         ],
         "summary": "`POST /v1/decisions/{id}:decide`.",
-        "description": "For the approval of a parked action call (APPROVAL-1) the decider is\nnever the call's requester (#618), and no flow turn runs: the answer is\nrecorded, and an approved call then commits through the shared action\ndispatch as its requester ([`AsStarter`] makes the requester the host's\nverified caller for that one call), its authority decided again there.\n\n# Errors\nIn this order: 404 `decision.not_found` (also for a caller who may not\ndecide it), 409 `decision.resolved`, 410 `decision.expired`, 403\n`decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),\n`decision.note_too_long` (`/note`) or `request.invalid`, 409\n`decision.idempotency_conflict`; the flow's or the kernel's refusal of the\nrun's result turn; a host failure.",
+        "description": "For the approval of a parked action call (APPROVAL-1) the decider is\nnever the call's requester (#618), and no flow turn runs: the answer is\nrecorded, and an approved call then runs through the shared action\ndispatch only under the requester's current authority ([`AsStarter`]:\nthe host runs it only when it can establish that authority, which a\ndecider's request never does). Otherwise the answer's `call` is\n`not_executed` and the requester's own authenticated retry runs it\n(APPROVAL-RECOVERY-1).\n\n# Errors\nIn this order: 404 `decision.not_found` (also for a caller who may not\ndecide it), 409 `decision.resolved`, 410 `decision.expired`, 403\n`decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),\n`decision.note_too_long` (`/note`) or `request.invalid`, 409\n`decision.idempotency_conflict`; the flow's or the kernel's refusal of the\nrun's result turn; a host failure.",
         "operationId": "decide",
         "parameters": [
           {
@@ -975,6 +1091,92 @@
           },
           "422": {
             "description": "The choice or note was refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/decisions:requested": {
+      "get": {
+        "tags": [
+          "crate::decisions"
+        ],
+        "summary": "`GET /v1/decisions:requested`: the caller's own approval-gated calls, as\ntheir requester sees them (APPROVAL-1, APPROVAL-RECOVERY-1). A requester\nnever decides their call and never lists it among the decisions waiting\non them; this is where they learn that it was approved and retry it\n(`canRun`), with the exact input and key it parked with. Without `id`:\nthe calls pending a decider before their deadline and those approved and\nnot yet run. With `id`: that decision in any state, or no item when it is\nnot the caller's direct call (the cell does not say which).",
+        "description": "The caller is the host's verified principal, compared as the dispatch\ncompares it (subject, actor kind and role table): the same subject under\nanother kind or role table is someone else, and reads nothing. Its calls\nare found by that identity before any parked payload is loaded, so\nanother requester's id costs what an id that exists nowhere costs.\n\n# Errors\nMissing or foreign scope; a missing caller (one opaque 403); an invalid\nid; a host failure.",
+        "operationId": "requested_decisions",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "description": "Only this decision, in whatever state it stands (the id a parked\ncall's `202` answer named). Without it, the calls that wait: those\npending a decider and those approved and not yet run.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's own approval-gated calls.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestedPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2500,7 +2702,7 @@
           "crate::object_review"
         ],
         "summary": "HOST-READ-6: an object's proven versions, newest first, with what wrote each.",
-        "description": "# Errors\nA denied gate (the opaque 403); an absent, withheld or source-withheld\nobject (one 404); a commit between the reads (409 `object.snapshot_moved`);\nor a host failure.",
+        "description": "# Errors\nA denied gate (the opaque 403); an absent or withheld object (one 404;\nSources is not needed, and gates only each version's lineage); a commit\nbetween the reads (409 `object.snapshot_moved`); or a host failure.",
         "operationId": "get_object_history",
         "parameters": [
           {
@@ -2542,7 +2744,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The object's proven versions, newest first, each with its commit and what wrote it.",
+            "description": "The object's proven versions the caller may read, newest first, each with its commit and what wrote it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2572,7 +2774,7 @@
             }
           },
           "404": {
-            "description": "The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served.",
+            "description": "The request was refused (`object.not_found`): the object is absent or withheld (no Population or Values); these are not told apart. Sources is not needed: without it no version names its source lineage. A quarantined object is served.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4981,6 +5183,10 @@
             "$ref": "#/components/schemas/ActionCommit",
             "description": "The original commit, the same on every replay."
           },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context retained from the original call."
+          },
           "version": {
             "type": "integer",
             "format": "int64",
@@ -5003,6 +5209,10 @@
           },
           "input": {
             "$ref": "#/components/schemas/NornActionInput"
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context persisted on the committed receipt."
           }
         },
         "additionalProperties": false
@@ -5225,9 +5435,23 @@
           "objectType"
         ],
         "properties": {
+          "mapping": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MANIFEST-03: the admitted mapping onto the type the load binds its\ncolumns by; needed only when more than one maps onto it."
+          },
           "objectType": {
             "type": "string",
             "description": "The admitted object type the rows are typed by."
+          },
+          "requestKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MANIFEST-04: the caller's key for this load. A retry with the same\nkey and the same request answers with the first load's receipt; the\nsame key with another request is refused (409\n`dataset.request_conflict`). A load without a key always commits."
           },
           "uploadId": {
             "type": "string",
@@ -5309,7 +5533,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/DecidedCall",
-                "description": "For an approved action call (APPROVAL-1), what committing it as its\nrequester answered; on a replay, present only while a run's step still\nwaits on the call, as what dispatching it again through the\napproval's fence answered."
+                "description": "For an approved action call (APPROVAL-1), where it stands after this\ncall (APPROVAL-RECOVERY-1): on a replay its recorded outcome, or, while\nit is approved and not yet executed, what running it now answered."
               },
               {
                 "type": "null"
@@ -5336,9 +5560,10 @@
       },
       "DecidedCall": {
         "type": "object",
-        "description": "What committing an approved call as its requester answered (APPROVAL-1).\nThe approval stands either way: the requester's own retry of the call\ncommits it.",
+        "description": "What the approved call is now (APPROVAL-1, APPROVAL-RECOVERY-1). The\napproval stands either way.",
         "required": [
-          "committed"
+          "committed",
+          "state"
         ],
         "properties": {
           "code": {
@@ -5346,13 +5571,26 @@
               "string",
               "null"
             ],
-            "description": "The requester's refusal code when it did not."
+            "description": "The refusal code when it did not: its recorded refusal, or why this\ntry could not run it."
           },
           "committed": {
             "type": "boolean",
             "description": "Whether the call committed."
+          },
+          "state": {
+            "$ref": "#/components/schemas/DecidedCallState",
+            "description": "Where it stands."
           }
         }
+      },
+      "DecidedCallState": {
+        "type": "string",
+        "description": "Where an approved action call stands (APPROVAL-RECOVERY-1).",
+        "enum": [
+          "committed",
+          "refused",
+          "not_executed"
+        ]
       },
       "DecidedDecision": {
         "type": "object",
@@ -5462,6 +5700,10 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context carried by the parked call."
           }
         }
       },
@@ -5668,6 +5910,17 @@
               "null"
             ],
             "description": "Who, in display words, never an id."
+          },
+          "call": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecidedCall",
+                "description": "For an approval of a parked action call, where the call stands\n(APPROVAL-RECOVERY-1), read only: nothing runs. Present for the\napprover and for a reader of the run."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "choice": {
             "type": [
@@ -6037,6 +6290,13 @@
           "artifacts"
         ],
         "properties": {
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstallDefinitionRequest"
+            },
+            "description": "The pack's approvals (#1469): admitted against the submitted set's\nactions, and installed with it in one transaction, so a new action\nis never live without its gate. A plan returns each one's\nrestatement; an apply carries each one's `signoff` of it and the\n`expectedVersion` (revision) the plan reported. Any refusal installs\nnothing."
+          },
           "artifacts": {
             "type": "array",
             "items": {
@@ -6078,6 +6338,13 @@
               "$ref": "#/components/schemas/PlannedArtifact"
             },
             "description": "Artifacts the change adds."
+          },
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlannedApproval"
+            },
+            "description": "The approvals the change installs with the set."
           },
           "baseVersion": {
             "type": "integer",
@@ -6526,6 +6793,17 @@
             "type": "string",
             "description": "The state it entered."
           },
+          "trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornActionTraceContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional provenance trace context supplied by the caller."
+          },
           "transition": {
             "type": "string",
             "description": "The fired transition."
@@ -6559,6 +6837,11 @@
             "description": "The callable actions an effect program can run, ordered by identity."
           }
         }
+      },
+      "NornActionDigest": {
+        "type": "string",
+        "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+        "pattern": "^sha256:[0-9a-f]{64}$"
       },
       "NornActionEffect": {
         "type": "string",
@@ -6597,6 +6880,24 @@
           "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
         }
       },
+      "NornActionInputLink": {
+        "type": "object",
+        "description": "One input field that names a record of `objectKind`.",
+        "required": [
+          "field",
+          "objectKind"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The top-level input field holding the record's id."
+          },
+          "objectKind": {
+            "type": "string",
+            "description": "The object type it names."
+          }
+        }
+      },
       "NornActionObjectTypeName": {
         "type": "string",
         "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
@@ -6630,6 +6931,13 @@
             "$ref": "#/components/schemas/NornActionEffect",
             "description": "How its effect changes that object."
           },
+          "inputLinks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionInputLink"
+            },
+            "description": "Input fields that name an existing record (a link the action creates\nto it), so a form offers a picker of that type's records\n(ACTION-CATALOG-LINKS-1). Omitted when none."
+          },
           "inputSchema": {
             "type": "object",
             "description": "The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies.",
@@ -6647,11 +6955,45 @@
             "type": "string",
             "description": "Its title, or its identity when it declares none."
           },
+          "toState": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a `fire_transition` action: the lifecycle state its transition\nleaves the object in, so a receipt can say what the record is now."
+          },
           "uiEffects": {
             "$ref": "#/components/schemas/NornActionUiEffects",
             "description": "The effects a caller must handle."
           }
         }
+      },
+      "NornActionTraceContext": {
+        "type": "object",
+        "description": "Optional provenance trace context attached to an action call and persisted\non its committed receipt.\n\nStrictly optional and additive: callers without trace context are unaffected,\nand raw transcript text is never stored (`sessionDigest` admits only a\ncontent-addressed SHA-256 digest).",
+        "required": [
+          "traceId"
+        ],
+        "properties": {
+          "intentRef": {
+            "type": "string",
+            "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
+            "maxLength": 512,
+            "minLength": 1
+          },
+          "sessionDigest": {
+            "type": "string",
+            "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "traceId": {
+            "type": "string",
+            "description": "Opaque correlation identifier tying multi-step causes and effects\ntogether (1 to 256 UTF-8 bytes, no control characters or outer whitespace).",
+            "maxLength": 256,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
       },
       "NornActionUiEffects": {
         "type": "object",
@@ -7842,6 +8184,74 @@
           }
         }
       },
+      "NornDatasetLineage": {
+        "type": "object",
+        "description": "The outcome of `GET /v1/datasets/{type}/rows/{row}:lineage`.",
+        "required": [
+          "objectType",
+          "row",
+          "manifest",
+          "commitSeq",
+          "source",
+          "findings",
+          "held"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit that admitted it.",
+            "minimum": 0
+          },
+          "data": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornLineageFile",
+                "description": "The data file, at the row; absent when the row was not typed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornRowFinding"
+            },
+            "description": "Every rule the row fails."
+          },
+          "held": {
+            "type": "boolean",
+            "description": "Whether the row is held back (not typed, or failing a rule that holds)."
+          },
+          "manifest": {
+            "type": "string",
+            "description": "The manifest that admitted the dataset."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The dataset's object type."
+          },
+          "refused": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the row was not typed (`bulk.*`), if it was not."
+          },
+          "row": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The source row offset; dataset answers name rows by it.",
+            "minimum": 0
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornLineageFile",
+            "description": "The source upload, at the row."
+          }
+        }
+      },
       "NornDatasetLoad": {
         "type": "object",
         "description": "The outcome of `POST /v1/datasets:load`.",
@@ -7902,7 +8312,7 @@
           "heldByRules": {
             "type": "integer",
             "format": "int64",
-            "description": "Admitted rows a law or invariant holds back; every other admitted row\nis trusted.",
+            "description": "Typed rows a law or invariant holds back: in the held-set file, not\namong `rows`.",
             "minimum": 0
           },
           "load": {
@@ -7942,13 +8352,13 @@
           "rejected": {
             "type": "integer",
             "format": "int64",
-            "description": "Rows quarantined.",
+            "description": "Rows quarantined because they could not be typed.",
             "minimum": 0
           },
           "rows": {
             "type": "integer",
             "format": "int64",
-            "description": "Rows admitted.",
+            "description": "Rows admitted as trusted: typed, and held back by no rule (LAW-02).",
             "minimum": 0
           },
           "sha256": {
@@ -32422,6 +32832,31 @@
         },
         "additionalProperties": false
       },
+      "NornLineageFile": {
+        "type": "object",
+        "description": "One file a dataset row is traced through, and the row's offset in it.",
+        "required": [
+          "uri",
+          "sha256",
+          "row"
+        ],
+        "properties": {
+          "row": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The row's source offset (1-based, in source file order); the data\nfile carries it as its `:row` column.",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Its SHA-256."
+          },
+          "uri": {
+            "type": "string",
+            "description": "The object's durable URI."
+          }
+        }
+      },
       "NornLinkCount": {
         "type": "object",
         "description": "The visible links of one declared link type in one direction.",
@@ -33036,7 +33471,7 @@
             "items": {
               "$ref": "#/components/schemas/NornObjectVersion"
             },
-            "description": "The versions listed, newest first."
+            "description": "The versions the caller may read, newest first. A version is listed\nonly when the caller holds Population and Values on that version's own\nrecord, and only when it changed a value the caller may see."
           }
         }
       },
@@ -34181,6 +34616,29 @@
           }
         }
       },
+      "NornRowFinding": {
+        "type": "object",
+        "description": "One law or invariant a dataset row fails.",
+        "required": [
+          "rule",
+          "label",
+          "holds"
+        ],
+        "properties": {
+          "holds": {
+            "type": "boolean",
+            "description": "Whether it holds the row back."
+          },
+          "label": {
+            "type": "string",
+            "description": "The law (`law:<id>`) or invariant (`invariant:<id>`)."
+          },
+          "rule": {
+            "type": "string",
+            "description": "The rule identity (canonical JSON of its reference)."
+          }
+        }
+      },
       "NornRuleFindings": {
         "type": "object",
         "description": "MANIFEST-LAWS-1: one law or invariant's findings over a dataset.",
@@ -34802,20 +35260,25 @@
               },
               "input": {
                 "type": "object",
-                "description": "The effective input (caller input plus server derivations); decimals are exact JSON number tokens.",
-                "additionalProperties": true
+                "description": "Deprecated: always the empty object. The call's effective input is never disclosed.",
+                "additionalProperties": true,
+                "deprecated": true
               },
               "kind": {
                 "type": "string",
                 "enum": [
                   "action"
                 ]
+              },
+              "trace": {
+                "$ref": "#/components/schemas/TraceContext",
+                "description": "Optional provenance trace context recorded on the action call."
               }
             }
           },
           {
             "type": "object",
-            "description": "Another writer (an import, a migration or a kernel rule).",
+            "description": "Another writer (an import, a migration or a kernel rule), or one this\ncaller is not told: an action whose call record the caller may not\nread, a mapping whose lineage the caller may not read (no Sources), or\na marked version.",
             "required": [
               "kind"
             ],
@@ -34922,6 +35385,43 @@
           "id": {
             "type": "string",
             "description": "The decision id (`POST /v1/decisions/{id}:decide`)."
+          }
+        }
+      },
+      "PlannedApproval": {
+        "type": "object",
+        "description": "An approval the change installs with the set.",
+        "required": [
+          "id",
+          "unchanged",
+          "restatement",
+          "restatementSha256"
+        ],
+        "properties": {
+          "fromRevision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The id's current revision, if any: the apply's `expectedVersion`.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The approval id."
+          },
+          "restatement": {
+            "type": "string",
+            "description": "The server's words for the approval: what the signer signs."
+          },
+          "restatementSha256": {
+            "type": "string",
+            "description": "Lower-case hex SHA-256 of the restatement: the apply's\n`signoff.restatementSha256`."
+          },
+          "unchanged": {
+            "type": "boolean",
+            "description": "Whether the active revision is already this approval."
           }
         }
       },
@@ -35248,6 +35748,157 @@
             "description": "RFC 6901 JSON pointer into the submitted document."
           }
         }
+      },
+      "RequestedCall": {
+        "type": "object",
+        "description": "The parked call itself, exactly as it waits: retrying it means calling\n`action` with `encodedInput` as the input and `idempotencyKey` as the key.",
+        "required": [
+          "action",
+          "definition",
+          "input",
+          "encodedInput",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "The action called."
+          },
+          "definition": {
+            "type": "string",
+            "description": "The approval definition that gates it."
+          },
+          "encodedInput": {
+            "type": "string",
+            "description": "The same input as canonical JSON text, numbers digit for digit, so a\nclient that parses JSON into binary floats can still send it back\nexactly."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The call's idempotency key."
+          },
+          "input": {
+            "type": "object",
+            "description": "The call's admitted input.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecidedCall",
+                "description": "Once it is approved, where the call stands (APPROVAL-RECOVERY-1)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context carried by the parked call."
+          }
+        }
+      },
+      "RequestedDecision": {
+        "type": "object",
+        "description": "One approval-gated call the caller made, as its requester sees it\n(APPROVAL-1): never a decider's view, and never anyone else's call.",
+        "required": [
+          "id",
+          "question",
+          "risk",
+          "requestedAtMs",
+          "expiresAtMs",
+          "status",
+          "call",
+          "canRun"
+        ],
+        "properties": {
+          "call": {
+            "$ref": "#/components/schemas/RequestedCall",
+            "description": "The call."
+          },
+          "canRun": {
+            "type": "boolean",
+            "description": "The cell offers the caller to run it now: it is approved, not yet\nexecuted, a direct call (a flow step's call runs by retrying its\nrun), and the caller is its requester. An offer, not a grant: the\nretry is decided again under the caller's current authority."
+          },
+          "expiresAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the decision expires (logical milliseconds).",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The opaque decision id."
+          },
+          "question": {
+            "type": "string",
+            "description": "The approval's question."
+          },
+          "requestedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the call parked (logical milliseconds).",
+            "minimum": 0
+          },
+          "resolvedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When it was resolved (logical milliseconds), once it was.",
+            "minimum": 0
+          },
+          "risk": {
+            "$ref": "#/components/schemas/DecisionRisk",
+            "description": "How much is at stake."
+          },
+          "status": {
+            "$ref": "#/components/schemas/RequestedStatus",
+            "description": "Where it stands."
+          }
+        }
+      },
+      "RequestedPage": {
+        "type": "object",
+        "description": "The caller's own approval-gated calls.",
+        "required": [
+          "items",
+          "serverNowMs"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestedDecision"
+            },
+            "description": "Soonest deadline first, ties to the oldest request, then id."
+          },
+          "serverNowMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The cell's clock when the page was read (logical milliseconds).",
+            "minimum": 0
+          },
+          "totalCapped": {
+            "type": "boolean",
+            "description": "More calls were not examined."
+          }
+        }
+      },
+      "RequestedStatus": {
+        "type": "string",
+        "description": "Where the caller's parked call stands with its approval.",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "expired",
+          "withdrawn"
+        ]
       },
       "RetireDefinitionRequest": {
         "type": "object",
@@ -35642,6 +36293,33 @@
           "executor",
           "timer"
         ]
+      },
+      "TraceContext": {
+        "type": "object",
+        "description": "Optional provenance trace context attached to an action call and retained\non its committed receipt.",
+        "required": [
+          "traceId"
+        ],
+        "properties": {
+          "intentRef": {
+            "type": "string",
+            "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
+            "maxLength": 512,
+            "minLength": 1
+          },
+          "sessionDigest": {
+            "type": "string",
+            "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "traceId": {
+            "type": "string",
+            "description": "Opaque correlation identifier tying multi-step causes and effects\ntogether (1 to 256 UTF-8 bytes, no control characters or outer whitespace).",
+            "maxLength": 256,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
       }
     },
     "securitySchemes": {

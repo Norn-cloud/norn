@@ -533,3 +533,225 @@ impl<'de> Deserialize<'de> for ActionLinkSource {
         })
     }
 }
+
+/// Maximum UTF-8 byte length of [`TraceContext::trace_id`].
+pub const MAX_TRACE_ID_BYTES: usize = 256;
+
+/// Maximum UTF-8 byte length of [`TraceContext::intent_ref`].
+pub const MAX_INTENT_REF_BYTES: usize = 512;
+
+/// Why a caller-supplied [`TraceContext`] is refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TraceContextError {
+    /// `traceId` is empty or whitespace-only.
+    BlankTraceId,
+    /// `traceId` exceeds [`MAX_TRACE_ID_BYTES`].
+    TraceIdTooLong {
+        /// Actual UTF-8 byte length.
+        actual_bytes: usize,
+        /// Permitted UTF-8 byte length.
+        max_bytes: usize,
+    },
+    /// `traceId` contains control characters or leading/trailing whitespace.
+    InvalidTraceId,
+    /// `intentRef` is empty or whitespace-only.
+    BlankIntentRef,
+    /// `intentRef` exceeds [`MAX_INTENT_REF_BYTES`].
+    IntentRefTooLong {
+        /// Actual UTF-8 byte length.
+        actual_bytes: usize,
+        /// Permitted UTF-8 byte length.
+        max_bytes: usize,
+    },
+    /// `intentRef` contains control characters or leading/trailing whitespace.
+    InvalidIntentRef,
+    /// `sessionDigest` is not a canonical `sha256:<64 lower-case hex>` digest.
+    InvalidSessionDigest,
+}
+
+impl TraceContextError {
+    /// Kernel input field path naming the invalid trace member.
+    #[must_use]
+    pub const fn field(&self) -> &'static str {
+        match self {
+            Self::BlankTraceId | Self::TraceIdTooLong { .. } | Self::InvalidTraceId => {
+                "trace.traceId"
+            }
+            Self::BlankIntentRef | Self::IntentRefTooLong { .. } | Self::InvalidIntentRef => {
+                "trace.intentRef"
+            }
+            Self::InvalidSessionDigest => "trace.sessionDigest",
+        }
+    }
+
+    /// RFC 6901 JSON pointer into an action request body for this error.
+    #[must_use]
+    pub const fn pointer(&self) -> &'static str {
+        match self {
+            Self::BlankTraceId | Self::TraceIdTooLong { .. } | Self::InvalidTraceId => {
+                "/trace/traceId"
+            }
+            Self::BlankIntentRef | Self::IntentRefTooLong { .. } | Self::InvalidIntentRef => {
+                "/trace/intentRef"
+            }
+            Self::InvalidSessionDigest => "/trace/sessionDigest",
+        }
+    }
+}
+
+impl std::fmt::Display for TraceContextError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BlankTraceId => f.write_str("trace.traceId must be non-empty"),
+            Self::TraceIdTooLong {
+                actual_bytes,
+                max_bytes,
+            } => write!(
+                f,
+                "trace.traceId is {actual_bytes} bytes; the limit is {max_bytes} bytes"
+            ),
+            Self::InvalidTraceId => {
+                f.write_str("trace.traceId must not contain control characters or outer whitespace")
+            }
+            Self::BlankIntentRef => f.write_str("trace.intentRef must be non-empty"),
+            Self::IntentRefTooLong {
+                actual_bytes,
+                max_bytes,
+            } => write!(
+                f,
+                "trace.intentRef is {actual_bytes} bytes; the limit is {max_bytes} bytes"
+            ),
+            Self::InvalidIntentRef => f.write_str(
+                "trace.intentRef must not contain control characters or outer whitespace",
+            ),
+            Self::InvalidSessionDigest => f.write_str(
+                "trace.sessionDigest must be a sha256:<64 lower-case hex> content digest",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TraceContextError {}
+
+/// Optional provenance trace context attached to an action call and persisted
+/// on its committed receipt.
+///
+/// Strictly optional and additive: callers without trace context are unaffected,
+/// and raw transcript text is never stored (`sessionDigest` admits only a
+/// content-addressed SHA-256 digest).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TraceContext {
+    /// Opaque correlation identifier tying multi-step causes and effects
+    /// together (1 to 256 UTF-8 bytes, no control characters or outer whitespace).
+    #[schemars(length(min = 1, max = 256))]
+    pub trace_id: String,
+    /// Optional reference to the goal, prompt, commitment, or decision that
+    /// initiated the action (1 to 512 UTF-8 bytes, no control characters or
+    /// outer whitespace).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String", length(min = 1, max = 512))]
+    pub intent_ref: Option<String>,
+    /// Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)
+    /// of an off-ledger agent or user session transcript. Raw transcript text
+    /// is never stored in the ledger.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "crate::function::Digest")]
+    pub session_digest: Option<crate::function::Digest>,
+}
+
+fn is_forbidden_trace_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        )
+}
+
+impl TraceContext {
+    /// Validate every field fail-closed against bounded length, printable text,
+    /// and canonical SHA-256 digest rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TraceContextError`] on the first invalid member.
+    pub fn validate(&self) -> Result<(), TraceContextError> {
+        if self.trace_id.trim().is_empty() {
+            return Err(TraceContextError::BlankTraceId);
+        }
+        if self.trace_id.len() > MAX_TRACE_ID_BYTES {
+            return Err(TraceContextError::TraceIdTooLong {
+                actual_bytes: self.trace_id.len(),
+                max_bytes: MAX_TRACE_ID_BYTES,
+            });
+        }
+        if self.trace_id.trim() != self.trace_id
+            || self.trace_id.chars().any(is_forbidden_trace_char)
+        {
+            return Err(TraceContextError::InvalidTraceId);
+        }
+        if let Some(intent_ref) = &self.intent_ref {
+            if intent_ref.trim().is_empty() {
+                return Err(TraceContextError::BlankIntentRef);
+            }
+            if intent_ref.len() > MAX_INTENT_REF_BYTES {
+                return Err(TraceContextError::IntentRefTooLong {
+                    actual_bytes: intent_ref.len(),
+                    max_bytes: MAX_INTENT_REF_BYTES,
+                });
+            }
+            if intent_ref.trim() != intent_ref || intent_ref.chars().any(is_forbidden_trace_char) {
+                return Err(TraceContextError::InvalidIntentRef);
+            }
+        }
+        if let Some(digest) = &self.session_digest
+            && !digest.is_well_formed()
+        {
+            return Err(TraceContextError::InvalidSessionDigest);
+        }
+        Ok(())
+    }
+
+    /// Encode this trace context as a canonical [`crate::RuntimeValue`] object,
+    /// omitting absent optional members.
+    #[must_use]
+    pub fn to_runtime_value(&self) -> crate::RuntimeValue {
+        let mut fields = BTreeMap::from([(
+            "traceId".to_owned(),
+            crate::RuntimeValue::String(self.trace_id.clone()),
+        )]);
+        if let Some(intent_ref) = &self.intent_ref {
+            fields.insert(
+                "intentRef".to_owned(),
+                crate::RuntimeValue::String(intent_ref.clone()),
+            );
+        }
+        if let Some(session_digest) = &self.session_digest {
+            fields.insert(
+                "sessionDigest".to_owned(),
+                crate::RuntimeValue::String(session_digest.0.clone()),
+            );
+        }
+        crate::RuntimeValue::Object(fields)
+    }
+}
+
+impl<'de> Deserialize<'de> for TraceContext {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct WireTraceContext {
+            trace_id: String,
+            #[serde(default, deserialize_with = "crate::members::present_non_null")]
+            intent_ref: Option<String>,
+            #[serde(default, deserialize_with = "crate::members::present_non_null")]
+            session_digest: Option<crate::function::Digest>,
+        }
+        let wire: WireTraceContext = crate::members::deserialize_object(deserializer)?;
+        Ok(Self {
+            trace_id: wire.trace_id,
+            intent_ref: wire.intent_ref,
+            session_digest: wire.session_digest,
+        })
+    }
+}

@@ -219,7 +219,10 @@ fn check_one_local(model: &EntityModel<'_>, prefix: &str, subtype: bool) -> Vec<
         base: EntityModel::EMPTY,
         tenant: None,
     };
-    check(model, &context, &Roots::DOCUMENT)
+    let mut checker = Checker::new(model, &context, &Roots::DOCUMENT, true);
+    checker.run();
+    checker
+        .out
         .into_iter()
         .filter(|finding| !depends_on_other_definitions(finding.code.as_str(), subtype))
         .map(|mut finding| {
@@ -257,7 +260,7 @@ pub(crate) fn check(
     context: &EntityContext<'_>,
     roots: &Roots,
 ) -> Vec<Diagnostic> {
-    let mut checker = Checker::new(model, context, roots);
+    let mut checker = Checker::new(model, context, roots, false);
     checker.run();
     checker.out
 }
@@ -342,7 +345,7 @@ pub fn effective_object_types(
     >,
     EffectiveViewRefused,
 > {
-    let mut checker = Checker::new(model, context, &Roots::DOCUMENT);
+    let mut checker = Checker::new(model, context, &Roots::DOCUMENT, false);
     checker.register();
     checker.classify_cycles()?;
     checker.expression_env = has_invariants(model, context).then(|| expression_env(model, context));
@@ -363,10 +366,16 @@ pub fn effective_object_types(
 }
 
 impl<'a, 'r> Checker<'a, 'r> {
-    fn new(model: &EntityModel<'a>, context: &EntityContext<'a>, roots: &'r Roots) -> Self {
+    fn new(
+        model: &EntityModel<'a>,
+        context: &EntityContext<'a>,
+        roots: &'r Roots,
+        local_only: bool,
+    ) -> Self {
         Checker {
             model: *model,
             context: *context,
+            local_only,
             expression_env: None,
             roots,
             types: BTreeMap::new(),
@@ -569,8 +578,7 @@ impl<'a, 'r> Checker<'a, 'r> {
                 .map(|resolved| {
                     let markings = property_markings
                         .get(resolved.property.id.as_str())
-                        .map(|markings| markings.iter().cloned().collect())
-                        .unwrap_or_default();
+                        .map_or_default(|markings| markings.iter().cloned().collect());
                     let mut property = crate::entity_instance::EffectiveProperty::from_resolved(
                         resolved, markings,
                     );
@@ -644,6 +652,9 @@ impl<'a> Requirement<'a> {
 struct Checker<'a, 'r> {
     model: EntityModel<'a>,
     context: EntityContext<'a>,
+    /// True only during standalone single-definition (T2) validation where no
+    /// property-type catalog or base layer is available.
+    local_only: bool,
     expression_env: Option<Result<ZenTypeEnv, Vec<norn_expr::EnvError>>>,
     roots: &'r Roots,
     types: BTreeMap<&'a ObjectTypeName, Entry<'a, ObjectTypeDef>>,

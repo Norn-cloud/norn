@@ -933,7 +933,7 @@ fn psm_versioned_action_u64_max_edges() {
         .expect("a guard at u64::MAX does not block a bump of another owner");
     assert_eq!(accepted.state.owner_version(&1), u64::MAX);
     assert_eq!(accepted.state.owner_version(&0), u64::MAX);
-    assert!(accepted.effects.is_empty());
+    assert_eq!(accepted.effects, []);
     // Now owner 1 is at u64::MAX too: the same bump overflows.
     let mut again = request(1);
     again.transition_id = "t2".into();

@@ -53,7 +53,7 @@ fn the_engine_profile_equals_the_exact_profile_of_every_demo_type() {
         .unwrap(),
     );
     let names = host.object_type_names().unwrap();
-    assert!(!names.is_empty());
+    assert_ne!(names.len(), 0);
     for name in names {
         let path = format!("/v1/objects/{name}:profile");
         let request = server::Request {

@@ -1059,7 +1059,7 @@ mod ontology_derived_measures {
                 _ => law.modality = LawModality::Never {},
             }
             artifacts[1].payload = payload(&ArtifactKind::Law, &law);
-            assert!(space(&artifacts).candidates().is_empty());
+            assert_eq!(space(&artifacts).candidates().len(), 0);
         }
     }
 

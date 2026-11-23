@@ -93,10 +93,10 @@ impl Store {
 impl S3Config {
     /// The storage of `store` named by `vars`: `NORN_S3_ENDPOINT` and
     /// `NORN_S3_REGION` (shared), then `NORN_S3_BUCKET` with
-    /// `NORN_SECRET_S3_ACCESS_KEY_ID` / `NORN_SECRET_S3_SECRET_ACCESS_KEY`,
+    /// `NORN_S3_ACCESS_KEY_ID` / `NORN_S3_SECRET_ACCESS_KEY`,
     /// or `NORN_S3_DOCUMENTS_BUCKET` with
-    /// `NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID` /
-    /// `NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY`. `None` when not configured.
+    /// `NORN_S3_DOCUMENTS_ACCESS_KEY_ID` /
+    /// `NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY`. `None` when not configured.
     #[must_use]
     pub fn from_vars(vars: &BTreeMap<String, String>, store: Store) -> Option<Self> {
         let get = |name: &str| vars.get(name).filter(|v| !v.is_empty()).cloned();
@@ -108,13 +108,13 @@ impl S3Config {
         let (bucket, id, secret) = match store {
             Store::Uploads => (
                 "NORN_S3_BUCKET",
-                "NORN_SECRET_S3_ACCESS_KEY_ID",
-                "NORN_SECRET_S3_SECRET_ACCESS_KEY",
+                "NORN_S3_ACCESS_KEY_ID",
+                "NORN_S3_SECRET_ACCESS_KEY",
             ),
             Store::Documents => (
                 "NORN_S3_DOCUMENTS_BUCKET",
-                "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID",
-                "NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY",
+                "NORN_S3_DOCUMENTS_ACCESS_KEY_ID",
+                "NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY",
             ),
         };
         Some(Self {
@@ -950,13 +950,13 @@ pub fn load_rows<E: SqlEngine>(
             .rows_read
             .saturating_add(u64::try_from(batch.len()).unwrap_or(u64::MAX));
         for ingested in host.ingest(&batch).map_err(|r| r.message)? {
-            match ingested.outcome {
+            match &ingested.outcome {
                 MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
                     loaded.rows_landed = loaded.rows_landed.saturating_add(1);
                 }
-                MappingOutcome::Quarantined(codes) => {
+                quarantined @ MappingOutcome::Quarantined(_) => {
                     loaded.rows_quarantined = loaded.rows_quarantined.saturating_add(1);
-                    for code in codes {
+                    for code in quarantined.codes() {
                         let n = loaded.quarantine_reasons.entry(code).or_insert(0);
                         *n = n.saturating_add(1);
                     }

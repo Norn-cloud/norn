@@ -27,6 +27,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use utoipa::IntoParams;
 
+/// S2 (#1547): a question that reads history (a knowledge cutoff, a
+/// property's versions, or a trace as answered) groups or filters by a
+/// property some version of which, current, past or deleted, holds a label.
+pub const MARKED_HISTORY: &str = "question.marked_history";
+
 /// Trusted per-request source frontier and authenticated history selection.
 pub struct QuestionSnapshot {
     /// Current host population, source coverage, authorization epoch and observation clock.
@@ -229,7 +234,14 @@ fn answer_plan<E: SqlEngine>(
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
-    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world)?;
+    let historical = snapshot.cutoff.is_some() || plan.as_of();
+    refuse_labeled_paths(
+        host,
+        cell.store(),
+        plan,
+        &snapshot.context.world,
+        historical,
+    )?;
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
@@ -433,14 +445,29 @@ pub fn get_numeric_trace<E: SqlEngine>(
 /// world. A summary the store
 /// cannot prove complete refuses too (fail closed). A cell that declares no
 /// marking has none to find.
+///
+/// A `historical` question (at a knowledge cutoff, over a property's versions,
+/// or traced as answered at an earlier frontier) also reads retained values
+/// of deleted and relabelled rows, which the live summary does not see. It is
+/// refused with `question.marked_history` when any version, current or past,
+/// of a grouped or filtered property holds a label (S2, #1547): fail closed
+/// rather than prove which versions it reads are unmarked. "Filtered" covers
+/// every lowered sum's filters, its metric's default filters included (S2a).
 fn refuse_labeled_paths<E: SqlEngine>(
     host: &DevHost<E>,
     store: &CellStore<E>,
     plan: &QuestionPlan,
     world: &str,
+    historical: bool,
 ) -> Result<(), Refusal> {
     let question = plan.question();
-    if question.dimensions.is_empty() && question.filters.is_empty() {
+    // A lowered sum's filters (its metric's defaults, S2a #1547) are
+    // predicates on row values too: a total can reveal whether a marked
+    // value matched, so they are checked like the question's own.
+    if question.dimensions.is_empty()
+        && question.filters.is_empty()
+        && plan.sums().iter().all(|sum| sum.filters.is_empty())
+    {
         return Ok(());
     }
     let reader = store.read();
@@ -451,14 +478,22 @@ fn refuse_labeled_paths<E: SqlEngine>(
         .dimensions
         .iter()
         .enumerate()
-        .map(|(index, dimension)| (format!("/groupBy/{index}"), &dimension.path))
+        .map(|(index, dimension)| (format!("/question/groupBy/{index}"), &dimension.path))
         .chain(
             question
                 .filters
                 .iter()
                 .enumerate()
-                .map(|(index, filter)| (format!("/filter/{index}"), &filter.path)),
-        );
+                .map(|(index, filter)| (format!("/question/filter/{index}"), &filter.path)),
+        )
+        .chain(plan.sums().iter().flat_map(|sum| {
+            sum.filters.iter().enumerate().map(move |(index, filter)| {
+                (
+                    format!("/metric/{}/norn/defaultFilters/{index}", sum.name),
+                    &filter.path,
+                )
+            })
+        }));
     for (pointer, path) in paths {
         let property = path.property.as_str();
         // An own path is read on the grain; a linked one (admitted only for a
@@ -480,6 +515,24 @@ fn refuse_labeled_paths<E: SqlEngine>(
                 .collect()
         };
         for object_type in types {
+            if historical
+                && reader
+                    .property_history_marked(world, &object_type, property)
+                    .map_err(Refusal::host)?
+            {
+                let mut refusal = Refusal::new(
+                    http::StatusCode::UNPROCESSABLE_ENTITY,
+                    MARKED_HISTORY,
+                    "the question reads history that holds marked values",
+                    "ask the current answer, or group and filter by a field none of whose versions is marked",
+                );
+                refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
+                    MARKED_HISTORY,
+                    "this question groups or filters by a field whose earlier or deleted versions are marked",
+                    pointer,
+                )];
+                return Err(refusal);
+            }
             let labels = reader
                 .property_marking_summary(world, &object_type, property)
                 .map_err(Refusal::host)?;
@@ -493,7 +546,7 @@ fn refuse_labeled_paths<E: SqlEngine>(
                 refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
                     norn_checker::metric::codes::MARKED_FIELD,
                     "this question groups or filters by a field whose values are marked",
-                    format!("/question{pointer}"),
+                    pointer,
                 )];
                 return Err(refusal);
             }
@@ -521,7 +574,14 @@ fn trace_plan<E: SqlEngine>(
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
-    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world)?;
+    let historical = snapshot.cutoff.is_some() || answered.is_some() || plan.as_of();
+    refuse_labeled_paths(
+        host,
+        cell.store(),
+        plan,
+        &snapshot.context.world,
+        historical,
+    )?;
     if snapshot.cutoff.is_some() {
         return Err(Refusal::from_compute(CellError::ComputeRefused(
             "core.compute.unsupported_engine",
@@ -1001,14 +1061,12 @@ pub fn metric_summary(
                 |path| path.property.0.clone(),
             )
         }),
-        time_links: time
-            .map(|path| {
-                path.links
-                    .iter()
-                    .map(|link| link.as_str().to_owned())
-                    .collect()
-            })
-            .unwrap_or_default(),
+        time_links: time.map_or_default(|path| {
+            path.links
+                .iter()
+                .map(|link| link.as_str().to_owned())
+                .collect()
+        }),
         numerator: definition.type_params.numerator.clone(),
         denominator: definition.type_params.denominator.clone(),
         unit_partition,
@@ -1041,6 +1099,11 @@ pub fn list_metrics<E: SqlEngine>(
     runtime: &dyn AdHocQuestions<E>,
 ) -> Result<NornMetricList, Refusal> {
     let actor = actor.ok_or_else(read_denied)?;
+    // TENANT-ISOLATION-1: a scope that is not this cell's is refused as every
+    // other route refuses it, never answered with an empty list.
+    host.scope()
+        .admit(scope.org_id.as_deref(), scope.environment_id.as_deref())
+        .map_err(|_refusal| read_denied())?;
     let named: &dyn QuestionRuntime<E> = runtime;
     let readable = |object_type: &str| {
         mapped(host, named, actor, object_type, Population, None).is_ok_and(|access| {

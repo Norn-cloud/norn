@@ -25,7 +25,8 @@ use std::time::Instant;
 
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
-    FileFormat, FileSource, LandRequest, LoadRequest, SettleRequest, TenantId,
+    FileFormat, FileSource, LandRequest, LoadRequest, SettleRequest, StoreRequest, StoredObject,
+    TenantId, dataset_cache_id,
 };
 use norn_cell::dataset_manifest::{
     DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestSource,
@@ -110,13 +111,15 @@ fn bpi_2019_through_one_manifest() {
         threads,
     })
     .expect("engine");
-    let copy = engine.scratch().join("bpi19.csv");
-    std::fs::copy(&path, &copy).expect("scratch copy");
     let store = cell.store();
     let table = store.analytics_table(TYPE).expect("table");
     let checks = store.dataset_checks(TYPE, &table).expect("checks");
     let lowered = checks.iter().filter(|c| c.predicate.is_some()).count();
-    let request = LandRequest {
+    let binding = BTreeMap::new();
+    let pins = store
+        .dataset_pins(TYPE, &binding, "bench.dataset.mapping@bench")
+        .expect("pins");
+    let mut request = LandRequest {
         load: LoadRequest {
             tenant: TenantId::of_scope("bench"),
             table: table.clone(),
@@ -127,19 +130,27 @@ fn bpi_2019_through_one_manifest() {
                 sha256: sha256.clone(),
                 format: FileFormat::Csv,
             },
-            headers: BTreeMap::new(),
+            headers: binding.clone(),
         },
-        data_url: String::new(),
-        held_url: String::new(),
+        pins: pins.clone(),
+        landing: "bpi19".into(),
+        attempt: String::new(),
         checks,
         residue_page: 2_000,
     };
     let at = Instant::now();
-    let mut landed = engine.land(&request, &copy).expect("landed");
+    let mut source = std::fs::File::open(&path).expect("log");
+    let mut landed = engine
+        .land(&request, |mut file| {
+            std::io::copy(&mut source, &mut file).expect("source copy");
+            Ok(())
+        })
+        .expect("landed");
     let land = at.elapsed();
+    request.attempt.clone_from(&landed.attempt);
     let (mut residue_rows, mut residue_eval, mut settle_time) = (0u64, 0f64, 0f64);
-    while landed.response.residue_total > 0 {
-        let page = landed.response.residue.clone();
+    while landed.residue_total > 0 {
+        let page = landed.residue.clone();
         residue_rows += page.len() as u64;
         let at = Instant::now();
         let findings = store
@@ -156,49 +167,72 @@ fn bpi_2019_through_one_manifest() {
             .expect("settled");
         settle_time += at.elapsed().as_secs_f64();
     }
-    let response = landed.response;
     let (data, held) = (
-        response.data.clone().expect("data file"),
-        response.held.clone().expect("held file"),
+        landed.data.clone().expect("data file"),
+        landed.held.clone().expect("held file"),
     );
-    let binding = BTreeMap::new();
+    let data_uri = format!("s3://bench/datasets/{}.parquet", data.sha256);
+    let held_uri = format!("s3://bench/datasets/{}.parquet", held.sha256);
+    let at = Instant::now();
+    let response = engine
+        .store(
+            &StoreRequest {
+                land: request,
+                landed,
+                data: StoredObject {
+                    uri: data_uri.clone(),
+                    url: String::new(),
+                },
+                held: StoredObject {
+                    uri: held_uri.clone(),
+                    url: String::new(),
+                },
+            },
+            |_data, _held| Ok(()),
+        )
+        .expect("stored");
+    let stored = at.elapsed();
+    let load = dataset_cache_id(&table, &data.sha256, &held.sha256);
+    assert_eq!(response.stored.as_deref(), Some(load.as_str()));
+    let markings = store.dataset_markings(TYPE, &table).expect("markings");
     let manifest = DatasetManifest {
         version: MANIFEST_VERSION.into(),
         object_type: TYPE.into(),
-        load: "bpi19".into(),
+        load,
         source: ManifestSource {
             uri: "s3://bench/uploads/bpi19.csv".into(),
             sha256,
             format: FileFormat::Csv,
             bytes: source_bytes,
         },
-        binding: binding.clone(),
+        binding,
         table,
-        pins: store.dataset_pins(TYPE, &binding).expect("pins"),
+        pins,
         data: ManifestFile {
-            uri: "s3://bench/datasets/data.parquet".into(),
+            uri: data_uri,
             sha256: data.sha256.clone(),
             rows: data.rows,
             bytes: data.bytes,
         },
         held: ManifestFile {
-            uri: "s3://bench/datasets/held.parquet".into(),
+            uri: held_uri,
             sha256: held.sha256.clone(),
             rows: held.rows,
             bytes: held.bytes,
         },
         counts: ManifestCounts {
             source: response.load.rows + response.load.rejected,
-            admitted: response.load.rows,
+            admitted: data.rows,
             held: response.load.reasons.clone(),
             findings: response.findings.clone(),
             held_by_rules: response.held_by_rules,
         },
         valid_time: response.valid_time.clone(),
+        markings,
     };
     let at = Instant::now();
     let (hash, receipt) = cell
-        .commit_dataset_manifest(&manifest)
+        .commit_dataset_manifest(&manifest, None)
         .expect("manifest committed");
     let commit = at.elapsed();
     let total = started.elapsed();
@@ -209,7 +243,7 @@ fn bpi_2019_through_one_manifest() {
     println!(
         "BENCH-MANIFEST {}",
         json!({
-            "rows": rows, "admitted": response.load.rows, "refused": response.load.rejected,
+            "rows": rows, "admitted": data.rows, "refused": response.load.rejected,
             "refusedReasons": response.load.reasons, "heldByRules": response.held_by_rules,
             "findings": response.findings, "rulesLowered": lowered, "rules": LAWS.len(),
             "residueRows": residue_rows, "sourceBytes": source_bytes,
@@ -218,6 +252,7 @@ fn bpi_2019_through_one_manifest() {
             "engine": {"threads": threads, "memory": memory},
             "seconds": {"hashSource": hashed.as_secs_f64(), "landAndCheck": land.as_secs_f64(),
                 "residuePerRow": residue_eval, "residueSettle": settle_time,
+                "store": stored.as_secs_f64(),
                 "commit": commit.as_secs_f64(), "total": total.as_secs_f64()},
             "rowsPerSecond": rows as f64 / total.as_secs_f64(),
             "perRowBaseline": baseline,
