@@ -23,10 +23,12 @@ engine="${NORN_WASM_ENGINE:-0}"
 if [[ "${engine}" == "1" ]]; then
   name="norn_engine_wasm" package="@norn/checker-engine" features=(--no-default-features)
   description="The ZEN engine alone: the checker ABI evaluateExpression, the same function as @norn/checker-wasm"
+  stamp_name=engine-clean
   out="${1:-${target_dir}/norn-checker-wasm/engine}"
 else
   name="norn_checker_wasm" package="@norn/checker-wasm" features=()
   description="Norn checker ABI (norn-checker-abi/1): JSON-in/JSON-out, byte-identical to the native checker"
+  stamp_name=pkg-clean
   out="${1:-${target_dir}/norn-checker-wasm/pkg}"
 fi
 wasm_manifest="${root}/crates/norn-checker-wasm/Cargo.toml"
@@ -53,6 +55,7 @@ cargo rustc --locked -p norn-checker-wasm --lib "${features[@]}" \
   --manifest-path "${root}/Cargo.toml"
 
 wasm="${target_dir}/wasm32-unknown-unknown/wasm-release/norn_checker_wasm.wasm"
+rm -f "${target_dir}/norn-checker-wasm/.${stamp_name}"
 mkdir -p "${out}"
 wasm-bindgen "${wasm}" --target web --out-dir "${out}" --out-name "${name}" \
   --remove-producers-section
