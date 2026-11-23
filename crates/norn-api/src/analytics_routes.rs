@@ -38,7 +38,7 @@ use utoipa::ToSchema;
 
 use crate::authz::{Operation, ReadCapability};
 use crate::host::DevHost;
-use crate::object_routes::{ObjectAccess, uniform_gate};
+use crate::object_routes::{ObjectAccess, uniform_gate, uniform_sources_gate};
 use crate::question_routes::{AdHocQuestions, QuestionRuntime, QuestionSnapshot};
 use crate::refusal::Refusal;
 use crate::scope::{CellScope, ScopeQuery};
@@ -1566,8 +1566,8 @@ pub struct NornDatasetLineage {
 /// MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the
 /// records grid names it, to the manifest that admitted it, the source
 /// upload and the data file, each by content hash and row offset, with what
-/// held it back. Held-back rows are traced too. Read like the type's
-/// records; no value is disclosed.
+/// held it back. Held-back rows are traced too. Requires Population, Values
+/// and Sources on the type; no value is disclosed.
 ///
 /// # Errors
 /// A denied gate (one opaque 403), no dataset or no such row (404), or an
@@ -1582,7 +1582,7 @@ pub fn dataset_lineage<E: SqlEngine>(
     transport: &dyn Transport,
 ) -> Result<NornDatasetLineage, Refusal> {
     use norn_cell::analytics::{LineageRequest, LineageResponse};
-    uniform_gate(host, scope, actor, object_type, access)?;
+    uniform_sources_gate(host, scope, actor, object_type, access)?;
     let row: u64 = row
         .parse()
         .ok()
@@ -1904,19 +1904,32 @@ impl DatasetMarks {
     }
 }
 
-/// The marks of the current dataset of `object_type`: its manifest's marked
-/// columns, under the cell's marking catalog.
+/// The marks of the current dataset of `object_type`: the monotone union of
+/// its manifest's marked columns and the type's currently declared property
+/// markings, under the cell's marking catalog.
 fn dataset_marks<E: SqlEngine>(
     host: &DevHost<E>,
     store: &CellStore<E>,
     object_type: &str,
 ) -> Result<DatasetMarks, Refusal> {
-    let columns = store
+    let reader = store.read();
+    let columns = match reader
         .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
         .map_err(Refusal::host)?
-        .map_or_default(|current| current.manifest.markings);
+    {
+        Some(current) => reader
+            .effective_dataset_markings(&current.manifest)
+            .map_err(Refusal::host)?,
+        None => reader
+            .model()
+            .effective_property_markings(object_type)
+            .map_err(Refusal::host)?
+            .into_iter()
+            .filter(|(_, markings)| !markings.is_empty())
+            .collect(),
+    };
     Ok(DatasetMarks {
-        catalog: host.marking_catalog(&store.read())?,
+        catalog: host.marking_catalog(&reader)?,
         columns,
         key: host.pseudonym_key().cloned(),
     })
@@ -2092,6 +2105,8 @@ fn page_clause(
 /// they are stored: the cell holds no marking label, or it declares no
 /// marking and no live row of the type carries one, so its labels (the
 /// kernel's on its own records, or earlier versions') are elsewhere (#1547).
+/// A loaded dataset with any effective column marking (manifest union current
+/// model) never leaves as raw stored values.
 ///
 /// # Errors
 /// A store failure.
@@ -2100,12 +2115,22 @@ fn stored_values_leave<E: SqlEngine>(
     reader: &norn_cell::StoreReader<'_, E>,
     object_type: &str,
 ) -> Result<bool, Refusal> {
+    if let Some(current) = reader
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?
+        && !reader
+            .effective_dataset_markings(&current.manifest)
+            .map_err(Refusal::host)?
+            .is_empty()
+    {
+        return Ok(false);
+    }
     let catalog = host.marking_catalog(reader)?;
     Ok(catalog.is_empty()
         || (!crate::privacy::declares(&catalog) && unlabeled(reader, object_type)))
 }
 
-/// S3 (#1547): `leave`, whether `object_type`'s stored values may reach the
+/// S3 (#1547): `decide`, how `object_type`'s stored values may reach the
 /// engine, and the analytics source an engine call reads, at one cell
 /// version. A commit by any
 /// connection between the decision and the frontier would let a row the
@@ -2116,31 +2141,41 @@ fn stored_values_leave<E: SqlEngine>(
 ///
 /// # Errors
 /// A moved snapshot, an engine without a revision, or a store failure.
-fn decided_source<E: SqlEngine>(
+fn decided_source<E: SqlEngine, T>(
     host: &DevHost<E>,
     store: &CellStore<E>,
     object_type: &str,
-    leave: impl Fn(&norn_cell::StoreReader<'_, E>) -> Result<bool, Refusal>,
-) -> Result<(bool, norn_cell::analytics::Source, String), Refusal> {
+    decide: impl Fn(&norn_cell::StoreReader<'_, E>) -> Result<T, Refusal>,
+) -> Result<(T, norn_cell::analytics::Source, String), Refusal> {
     for _attempt in 0..3 {
         let reader = store.read();
         let start = crate::object_routes::cell_version(&reader)?;
-        let leave = leave(&reader)?;
+        let decision = decide(&reader)?;
         let (source, snapshot) = store
             .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
             .map_err(engine_failure)?;
         if crate::object_routes::cell_version(&reader)? == start {
-            return Ok((leave, source, snapshot));
+            return Ok((decision, source, snapshot));
         }
     }
     Err(crate::object_routes::snapshot_moved())
 }
 
 /// Whether every live row of `object_type` has a complete marking snapshot
-/// with no label on any of its properties. An unknown type, an incomplete
-/// snapshot or an unbounded summary counts as labeled: it fails closed to the
-/// native profile.
+/// with no label on any of its properties. For a loaded dataset whose rows
+/// live in the engine, this checks the effective dataset markings (manifest
+/// union current model). An unknown type, an incomplete snapshot or an
+/// unbounded summary counts as labeled: it fails closed.
 fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
+    match reader.dataset_manifest(norn_cell::MAIN_WORLD, object_type) {
+        Ok(Some(current)) => {
+            return reader
+                .effective_dataset_markings(&current.manifest)
+                .is_ok_and(|markings| markings.is_empty());
+        }
+        Ok(None) => {}
+        Err(_) => return false,
+    }
     let Ok(properties) = reader.model().effective_property_types(object_type) else {
         return false;
     };
@@ -2151,6 +2186,42 @@ fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: 
     })
 }
 
+/// How `GET /v1/objects/{type}:profile` handles `object_type` under PRIVACY-1
+/// and MANIFEST-MARK-1.
+enum ProfilePlan {
+    /// Unmarked mirror or unmarked loaded dataset: profile on the engine.
+    Engine,
+    /// Marked cell-stored type: profile natively over projected values.
+    Native,
+    /// Loaded dataset with at least one effective marked column: refuse before
+    /// touching the engine.
+    RefusedColumn(String),
+}
+
+fn decide_profile<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &norn_cell::StoreReader<'_, E>,
+    object_type: &str,
+) -> Result<ProfilePlan, Refusal> {
+    if let Some(current) = reader
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?
+    {
+        let markings = reader
+            .effective_dataset_markings(&current.manifest)
+            .map_err(Refusal::host)?;
+        if let Some((column, _)) = markings.into_iter().next() {
+            return Ok(ProfilePlan::RefusedColumn(column));
+        }
+        return Ok(ProfilePlan::Engine);
+    }
+    if host.marking_catalog(reader)?.is_empty() || unlabeled(reader, object_type) {
+        Ok(ProfilePlan::Engine)
+    } else {
+        Ok(ProfilePlan::Native)
+    }
+}
+
 /// HOST-READ-5 on the engine (D102): the profile of every row of
 /// `object_type` the caller may read, in the exact profile's shape and
 /// semantics (nearest-rank quantiles, equal-population bins, calendar labels,
@@ -2159,7 +2230,8 @@ fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: 
 /// rows counted as withheld and no value statistic.
 ///
 /// # Errors
-/// A denied gate (one opaque 403), an unknown type (404), or an unreachable engine.
+/// A denied gate (one opaque 403), a marked dataset column (`privacy.marked_column`, 403),
+/// an unknown type (404), or an unreachable engine.
 pub fn profile_objects<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -2171,16 +2243,21 @@ pub fn profile_objects<E: SqlEngine>(
     use norn_cell::analytics::{ProfileRequest, ProfileResponse};
     // PRIVACY-1: the engine mirror holds stored values; a cell that declares
     // markings profiles natively, over projected values, unless no live row
-    // of this type carries a label on any of its properties. Then every value
-    // projects as itself and the engine's profile is the native one.
-    let leave = |reader: &norn_cell::StoreReader<'_, E>| -> Result<bool, Refusal> {
-        Ok(host.marking_catalog(reader)?.is_empty() || unlabeled(reader, object_type))
-    };
-    let unmarked = {
+    // of this type carries a label on any of its properties. A loaded dataset
+    // lives only in the engine, so it always passes the authorization gate
+    // first and then refuses if any effective column is marked.
+    let native_only = {
         let guard = host.cell()?;
-        leave(&guard.store().read())?
+        let reader = guard.store().read();
+        let is_dataset = reader
+            .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+            .map_err(Refusal::host)?
+            .is_some();
+        !(is_dataset
+            || host.marking_catalog(&reader)?.is_empty()
+            || unlabeled(&reader, object_type))
     };
-    if !unmarked {
+    if native_only {
         return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
     }
     let values = uniform_gate(host, scope, actor, object_type, access)?;
@@ -2188,10 +2265,22 @@ pub fn profile_objects<E: SqlEngine>(
     let store = guard.store();
     // After the gate, so a denied caller costs what it did: the decision
     // again, with the profiled frontier, at one cell version (S3, #1547).
-    let (unmarked, source, _snapshot) = decided_source(host, store, object_type, leave)?;
-    if !unmarked {
-        drop(guard);
-        return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
+    let (plan, source, _snapshot) = decided_source(host, store, object_type, |reader| {
+        decide_profile(host, reader, object_type)
+    })?;
+    match plan {
+        ProfilePlan::Native => {
+            drop(guard);
+            return crate::object_profile::get_object_profile(
+                host,
+                scope,
+                actor,
+                object_type,
+                access,
+            );
+        }
+        ProfilePlan::RefusedColumn(column) => return Err(marked_column(&column)),
+        ProfilePlan::Engine => {}
     }
     let declared = store
         .model()

@@ -1200,7 +1200,7 @@ impl Engine {
     /// Held-back rows are answered too: lineage reaches every source row.
     ///
     /// # Errors
-    /// `core.compute.dataset_cold` if the kept files are absent,
+    /// `analytics.dataset_cold` if the kept files are absent,
     /// `core.compute.stale_input` for another landing, or an engine failure.
     pub fn lineage(&self, request: &LineageRequest) -> Outcome<LineageResponse> {
         self.with(&request.tenant, |conn| {

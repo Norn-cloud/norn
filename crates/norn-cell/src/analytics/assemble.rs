@@ -162,10 +162,11 @@ impl<E: SqlEngine> CellStore<E> {
                 }
                 // MANIFEST-MARK-1: an answer over a marked column would carry
                 // its stored values outside any projection.
+                let markings = self.effective_dataset_markings(&dataset.manifest)?;
                 if plan
                     .properties()
                     .iter()
-                    .any(|property| dataset.manifest.markings.contains_key(property.id.as_str()))
+                    .any(|property| markings.contains_key(property.id.as_str()))
                 {
                     return Err(refused(MARKED_COLUMN));
                 }

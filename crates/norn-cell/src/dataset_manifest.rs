@@ -27,7 +27,7 @@
 //!   table and the two files' digests ([`dataset_cache_id`]); the engine
 //!   rebuilds it from files of exactly those digests on a miss.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -35,7 +35,7 @@ use serde_json::Value;
 use crate::analytics::{FileFormat, RuleCount, TableSchema, ValidRange, dataset_cache_id};
 use crate::engine::{SqlEngine, params};
 use crate::system::LEDGER;
-use crate::{CellError, CellStore, CommitBatch, GuardedError, Receipt};
+use crate::{CellError, CellStore, CommitBatch, GuardedError, Receipt, StoreReader};
 
 /// The ledger event type of a committed manifest.
 pub const MANIFEST_EVENT: &str = "dataset.manifest";
@@ -439,6 +439,36 @@ impl<E: SqlEngine> CellStore<E> {
         world: &str,
         object_type: &str,
     ) -> Result<Option<CommittedManifest>, CellError> {
+        self.read().dataset_manifest(world, object_type)
+    }
+
+    /// MANIFEST-MARK-1: the effective markings of every marked column of a
+    /// committed dataset: the monotone union of the markings stamped into its
+    /// manifest at load time and the type's currently declared property
+    /// markings. Adding a marking in a later definitions version immediately
+    /// governs every read of an already-loaded dataset, and removing one never
+    /// unmarks columns already stamped in the manifest.
+    ///
+    /// # Errors
+    /// An unknown type or model error (fails closed).
+    pub fn effective_dataset_markings(
+        &self,
+        manifest: &DatasetManifest,
+    ) -> Result<BTreeMap<String, Vec<String>>, CellError> {
+        self.read().effective_dataset_markings(manifest)
+    }
+}
+
+impl<E: SqlEngine> StoreReader<'_, E> {
+    /// MANIFEST-CURRENT-1: the current dataset of `object_type` in `world`.
+    ///
+    /// # Errors
+    /// A store error or an undecodable manifest event.
+    pub fn dataset_manifest(
+        &self,
+        world: &str,
+        object_type: &str,
+    ) -> Result<Option<CommittedManifest>, CellError> {
         let found = self.conn.query_optional(
             &format!(
                 "SELECT \"event\", \"commit_seq\" FROM \"{LEDGER}\" \
@@ -463,6 +493,40 @@ impl<E: SqlEngine> CellStore<E> {
             hash,
             commit_seq,
         }))
+    }
+
+    /// MANIFEST-MARK-1: the effective markings of every marked column of a
+    /// committed dataset: the monotone union of `manifest.markings` and the
+    /// type's current `effective_property_markings`.
+    ///
+    /// # Errors
+    /// An unknown type or model error (fails closed).
+    pub fn effective_dataset_markings(
+        &self,
+        manifest: &DatasetManifest,
+    ) -> Result<BTreeMap<String, Vec<String>>, CellError> {
+        let mut merged: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for (column, ids) in &manifest.markings {
+            if !ids.is_empty() {
+                merged
+                    .entry(column.clone())
+                    .or_default()
+                    .extend(ids.iter().cloned());
+            }
+        }
+        for (column, ids) in self
+            .model()
+            .effective_property_markings(&manifest.object_type)?
+        {
+            if !ids.is_empty() {
+                merged.entry(column).or_default().extend(ids);
+            }
+        }
+        Ok(merged
+            .into_iter()
+            .filter(|(_, ids)| !ids.is_empty())
+            .map(|(column, ids)| (column, ids.into_iter().collect()))
+            .collect())
     }
 }
 
