@@ -125,12 +125,29 @@ CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 CORE_RUNNER = ROOT / "scripts/ci/core.sh"
 AUTHORING_INVENTORY = ROOT / "scripts/ci/authoring-test-files.txt"
-# The keys of the shared Boat cache (R2) reach only the sccache start step. The writable key is a
-# secret of the `ci-cache-writer-boat` environment, which a push to main enters exactly when it
-# runs on Boat (#1369): made and started by the merge queue's bot, with NORN_MAIN_RUNNER set. A
-# hosted main push (a human's push or re-run included) never receives the key.
-SCCACHE_SECRETS = {name: "${{ secrets.%s }}" % name for name in
-                   ("NORN_SCCACHE_BUCKET", "NORN_SCCACHE_ENDPOINT", "NORN_SCCACHE_KEY_ID", "NORN_SCCACHE_SECRET")}
+# The keys of the shared Boat cache (R2) reach only the sccache start step. Only the
+# `ci-cache-writer-boat` environment names the writer identity, and a push to main enters it exactly
+# when it runs on Boat (#1369): made and started by the merge queue's bot, with NORN_MAIN_RUNNER
+# set. A hosted main push (a human's push or re-run included) never logs in as the writer.
+# The keys live in Infisical. The
+# step before the start step reads them over OIDC with the reviewed helper
+# scripts/ci/infisical-oidc.sh and hands them over as its outputs.
+SCCACHE_SECRETS = {"NORN_SCCACHE_%s" % name: "${{ steps.sccache-keys.outputs.norn_sccache_%s }}" % name.lower()
+                   for name in ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")}
+# The reader and the writer have their own variables (the writer's are set only in the
+# `ci-cache-writer-boat` environment) and their own Infisical projects; only a push to main asks for
+# the writer, and an unset variable yields '' rather than the other role's.
+SCCACHE_ROLE = ("${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_%s"
+                " || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_%s"
+                " || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_%s || '' }}")
+SCCACHE_KEY_VARS = {"INFISICAL_%s" % what: SCCACHE_ROLE % (what, what, what) for what in ("IDENTITY_ID", "PROJECT_ID")}
+# Pin the cache step to the Infisical OIDC helper.
+SCCACHE_KEYS = ("bash scripts/ci/infisical-oidc.sh --optional prod /sccache"
+                " NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET")
+SCCACHE_KEYS_STEP = {"name": "Read the shared cache keys from Infisical over OIDC", "id": "sccache-keys",
+                     "if": "${{ runner.environment == 'self-hosted' }}", "env": SCCACHE_KEY_VARS, "run": SCCACHE_KEYS}
+# core and test may mint an OIDC token, for that step; no other job may.
+OIDC_PERMISSIONS = {"contents": "read", "id-token": "write"}
 CACHE_WRITER_ENVIRONMENT = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}"
 SCCACHE_START = r"""set -uo pipefail
 # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
@@ -623,19 +640,29 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     }, "workflow must cancel only superseded PR and main runs")
     require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}",
             "run name must attribute READY to the triggering event and head")
+    require(workflow.get("permissions") == {"contents": "read"},
+            "workflow: inherited permissions must be contents: read")
     jobs = workflow["jobs"]
     # The shared cache keys appear only as the sccache start steps' environment of core and test;
     # no other job enters the cache-writer environment.
     for name, job in jobs.items():
         require(name in {"core", "test"} or "environment" not in job,
                 f"{name}: only core and test may name the cache-writer environment")
+        permissions = job.get("permissions") or {}
+        # `write-all` grants id-token: write too (and `"id-token" in "write-all"` is a substring test).
+        require(permissions == {**OIDC_PERMISSIONS, "actions": "read"} if name == "core"
+                else permissions == OIDC_PERMISSIONS if name == "test"
+                else permissions != "write-all" and "id-token" not in permissions,
+                f"{name}: only core and test mint an OIDC token, with contents: read beside it")
         for step in job.get("steps", []):
-            expected = SCCACHE_SECRETS if (name in {"core", "test"}
-                                           and step.get("name") == "Start sccache or compile without it") else {}
-            require({key: value for key, value in (step.get("env") or {}).items() if "NORN_SCCACHE_" in str(value)} == expected,
+            in_cache_job = name in {"core", "test"}
+            expected = (SCCACHE_SECRETS if in_cache_job and step.get("name") == "Start sccache or compile without it"
+                        else SCCACHE_KEY_VARS if in_cache_job and step.get("id") == "sccache-keys" else {})
+            require({key: value for key, value in (step.get("env") or {}).items()
+                     if "NORN_SCCACHE_" in f"{key}={value}"} == expected,
                     f"{name}: shared cache keys may reach only the sccache start step")
-    require(source.count("secrets.NORN_SCCACHE_") == 2 * len(SCCACHE_SECRETS),
-            "shared cache keys may appear only in the two sccache start steps")
+    require(source.count("steps.sccache-keys.outputs.") == 2 * len(SCCACHE_SECRETS) and "secrets.NORN_SCCACHE_" not in source,
+            "shared cache keys may appear only in the two sccache start steps, from Infisical")
     # The gate plan is a hosted job of its own (no Boat start), so bundles start alongside core.
     require(set(jobs) == {"plan", "core", "test", "full", "trusted-policy"}, "workflow job inventory changed")
     check_names = {"core": "core", "full": "full", "trusted-policy": "trusted-policy evaluation"}
@@ -717,6 +744,8 @@ echo "$plan"'''
         {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",
          "with": {"version": "v0.19.0", "disable_annotations": True}},
         # RUSTC_WRAPPER is set only once the sccache server runs; otherwise plain rustc.
+        # The keys come from Infisical over OIDC, on Boat only.
+        SCCACHE_KEYS_STEP,
         {"name": "Start sccache or compile without it", "env": SCCACHE_SECRETS, "run": SCCACHE_START},
         {"uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
          "with": {"cache-targets": False, "shared-key": "cargo-registry",
@@ -804,6 +833,10 @@ df -h /
         preparation.insert(1, copy.deepcopy(boat_cleanup))
         after_checkout = preparation.index(checkout) + 1
         preparation[after_checkout:after_checkout] = ([hosted_warning] if name == "core" else []) + [libclang]
+        if name == "core":
+            preparation.append({"name": "Audit Actions secret inventory",
+                                "env": {"GITHUB_TOKEN": "${{ github.token }}"},
+                                "run": "python3 -I scripts/ci/actions-secret-inventory.py"})
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
@@ -813,7 +846,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == {"core": 6, "test": 5}[name],
+        require(len([step for step in job_steps if "run" in step]) == {"core": 8, "test": 6}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")

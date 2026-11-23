@@ -1510,6 +1510,12 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["run-name"] = "${{ github.event.pull_request.title }}"
         rejected("forged READY attribution", document)
+        document = copy.deepcopy(workflow)
+        document["permissions"]["id-token"] = "write"
+        rejected("workflow-wide OIDC grant inherited by the planner", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["plan"]["permissions"] = {"contents": "read", "id-token": "write"}
+        rejected("planner OIDC grant", document)
         for name in ("core", "full", "trusted-policy"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
@@ -1690,12 +1696,35 @@ def workflow_context_canaries(source: str) -> None:
                     ("cache keys outside the start step", lambda job: next(step for step in job["steps"]
                         if step.get("uses", "").startswith("Swatinem/rust-cache@")).__setitem__("env",
                         {"NORN_SCCACHE_SECRET": "${{ secrets.NORN_SCCACHE_SECRET }}"})),
+                    # The keys come from Infisical over OIDC, never from GitHub secrets again.
+                    ("cache keys back in GitHub secrets", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("env",
+                        {"NORN_SCCACHE_%s" % name: "${{ secrets.NORN_SCCACHE_%s }}" % name
+                         for name in ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")})),
+                    ("cache-key step on hosted runners", lambda job: next(step for step in job["steps"]
+                        if step.get("id") == "sccache-keys").pop("if")),
+                    ("cache-key step without its OIDC token", lambda job: job.pop("permissions")),
+                    ("job-wide write permissions for the cache", lambda job: job.__setitem__("permissions", "write-all")),
                     ("fatal start", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):
                 document = copy.deepcopy(workflow)
                 change(document["jobs"][name])
                 rejected(f"{name} sccache {label}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["core"]["permissions"].pop("actions")
+        rejected("core secret inventory without environment read permission", document)
+        document = copy.deepcopy(workflow)
+        step = next(step for step in document["jobs"]["core"]["steps"]
+                    if step.get("name") == "Audit Actions secret inventory")
+        step["continue-on-error"] = True
+        rejected("core secret inventory failure ignored", document)
+        # Outside core and test no job mints an OIDC token, `write-all` included.
+        for name in ("full", "trusted-policy"):
+            for label, permissions in (("write-all", "write-all"), ("id-token", {"id-token": "write"})):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["permissions"] = permissions
+                rejected(f"{name} OIDC token by {label}", document)
         # The bundle may drop only the cargo target dir, between tasks that share no build.
         source_runner = validator.CORE_RUNNER
         core = source_runner.read_text(encoding="utf-8")

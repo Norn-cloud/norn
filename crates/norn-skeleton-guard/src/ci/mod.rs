@@ -23,7 +23,7 @@ const GATE_DIRECTORIES: [&str; 2] = [".cargo/", "crates/norn-skeleton-guard/"];
 /// A gate file absent from the base must stay absent. The toolchain files are gates although
 /// none exists, as defence in depth: rustup reads them from the working directory, but the
 /// gated `validate-runner-policy.py` sets `RUSTUP_TOOLCHAIN`, which takes precedence.
-const GATE_FILES: [&str; 26] = [
+const GATE_FILES: [&str; 30] = [
     // Python isolation (#513): the base-owned check and its canaries, and every file a gated
     // Python file loads by explicit path, so none of them can change what a gate decides.
     "scripts/ci/python_isolation.py",
@@ -38,6 +38,10 @@ const GATE_FILES: [&str; 26] = [
     "rust-toolchain",
     "verification/coverage-v1/fixtures/pull-request-concurrency.json",
     "scripts/ci/core.sh",
+    "scripts/ci/actions-secret-inventory.py",
+    "scripts/ci/infisical-oidc.sh",
+    "scripts/ci/secret-scan.sh",
+    "scripts/ci/test_infisical_oidc.py",
     "scripts/ci/contract_diff.py",
     "scripts/ci/test_contract_diff.py",
     "scripts/ci/contract-breaks.json",

@@ -16,7 +16,7 @@ jobs:
     if: github.repository == 'Norn-cloud/norn'
     permissions:
       contents: read
-      issues: write
+      issues: write # Update the persistent Zen upstream tracking issue.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

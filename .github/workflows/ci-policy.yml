@@ -56,12 +56,17 @@ jobs:
     # re-runner are all Boat CI's public-repository user (`boat ci public`). Every
     # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
-    # The writable cache key is an environment secret of `ci-cache-writer-boat` (deployment
-    # branch: main only). Merge groups and pull requests see only the read-only repository key.
+    # Only `ci-cache-writer-boat` (deployment branch: main only) names the writer identity, whose
+    # OIDC binding is that environment's immutable subject on a push to main of this workflow.
+    # Merge groups and pull requests log in as the reader, which can reach only the read-only key.
     # A main push enters the environment exactly when the runner's main-push arm sends it to Boat
     # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
     # push runs hosted, uses the Actions cache and never receives the key.
     environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
+    permissions:
+      contents: read
+      actions: read # Enumerate deployment environments for the secret inventory.
+      id-token: write # Read the shared cache keys from Infisical over OIDC.
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -137,12 +142,25 @@ jobs:
         with:
           version: v0.19.0
           disable_annotations: true
+      # The shared cache's R2 keys live in Infisical. This step reads them over OIDC using the
+      # helper pinned by the workflow contract. A push to main (Boat only, inside
+      # `ci-cache-writer-boat`) logs in as the writer its environment variables name, in the writer's
+      # own Infisical project; every other run as the reader, in the reader's project, which holds only
+      # the read-only key. An unset variable yields '' (never the other role). With `--optional`, unset
+      # variables, a fork or any failure keep Boat on its local cache: a cache outage never fails a build.
+      - name: Read the shared cache keys from Infisical over OIDC
+        id: sccache-keys
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          INFISICAL_IDENTITY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_IDENTITY_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || '' }}
+          INFISICAL_PROJECT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_PROJECT_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || '' }}
+        run: bash scripts/ci/infisical-oidc.sh --optional prod /sccache NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET
       - name: Start sccache or compile without it
         env:
-          NORN_SCCACHE_BUCKET: ${{ secrets.NORN_SCCACHE_BUCKET }}
-          NORN_SCCACHE_ENDPOINT: ${{ secrets.NORN_SCCACHE_ENDPOINT }}
-          NORN_SCCACHE_KEY_ID: ${{ secrets.NORN_SCCACHE_KEY_ID }}
-          NORN_SCCACHE_SECRET: ${{ secrets.NORN_SCCACHE_SECRET }}
+          NORN_SCCACHE_BUCKET: ${{ steps.sccache-keys.outputs.norn_sccache_bucket }}
+          NORN_SCCACHE_ENDPOINT: ${{ steps.sccache-keys.outputs.norn_sccache_endpoint }}
+          NORN_SCCACHE_KEY_ID: ${{ steps.sccache-keys.outputs.norn_sccache_key_id }}
+          NORN_SCCACHE_SECRET: ${{ steps.sccache-keys.outputs.norn_sccache_secret }}
         # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
         run: | # zizmor: ignore[github-env]
           set -uo pipefail
@@ -212,18 +230,26 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
+      - name: Audit Actions secret inventory
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/ci/actions-secret-inventory.py
       - run: bash scripts/ci/core.sh cheap
   # A draft head runs only core: no bundle until it is ready for review.
   test:
     name: bundle (${{ matrix.bundle.id }})
     needs: [plan]
     if: fromJSON(needs.plan.outputs.plan).bundle[0] != null && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
-    # The writable cache key is an environment secret of `ci-cache-writer-boat` (deployment
-    # branch: main only). Merge groups and pull requests see only the read-only repository key.
+    # Only `ci-cache-writer-boat` (deployment branch: main only) names the writer identity, whose
+    # OIDC binding is that environment's immutable subject on a push to main of this workflow.
+    # Merge groups and pull requests log in as the reader, which can reach only the read-only key.
     # A main push enters the environment exactly when the runner's main-push arm sends it to Boat
     # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
     # push runs hosted, uses the Actions cache and never receives the key.
     environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
+    permissions:
+      contents: read
+      id-token: write # Read the shared cache keys from Infisical over OIDC.
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -299,12 +325,25 @@ jobs:
         with:
           version: v0.19.0
           disable_annotations: true
+      # The shared cache's R2 keys live in Infisical. This step reads them over OIDC using the
+      # helper pinned by the workflow contract. A push to main (Boat only, inside
+      # `ci-cache-writer-boat`) logs in as the writer its environment variables name, in the writer's
+      # own Infisical project; every other run as the reader, in the reader's project, which holds only
+      # the read-only key. An unset variable yields '' (never the other role). With `--optional`, unset
+      # variables, a fork or any failure keep Boat on its local cache: a cache outage never fails a build.
+      - name: Read the shared cache keys from Infisical over OIDC
+        id: sccache-keys
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          INFISICAL_IDENTITY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_IDENTITY_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || '' }}
+          INFISICAL_PROJECT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_PROJECT_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || '' }}
+        run: bash scripts/ci/infisical-oidc.sh --optional prod /sccache NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET
       - name: Start sccache or compile without it
         env:
-          NORN_SCCACHE_BUCKET: ${{ secrets.NORN_SCCACHE_BUCKET }}
-          NORN_SCCACHE_ENDPOINT: ${{ secrets.NORN_SCCACHE_ENDPOINT }}
-          NORN_SCCACHE_KEY_ID: ${{ secrets.NORN_SCCACHE_KEY_ID }}
-          NORN_SCCACHE_SECRET: ${{ secrets.NORN_SCCACHE_SECRET }}
+          NORN_SCCACHE_BUCKET: ${{ steps.sccache-keys.outputs.norn_sccache_bucket }}
+          NORN_SCCACHE_ENDPOINT: ${{ steps.sccache-keys.outputs.norn_sccache_endpoint }}
+          NORN_SCCACHE_KEY_ID: ${{ steps.sccache-keys.outputs.norn_sccache_key_id }}
+          NORN_SCCACHE_SECRET: ${{ steps.sccache-keys.outputs.norn_sccache_secret }}
         # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
         run: | # zizmor: ignore[github-env]
           set -uo pipefail
@@ -425,10 +464,10 @@ jobs:
     # Write access serves only the last step, which removes a failing pull
     # request from the merge queue. No step runs candidate code.
     permissions:
-      contents: write
-      issues: read
-      pull-requests: write
-      statuses: write
+      contents: write # Remove a rejected pull request from the merge queue.
+      issues: read # Read maintainer approval comments.
+      pull-requests: write # Remove a rejected pull request from the merge queue.
+      statuses: write # Publish the head-bound policy status.
     # An edit re-runs when either the new or the previous body mentions the
     # command, so removing an approval re-evaluates and fails closed. `contains`
     # also covers bodies the gate accepts after trimming.

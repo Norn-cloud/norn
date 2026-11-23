@@ -18,10 +18,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      actions: write
-      contents: write
-      pull-requests: write
-      statuses: write
+      actions: write # Run the pinned CLA action with its documented Actions grant.
+      contents: write # Write signatures to the dedicated CLA branch.
+      pull-requests: write # Post and maintain signature comments on pull requests.
+      statuses: write # Publish the CLA status.
     steps:
       - name: Record contributor agreement
         # Archived upstream; pinned to a reviewed commit until a maintained replacement is chosen.
