@@ -1,6 +1,13 @@
 {
   "artifactId": "hr.PreferenceProfile.entity",
-  "dependencies": [],
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
   "irVersion": "0.1",
   "kind": "entity",
   "lifecycle": "active",
@@ -594,12 +601,8 @@
         {
           "id": "weekly_overtime_budget",
           "type": {
-            "currencySource": {
-              "links": [],
-              "property": "currency"
-            },
-            "kind": "decimal",
-            "scale": 2
+            "kind": "ref",
+            "name": "core.money_amount"
           }
         },
         {

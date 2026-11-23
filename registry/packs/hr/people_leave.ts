@@ -48,6 +48,7 @@ export const Employment = Norn.type({
   role: "thing",
   title: "Employment terms",
   version: "0.1.0",
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   description: "Effective-dated employment contract and compensation terms attached to an org.Membership.",
   properties: Schema.Struct({
     id: Schema.String,
@@ -196,7 +197,7 @@ const LeaveRequestProps = Schema.Struct({
   leave_kind: Schema.Literals(["annual", "sick", "unpaid", "emergency"]),
   starts_on: Norn.date(),
   ends_on: Norn.date(),
-  days: Norn.decimal(2, { unit: { system: "ucum", code: "d" } }),
+  days: Norn.decimal(6),
   medical_note: Schema.NullOr(Schema.String),
   status: LeaveStatus,
 })

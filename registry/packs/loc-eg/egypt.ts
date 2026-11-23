@@ -13,6 +13,7 @@ export const EgyptLaborProfile = Norn.type({
   role: "thing",
   title: "Egypt labor-law profile",
   version: "0.1.0",
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   description: "Governed Egyptian labor parameters (Africa/Cairo timezone, EGP currency, statutory weekly/daily hour caps, rest gap, and annual leave tiers).",
   properties: Schema.Struct({
     id: Schema.String,

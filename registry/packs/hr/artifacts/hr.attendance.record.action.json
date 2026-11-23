@@ -129,6 +129,48 @@
       "orgId",
       "environmentId"
     ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "providerId"
+          }
+        },
+        "name": "provider",
+        "objectType": "hr.Person"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "receiverId"
+          }
+        },
+        "name": "receiver",
+        "objectType": "org.OrgUnit"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "resourceId"
+          }
+        },
+        "name": "resource",
+        "objectType": "hr.LeaveBalance"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "shiftCommitmentId"
+          }
+        },
+        "name": "commitment",
+        "objectType": "hr.ShiftCommitment"
+      }
+    ],
     "title": "Record immutable attendance event",
     "writes": [
       {

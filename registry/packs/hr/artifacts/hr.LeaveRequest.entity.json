@@ -134,11 +134,7 @@
           "id": "days",
           "type": {
             "kind": "decimal",
-            "scale": 2,
-            "unit": {
-              "code": "d",
-              "system": "ucum"
-            }
+            "scale": 6
           }
         },
         {
