@@ -1,0 +1,627 @@
+{
+  "_comment": "Floor of the lint set (src/lint_pin.rs): workspace lint levels, clippy.toml and crate-root lint levels. Levels may rise without touching this file; lowering, removing or loosening anything pinned here fails. Changing this file is a gated edit.",
+  "workspace_lints": {
+    "clippy": {
+      "all": {
+        "level": "warn",
+        "priority": -1
+      },
+      "allow_attributes_without_reason": {
+        "level": "deny"
+      },
+      "arithmetic_side_effects": {
+        "level": "deny"
+      },
+      "as_conversions": {
+        "level": "deny"
+      },
+      "await_holding_lock": {
+        "level": "deny"
+      },
+      "box_collection": {
+        "level": "deny"
+      },
+      "clone_on_ref_ptr": {
+        "level": "deny"
+      },
+      "dbg_macro": {
+        "level": "deny"
+      },
+      "disallowed_types": {
+        "level": "allow"
+      },
+      "empty_drop": {
+        "level": "deny"
+      },
+      "expect_used": {
+        "level": "deny"
+      },
+      "float_cmp_const": {
+        "level": "deny"
+      },
+      "fn_to_numeric_cast_any": {
+        "level": "deny"
+      },
+      "format_collect": {
+        "level": "deny"
+      },
+      "format_push_string": {
+        "level": "deny"
+      },
+      "indexing_slicing": {
+        "level": "deny"
+      },
+      "inefficient_to_string": {
+        "level": "deny"
+      },
+      "large_enum_variant": {
+        "level": "deny"
+      },
+      "large_futures": {
+        "level": "deny"
+      },
+      "large_stack_arrays": {
+        "level": "deny"
+      },
+      "large_stack_frames": {
+        "level": "deny"
+      },
+      "large_types_passed_by_value": {
+        "level": "deny"
+      },
+      "let_underscore_future": {
+        "level": "deny"
+      },
+      "let_underscore_must_use": {
+        "level": "deny"
+      },
+      "lossy_float_literal": {
+        "level": "deny"
+      },
+      "map_err_ignore": {
+        "level": "deny"
+      },
+      "match_wildcard_for_single_variants": {
+        "level": "deny"
+      },
+      "mem_forget": {
+        "level": "deny"
+      },
+      "missing_safety_doc": {
+        "level": "deny"
+      },
+      "multiple_unsafe_ops_per_block": {
+        "level": "deny"
+      },
+      "needless_collect": {
+        "level": "deny"
+      },
+      "needless_pass_by_value": {
+        "level": "deny"
+      },
+      "or_fun_call": {
+        "level": "deny"
+      },
+      "panic": {
+        "level": "deny"
+      },
+      "pedantic": {
+        "level": "warn",
+        "priority": -1
+      },
+      "print_stderr": {
+        "level": "deny"
+      },
+      "print_stdout": {
+        "level": "deny"
+      },
+      "rc_buffer": {
+        "level": "deny"
+      },
+      "redundant_clone": {
+        "level": "deny"
+      },
+      "rest_pat_in_fully_bound_structs": {
+        "level": "deny"
+      },
+      "same_name_method": {
+        "level": "deny"
+      },
+      "string_slice": {
+        "level": "deny"
+      },
+      "suspicious_xor_used_as_pow": {
+        "level": "deny"
+      },
+      "todo": {
+        "level": "deny"
+      },
+      "undocumented_unsafe_blocks": {
+        "level": "deny"
+      },
+      "unimplemented": {
+        "level": "deny"
+      },
+      "unnecessary_safety_comment": {
+        "level": "deny"
+      },
+      "unnecessary_to_owned": {
+        "level": "deny"
+      },
+      "unneeded_field_pattern": {
+        "level": "deny"
+      },
+      "unwrap_in_result": {
+        "level": "deny"
+      },
+      "unwrap_used": {
+        "level": "deny"
+      },
+      "vec_box": {
+        "level": "deny"
+      },
+      "verbose_file_reads": {
+        "level": "deny"
+      },
+      "wildcard_enum_match_arm": {
+        "level": "deny"
+      }
+    },
+    "rust": {
+      "missing_docs": {
+        "level": "warn"
+      },
+      "rust_2018_idioms": {
+        "level": "warn",
+        "priority": -1
+      },
+      "unexpected_cfgs": {
+        "check-cfg": [
+          "cfg(kani)"
+        ],
+        "level": "warn"
+      },
+      "unreachable_pub": {
+        "level": "warn"
+      },
+      "unsafe_code": {
+        "level": "forbid"
+      },
+      "unsafe_op_in_unsafe_fn": {
+        "level": "deny"
+      },
+      "unused_extern_crates": {
+        "level": "warn"
+      },
+      "unused_lifetimes": {
+        "level": "warn"
+      }
+    },
+    "rustdoc": {
+      "bare_urls": {
+        "level": "deny"
+      },
+      "broken_intra_doc_links": {
+        "level": "deny"
+      },
+      "invalid_rust_codeblocks": {
+        "level": "deny"
+      },
+      "private_intra_doc_links": {
+        "level": "deny"
+      }
+    }
+  },
+  "clippy_toml": {
+    "allow-dbg-in-tests": true,
+    "allow-expect-in-tests": true,
+    "allow-indexing-slicing-in-tests": true,
+    "allow-panic-in-tests": true,
+    "allow-print-in-tests": true,
+    "allow-unwrap-in-tests": true,
+    "disallowed-methods": [
+      {
+        "path": "std::process::exit",
+        "reason": "abrupt exit skips destructors and the execution ledger; return an error up to main instead"
+      },
+      {
+        "path": "std::mem::forget",
+        "reason": "leaking values hides resource bugs; use ManuallyDrop with justification if truly needed"
+      },
+      {
+        "path": "std::env::set_var",
+        "reason": "mutating process env is racy and non-deterministic; thread config through explicit context"
+      },
+      {
+        "path": "std::process::Command::new",
+        "reason": "spawning processes is a capability; use a capability wrapper once norn-caps lands"
+      },
+      {
+        "path": "std::time::SystemTime::now",
+        "reason": "ambient wall-clock reads break replay/determinism; inject a Clock capability"
+      },
+      {
+        "path": "jiff::Timestamp::now",
+        "reason": "ambient wall-clock reads break replay/determinism; inject a Clock capability"
+      },
+      {
+        "path": "jiff::Zoned::now",
+        "reason": "ambient wall-clock and host tz reads break replay/determinism; inject a Clock capability"
+      },
+      {
+        "path": "jiff::tz::TimeZone::system",
+        "reason": "the host time zone breaks replay/determinism; resolve zones from the pinned jiff-tzdb"
+      },
+      {
+        "path": "jiff::tz::TimeZone::try_system",
+        "reason": "the host time zone breaks replay/determinism; resolve zones from the pinned jiff-tzdb"
+      },
+      {
+        "path": "jiff::tz::db",
+        "reason": "the global tz database can read host zoneinfo, breaking replay/determinism; resolve zones from the pinned jiff-tzdb"
+      }
+    ],
+    "disallowed-types": [
+      {
+        "path": "std::collections::HashMap",
+        "reason": "core iteration must be deterministic; use BTreeMap or IndexMap"
+      },
+      {
+        "path": "std::collections::HashSet",
+        "reason": "core iteration must be deterministic; use BTreeSet or IndexSet"
+      }
+    ]
+  },
+  "inner_levels": {
+    "crates/norn-canonical/src/lib.rs": {
+      "clippy::disallowed_types": "deny",
+      "clippy::float_arithmetic": "deny",
+      "clippy::integer_division": "deny",
+      "clippy::modulo_arithmetic": "deny"
+    },
+    "crates/norn-checker/src/lib.rs": {
+      "clippy::disallowed_types": "deny"
+    },
+    "crates/norn-checker/tests/entity_model.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/lifecycle.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/object_types.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/ontology_pack.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/ontology_registry.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/property_types.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/quantity_ledger.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/quantity_ledger_boundary.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/quantity_ledger_expression.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/quantity_ledger_properties.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/quantity_unit_ontology_pack.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-checker/tests/technical_view.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-datalog/src/lib.rs": {
+      "unsafe_code": "forbid"
+    },
+    "crates/norn-decisions/src/lib.rs": {
+      "unsafe_code": "forbid"
+    },
+    "crates/norn-decisions/tests/dmn_tck.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-decisions/tests/evaluate.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-decisions/tests/flow_vertical.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-decisions/tests/zen_corpus.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-expr/src/lib.rs": {
+      "unsafe_code": "forbid"
+    },
+    "crates/norn-expr/tests/check.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-expr/tests/corpus.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-expr/tests/cost.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-expr/tests/profile_conformance.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-expr/tests/temporal_intervals.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-expr/tests/type_env.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-graph/src/lib.rs": {
+      "clippy::disallowed_types": "deny",
+      "clippy::float_arithmetic": "deny",
+      "clippy::integer_division": "deny",
+      "clippy::modulo_arithmetic": "deny",
+      "unsafe_code": "forbid"
+    },
+    "crates/norn-ir/src/lib.rs": {
+      "clippy::float_arithmetic": "deny",
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::integer_division": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::modulo_arithmetic": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-ir/tests/artifact_governance.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-ir/tests/proptest_ir_roundtrip.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-ir/tests/provenance_envelope.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-ir/tests/technical_view.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-kernel/src/lib.rs": {
+      "clippy::disallowed_types": "deny",
+      "clippy::float_arithmetic": "deny",
+      "clippy::integer_division": "deny",
+      "clippy::modulo_arithmetic": "deny",
+      "unsafe_code": "forbid"
+    },
+    "crates/norn-kernel/tests/accounting_commit.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-kernel/tests/action_commit.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-kernel/tests/decision_commit.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-kernel/tests/refusal_taxonomy.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-projections/tests/interop_exports.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-projections/tests/lineage.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-projections/tests/lineage_world.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    },
+    "crates/norn-testkit/tests/decide_commit.rs": {
+      "clippy::format_collect": "deny",
+      "clippy::format_push_string": "deny",
+      "clippy::inefficient_to_string": "deny",
+      "clippy::large_futures": "deny",
+      "clippy::large_types_passed_by_value": "deny",
+      "clippy::match_wildcard_for_single_variants": "deny",
+      "clippy::needless_pass_by_value": "deny"
+    }
+  }
+}
