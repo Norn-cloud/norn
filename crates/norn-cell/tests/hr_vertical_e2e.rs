@@ -1340,7 +1340,7 @@ fn hr_pii_markings_persist_and_mask_in_real_cell() {
         vec!["pii.demographic".to_owned()]
     );
     assert_eq!(person_markings["phone"], vec!["pii.demographic".to_owned()]);
-    assert_eq!(person_markings["display_name"], [] as [String; 0]);
+    assert_eq!(person_markings["display_name"], Vec::<String>::new());
 
     let batch_markings = cell
         .store()
@@ -1442,7 +1442,7 @@ fn hr_pii_markings_persist_and_mask_in_real_cell() {
         .effective_markings(MAIN_WORLD, "hr.Person", "person_nour", Some(1))
         .expect("historical markings")
         .expect("complete snapshot");
-    assert_eq!(current_after["national_id"], [] as [String; 0]);
+    assert_eq!(current_after["national_id"], Vec::<String>::new());
     assert_eq!(historical_v1["national_id"], vec!["pii.gov_id".to_owned()]);
     cell.store()
         .read()
