@@ -76,7 +76,10 @@ composite PRIMARY KEY, FOREIGN KEY ON DELETE CASCADE); CREATE [UNIQUE] INDEX IF 
 quoted identifiers; <=100 columns per table; <=100 KB per statement";
 
 /// Host limit: columns per table (ruling 2026-09-25 §6).
-pub const MAX_COLUMNS_PER_TABLE: usize = 100;
+///
+/// Re-exported from [`norn_ir::MAX_SQLITE_COLUMNS_PER_TABLE`] so DDL emission
+/// and widget query checking share one canonical constant.
+pub use norn_ir::MAX_SQLITE_COLUMNS_PER_TABLE as MAX_COLUMNS_PER_TABLE;
 
 /// Host limit: bytes per SQL statement (ruling 2026-09-25 §6).
 pub const MAX_STATEMENT_BYTES: usize = 100_000;
