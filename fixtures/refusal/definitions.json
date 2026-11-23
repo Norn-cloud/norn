@@ -201,6 +201,11 @@
             "version": "0.1.0"
           },
           {
+            "artifactId": "core.TimeInterval.interface",
+            "sha256": "362d2292fe82ba28096266763817f94b0827d4edb61642065ef6bc047f5a53af",
+            "version": "0.1.0"
+          },
+          {
             "artifactId": "core.analytics.Restatement.entity",
             "sha256": "e7d87d1fb75a7740bf2eb6b22ffddd839f51fca9ac233c11a21690a33438eaa4",
             "version": "0.1.0"
@@ -231,6 +236,11 @@
             "version": "0.1.0"
           },
           {
+            "artifactId": "core.time",
+            "sha256": "e011c4fbfb4190fbe5724ed95832bd6fef24ea745071412b42dedaf3de28df89",
+            "version": "1.0.0"
+          },
+          {
             "artifactId": "core.units",
             "sha256": "068fd239df015a73556c06ac1708f0b1dc5da6e419f022d7a4338b9b1488b321",
             "version": "1.0.0"
@@ -246,7 +256,7 @@
             "version": "0.1.0"
           }
         ],
-        "sha256": "bb1f8d9b4ff5a593b407f9917739cf262aa0e171b94d9178e0bc53264e837f23"
+        "sha256": "f4720eaa91a8ab86248dcc2bb48df300fad2e4c48dc3eb51678ca71e7657ccf8"
       },
       "checker": {
         "name": "norn-checker",
@@ -267,11 +277,11 @@
       },
       "typeEnv": {
         "id": "norn.expr.env",
-        "sha256": "c44ed7b3ea22dca2f7a69d225fecf8845b008899e9e0ee9315a1e9856aa428c3",
+        "sha256": "308b43508b93ba9583a9829ed7bf2e322102b73eedb561cc674d1609dbb67160",
         "version": 2
       }
     },
-    "receiptSha256": "b827f20aed392bb3a40b0e06f39f81f83f0243af89227fb6ff923c0185b881c7",
+    "receiptSha256": "11a2898c152c49583f5489e5dedc70c2a45179a0fe3f0de04d565ccaaa711db8",
     "diagnostics": null,
     "registry": [],
     "baseArtifactIds": [
@@ -286,12 +296,14 @@
       "core.LedgerEffect.interface",
       "core.Process.interface",
       "core.Resource.interface",
+      "core.TimeInterval.interface",
       "core.analytics.Restatement.entity",
       "core.analytics.RestatementEvidence.interface",
       "core.analytics.restatement.access.policy",
       "core.analytics.restatement.activate.action",
       "core.analytics.restatement.approve.action",
       "core.analytics.restatement_policy.law",
+      "core.time",
       "core.units",
       "core.value_types.entity",
       "std.value_types.entity"
@@ -1077,6 +1089,62 @@
         "version": "0.1.0"
       },
       {
+        "artifactId": "core.TimeInterval.interface",
+        "dependencies": [],
+        "irVersion": "0.1",
+        "kind": "entity",
+        "lifecycle": "active",
+        "name": "Time interval",
+        "namespace": "core",
+        "payload": {
+          "entityVersion": "2.0",
+          "interface": {
+            "description": "A proper half-open temporal interval [starts_at, ends_at) in UTC with an optional canonical IANA timezone label.",
+            "invariants": [
+              {
+                "expression": "timestamp(self.starts_at) < timestamp(self.ends_at)",
+                "id": "proper_interval",
+                "message": "starts_at must be strictly before ends_at"
+              }
+            ],
+            "name": "core.TimeInterval",
+            "properties": [
+              {
+                "id": "starts_at",
+                "type": {
+                  "kind": "ref",
+                  "name": "core.time.instant"
+                }
+              },
+              {
+                "id": "ends_at",
+                "type": {
+                  "kind": "ref",
+                  "name": "core.time.instant"
+                }
+              },
+              {
+                "constraints": {
+                  "nullable": true
+                },
+                "id": "timezone",
+                "type": {
+                  "kind": "ref",
+                  "name": "core.time.iana_timezone"
+                }
+              }
+            ],
+            "role": "happening"
+          }
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.TimeInterval.interface.json"
+        },
+        "scope": {},
+        "version": "0.1.0"
+      },
+      {
         "artifactId": "core.analytics.Restatement.entity",
         "dependencies": [],
         "irVersion": "0.1",
@@ -1542,6 +1610,122 @@
         },
         "scope": {},
         "version": "0.1.0"
+      },
+      {
+        "artifactId": "core.time",
+        "dependencies": [],
+        "irVersion": "0.1",
+        "kind": "entity",
+        "lifecycle": "active",
+        "name": "Core temporal value types",
+        "namespace": "core",
+        "payload": {
+          "entityVersion": "2.0",
+          "propertyTypes": [
+            {
+              "description": "An exact UTC instant (RFC 3339 normalized to UTC, at most nanosecond precision).",
+              "name": "core.time.instant",
+              "type": {
+                "kind": "timestamp",
+                "timezone": "utc"
+              }
+            },
+            {
+              "description": "A proleptic-Gregorian calendar date (YYYY-MM-DD), with no time-of-day and no timezone.",
+              "name": "core.time.date",
+              "type": {
+                "kind": "date"
+              }
+            },
+            {
+              "description": "An exact elapsed duration (ISO 8601 duration with fixed-length units).",
+              "name": "core.time.duration",
+              "type": {
+                "kind": "duration"
+              }
+            },
+            {
+              "constraints": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$"
+              },
+              "description": "A canonical IANA timezone identifier from the pinned timezone database (tzdb 2025b).",
+              "name": "core.time.iana_timezone",
+              "type": {
+                "kind": "text"
+              }
+            },
+            {
+              "description": "Explicit disambiguation policy for ambiguous DST fall-back wall times (reject, earlier, or later).",
+              "name": "core.time.dst_policy",
+              "type": {
+                "kind": "enum",
+                "values": [
+                  {
+                    "value": "reject"
+                  },
+                  {
+                    "value": "earlier"
+                  },
+                  {
+                    "value": "later"
+                  }
+                ]
+              }
+            },
+            {
+              "description": "A half-open UTC instant interval [starts_at, ends_at) where starts_at < ends_at.",
+              "name": "core.time.proper_interval",
+              "type": {
+                "kind": "record",
+                "members": [
+                  {
+                    "id": "starts_at",
+                    "type": {
+                      "kind": "timestamp",
+                      "timezone": "utc"
+                    }
+                  },
+                  {
+                    "id": "ends_at",
+                    "type": {
+                      "kind": "timestamp",
+                      "timezone": "utc"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "description": "A calendar date interval bounded by starts_at and ends_at.",
+              "name": "core.time.date_interval",
+              "type": {
+                "kind": "record",
+                "members": [
+                  {
+                    "id": "starts_at",
+                    "type": {
+                      "kind": "date"
+                    }
+                  },
+                  {
+                    "id": "ends_at",
+                    "type": {
+                      "kind": "date"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/src/time.rs"
+        },
+        "scope": {},
+        "version": "1.0.0"
       },
       {
         "artifactId": "core.units",

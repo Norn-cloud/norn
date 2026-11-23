@@ -52,9 +52,12 @@ fn property(name: &str) -> EffectiveProperty {
 fn core_time_is_the_exact_generated_admitted_catalog() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../registry/core/artifacts/core.time.json");
+    let exact =
+        RuntimeValue::from_json(serde_json::to_value(time::pack().expect("pack")).expect("wire"))
+            .expect("exact runtime value");
     let rendered = format!(
         "{}\n",
-        serde_json::to_string_pretty(&time::pack().expect("pack")).expect("serializes")
+        serde_json::to_string_pretty(&exact).expect("serializes")
     );
     if std::env::var_os("NORN_CHECKER_UPDATE_GOLDENS").is_some() {
         std::fs::write(&path, &rendered).expect("regenerate");
