@@ -4,6 +4,7 @@ import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
+import { FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
 import { Braces, Database, EyeOff, GitBranch, History as HistoryIcon, Link2, RefreshCw, Rows3, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
@@ -95,6 +96,7 @@ export function ObjectPage() {
             <h1 className="min-w-0 text-title font-semibold tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             <Chip tone="violet" icon={TypeIcon}>{concept?.title ?? conceptTitle(name)}</Chip>
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
+            {live && review.isSuccess && <FactStatusBadge status={deriveFactStatus({ quarantined: heldBack, openFindings: broken.length })} />}
             {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
             {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
             {data?.source?.document && <SourceChip system={data.source.document.sourceRecordRef.system} title="The connected system this record was read from" />}

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
+import { Blend, ChartLine, Columns2, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { endSession, useAccount } from "@/lib/session"
@@ -9,6 +9,7 @@ import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
 import { useDecisionBadge } from "./decisions/inbox.tsx"
 import { useGuaranteesMenu } from "./guarantees.tsx"
+import { useImportTriageBadge } from "./imports/import-triage-page.tsx"
 import { useQuestionsMenu } from "./questions.tsx"
 import { routeTree } from "./routes.tsx"
 import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
@@ -20,6 +21,7 @@ import "./index.css"
 const SECTIONS: readonly Section[] = [
   { path: "/", label: "Home", icon: House, summary: "What needs you, and the numbers that matter.", group: "Work" },
   { path: "/decisions", label: "Decisions", icon: Inbox, summary: "Choices your flows wait on you to make, soonest deadline first.", useBadge: useDecisionBadge, group: "Work", paths: ["/episodes"] },
+  { path: "/imports", label: "Import triage", icon: Columns2, summary: "Match external aliases, inspect staged artifacts beside extracted rows, and resolve supersession conflicts through governed rules.", useBadge: useImportTriageBadge, group: "Work" },
   { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", kind: "source", useMenu: useSourcesMenu, group: "Model", paths: ["/objects"], action: { label: "Connect a source", to: "/connections" } },
   { path: "/transforms", label: "Transforms", icon: Blend, summary: "Derived datasets the cell checks: typed columns, declared joins, every row traced to its records.", kind: "transform", group: "Model" },
   { path: "/metrics", label: "Metrics", icon: ChartLine, summary: "The numbers your records add up to, answered exactly, down to the records behind every number.", kind: "question", useMenu: useQuestionsMenu, group: "Model", action: { label: "Explore a metric", to: "/metrics/new" } },

@@ -1,0 +1,558 @@
+import type { Page, Route } from "@playwright/test"
+import type {
+  AliasCandidate,
+  CandidateRow,
+  ImportTriageWorkspace,
+  StagedArtifact,
+  SupersessionConflict,
+  TargetEntity,
+} from "../src/lib/import-triage.ts"
+
+/**
+ * Synthetic, strictly domain-agnostic stand-in for the cell's import triage read and governed
+ * action routes. Zero real customer or personal data; uses inline SVG artifacts so zoomable
+ * source captures render crisply without external network calls.
+ */
+
+function artifactSvgDataUri(title: string, timestamp: string, rows: readonly [string, string, string, string][]): string {
+  const body = rows.map(([entity, slot, duration, status], index) => {
+    const y = 112 + index * 56
+    const highlight = status === "amber" ? "#fef3c7" : status === "red" ? "#fee2e2" : "#f8fafc"
+    return `
+      <rect x="24" y="${y}" width="592" height="44" rx="4" fill="${highlight}" stroke="#cbd5e1" stroke-width="1"/>
+      <text x="40" y="${y + 27}" font-family="ui-monospace, monospace" font-size="14" fill="#0f172a">${entity}</text>
+      <text x="215" y="${y + 27}" font-family="ui-monospace, monospace" font-size="14" fill="#0f172a">${slot}</text>
+      <text x="385" y="${y + 27}" font-family="ui-monospace, monospace" font-size="14" fill="#0f172a">${duration}</text>
+      <text x="505" y="${y + 27}" font-family="ui-monospace, monospace" font-size="12" fill="#475569">${status === "red" ? "FLAG" : status === "amber" ? "LOW-CONF" : "OK"}</text>
+    `
+  }).join("")
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360">
+    <rect width="640" height="360" fill="#ffffff"/>
+    <rect x="0" y="0" width="640" height="58" fill="#f1f5f9"/>
+    <line x1="0" y1="58" x2="640" y2="58" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="24" y="28" font-family="system-ui, sans-serif" font-size="15" font-weight="600" fill="#0f172a">${title}</text>
+    <text x="24" y="47" font-family="ui-monospace, monospace" font-size="11" fill="#475569">Captured ${timestamp} · Synthetic Grid Snapshot</text>
+    <text x="40" y="92" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#64748b">RECORD</text>
+    <text x="215" y="92" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#64748b">WINDOW SLOT</text>
+    <text x="385" y="92" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#64748b">HOURS</text>
+    <text x="505" y="92" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#64748b">SCAN</text>
+    <line x1="24" y1="100" x2="616" y2="100" stroke="#e2e8f0" stroke-width="1"/>
+    ${body}
+  </svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+const ARTIFACT_A_URI = artifactSvgDataUri("Window W47 Allocation Grid — Capture A", "2026-11-16 09:04 UTC", [
+  ["Unit Alpha", "SLOT-01 · Mon", "8.00", "amber"],
+  ["@handle_north_1", "SLOT-02 · Tue", "7.50", "clean"],
+  ["Unit Gamma", "SLOT-02 · Tue", "16.00", "red"],
+  ["Unit Delta", "2026-02-31", "6.00", "red"],
+])
+
+const ARTIFACT_B_URI = artifactSvgDataUri("Window W47 Allocation Grid — Capture B (Revised)", "2026-11-16 11:19 UTC", [
+  ["Unit Alpha", "SLOT-01 · Mon", "8.50", "clean"],
+  ["@handle_north_1", "SLOT-03 · Tue", "7.50", "clean"],
+  ["Unit Gamma", "SLOT-02 · Tue", "8.00", "clean"],
+  ["Unit Delta", "2026-11-18", "6.00", "clean"],
+])
+
+export interface TriageCall {
+  readonly actionId: string
+  readonly idempotencyKey: string
+  readonly input: Record<string, unknown>
+}
+
+export interface ImportTriageCell {
+  readonly calls: TriageCall[]
+  /** Make the next promotion call for `rowId` refuse with a law violation. */
+  refuseNextPromote(rowId: string, code: string, message: string): void
+}
+
+const hash = (seed: number) => `sha256:${seed.toString(16).padStart(64, "b")}`
+
+export function createFixtureWorkspace(): ImportTriageWorkspace {
+  const entities: TargetEntity[] = [
+    { id: "rec-001", label: "Unit Alpha", subtitle: "Zone North" },
+    { id: "rec-002", label: "Unit Beta", subtitle: "Zone North" },
+    { id: "rec-003", label: "Unit Gamma", subtitle: "Zone East" },
+    { id: "rec-004", label: "Unit Delta", subtitle: "Zone West" },
+  ]
+
+  const aliases: AliasCandidate[] = [
+    {
+      id: "alias-north-1",
+      externalHandle: "@handle_north_1",
+      sourceChannel: "feed-ops-north",
+      occurrences: 5,
+      sampleExcerpt: "Posting updated W47 allocation grid for Zone North.",
+      firstObservedAt: "2026-11-16T08:52:00Z",
+      suggestedTargetId: "rec-002",
+      suggestedTargetLabel: "Unit Beta",
+      suggestionConfidenceBps: 8140,
+      resolution: null,
+    },
+    {
+      id: "alias-temp-9",
+      externalHandle: "Handle-Temp-09",
+      sourceChannel: "feed-ops-north",
+      occurrences: 2,
+      sampleExcerpt: "Covered backup slot for East annex on Wednesday.",
+      firstObservedAt: "2026-11-16T09:10:00Z",
+      suggestedTargetId: null,
+      suggestedTargetLabel: null,
+      suggestionConfidenceBps: null,
+      resolution: null,
+    },
+    {
+      id: "alias-bot-notify",
+      externalHandle: "AutoRelay-Bot",
+      sourceChannel: "feed-ops-north",
+      occurrences: 9,
+      sampleExcerpt: "Automated export timestamp sync.",
+      firstObservedAt: "2026-11-15T18:00:00Z",
+      suggestedTargetId: null,
+      suggestedTargetLabel: null,
+      suggestionConfidenceBps: null,
+      resolution: null,
+    },
+  ]
+
+  const artifacts: StagedArtifact[] = [
+    {
+      id: "art-w47-a",
+      label: "Capture A · W47 Grid (09:04)",
+      sourceChannel: "feed-ops-north",
+      mediaType: "image/svg+xml",
+      documentUri: ARTIFACT_A_URI,
+      blobDigest: hash(101),
+      functionReceiptDigest: hash(201),
+      extractor: "norn.extract.grid",
+      extractorVersion: "1.4.0",
+      promptDigest: hash(301),
+      observedAt: "2026-11-16T09:04:00Z",
+      windowLabel: "2026-W47",
+      markings: ["pii.raw_media", "pii.handle"],
+      contextMessages: [
+        {
+          id: "msg-1",
+          senderHandle: "@handle_north_1",
+          aliasId: "alias-north-1",
+          observedAt: "2026-11-16T09:02:00Z",
+          body: "Sharing initial W47 allocation grid capture for review.",
+        },
+        {
+          id: "msg-2",
+          senderHandle: "@handle_north_1",
+          aliasId: "alias-north-1",
+          observedAt: "2026-11-16T09:04:00Z",
+          body: "Attached Capture A (W47 Grid). Note row 1 hours were handwritten.",
+          isAnchor: true,
+        },
+        {
+          id: "msg-3",
+          senderHandle: "Unit Alpha",
+          observedAt: "2026-11-16T09:12:00Z",
+          body: "Confirmed Mon slot starts at 08:00 UTC.",
+        },
+      ],
+    },
+    {
+      id: "art-w47-b",
+      label: "Capture B · W47 Revised (11:19)",
+      sourceChannel: "feed-ops-north",
+      mediaType: "image/svg+xml",
+      documentUri: ARTIFACT_B_URI,
+      blobDigest: hash(102),
+      functionReceiptDigest: hash(202),
+      extractor: "norn.extract.grid",
+      extractorVersion: "1.4.0",
+      promptDigest: hash(301),
+      observedAt: "2026-11-16T11:19:00Z",
+      windowLabel: "2026-W47",
+      markings: ["pii.raw_media", "pii.handle"],
+      contextMessages: [
+        {
+          id: "msg-4",
+          senderHandle: "@handle_north_1",
+          aliasId: "alias-north-1",
+          observedAt: "2026-11-16T11:19:00Z",
+          body: "Updated W47 snapshot — adjusted Unit Alpha duration and moved Tuesday slot.",
+          isAnchor: true,
+        },
+      ],
+    },
+  ]
+
+  const rows: CandidateRow[] = [
+    {
+      id: "row-w47-1",
+      artifactId: "art-w47-a",
+      targetObjectType: "canon.Allocation",
+      windowLabel: "2026-W47",
+      entityAliasId: null,
+      entityRecordId: "rec-001",
+      entityLabel: "Unit Alpha",
+      status: "imported_unverified",
+      effectiveAt: "2026-11-16T08:00:00Z",
+      observedAt: "2026-11-16T09:04:00Z",
+      recordedAt: null,
+      fields: [
+        {
+          id: "f-1-slot",
+          name: "slot_code",
+          label: "Window slot",
+          extractedValue: "SLOT-01",
+          value: "SLOT-01",
+          confidenceBps: 9840,
+          box: { x: "0.32", y: "0.31", w: "0.24", h: "0.12" },
+          findingIds: [],
+        },
+        {
+          id: "f-1-hours",
+          name: "duration_hours",
+          label: "Duration (hours)",
+          extractedValue: "8.00",
+          value: "8.00",
+          confidenceBps: 6800,
+          box: { x: "0.59", y: "0.31", w: "0.16", h: "0.12" },
+          findingIds: [],
+        },
+      ],
+      findings: [],
+      ambiguities: ["Handwritten decimal digit"],
+      receipt: null,
+    },
+    {
+      id: "row-w47-2",
+      artifactId: "art-w47-a",
+      targetObjectType: "canon.Allocation",
+      windowLabel: "2026-W47",
+      entityAliasId: "alias-north-1",
+      entityRecordId: null,
+      entityLabel: "@handle_north_1",
+      status: "imported_unverified",
+      effectiveAt: "2026-11-17T08:00:00Z",
+      observedAt: "2026-11-16T09:04:00Z",
+      recordedAt: null,
+      fields: [
+        {
+          id: "f-2-slot",
+          name: "slot_code",
+          label: "Window slot",
+          extractedValue: "SLOT-02",
+          value: "SLOT-02",
+          confidenceBps: 9650,
+          box: { x: "0.32", y: "0.47", w: "0.24", h: "0.12" },
+          findingIds: [],
+        },
+        {
+          id: "f-2-hours",
+          name: "duration_hours",
+          label: "Duration (hours)",
+          extractedValue: "7.50",
+          value: "7.50",
+          confidenceBps: 9420,
+          box: { x: "0.59", y: "0.47", w: "0.16", h: "0.12" },
+          findingIds: [],
+        },
+      ],
+      findings: [],
+      ambiguities: [],
+      receipt: null,
+    },
+    {
+      id: "row-w47-3",
+      artifactId: "art-w47-a",
+      targetObjectType: "canon.Allocation",
+      windowLabel: "2026-W47",
+      entityAliasId: null,
+      entityRecordId: "rec-003",
+      entityLabel: "Unit Gamma",
+      status: "quarantined",
+      effectiveAt: "2026-11-17T08:00:00Z",
+      observedAt: "2026-11-16T09:04:00Z",
+      recordedAt: null,
+      fields: [
+        {
+          id: "f-3-slot",
+          name: "slot_code",
+          label: "Window slot",
+          extractedValue: "SLOT-02",
+          value: "SLOT-02",
+          confidenceBps: 9700,
+          box: { x: "0.32", y: "0.62", w: "0.24", h: "0.12" },
+          findingIds: [],
+        },
+        {
+          id: "f-3-hours",
+          name: "duration_hours",
+          label: "Duration (hours)",
+          extractedValue: "16.00",
+          value: "16.00",
+          confidenceBps: 9510,
+          box: { x: "0.59", y: "0.62", w: "0.16", h: "0.12" },
+          findingIds: ["finding-obs-bad"],
+        },
+      ],
+      findings: [
+        {
+          id: "finding-obs-bad",
+          code: "OBS-BAD",
+          ruleId: "canon.allocation.max_window_duration",
+          severity: "error",
+          message: "Double-booked window exceeds the 12.00 hour cap (observed 16.00).",
+          fieldName: "duration_hours",
+          status: "open",
+        },
+      ],
+      ambiguities: [],
+      receipt: null,
+    },
+    {
+      id: "row-w47-4",
+      artifactId: "art-w47-a",
+      targetObjectType: "canon.Allocation",
+      windowLabel: "2026-W47",
+      entityAliasId: null,
+      entityRecordId: "rec-004",
+      entityLabel: "Unit Delta",
+      status: "quarantined",
+      effectiveAt: "2026-02-31",
+      observedAt: "2026-11-16T09:04:00Z",
+      recordedAt: null,
+      fields: [
+        {
+          id: "f-4-date",
+          name: "effective_date",
+          label: "Effective date",
+          extractedValue: "2026-02-31",
+          value: "2026-02-31",
+          confidenceBps: 9300,
+          box: { x: "0.32", y: "0.78", w: "0.24", h: "0.12" },
+          findingIds: ["finding-invalid-date"],
+        },
+        {
+          id: "f-4-hours",
+          name: "duration_hours",
+          label: "Duration (hours)",
+          extractedValue: "6.00",
+          value: "6.00",
+          confidenceBps: 9600,
+          box: { x: "0.59", y: "0.78", w: "0.16", h: "0.12" },
+          findingIds: [],
+        },
+      ],
+      findings: [
+        {
+          id: "finding-invalid-date",
+          code: "InvalidTemporalObservation",
+          ruleId: "core.temporal.valid_calendar_date",
+          severity: "error",
+          message: "Date 2026-02-31 is not a valid calendar date.",
+          fieldName: "effective_date",
+          status: "open",
+        },
+      ],
+      ambiguities: [],
+      receipt: null,
+    },
+  ]
+
+  const supersessions: SupersessionConflict[] = [
+    {
+      id: "conflict-w47-north",
+      findingCode: "FEED-CONFLICT",
+      windowLabel: "2026-W47",
+      scopeKey: "zone-north/2026-W47",
+      earlier: {
+        artifactId: "art-w47-a",
+        label: "Capture A · W47 Grid (09:04)",
+        blobDigest: hash(101),
+        functionReceiptDigest: hash(201),
+        observedAt: "2026-11-16T09:04:00Z",
+        sourceChannel: "feed-ops-north",
+      },
+      newer: {
+        artifactId: "art-w47-b",
+        label: "Capture B · W47 Revised (11:19)",
+        blobDigest: hash(102),
+        functionReceiptDigest: hash(202),
+        observedAt: "2026-11-16T11:19:00Z",
+        sourceChannel: "feed-ops-north",
+      },
+      cells: [
+        {
+          id: "cell-1",
+          rowKey: "row-w47-1",
+          entityLabel: "Unit Alpha",
+          fieldName: "duration_hours",
+          fieldLabel: "Duration (hours)",
+          earlierValue: "8.00",
+          newerValue: "8.50",
+          changed: true,
+          newerConfidenceBps: 9740,
+        },
+        {
+          id: "cell-2",
+          rowKey: "row-w47-2",
+          entityLabel: "Unit Beta",
+          fieldName: "slot_code",
+          fieldLabel: "Window slot",
+          earlierValue: "SLOT-02",
+          newerValue: "SLOT-03",
+          changed: true,
+          newerConfidenceBps: 8650,
+        },
+        {
+          id: "cell-3",
+          rowKey: "row-w47-2",
+          entityLabel: "Unit Beta",
+          fieldName: "duration_hours",
+          fieldLabel: "Duration (hours)",
+          earlierValue: "7.50",
+          newerValue: "7.50",
+          changed: false,
+          newerConfidenceBps: 9810,
+        },
+      ],
+      defaultChoice: "accept_newer",
+      resolution: null,
+    },
+  ]
+
+  return {
+    batchId: "batch-w47-sync",
+    title: "Window W47 multi-capture batch",
+    targetObjectType: "canon.Allocation",
+    lowConfidenceThresholdBps: 9000,
+    actions: {
+      bindAlias: "canon.alias.bind",
+      createEntity: "canon.entity.create_and_bind",
+      ignoreAlias: "canon.alias.ignore",
+      promoteRow: "canon.import.promote_row",
+      resolveSupersession: "canon.import.resolve_supersession",
+    },
+    aliases,
+    availableEntities: entities,
+    artifacts,
+    rows,
+    supersessions,
+  }
+}
+
+export async function importTriageCell(page: Page): Promise<ImportTriageCell> {
+  let workspace = createFixtureWorkspace()
+  let seq = 500
+  const calls: TriageCall[] = []
+  const refusals = new Map<string, { code: string; message: string }>()
+
+  const scoped = (url: URL) => url.searchParams.get("orgId") === "org_demo" && url.searchParams.get("environmentId") === "analytics"
+  const refuse = (route: Route, status: number, code: string, message: string) =>
+    route.fulfill({ status, json: { code, category: "law", message, diagnostics: [{ code, message, span: null }] } })
+
+  await page.route("**/api/host/v1/imports/triage**", async (route) => {
+    const url = new URL(route.request().url())
+    if (!scoped(url)) return refuse(route, 403, "scope.denied", "Not your workspace.")
+    return route.fulfill({ json: workspace })
+  })
+
+  await page.route("**/api/host/v1/actions/**", async (route) => {
+    const url = new URL(route.request().url())
+    if (!scoped(url)) return refuse(route, 403, "scope.denied", "Not your workspace.")
+    const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
+    const body = JSON.parse(route.request().postData() ?? "{}") as { input?: Record<string, unknown>; idempotencyKey?: string }
+    const input = body.input ?? {}
+    const idempotencyKey = String(body.idempotencyKey ?? "")
+    calls.push({ actionId, idempotencyKey, input })
+
+    if (actionId === workspace.actions.promoteRow) {
+      const rowId = String(input.rowId ?? "")
+      const injected = refusals.get(rowId)
+      if (injected) {
+        refusals.delete(rowId)
+        return refuse(route, 422, injected.code, injected.message)
+      }
+      const row = workspace.rows.find((candidate) => candidate.id === rowId)
+      if (row && row.findings.some((f) => f.status === "open")) {
+        return refuse(route, 422, "law.violation_quarantined", "Row has an open law finding and stays quarantined.")
+      }
+    }
+
+    seq += 1
+    const recordedAtMs = Date.UTC(2026, 10, 23, 15, 45, seq % 60)
+    const objectId = actionId === workspace.actions.createEntity
+      ? `rec-${String(seq).padStart(3, "0")}`
+      : String(input.rowId ?? input.targetRecordId ?? input.conflictId ?? input.aliasId ?? `obj-${seq}`)
+    const receipt = {
+      outcome: "committed" as const,
+      objectType: workspace.targetObjectType,
+      objectId,
+      version: 1,
+      receipt: { receiptHash: hash(seq).replace("sha256:", ""), commitSeq: seq, recordedAtMs },
+    }
+
+    // Keep server-side workspace synchronized if Studio refetches.
+    if (actionId === workspace.actions.bindAlias) {
+      const aliasId = String(input.aliasId)
+      const targetId = String(input.targetRecordId)
+      const targetLabel = workspace.availableEntities.find((e) => e.id === targetId)?.label ?? targetId
+      workspace = {
+        ...workspace,
+        aliases: workspace.aliases.map((a) => a.id === aliasId ? { ...a, resolution: { kind: "bound", targetId, targetLabel, receipt } } : a),
+        rows: workspace.rows.map((r) => r.entityAliasId === aliasId ? { ...r, entityRecordId: targetId, entityLabel: targetLabel } : r),
+      }
+    } else if (actionId === workspace.actions.createEntity) {
+      const aliasId = String(input.aliasId)
+      const label = String(input.label)
+      const created: TargetEntity = { id: objectId, label }
+      workspace = {
+        ...workspace,
+        availableEntities: [...workspace.availableEntities, created],
+        aliases: workspace.aliases.map((a) => a.id === aliasId ? { ...a, resolution: { kind: "created", targetId: objectId, targetLabel: label, receipt } } : a),
+      }
+    } else if (actionId === workspace.actions.ignoreAlias) {
+      const aliasId = String(input.aliasId)
+      const note = typeof input.note === "string" ? input.note : undefined
+      workspace = {
+        ...workspace,
+        aliases: workspace.aliases.map((a) => a.id === aliasId ? { ...a, resolution: { kind: "ignored", ...note ? { note } : {}, receipt } } : a),
+      }
+    } else if (actionId === workspace.actions.promoteRow) {
+      const rowId = String(input.rowId)
+      const values = (input.values ?? {}) as Record<string, string>
+      workspace = {
+        ...workspace,
+        rows: workspace.rows.map((r) => r.id === rowId ? {
+          ...r,
+          status: "verified_fact",
+          recordedAt: new Date(recordedAtMs).toISOString(),
+          receipt,
+          fields: r.fields.map((f) => ({ ...f, value: values[f.name] ?? f.value })),
+        } : r),
+      }
+    } else if (actionId === workspace.actions.resolveSupersession) {
+      const conflictId = String(input.conflictId)
+      const choice = input.choice as "accept_newer" | "keep_earlier" | "keep_disputed"
+      const note = typeof input.note === "string" ? input.note : undefined
+      workspace = {
+        ...workspace,
+        supersessions: workspace.supersessions.map((s) => s.id === conflictId ? {
+          ...s,
+          resolution: {
+            choice,
+            ...note ? { note } : {},
+            preservedHistoricalArtifactId: choice === "keep_earlier" ? s.newer.artifactId : s.earlier.artifactId,
+            receipt,
+          },
+        } : s),
+      }
+    }
+
+    return route.fulfill({ json: receipt })
+  })
+
+  return {
+    calls,
+    refuseNextPromote: (rowId, code, message) => { refusals.set(rowId, { code, message }) },
+  }
+}
