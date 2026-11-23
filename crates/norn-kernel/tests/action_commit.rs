@@ -384,6 +384,7 @@ fn call<'a>(action: &'a ActionRoot, so_number: &str, key: &str) -> ActionCall<'a
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 
@@ -4469,4 +4470,166 @@ fn retained_direct_law_keeps_naming_counter_seed_and_allocation_available() {
         "SO-ACME-2025-00038"
     );
     assert_eq!(cell.ledger().len(), 2);
+}
+
+#[test]
+fn trace_context_is_strictly_optional_persists_in_receipts_and_refuses_malformed_inputs() {
+    let types = order_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = approve();
+    let digest = norn_ir::function::Digest(format!("sha256:{}", "b".repeat(64)));
+    let trace = norn_kernel::TraceContext {
+        trace_id: "trace-abc-001".to_owned(),
+        intent_ref: Some("goal:approve-so-1".to_owned()),
+        session_digest: Some(digest),
+    };
+
+    // Omitting trace writes no `trace` key in the canonical stored ActionCall record.
+    let mut plain_cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+    seed(&mut plain_cell, ORDER, "SO-1", "draft");
+    let plain_req = call(&action, "SO-1", "plain-key");
+    let ActionOutcome::Committed {
+        record: plain_rec, ..
+    } = commit_action(&mut plain_cell, &catalog, &plain_req, &Allow).unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(plain_rec.trace, None);
+    let stored_plain = plain_cell
+        .load(&FactKey::new(
+            norn_kernel::ACTION_CALL_TYPE,
+            "commerce.sales_order.approve/plain-key",
+        ))
+        .unwrap()
+        .values
+        .unwrap();
+    assert!(
+        !stored_plain.contains_key("trace"),
+        "omitting trace must not add a trace field to canonical record values"
+    );
+    assert_eq!(
+        norn_kernel::ActionCallRecord::from_values(&stored_plain),
+        Some(plain_rec)
+    );
+
+    // Supplying trace persists it into ActionCallRecord and survives exact replay.
+    let mut traced_cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+    seed(&mut traced_cell, ORDER, "SO-1", "draft");
+    let mut traced_req = call(&action, "SO-1", "traced-key");
+    traced_req.trace = Some(trace.clone());
+    let ActionOutcome::Committed {
+        record: committed_rec,
+        ..
+    } = commit_action(&mut traced_cell, &catalog, &traced_req, &Allow).unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(committed_rec.trace.as_ref(), Some(&trace));
+    let stored_traced = traced_cell
+        .load(&FactKey::new(
+            norn_kernel::ACTION_CALL_TYPE,
+            "commerce.sales_order.approve/traced-key",
+        ))
+        .unwrap()
+        .values
+        .unwrap();
+    assert_eq!(
+        norn_kernel::ActionCallRecord::from_values(&stored_traced),
+        Some(committed_rec.clone())
+    );
+    let ActionOutcome::Replayed {
+        record: replayed_rec,
+    } = commit_action(&mut traced_cell, &catalog, &traced_req, &Allow).unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(replayed_rec, committed_rec);
+
+    // Changing or dropping trace under the same idempotency key refuses conflict.
+    let mut changed_trace = traced_req.clone();
+    changed_trace.trace = Some(norn_kernel::TraceContext {
+        trace_id: "trace-different".to_owned(),
+        intent_ref: None,
+        session_digest: None,
+    });
+    assert_refused(
+        &mut traced_cell,
+        &catalog,
+        &changed_trace,
+        &Allow,
+        "action.idempotency_conflict",
+    );
+    let mut dropped_trace = traced_req.clone();
+    dropped_trace.trace = None;
+    assert_refused(
+        &mut traced_cell,
+        &catalog,
+        &dropped_trace,
+        &Allow,
+        "action.idempotency_conflict",
+    );
+
+    // Malformed / oversized / raw-transcript trace inputs refuse fail-closed before host IO.
+    let invalid_cases = [
+        norn_kernel::TraceContext {
+            trace_id: "   ".to_owned(),
+            intent_ref: None,
+            session_digest: None,
+        },
+        norn_kernel::TraceContext {
+            trace_id: "x".repeat(norn_kernel::MAX_TRACE_ID_BYTES + 1),
+            intent_ref: None,
+            session_digest: None,
+        },
+        norn_kernel::TraceContext {
+            trace_id: "trace\nwith-newline".to_owned(),
+            intent_ref: None,
+            session_digest: None,
+        },
+        norn_kernel::TraceContext {
+            trace_id: "trace-ok".to_owned(),
+            intent_ref: Some(" ".to_owned()),
+            session_digest: None,
+        },
+        norn_kernel::TraceContext {
+            trace_id: "trace-ok".to_owned(),
+            intent_ref: Some("i".repeat(norn_kernel::MAX_INTENT_REF_BYTES + 1)),
+            session_digest: None,
+        },
+        norn_kernel::TraceContext {
+            trace_id: "trace-ok".to_owned(),
+            intent_ref: None,
+            session_digest: Some(norn_ir::function::Digest(
+                "user: raw transcript text must never be stored".to_owned(),
+            )),
+        },
+        norn_kernel::TraceContext {
+            trace_id: "trace-ok".to_owned(),
+            intent_ref: None,
+            session_digest: Some(norn_ir::function::Digest(format!(
+                "sha256:{}",
+                "A".repeat(64)
+            ))),
+        },
+    ];
+    for bad in invalid_cases {
+        let mut req = call(&action, "SO-1", "bad-trace");
+        req.trace = Some(bad);
+        let refusal = commit_action(&mut NoReadOrCommit, &catalog, &req, &Allow).unwrap_err();
+        assert_eq!(refusal.code(), "action.invalid_input");
+    }
+
+    // Corrupt stored trace fails closed on record decode.
+    let mut corrupt = stored_traced;
+    corrupt.insert(
+        "trace".to_owned(),
+        JsonValue::Object(JsonObject::from([
+            ("traceId".to_owned(), JsonValue::String("t".to_owned())),
+            (
+                "sessionDigest".to_owned(),
+                JsonValue::String("not-a-digest".to_owned()),
+            ),
+        ])),
+    );
+    assert!(norn_kernel::ActionCallRecord::from_values(&corrupt).is_none());
 }

@@ -1032,6 +1032,13 @@ fn check_scope<X>(call: &ActionCall<'_>) -> Result<(), ActionRefusal<X>> {
             return Err(ActionRefusal::MissingScope { key: key.clone() });
         }
     }
+    if let Some(trace) = &call.trace {
+        trace
+            .validate()
+            .map_err(|error| ActionRefusal::InvalidInput {
+                field: error.field().to_owned(),
+            })?;
+    }
     Ok(())
 }
 

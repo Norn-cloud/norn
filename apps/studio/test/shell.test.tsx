@@ -76,9 +76,9 @@ test("the page bar holds search, shortcuts and notifications (the view and langu
   expect(html).toContain("Ada Lovelace")
 })
 
-test("only the recorded jewelry world opens; the NC benchmark points to its offline results; the rest say why they are empty", () => {
+test("only the recorded demo world opens; the NC benchmark points to its offline results; the rest say why they are empty", () => {
   expect(new Set(WORKSPACES.map(({ group }) => group))).toEqual(new Set(["Class demos", "Industry benchmarks", "First-party"]))
-  expect(WORKSPACES.filter(({ recorded }) => recorded).map(({ id, group }) => `${group}/${id}`)).toEqual(["First-party/jewelry"])
+  expect(WORKSPACES.filter(({ recorded }) => recorded).map(({ id, group }) => `${group}/${id}`)).toEqual(["First-party/recorded-demo"])
   const olist = WORKSPACES.find(({ id }) => id === "olist")
   expect(olist?.detail).toBe("Benchmark run offline (licence NC)")
   expect(olist?.results).toBe("https://github.com/Norn-cloud/norn/issues/531")
