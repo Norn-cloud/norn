@@ -1,0 +1,4 @@
+{
+  "order": 3,
+  "value": "quint verify verification/hr-vertical-v1/models/hr-shift-safety.qnt --backend apalache --invariants typeOk statutoryRestFloorPreserved publishedHasReceipt publishedShiftsHalfOpen publishedNoOverlap publishedMinRest publishedNoApprovedLeaveOverlap --max-steps 5"
+}

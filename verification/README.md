@@ -13,7 +13,7 @@ Formal models and proofs for parts of Norn, and the scripts that check them. Thi
 | `kernel-v2/` | Quint models of commit admission, quantity ledger and projection trust, their ITF traces (`traces/`) and `results.json` |
 | `semantics-v1/` | Shared Lean semantics (`NornSem`) and checker proofs, with pinned statements and axioms |
 | `exact-arith-v1/` | Lean proofs over Aeneas extractions of the exact decimal, rational and ledger arithmetic |
-| `authz-v1/`, `ontology-v1/`, `linear-conservation-v1/`, `query-compute-v1/`, `specialisation-v1/`, `quantity-batch-atomicity-v1/`, `quantity-unit-dimension-v1/`, `core-physics-v1/` | Lean proofs and Quint models for one subsystem each |
+| `authz-v1/`, `ontology-v1/`, `linear-conservation-v1/`, `query-compute-v1/`, `specialisation-v1/`, `quantity-batch-atomicity-v1/`, `quantity-unit-dimension-v1/`, `core-physics-v1/`, `hr-vertical-v1/` | Lean proofs and Quint models for one subsystem each |
 | `cell-protocol-v1/` | Hand-written Quint models of cell protocols, TLC liveness harnesses, traces and `results.json`. Not a promoted gate. |
 | `canonical-values-v1/`, `cell-profile-v1/`, `ordered-fold-v1/`, `parameters/`, `values-v1/` | Kani harnesses and contracts. Crates include some of them under `#[cfg(kani)]`. |
 | `ontology/` | Ontology packs, registry and their validator |

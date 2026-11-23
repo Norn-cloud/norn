@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/hr-vertical-v1/models/hr-shift-safety.qnt",
+    "command": "quint verify verification/hr-vertical-v1/models/hr-shift-safety.qnt --backend apalache --invariants typeOk statutoryRestFloorPreserved publishedHasReceipt publishedShiftsHalfOpen publishedNoOverlap publishedMinRest publishedNoApprovedLeaveOverlap --max-steps 5",
+    "selectors": {
+      "$entries": "obligationClaims.entry979459fe40dccf8398bf85bb3024e5e716144edefaec6717d26682cfaee7c0b1.evidence.model.entryee81c573a60e5fff0f0a186656392fec986abf26dc466241d7de6dda915985e1.selectors"
+    }
+  }
+}

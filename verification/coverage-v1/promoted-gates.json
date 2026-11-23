@@ -849,6 +849,147 @@
       "generatedArtifacts": []
     },
     {
+      "id": "core-escrow-holds-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/core-physics-v1/models/core-escrow-holds.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "core-escrow-holds-quint",
+      "profile": "fast",
+      "command": "quint verify verification/core-physics-v1/models/core-escrow-holds.qnt --backend apalache --invariants typeOk balanceNonNegative allHoldsNonNegative openHoldsBoundedByBalance availableNonNegative terminalHoldsImmutable refusedStepPreservesState --max-steps 5",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/core-escrow-holds-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "core-escrow-holds-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreEscrowHolds.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "core-physics",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hr-time-dst-pin-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/hr-vertical-v1/models/time-dst-pin.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "hr-vertical",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hr-time-dst-pin-quint",
+      "profile": "fast",
+      "command": "quint verify verification/hr-vertical-v1/models/time-dst-pin.qnt --backend apalache --invariants typeOk deterministicResolution admittedIntervalHalfOpen gapAlwaysRefused foldUnderRejectAlwaysRefused replayPinImmutable --max-steps 5",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "hr-vertical",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/hr-time-dst-pin-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hr-time-dst-pin-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/hr-vertical-v1/proofs/TimeDstPin.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "hr-vertical",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hr-shift-safety-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/hr-vertical-v1/models/hr-shift-safety.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "hr-vertical",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hr-shift-safety-quint",
+      "profile": "fast",
+      "command": "quint verify verification/hr-vertical-v1/models/hr-shift-safety.qnt --backend apalache --invariants typeOk statutoryRestFloorPreserved publishedHasReceipt publishedShiftsHalfOpen publishedNoOverlap publishedMinRest publishedNoApprovedLeaveOverlap --max-steps 5",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "hr-vertical",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/hr-shift-safety-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hr-shift-safety-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/hr-vertical-v1/proofs/HrShiftSafety.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "hr-vertical",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "quantity-kani",
       "profile": "full",
       "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",

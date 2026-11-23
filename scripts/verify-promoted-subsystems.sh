@@ -664,6 +664,68 @@ run_gate fast core-value-ledger-lean \
   command \
   lean -DwarningAsError=true \
     verification/core-physics-v1/proofs/CoreValueLedger.lean
+run_gate fast core-escrow-holds-quint-typecheck \
+  "quint typecheck verification/core-physics-v1/models/core-escrow-holds.qnt" \
+  command \
+  quint typecheck \
+    verification/core-physics-v1/models/core-escrow-holds.qnt
+run_gate fast core-escrow-holds-quint \
+  "quint verify verification/core-physics-v1/models/core-escrow-holds.qnt --backend apalache --invariants typeOk balanceNonNegative allHoldsNonNegative openHoldsBoundedByBalance availableNonNegative terminalHoldsImmutable refusedStepPreservesState --max-steps 5" \
+  command \
+  quint verify \
+    verification/core-physics-v1/models/core-escrow-holds.qnt \
+    --backend apalache \
+    --invariants typeOk balanceNonNegative allHoldsNonNegative \
+      openHoldsBoundedByBalance availableNonNegative terminalHoldsImmutable \
+      refusedStepPreservesState \
+    --max-steps 5 \
+    --out "$result_root/core-escrow-holds-quint.json"
+run_gate fast core-escrow-holds-lean \
+  "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreEscrowHolds.lean" \
+  command \
+  lean -DwarningAsError=true \
+    verification/core-physics-v1/proofs/CoreEscrowHolds.lean
+run_gate fast hr-time-dst-pin-quint-typecheck \
+  "quint typecheck verification/hr-vertical-v1/models/time-dst-pin.qnt" \
+  command \
+  quint typecheck \
+    verification/hr-vertical-v1/models/time-dst-pin.qnt
+run_gate fast hr-time-dst-pin-quint \
+  "quint verify verification/hr-vertical-v1/models/time-dst-pin.qnt --backend apalache --invariants typeOk deterministicResolution admittedIntervalHalfOpen gapAlwaysRefused foldUnderRejectAlwaysRefused replayPinImmutable --max-steps 5" \
+  command \
+  quint verify \
+    verification/hr-vertical-v1/models/time-dst-pin.qnt \
+    --backend apalache \
+    --invariants typeOk deterministicResolution admittedIntervalHalfOpen \
+      gapAlwaysRefused foldUnderRejectAlwaysRefused replayPinImmutable \
+    --max-steps 5 \
+    --out "$result_root/hr-time-dst-pin-quint.json"
+run_gate fast hr-time-dst-pin-lean \
+  "lean -DwarningAsError=true verification/hr-vertical-v1/proofs/TimeDstPin.lean" \
+  command \
+  lean -DwarningAsError=true \
+    verification/hr-vertical-v1/proofs/TimeDstPin.lean
+run_gate fast hr-shift-safety-quint-typecheck \
+  "quint typecheck verification/hr-vertical-v1/models/hr-shift-safety.qnt" \
+  command \
+  quint typecheck \
+    verification/hr-vertical-v1/models/hr-shift-safety.qnt
+run_gate fast hr-shift-safety-quint \
+  "quint verify verification/hr-vertical-v1/models/hr-shift-safety.qnt --backend apalache --invariants typeOk statutoryRestFloorPreserved publishedHasReceipt publishedShiftsHalfOpen publishedNoOverlap publishedMinRest publishedNoApprovedLeaveOverlap --max-steps 5" \
+  command \
+  quint verify \
+    verification/hr-vertical-v1/models/hr-shift-safety.qnt \
+    --backend apalache \
+    --invariants typeOk statutoryRestFloorPreserved publishedHasReceipt \
+      publishedShiftsHalfOpen publishedNoOverlap publishedMinRest \
+      publishedNoApprovedLeaveOverlap \
+    --max-steps 5 \
+    --out "$result_root/hr-shift-safety-quint.json"
+run_gate fast hr-shift-safety-lean \
+  "lean -DwarningAsError=true verification/hr-vertical-v1/proofs/HrShiftSafety.lean" \
+  command \
+  lean -DwarningAsError=true \
+    verification/hr-vertical-v1/proofs/HrShiftSafety.lean
 run_gate full quantity-kani \
   "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs" \
   command \

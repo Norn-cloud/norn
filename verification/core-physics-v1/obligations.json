@@ -87,7 +87,7 @@
         "two reservations each fit the available stock but together exceed it",
         "releasing more than is held"
       ],
-      "status": "specified"
+      "status": "modeled"
     },
     {
       "id": "INV-CORE-COMMITMENT-COMPLETION",

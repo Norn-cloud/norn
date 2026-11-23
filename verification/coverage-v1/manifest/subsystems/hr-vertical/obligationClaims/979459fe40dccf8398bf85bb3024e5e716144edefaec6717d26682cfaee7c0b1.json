@@ -1,0 +1,21 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-SHIFT-SAFETY",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry979459fe40dccf8398bf85bb3024e5e716144edefaec6717d26682cfaee7c0b1.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry979459fe40dccf8398bf85bb3024e5e716144edefaec6717d26682cfaee7c0b1.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry979459fe40dccf8398bf85bb3024e5e716144edefaec6717d26682cfaee7c0b1.evidence.proof"
+      }
+    },
+    "residual": "Reference Quint model and Lean 4 inductive proof cover non-overlap (HR-SH-01), approved-leave exclusion (HR-SH-02), minimum rest floor (HR-SH-03), and solver receipt / statutory floor preservation (HR-SH-04); awaiting phase/formal Boat execution. No Rust kernel or CP-SAT solver refinement proof yet."
+  }
+}

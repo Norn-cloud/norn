@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/core-physics-v1/models/core-escrow-holds.qnt",
+    "command": "quint verify verification/core-physics-v1/models/core-escrow-holds.qnt --backend apalache --invariants typeOk balanceNonNegative allHoldsNonNegative openHoldsBoundedByBalance availableNonNegative terminalHoldsImmutable refusedStepPreservesState --max-steps 5",
+    "selectors": {
+      "$entries": "obligationClaims.entry9a26ac934937a9cd2c4e2ffc690dbb91b7655a6bb4a18a951c5e0bd2807ec46d.evidence.model.entry347e74fe83e61ed42d274f56254c135c251a3f0236c625f152583542d751b6e8.selectors"
+    }
+  }
+}

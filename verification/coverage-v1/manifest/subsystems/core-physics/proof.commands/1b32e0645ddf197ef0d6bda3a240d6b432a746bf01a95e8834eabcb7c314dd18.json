@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreEscrowHolds.lean"
+}

@@ -1,0 +1,45 @@
+{
+  "registry_version": "norn.verification.obligations.v1",
+  "obligations": [
+    {
+      "id": "INV-TIME-DST-DETERMINISTIC",
+      "law": "time.law.dst_deterministic",
+      "domain": "hr-vertical",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "Pinned IANA tzdb wall-clock to UTC interval resolution (Core 01 TIME-PIN-1) is deterministic, admits only half-open UTC intervals [start, end) with start < end, refuses spring-forward gaps under every dst_policy and fall-back folds under dst_policy = reject, and preserves persisted UTC bounds across subsequent tzdb upgrades on replay.",
+      "owner": "time foundation pack; Core 01 TIME-PIN-1 temporal materialization",
+      "assumptions": [
+        "Each pinned tzdb version maps every local wall-clock instant to either a unique UTC instant, a spring-forward gap, or a fall-back fold with earlierUtc < laterUtc.",
+        "Committed records persist their resolved UTC bounds and temporal pins and replay them directly without re-evaluating wall-clock time under newer tzdb rules."
+      ],
+      "counterexamples": [
+        "a wall-clock instant inside a spring-forward gap is admitted under earlier or later policy",
+        "an ambiguous fall-back fold instant is admitted under dst_policy = reject",
+        "a materialized interval has startUtc >= endUtc",
+        "a committed interval changes its UTC bounds on replay after a tzdb upgrade"
+      ],
+      "status": "modeled"
+    },
+    {
+      "id": "INV-SHIFT-SAFETY",
+      "law": "hr.law.shift_safety",
+      "domain": "hr-vertical",
+      "priority": "P0",
+      "kind": "safety",
+      "statement": "Every admitted published hr.Roster carries an accepted solver receipt digest, enforces a minimum rest floor no lower than the statutory baseline (e.g. Egypt 11h), admits only half-open UTC hr.ShiftCommitment intervals, and contains no overlapping shifts for the same employee (HR-SH-01), no shifts violating the minimum rest gap (HR-SH-03), and no shifts overlapping approved hr.LeaveRequest intervals (HR-SH-02).",
+      "owner": "hr domain pack; loc-eg overlay; publish_roster commit check",
+      "assumptions": [
+        "All shift commitments and approved leave requests are materialized to canonical half-open UTC intervals [startUtc, endUtc) before roster admission.",
+        "Roster publication and leave approval are serialized within one cell transaction against the active statutory labor profile."
+      ],
+      "counterexamples": [
+        "two overlapping ShiftCommitments for the same employee are admitted in a published roster (HR-SH-01)",
+        "an employee is scheduled during an approved LeaveRequest (HR-SH-02)",
+        "a closing shift ending at 23:00 followed by a 06:00 opening shift (7h < 11h rest) is published (HR-SH-03)",
+        "a roster is published without a solver receipt digest or by silently relaxing the statutory minimum rest floor (HR-SH-04)"
+      ],
+      "status": "modeled"
+    }
+  ]
+}

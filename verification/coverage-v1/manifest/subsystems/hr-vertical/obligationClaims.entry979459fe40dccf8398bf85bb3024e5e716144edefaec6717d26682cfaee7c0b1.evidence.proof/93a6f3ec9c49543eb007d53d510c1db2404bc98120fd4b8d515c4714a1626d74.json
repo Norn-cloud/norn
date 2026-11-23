@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/hr-vertical-v1/proofs/HrShiftSafety.lean",
+    "command": "lean -DwarningAsError=true verification/hr-vertical-v1/proofs/HrShiftSafety.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry979459fe40dccf8398bf85bb3024e5e716144edefaec6717d26682cfaee7c0b1.evidence.proof.entry93a6f3ec9c49543eb007d53d510c1db2404bc98120fd4b8d515c4714a1626d74.selectors"
+    }
+  }
+}

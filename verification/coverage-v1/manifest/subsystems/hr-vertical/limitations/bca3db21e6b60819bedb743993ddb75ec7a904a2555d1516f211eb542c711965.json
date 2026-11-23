@@ -1,0 +1,4 @@
+{
+  "order": 0,
+  "value": "The Lean and Quint artefacts are reference specifications for TIME-PIN-1 and HR shift safety (HR-SH-01..04), not refinement proofs of the Rust kernel, chrono/tzdb crates, or external CP-SAT solver."
+}

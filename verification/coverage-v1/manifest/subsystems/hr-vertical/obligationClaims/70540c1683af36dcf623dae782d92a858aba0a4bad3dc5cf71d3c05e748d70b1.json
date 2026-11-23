@@ -1,0 +1,21 @@
+{
+  "order": 0,
+  "value": {
+    "id": "INV-TIME-DST-DETERMINISTIC",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry70540c1683af36dcf623dae782d92a858aba0a4bad3dc5cf71d3c05e748d70b1.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry70540c1683af36dcf623dae782d92a858aba0a4bad3dc5cf71d3c05e748d70b1.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry70540c1683af36dcf623dae782d92a858aba0a4bad3dc5cf71d3c05e748d70b1.evidence.proof"
+      }
+    },
+    "residual": "Reference Quint model and Lean 4 proof over arbitrary pinned tzdb rules cover determinism, half-open intervals, fail-closed gap/fold refusal, and replay pin immutability; awaiting phase/formal Boat execution. No Rust runtime refinement proof yet."
+  }
+}

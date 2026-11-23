@@ -1,0 +1,4 @@
+{
+  "order": 0,
+  "value": "lean -DwarningAsError=true verification/hr-vertical-v1/proofs/TimeDstPin.lean"
+}

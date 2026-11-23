@@ -1,0 +1,4 @@
+{
+  "order": 3,
+  "value": "quint verify verification/core-physics-v1/models/core-escrow-holds.qnt --backend apalache --invariants typeOk balanceNonNegative allHoldsNonNegative openHoldsBoundedByBalance availableNonNegative terminalHoldsImmutable refusedStepPreservesState --max-steps 5"
+}

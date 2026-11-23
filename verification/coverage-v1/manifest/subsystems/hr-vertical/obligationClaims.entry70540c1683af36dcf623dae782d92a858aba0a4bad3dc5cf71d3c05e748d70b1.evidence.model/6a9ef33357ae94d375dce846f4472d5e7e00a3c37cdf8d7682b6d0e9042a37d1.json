@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/hr-vertical-v1/models/time-dst-pin.qnt",
+    "command": "quint verify verification/hr-vertical-v1/models/time-dst-pin.qnt --backend apalache --invariants typeOk deterministicResolution admittedIntervalHalfOpen gapAlwaysRefused foldUnderRejectAlwaysRefused replayPinImmutable --max-steps 5",
+    "selectors": {
+      "$entries": "obligationClaims.entry70540c1683af36dcf623dae782d92a858aba0a4bad3dc5cf71d3c05e748d70b1.evidence.model.entry6a9ef33357ae94d375dce846f4472d5e7e00a3c37cdf8d7682b6d0e9042a37d1.selectors"
+    }
+  }
+}

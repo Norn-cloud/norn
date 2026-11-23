@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/core-physics-v1/proofs/CoreEscrowHolds.lean",
+    "command": "lean -DwarningAsError=true verification/core-physics-v1/proofs/CoreEscrowHolds.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry9a26ac934937a9cd2c4e2ffc690dbb91b7655a6bb4a18a951c5e0bd2807ec46d.evidence.proof.entry85ac717a3846a6df419bfa7929d6f73b6b7c9b5b87c96fbe7be597e6e26f5c1c.selectors"
+    }
+  }
+}

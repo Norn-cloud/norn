@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/hr-vertical-v1/proofs/TimeDstPin.lean",
+    "command": "lean -DwarningAsError=true verification/hr-vertical-v1/proofs/TimeDstPin.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry70540c1683af36dcf623dae782d92a858aba0a4bad3dc5cf71d3c05e748d70b1.evidence.proof.entrydf260fa5c670d194bcfc9a1410df204e908dd9160730a5d7f569dd2ed7c057ac.selectors"
+    }
+  }
+}

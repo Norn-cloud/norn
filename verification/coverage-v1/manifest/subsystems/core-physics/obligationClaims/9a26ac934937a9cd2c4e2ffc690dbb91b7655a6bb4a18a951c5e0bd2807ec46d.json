@@ -3,8 +3,8 @@
   "value": {
     "id": "INV-CORE-ESCROW-NON-NEGATIVE",
     "runtime": "missing",
-    "model": "missing",
-    "proof": "missing",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
     "evidence": {
       "runtime": {
         "$entries": "obligationClaims.entry9a26ac934937a9cd2c4e2ffc690dbb91b7655a6bb4a18a951c5e0bd2807ec46d.evidence.runtime"
@@ -16,6 +16,6 @@
         "$entries": "obligationClaims.entry9a26ac934937a9cd2c4e2ffc690dbb91b7655a6bb4a18a951c5e0bd2807ec46d.evidence.proof"
       }
     },
-    "residual": "Specified only; the kernel quantity ledger refuses spending held or absent quantity. Core-pack model and proof are pending."
+    "residual": "Reference Quint model (3 slots, depth 5) and Lean 4 inductive proof cover balance accrual, single/concurrent holds, consume, release, and 7-day timer expiry; awaiting phase/formal Boat execution. Not a refinement proof of the Rust quantity ledger or storage."
   }
 }

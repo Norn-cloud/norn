@@ -1,0 +1,61 @@
+{
+  "obligations": {
+    "$entries": "obligations"
+  },
+  "obligationClaims": {
+    "$entries": "obligationClaims"
+  },
+  "runtime": {
+    "status": "missing",
+    "artifacts": {
+      "$entries": "runtime.artifacts"
+    },
+    "commands": {
+      "$entries": "runtime.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "runtime.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "runtime.resultArtifacts"
+    }
+  },
+  "model": {
+    "status": "bounded_model_checked",
+    "bound": "Apalache depth 5 over time-dst-pin (3 record slots, local hours 0..11 with Cairo-style gap/fold and tzdb v1/v2 upgrade) and hr-shift-safety (2 employees, 3 shift slots, 2 leave slots, representative hour grid, Egypt 11h statutory floor)",
+    "artifacts": {
+      "$entries": "model.artifacts"
+    },
+    "commands": {
+      "$entries": "model.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "model.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "model.resultArtifacts"
+    }
+  },
+  "proof": {
+    "status": "reference_proved",
+    "scope": "reference",
+    "artifacts": {
+      "$entries": "proof.artifacts"
+    },
+    "commands": {
+      "$entries": "proof.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "proof.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "proof.resultArtifacts"
+    }
+  },
+  "limitations": {
+    "$entries": "limitations"
+  },
+  "sourceFiles": {
+    "$entries": "sourceFiles"
+  }
+}

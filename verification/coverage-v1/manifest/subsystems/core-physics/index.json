@@ -22,7 +22,7 @@
   },
   "model": {
     "status": "partial",
-    "bound": "Apalache depth 4 over four journal slots of two legs, accounts 0..3, two units and amounts -2..2, with post, reverse and refused amend or delete steps",
+    "bound": "Apalache depth 4 over core-value-ledger (four journal slots of two legs, accounts 0..3, two units, amounts -2..2); depth 5 over core-escrow-holds (three hold slots, balance 0..12, 7-day expiry TTL, clock 0..21)",
     "artifacts": {
       "$entries": "model.artifacts"
     },

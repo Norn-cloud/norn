@@ -60,6 +60,11 @@ REQUIRED_CORE_PHYSICS_OBLIGATION_IDS = frozenset([
     "INV-CORE-QUANTITY-CONSERVATION",
     "INV-CORE-VALUE-CONSERVATION",
 ])
+HR_VERTICAL_OBLIGATIONS = ROOT / "verification/hr-vertical-v1/obligations.json"
+REQUIRED_HR_VERTICAL_OBLIGATION_IDS = frozenset([
+    "INV-SHIFT-SAFETY",
+    "INV-TIME-DST-DETERMINISTIC",
+])
 KERNEL_OBLIGATIONS = ROOT / "verification/archive/kernel-v1/obligations.json"
 KERNEL_OBLIGATIONS_SCHEMA = (
     ROOT / "verification/archive/kernel-v1/schemas/obligations.schema.json"
@@ -104,6 +109,7 @@ MANDATORY = {
     "verification-integrity",
     "kernel-v2",
     "core-physics",
+    "hr-vertical",
 }
 LAYERS = ("runtime", "model", "proof")
 GATE_ROLES = {
@@ -1194,6 +1200,7 @@ def validate(
     gate_manifest_source: Path | None = None,
     central_obligations_path: Path = CENTRAL_OBLIGATIONS,
     core_physics_obligations_path: Path = CORE_PHYSICS_OBLIGATIONS,
+    hr_vertical_obligations_path: Path = HR_VERTICAL_OBLIGATIONS,
     formal_workflow_path: Path = FORMAL_WORKFLOW,
 ) -> int:
     """Validate canonical inputs, with explicit paths only for in-process canaries.
@@ -1280,6 +1287,15 @@ def validate(
         f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_ids)}, "
         f"unexpected={sorted(core_physics_ids - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
     )
+    hr_vertical_registry = load(hr_vertical_obligations_path)
+    hr_vertical_ids = obligation_ids(hr_vertical_registry)
+    require(
+        len(hr_vertical_registry.get("obligations", [])) == len(REQUIRED_HR_VERTICAL_OBLIGATION_IDS)
+        and hr_vertical_ids == REQUIRED_HR_VERTICAL_OBLIGATION_IDS,
+        "hr-vertical obligation registry must contain exactly the HR/time law closure; "
+        f"missing={sorted(REQUIRED_HR_VERTICAL_OBLIGATION_IDS - hr_vertical_ids)}, "
+        f"unexpected={sorted(hr_vertical_ids - REQUIRED_HR_VERTICAL_OBLIGATION_IDS)}",
+    )
     certificate_registry = load(ROOT / "verification/coverage-v1/assurance-certificate-obligations.json")
     certificate_obligations = certificate_registry.get("obligations")
     require(
@@ -1303,6 +1319,7 @@ def validate(
         central_ids
         | obligation_ids(phase1_registry)
         | core_physics_ids
+        | hr_vertical_ids
         | certificate_ids
     )
     p0_obligations = (
@@ -1310,6 +1327,7 @@ def validate(
         | p0_obligation_ids(certificate_registry)
         | p0_obligation_ids(kernel_registry, default_priority="P0")
         | p0_obligation_ids(core_physics_registry)
+        | p0_obligation_ids(hr_vertical_registry)
     )
 
     subsystems = coverage.get("subsystems")
@@ -1504,6 +1522,13 @@ def validate(
         "core-physics coverage must claim exactly the norn.core law closure, whatever their priority; "
         f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_claimed)}, "
         f"unexpected={sorted(core_physics_claimed - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
+    )
+    hr_vertical_claimed = set(by_id.get("hr-vertical", {}).get("obligations", []))
+    require(
+        hr_vertical_claimed == REQUIRED_HR_VERTICAL_OBLIGATION_IDS,
+        "hr-vertical coverage must claim exactly the HR/time law closure, whatever their priority; "
+        f"missing={sorted(REQUIRED_HR_VERTICAL_OBLIGATION_IDS - hr_vertical_claimed)}, "
+        f"unexpected={sorted(hr_vertical_claimed - REQUIRED_HR_VERTICAL_OBLIGATION_IDS)}",
     )
     require(set(by_id) == MANDATORY | present_domains, f"mandatory subsystem mismatch: expected {sorted(MANDATORY)}, got {sorted(by_id)}")
 

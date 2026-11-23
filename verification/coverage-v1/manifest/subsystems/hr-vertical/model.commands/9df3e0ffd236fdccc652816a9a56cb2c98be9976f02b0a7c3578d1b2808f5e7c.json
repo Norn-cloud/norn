@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "quint verify verification/hr-vertical-v1/models/time-dst-pin.qnt --backend apalache --invariants typeOk deterministicResolution admittedIntervalHalfOpen gapAlwaysRefused foldUnderRejectAlwaysRefused replayPinImmutable --max-steps 5"
+}
