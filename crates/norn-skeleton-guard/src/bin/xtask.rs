@@ -16,6 +16,18 @@ enum Top {
 }
 #[derive(Subcommand)]
 enum Gate {
+    /// Run one bundle from a checked plan.
+    #[command(disable_help_flag = true)]
+    Bundle {
+        #[arg(allow_hyphen_values = true)]
+        plan: String,
+        #[arg(allow_hyphen_values = true)]
+        id: String,
+    },
+    /// Pack a planner document.
+    BundlePlan { plan: String },
+    /// Check the exact deterministic bundle inventory.
+    BundleCheck { plan: String },
     /// Exact candidate or expanded-distribution provenance.
     Provenance {
         #[arg(long, default_value = ".")]
@@ -46,6 +58,11 @@ enum Gate {
 fn main() -> ExitCode {
     let Top::Ci(command) = Cli::parse().command;
     let (document, passed) = match command {
+        Gate::Bundle { plan, id } => return bundle_exit(ci::bundle::run(&plan, Some(&id))),
+        Gate::BundlePlan { plan } => {
+            return bundle_exit(ci::bundle::print_plan(&plan).map_err(Into::into));
+        }
+        Gate::BundleCheck { plan } => return bundle_exit(ci::bundle::run(&plan, None)),
         Gate::Provenance {
             root,
             distribution,
@@ -88,5 +105,15 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         _ => ExitCode::FAILURE,
+    }
+}
+
+fn bundle_exit(result: Result<(), ci::bundle::Failure>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            let _diagnostic = writeln!(std::io::stderr().lock(), "{}", error.message);
+            ExitCode::from(error.code)
+        }
     }
 }
