@@ -1,0 +1,39 @@
+{
+  "artifactId": "privacy.markings.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Personal data markings",
+  "namespace": "privacy",
+  "payload": {
+    "entityVersion": "2.0",
+    "markings": [
+      {
+        "category": "pii.contact",
+        "id": "pii.contact",
+        "label": "Contact",
+        "mask": {
+          "kind": "pseudonym",
+          "subject": "Customer"
+        },
+        "severity": "high"
+      },
+      {
+        "category": "pii.identity",
+        "id": "pii.identity",
+        "label": "Government identity",
+        "mask": {
+          "kind": "refuse"
+        },
+        "severity": "critical"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/privacy/artifacts/privacy.markings.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

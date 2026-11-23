@@ -1,14 +1,22 @@
 import alchemy from "alchemy"
-import { D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
+import { createCloudflareApi, D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { authDeploy, cellHost, deployTarget, requireWorkerScript, scanState } from "./deploy-target.ts"
+import { authDeploy, cellHost, cloudflareCredentials, deployTarget, otelSettings, requireSignInRecipe, requireWorkerScript, scanState, useCloudflareCredentials } from "./deploy-target.ts"
+import { billingModeStatement } from "./worker/billing.ts"
+import { polarConfig } from "./worker/polar-config.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
 // (comma-separated); browser navigations to
-// client-side routes fall back to index.html. Credentials come from
-// CLOUDFLARE_* in the environment. State lives in ALCHEMY_STATE_DIR (outside
-// the repository) or the ignored `.alchemy`.
+// client-side routes fall back to index.html. Credentials: the Norn account's workers token,
+// CLOUDFLARE_WORKERS_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from Infisical prod /norn/cloudflare,
+// checked before any API call (deploy-target.ts cloudflareCredentials). The Global API Key
+// variables refuse the run, and another account refuses it. State lives in ALCHEMY_STATE_DIR
+// (outside the repository) or the ignored `.alchemy`.
+// This entry point builds the sign-in Studio only. Production (studio, studio-demo) is the
+// recorded-demo Studio with the /api/agent assistant and no sign-in; it is refused here
+// (deploy-target.ts Recipe, requireSignInRecipe) so a prod run can never delete its AgentBudget
+// Durable Object class or put sign-in on it.
 // ALCHEMY_STAGE must name the stage: unset, the deploy refuses rather than
 // meaning production, and prod also needs NORN_DEPLOY_PROD=1.
 // Each stage has its own Worker (production keeps the live one), and a fresh
@@ -21,13 +29,24 @@ import { authDeploy, cellHost, deployTarget, requireWorkerScript, scanState } fr
 // Operators load BETTER_AUTH_SECRET and ALCHEMY_PASSWORD by name from the secret store
 // (path /auth: NORN_STUDIO_<STAGE>_BETTER_AUTH_SECRET, NORN_STUDIO_<STAGE>_ALCHEMY_PASSWORD).
 const target = deployTarget(process.env)
+requireSignInRecipe(target)
+const credentials = cloudflareCredentials(process.env)
+useCloudflareCredentials(process.env, credentials)
 const auth = authDeploy(process.env, target)
 // Preview binds the Norn cell Worker as NORN_HOST by script name; the script must already exist.
 const host = cellHost(target)
-if (host !== undefined) await requireWorkerScript(host, process.env)
+if (host !== undefined) await requireWorkerScript(host, credentials)
 // The scan below must see the secret's value, so keep a copy before taking it out of the environment.
 const scanEnv = { ...process.env }
 delete process.env.BETTER_AUTH_SECRET
+// OpenTelemetry export (worker/telemetry.ts): off unless OTEL_EXPORTER_OTLP_ENDPOINT is set; its headers become a Worker secret.
+const otel = otelSettings(process.env)
+delete process.env.OTEL_EXPORTER_OTLP_HEADERS
+// Hosted billing (worker/polar-config.ts): POLAR_ACCESS_TOKEN, POLAR_WEBHOOK_SECRET, POLAR_SERVER and
+// POLAR_PLANS together, or none (billing off). The token and webhook secret become encrypted Worker secrets.
+const billing = polarConfig(process.env)
+delete process.env.POLAR_ACCESS_TOKEN
+delete process.env.POLAR_WEBHOOK_SECRET
 const stateDir = process.env.ALCHEMY_STATE_DIR ?? ".alchemy"
 // Alchemy keeps this app's state under <stateDir>/<APP>/; the post-deploy scan reads exactly that subtree.
 const APP = "norn-studio"
@@ -43,6 +62,13 @@ const authDb = await D1Database("auth-db", {
   adopt: true,
 })
 
+// The database's billing mode (worker/billing.ts billingModeStatement), written once here, after the
+// migrations, from this deployment's billing settings; no request writes it. Billing off writes off.
+const cloudflare = await createCloudflareApi()
+const mode = await cloudflare.post(`/accounts/${cloudflare.accountId}/d1/database/${authDb.id}/query`, { sql: billingModeStatement(billing !== undefined) })
+if (!mode.ok) throw new Error(`writing the billing mode failed: ${mode.status} ${await mode.text()}`)
+console.log(`Billing mode: ${billing === undefined ? "off" : "on"}`)
+
 export const studio = await Vite("studio", {
   name: target.worker,
   assets: { directory: "dist", run_worker_first: ["/api/*"] },
@@ -55,9 +81,24 @@ export const studio = await Vite("studio", {
     AUTH_DB: authDb,
     BETTER_AUTH_SECRET: alchemy.secret(auth.secret),
     BETTER_AUTH_URL: auth.url,
+    // Cloudflare sets cf-connecting-ip itself; the Worker refuses auth without this (#1328).
+    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
+    // Invite-only sign-up (worker/index.ts signUpEmails): required on every stage.
+    STUDIO_SIGNUP_EMAILS: auth.signUpEmails.join(","),
     ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },
     BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify(auth.origins),
+    ...otel === undefined ? {} : {
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel.endpoint,
+      ...otel.headers === undefined ? {} : { OTEL_EXPORTER_OTLP_HEADERS: alchemy.secret(otel.headers) },
+      ...otel.resourceAttributes === undefined ? {} : { OTEL_RESOURCE_ATTRIBUTES: otel.resourceAttributes },
+    },
+    ...billing === undefined ? {} : {
+      POLAR_ACCESS_TOKEN: alchemy.secret(billing.accessToken),
+      POLAR_WEBHOOK_SECRET: alchemy.secret(billing.webhookSecret),
+      POLAR_SERVER: billing.server,
+      POLAR_PLANS: JSON.stringify(billing.table),
+    },
     // Magic links need a Cloudflare Email Service sender on the domain; without one they refuse.
     ...auth.emailFrom === undefined ? {} : { EMAIL: EmailSender({ allowedSenderAddresses: [auth.emailFrom] }), EMAIL_FROM: auth.emailFrom },
   },

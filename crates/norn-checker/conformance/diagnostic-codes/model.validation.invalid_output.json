@@ -1,0 +1,7 @@
+{
+  "code": "model.validation.invalid_output",
+  "message": "a model output is not an inline text, integer, decimal, boolean or enum column",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

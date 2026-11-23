@@ -1,0 +1,58 @@
+{
+  "flow": "ops.approve_refund",
+  "flowAt": {
+    "file": "fixtures/flows/ask.builder.ts",
+    "line": 8
+  },
+  "format": "norn-flow-sourcemap/1",
+  "note": "non-executable: maps generated ids to the definition sites that produced them",
+  "rows": {
+    "awaiting_perform_ask_review/failure/1": {
+      "file": "fixtures/flows/ask.builder.ts",
+      "line": 9
+    },
+    "awaiting_perform_ask_review/failure/2": {
+      "file": "fixtures/flows/ask.builder.ts",
+      "line": 9
+    },
+    "awaiting_perform_ask_review/result/1": {
+      "file": "fixtures/flows/ask.builder.ts",
+      "line": 17
+    },
+    "awaiting_perform_ask_review/result/2": {
+      "file": "fixtures/flows/ask.builder.ts",
+      "line": 18
+    },
+    "started/start/1": {
+      "file": "fixtures/flows/ask.builder.ts",
+      "line": 9
+    }
+  },
+  "sourcePath": "tools/norn-ts/fixtures/flows/ask.flow.ts",
+  "states": {
+    "awaiting_perform_ask_review": {
+      "file": "fixtures/flows/ask.builder.ts",
+      "line": 9
+    },
+    "completed": {
+      "file": "fixtures/flows/ask.builder.ts",
+      "line": 17
+    },
+    "failed_expired": {
+      "file": "fixtures/flows/ask.builder.ts",
+      "line": 9
+    },
+    "failed_withdrawn": {
+      "file": "fixtures/flows/ask.builder.ts",
+      "line": 9
+    },
+    "started": null
+  },
+  "steps": {
+    "ask_review": {
+      "file": "fixtures/flows/ask.builder.ts",
+      "line": 9
+    }
+  },
+  "version": "1.0.0"
+}

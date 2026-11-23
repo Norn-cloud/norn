@@ -1207,7 +1207,7 @@ fn model_and_source_check_clean_on_their_own() {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:#?}");
+    assert_eq!(findings, [], "{findings:#?}");
     assert!(MappingModel::from_artifacts(&model_artifacts()).is_ok());
 }
 
@@ -1219,9 +1219,116 @@ fn erpnext_mapping_checks_clean_in_the_artifact_set() {
     );
     assert_eq!(mapping_key(&mapping), "erpnext.norn_core@0.1.0");
     let findings = check(mapping);
+    assert_eq!(findings, [], "the set should check clean: {findings:#?}");
+}
+
+/// The claim type is needed only where links are mapped: a set whose mapping
+/// declares no links is checked exactly as before, with or without
+/// `norn.ObservedLinkClaim` (a tenant without link-claim mappings installs
+/// unchanged).
+#[test]
+fn a_mapping_without_links_does_not_need_the_claim_type() {
+    let mut payload = read_json(&ir_fixtures().join("mapping/erpnext.mapping.json"));
+    for map in payload
+        .pointer_mut("/maps")
+        .and_then(Value::as_array_mut)
+        .expect("the mapping declares maps")
+    {
+        map["links"] = json!([]);
+    }
+    let check = |with_claim_type: bool| {
+        let mut mapping = mapping_artifact(payload.clone(), false);
+        if !with_claim_type {
+            mapping
+                .dependencies
+                .retain(|dependency| dependency.artifact_id != "norn.ObservedLinkClaim.entity");
+        }
+        let mut artifacts: Vec<ArtifactEnvelope> = model_artifacts()
+            .into_iter()
+            .filter(|artifact| {
+                with_claim_type || artifact.artifact_id != "norn.ObservedLinkClaim.entity"
+            })
+            .collect();
+        artifacts.push(source_artifact());
+        artifacts.push(mapping);
+        let mut codes: Vec<String> = check_artifact_set(
+            &artifacts,
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            },
+        )
+        .into_iter()
+        .map(|finding| finding.code.to_string())
+        .collect();
+        codes.sort();
+        codes
+    };
+    let without = check(false);
     assert!(
-        findings.is_empty(),
-        "the set should check clean: {findings:#?}"
+        !without
+            .iter()
+            .any(|code| code == "mapping.model.link_claim_type_missing"),
+        "no link is mapped, so no claim is recorded: {without:#?}"
+    );
+    assert_eq!(
+        without,
+        check(true),
+        "the claim type's absence changes nothing"
+    );
+}
+
+/// OBS-LINK-CONVERGE-1 at admission: the cell records every mapped link as a
+/// `norn.ObservedLinkClaim`, so a set whose mapping declares links without
+/// that type is refused here, at the first linking map, instead of admitting
+/// and then quarantining every linked row at mapping time.
+#[test]
+fn a_linking_mapping_without_the_claim_type_is_refused() {
+    let payload = read_json(&ir_fixtures().join("mapping/erpnext.mapping.json"));
+    let decoded: norn_ir::mapping::MappingIr =
+        serde_json::from_value(payload.clone()).expect("the mapping payload decodes");
+    // A mapping that names the claim type as a dependency is already refused
+    // by resolution; this one leaves it out, as a hand-built set would.
+    let mut mapping = mapping_artifact(payload, false);
+    mapping
+        .dependencies
+        .retain(|dependency| dependency.artifact_id != "norn.ObservedLinkClaim.entity");
+    let first_linking = decoded
+        .maps
+        .iter()
+        .position(|map| !map.links.is_empty())
+        .expect("the ERPNext mapping declares links");
+    let mut artifacts: Vec<ArtifactEnvelope> = model_artifacts()
+        .into_iter()
+        .filter(|artifact| artifact.artifact_id != "norn.ObservedLinkClaim.entity")
+        .collect();
+    artifacts.push(source_artifact());
+    artifacts.push(mapping);
+    let findings = check_artifact_set(
+        &artifacts,
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    let refusals: Vec<&Diagnostic> = findings
+        .iter()
+        .filter(|finding| finding.code == "mapping.model.link_claim_type_missing")
+        .collect();
+    assert_eq!(refusals.len(), 1, "one refusal per mapping: {findings:#?}");
+    assert!(
+        refusals[0].span.as_ref().is_some_and(|span| span
+            .pointer
+            .ends_with(&format!("/maps/{first_linking}/links"))),
+        "the refusal points at the first linking map: {:#?}",
+        refusals[0]
+    );
+    assert_eq!(
+        findings.len(),
+        1,
+        "the claim type is the only thing missing: {findings:#?}"
     );
 }
 
@@ -1332,7 +1439,7 @@ fn composition_pack_can_contain_mapping_and_source_schema() {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:#?}");
+    assert_eq!(findings, [], "{findings:#?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1449,10 +1556,7 @@ fn compiled_actions_pass_the_artifact_set_check() {
             tenant: None,
         },
     );
-    assert!(
-        findings.is_empty(),
-        "compiled actions pass T2/T3: {findings:#?}"
-    );
+    assert_eq!(findings, [], "compiled actions pass T2/T3: {findings:#?}");
 }
 
 #[test]
@@ -1501,7 +1605,7 @@ fn coverage_records_every_member_and_ignored_field() {
         }
     );
     assert!(order.accounts_for(&MemberRef::Property(PropertyId("status".to_owned()))));
-    assert!(order.unaccounted_source_fields().is_empty(), "{order:#?}");
+    assert_eq!(order.unaccounted_source_fields().len(), 0, "{order:#?}");
 }
 
 #[test]
@@ -1646,8 +1750,9 @@ fn mapped_provenance_inherits_member_and_identity_source_fields() {
         tenant: None,
     };
     let findings = check_artifact_set(&artifacts, &context);
-    assert!(
-        findings.is_empty(),
+    assert_eq!(
+        findings,
+        [],
         "the marked mapping set is valid: {findings:#?}"
     );
 
@@ -2299,20 +2404,20 @@ fn guarded_maps_skip_nullable_subjects_and_guarded_deletes_refuse_partial_record
             "attributes": []
         }),
     );
-    assert!(
+    assert_eq!(
         compiled
             .apply(
                 std::slice::from_ref(&template),
                 &UtcTimestamp("2026-10-01T00:00:00Z".to_owned())
             )
-            .expect("the false guard skips before the nullable subject")
-            .is_empty()
+            .expect("the false guard skips before the nullable subject"),
+        []
     );
-    assert!(
+    assert_eq!(
         compiled
             .apply_delete(&template, &UtcTimestamp("2026-10-01T00:00:00Z".to_owned()))
-            .expect("a complete template delete evaluates its false guard")
-            .is_empty(),
+            .expect("a complete template delete evaluates its false guard"),
+        [],
         "a guarded delete cannot tombstone a record from the opposite branch"
     );
     let variant_delete = document(
@@ -2753,6 +2858,63 @@ fn observed_lifecycle_deviations_are_advisory_and_preserve_lineage_context() {
             .message
             .contains("reason=ambiguous_shortest_path")
     );
+}
+
+/// MAP-DECIMAL-TEXT-1: a declared decimal arrives as exact decimal text
+/// (`"1250.5"`, how careful extractors and many ERP exports write money) and
+/// maps exactly as the JSON number does; text outside the strict JSON-decimal
+/// grammar still refuses. MAP-EXPLAIN-1: that refusal names the map, the
+/// field, its value and the declared type, not only the code.
+#[test]
+fn decimal_text_conforms_and_a_refusal_explains_its_field() {
+    let order = |total: Value| {
+        document(
+            "Sales Order",
+            &json!({
+                "doctype": "Sales Order",
+                "name": "SAL-ORD-0001",
+                "customer": "CUST-0001",
+                "transaction_date": "2026-09-29",
+                "grand_total": total,
+                "docstatus": 1,
+                "items": []
+            }),
+        )
+    };
+    let recorded_at = UtcTimestamp("2026-10-01T00:00:00Z".to_owned());
+    let compiled = compiled();
+    let number = compiled
+        .apply(&[order(json!(1250.5))], &recorded_at)
+        .expect("a JSON number conforms");
+    let text = compiled
+        .apply(&[order(json!("1250.5"))], &recorded_at)
+        .expect("exact decimal text conforms");
+    assert_eq!(number, text, "decimal text maps exactly as the number does");
+
+    for bad in ["1,250.50", "1.25e3", " 1250.5", "EGP 1250"] {
+        let refusals = compiled
+            .apply_explained(&[order(json!(bad))], &recorded_at)
+            .expect_err("text outside the decimal grammar refuses");
+        let refusal = refusals
+            .iter()
+            .find(|refusal| refusal.code == "mapping.runtime.invalid_record")
+            .unwrap_or_else(|| panic!("{bad}: {refusals:#?}"));
+        let field = refusal.field.as_ref().expect("names the field");
+        assert_eq!(field.field, "grand_total");
+        assert_eq!(field.value.as_deref(), Some(format!("{bad:?}").as_str()));
+        assert!(field.expected.contains("decimal"), "{field:?}");
+        assert!(field.reason.contains("JSON decimal"), "{field:?}");
+        assert_ne!(refusal.map.len(), 0);
+        assert_eq!(refusal.document, 0);
+        // The diagnostic `apply` reports is the same refusal, in words.
+        let diagnostic = refusal.diagnostic();
+        assert_eq!(diagnostic.code.as_str(), "mapping.runtime.invalid_record");
+        assert!(
+            diagnostic.message.contains("grand_total"),
+            "{}",
+            diagnostic.message
+        );
+    }
 }
 
 #[test]

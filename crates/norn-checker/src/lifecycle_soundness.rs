@@ -193,15 +193,6 @@ pub(crate) fn check_declaration(lifecycle: &Lifecycle, states: &[&str]) -> Vec<F
             }
             Some(TransitionTrigger::Timer { .. } | TransitionTrigger::Event { .. }) | None => {}
         }
-        if transition.trigger.is_some() && transition.mode == Some(TransitionMode::Request) {
-            out.push(finding(
-                codes::INVALID_TRIGGER,
-                format!(
-                    "transition {id:?} is fired by a timer or event, so it is a fact, not a request"
-                ),
-                &at("mode"),
-            ));
-        }
         if let Some(compensation) = &transition.compensated_by
             && (compensation == &transition.id
                 || !lifecycle.transitions.iter().any(|t| &t.id == compensation))
@@ -215,7 +206,41 @@ pub(crate) fn check_declaration(lifecycle: &Lifecycle, states: &[&str]) -> Vec<F
                 &at("compensatedBy"),
             ));
         }
-        if transition.is_fact() && !transition.guards.is_empty() {
+    }
+    out
+}
+
+/// LIFE-SOUND-5 over the effective transitions of `lifecycle`'s machine, after inheritance:
+/// a trigger, mode or guard a subtype inherits counts with the ones it declares, so a guard
+/// appended to an inherited fact is a guarded fact. Findings sit on `lifecycle`'s own
+/// transitions.
+pub(crate) fn check_effective_transitions(
+    lifecycle: &Lifecycle,
+    machine: &Machine<'_>,
+) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for (index, transition) in lifecycle.transitions.iter().enumerate() {
+        let Some(edge) = machine
+            .transitions
+            .iter()
+            .find(|edge| *edge.id == transition.id)
+        else {
+            continue;
+        };
+        let index = index.to_string();
+        let id = transition.id.as_str();
+        let at = |member: &'static str| vec!["transitions", index.as_str(), member];
+        if edge.trigger.is_some() && edge.mode == Some(TransitionMode::Request) {
+            out.push(finding(
+                codes::INVALID_TRIGGER,
+                format!(
+                    "transition {id:?} is fired by a timer or event, so it is a fact, not a request"
+                ),
+                &at("mode"),
+            ));
+        }
+        let fact = edge.trigger.is_some() || edge.mode == Some(TransitionMode::Fact);
+        if fact && !edge.guards.is_empty() {
             out.push(finding(
                 codes::FACT_GUARDED,
                 format!(
@@ -338,7 +363,11 @@ pub(crate) fn check_machine(machine: &Machine<'_>) -> Vec<Finding> {
         || machine.transitions.iter().any(|edge| {
             edge.trigger.is_some() || edge.mode.is_some() || edge.compensated_by.is_some()
         });
-    if net.endings.iter().all(Option::is_none) {
+    // With no ending, completion is undefined: report that once and skip the
+    // completion findings (traps, unknown completion, deadlines without a
+    // remedy), but still check events, waits, timer cycles and compensation.
+    let no_ending = net.endings.iter().all(Option::is_none);
+    if no_ending {
         if !opted_in {
             return out;
         }
@@ -350,20 +379,18 @@ pub(crate) fn check_machine(machine: &Machine<'_>) -> Vec<Finding> {
                 &[],
             )
         });
-        return out;
     }
     let verdict = soundness::analyse(&net);
     let state_name = |state: usize| machine.states.get(state).copied().unwrap_or_default();
     let mut stuck = BTreeSet::new();
     for (state, outcome) in verdict.states.iter().enumerate() {
         // A state without any exit is `lifecycle.validation.dead_end_state`'s.
-        if !outcome.reachable || outcome.deadlock {
+        if no_ending || !outcome.reachable || outcome.deadlock {
             continue;
         }
         let name = state_name(state);
-        let trace = soundness::witness(&net, state)
-            .map(|edges| run(machine, &net, &edges))
-            .unwrap_or_default();
+        let trace =
+            soundness::witness(&net, state).map_or_default(|edges| run(machine, &net, &edges));
         match outcome.completion {
             Completion::Must => {}
             Completion::None => {
@@ -445,7 +472,8 @@ pub(crate) fn check_machine(machine: &Machine<'_>) -> Vec<Finding> {
         }
     }
     for edge in machine.transitions.iter().filter(|edge| is_timer(edge)) {
-        if let Some(to) = index(machine, edge.to)
+        if !no_ending
+            && let Some(to) = index(machine, edge.to)
             && edge.from.iter().any(|from| reachable(from))
             && verdict
                 .states
@@ -555,17 +583,15 @@ fn check_compensation(machine: &Machine<'_>, out: &mut Vec<Finding>) {
                     .get(owed)
                     .is_some_and(|outcome| outcome.reachable)
             {
-                let trace = soundness::witness(&product, owed)
-                    .map(|edges| {
-                        edges
-                            .iter()
-                            .filter_map(|edge| product.edges.get(*edge))
-                            .filter_map(|edge| machine.transitions.get(edge.label))
-                            .map(|transition| transition.id.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
-                    .unwrap_or_default();
+                let trace = soundness::witness(&product, owed).map_or_default(|edges| {
+                    edges
+                        .iter()
+                        .filter_map(|edge| product.edges.get(*edge))
+                        .filter_map(|edge| machine.transitions.get(edge.label))
+                        .map(|transition| transition.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                });
                 out.push(finding(
                     codes::COMPENSATION_NOT_CLOSED,
                     format!(
@@ -784,6 +810,7 @@ mod tests {
         let machine = Machine::declared(lifecycle, states.to_vec());
         declared
             .into_iter()
+            .chain(check_effective_transitions(lifecycle, &machine))
             .chain(check_machine(&machine))
             .map(|finding| finding.code)
             .collect()
@@ -845,7 +872,7 @@ mod tests {
         ];
         let chart = lifecycle(chart);
         let machine = Machine::declared(&chart, states.to_vec());
-        assert!(machine.dead_ends().is_empty(), "the local check passes it");
+        assert_eq!(machine.dead_ends().len(), 0, "the local check passes it");
         let findings = check_machine(&machine);
         let traps: Vec<_> = findings.iter().filter(|f| f.code == codes::TRAP).collect();
         assert_eq!(traps.len(), 2, "{findings:?}");
@@ -880,7 +907,10 @@ mod tests {
         if let Some(ship) = legacy["transitions"][2].as_object_mut() {
             ship.remove("mode");
         }
-        assert!(check_machine(&Machine::declared(&lifecycle(legacy), ORDER.to_vec())).is_empty());
+        assert_eq!(
+            check_machine(&Machine::declared(&lifecycle(legacy), ORDER.to_vec())),
+            []
+        );
     }
 
     #[test]
@@ -1064,7 +1094,7 @@ mod tests {
         };
         assert_eq!(failure.states, ["review"]);
         assert_eq!(failure.unreachable, ["review"]);
-        assert!(failure.blocking.is_empty());
+        assert_eq!(failure.blocking.len(), 0);
         // a guarded refund leaves review Unknown: the guard is the smallest blocking set.
         let mut guarded = chart();
         guarded["transitions"][3]["guards"] = json!(["self.paid"]);
@@ -1074,7 +1104,7 @@ mod tests {
             panic!("review ends well only through a guard");
         };
         assert_eq!(failure.states, ["review"]);
-        assert!(failure.unreachable.is_empty());
+        assert_eq!(failure.unreachable.len(), 0);
         assert_eq!(failure.blocking, ["refund"]);
         assert!(failure.message().contains("smallest blocking set"));
         // An unclassified terminal is not a declared good ending.
@@ -1116,11 +1146,63 @@ mod tests {
         let mut timer = order(&json!({}));
         timer["transitions"][2]["trigger"] = json!({"kind": "timer", "millis": "0"});
         timer["transitions"][2]["mode"] = json!("request");
-        let found: Vec<_> = check_declaration(&lifecycle(timer), &ORDER)
+        let timer = lifecycle(timer);
+        let found: Vec<_> = check_declaration(&timer, &ORDER)
             .into_iter()
+            .chain(check_effective_transitions(
+                &timer,
+                &Machine::declared(&timer, ORDER.to_vec()),
+            ))
             .map(|finding| finding.code)
             .collect();
         assert_eq!(found, vec![codes::INVALID_TRIGGER, codes::INVALID_TRIGGER]);
+    }
+
+    /// With no ending only the completion findings are moot: a timer cycle and an
+    /// unhandled event are still reported (LIFE-SOUND-6, LIFE-SOUND-7).
+    #[test]
+    fn a_chart_without_endings_still_checks_timers_and_events() {
+        let states = ["a", "b"];
+        let cycle = lifecycle(json!({
+            "property": "status",
+            "initial": ["a"],
+            "terminal": [],
+            "transitions": [
+                {"id": "tick", "from": ["a"], "to": "b", "trigger": {"kind": "timer", "millis": "1000"}},
+                {"id": "tock", "from": ["b"], "to": "a", "trigger": {"kind": "timer", "millis": "1000"}}
+            ]
+        }));
+        let found: Vec<_> = check_machine(&Machine::declared(&cycle, states.to_vec()))
+            .into_iter()
+            .map(|finding| finding.code)
+            .collect();
+        assert_eq!(
+            found,
+            vec![codes::NO_ENDING, codes::TIMER_CYCLE, codes::TIMER_CYCLE]
+        );
+
+        let unhandled = lifecycle(json!({
+            "property": "status",
+            "initial": ["a"],
+            "terminal": [],
+            "events": [{"id": "ping"}],
+            "transitions": [
+                {"id": "go", "from": ["a"], "to": "b", "trigger": {"kind": "event", "event": "ping"}},
+                {"id": "back", "from": ["b"], "to": "a"}
+            ]
+        }));
+        let found: Vec<_> = check_machine(&Machine::declared(&unhandled, states.to_vec()))
+            .into_iter()
+            .map(|finding| finding.code)
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                codes::NO_ENDING,
+                codes::UNHANDLED_EVENT,
+                codes::WAIT_WITHOUT_DEADLINE
+            ]
+        );
     }
 
     #[test]
@@ -1134,7 +1216,10 @@ mod tests {
         }));
         let states = ["active", "building"];
         // D84: a chart that declares no LIFE-SOUND member keeps its admission output.
-        assert!(check_machine(&Machine::declared(&chart, states.to_vec())).is_empty());
+        assert_eq!(
+            check_machine(&Machine::declared(&chart, states.to_vec())),
+            []
+        );
         let mut opted = chart;
         opted.events = vec![norn_ir::LifecycleEvent {
             id: "audit".into(),
@@ -1151,6 +1236,9 @@ mod tests {
             state: "active".into(),
             outcome: LifecycleOutcome::Resting,
         }];
-        assert!(check_machine(&Machine::declared(&resting, states.to_vec())).is_empty());
+        assert_eq!(
+            check_machine(&Machine::declared(&resting, states.to_vec())),
+            []
+        );
     }
 }

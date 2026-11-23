@@ -7,6 +7,7 @@
     reason = "synthetic historical-world correspondence"
 )]
 
+use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
 
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
@@ -22,9 +23,9 @@ const SPLIT: &str = "2026-09-28T00:00:00Z";
 
 fn millis(time: &str) -> u64 {
     u64::try_from(
-        chrono::DateTime::parse_from_rfc3339(time)
+        time.parse::<jiff::Timestamp>()
             .expect("UTC instant")
-            .timestamp_millis(),
+            .as_millisecond(),
     )
     .expect("post-epoch fixture")
 }

@@ -5,25 +5,30 @@
  * test/e2e/pages.ts opens every one in a browser on a deployment.
  */
 export const PAGES = {
+  "/": "/",
   "/sources": "/sources",
   "/sources/$concept": "/sources/canon.Item",
   "/sources/$concept/$": "/sources/canon.Item/demo/item/gold",
   "/objects/$type": "/objects/canon.Item",
+  "/transforms": "/transforms",
+  "/transforms/$id": "/transforms/shop.revenue_by_region",
   "/decisions": "/decisions",
+  "/imports": "/imports",
   "/runs/$id": "/runs/run_restock_7",
   "/episodes/$id": "/episodes/ep_demo_overridden",
-  "/questions": "/questions",
-  "/questions/new": "/questions/new",
-  "/questions/build": "/questions/build",
-  "/questions/$name": "/questions/demo.yield_week",
+  "/metrics": "/metrics",
+  "/metrics/new": "/metrics/new",
+  "/metrics/build": "/metrics/build",
+  "/metrics/$name": "/metrics/demo.yield_week",
   "/dashboards": "/dashboards",
   "/dashboards/new": "/dashboards/new",
   "/dashboards/$id": "/dashboards/studio.dashboard.missing",
+  "/dashboards/$id/edit": "/dashboards/studio.dashboard.missing/edit",
   "/workflows": "/workflows",
   "/canvas": "/canvas",
   "/guarantees": "/guarantees",
+  "/markings": "/markings",
   "/connections": "/connections",
-  "/status": "/status",
 } as const
 
 export type PagePath = keyof typeof PAGES

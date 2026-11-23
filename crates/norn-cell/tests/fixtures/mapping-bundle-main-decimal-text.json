@@ -1,0 +1,279 @@
+{
+  "artifactPins": [
+    [
+      "erpnext.three.source",
+      "0.1.0",
+      "eb61ffb42f8a4d6b0ee9f3f153fa647e7a03779c96622ba1f6568e16bc234574"
+    ],
+    [
+      "erpnext.three.mapping",
+      "0.1.0",
+      "1d538ebe3e9a2c5307c49eebd2713a83a7b831ef467a48ec8e2d9aaed1f0a5c5"
+    ]
+  ],
+  "definitionsDigest": "9f89a042c3858669edc4a065634afe2bb11f300273bd300c954789f436f0de63",
+  "definitionsVersion": 1,
+  "diagnostics": [],
+  "digest": "6e089ffa25b514e3c94f1bf9e0db52533e6b378d46636f9c62eb2a5546e9a61b",
+  "input": {
+    "connectorInstance": "demo",
+    "dataset": "Warehouse Lot Balance",
+    "mapping": "erpnext.three.mapping",
+    "partition": "snapshot",
+    "recordedAt": "2026-11-03T00:00:00Z"
+  },
+  "raw": {
+    "contract": "norn.raw_observation/v1",
+    "event_id": "snapshot",
+    "extracted_at": 1793702400000,
+    "kind": "upsert",
+    "payload": {
+      "cost_currency": "USD",
+      "custodian_ref": "demo/party/custodian",
+      "custom_norn_ref": "demo/holding/owner/north/gold",
+      "item_ref": "demo/item/gold",
+      "location": "north",
+      "modified": "2026-11-01T00:00:00Z",
+      "name": "SYN-ERPNEXT-main",
+      "owner_ref": "demo/party/owner",
+      "quantity": "200.50",
+      "resource_code": "GOLD",
+      "stock_cost": 9000,
+      "unit": "g",
+      "valuation_method": "moving_average"
+    },
+    "payload_digest": "6ab1474c81fa4f5bd3af2aa3ea926684e0ae1f65316098a39a3ca4371055e07d",
+    "pipeline_version": "synthetic/1",
+    "source": "synthetic-erpnext",
+    "source_id": "SYN-ERPNEXT-main",
+    "source_version": "0"
+  },
+  "records": [
+    {
+      "invocations": [
+        {
+          "actionId": "erpnext.three.mapping.holding.observe",
+          "input": {
+            "cost_currency": "USD",
+            "currency": null,
+            "location": "north",
+            "objectId": "demo/holding/owner/north/gold",
+            "observed_at": "2026-11-01T00:00:00Z",
+            "quantity": 200.5,
+            "quantity_basis": "on_hand",
+            "resource_code": "GOLD",
+            "stock_cost": 9000,
+            "unit": "g",
+            "valuation_method": "moving_average"
+          }
+        }
+      ],
+      "key": "demo/holding/owner/north/gold",
+      "links": [
+        {
+          "key": "demo/holding/owner/north/gold",
+          "link": "item",
+          "objectType": "canon.Holding",
+          "provenance": {
+            "mappingVersion": "erpnext.three.mapping@0.1.0",
+            "recordedAt": "2026-11-03T00:00:00Z",
+            "source": {
+              "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+              "system": "synthetic-erpnext"
+            },
+            "transform": "holding.item"
+          },
+          "targetKey": "demo/item/gold",
+          "targetType": "canon.Item"
+        },
+        {
+          "key": "demo/holding/owner/north/gold",
+          "link": "owner",
+          "objectType": "canon.Holding",
+          "provenance": {
+            "mappingVersion": "erpnext.three.mapping@0.1.0",
+            "recordedAt": "2026-11-03T00:00:00Z",
+            "source": {
+              "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+              "system": "synthetic-erpnext"
+            },
+            "transform": "holding.owner"
+          },
+          "targetKey": "demo/party/owner",
+          "targetType": "canon.Party"
+        },
+        {
+          "key": "demo/holding/owner/north/gold",
+          "link": "custodian",
+          "objectType": "canon.Holding",
+          "provenance": {
+            "mappingVersion": "erpnext.three.mapping@0.1.0",
+            "recordedAt": "2026-11-03T00:00:00Z",
+            "source": {
+              "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+              "system": "synthetic-erpnext"
+            },
+            "transform": "holding.custodian"
+          },
+          "targetKey": "demo/party/custodian",
+          "targetType": "canon.Party"
+        }
+      ],
+      "map": "holding",
+      "objectType": "canon.Holding",
+      "propertyProvenance": {
+        "cost_currency": {
+          "mappingVersion": "erpnext.three.mapping@0.1.0",
+          "recordedAt": "2026-11-03T00:00:00Z",
+          "source": {
+            "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+            "system": "synthetic-erpnext"
+          },
+          "sourceFields": [
+            "name",
+            "custom_norn_ref",
+            "cost_currency"
+          ],
+          "transform": "holding.cost_currency"
+        },
+        "currency": {
+          "mappingVersion": "erpnext.three.mapping@0.1.0",
+          "recordedAt": "2026-11-03T00:00:00Z",
+          "source": {
+            "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+            "system": "synthetic-erpnext"
+          },
+          "sourceFields": [
+            "name",
+            "custom_norn_ref"
+          ],
+          "transform": "holding.currency"
+        },
+        "location": {
+          "mappingVersion": "erpnext.three.mapping@0.1.0",
+          "recordedAt": "2026-11-03T00:00:00Z",
+          "source": {
+            "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+            "system": "synthetic-erpnext"
+          },
+          "sourceFields": [
+            "name",
+            "custom_norn_ref",
+            "location"
+          ],
+          "transform": "holding.location"
+        },
+        "observed_at": {
+          "mappingVersion": "erpnext.three.mapping@0.1.0",
+          "recordedAt": "2026-11-03T00:00:00Z",
+          "source": {
+            "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+            "system": "synthetic-erpnext"
+          },
+          "sourceFields": [
+            "name",
+            "custom_norn_ref",
+            "modified"
+          ],
+          "transform": "holding.observed_at"
+        },
+        "quantity": {
+          "mappingVersion": "erpnext.three.mapping@0.1.0",
+          "recordedAt": "2026-11-03T00:00:00Z",
+          "source": {
+            "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+            "system": "synthetic-erpnext"
+          },
+          "sourceFields": [
+            "name",
+            "custom_norn_ref",
+            "quantity"
+          ],
+          "transform": "holding.quantity"
+        },
+        "quantity_basis": {
+          "mappingVersion": "erpnext.three.mapping@0.1.0",
+          "recordedAt": "2026-11-03T00:00:00Z",
+          "source": {
+            "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+            "system": "synthetic-erpnext"
+          },
+          "sourceFields": [
+            "name",
+            "custom_norn_ref"
+          ],
+          "transform": "holding.quantity_basis"
+        },
+        "resource_code": {
+          "mappingVersion": "erpnext.three.mapping@0.1.0",
+          "recordedAt": "2026-11-03T00:00:00Z",
+          "source": {
+            "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+            "system": "synthetic-erpnext"
+          },
+          "sourceFields": [
+            "name",
+            "custom_norn_ref",
+            "resource_code"
+          ],
+          "transform": "holding.resource_code"
+        },
+        "stock_cost": {
+          "mappingVersion": "erpnext.three.mapping@0.1.0",
+          "recordedAt": "2026-11-03T00:00:00Z",
+          "source": {
+            "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+            "system": "synthetic-erpnext"
+          },
+          "sourceFields": [
+            "name",
+            "custom_norn_ref",
+            "stock_cost"
+          ],
+          "transform": "holding.stock_cost"
+        },
+        "unit": {
+          "mappingVersion": "erpnext.three.mapping@0.1.0",
+          "recordedAt": "2026-11-03T00:00:00Z",
+          "source": {
+            "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+            "system": "synthetic-erpnext"
+          },
+          "sourceFields": [
+            "name",
+            "custom_norn_ref",
+            "unit"
+          ],
+          "transform": "holding.unit"
+        },
+        "valuation_method": {
+          "mappingVersion": "erpnext.three.mapping@0.1.0",
+          "recordedAt": "2026-11-03T00:00:00Z",
+          "source": {
+            "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+            "system": "synthetic-erpnext"
+          },
+          "sourceFields": [
+            "name",
+            "custom_norn_ref",
+            "valuation_method"
+          ],
+          "transform": "holding.valuation_method"
+        }
+      },
+      "provenance": {
+        "mappingVersion": "erpnext.three.mapping@0.1.0",
+        "recordedAt": "2026-11-03T00:00:00Z",
+        "source": {
+          "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-main",
+          "system": "synthetic-erpnext"
+        },
+        "sourceFields": [
+          "name",
+          "custom_norn_ref"
+        ],
+        "transform": "holding.subject"
+      }
+    }
+  ]
+}

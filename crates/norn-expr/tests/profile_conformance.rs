@@ -19,7 +19,7 @@
     clippy::large_futures
 )]
 
-//! Conformance with the published profile `norn-zen/6` (`PROFILE.md`,
+//! Conformance with the published profile `norn-zen/7` (`PROFILE.md`,
 //! T1-EXPR-6 #2766): positive and negative fixtures per rule section, the
 //! zen adoption review's mandatory counterexamples, and the pin that ties
 //! `PROFILE.md`'s content to the profile id.
@@ -37,7 +37,7 @@ use support::{Model, fields, roomy_limits};
 
 /// The Norn1 hash of `PROFILE.md`, pinned with the profile id: editing the
 /// profile without bumping `CHECKER_PROFILE` (and re-pinning) fails here.
-const PROFILE_MD_HASH: &str = "bd12ad3c7cd74e5881b62d3e781b535ac8aa10cf68934ef28938b0c76c481813";
+const PROFILE_MD_HASH: &str = "7f8ab6c9d09a5b0ba65b09c6bb2fba18f621592b1d0645e69bac0ad6c7a063bd";
 
 fn probe_env() -> ZenTypeEnv {
     let model = Model::retail();
@@ -81,6 +81,7 @@ fn probe_env() -> ZenTypeEnv {
                 },
             ),
             ("o", Type::Record("probe.O".into())),
+            ("maybe", Type::Record("probe.O".into()).optional()),
             ("xs", Type::Number.list()),
         ]))
         .expect("input")
@@ -133,9 +134,9 @@ const OUTSIDE: &[&str] = &[codes::UNSUPPORTED_CONSTRUCT, codes::SYNTAX];
 
 #[test]
 fn profile_id_is_published_and_pinned_to_profile_md() {
-    assert_eq!(CHECKER_PROFILE, "norn-zen/6");
+    assert_eq!(CHECKER_PROFILE, "norn-zen/7");
     let text = profile_document();
-    assert!(text.contains("`norn-zen/6`"), "PROFILE.md must name the id");
+    assert!(text.contains("`norn-zen/7`"), "PROFILE.md must name the id");
     let hash = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(text.as_bytes());
     assert_eq!(
         hash, PROFILE_MD_HASH,
@@ -849,6 +850,51 @@ fn nullable_division_requires_handling() {
         .unwrap(),
         Value::Null
     );
+}
+
+/// A law's response is evaluated only when its condition holds, so it reads
+/// the paths the condition proves non-null as non-null (LAW-LINK-1's
+/// `when: self.link != null`). The profile's own expressions never narrow.
+#[test]
+fn a_guarding_condition_narrows_only_the_reads_it_proves() {
+    let env = probe_env();
+    let under = |source: &str, condition: &str| {
+        norn_expr::check_expression_under(
+            &Expression::compile(source).expect("source"),
+            &Expression::compile(condition).expect("condition"),
+            &env,
+            &Type::Bool,
+        )
+        .map(|_| ())
+        .map_err(|diagnostics| diagnostics.iter().map(|d| d.code).collect::<Vec<_>>())
+    };
+    let read = "input.maybe.x == input.s";
+    refused(read, &Type::Bool, &[codes::NULLABLE]);
+    refused(
+        "input.maybe != null and input.maybe.x == input.s",
+        &Type::Bool,
+        &[codes::NULLABLE],
+    );
+    for guard in [
+        "input.maybe != null",
+        "null != input.maybe",
+        "(input.maybe != null) and input.flag",
+        "input.flag and not (input.maybe == null)",
+    ] {
+        assert_eq!(under(read, guard), Ok(()), "{guard}");
+    }
+    for guard in [
+        "input.flag",
+        "input.maybe == null",
+        "input.maybe != null or input.flag",
+        "not (input.maybe != null)",
+        "input.o != null",
+    ] {
+        assert!(
+            under(read, guard).is_err_and(|found| found.contains(&codes::NULLABLE)),
+            "{guard} proves nothing about input.maybe"
+        );
+    }
 }
 
 #[test]

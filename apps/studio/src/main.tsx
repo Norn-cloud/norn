@@ -1,31 +1,43 @@
-import { AgentButton } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { ChartLine, Database, Gauge, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
+import { Blend, ChartLine, Columns2, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
-import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
+import { endSession, useAccount } from "@/lib/session"
 import { LoginPage } from "./login.tsx"
+import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
 import { useDecisionBadge } from "./decisions/inbox.tsx"
 import { useGuaranteesMenu } from "./guarantees.tsx"
+import { useImportTriageBadge } from "./imports/import-triage-page.tsx"
 import { useQuestionsMenu } from "./questions.tsx"
 import { routeTree } from "./routes.tsx"
+import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
 import { Shell, type Section } from "./shell.tsx"
-import { useSourcesMenu } from "./sources.tsx"
+import { useRecordsMenu, useSourcesMenu } from "./sources.tsx"
 import { useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
 
+/**
+ * Every destination, in the perspective that lists it and the space (sidebar section) it sits under.
+ * Home and Inbox are global: one shared home and one inbox across everything installed.
+ */
 const SECTIONS: readonly Section[] = [
-  { path: "/decisions", label: "Decisions", icon: Inbox, summary: "Choices your flows wait on you to make, soonest deadline first.", useBadge: useDecisionBadge, group: "Work" },
-  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", kind: "source", useMenu: useSourcesMenu, group: "Model" },
-  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", kind: "question", useMenu: useQuestionsMenu, group: "Model" },
-  { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, summary: "Saved sets of questions, each a definition the cell checks before it is kept.", group: "Model" },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", kind: "workflow", useMenu: useWorkflowsMenu, group: "Rules" },
-  { path: "/canvas", label: "Canvas", icon: Network, summary: "Draw and change a process, with every edit checked as you make it.", group: "Rules" },
-  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", kind: "guarantee", useMenu: useGuaranteesMenu, group: "Rules" },
-  { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "System" },
-  { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area.", foot: true },
+  { path: "/", label: "Home", icon: House, perspective: "global" },
+  { path: "/decisions", label: "Inbox", icon: Inbox, perspective: "global", useBadge: useDecisionBadge, paths: ["/episodes"] },
+  // Workspace: what an operator works with.
+  { path: "/objects", label: "Records", icon: Rows3, perspective: "workspace", group: "Data", kind: "source", useMenu: useRecordsMenu, index: false },
+  { path: "/metrics", label: "Metrics", icon: ChartLine, perspective: "workspace", group: "Analysis", kind: "question", useMenu: useQuestionsMenu },
+  { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, perspective: "workspace", group: "Analysis" },
+  { path: "/workflows", label: "Workflows", icon: Workflow, perspective: "workspace", group: "Operations", kind: "workflow", useMenu: useWorkflowsMenu, paths: ["/runs"] },
+  { path: "/imports", label: "Import triage", icon: Columns2, perspective: "workspace", group: "Operations", useBadge: useImportTriageBadge },
+  // Builder: how the model is made.
+  { path: "/sources", label: "Sources", icon: Database, perspective: "builder", group: "Model", kind: "source", useMenu: useSourcesMenu, paths: ["/objects"] },
+  { path: "/transforms", label: "Transforms", icon: Blend, perspective: "builder", group: "Model", kind: "transform" },
+  { path: "/canvas", label: "Canvas", icon: Network, perspective: "builder", group: "Logic" },
+  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, perspective: "builder", group: "Logic", kind: "guarantee", useMenu: useGuaranteesMenu },
+  { path: "/markings", label: "Markings", icon: Fingerprint, perspective: "builder", group: "Logic" },
+  { path: "/connections", label: "Connections", icon: Plug, perspective: "builder", group: "Settings" },
 ]
 
 /**
@@ -34,8 +46,9 @@ const SECTIONS: readonly Section[] = [
  */
 function Root() {
   const account = useAccount()
-  const refresh = useRefreshAccount()
-  if (account.data != null) return <Shell sections={SECTIONS} tools={<AgentButton />} account={account.data} onSignOut={() => void signOut(refresh)} />
+  // Sidekick is offered only where a bridge serves it (a private deployment); elsewhere the rail shows no entry for it.
+  const sidekick = useSidekickServed()
+  if (account.data != null) return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => void signOut()} />
   if (account.isPending) return null
   if (account.isError) {
     return (
@@ -48,17 +61,16 @@ function Root() {
   return <LoginPage />
 }
 
-/** Sign out, and forget the account only once the server has ended the session. */
-async function signOut(refresh: () => Promise<void>) {
+/** Sign out, and forget the account and its reads only once the server has ended the session. */
+async function signOut() {
   try {
-    await authApi.signOut()
+    await endSession(queryClient)
   } catch {
     window.alert("Sign-out did not complete; you are still signed in. Try again.")
-    return
   }
-  await refresh()
 }
 
+const queryClient = new QueryClient()
 const root = createRootRoute({ component: Root })
 const router = createRouter({ routeTree: routeTree(root) })
 
@@ -68,10 +80,15 @@ const applyScheme = () => document.documentElement.classList.toggle("dark", dark
 applyScheme()
 dark.addEventListener("change", applyScheme)
 
+// An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.
+const OAuthPage = oauthPage(window.location.pathname)
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    <QueryClientProvider client={new QueryClient()}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    {OAuthPage === null ? (
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    ) : <OAuthPage />}
   </StrictMode>,
 )

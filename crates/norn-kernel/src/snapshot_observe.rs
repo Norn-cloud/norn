@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, CommitReceipt, Consumed, FactExpectation, FactKey,
-    FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue, LinkMutation,
+    FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey, LinkMutation,
     LinkReadExpectation, LinkWrite,
 };
 use crate::commit_check::{InvariantEvaluationError, InvariantFailure, evaluate_invariants};
@@ -304,6 +304,27 @@ type PreparedFindingComparison<'a> = (
     &'a [DataQualityFinding],
 );
 
+/// [`ObservationAuthorization`]'s authorized writes, indexed by key.
+pub(crate) struct AuthorizedWrites<'a> {
+    by_key: BTreeMap<&'a FactKey, Vec<&'a AuthorizedObservedWrite>>,
+}
+
+impl<'a> AuthorizedWrites<'a> {
+    fn find(&self, write: &FactWrite) -> Option<&'a AuthorizedObservedWrite> {
+        self.by_key
+            .get(&write.key)?
+            .iter()
+            .copied()
+            .find(|authorized| authorized.write == *write)
+    }
+
+    /// Whether this exact complete object write was prepared as an
+    /// observation, from the index.
+    pub(crate) fn authorizes(&self, write: &FactWrite) -> bool {
+        self.find(write).is_some()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AuthorizedObservedReadFinding {
     pub(crate) key: FactKey,
@@ -312,6 +333,9 @@ pub(crate) struct AuthorizedObservedReadFinding {
     pub(crate) provenance: InstanceProvenance,
     pub(crate) observation_id: String,
     pub(crate) findings: Vec<DataQualityFinding>,
+    /// LAW-LINK-1: a linked subject re-checked because its target changed
+    /// files findings only for the link laws the change broke.
+    pub(crate) laws: Option<Vec<DataQualityRuleRef>>,
 }
 
 impl ObservationAuthorization {
@@ -368,6 +392,7 @@ impl ObservationAuthorization {
             provenance,
             observation_id,
             failures,
+            &mut crate::governing_laws::DeferLinkLaws,
         )?;
         self.writes.push(AuthorizedObservedWrite {
             write: write.clone(),
@@ -394,6 +419,7 @@ impl ObservationAuthorization {
             provenance,
             observation_id,
             failures,
+            &mut crate::governing_laws::DeferLinkLaws,
         )?;
         // Claim authority retains the checked values even when no finding is emitted.
         if !findings.is_empty()
@@ -406,6 +432,7 @@ impl ObservationAuthorization {
                 provenance: provenance.clone(),
                 observation_id: observation_id.to_owned(),
                 findings,
+                laws: None,
             });
         }
         Ok(())
@@ -821,36 +848,7 @@ impl ObservationAuthorization {
     fn claim_standings(&self) -> BTreeMap<&FactKey, ClaimStanding> {
         // A fresh claim is one this turn's final authorized writes create.
         let fresh: BTreeSet<&FactKey> = self.writes.iter().map(|w| &w.write.key).collect();
-        let superseded: BTreeSet<&FactKey> = self
-            .claims
-            .iter()
-            .filter(|(key, claim)| {
-                self.claims.iter().any(|(other_key, other)| {
-                    other.contribution == claim.contribution
-                        && other.supersedes.contains(&key.key)
-                        && (fresh.contains(other_key) || !fresh.contains(key))
-                })
-            })
-            .map(|(key, _)| key)
-            .collect();
-        self.claims
-            .iter()
-            .map(|(key, claim)| {
-                let rival = self.claims.iter().any(|(other_key, other)| {
-                    other.contribution == claim.contribution
-                        && other.target != claim.target
-                        && !superseded.contains(other_key)
-                });
-                let standing = if superseded.contains(key) {
-                    ClaimStanding::Superseded
-                } else if rival {
-                    ClaimStanding::Contested
-                } else {
-                    ClaimStanding::Current
-                };
-                (key, standing)
-            })
-            .collect()
+        standings_of(&self.claims, &fresh)
     }
 
     /// The sealed edge changes the final claim set authorizes: a current claim
@@ -863,6 +861,17 @@ impl ObservationAuthorization {
         }
         let standings = self.claim_standings();
         let stands = |key: &FactKey| standings.get(key) != Some(&ClaimStanding::Superseded);
+        // Standing claims per edge, so a withdrawal asks its own edge only.
+        let mut standing_edges: BTreeMap<(&norn_ir::LinkId, &FactKey, Option<&FactKey>), usize> =
+            BTreeMap::new();
+        for (key, claim) in &self.claims {
+            if stands(key) {
+                let count = standing_edges
+                    .entry((&claim.role, &claim.source, claim.target.as_ref()))
+                    .or_default();
+                *count = count.saturating_add(1);
+            }
+        }
         self.claim_intents
             .iter()
             .filter(|(key, write)| {
@@ -871,15 +880,13 @@ impl ObservationAuthorization {
                 };
                 match write.mutation {
                     LinkMutation::Add { .. } => standings.get(key) == Some(&ClaimStanding::Current),
+                    // This claim does not stand, so every standing claim on
+                    // its edge is another one.
                     LinkMutation::Remove => {
                         !stands(key)
-                            && !self.claims.iter().any(|(other_key, other)| {
-                                other_key != key
-                                    && other.role == claim.role
-                                    && other.source == claim.source
-                                    && other.target == claim.target
-                                    && stands(other_key)
-                            })
+                            && standing_edges
+                                .get(&(&claim.role, &claim.source, claim.target.as_ref()))
+                                .is_none_or(|count| *count == 0)
                     }
                 }
             })
@@ -887,10 +894,16 @@ impl ObservationAuthorization {
             .collect()
     }
 
-    pub(crate) fn authorizes_claim_write(&self, write: &FactWrite) -> bool {
+    /// Whether `write` is a prepared claim's own creation, asked of the
+    /// commit's [`Self::indexed`] writes (no scan per claim).
+    pub(crate) fn authorizes_claim_write(
+        &self,
+        authorized: &AuthorizedWrites<'_>,
+        write: &FactWrite,
+    ) -> bool {
         write.expected == FactVersion(0)
             && matches!(&write.mutation, FactMutation::Put { values } if self.claims.get(&write.key).is_some_and(|claim| &claim.values == values))
-            && self.authorizes_write(write)
+            && authorized.authorizes(write)
     }
 
     /// Seal pending-record changes from trusted mapping preparation. Retained
@@ -977,27 +990,42 @@ impl ObservationAuthorization {
         &self.source_scopes
     }
 
-    /// Whether this exact complete object write was prepared as an observation.
-    #[must_use]
-    pub(crate) fn authorizes_write(&self, write: &FactWrite) -> bool {
-        self.writes
-            .iter()
-            .any(|authorized| authorized.write == *write)
+    /// The authorized writes indexed by key, for a check that asks about
+    /// every write of a commit (INGEST-BATCH-1: a keyed lookup per write,
+    /// O(log N), not a scan).
+    pub(crate) fn indexed(&self) -> AuthorizedWrites<'_> {
+        let mut by_key: BTreeMap<&FactKey, Vec<&AuthorizedObservedWrite>> = BTreeMap::new();
+        for authorized in &self.writes {
+            by_key
+                .entry(&authorized.write.key)
+                .or_default()
+                .push(authorized);
+        }
+        AuthorizedWrites { by_key }
     }
 
     pub(crate) fn findings_for_read(
         catalog: &TypeCatalog<'_>,
         authorized: &AuthorizedObservedReadFinding,
         failures: &[InvariantFailure],
+        links: &mut dyn crate::governing_laws::LinkTargets,
     ) -> Result<Vec<DataQualityFinding>, ObservationRefusal> {
-        findings_for(
+        let findings = findings_for(
             catalog,
             &authorized.key,
             &authorized.values,
             &authorized.provenance,
             &authorized.observation_id,
             failures,
-        )
+            links,
+        )?;
+        Ok(match &authorized.laws {
+            Some(laws) => findings
+                .into_iter()
+                .filter(|finding| laws.contains(&finding.rule_ref))
+                .collect(),
+            None => findings,
+        })
     }
 
     /// Seal bounded ledger event chunks for an atomic complete-source snapshot.
@@ -1058,19 +1086,43 @@ impl ObservationAuthorization {
     /// match an exact sealed mapping or pending-resolution intent.
     #[must_use]
     pub fn validates<E, C, T>(&self, commit: &CellCommit<E, C, T>) -> bool {
-        let convergent = self.convergent_links();
+        // INGEST-BATCH-1: every membership and count below is the same check
+        // as a scan of the commit, answered from indexes built once, so one
+        // page of N records validates in O(N) rather than O(N²). The checks,
+        // and what each refuses, are unchanged.
+        let mut writes_by_key: BTreeMap<&FactKey, Vec<&FactWrite>> = BTreeMap::new();
+        for write in &commit.writes {
+            writes_by_key.entry(&write.key).or_default().push(write);
+        }
+        let writes_of = |key: &FactKey| writes_by_key.get(key).map_or(&[][..], Vec::as_slice);
+        // Reads by key and expected version (`FactExpectation` has no order).
+        let mut reads: BTreeMap<(&FactKey, u64), usize> = BTreeMap::new();
+        for read in &commit.reads {
+            let count = reads.entry((&read.key, read.expected.0)).or_default();
+            *count = count.saturating_add(1);
+        }
+        let read = |expectation: &FactExpectation| {
+            reads
+                .get(&(&expectation.key, expectation.expected.0))
+                .copied()
+                .unwrap_or_default()
+        };
+        let mut authorized_links: BTreeMap<&LinkKey, Vec<&LinkWrite>> = BTreeMap::new();
+        for link in self.links.iter().chain(self.convergent_links()) {
+            authorized_links.entry(&link.key).or_default().push(link);
+        }
         if !commit.effects.is_empty()
             || self.source_scopes.iter().any(|(scope, _)| {
-                !commit.reads.contains(scope)
-                    && !commit
-                        .writes
+                read(scope) == 0
+                    && !writes_of(&scope.key)
                         .iter()
-                        .any(|write| write.key == scope.key && write.expected == scope.expected)
+                        .any(|write| write.expected == scope.expected)
             })
-            || commit
-                .links
-                .iter()
-                .any(|write| !self.links.contains(write) && !convergent.contains(&write))
+            || commit.links.iter().any(|write| {
+                !authorized_links
+                    .get(&write.key)
+                    .is_some_and(|links| links.contains(&write))
+            })
             || commit.writes.iter().any(|write| {
                 write.key.object_type.as_str() == "norn.PendingLinks"
                     && !self.pending_writes.contains(write)
@@ -1087,50 +1139,44 @@ impl ObservationAuthorization {
                 return false;
             }
         }
-        if self.observed_reads.iter().any(|read| {
-            !commit.reads.contains(read) || commit.writes.iter().any(|write| write.key == read.key)
-        }) {
+        if self
+            .observed_reads
+            .iter()
+            .any(|expected| read(expected) == 0 || !writes_of(&expected.key).is_empty())
+        {
             return false;
         }
-        for (index, authorized) in self.writes.iter().enumerate() {
-            if self
-                .writes
-                .iter()
-                .take(index)
-                .any(|prior| prior.write == authorized.write)
-                || commit
-                    .writes
+        // Each authorized write is unique among the authorized writes and
+        // appears exactly once in the commit.
+        let mut authorized_by_key: BTreeMap<&FactKey, Vec<&FactWrite>> = BTreeMap::new();
+        for authorized in &self.writes {
+            let earlier = authorized_by_key.entry(&authorized.write.key).or_default();
+            if earlier.iter().any(|prior| **prior == authorized.write)
+                || writes_of(&authorized.write.key)
                     .iter()
-                    .filter(|write| **write == authorized.write)
+                    .filter(|write| ***write == authorized.write)
                     .count()
                     != 1
             {
                 return false;
             }
+            earlier.push(&authorized.write);
         }
-        for (index, authorized) in self.read_findings.iter().enumerate() {
-            let expectation = FactExpectation {
-                key: authorized.key.clone(),
-                expected: authorized.expected,
-            };
-            if self
-                .read_findings
-                .iter()
-                .take(index)
-                .any(|prior| prior == authorized)
-                || commit
-                    .reads
-                    .iter()
-                    .filter(|read| **read == expectation)
-                    .count()
+        let mut findings_by_key: BTreeMap<&FactKey, Vec<&AuthorizedObservedReadFinding>> =
+            BTreeMap::new();
+        for authorized in &self.read_findings {
+            let earlier = findings_by_key.entry(&authorized.key).or_default();
+            if earlier.contains(&authorized)
+                || reads
+                    .get(&(&authorized.key, authorized.expected.0))
+                    .copied()
+                    .unwrap_or_default()
                     != 1
-                || commit
-                    .writes
-                    .iter()
-                    .any(|write| write.key == authorized.key)
+                || !writes_of(&authorized.key).is_empty()
             {
                 return false;
             }
+            earlier.push(authorized);
         }
         true
     }
@@ -1144,16 +1190,14 @@ impl ObservationAuthorization {
             .chain(self.observed_reads.iter().map(|read| &read.key))
     }
 
-    pub(crate) fn findings_for_write(
-        &self,
+    pub(crate) fn findings_for_write<'s>(
+        index: &AuthorizedWrites<'s>,
         catalog: &TypeCatalog<'_>,
         write: &FactWrite,
         failures: &[InvariantFailure],
-    ) -> Option<PreparedFindingComparison<'_>> {
-        let authorized = self
-            .writes
-            .iter()
-            .find(|authorized| authorized.write == *write)?;
+        links: &mut dyn crate::governing_laws::LinkTargets,
+    ) -> Option<PreparedFindingComparison<'s>> {
+        let authorized = index.find(write)?;
         let FactMutation::Put { values } = &write.mutation else {
             return Some((
                 Err(ObservationRefusal::Encoding(
@@ -1170,9 +1214,259 @@ impl ObservationAuthorization {
                 &authorized.provenance,
                 &authorized.observation_id,
                 failures,
+                links,
             ),
             &authorized.findings,
         ))
+    }
+
+    /// LAW-LINK-1: once a bundle's links are in `commit`, recompute the
+    /// complete findings of every prepared write and guarded read whose type
+    /// has a law that reads a link, over the state the commit leaves. The
+    /// commit's own admission recomputes the same findings and compares them.
+    ///
+    /// # Errors
+    /// An unreadable link target, unsupported semantics or exhausted fuel.
+    pub fn refresh_link_findings<E, C, T, V: crate::CommitView + ?Sized>(
+        &mut self,
+        catalog: &TypeCatalog<'_>,
+        commit: &mut CellCommit<E, C, T>,
+        view: &V,
+    ) -> Result<(), ObservationRefusal> {
+        self.refresh_written_link_findings(catalog, commit, view)?;
+        self.recheck_linked_subjects(catalog, commit, view)
+    }
+
+    fn refresh_written_link_findings<E, C, T, V: crate::CommitView + ?Sized>(
+        &mut self,
+        catalog: &TypeCatalog<'_>,
+        commit: &CellCommit<E, C, T>,
+        view: &V,
+    ) -> Result<(), ObservationRefusal> {
+        let model = crate::CommitModel::new(catalog);
+        let refuse = |error: String| ObservationRefusal::Encoding(format!("LAW-LINK-1: {error}"));
+        let mut remaining = EvaluationBudget::default().units();
+        for authorized in &mut self.writes {
+            let FactMutation::Put { values } = &authorized.write.mutation else {
+                continue;
+            };
+            let key = authorized.write.key.clone();
+            if !crate::governing_laws::reads_links(catalog, &key.object_type)? {
+                continue;
+            }
+            let failures = crate::commit_check::observed_invariant_failures(
+                catalog,
+                &key,
+                values,
+                &mut remaining,
+            )
+            .ok_or_else(|| refuse("invariant evaluation refused".into()))?;
+            let mut links = crate::commit_check::CommitLinks::new(commit, model, view, &key);
+            let findings = findings_for(
+                catalog,
+                &key,
+                values,
+                &authorized.provenance,
+                &authorized.observation_id,
+                &failures,
+                &mut links,
+            )?;
+            if links.take_host_error().is_some() {
+                return Err(refuse("a link target cannot be read".into()));
+            }
+            authorized.findings = findings;
+        }
+        for authorized in &mut self.read_findings {
+            if !crate::governing_laws::reads_links(catalog, &authorized.key.object_type)? {
+                continue;
+            }
+            let failures = crate::commit_check::observed_invariant_failures(
+                catalog,
+                &authorized.key,
+                &authorized.values,
+                &mut remaining,
+            )
+            .ok_or_else(|| refuse("invariant evaluation refused".into()))?;
+            let mut links =
+                crate::commit_check::CommitLinks::new(commit, model, view, &authorized.key);
+            let findings = findings_for(
+                catalog,
+                &authorized.key,
+                &authorized.values,
+                &authorized.provenance,
+                &authorized.observation_id,
+                &failures,
+                &mut links,
+            )?;
+            if links.take_host_error().is_some() {
+                return Err(refuse("a link target cannot be read".into()));
+            }
+            authorized.findings = findings;
+        }
+        Ok(())
+    }
+
+    /// LAW-LINK-1: every subject not written here whose link law reads a
+    /// target this bundle changes is re-checked against the state the commit
+    /// leaves. A law the change breaks (it held before, it fails after) files a
+    /// finding on the subject, bound to a read of its exact version, and the
+    /// subject is quarantined; the commit's admission recomputes and compares
+    /// it. A change that restores the target resolves the finding through
+    /// recovery, which reads the current target.
+    ///
+    /// # Errors
+    /// More linked subjects on one target than the bound, an unreadable
+    /// subject or target, unsupported semantics or exhausted fuel.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass finds a changed target's subjects, compares before and after, and binds the findings"
+    )]
+    fn recheck_linked_subjects<E, C, T, V: crate::CommitView + ?Sized>(
+        &mut self,
+        catalog: &TypeCatalog<'_>,
+        commit: &mut CellCommit<E, C, T>,
+        view: &V,
+    ) -> Result<(), ObservationRefusal> {
+        let index = crate::governing_laws::link_law_index(catalog)?;
+        if index.is_empty() {
+            return Ok(());
+        }
+        let model = crate::CommitModel::new(catalog);
+        let refuse = |error: &str| ObservationRefusal::Encoding(format!("LAW-LINK-1: {error}"));
+        let from_commit = |error: crate::CommitError<V::Error>| {
+            if let crate::CommitError::Law { reason, .. } = error {
+                ObservationRefusal::from(reason)
+            } else {
+                refuse("a linked subject or its target cannot be read")
+            }
+        };
+        let written: BTreeSet<FactKey> = commit
+            .writes
+            .iter()
+            .map(|write| model.canonical(&write.key))
+            .collect();
+        let mut subjects: BTreeMap<FactKey, (InstanceProvenance, String)> = BTreeMap::new();
+        for authorized in &self.writes {
+            let FactMutation::Put { values } = &authorized.write.mutation else {
+                continue;
+            };
+            let current = view
+                .object_values(&model.canonical(&authorized.write.key))
+                .map_err(|_host| refuse("a target's values cannot be read"))?;
+            if current.as_ref() == Some(values) {
+                continue;
+            }
+            let mut found = BTreeSet::new();
+            crate::commit_check::linked_subjects(
+                commit,
+                model,
+                view,
+                &index,
+                &authorized.write.key,
+                &written,
+                &mut found,
+            )
+            .map_err(from_commit)?;
+            for subject in found {
+                subjects.entry(subject).or_insert_with(|| {
+                    (
+                        authorized.provenance.clone(),
+                        authorized.observation_id.clone(),
+                    )
+                });
+            }
+        }
+        let before = CellCommit::<E, C, T>::empty();
+        let mut remaining = EvaluationBudget::default().units();
+        for (subject, (provenance, observation_id)) in subjects {
+            let Some(values) = view
+                .object_values(&subject)
+                .map_err(|_host| refuse("a linked subject's values cannot be read"))?
+            else {
+                continue;
+            };
+            let expected = view
+                .version(&subject)
+                .map_err(|_host| refuse("a linked subject's version cannot be read"))?;
+            let mut held_links =
+                crate::commit_check::CommitLinks::new(&before, model, view, &subject);
+            let held = crate::governing_laws::evaluate_linked(
+                catalog,
+                &subject,
+                &values,
+                &mut held_links,
+                &mut remaining,
+            )?;
+            let mut after_links =
+                crate::commit_check::CommitLinks::new(commit, model, view, &subject);
+            let after = crate::governing_laws::evaluate_linked(
+                catalog,
+                &subject,
+                &values,
+                &mut after_links,
+                &mut remaining,
+            )?;
+            if held_links.take_host_error().is_some() || after_links.take_host_error().is_some() {
+                return Err(refuse("a link target cannot be read"));
+            }
+            let broken: Vec<DataQualityRuleRef> = after
+                .into_iter()
+                .filter(|failure| {
+                    !failure.links.is_empty()
+                        && !held.iter().any(|prior| prior.rule_ref == failure.rule_ref)
+                })
+                .map(|failure| failure.rule_ref)
+                .collect();
+            if broken.is_empty() {
+                continue;
+            }
+            let failures = crate::commit_check::observed_invariant_failures(
+                catalog,
+                &subject,
+                &values,
+                &mut remaining,
+            )
+            .ok_or_else(|| refuse("invariant evaluation refused"))?;
+            let mut links = crate::commit_check::CommitLinks::new(commit, model, view, &subject);
+            let findings: Vec<_> = findings_for(
+                catalog,
+                &subject,
+                &values,
+                &provenance,
+                &observation_id,
+                &failures,
+                &mut links,
+            )?
+            .into_iter()
+            .filter(|finding| broken.contains(&finding.rule_ref))
+            .collect();
+            if links.take_host_error().is_some() {
+                return Err(refuse("a link target cannot be read"));
+            }
+            if findings.is_empty() {
+                continue;
+            }
+            let read = FactExpectation {
+                key: subject.clone(),
+                expected,
+            };
+            if !commit.reads.contains(&read) {
+                commit.reads.push(read);
+            }
+            self.read_findings.push(AuthorizedObservedReadFinding {
+                key: subject,
+                expected,
+                values,
+                provenance,
+                observation_id,
+                findings,
+                laws: Some(broken),
+            });
+        }
+        if self.reference_proof.is_some() {
+            self.seal_link_reference_reads(commit)?;
+        }
+        Ok(())
     }
 
     /// Add this authority's provenance-bearing finding events to `commit`.
@@ -1249,6 +1543,143 @@ fn property_finding_rule_ref(
         .ok_or_else(|| ObservationRefusal::Encoding("property domain is not retained".to_owned()))
 }
 
+/// The rule identity, outcome and severity an invariant or property
+/// failure is recorded under.
+fn failure_rule(
+    catalog: &TypeCatalog<'_>,
+    failure: &InvariantFailure,
+) -> Result<(DataQualityRuleRef, DataQualityOutcome, DataQualitySeverity), ObservationRefusal> {
+    let (rule_ref, outcome) = match &failure.finding_outcome {
+        Some(outcome @ DataQualityOutcome::InvalidTemporalObservation { .. }) => (
+            DataQualityRuleRef::Builtin {
+                id: TEMPORAL_PROPERTY_RULE_ID.to_owned(),
+                version: "1".to_owned(),
+            },
+            outcome.clone(),
+        ),
+        Some(outcome) => {
+            return Err(ObservationRefusal::Encoding(format!(
+                "unsupported built-in invariant finding outcome: {outcome:?}"
+            )));
+        }
+        None if failure.id.as_str().starts_with("$property.") => (
+            property_finding_rule_ref(catalog, failure)?,
+            failure.outcome.clone(),
+        ),
+        None => {
+            let version = catalog
+                .invariant_owner_version(&failure.owner)
+                .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?
+                .ok_or_else(|| {
+                    ObservationRefusal::Encoding(format!(
+                        "invariant owner {:?} is absent from the catalog",
+                        failure.owner
+                    ))
+                })?;
+            (
+                DataQualityRuleRef::Invariant {
+                    owner: failure.owner.clone(),
+                    invariant_id: failure.id.clone(),
+                    version,
+                },
+                failure.outcome.clone(),
+            )
+        }
+    };
+    let severity = match failure.classification {
+        ConstraintClass::Integrity => DataQualitySeverity::Error,
+        ConstraintClass::Quality => DataQualitySeverity::Warning,
+    };
+    Ok((rule_ref, outcome, severity))
+}
+
+/// MANIFEST-LAWS-1: one finding an observed record gets, without the
+/// observation's provenance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleFinding {
+    /// The rule the record fails.
+    pub rule_ref: DataQualityRuleRef,
+    /// The declared severity.
+    pub severity: DataQualitySeverity,
+    /// The evaluation outcome.
+    pub outcome: DataQualityOutcome,
+    /// DATA-QUARANTINE: whether the finding holds the record back.
+    pub quarantines: bool,
+}
+
+/// DATA-QUARANTINE: whether a finding of `rule_ref` at `severity` holds its
+/// record back: an integrity rule always does, a built-in one at error.
+///
+/// # Errors
+/// The rule reference cannot be canonicalized.
+pub fn finding_quarantines(
+    catalog: &TypeCatalog<'_>,
+    rule_ref: &DataQualityRuleRef,
+    severity: DataQualitySeverity,
+) -> Result<bool, norn_ir::canonical::CanonicalJsonError> {
+    let class = catalog.classify_data_quality_rule(rule_ref)?;
+    Ok(class == crate::DataQualityRuleClassification::Integrity
+        || (class == crate::DataQualityRuleClassification::Builtin
+            && severity == DataQualitySeverity::Error))
+}
+
+/// MANIFEST-LAWS-1 (S2): the fuel [`observation_rule_findings`] charges a
+/// row of `object_type` before any rule: one unit of its invariant budget
+/// per typed property the runtime domain check reads. The dataset path's
+/// fuel bound adds it once per row.
+#[must_use]
+pub fn observation_typed_fuel(
+    catalog: &TypeCatalog<'_>,
+    object_type: &norn_ir::ObjectTypeName,
+) -> u64 {
+    crate::commit_check::typed_property_units(catalog, object_type)
+}
+
+/// MANIFEST-LAWS-1: the findings an observation of `values` as `key` records,
+/// rule by rule, by the per-row path's own evaluation: the effective values,
+/// every property check and invariant, then every governing law. A law that
+/// reads a link refuses: a dataset row has no links.
+///
+/// # Errors
+/// Invalid effective values, exhausted evaluation fuel, a law that reads a
+/// link, or unsupported law semantics.
+pub fn observation_rule_findings(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &JsonObject,
+) -> Result<Vec<RuleFinding>, ObservationRefusal> {
+    let current = effective_observed_values(catalog, key, values)?;
+    let failures = evaluate_observed_invariants(catalog, key, &current)?;
+    let mut found = Vec::new();
+    for failure in &failures {
+        let (rule_ref, outcome, severity) = failure_rule(catalog, failure)?;
+        found.push((rule_ref, severity, outcome));
+    }
+    let mut remaining = EvaluationBudget::default().units();
+    for failure in crate::governing_laws::evaluate_linked(
+        catalog,
+        key,
+        &current,
+        &mut crate::governing_laws::NoLinkTargets,
+        &mut remaining,
+    )? {
+        found.push((failure.rule_ref, failure.severity, failure.outcome));
+    }
+    found
+        .into_iter()
+        .map(|(rule_ref, severity, outcome)| {
+            let quarantines = finding_quarantines(catalog, &rule_ref, severity)
+                .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?;
+            Ok(RuleFinding {
+                rule_ref,
+                severity,
+                outcome,
+                quarantines,
+            })
+        })
+        .collect()
+}
+
 fn findings_for(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
@@ -1256,6 +1687,7 @@ fn findings_for(
     provenance: &InstanceProvenance,
     observation_id: &str,
     failures: &[InvariantFailure],
+    links: &mut dyn crate::governing_laws::LinkTargets,
 ) -> Result<Vec<DataQualityFinding>, ObservationRefusal> {
     let evidence_digest = norn_ir::canonical::canonical_json_of(values)
         .map(|bytes| {
@@ -1289,58 +1721,28 @@ fn findings_for(
     let mut findings = failures
         .iter()
         .map(|failure| {
-            let (rule_ref, outcome) = match &failure.finding_outcome {
-                Some(outcome @ DataQualityOutcome::InvalidTemporalObservation { .. }) => (
-                    DataQualityRuleRef::Builtin {
-                        id: TEMPORAL_PROPERTY_RULE_ID.to_owned(),
-                        version: "1".to_owned(),
-                    },
-                    outcome.clone(),
-                ),
-                Some(outcome) => {
-                    return Err(ObservationRefusal::Encoding(format!(
-                        "unsupported built-in invariant finding outcome: {outcome:?}"
-                    )));
-                }
-                None if failure.id.as_str().starts_with("$property.") => (
-                    property_finding_rule_ref(catalog, failure)?,
-                    failure.outcome.clone(),
-                ),
-                None => {
-                    let version = catalog
-                        .invariant_owner_version(&failure.owner)
-                        .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?
-                        .ok_or_else(|| {
-                            ObservationRefusal::Encoding(format!(
-                                "invariant owner {:?} is absent from the catalog",
-                                failure.owner
-                            ))
-                        })?;
-                    (
-                        DataQualityRuleRef::Invariant {
-                            owner: failure.owner.clone(),
-                            invariant_id: failure.id.clone(),
-                            version,
-                        },
-                        failure.outcome.clone(),
-                    )
-                }
-            };
-            let severity = match failure.classification {
-                ConstraintClass::Integrity => DataQualitySeverity::Error,
-                ConstraintClass::Quality => DataQualitySeverity::Warning,
-            };
+            let (rule_ref, outcome, severity) = failure_rule(catalog, failure)?;
             build(rule_ref, severity, failure.message.clone(), outcome)
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut remaining = EvaluationBudget::default().units();
-    for failure in crate::governing_laws::evaluate(catalog, key, values, &mut remaining)? {
-        findings.push(build(
+    for failure in
+        crate::governing_laws::evaluate_linked(catalog, key, values, links, &mut remaining)?
+    {
+        let finding = build(
             failure.rule_ref,
             failure.severity,
             failure.message,
             failure.outcome,
-        )?);
+        )?
+        .with_values(failure.values);
+        findings.push(if failure.links.is_empty() {
+            finding
+        } else {
+            finding
+                .with_links(failure.links)
+                .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?
+        });
     }
     Ok(findings)
 }
@@ -1355,8 +1757,9 @@ pub fn verify_finding_values(
     key: &FactKey,
     values: &JsonObject,
     finding: &DataQualityFinding,
+    links: &mut dyn crate::governing_laws::LinkTargets,
 ) -> Result<bool, ObservationRefusal> {
-    let expected = reevaluate_finding(catalog, key, values, finding)?;
+    let expected = reevaluate_finding(catalog, key, values, finding, links)?;
     Ok(expected.iter().any(|expected| {
         expected.rule_ref == finding.rule_ref
             && expected.subjects == finding.subjects
@@ -1364,6 +1767,10 @@ pub fn verify_finding_values(
             && expected.message == finding.message
             && expected.outcome == finding.outcome
             && expected.severity == finding.severity
+            // DIAG-REASON-1: compared values, when recorded, are what the
+            // replay reads; a finding retained before they were recorded
+            // carries none and claims none.
+            && (finding.values.is_empty() || expected.values == finding.values)
     }))
 }
 
@@ -1377,6 +1784,7 @@ pub fn finding_rule_is_violated(
     key: &FactKey,
     values: &JsonObject,
     finding: &DataQualityFinding,
+    links: &mut dyn crate::governing_laws::LinkTargets,
 ) -> Result<bool, ObservationRefusal> {
     if let DataQualityOutcome::ObservedOutOfBand { property, .. } = &finding.outcome {
         return Err(ObservationRefusal::InvalidLifecycle {
@@ -1384,7 +1792,7 @@ pub fn finding_rule_is_violated(
             reason: "state-aware finding recovery is unsupported".into(),
         });
     }
-    Ok(reevaluate_finding(catalog, key, values, finding)?
+    Ok(reevaluate_finding(catalog, key, values, finding, links)?
         .iter()
         .any(|expected| expected.rule_ref == finding.rule_ref))
 }
@@ -1394,6 +1802,7 @@ fn reevaluate_finding(
     key: &FactKey,
     values: &JsonObject,
     finding: &DataQualityFinding,
+    links: &mut dyn crate::governing_laws::LinkTargets,
 ) -> Result<Vec<DataQualityFinding>, ObservationRefusal> {
     let mut remaining = EvaluationBudget::default().units();
     let failures = evaluate_invariants(catalog, key, values, &mut remaining).map_err(|error| {
@@ -1421,6 +1830,7 @@ fn reevaluate_finding(
         &provenance,
         "verified-history",
         &failures,
+        links,
     )
 }
 
@@ -2368,6 +2778,141 @@ where
         authorization,
     )
     .map_err(ObservationCommitRefusal::Commit)
+}
+
+/// OBS-LINK-CONTRIBUTION-1: each claim's standing, decided within its own
+/// contribution (claims indexed by it, no scan of every claim per claim).
+fn standings_of<'a>(
+    claims: &'a BTreeMap<FactKey, PreparedClaim>,
+    fresh: &BTreeSet<&FactKey>,
+) -> BTreeMap<&'a FactKey, ClaimStanding> {
+    let mut by_contribution: BTreeMap<&str, Vec<(&FactKey, &PreparedClaim)>> = BTreeMap::new();
+    for (key, claim) in claims {
+        by_contribution
+            .entry(claim.contribution.as_str())
+            .or_default()
+            .push((key, claim));
+    }
+    let mut standings = BTreeMap::new();
+    for group in by_contribution.values() {
+        let mut by_name: BTreeMap<&str, Vec<&FactKey>> = BTreeMap::new();
+        for (key, _) in group {
+            by_name.entry(key.key.as_str()).or_default().push(key);
+        }
+        let mut superseded: BTreeSet<&FactKey> = BTreeSet::new();
+        for (other_key, other) in group {
+            for named in &other.supersedes {
+                for key in by_name.get(named.as_str()).into_iter().flatten() {
+                    if fresh.contains(other_key) || !fresh.contains(key) {
+                        superseded.insert(key);
+                    }
+                }
+            }
+        }
+        // The targets the group's standing (not superseded) claims name.
+        let mut targets: BTreeSet<Option<&FactKey>> = BTreeSet::new();
+        for (key, claim) in group {
+            if !superseded.contains(key) {
+                targets.insert(claim.target.as_ref());
+            }
+        }
+        for (key, claim) in group {
+            let target = claim.target.as_ref();
+            let rival = targets.len() > 1 || !targets.contains(&target);
+            let standing = if superseded.contains(key) {
+                ClaimStanding::Superseded
+            } else if rival {
+                ClaimStanding::Contested
+            } else {
+                ClaimStanding::Current
+            };
+            standings.insert(*key, standing);
+        }
+    }
+    standings
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "claim standing scenarios")]
+mod claim_standing_tests {
+    use super::{ClaimStanding, PreparedClaim, standings_of};
+    use crate::FactKey;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// The all-pairs definition the index replaced.
+    fn reference<'a>(
+        claims: &'a BTreeMap<FactKey, PreparedClaim>,
+        fresh: &BTreeSet<&FactKey>,
+    ) -> BTreeMap<&'a FactKey, ClaimStanding> {
+        let superseded: BTreeSet<&FactKey> = claims
+            .iter()
+            .filter(|(key, claim)| {
+                claims.iter().any(|(other_key, other)| {
+                    other.contribution == claim.contribution
+                        && other.supersedes.contains(&key.key)
+                        && (fresh.contains(other_key) || !fresh.contains(key))
+                })
+            })
+            .map(|(key, _)| key)
+            .collect();
+        claims
+            .iter()
+            .map(|(key, claim)| {
+                let rival = claims.iter().any(|(other_key, other)| {
+                    other.contribution == claim.contribution
+                        && other.target != claim.target
+                        && !superseded.contains(other_key)
+                });
+                let standing = if superseded.contains(key) {
+                    ClaimStanding::Superseded
+                } else if rival {
+                    ClaimStanding::Contested
+                } else {
+                    ClaimStanding::Current
+                };
+                (key, standing)
+            })
+            .collect()
+    }
+
+    /// INGEST-BATCH-1 / S7: the contribution index decides every claim's
+    /// standing exactly as the all-pairs scan did, over contributions with
+    /// supersession chains, fresh and retained claims, rival and shared
+    /// targets, and absent targets.
+    #[test]
+    fn indexed_claim_standing_matches_the_all_pairs_definition() {
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = |bound: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % bound
+        };
+        for _round in 0..200 {
+            let count = next(12) + 1;
+            let mut claims = BTreeMap::new();
+            for n in 0..count {
+                let supersedes = (0..next(3)).map(|_| format!("c{}", next(count))).collect();
+                let target = match next(3) {
+                    0 => None,
+                    t => Some(FactKey::new("test.Target", format!("t{t}"))),
+                };
+                claims.insert(
+                    FactKey::new("norn.ObservedLinkClaim", format!("c{n}")),
+                    PreparedClaim {
+                        supersedes,
+                        values: super::JsonObject::new(),
+                        contribution: format!("k{}", next(3)),
+                        role: norn_ir::LinkId("owner".to_owned()),
+                        source: FactKey::new("test.Source", "s"),
+                        target,
+                    },
+                );
+            }
+            let fresh: BTreeSet<&FactKey> = claims.keys().filter(|_| next(2) == 0).collect();
+            assert_eq!(standings_of(&claims, &fresh), reference(&claims, &fresh));
+        }
+    }
 }
 
 #[cfg(test)]

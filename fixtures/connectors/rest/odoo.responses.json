@@ -1,0 +1,809 @@
+{
+ "size": 3,
+ "pages": [
+  {
+   "dataset": "res.partner",
+   "status": 200,
+   "body": {
+    "length": 69,
+    "records": [
+     {
+      "id": 6,
+      "name": "Owner",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/owner",
+      "x_norn_role": "owner"
+     },
+     {
+      "id": 7,
+      "name": "Custodian",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/custodian",
+      "x_norn_role": "custodian"
+     },
+     {
+      "id": 8,
+      "name": "Customer 002",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-002",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 9,
+      "name": "Customer 005",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-005",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 10,
+      "name": "Customer 008",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-008",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 11,
+      "name": "Customer 011",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-011",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 12,
+      "name": "Customer 017",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-017",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 13,
+      "name": "Customer 020",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-020",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 14,
+      "name": "Customer 023",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-023",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 15,
+      "name": "Customer 026",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-026",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 16,
+      "name": "Customer 029",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-029",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 17,
+      "name": "Customer 032",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-032",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 18,
+      "name": "Customer 038",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-038",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 19,
+      "name": "Customer 041",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-041",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 20,
+      "name": "Customer 044",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-044",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 21,
+      "name": "Customer 050",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-050",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 22,
+      "name": "Customer 059",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-059",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 23,
+      "name": "Customer 062",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-062",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 24,
+      "name": "Customer 065",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-065",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 25,
+      "name": "Customer 068",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-068",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 26,
+      "name": "Customer 071",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-071",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 27,
+      "name": "Customer 074",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-074",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 28,
+      "name": "Customer 080",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-080",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 29,
+      "name": "Customer 083",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-083",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 30,
+      "name": "Customer 086",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-086",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 31,
+      "name": "Customer 089",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-089",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 32,
+      "name": "Customer 092",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-092",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 33,
+      "name": "Customer 095",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-095",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 34,
+      "name": "Customer 101",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-101",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 35,
+      "name": "Customer 104",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-104",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 36,
+      "name": "Customer 107",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-107",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 37,
+      "name": "Customer 110",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-110",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 38,
+      "name": "Customer 113",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-113",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 39,
+      "name": "Customer 116",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-116",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 40,
+      "name": "Customer 122",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-122",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 41,
+      "name": "Customer 125",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-125",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 42,
+      "name": "Customer 128",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-128",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 43,
+      "name": "Customer 131",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-131",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 44,
+      "name": "Customer 134",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-134",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 45,
+      "name": "Customer 137",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-137",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 46,
+      "name": "Customer 143",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-143",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 47,
+      "name": "Customer 146",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-146",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 48,
+      "name": "Customer 149",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-149",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 49,
+      "name": "Customer 152",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-152",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 50,
+      "name": "Customer 155",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-155",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 51,
+      "name": "Customer 158",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-158",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 52,
+      "name": "Customer 164",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-164",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 53,
+      "name": "Customer 167",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-167",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 54,
+      "name": "Customer 170",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-170",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 55,
+      "name": "Customer 173",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-173",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 56,
+      "name": "Customer 176",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-176",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 57,
+      "name": "Customer 179",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-179",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 58,
+      "name": "Customer 185",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-185",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 59,
+      "name": "Customer 188",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-188",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 60,
+      "name": "Customer 191",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-191",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 61,
+      "name": "Customer 194",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-194",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 62,
+      "name": "Customer 197",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-197",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 63,
+      "name": "Customer 200",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-200",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 64,
+      "name": "Customer 206",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-206",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 65,
+      "name": "Customer 209",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-209",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 66,
+      "name": "Customer 212",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-212",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 67,
+      "name": "Customer 215",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-215",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 68,
+      "name": "Customer 218",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-218",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 69,
+      "name": "Customer 221",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-221",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 70,
+      "name": "Customer 227",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-227",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 71,
+      "name": "Customer 230",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-230",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 72,
+      "name": "Customer 233",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-233",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 73,
+      "name": "Customer 236",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-236",
+      "x_norn_role": "customer"
+     },
+     {
+      "id": 74,
+      "name": "Customer 239",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/party/customer-239",
+      "x_norn_role": "customer"
+     }
+    ]
+   }
+  },
+  {
+   "dataset": "product.product",
+   "status": 200,
+   "body": {
+    "length": 2,
+    "records": [
+     {
+      "id": 1,
+      "barcode": "SKU-GOLD",
+      "default_code": "GOLD",
+      "list_price": 62.4,
+      "name": "Gold scrap",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/item/gold"
+     },
+     {
+      "id": 2,
+      "barcode": "SKU-SILVER",
+      "default_code": "SILVER",
+      "list_price": 0.85,
+      "name": "Silver grain",
+      "write_date": "2026-11-12 15:14:32",
+      "x_norn_ref": "demo/item/silver"
+     }
+    ]
+   }
+  },
+  {
+   "dataset": "stock.quant",
+   "status": 200,
+   "body": {
+    "length": 8,
+    "records": [
+     {
+      "id": 1,
+      "location_id": {
+       "id": 13,
+       "name": "north"
+      },
+      "owner_id": {
+       "id": 6,
+       "x_norn_ref": "demo/party/owner"
+      },
+      "product_id": {
+       "id": 1,
+       "default_code": "GOLD",
+       "x_norn_ref": "demo/item/gold"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "quantity": 100000.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_cost_currency": "USD",
+      "x_custodian_ref": "demo/party/custodian",
+      "x_norn_ref": "demo/holding/owner/north/gold",
+      "x_stock_cost": 4500000.0,
+      "x_valuation_method": "moving_average"
+     },
+     {
+      "id": 2,
+      "location_id": {
+       "id": 14,
+       "name": "south"
+      },
+      "owner_id": {
+       "id": 6,
+       "x_norn_ref": "demo/party/owner"
+      },
+      "product_id": {
+       "id": 1,
+       "default_code": "GOLD",
+       "x_norn_ref": "demo/item/gold"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "quantity": 100000.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_cost_currency": "USD",
+      "x_custodian_ref": "demo/party/custodian",
+      "x_norn_ref": "demo/holding/owner/south/gold",
+      "x_stock_cost": 4500000.0,
+      "x_valuation_method": "moving_average"
+     },
+     {
+      "id": 3,
+      "location_id": {
+       "id": 15,
+       "name": "east"
+      },
+      "owner_id": {
+       "id": 6,
+       "x_norn_ref": "demo/party/owner"
+      },
+      "product_id": {
+       "id": 1,
+       "default_code": "GOLD",
+       "x_norn_ref": "demo/item/gold"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "quantity": 100000.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_cost_currency": "USD",
+      "x_custodian_ref": "demo/party/custodian",
+      "x_norn_ref": "demo/holding/owner/east/gold",
+      "x_stock_cost": 4500000.0,
+      "x_valuation_method": "moving_average"
+     },
+     {
+      "id": 4,
+      "location_id": {
+       "id": 16,
+       "name": "west"
+      },
+      "owner_id": {
+       "id": 6,
+       "x_norn_ref": "demo/party/owner"
+      },
+      "product_id": {
+       "id": 1,
+       "default_code": "GOLD",
+       "x_norn_ref": "demo/item/gold"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "quantity": 100000.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_cost_currency": "USD",
+      "x_custodian_ref": "demo/party/custodian",
+      "x_norn_ref": "demo/holding/owner/west/gold",
+      "x_stock_cost": 4500000.0,
+      "x_valuation_method": "moving_average"
+     },
+     {
+      "id": 5,
+      "location_id": {
+       "id": 13,
+       "name": "north"
+      },
+      "owner_id": {
+       "id": 6,
+       "x_norn_ref": "demo/party/owner"
+      },
+      "product_id": {
+       "id": 2,
+       "default_code": "SILVER",
+       "x_norn_ref": "demo/item/silver"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "quantity": 100000.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_cost_currency": "USD",
+      "x_custodian_ref": "demo/party/custodian",
+      "x_norn_ref": "demo/holding/owner/north/silver",
+      "x_stock_cost": 80000.0,
+      "x_valuation_method": "moving_average"
+     },
+     {
+      "id": 6,
+      "location_id": {
+       "id": 14,
+       "name": "south"
+      },
+      "owner_id": {
+       "id": 6,
+       "x_norn_ref": "demo/party/owner"
+      },
+      "product_id": {
+       "id": 2,
+       "default_code": "SILVER",
+       "x_norn_ref": "demo/item/silver"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "quantity": 100000.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_cost_currency": "USD",
+      "x_custodian_ref": "demo/party/custodian",
+      "x_norn_ref": "demo/holding/owner/south/silver",
+      "x_stock_cost": 80000.0,
+      "x_valuation_method": "moving_average"
+     },
+     {
+      "id": 7,
+      "location_id": {
+       "id": 15,
+       "name": "east"
+      },
+      "owner_id": {
+       "id": 6,
+       "x_norn_ref": "demo/party/owner"
+      },
+      "product_id": {
+       "id": 2,
+       "default_code": "SILVER",
+       "x_norn_ref": "demo/item/silver"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "quantity": 100000.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_cost_currency": "USD",
+      "x_custodian_ref": "demo/party/custodian",
+      "x_norn_ref": "demo/holding/owner/east/silver",
+      "x_stock_cost": 80000.0,
+      "x_valuation_method": "moving_average"
+     },
+     {
+      "id": 8,
+      "location_id": {
+       "id": 16,
+       "name": "west"
+      },
+      "owner_id": {
+       "id": 6,
+       "x_norn_ref": "demo/party/owner"
+      },
+      "product_id": {
+       "id": 2,
+       "default_code": "SILVER",
+       "x_norn_ref": "demo/item/silver"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "quantity": 100000.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_cost_currency": "USD",
+      "x_custodian_ref": "demo/party/custodian",
+      "x_norn_ref": "demo/holding/owner/west/silver",
+      "x_stock_cost": 80000.0,
+      "x_valuation_method": "moving_average"
+     }
+    ]
+   }
+  },
+  {
+   "dataset": "sale.order.line",
+   "status": 200,
+   "body": {
+    "length": 285,
+    "records": [
+     {
+      "id": 1,
+      "order_partner_id": {
+       "id": 50,
+       "x_norn_ref": "demo/party/customer-155"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "product_uom_qty": 1503.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_due_at": "2026-07-17T12:00:00Z",
+      "x_holding_ref": "demo/holding/owner/west/silver",
+      "x_norn_ref": "demo/order/00002/line/1",
+      "x_provider_ref": "demo/party/owner"
+     },
+     {
+      "id": 2,
+      "order_partner_id": {
+       "id": 42,
+       "x_norn_ref": "demo/party/customer-128"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "product_uom_qty": 213.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_due_at": "2026-05-17T12:00:00Z",
+      "x_holding_ref": "demo/holding/owner/north/gold",
+      "x_norn_ref": "demo/order/00032/line/1",
+      "x_provider_ref": "demo/party/owner"
+     },
+     {
+      "id": 3,
+      "order_partner_id": {
+       "id": 24,
+       "x_norn_ref": "demo/party/customer-065"
+      },
+      "product_uom_id": {
+       "id": 15,
+       "name": "g"
+      },
+      "product_uom_qty": 175.0,
+      "write_date": "2026-11-12 15:14:32",
+      "x_due_at": "2026-09-28T12:00:00Z",
+      "x_holding_ref": "demo/holding/owner/south/gold",
+      "x_norn_ref": "demo/order/00033/line/1",
+      "x_provider_ref": "demo/party/owner"
+     }
+    ]
+   }
+  }
+ ]
+}

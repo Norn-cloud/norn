@@ -881,16 +881,12 @@ struct LayoutIds {
 
 fn artifact_layout_ids(artifact: &ArtifactEnvelope) -> LayoutIds {
     match &artifact.payload {
-        ArtifactPayload::Rule(payload) => payload
-            .graph
-            .as_value()
-            .map(layout_ids_from_jdm)
-            .unwrap_or_default(),
-        ArtifactPayload::Widget(payload) => payload
-            .ux
-            .as_value()
-            .map(layout_ids_from_widget)
-            .unwrap_or_default(),
+        ArtifactPayload::Rule(payload) => {
+            payload.graph.as_value().map_or_default(layout_ids_from_jdm)
+        }
+        ArtifactPayload::Widget(payload) => {
+            payload.ux.as_value().map_or_default(layout_ids_from_widget)
+        }
         ArtifactPayload::Entity(_)
         | ArtifactPayload::Relation(_)
         | ArtifactPayload::Action(_)
@@ -904,7 +900,8 @@ fn artifact_layout_ids(artifact: &ArtifactEnvelope) -> LayoutIds {
         | ArtifactPayload::Mapping(_)
         | ArtifactPayload::Law(_)
         | ArtifactPayload::DefinedConcept(_)
-        | ArtifactPayload::Labels(_) => LayoutIds::default(),
+        | ArtifactPayload::Labels(_)
+        | ArtifactPayload::Model(_) => LayoutIds::default(),
     }
 }
 
@@ -1247,7 +1244,7 @@ mod tests {
         .expect("empty rule");
         let original = artifact.clone();
         let sidecar = extract_inline_layout(&mut artifact).expect("empty extraction");
-        assert!(sidecar.artifacts.is_empty());
+        assert_eq!(sidecar.artifacts.len(), 0);
         assert_eq!(artifact, original);
     }
 

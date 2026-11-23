@@ -1,0 +1,110 @@
+{
+  "artifactId": "lab.Batch.entity",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Batch",
+  "namespace": "lab",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "holding",
+          "target": "canon.Holding"
+        }
+      ],
+      "name": "lab.Batch",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "material",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "copper"
+              },
+              {
+                "value": "tin"
+              }
+            ]
+          }
+        },
+        {
+          "id": "input_g",
+          "type": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "output_g",
+          "type": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "loss_g",
+          "type": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "loss_reason",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/batches/artifacts/lab.Batch.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

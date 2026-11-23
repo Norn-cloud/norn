@@ -339,7 +339,7 @@ fn val_round_declarations_activate_the_shared_exact_site_binding() {
             ty["rounding"] = mode.into();
         }
         let result = findings(&serde_json::json!([{"name":"a.amount","type":ty}]));
-        assert!(result.is_empty(), "{result:?}");
+        assert_eq!(result, [], "{result:?}");
     }
 }
 
@@ -354,6 +354,7 @@ fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
         unit: None,
         currency_source: None,
         per_unit: None,
+        unit_source: Vec::new(),
     };
     for (text, rounding, expected) in [
         ("1.005", None, None),
@@ -389,7 +390,7 @@ proptest::proptest! {
         let rounding = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][mode];
         let site = PropertyType::Decimal {
         additivity: norn_ir::PropertyAdditivity::Undeclared {},
- scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None, per_unit: None, };
+ scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None, per_unit: None, unit_source: Vec::new(), };
         let text = format!("{}{}.{:03}", if coefficient < 0 { "-" } else { "" }, coefficient.abs()/1000, coefficient.abs()%1000);
         let result = norn_expr::rescale_decimal(&site, &text.parse().expect("number"));
         if rounding == Rounding::Refuse && coefficient % 10 != 0 { proptest::prop_assert!(result.is_err()); }

@@ -17,10 +17,12 @@ use norn_api::object_routes::{ObjectAccess, get_object, get_object_page};
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
+// #1485 S6: fixtures write through the kernel path, never the raw door.
 use norn_cell::{CellStore, CommitBatch, MAIN_WORLD, Model, ObjectRecord};
 use norn_kernel::authz::{
     AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
 };
+use query_support::governed::GovernedCommit as _;
 use query_support::{TYPE, capture_quality, fixture, fixture_writes, put};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -598,6 +600,13 @@ fn a_write_without_a_receipt_inside_a_section_refuses_the_page() {
 /// `read_cache_revision` (`None`): the declared guarantee is missing.
 struct NoRevision(NativeEngine);
 impl norn_cell::engine::SqlEngine for NoRevision {
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, norn_cell::CellError>,
+    ) -> Result<T, norn_cell::CellError> {
+        self.0.definition_writes(f)
+    }
+
     fn execute(
         &self,
         sql: &str,

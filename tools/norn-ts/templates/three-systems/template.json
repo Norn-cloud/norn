@@ -1,0 +1,44 @@
+{
+  "format": "norn-template/1",
+  "description": "The three-systems product packs as a hosted tenant provisions them: the host's trusted base and the cell-owned evidence types from registry/core, then the canon, ERPNext, Shopify, Odoo, sources and Arabic-locale packs, with their committed synthetic exports.",
+  "core": [
+    "core.Agent.interface",
+    "core.AgentRole.interface",
+    "core.Claim.interface",
+    "core.Commitment.interface",
+    "core.Conversion.interface",
+    "core.EconomicEvent.interface",
+    "core.Exchange.interface",
+    "core.Hold.interface",
+    "core.LedgerEffect.interface",
+    "core.Process.interface",
+    "core.Resource.interface",
+    "core.TimeInterval.interface",
+    "core.analytics.Restatement.entity",
+    "core.analytics.RestatementEvidence.interface",
+    "core.analytics.restatement.access.policy",
+    "core.analytics.restatement.activate.action",
+    "core.analytics.restatement.approve.action",
+    "core.analytics.restatement_policy.law",
+    "core.time",
+    "core.units",
+    "core.value_types.entity",
+    "norn.ObservedLinkClaim.entity",
+    "norn.SourceDocument.interface",
+    "norn.SourceEvidence.interface",
+    "std.value_types.entity"
+  ],
+  "packs": [
+    "canon",
+    "erpnext",
+    "locale-ar",
+    "odoo",
+    "shopify",
+    "sources"
+  ],
+  "data": [
+    "erpnext",
+    "shopify",
+    "odoo"
+  ]
+}

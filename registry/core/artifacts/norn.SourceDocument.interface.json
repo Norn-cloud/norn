@@ -1,0 +1,54 @@
+{
+  "artifactId": "norn.SourceDocument.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Scanned source provenance",
+  "namespace": "norn",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "The document bytes a record was read from (URI, SHA-256 and media type) and the extractor and version that read them.",
+      "name": "norn.SourceDocument",
+      "properties": [
+        {
+          "id": "document_uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "document_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "media_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor_version",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/norn.SourceDocument.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

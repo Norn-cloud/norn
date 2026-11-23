@@ -68,8 +68,9 @@ fn invalid_agent_proposals_have_specific_readable_refusals() {
     );
     let mut failures = Vec::new();
     for proposal in corpus.cases {
-        assert!(
-            !proposal.text.is_empty(),
+        assert_ne!(
+            proposal.text.len(),
+            0,
             "{} needs a readable reason",
             proposal.name
         );
@@ -117,5 +118,5 @@ fn invalid_agent_proposals_have_specific_readable_refusals() {
             ));
         }
     }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert_eq!(failures.len(), 0, "{}", failures.join("\n"));
 }

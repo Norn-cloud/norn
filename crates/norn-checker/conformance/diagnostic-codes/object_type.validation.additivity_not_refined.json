@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.additivity_not_refined",
+  "message": "property {property} declares an additivity other than the one {owner} requires; a member may add additivity where the referenced type declares none, never change a declared one",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

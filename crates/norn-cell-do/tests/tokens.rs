@@ -57,6 +57,7 @@ struct Demo {
     tokens: TokenPrincipals,
     caller: std::sync::Arc<norn_cell_do::policy::CallerSlot>,
     object_types: Vec<String>,
+    role_reads: norn_cell_do::policy::RoleReads,
 }
 
 fn demo() -> Demo {
@@ -76,6 +77,7 @@ fn demo_with(issuer_keys: &[(u8, &str)]) -> Demo {
     )
     .unwrap();
     let caller = policy.caller();
+    let role_reads = policy.role_reads();
     let object_types = store
         .model()
         .object_types()
@@ -89,6 +91,7 @@ fn demo_with(issuer_keys: &[(u8, &str)]) -> Demo {
         tokens,
         caller,
         object_types,
+        role_reads,
     }
 }
 
@@ -217,6 +220,10 @@ fn access(demo: &Demo, query: &str, authorization: Option<&str>) -> server::Resp
         &demo.tokens,
         &demo.caller,
         &demo.object_types,
+        &server::RoleExplainer {
+            reads: &demo.role_reads,
+            actions: None,
+        },
         &request,
     )
 }
@@ -255,6 +262,55 @@ fn the_access_document_reports_each_roles_decisions() {
             "{capability}"
         );
     }
+}
+
+/// `GET /v1/access?objectType=`: each declared role's read decisions on that
+/// one collection, from the read PDP; a collection the cell does not publish
+/// is the shared denial.
+#[test]
+fn the_access_document_tells_each_roles_reads_of_one_collection() {
+    let demo = demo();
+    let member = sign(1, "k1", &claims("user", "org_demo", "member", "password"));
+    let object_type = demo.object_types[0].clone();
+    let response = access(
+        &demo,
+        &format!("{SCOPE}&objectType={object_type}"),
+        Some(&member),
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    let document: Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(document["objectType"], json!(object_type));
+    let decisions: Vec<(String, [Value; 3])> = document["roles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|role| {
+            (
+                role["role"].as_str().unwrap().to_owned(),
+                ["population", "values", "sources"]
+                    .map(|name| role["read"][name]["decision"].clone()),
+            )
+        })
+        .collect();
+    let (permit, deny) = (json!("permit"), json!("deny"));
+    assert_eq!(
+        decisions,
+        [
+            (
+                "viewer".to_owned(),
+                [permit.clone(), deny.clone(), deny.clone()]
+            ),
+            ("member".to_owned(), [permit.clone(), permit.clone(), deny]),
+            (
+                "admin".to_owned(),
+                [permit.clone(), permit.clone(), permit.clone()]
+            ),
+            ("owner".to_owned(), [permit.clone(), permit.clone(), permit]),
+        ]
+    );
+    assert_eq!(document["roles"][0]["actions"].as_array().unwrap().len(), 0);
+    let unknown = access(&demo, &format!("{SCOPE}&objectType=no.Such"), Some(&member));
+    assert_eq!(unknown.status, 403, "{}", unknown.body);
 }
 
 #[test]
@@ -475,4 +531,43 @@ fn a_successful_refetch_recovers_verification_after_a_clock_regression() {
         defs_at(&demo, Some(&admin_at(1, "k1", edge + 1)), edge + 1).status,
         403
     );
+}
+
+/// `POST /v1/cell:provision` on a cell the dispatch already serves: an owner
+/// (the declared provisioner) is told the cell exists, whatever it sends;
+/// every other principal gets the opaque denial; GET is not the route's method.
+#[test]
+fn provisioning_a_served_cell_tells_only_its_owner_that_it_exists() {
+    let demo = demo();
+    let call = |method: &str, authorization: Option<&str>, body: &str| {
+        let request = server::Request {
+            method,
+            path: norn_api::provision::PROVISION_PATH,
+            query: SCOPE,
+            authorization,
+            now: NOW,
+            body,
+        };
+        server::handle(&demo.host, &demo.tokens, &request)
+    };
+    let owner = sign(1, "k1", &claims("user", "org_demo", "owner", "password"));
+    for body in ["", "{}", "not json"] {
+        let response = call("POST", Some(&owner), body);
+        let refusal: Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(
+            (response.status, refusal["code"].as_str()),
+            (409, Some(norn_api::provision::codes::PROVISION_CONFLICT)),
+            "{body:?}"
+        );
+        assert_eq!(refusal["message"], "the cell already exists");
+    }
+    let denied = call("POST", None, "");
+    assert_eq!(denied.status, 403);
+    for role in ["admin", "member", "viewer"] {
+        let token = sign(1, "k1", &claims("user", "org_demo", role, "password"));
+        assert_eq!(call("POST", Some(&token), ""), denied, "{role}");
+    }
+    let service = sign(1, "k1", &claims("service", "org_demo", "member", "api_key"));
+    assert_eq!(call("POST", Some(&service), ""), denied);
+    assert_eq!(call("GET", Some(&owner), "").status, 405);
 }

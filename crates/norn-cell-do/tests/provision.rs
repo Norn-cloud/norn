@@ -35,7 +35,7 @@ use norn_api::scope::CellScope;
 use norn_cell::StoreOptions;
 use norn_cell::engine::{
     DoEngine, DoStorageEmulator, EngineFault, EngineFaultKind, FaultEngine, FaultSwitch,
-    NativeEngine, SqlEngine,
+    NativeEngine, SqlEngine, SqlValue,
 };
 use norn_cell_do::policy::DEMO_GRANTS;
 use norn_cell_do::principal::TokenPrincipals;
@@ -45,6 +45,8 @@ use norn_cell_do::{base, seed};
 use serde_json::{Value, json};
 
 const ISSUER: &str = "https://studio-preview.example";
+/// A stage lineage key, as the deployed host passes one.
+const LINEAGE_KEY: [u8; 32] = [7; 32];
 const NOW: u64 = 1_800_000_000;
 /// The recorded three-systems set: its artifacts outside the reserved
 /// namespaces are a tenant's submission.
@@ -141,8 +143,15 @@ fn with_engine<E: SqlEngine + 'static>(
     scope: &CellScope,
     open: impl Fn() -> Result<E, String> + 'static,
 ) -> Result<Cell<E>, String> {
-    let tenant = Tenant::open(scope.clone(), &DEMO_GRANTS, Box::new(open))
-        .map_err(|error| error.to_string())?;
+    // As wasm.rs builds a deployed tenant: with the stage's lineage key, so
+    // every route sees the receipt-handle runtime a deployed cell has.
+    let tenant = Tenant::open(
+        scope.clone(),
+        &DEMO_GRANTS,
+        Box::new(open),
+        Some(&LINEAGE_KEY),
+    )
+    .map_err(|error| error.to_string())?;
     let tokens = TokenPrincipals::new(ISSUER, &jwks(), scope.clone(), tenant.caller(), NOW)
         .map_err(|refusal| refusal.code)?;
     Ok(Cell { tenant, tokens })
@@ -369,7 +378,7 @@ fn only_the_owner_of_the_scopes_organization_provisions_it() {
     assert_eq!(receipt["outcome"], "provisioned");
     assert_eq!(receipt["definitionsVersion"], 1);
     assert_eq!(receipt["baseSha256"], cell.tenant.base_sha256());
-    assert!(!receipt["cellId"].as_str().unwrap().is_empty());
+    assert_ne!(receipt["cellId"].as_str().unwrap().len(), 0);
     assert_eq!(receipt["receiptSha256"].as_str().unwrap().len(), 64);
     assert!(cell.tenant.is_provisioned());
     // The cell serves its organization's roles through the declared tables.
@@ -459,11 +468,9 @@ fn a_refused_submission_is_typed_and_writes_nothing() {
         "{}",
         response.body
     );
-    assert!(
-        !json_of(&response)["diagnostics"]
-            .as_array()
-            .unwrap()
-            .is_empty()
+    assert_ne!(
+        json_of(&response)["diagnostics"].as_array().unwrap().len(),
+        0
     );
     // Shape, bound, method and query.
     let large = format!("{}{}", submission(&full()), " ".repeat(MAX_PROVISION_BYTES));
@@ -677,13 +684,141 @@ fn an_identical_retry_replays_and_a_different_one_refuses() {
         let admitted = provision::admit_submission(&trusted, &scope, &body).unwrap();
         let engine = NativeEngine::open(&path, StoreOptions::default()).unwrap();
         let refusal =
-            provision::provision_cell(engine, &scope, &trusted, admitted, (NOW + 5) * 1000)
+            provision::provision_cell(engine, &scope, &trusted, &admitted, (NOW + 5) * 1000)
                 .map(|(_, receipt)| receipt)
                 .expect_err("a cell is provisioned once");
         assert_eq!(refusal.code, provision::codes::PROVISION_CONFLICT);
     }
     let mut cell = open(&path, &scope);
     assert_eq!(definitions(&mut cell, Some(&owner)), installed);
+}
+
+/// #1358: a cell answers "which connections?" from its first request: its
+/// own sources pack is installed right after the provisioned revision, so an
+/// admin's and the owner's reads of `source.Connection` are an empty page,
+/// never a refusal. The provisioned revision, and so the receipt and its
+/// replay, are unchanged, and a replay installs nothing again.
+#[test]
+fn a_provisioned_cell_serves_its_connections_from_the_start() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "a");
+    let scope = scope("org_a", "prod");
+    let owner = user("org_a", "owner");
+    let body = submission(&plain());
+    let mut cell = open(&path, &scope);
+    let first = json_of(&provision(&mut cell, Some(&owner), &body));
+    assert_eq!(first["outcome"], "provisioned", "{first}");
+    assert_eq!(first["definitionsVersion"], 1, "{first}");
+    let installed = definitions(&mut cell, Some(&owner));
+    assert_eq!(installed.status, 200, "{}", installed.body);
+    assert!(
+        installed.body.contains("source.Connection"),
+        "{}",
+        installed.body
+    );
+    let query = query(&scope);
+    for role in ["owner", "admin"] {
+        let auth = user("org_a", role);
+        for object_type in ["source.Connection", "source.SyncRun", "source.Upload"] {
+            let page = call(
+                &mut cell,
+                "GET",
+                &format!("/v1/objects/{object_type}"),
+                &query,
+                Some(&auth),
+                "",
+            );
+            assert_eq!(page.status, 200, "{role} {object_type}: {}", page.body);
+            assert_eq!(json_of(&page)["records"], json!([]), "{role} {object_type}");
+        }
+    }
+    let mut again = json_of(&provision(&mut cell, Some(&owner), &body));
+    assert_eq!(again["outcome"], "replayed", "{again}");
+    again["outcome"] = json!("provisioned");
+    assert_eq!(again, first);
+    assert_eq!(definitions(&mut cell, Some(&owner)), installed);
+}
+
+/// #1036: Studio's connector page asks the cell `POST /v1/access:decide`,
+/// and the kernel PDP decides each check under the cell's declared connector
+/// grants, for the caller's own roles. An admin reads and binds; a member
+/// and a viewer read but may not bind (a connector write); an action or a
+/// resource type the policy does not declare, another workspace, and a
+/// binding the cell does not hold are denied; a caller outside the cell gets
+/// the shared 403 Studio reads as deny-all. Before this route existed every
+/// hosted cell answered 404, and Studio's Connections page showed
+/// `connectors.access_unavailable`.
+#[test]
+fn the_cell_decides_connector_checks_for_its_members() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let mut cell = provisioned(&file(&directory, "a"), &scope, &plain());
+    let query = query(&scope);
+    let body = json!({ "checks": [
+        { "action": "connector.read", "resource": { "type": "studio.Workspace", "id": "org_a" } },
+        { "action": "connector.bind", "resource": { "type": "studio.Workspace", "id": "org_a" } },
+        { "action": "connector.run", "resource": { "type": "studio.ToolBinding", "id": "binding.none" } },
+        { "action": "connector.read", "resource": { "type": "studio.Workspace", "id": "org_b" } },
+        { "action": "connector.delete", "resource": { "type": "studio.Workspace", "id": "org_a" } },
+        { "action": "connector.read", "resource": { "type": "studio.Anything", "id": "org_a" } },
+    ] })
+    .to_string();
+    let decide = |cell: &mut Cell<NativeEngine>, role: &str| -> Vec<(String, Value)> {
+        let response = call(
+            cell,
+            "POST",
+            "/v1/access:decide",
+            &query,
+            Some(&user("org_a", role)),
+            &body,
+        );
+        assert_eq!(response.status, 200, "{role}: {}", response.body);
+        let answer = json_of(&response);
+        assert_eq!(answer["decisions"][1]["action"], "connector.bind");
+        assert_eq!(
+            answer["decisions"][1]["resource"]["type"],
+            "studio.Workspace"
+        );
+        answer["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["decision"].as_str().unwrap().to_owned(),
+                    d["rule"].clone(),
+                )
+            })
+            .collect()
+    };
+    let deny = || ("deny".to_owned(), Value::Null);
+    let denied_rest = [deny(), deny(), deny(), deny()];
+    let admin = decide(&mut cell, "admin");
+    assert_eq!(admin[0], ("permit".to_owned(), json!("connector_read")));
+    assert_eq!(admin[1], ("permit".to_owned(), json!("connector_bind")));
+    assert_eq!(admin[2..], denied_rest);
+    // A member is denied the connector write an admin is allowed.
+    for role in ["member", "viewer"] {
+        let decided = decide(&mut cell, role);
+        assert_eq!(
+            decided[0],
+            ("permit".to_owned(), json!("connector_read")),
+            "{role}"
+        );
+        assert_eq!(decided[1], deny(), "{role}: no connector write");
+        assert_eq!(decided[2..], denied_rest, "{role}");
+    }
+    let outsider = call(
+        &mut cell,
+        "POST",
+        "/v1/access:decide",
+        &query,
+        Some(&user("org_b", "owner")),
+        &body,
+    );
+    assert_eq!(outsider.status, 403, "{}", outsider.body);
+    let anonymous = call(&mut cell, "POST", "/v1/access:decide", &query, None, &body);
+    assert_eq!(anonymous.status, 403, "{}", anonymous.body);
 }
 
 // ------------------------------------------------------------ unprovisioned
@@ -707,6 +842,11 @@ fn outsider_requests(scope: &CellScope) -> Vec<(&'static str, String, String, &'
             ("GET", "/v1/definitions/studio.dashboard.d1", ""),
             ("POST", "/v1/definitions:install", "{}"),
             ("POST", "/v1/definitions:admit", "not json"),
+            (
+                "POST",
+                "/v1/definitions:install",
+                r#"{"kind":"dashboard","id":"studio.dashboard.d1","payload":{"title":"","tiles":[]}}"#,
+            ),
             ("POST", "/v1/definitions/studio.dashboard.d1:retire", "{}"),
             ("GET", "/v1/objects/canon.Item", ""),
             ("GET", "/v1/objects/tenant.Unknown", ""),
@@ -1038,6 +1178,9 @@ struct Swept {
     vacant: u32,
     whole: u32,
     cases: u32,
+    /// Plans whose statement list ended while faults still fired: the
+    /// transaction may have more statements than the list reached.
+    unexhausted: Vec<String>,
 }
 
 /// HOST-PROVISION-ATOMIC through the request layer, on the Durable Object
@@ -1086,6 +1229,7 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
         vacant: 0,
         whole: 0,
         cases: 0,
+        unexhausted: Vec::new(),
     };
     for (kind, transaction, statements) in plans {
         let mut past = false;
@@ -1133,6 +1277,11 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
             remove_store(&path);
             past = !hit;
         }
+        if !past && statements.len() > 1 {
+            swept
+                .unexhausted
+                .push(format!("{kind:?} at transaction {transaction}"));
+        }
     }
     swept
 }
@@ -1161,7 +1310,7 @@ fn a_fault_anywhere_in_provisioning_leaves_nothing_half_made() {
 
 /// [`fault_sweep`] at every statement of both transactions and their commit
 /// points. Minutes in a release build:
-/// `cargo test --release -p norn-cell-do --test provision -- --ignored`.
+/// `cargo test --release -p norn-cell-do --test suites provision:: -- --ignored`.
 #[test]
 #[ignore = "exhaustive host-level sweep; run on demand in release mode"]
 fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
@@ -1175,7 +1324,8 @@ fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
         Ok("crash") => vec![EngineFaultKind::Crash],
         Ok("io") => vec![EngineFaultKind::Io],
         Ok("commit") => vec![EngineFaultKind::Commit],
-        _ => vec![
+        Ok(other) => panic!("NORN_SWEEP_KIND is crash, io or commit, not {other:?}"),
+        Err(_) => vec![
             EngineFaultKind::Crash,
             EngineFaultKind::Io,
             EngineFaultKind::Commit,
@@ -1192,6 +1342,16 @@ fn a_fault_at_every_statement_of_provisioning_leaves_nothing_half_made() {
         started.elapsed().as_secs_f64()
     );
     assert!(swept.vacant >= 16 || from > 0 || kinds == [EngineFaultKind::Commit]);
+    // A shard that runs to the bound must reach the end of every transaction
+    // (a fault that no longer fires); a shard ending earlier stops by design.
+    if to == 400_000 {
+        assert_eq!(
+            swept.unexhausted.len(),
+            0,
+            "statements left past the bound in: {:?}",
+            swept.unexhausted
+        );
+    }
 }
 
 // ------------------------------------------------------------- seeded cells
@@ -1224,4 +1384,562 @@ fn a_seeded_cell_is_not_provisioned_over() {
         403
     );
     assert_eq!(definitions(&mut cell, Some(&owner)), before);
+}
+
+/// A seeded demo cell with one run waiting on its ask (deciders admin or
+/// owner), started by an admin; `handles` keys its receipt coordinates.
+fn waiting_demo_cell(handles: Option<&[u8]>) -> (Cell<NativeEngine>, String) {
+    let scope = seed::demo_scope();
+    let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let tenant = Tenant::seeded(scope.clone(), &DEMO_GRANTS, store, None)
+        .unwrap()
+        .with_receipt_handles(handles)
+        .unwrap();
+    let tokens =
+        TokenPrincipals::new(ISSUER, &jwks(), scope.clone(), tenant.caller(), NOW).unwrap();
+    let mut cell = Cell { tenant, tokens };
+    let at = query(&scope);
+    let owner = user(&scope.org_id, "owner");
+    let artifacts: Vec<Value> = serde_json::from_str::<Vec<Value>>(include_str!(
+        "../../../tools/norn-ts/fixtures/flows/ask.ir.json"
+    ))
+    .unwrap()
+    .into_iter()
+    .map(|mut artifact| {
+        artifact["scope"] = json!({ "orgId": scope.org_id, "environmentId": scope.environment_id });
+        artifact
+    })
+    .collect();
+    let mut body = json!({ "kind": "flow", "id": "ops.approve_refund", "payload": {
+        "flow": { "id": "ops.approve_refund", "version": "1.0.0", "title": "Approve a refund" },
+        "artifacts": artifacts } });
+    let admitted = call(
+        &mut cell,
+        "POST",
+        "/v1/definitions:admit",
+        &at,
+        Some(&owner),
+        &body.to_string(),
+    );
+    assert_eq!(admitted.status, 200, "{}", admitted.body);
+    body["signoff"] = json!({ "restatementSha256": json_of(&admitted)["restatementSha256"] });
+    let installed = call(
+        &mut cell,
+        "POST",
+        "/v1/definitions:install",
+        &at,
+        Some(&owner),
+        &body.to_string(),
+    );
+    assert_eq!(installed.status, 200, "{}", installed.body);
+    let started = call(
+        &mut cell,
+        "POST",
+        "/v1/runs",
+        &at,
+        Some(&user(&scope.org_id, "admin")),
+        &json!({ "flow": "ops.approve_refund", "runId": "refund-1" }).to_string(),
+    );
+    assert_eq!(started.status, 201, "{}", started.body);
+    (cell, at)
+}
+
+/// What `role` sees in the inbox, and what its :decide of the run's
+/// decision answers.
+fn inbox_and_decide(
+    cell: &mut Cell<NativeEngine>,
+    at: &str,
+    role: &str,
+    id: &str,
+) -> (Response, Response) {
+    let caller = user(&seed::demo_scope().org_id, role);
+    let page = call(
+        cell,
+        "GET",
+        "/v1/decisions",
+        &format!("{at}&state=pending"),
+        Some(&caller),
+        "",
+    );
+    let decided = call(
+        cell,
+        "POST",
+        &format!("/v1/decisions/{id}:decide"),
+        at,
+        Some(&caller),
+        &json!({ "choice": "approve", "idempotencyKey": format!("k-{role}") }).to_string(),
+    );
+    (page, decided)
+}
+
+/// DECISIONS-1 on the seeded demo cell: for every role, the inbox lists
+/// exactly the decisions that role's :decide accepts. The demo cell publishes
+/// no questions; its lineage-keyed receipt handles are its disclosure
+/// authority, so its deciders decide.
+#[test]
+fn every_role_lists_exactly_what_it_may_decide() {
+    let admin = user(&seed::demo_scope().org_id, "admin");
+    for (role, decides) in [
+        ("viewer", false),
+        ("member", false),
+        ("admin", true),
+        ("owner", true),
+    ] {
+        // A fresh cell per role: deciding resolves the decision.
+        let (mut cell, at) = waiting_demo_cell(Some(&[7; 32]));
+        let pending = format!("{at}&state=pending");
+        let page = call(
+            &mut cell,
+            "GET",
+            "/v1/decisions",
+            &pending,
+            Some(&admin),
+            "",
+        );
+        let id = json_of(&page)["items"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (page, decided) = inbox_and_decide(&mut cell, &at, role, &id);
+        assert_eq!(page.status, 200, "{role}: {}", page.body);
+        let listed: Vec<String> = json_of(&page)["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_owned())
+            .collect();
+        let expected: Vec<String> = if decides {
+            vec![id.clone()]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(listed, expected, "{role}");
+        let status = if decides { 200 } else { 404 };
+        assert_eq!(decided.status, status, "{role}: {}", decided.body);
+    }
+}
+
+/// A cell with no disclosure authority decides nothing, and lists nothing
+/// either: its inbox never offers a decision its :decide refuses.
+#[test]
+fn a_cell_that_cannot_decide_lists_nothing() {
+    let (mut cell, at) = waiting_demo_cell(None);
+    let (page, decided) = inbox_and_decide(&mut cell, &at, "admin", "dec_any");
+    assert_eq!(page.status, 403, "{}", page.body);
+    assert_eq!(
+        (decided.status, code(&decided).as_str()),
+        (404, "decision.not_found")
+    );
+}
+
+/// A lineage key shorter than 32 bytes refuses to open the cell rather than
+/// serve weakly keyed receipt handles.
+#[test]
+fn a_short_lineage_key_refuses_to_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "a");
+    let refused = Tenant::open(
+        scope("org_a", "prod"),
+        &DEMO_GRANTS,
+        Box::new(move || {
+            NativeEngine::open(&path, StoreOptions::default()).map_err(|error| error.to_string())
+        }),
+        Some(&[1; 16]),
+    );
+    assert!(refused.is_err());
+}
+
+/// DEFS-REOPEN-1, the alpha incident of 2026-11-12: a provisioned cell lands
+/// rows through its mapping path, then takes a runtime-defined upload type
+/// (`:load`, then `:define`), then its host restarts. The cell reopens at
+/// its active definitions with every row it had; a definitions install never
+/// commits a model the next open would refuse.
+#[test]
+fn a_runtime_defined_type_survives_a_restart() {
+    use norn_api::uploads::{LoadRequest, generate, install, load_rows, parse_csv, sha256_hex};
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "cell");
+    let scope = scope("org_a", "dev");
+    let owner = user(&scope.org_id, "owner");
+    // Past provisioning's logical clock, in milliseconds.
+    let at = 4_000_000_000_000;
+    {
+        let cell = provisioned(&path, &scope, &full());
+        let host = cell.tenant.serving_host().expect("a served cell");
+        for (name, csv, uri, rows) in [
+            (
+                "Sales",
+                "region,units\nnorth,3\nsouth,4\n",
+                "s3://uploads/a.csv",
+                true,
+            ),
+            ("Probe", "sku,qty\nA,1\n", "s3://uploads/b.csv", false),
+        ] {
+            let table = parse_csv(csv).unwrap();
+            let sha = sha256_hex(csv.as_bytes());
+            let request = LoadRequest {
+                type_name: name.into(),
+                columns: vec![],
+                key: vec![],
+                sha256: None,
+            };
+            let generated =
+                generate(&table, &request, uri, &sha, "2026-11-12T12:00:00.000Z").unwrap();
+            install(host, &generated, at).unwrap();
+            if rows {
+                let loaded = load_rows(host, &generated, &table, uri, &sha, at).unwrap();
+                assert_eq!(loaded.rows_landed, 2, "{loaded:?}");
+            }
+        }
+    }
+    // The restarted host: the same file, opened at its active definitions.
+    let mut cell = try_open(&path, &scope).expect("the cell reopens after a runtime-defined type");
+    let response = definitions(&mut cell, Some(&owner));
+    assert_eq!(response.status, 200, "{}", response.body);
+    let host = cell.tenant.serving_host().expect("a served cell");
+    let row = host
+        .host_object("upload.Sales", "s3://uploads/a.csv#row=2")
+        .unwrap()
+        .expect("the landed row is kept");
+    assert_eq!(
+        row.get("region").and_then(norn_ir::RuntimeValue::as_str),
+        Some("south")
+    );
+}
+
+/// A request as the Worker hands it to the cell's connect routes.
+fn post<'a>(path: &'a str, query: &'a str, authorization: &'a str, body: &'a str) -> Request<'a> {
+    Request {
+        method: "POST",
+        path,
+        query,
+        authorization: Some(authorization),
+        now: NOW,
+        body,
+    }
+}
+
+/// UPLOAD-RECORD-2 (S5): a caller's recorded export never lands the cell's
+/// own records: an upload record naming another scope's object, sent as an
+/// observation through the cell's own `norn-connect` mapping, is refused,
+/// and nothing is kept.
+#[test]
+fn a_caller_cannot_load_the_cells_own_upload_records() {
+    use norn_cell_do::connect::Connect;
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "cell");
+    let scope = scope("org_a", "dev");
+    let owner = user(&scope.org_id, "owner");
+    let q = query(&scope);
+    let mut set = full();
+    for name in [
+        "source.Synced.interface",
+        "source.Connection.entity",
+        "source.SyncRun.entity",
+        "source.Upload.entity",
+        "norn.connect.source",
+        "norn.connect.mapping",
+    ] {
+        set.push(
+            std::fs::read_to_string(format!(
+                "{}/../../registry/packs/sources/artifacts/{name}.json",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        );
+    }
+    let cell = provisioned(&path, &scope, &set);
+    let host = cell.tenant.serving_host().expect("a served cell");
+    let forged_id = "u-forged";
+    let record = json!({
+        "id": norn_api::sources::kept_upload_key(forged_id), "upload_id": forged_id,
+        "store": "uploads", "uri": "s3://uploads-bucket/uploads/org_b/prod/secret.csv",
+        "sha256": "0".repeat(64), "size": 6, "content_type": "text/csv",
+        "file_name": "secret.csv", "format": "csv", "columns": "[]",
+        "owner": "user:owner", "completed_at": "2026-11-12T12:00:05Z",
+    });
+    let mut connect = Connect::new("[]", "{}").unwrap();
+    for (source, mapping, instance) in [
+        ("norn-connect", "norn.connect.mapping", "cell"),
+        ("norn-connect", "norn.connect.mapping", "demo"),
+        ("elsewhere", "norn.connect.mapping", "demo"),
+        ("norn-connect", "other.mapping", "demo"),
+    ] {
+        let body = json!({
+            "source": source, "mapping": mapping, "connectorInstance": instance,
+            "snapshot": [{"dataset": "upload", "record": record}],
+        })
+        .to_string();
+        let routed = connect
+            .route(
+                Some(host),
+                &cell.tokens,
+                &post("/v1/observations:load", &q, &owner, &body),
+                NOW,
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                routed.response.status,
+                json_of(&routed.response)["code"].as_str()
+            ),
+            (403, Some("authz.denied")),
+            "{source} {mapping} {instance}: {}",
+            routed.response.body
+        );
+    }
+    assert_eq!(
+        norn_api::sources::kept_upload(host, forged_id).unwrap(),
+        None,
+        "nothing was kept"
+    );
+}
+
+/// UPLOAD-RECORD-1 across a restart: an upload completed before the host
+/// restarts is defined after it from the record the cell kept at
+/// `:complete`; a digest the client sends that differs is refused, never
+/// trusted in the kept one's place.
+#[test]
+fn a_completed_upload_survives_a_restart() {
+    use norn_cell_do::connect::Connect;
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "cell");
+    let scope = scope("org_a", "dev");
+    let owner = user(&scope.org_id, "owner");
+    let q = query(&scope);
+    let mut set = full();
+    for name in [
+        "source.Synced.interface",
+        "source.Connection.entity",
+        "source.SyncRun.entity",
+        "source.Upload.entity",
+        "norn.connect.source",
+        "norn.connect.mapping",
+    ] {
+        set.push(
+            std::fs::read_to_string(format!(
+                "{}/../../registry/packs/sources/artifacts/{name}.json",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        );
+    }
+    let vars = json!({
+        "NORN_S3_ENDPOINT": "https://storage.example.test", "NORN_S3_BUCKET": "uploads-bucket",
+        "NORN_S3_ACCESS_KEY_ID": "key-id", "NORN_S3_SECRET_ACCESS_KEY": "secret",
+    })
+    .to_string();
+    let csv = b"region,units\nnorth,3\nsouth,4\n";
+    let at = 4_000_000_000_000;
+    let upload_id = {
+        let cell = provisioned(&path, &scope, &set);
+        let host = cell.tenant.serving_host().expect("a served cell");
+        let mut connect = Connect::new("[]", &vars).unwrap();
+        let request = r#"{"fileName": "sales.csv", "contentType": "text/csv", "size": 30}"#;
+        let begun = connect
+            .route(
+                Some(host),
+                &cell.tokens,
+                &post("/v1/uploads:begin", &q, &owner, request),
+                at,
+            )
+            .unwrap();
+        assert_eq!(begun.response.status, 200, "{}", begun.response.body);
+        let id = json_of(&begun.response)["uploadId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let complete = format!("/v1/uploads/{id}:complete");
+        let routed = connect
+            .route(
+                Some(host),
+                &cell.tokens,
+                &post(&complete, &q, &owner, "{}"),
+                at,
+            )
+            .unwrap();
+        let (token, _read) = routed.then.expect("a read of the object");
+        let completed = connect.resume(Some(host), &token, 200, csv, at);
+        assert_eq!(completed.status, 200, "{}", completed.body);
+        id
+    };
+    // The restarted host: the reopened cell and a Connect that never saw it.
+    let cell = open(&path, &scope);
+    let host = cell.tenant.serving_host().expect("a served cell");
+    let kept = norn_api::sources::kept_upload(host, &upload_id)
+        .unwrap()
+        .expect("the kept record");
+    assert_eq!(kept.sha256, norn_api::uploads::sha256_hex(csv));
+    assert_eq!(kept.file_name, "sales.csv");
+    assert_ne!(kept.owner.len(), 0);
+    let mut connect = Connect::new("[]", &vars).unwrap();
+    let define = format!("/v1/uploads/{upload_id}:define");
+    let mut define_with = |body: &str| {
+        let routed = connect
+            .route(
+                Some(host),
+                &cell.tokens,
+                &post(&define, &q, &owner, body),
+                at,
+            )
+            .unwrap();
+        let (token, _read) = routed.then.expect("a read of the object");
+        connect.resume(Some(host), &token, 200, csv, at)
+    };
+    let claimed = json!({"typeName": "Sales", "sha256": "0".repeat(64)}).to_string();
+    assert_eq!(define_with(&claimed).status, 409);
+    let defined = define_with(r#"{"typeName": "Sales"}"#);
+    assert_eq!(defined.status, 200, "{}", defined.body);
+    assert_eq!(json_of(&defined)["objectType"], "upload.Sales");
+}
+
+/// A stored cell whose layout is not the one its definitions rebuild (the
+/// alpha incident of 2026-11-12) opens into a refusal state, never a retried
+/// open on every request. A verified member is told `cell.unopenable` (503),
+/// with the reason only for a definition writer; provisioning never overwrites
+/// it; anyone else is answered exactly as for a scope with no cell.
+#[test]
+fn a_cell_that_does_not_open_is_refused_never_retried_or_exposed() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let path = file(&directory, "broken");
+    drop(provisioned(&path, &scope, &full()));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).unwrap();
+    engine
+        .execute(
+            "UPDATE _norn_meta SET value = ? WHERE key = 'ddl_hash'",
+            &[SqlValue::Text("0".repeat(64))],
+        )
+        .unwrap();
+    drop(engine);
+    let mut broken = open(&path, &scope);
+    let reason = broken.tenant.open_error().map(str::to_owned).unwrap();
+    assert!(reason.contains("schema mismatch"), "{reason}");
+    let mut vacant = open(&file(&directory, "vacant"), &scope);
+    let outsiders = [
+        None,
+        Some(user("org_b", "owner")),
+        Some(user("org_a", "analyst")),
+        Some("Bearer nonsense".to_owned()),
+    ];
+    for (method, path, query, body) in outsider_requests(&scope) {
+        for outsider in &outsiders {
+            assert_eq!(
+                call(
+                    &mut broken,
+                    method,
+                    &path,
+                    &query,
+                    outsider.as_deref(),
+                    body
+                ),
+                call(
+                    &mut vacant,
+                    method,
+                    &path,
+                    &query,
+                    outsider.as_deref(),
+                    body
+                ),
+                "{method} {path}?{query} as {outsider:?}"
+            );
+        }
+    }
+    for (role, told) in [
+        ("member", false),
+        ("viewer", false),
+        ("admin", true),
+        ("owner", true),
+    ] {
+        let response = definitions(&mut broken, Some(&user("org_a", role)));
+        let document = json_of(&response);
+        assert_eq!(
+            (response.status, document["code"].as_str()),
+            (503, Some(provision::codes::UNOPENABLE)),
+            "{role}"
+        );
+        assert_eq!(
+            document["explanation"]
+                .as_str()
+                .is_some_and(|text| text.contains("schema mismatch")),
+            told,
+            "{role}: {document}"
+        );
+    }
+    let again = provision(
+        &mut broken,
+        Some(&user("org_a", "owner")),
+        &submission(&full()),
+    );
+    assert_eq!(
+        (again.status, code(&again).as_str()),
+        (503, provision::codes::UNOPENABLE)
+    );
+    assert!(!broken.tenant.is_provisioned());
+}
+
+/// INCIDENT-1: an internal failure is never silent. A storage error while an
+/// admin installs a definition answers the opaque `host.error`, with an
+/// incident id in the problem body; the host logs that id with the error's
+/// cause, and the cause never reaches the caller.
+#[test]
+fn an_internal_failure_is_logged_with_an_incident_id_the_caller_gets() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let path = file(&directory, "incident");
+    drop(provisioned(&path, &scope, &full()));
+    let faults = FaultSwitch::default();
+    let mut cell = open_faulted(&path, &scope, &faults).unwrap();
+    faults.arm(EngineFault {
+        kind: EngineFaultKind::Io,
+        transaction: 0,
+        at_statement: 0,
+    });
+    let install =
+        r#"{"kind":"dashboard","id":"studio.dashboard.ops","payload":{"title":"Ops","tiles":[]}}"#;
+    let response = call(
+        &mut cell,
+        "POST",
+        "/v1/definitions:install",
+        &query(&scope),
+        Some(&user("org_a", "admin")),
+        install,
+    );
+    assert!(faults.disarm(), "the fault fired");
+    let document = json_of(&response);
+    assert_eq!(
+        (response.status, document["code"].as_str()),
+        (500, Some("host.error")),
+        "{document}"
+    );
+    let incident = document["incidentId"].as_str().unwrap().to_owned();
+    assert!(incident.starts_with("inc-"), "{incident}");
+    assert!(
+        !response.body.contains("injected fault"),
+        "{}",
+        response.body
+    );
+    let logged = norn_cell_do::incident::recent();
+    let line = logged
+        .iter()
+        .find(|line| line.contains(&incident))
+        .unwrap_or_else(|| panic!("no log line for {incident}: {logged:?}"));
+    assert!(line.contains("host.error"), "{line}");
+    assert!(line.contains("injected fault"), "{line}");
+    // A refusal that is not internal carries no incident and logs nothing.
+    let before = norn_cell_do::incident::recent().len();
+    let denied = call(
+        &mut cell,
+        "POST",
+        "/v1/definitions:install",
+        &query(&scope),
+        None,
+        install,
+    );
+    assert!(
+        json_of(&denied).get("incidentId").is_none(),
+        "{}",
+        denied.body
+    );
+    assert_eq!(norn_cell_do::incident::recent().len(), before);
 }

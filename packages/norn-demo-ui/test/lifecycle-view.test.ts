@@ -1,13 +1,17 @@
 // The lifecycle view's model (UI-LIFECYCLE-2): layout from the declaration, counts only from the
-// cell's facets answer, and a counterexample stepped by its witness alone.
-import { expect, test } from "bun:test"
-import { type ArrowRoute, type Box, type LifecycleDoc, type LifecycleFinding, type Point, countsFrom, layout, routeArrow, stepState } from "../src/elements/lifecycle-view.ts"
+// cell's facets answer (`object_facets.rs`), and a counterexample stepped by its witness alone.
+import { describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { pathToFileURL } from "node:url"
+import { type ArrowRoute, type Box, type LifecycleDoc, type LifecycleFinding, type Point, countsFrom, isFacetsAnswer, layout, lifecycleStateRole, routeArrow, stepState } from "../src/elements/lifecycle-view.ts"
 
 const ORDER: LifecycleDoc = {
   property: "status",
   states: ["draft", "submitted", "approved", "rejected", "received", "cancelled", "archived"],
   initial: ["draft"],
   terminal: ["received", "cancelled"],
+  endings: [{ state: "approved", outcome: "resting" }],
   transitions: [
     { id: "submit", from: ["draft"], to: "submitted" }, { id: "approve", from: ["submitted"], to: "approved" },
     { id: "reject", from: ["submitted"], to: "rejected" }, { id: "revise", from: ["rejected"], to: "draft" },
@@ -17,15 +21,54 @@ const ORDER: LifecycleDoc = {
 
 test("states are laid out by distance from the start; a state no run reaches goes last", () => {
   expect(layout(ORDER)).toEqual([["draft"], ["submitted"], ["approved", "rejected", "cancelled"], ["received"], ["archived"]])
+  expect(lifecycleStateRole(ORDER, "draft", "en")).toBe("start")
+  expect(lifecycleStateRole(ORDER, "received", "en")).toBe("ending")
+  expect(lifecycleStateRole(ORDER, "approved", "en")).toBe("can rest here")
+  expect(lifecycleStateRole(ORDER, "draft", "ar")).toBe("البداية")
+  expect(lifecycleStateRole(ORDER, "received", "ar")).toBe("نهاية")
+  expect(lifecycleStateRole(ORDER, "approved", "ar")).toBe("يمكن أن يستقر هنا")
 })
 
-test("counts are the cell's: a declared state the answer omits is 0, a scan past the bound is a lower bound, unseen rows are said", () => {
-  const answer = { status: 200, body: { rows: 40, withheldRows: 3, quarantinedRows: 0, approximate: true, facets: [{ property: "status", values: [{ value: "draft", count: 30 }, { value: "submitted", count: 10 }], otherRows: 2, nulls: 1 }] } }
-  const counts = countsFrom(ORDER, answer)
-  expect(counts.states.get("draft")).toEqual({ kind: "count", count: 30, lowerBound: true })
-  expect(counts.states.get("cancelled")).toEqual({ kind: "count", count: 0, lowerBound: true })
-  expect(counts.notes).toEqual(["3 withheld from you", "1 without a state", "2 in states this view does not list"])
-  expect(counts.refused).toBeNull()
+test("counts are the cell's: an omitted state is 0 only when otherRows is 0, and lowerBound marks every count", () => {
+  const exact = { status: 200, body: { rows: 40, withheldRows: 3, quarantinedRows: 0, lowerBound: false, facets: [{ property: "status", values: [{ value: "draft", count: 30 }, { value: "submitted", count: 10 }], otherRows: 0, nulls: 1 }] } }
+  const exactCounts = countsFrom(ORDER, exact)
+  expect(exactCounts.states.get("draft")).toEqual({ kind: "count", count: 30, lowerBound: false })
+  expect(exactCounts.states.get("cancelled")).toEqual({ kind: "count", count: 0, lowerBound: false })
+  expect(exactCounts.notes).toEqual(["3 withheld from you", "1 without a state"])
+  expect(exactCounts.refused).toBeNull()
+
+  const bounded = { status: 200, body: { rows: 10_000, withheldRows: 3, quarantinedRows: 2, lowerBound: true, scanLimit: 10_000, facets: [{ property: "status", values: [{ value: "draft", count: 6_200 }, { value: "submitted", count: 3_800 }], otherRows: 0, nulls: 1 }] } }
+  const boundedCounts = countsFrom(ORDER, bounded)
+  expect(boundedCounts.states.get("draft")).toEqual({ kind: "count", count: 6_200, lowerBound: true })
+  expect(boundedCounts.states.get("cancelled")).toEqual({ kind: "count", count: 0, lowerBound: true })
+  expect(boundedCounts.notes).toEqual([
+    "Scan limit reached (10,000 rows); counts are lower bounds",
+    "at least 3 withheld from you",
+    "at least 2 held in quarantine",
+    "at least 1 without a state",
+  ])
+})
+
+test("when otherRows > 0, omitted declared states are unlisted rather than counted as 0", () => {
+  const truncated = { status: 200, body: { rows: 42, withheldRows: 0, quarantinedRows: 0, lowerBound: false, facets: [{ property: "status", values: [{ value: "draft", count: 30 }, { value: "submitted", count: 10 }], otherRows: 2, nulls: 0 }] } }
+  const counts = countsFrom(ORDER, truncated)
+  expect(counts.states.get("draft")).toEqual({ kind: "count", count: 30, lowerBound: false })
+  expect(counts.states.get("submitted")).toEqual({ kind: "count", count: 10, lowerBound: false })
+  expect(counts.states.get("cancelled")).toEqual({ kind: "unlisted" })
+  expect(counts.states.get("archived")).toEqual({ kind: "unlisted" })
+  expect(counts.notes).toEqual(["2 in unlisted values (omitted states are not counted as 0)"])
+
+  const truncatedAr = countsFrom(ORDER, { ...truncated, body: { ...truncated.body, lowerBound: true } }, "ar")
+  expect(truncatedAr.states.get("cancelled")).toEqual({ kind: "unlisted" })
+  expect(truncatedAr.notes).toEqual(["٢ على الأقل في قيم غير مدرجة (الحالات غير المدرجة لا تُعدّ صفراً)"])
+})
+
+test("legacy approximate bodies without lowerBound are rejected as invalid facets documents", () => {
+  expect(isFacetsAnswer({ rows: 10, withheldRows: 0, quarantinedRows: 0, approximate: true, facets: [] })).toBe(false)
+  expect(isFacetsAnswer({ rows: 10, withheldRows: 0, quarantinedRows: 0, lowerBound: true, facets: [] })).toBe(true)
+  const rejected = countsFrom(ORDER, { status: 200, body: { rows: 10, approximate: true, facets: [] } })
+  expect(rejected.refused).toBe("The cell did not answer.")
+  expect([...rejected.states.values()].every((count) => count.kind === "pending")).toBe(true)
 })
 
 test("before an answer every count is pending; a refusal shows no number at all", () => {
@@ -80,12 +123,12 @@ test("no arrow crosses a card, for any lifecycle the layout can produce", () => 
       transitions: Array.from({ length: 1 + Math.floor(random() * 12) }, (_, index) => ({ id: `t${index}`, from: [pick(states), pick(states)], to: pick(states) })),
     }
     const columns = layout(lifecycle)
-    const column = new Map(columns.flatMap((column, index) => column.map((state) => [state, index] as const)))
+    const column = new Map(columns.flatMap((col, index) => col.map((state) => [state, index] as const)))
     for (const rtl of [false, true]) {
       const boxes = new Map<string, Box>()
-      columns.forEach((column, index) => {
+      columns.forEach((col, index) => {
         let top = 20
-        for (const state of column) {
+        for (const state of col) {
           const height = 60 + Math.floor(random() * 40)
           const left = rtl ? 2000 - index * 240 - 176 : 20 + index * 240
           boxes.set(state, { left, right: left + 176, top, bottom: top + height })
@@ -113,11 +156,6 @@ test("no arrow crosses a card, for any lifecycle the layout can produce", () => 
 
 // The view's load states are a declared machine, admitted by the checker like any page's: every
 // state can exit (no endless "Counting…"), every outcome of the read is handled.
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
-import { pathToFileURL } from "node:url"
-import { describe } from "bun:test"
-
 const pkg = process.env.NORN_CHECKER_WASM_PKG
 const withChecker = pkg ? describe : describe.skip
 withChecker("the checker", () => {

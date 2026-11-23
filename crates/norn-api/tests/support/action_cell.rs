@@ -59,6 +59,76 @@ where
     P: FnOnce(&Model) -> Result<Model, X>,
     X: std::fmt::Debug,
 {
+    admitted_store_on(NativeEngine::open_in_memory().unwrap(), documents, prepare)
+}
+
+/// [`melt_store`] on `engine`: a file reopened this way keeps its ledger.
+#[allow(dead_code, reason = "only the crash tests open a melt cell on a file")]
+pub(crate) fn melt_store_on<E, P, X>(engine: E, set: &str, prepare: P) -> CellStore<E>
+where
+    E: norn_cell::engine::SqlEngine,
+    P: FnOnce(&Model) -> Result<Model, X>,
+    X: std::fmt::Debug,
+{
+    admitted_store_on(engine, &documents(set), prepare)
+}
+
+/// [`admitted_store`] on `engine`.
+fn admitted_store_on<E, P, X>(engine: E, documents: &[Value], prepare: P) -> CellStore<E>
+where
+    E: norn_cell::engine::SqlEngine,
+    P: FnOnce(&Model) -> Result<Model, X>,
+    X: std::fmt::Debug,
+{
+    let (model, input) = admitted_install(documents, prepare, 1);
+    CellStore::provision_definitions(engine, model, &input, "org_demo/dev").unwrap()
+}
+
+/// The model and install input of the fixture's `set`, admitted by the
+/// checker, installed at `installed_at`: a later revision of a melt cell.
+#[allow(dead_code, reason = "only the approval tests install a later revision")]
+pub(crate) fn melt_install<P, X>(
+    set: &str,
+    prepare: P,
+    installed_at: u64,
+) -> (Model, InstalledDefinitionInput)
+where
+    P: FnOnce(&Model) -> Result<Model, X>,
+    X: std::fmt::Debug,
+{
+    admitted_install(&documents(set), prepare, installed_at)
+}
+
+/// As [`melt_install`], with the fixture's `set` changed by `edit` first.
+#[allow(
+    dead_code,
+    reason = "only the approval tests install an edited revision"
+)]
+pub(crate) fn melt_install_edited<P, X>(
+    set: &str,
+    edit: impl FnOnce(&mut Vec<Value>),
+    prepare: P,
+    installed_at: u64,
+) -> (Model, InstalledDefinitionInput)
+where
+    P: FnOnce(&Model) -> Result<Model, X>,
+    X: std::fmt::Debug,
+{
+    let mut edited = documents(set);
+    edit(&mut edited);
+    admitted_install(&edited, prepare, installed_at)
+}
+
+/// The model and install input of `documents`, admitted by the checker.
+fn admitted_install<P, X>(
+    documents: &[Value],
+    prepare: P,
+    installed_at: u64,
+) -> (Model, InstalledDefinitionInput)
+where
+    P: FnOnce(&Model) -> Result<Model, X>,
+    X: std::fmt::Debug,
+{
     let mut types = Vec::new();
     let mut properties = Vec::new();
     let mut interfaces = Vec::new();
@@ -104,7 +174,14 @@ where
     .unwrap();
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let input = InstalledDefinitionInput {
-        canonical_set: serde_json::to_string(documents).unwrap(),
+        // Canonical, as an export verifies it.
+        canonical_set: String::from_utf8(
+            RuntimeValue::from_json(Value::Array(documents.to_vec()))
+                .unwrap()
+                .canonical_json()
+                .unwrap(),
+        )
+        .unwrap(),
         registry: vec![],
         receipt_sha256: checked.receipt.content_sha256().unwrap(),
         admission_receipt: Some(
@@ -112,16 +189,10 @@ where
         ),
         readmission: None,
         diff: json!({}),
-        installed_at: 1,
+        installed_at,
         layout: None,
     };
-    CellStore::provision_definitions(
-        NativeEngine::open_in_memory().unwrap(),
-        model,
-        &input,
-        "org_demo/dev",
-    )
-    .unwrap()
+    (model, input)
 }
 
 /// A request body for one melt. Exact decimals travel as their text (VAL-EXACT-1).

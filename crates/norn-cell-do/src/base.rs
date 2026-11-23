@@ -18,7 +18,7 @@ use norn_api::provision::TrustedBase;
 use crate::seed::SeedError;
 
 /// The trusted base: one artifact envelope each.
-pub const SOURCES: [&str; 20] = [
+pub const SOURCES: [&str; 22] = [
     include_str!("../../../registry/core/artifacts/core.Agent.interface.json"),
     include_str!("../../../registry/core/artifacts/core.AgentRole.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Claim.interface.json"),
@@ -30,6 +30,7 @@ pub const SOURCES: [&str; 20] = [
     include_str!("../../../registry/core/artifacts/core.LedgerEffect.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Process.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Resource.interface.json"),
+    include_str!("../../../registry/core/artifacts/core.TimeInterval.interface.json"),
     include_str!("../../../registry/core/artifacts/core.analytics.Restatement.entity.json"),
     include_str!(
         "../../../registry/core/artifacts/core.analytics.RestatementEvidence.interface.json"
@@ -40,9 +41,32 @@ pub const SOURCES: [&str; 20] = [
     ),
     include_str!("../../../registry/core/artifacts/core.analytics.restatement.approve.action.json"),
     include_str!("../../../registry/core/artifacts/core.analytics.restatement_policy.law.json"),
+    include_str!("../../../registry/core/artifacts/core.time.json"),
     include_str!("../../../registry/core/artifacts/core.units.json"),
     include_str!("../../../registry/core/artifacts/core.value_types.entity.json"),
     include_str!("../../../registry/core/artifacts/std.value_types.entity.json"),
+];
+
+/// The registry packs a hosted three-systems tenant submits over the base
+/// (`tests/hosted_load.rs`; `norn init --template three-systems` copies the
+/// same set).
+pub const TENANT_PACKS: [&str; 6] = [
+    "canon",
+    "erpnext",
+    "locale-ar",
+    "odoo",
+    "shopify",
+    "sources",
+];
+
+/// The cell-owned `norn.` core artifacts the base lacks, by registry file
+/// stem: the link claims and source evidence the cell writes for every mapped
+/// link and source row, and the source-document interface. A tenant submits
+/// them only while the base lacks them.
+pub const CELL_OWNED: [&str; 3] = [
+    "norn.ObservedLinkClaim.entity",
+    "norn.SourceDocument.interface",
+    "norn.SourceEvidence.interface",
 ];
 
 /// The host's trusted base.

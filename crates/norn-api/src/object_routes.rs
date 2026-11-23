@@ -23,6 +23,7 @@ use crate::{
         NornAppliedQuery, NornObjectPage, NornObjectQueryPage, NornObjectRecord, NornQueriedRecord,
         NornQueryTotal,
     },
+    privacy,
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
@@ -93,6 +94,16 @@ pub(crate) fn mapped(
     Ok(request)
 }
 
+/// Whether the caller holds both Population and Values on this exact row.
+pub(crate) fn row_readable<E: SqlEngine>(
+    host: &DevHost<E>,
+    access: &dyn ObjectAccess,
+    actor: &str,
+    row: &ObjectRecord,
+) -> bool {
+    row_visible(host, access, actor, row)
+}
+
 fn row_visible<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
@@ -137,6 +148,104 @@ pub(crate) fn collection<'h, E: SqlEngine>(
     Ok((epoch, actor.to_owned()))
 }
 
+/// D102: the collection gate, then the row gate asked once for every row of
+/// `object_type`, for a host whose read policy decides rows by their type
+/// alone (it is asked for [`norn_cell::compute::ALL_MEMBERS`]). The answer is
+/// whether the caller may also read the rows' values.
+///
+/// # Errors
+/// A denied collection or population gate (one opaque 403).
+pub fn uniform_gate<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    object_type: &str,
+    access: &dyn ObjectAccess,
+) -> Result<bool, Refusal> {
+    let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
+    let every = ObjectRecord {
+        object_type: object_type.to_owned(),
+        id: norn_cell::compute::ALL_MEMBERS.to_owned(),
+        scope: host.scope().key(),
+        version: 0,
+        values: std::collections::BTreeMap::new(),
+    };
+    if !permitted(host, access, &actor, &every, Population) {
+        return Err(read_denied());
+    }
+    Ok(permitted(host, access, &actor, &every, Values))
+}
+
+/// D102 / MANIFEST-LINEAGE-1: the collection gate, then the uniform row gate
+/// requiring `Population`, `Values` and `Sources` (the same three capabilities
+/// as [`crate::object_links::get_object_lineage`] and
+/// [`crate::object_review::get_object_findings`]). Fails closed with the opaque
+/// 403 before any row, manifest or engine call is touched.
+///
+/// # Errors
+/// A denied collection, population, values or sources gate (one opaque 403).
+pub(crate) fn uniform_sources_gate<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    object_type: &str,
+    access: &dyn ObjectAccess,
+) -> Result<(), Refusal> {
+    let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
+    let every = ObjectRecord {
+        object_type: object_type.to_owned(),
+        id: norn_cell::compute::ALL_MEMBERS.to_owned(),
+        scope: host.scope().key(),
+        version: 0,
+        values: std::collections::BTreeMap::new(),
+    };
+    let allowed = [Population, Values, ReadCapability::Sources]
+        .into_iter()
+        .all(|capability| permitted(host, access, &actor, &every, capability));
+    if !allowed {
+        return Err(read_denied());
+    }
+    Ok(())
+}
+
+/// For each listed row: whether it is held back, and (for a visible one)
+/// its effective markings; with the cell's marking catalog.
+type HeldAndMarked = (
+    Vec<bool>,
+    privacy::MarkingCatalog,
+    Vec<Option<std::collections::BTreeMap<String, Vec<String>>>>,
+);
+
+fn held_and_marked<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &StoreReader<'_, E>,
+    visible: &[(bool, ObjectRecord)],
+) -> Result<HeldAndMarked, Refusal> {
+    let held = visible
+        .iter()
+        .map(|(seen, row)| {
+            if *seen {
+                reader.observation_is_quarantined(MAIN_WORLD, row)
+            } else {
+                Ok(false)
+            }
+        })
+        .collect::<Result<Vec<bool>, _>>()
+        .map_err(Refusal::host)?;
+    let catalog = host.marking_catalog(reader)?;
+    let marked = visible
+        .iter()
+        .map(|(seen, row)| {
+            if *seen {
+                privacy::row_markings(reader, &catalog, row)
+            } else {
+                Ok(None)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((held, catalog, marked))
+}
+
 /// One page of a concept's visible, unquarantined objects after `after`.
 ///
 /// # Errors
@@ -178,18 +287,7 @@ pub fn get_object_page<E: SqlEngine>(
     let mut within = |read: &mut dyn FnMut(&StoreReader<'_, E>) -> Result<(), Refusal>| {
         let cell = host.cell()?;
         let reader = cell.store().read();
-        let version = || {
-            let revision = match reader.read_isolation() {
-                ReadIsolation::Revisioned => Some(
-                    reader
-                        .database_revision()
-                        .map_err(Refusal::host)?
-                        .ok_or_else(snapshot_unavailable)?,
-                ),
-                ReadIsolation::ExclusiveSynchronous => None,
-            };
-            Ok::<_, Refusal>((reader.head_commit_seq().map_err(Refusal::host)?, revision))
-        };
+        let version = || cell_version(&reader);
         let start = match snapshot {
             Some(start) => start,
             None => *snapshot.insert(version()?),
@@ -205,6 +303,7 @@ pub fn get_object_page<E: SqlEngine>(
         Ok(())
     };
     let mut cursor = after.map(str::to_owned);
+    let mut marked_catalog = None;
     loop {
         let mut batch = Vec::new();
         within(&mut |reader| {
@@ -222,21 +321,18 @@ pub fn get_object_page<E: SqlEngine>(
             .map(|row| (row_visible(host, access, &actor, &row), row))
             .collect();
         let mut quarantined = Vec::with_capacity(visible.len());
+        let mut marked = Vec::with_capacity(visible.len());
         within(&mut |reader| {
-            quarantined = visible
-                .iter()
-                .map(|(seen, row)| {
-                    if *seen {
-                        reader.observation_is_quarantined(MAIN_WORLD, row)
-                    } else {
-                        Ok(false)
-                    }
-                })
-                .collect::<Result<Vec<bool>, _>>()
-                .map_err(Refusal::host)?;
+            let (held, catalog, markings) = held_and_marked(host, reader, &visible)?;
+            quarantined = held;
+            marked = markings;
+            marked_catalog = Some(catalog);
             Ok(())
         })?;
-        for ((seen, row), quarantined) in visible.into_iter().zip(quarantined) {
+        let catalog = marked_catalog.take().unwrap_or_default();
+        for (((seen, mut row), quarantined), markings) in
+            visible.into_iter().zip(quarantined).zip(marked)
+        {
             cursor = Some(row.id.clone());
             if !seen {
                 continue;
@@ -245,7 +341,10 @@ pub fn get_object_page<E: SqlEngine>(
             if quarantined {
                 page.quarantine_count = page.quarantine_count.saturating_add(1);
             } else {
-                page.records.push(row.into());
+                let projected =
+                    privacy::project(host, &actor, &catalog, markings.as_ref(), &mut row);
+                page.records
+                    .push(NornObjectRecord::projected(row, projected));
             }
             if page.records.len() == limit {
                 return Ok(page);
@@ -257,6 +356,28 @@ pub fn get_object_page<E: SqlEngine>(
             return Ok(page);
         }
     }
+}
+
+/// The version of the cell `reader` sees: its head commit and, on an engine
+/// whose reads are not exclusive, the database revision, which moves on any
+/// commit by another connection. Two equal versions bracket one snapshot.
+///
+/// # Errors
+/// `object.snapshot_unavailable` when a revisioned engine offers no revision,
+/// or a host failure.
+pub(crate) fn cell_version<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+) -> Result<(u64, Option<(u64, u64)>), Refusal> {
+    let revision = match reader.read_isolation() {
+        ReadIsolation::Revisioned => Some(
+            reader
+                .database_revision()
+                .map_err(Refusal::host)?
+                .ok_or_else(snapshot_unavailable)?,
+        ),
+        ReadIsolation::ExclusiveSynchronous => None,
+    };
+    Ok((reader.head_commit_seq().map_err(Refusal::host)?, revision))
 }
 
 fn snapshot_unavailable() -> Refusal {
@@ -309,7 +430,11 @@ pub fn get_object<E: SqlEngine>(
     {
         return Err(not_found());
     }
-    Ok(row.into())
+    let catalog = host.marking_catalog(&reader)?;
+    let markings = privacy::row_markings(&reader, &catalog, &row)?;
+    let mut row = row;
+    let projected = privacy::project(host, &actor, &catalog, markings.as_ref(), &mut row);
+    Ok(NornObjectRecord::projected(row, projected))
 }
 
 /// Visible rows one grid query reads at most. A sort or filter needs every
@@ -319,17 +444,19 @@ pub fn get_object<E: SqlEngine>(
 pub const MAX_QUERY_SCAN: usize = 10_000;
 
 /// One row a grid query lists: Population held; `readable` when Values is too.
-struct Listed {
-    row: ObjectRecord,
-    readable: bool,
+pub(crate) struct Listed {
+    pub(crate) row: ObjectRecord,
+    pub(crate) readable: bool,
+    /// How the row's marked properties were projected (readable rows only).
+    pub(crate) projected: privacy::Projected,
 }
 
 /// The rows one snapshot holds after `after`, up to the visible bound, with what the
 /// caller may see of each.
-struct Scan {
-    listed: Vec<Listed>,
-    quarantined: u64,
-    exhausted: bool,
+pub(crate) struct Scan {
+    pub(crate) listed: Vec<Listed>,
+    pub(crate) quarantined: u64,
+    pub(crate) exhausted: bool,
     version: (u64, Option<(u64, u64)>),
 }
 
@@ -400,7 +527,7 @@ pub(crate) fn locked<E: SqlEngine, T>(
 /// outside the cell lock, as for HOST-READ-2 pages. A readable row is held
 /// back when quarantined; a withheld row is listed whatever its evidence,
 /// which is value-level and not the caller's to see (D67).
-fn scan_listed<E: SqlEngine>(
+pub(crate) fn scan_listed<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     actor: &str,
@@ -435,10 +562,12 @@ fn scan_listed<E: SqlEngine>(
             .map(|row| Listed {
                 readable: permitted(host, access, actor, &row, Values),
                 row,
+                projected: privacy::Projected::default(),
             })
             .collect();
-        let held = locked(host, access, &mut start, |reader| {
-            seen.iter()
+        let (held, catalog, marked) = locked(host, access, &mut start, |reader| {
+            let held = seen
+                .iter()
                 .map(|listed| {
                     if listed.readable {
                         reader.observation_is_quarantined(MAIN_WORLD, &listed.row)
@@ -447,12 +576,28 @@ fn scan_listed<E: SqlEngine>(
                     }
                 })
                 .collect::<Result<Vec<bool>, _>>()
-                .map_err(Refusal::host)
+                .map_err(Refusal::host)?;
+            let catalog = host.marking_catalog(reader)?;
+            let marked = seen
+                .iter()
+                .map(|listed| {
+                    if listed.readable {
+                        privacy::row_markings(reader, &catalog, &listed.row)
+                    } else {
+                        Ok(None)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((held, catalog, marked))
         })?;
-        for (listed, quarantined) in seen.into_iter().zip(held) {
+        for ((mut listed, quarantined), markings) in seen.into_iter().zip(held).zip(marked) {
             if quarantined {
                 scan.quarantined = scan.quarantined.saturating_add(1);
             } else {
+                if listed.readable {
+                    listed.projected =
+                        privacy::project(host, actor, &catalog, markings.as_ref(), &mut listed.row);
+                }
                 scan.listed.push(listed);
             }
         }
@@ -490,7 +635,8 @@ fn queried(listed: &Listed) -> NornQueriedRecord {
         version: listed.readable.then_some(listed.row.version),
         values: listed.readable.then(|| listed.row.values.clone()),
         withheld: !listed.readable,
-        withheld_properties: Vec::new(),
+        withheld_properties: listed.projected.withheld.clone(),
+        masked: listed.projected.masked.clone(),
     }
 }
 
@@ -691,17 +837,32 @@ pub fn get_queried_object<E: SqlEngine>(
     // The closing section always runs, so a commit during authorization is
     // detected for a withheld record too; only the quarantine lookup needs
     // Values.
-    let quarantined = locked(host, access, &mut start, |reader| {
+    let (quarantined, catalog, markings) = locked(host, access, &mut start, |reader| {
         if readable {
-            reader
-                .observation_is_quarantined(MAIN_WORLD, &row)
-                .map_err(Refusal::host)
+            let catalog = host.marking_catalog(reader)?;
+            Ok((
+                reader
+                    .observation_is_quarantined(MAIN_WORLD, &row)
+                    .map_err(Refusal::host)?,
+                privacy::row_markings(reader, &catalog, &row)?,
+                Some(catalog),
+            ))
+            .map(|(held, markings, catalog)| (held, catalog, markings))
         } else {
-            Ok(false)
+            Ok((false, None, None))
         }
     })?;
     if quarantined {
         return Err(not_found());
     }
-    Ok(queried(&Listed { row, readable }))
+    let mut row = row;
+    let projected = match &catalog {
+        Some(catalog) => privacy::project(host, &actor, catalog, markings.as_ref(), &mut row),
+        None => privacy::Projected::default(),
+    };
+    Ok(queried(&Listed {
+        row,
+        readable,
+        projected,
+    }))
 }

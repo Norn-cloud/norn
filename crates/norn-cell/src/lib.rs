@@ -17,7 +17,7 @@
 //! - [`CellStore`]: the normalized store (T2-ST-1 #2540, T2-ST-2 #2541),
 //!   shared by native and host adapters:
 //!   object and link tables, and the ledger, receipt, outbox, timer, and run
-//!   system tables ([`system`]). One [`CellStore::commit`] writes the
+//!   system tables ([`system`]). One `CellStore::commit_unchecked` writes the
 //!   consumed delivery, facts, events, the receipt, enqueued commands, and
 //!   timers in one SQLite transaction; reopening verifies the ledger hash
 //!   chain ([`StoreReader::verify_ledger`]).
@@ -29,12 +29,18 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod analytics;
 pub mod catalog;
 pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
+pub mod dataset_laws;
+pub mod dataset_manifest;
+pub mod decision_ledger;
+pub mod due_retry;
 pub mod engine;
+pub mod engine_release;
 pub mod error;
 pub mod export;
 mod export_journal;
@@ -43,14 +49,20 @@ pub mod fork;
 mod history;
 mod history_selection;
 pub mod host;
+mod link_laws;
 pub mod mapping_bundle;
 pub mod mapping_conflict;
 mod mapping_identity;
 mod mapping_links;
+pub use mapping_links::LINK_HELD_RULE;
+#[doc(hidden)]
+pub use mapping_links::check_link_plans_against_wide_scope;
+pub mod mapping_page;
 mod mapping_process;
 mod migration;
 pub mod mining;
 mod observation_quality;
+pub mod provision;
 pub use observation_quality::AuthoritativePage;
 mod identity;
 pub mod model;
@@ -63,16 +75,35 @@ mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
 pub mod retained;
+pub mod source_agreement;
 pub mod source_provenance;
 pub mod store;
 pub mod system;
+// #1485 S6: the raw commits exist only in this crate's own tests, and the
+// suites under `tests/` that need them are compiled here (`suites`), naming
+// the crate `norn_cell` as an integration test does.
+#[cfg(test)]
+extern crate self as norn_cell;
+#[cfg(test)]
+#[allow(
+    dead_code,
+    unreachable_pub,
+    clippy::duplicate_mod,
+    reason = "integration suites compiled in the crate keep their own visibility and \
+              each loads its shared helpers, as its own test binary did"
+)]
+mod suites;
+#[cfg(test)]
+mod test_door;
 pub mod transparency;
 mod write;
 
 pub use error::CellError;
+
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
+pub use mapping_process::{MappingOutcome, QuarantineReason};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,
@@ -80,13 +111,21 @@ pub use read::{
     PendingTimer, RunRecord, StoreReader,
 };
 #[cfg(feature = "native")]
-pub use restore::{RestoreError, RestoreReport};
+pub use restore::{HistoryDiagnosis, PrefixRestore, RestoreError, RestoreReport, UnprovenEntry};
 pub use store::{
     CellStore, CommitBatch, CommitOutcome, CommitPoint, Consumption, DefinitionInstallRecord,
     DefinitionReadmission, EffectRow, FactWriteRow, GuardedError, InstalledDefinitionInput,
     InstalledDefinitionSet, JournalMode, LinkChange, MAIN_WORLD, MarkingDeclassification,
-    OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
+    MarkingReveal, OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
 };
+
+/// Whether `function_id@version` is a compiled-in built-in
+/// (`norn_builtins::resolve`); a host registers it so a flow step may
+/// perform only built-ins (#1252).
+#[must_use]
+pub fn builtin_registered(function_id: &str, version: u32) -> bool {
+    matches!(norn_builtins::resolve(function_id, version), Ok(Some(_)))
+}
 
 /// Workers/Durable Objects SQLite adapter (celld and workerd).
 #[cfg(target_arch = "wasm32")]

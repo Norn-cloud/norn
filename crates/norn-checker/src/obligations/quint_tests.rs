@@ -34,6 +34,7 @@ pub(super) fn fixture() -> Vec<Value> {
                     unit: None,
                     currency_source: None,
                     per_unit: None,
+                    unit_source: Vec::new(),
                 }
             },
             constraints: norn_ir::PropertyConstraints::default(),
@@ -103,7 +104,7 @@ fn original_mutant_restore_and_visible_unknown_inventory() {
             tenant: None,
         },
     );
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(diagnostics, [], "{diagnostics:?}");
     let original = source(&artifacts);
     let registry = BTreeSet::new();
     let authority = ApprovedContract::approve(

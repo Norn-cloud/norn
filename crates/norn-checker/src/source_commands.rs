@@ -775,7 +775,7 @@ mod tests {
             let payload = serde_json::from_value(payload).expect("payload");
             let mut findings = Vec::new();
             validate_connector_profile(&payload, &mut findings, None);
-            assert!(!findings.is_empty());
+            assert_ne!(findings, []);
         }
     }
 }

@@ -1,0 +1,86 @@
+{
+  "flow": "ops.approve_melt",
+  "flowAt": {
+    "file": "fixtures/flows/melt.builder.ts",
+    "line": 13
+  },
+  "format": "norn-flow-sourcemap/1",
+  "note": "non-executable: maps generated ids to the definition sites that produced them",
+  "rows": {
+    "awaiting_perform_ask_review/failure/1": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 14
+    },
+    "awaiting_perform_ask_review/failure/2": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 14
+    },
+    "awaiting_perform_ask_review/result/1": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 21
+    },
+    "awaiting_perform_ask_review/result/2": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 23
+    },
+    "awaiting_perform_convert/failure/1": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 21
+    },
+    "awaiting_perform_convert/failure/2": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 21
+    },
+    "awaiting_perform_convert/result/1": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 22
+    },
+    "started/start/1": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 14
+    }
+  },
+  "sourcePath": "tools/norn-ts/fixtures/flows/melt.flow.ts",
+  "states": {
+    "awaiting_perform_ask_review": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 14
+    },
+    "awaiting_perform_convert": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 21
+    },
+    "completed": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 23
+    },
+    "failed_denied": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 21
+    },
+    "failed_expired": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 14
+    },
+    "failed_refused": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 21
+    },
+    "failed_withdrawn": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 14
+    },
+    "started": null
+  },
+  "steps": {
+    "ask_review": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 14
+    },
+    "convert": {
+      "file": "fixtures/flows/melt.builder.ts",
+      "line": 21
+    }
+  },
+  "version": "1.0.0"
+}

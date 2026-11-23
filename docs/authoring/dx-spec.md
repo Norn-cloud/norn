@@ -24,7 +24,7 @@ The same pattern runs through the registry:
 
 | Source | Plumbing written by hand |
 |---|---|
-| [`registry/core/src/physics.ts`](../../registry/core/src/physics.ts) | `cardinality: { to, from, required }` on every link; string targets (`"core.EconomicEvent"`) for self-references |
+| [`registry/core/src/rea.ts`](../../registry/core/src/rea.ts) | `cardinality: { to, from, required }` on every link; string targets (`"core.EconomicEvent"`) for self-references |
 | [`registry/core/src/commerce.ts`](../../registry/core/src/commerce.ts) | Lifecycle as `{ id, from: [...], to }` triples: states are strings, so a typo in `from` is a checker error, not an editor error |
 | [`registry/core/src/restatement.ts`](../../registry/core/src/restatement.ts) | Three artifacts to say "a reviewer may approve": `Norn.action` (`effect.kind: "fire_transition"`), `Norn.access` (role rule) and the lifecycle transition, cross-linked by id |
 | [`registry/packs/erpnext/records.ts`](../../registry/packs/erpnext/records.ts) | Mapping transforms as ZEN strings (`"'erpnext/demo/Item/' + input.name"`); a source schema `sha256` pinned by hand |
@@ -265,12 +265,12 @@ declare function law<T extends ObjectType | Interface>(
     eventually?: (self: SelfOf<T>) => boolean
     within?: { days?: number; hours?: number } | { before: (self: SelfOf<T>) => Date }  // `before`: a bare read of a timestamp property only
     severity?: "error" | "warning" | Override   // default "error"
-    unless?: ReadonlyArray<Exception<T>>        // GAP §8.1
+    unless?: { [label: string]: Exception<T> }  // CURRENT compiler (#1176 unit B); evaluation GAP §8.1
     because: string                      // rationale, required
     id?: string                          // codemod only: keep an existing law id (see below)
   },
 ): Law<T>
-type Exception<T> = { name: string; when: (self: SelfOf<T>) => boolean; because: string }
+type Exception<T> = { when: (self: SelfOf<T>) => boolean; because: string; unless?: { [label: string]: Exception<T> } }
 type Override = { override: { fixWithin: { days: number }; by: Role } }   // GAP §8.2
 ```
 
@@ -459,13 +459,17 @@ Every row names an existing IR kind; only the rows marked GAP need engine work.
 | `.owned()` | `LinkDecl` + action `createLinks` | `builder/entity.ts`, `builder/action.ts` | `entity_v2`, `action.rs` | CURRENT parts |
 | `pathEquations` | `norn.path-equations/1.0.0` extension | `builder/entity.ts` | chase EGDs | CURRENT |
 | `machine` | `LifecycleDecl` + `TransitionDecl` | `builder/entity.ts` | `entity_v2`, checker `lifecycles.rs` | CURRENT builder |
+| machine shape in `Norn.type({ lifecycles })`: `{ property, initial, states: { s: { on, after, final, resting, immutable } }, events }` | `LifecycleDecl` with `endings`, `events`, `trigger`, `mode`, `compensatedBy` (one transition per event; `NORN-MACHINE-EVENT-CONFLICT` when one event moves differently) | `compiler/definitions.ts` `machine` | `entity_v2/lifecycle.rs`; checker `lifecycle_soundness.rs` (LIFE-SOUND-1..9) | CURRENT compiler |
 | machine event | `action` (`fire_transition`) | `builder/action.ts` | `action.rs` | CURRENT builder |
 | `by: Role` | `policy` (AccessIR) | `builder/access.ts` | `access.rs` | CURRENT builder |
 | `after` | `rule` (`decide`, `transitioned` trigger + timer) | `builder/rule.ts` | `rule.rs` | CURRENT builder, PROPOSED generator |
 | `run: flow` | `rule` (`decide`, `transitioned` trigger) | `builder/rule.ts` | `rule.rs` | PROPOSED generator |
 | `law` | `law` (LawIR) | `builder/law.ts` | `verification.rs` `LawIR` | CURRENT builder |
 | lambdas | ZEN expression text | `builder/expr.ts` (needs closures, `sum`) | `norn-expr` `norn-zen/6` | PROPOSED builder ops |
-| `unless` | `LawIR.exceptions` (exception tree) | `builder/law.ts` `LawException` | `verification.rs` `LawException`; checker `law_exceptions.rs` | CURRENT IR and admission; **GAP §8.1** evaluation |
+| `unless: { label: { when, because, unless? } }` | `LawIR.exceptions` (exception tree; labels are ids, a nested label overrides its parent, each source is its own slot) | `compiler/definitions.ts` `exceptions` | `verification.rs` `LawException`; checker `law_exceptions.rs` | CURRENT compiler and admission; **GAP §8.1** evaluation |
+| `Norn.decision({ hit: "unique" }, callback)` | `decisionTableNode` with `hitPolicy: unique`; each branch is a row and the fallthrough is their complement | `compiler/definitions.ts` `decision` | `jdm.rs` `JdmHitPolicy::Unique`; checker `jdm_profile::check_unique_tables` (TABLE-UNIQUE-1) | CURRENT compiler and admission |
+| `Norn.example(name, { of, given, expect })` | a compiled case run by `norn check` with the checker's `evaluateLaw` | `compiler/definitions.ts` `examples`, `src/examples.ts` | `law_examples.rs` (LAW-EXAMPLE-1) | CURRENT |
+| `Norn.obligation` / `prohibition` / `permission(name, { on, when?, must \| never \| may, cite: { authority, version }, yieldsTo?, unless?, because })` | one `DeonticRule` each in the subject type's `norn.normative/1.0.0` slot (`yieldsTo` → `defeatedBy`; a permission is a defeater and grants nothing); declared in the subject's module | `compiler/definitions.ts` `norms` | `deontic.rs` declared-order admission | CURRENT compiler |
 | `severity: { override }` | `LawSeverity` + violation record | `builder/law.ts` | `verification.rs` `LawSeverity` | **GAP §8.2** |
 | `flow` (either syntax) | Run `entity` + `rule` | `builder/flow.ts`, `lower-flow.ts` | `entity_v2`, `rule.rs` | CURRENT for Effect.gen |
 | `fn` / `failure` | Function handle, tagged error | `builder/flow.ts` | `function.rs` | CURRENT |
@@ -563,7 +567,7 @@ plan blocked: 1 new law violated by live data (cli.plan.law_violated_live)
 
 ## 7. Worked example: an accounting pack
 
-The code below is PROPOSED syntax. The table after it says which part of each check runs on `main` today. `@norn/core` is `registry/core/src/physics.ts` (renamed `rea.ts` in a separate unit; see §11).
+The code below is PROPOSED syntax. The table after it says which part of each check runs on `main` today. `@norn/core` is `registry/core/src/rea.ts`.
 
 ```mermaid
 classDiagram
@@ -618,7 +622,7 @@ classDiagram
 ```ts
 // registry/packs/accounting/accounting.ts
 import { pack, thing, happening, link, law, role, final, sum, id, text, oneOf, money, currency, date, timestamp, value } from "@norn/authoring/v2"
-import * as core from "@norn/core"   // registry/core/src (physics.ts today)
+import * as core from "@norn/core"   // registry/core/src/rea.ts
 
 export const Accountant = role("Accountant")
 export const Controller = role("Controller")
@@ -866,7 +870,7 @@ Inputs, in order (each is one PR, smallest blast radius first):
 |---|---|---|
 | 1 | `scripts/demo/constitution.source.ts`, `scripts/demo/jewelry.source.ts` | Smallest; the constitution law has the only generated model-checked result, so its profile must stay green |
 | 2 | `registry/core/src/observations.ts`, `restatement.ts`, `commerce.ts` | `restatement.ts` exercises machine + action + access folding into one `machine` |
-| 3 | `registry/core/src/physics.ts` | After the separate rename to `rea.ts` lands (do not combine the rename with the codemod) |
+| 3 | `registry/core/src/rea.ts` | The rename to `rea.ts` has landed; this step is the codemod only |
 | 4 | `registry/packs/canon/*.ts` | |
 | 5 | `registry/packs/{erpnext,odoo,shopify}/*.ts`, `registry/packs/live/records.ts` | `connector(...).map` + generated system-pack terms; hand-written correspondences kept |
 | 6 | `registry/packs/demo-commerce/*.ts`, `registry/packs/demo-erpnext/*.ts` | |

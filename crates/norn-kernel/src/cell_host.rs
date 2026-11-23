@@ -968,6 +968,147 @@ impl<X> CommitError<X> {
 
 pub use crate::commit_check::{CommitModel, CommitView, check_commit, check_commit_owned_rows};
 
+/// K3 (#1375): the commit pipeline as types, `Proposed → Authorized → Checked
+/// → Committed`. Each stage is reachable only from the previous one, so a host
+/// that stores a [`Checked`] commit has run the shared admission check on that
+/// exact commit, under the admission its authority selected.
+///
+/// The stages borrow the commit: hosts build their storage batch from the same
+/// value they check.
+#[derive(Debug)]
+pub struct Proposed<'c, E, C, T> {
+    commit: &'c CellCommit<E, C, T>,
+}
+
+/// The admission a proposed commit was authorized under.
+enum Admission<'c> {
+    /// An ordinary commit: [`check_commit`].
+    Plain,
+    /// A kernel-prepared parent and owned-row commit: [`check_commit_owned_rows`].
+    OwnedRows(Box<OwnedRowsCommitProof>),
+    /// A sealed observation: [`crate::check_commit_observed`].
+    Observed(&'c ObservationAuthorization),
+}
+
+/// A proposed commit with the admission its authority selected.
+pub struct Authorized<'c, E, C, T> {
+    commit: &'c CellCommit<E, C, T>,
+    admission: Admission<'c>,
+}
+
+/// A commit that passed the shared admission check, with the versions it
+/// assigns. Only [`Authorized::check`] constructs one.
+#[derive(Debug)]
+pub struct Checked<'c, E, C, T> {
+    commit: &'c CellCommit<E, C, T>,
+    versions: CommitVersions,
+}
+
+/// A checked commit the host applied, with its receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Committed {
+    receipt: CommitReceipt,
+}
+
+impl<'c, E, C, T> Proposed<'c, E, C, T> {
+    /// Propose `commit`.
+    #[must_use]
+    pub const fn new(commit: &'c CellCommit<E, C, T>) -> Self {
+        Self { commit }
+    }
+
+    /// Select the admission from the host's authority: an observation
+    /// authorization, an owned-rows proof, or neither.
+    ///
+    /// # Errors
+    ///
+    /// [`CommitError::ObservationAuthorization`] when both are supplied.
+    pub fn authorize<X>(
+        self,
+        authorization: Option<&'c ObservationAuthorization>,
+        owned_rows: Option<OwnedRowsCommitProof>,
+    ) -> Result<Authorized<'c, E, C, T>, CommitError<X>> {
+        let admission = match (authorization, owned_rows) {
+            (None, None) => Admission::Plain,
+            (None, Some(proof)) => Admission::OwnedRows(Box::new(proof)),
+            (Some(authorization), None) => Admission::Observed(authorization),
+            (Some(_), Some(_)) => return Err(CommitError::ObservationAuthorization),
+        };
+        Ok(Authorized {
+            commit: self.commit,
+            admission,
+        })
+    }
+}
+
+impl<'c, E, C, T: Serialize> Authorized<'c, E, C, T> {
+    /// Run the shared admission check for this commit's admission.
+    ///
+    /// # Errors
+    ///
+    /// The first failed check, or [`CommitError::Host`] if a lookup failed.
+    pub fn check<V: CommitView + ?Sized>(
+        self,
+        model: &CommitModel<'_, '_>,
+        view: &V,
+    ) -> Result<Checked<'c, E, C, T>, CommitError<V::Error>> {
+        let versions = match self.admission {
+            Admission::Plain => check_commit(self.commit, model, view),
+            Admission::OwnedRows(proof) => {
+                check_commit_owned_rows(self.commit, model, view, *proof)
+            }
+            Admission::Observed(authorization) => {
+                crate::check_commit_observed(self.commit, model, view, authorization)
+            }
+        }?;
+        Ok(Checked {
+            commit: self.commit,
+            versions,
+        })
+    }
+}
+
+impl<'c, E, C, T> Checked<'c, E, C, T> {
+    /// The checked commit.
+    #[must_use]
+    pub const fn commit(&self) -> &'c CellCommit<E, C, T> {
+        self.commit
+    }
+
+    /// The versions the commit assigns.
+    #[must_use]
+    pub const fn versions(&self) -> &CommitVersions {
+        &self.versions
+    }
+
+    /// The versions the commit assigns, for a host that stores the commit
+    /// it checked.
+    #[must_use]
+    pub fn into_versions(self) -> CommitVersions {
+        self.versions
+    }
+
+    /// Record that the host applied this commit with `receipt`.
+    #[must_use]
+    pub fn committed(self, receipt: CommitReceipt) -> Committed {
+        Committed { receipt }
+    }
+}
+
+impl Committed {
+    /// The commit's receipt.
+    #[must_use]
+    pub const fn receipt(&self) -> &CommitReceipt {
+        &self.receipt
+    }
+
+    /// The commit's receipt, by value.
+    #[must_use]
+    pub fn into_receipt(self) -> CommitReceipt {
+        self.receipt
+    }
+}
+
 /// How a host orders commits that touch an object (ruling 2026-09-25 §7).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]

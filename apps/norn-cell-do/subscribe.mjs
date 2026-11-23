@@ -17,6 +17,20 @@ export const PROTOCOL = "norn.live.v1";
 export const MAX_SUBSCRIPTIONS = 8;
 /** Sockets per cell object. */
 export const MAX_SOCKETS = 256;
+/**
+ * TENANT-ISOLATION-1 (S3): sockets per cell object of callers who are not its members. They are
+ * counted apart (by this tag) and answered by the membership gate, never the cell, so a member's
+ * socket never shapes what an outsider sees, and outsiders never crowd out members.
+ */
+export const MAX_OUTSIDE_SOCKETS = 32;
+/**
+ * S3: every socket's attachment carries the membership decision made when it was accepted
+ * (`role`): MEMBER or OUTSIDE. A socket without one (accepted before the gate) is neither: it is
+ * never counted, answered or published to as a member, and it is closed (`reclassify`) only on its
+ * own message, never on another caller's activity (an upgrade or a commit), which it could observe.
+ */
+export const OUTSIDE = "outside";
+export const MEMBER = "member";
 const MAX_ATTACHMENT = 2000;
 const MAX_MESSAGE = 4096;
 
@@ -33,11 +47,14 @@ export function subscribable(path) {
   return { pathname: url.pathname, query: url.search.slice(1) };
 }
 
+/** Send one message; whether the socket took it. */
 const send = (ws, message) => {
   try {
     ws.send(JSON.stringify(message));
+    return true;
   } catch {
     // A socket closing under us: its close handler cleans up.
+    return false;
   }
 };
 
@@ -45,24 +62,49 @@ const send = (ws, message) => {
  * Accept one live socket on `ctx` for `scope` as `authorization`. The upgrade itself carries no
  * data; every answer comes later from `evaluate`.
  */
-export function accept(ctx, scope, authorization, requested = "") {
-  if (ctx.getWebSockets().length >= MAX_SOCKETS) {
-    return Response.json({ format: "norn/refusal@2", retryable: true, reason: null, code: "live.too_many_sockets", category: "limit", message: "this cell has too many live readers", explanation: `at most ${MAX_SOCKETS} sockets per cell` }, { status: 429 });
+export function accept(ctx, scope, authorization, requested = "", { outside = false } = {}) {
+  // An outsider is counted only among outsiders; a member among members.
+  const open = outside ? ctx.getWebSockets(OUTSIDE).length : members(ctx).length;
+  const limit = outside ? MAX_OUTSIDE_SOCKETS : MAX_SOCKETS;
+  if (open >= limit) {
+    return Response.json({ format: "norn/refusal@2", retryable: true, reason: null, code: "live.too_many_sockets", category: "limit", message: "this cell has too many live readers", explanation: `at most ${limit} sockets per cell` }, { status: 429 });
   }
   const [client, server] = Object.values(new WebSocketPair());
-  ctx.acceptWebSocket(server);
-  server.serializeAttachment({ scope, authorization, subs: {} });
+  const role = outside ? OUTSIDE : MEMBER;
+  ctx.acceptWebSocket(server, [role]);
+  server.serializeAttachment({ scope, authorization, subs: {}, role });
   // Echo the protocol only when the client asked for it: a strict client refuses an unasked one.
   const asked = requested.split(",").map((name) => name.trim()).includes(PROTOCOL);
   return new Response(null, { status: 101, webSocket: client, ...(asked ? { headers: { "sec-websocket-protocol": PROTOCOL } } : {}) });
 }
 
+/** The membership decision an attachment carries: MEMBER, OUTSIDE, or null (unclassified). */
+export function roleOf(attachment) {
+  const role = attachment?.role;
+  return role === MEMBER || role === OUTSIDE ? role : null;
+}
+
+/** The object's members' sockets: only those classified MEMBER when accepted. */
+export function members(ctx) {
+  return ctx.getWebSockets().filter((ws) => roleOf(ws.deserializeAttachment()) === MEMBER);
+}
+
+/** Close a socket no membership decision classified; the client reconnects through the gate. */
+export function reclassify(ws) {
+  try {
+    ws.close(1012, "reconnect");
+  } catch {
+    // Already closed.
+  }
+}
+
 /**
- * Answer every subscription of `ws` again and send the ones that changed. `ask(path, query,
- * authorization)` is the cell's own GET. Returns false when the socket was closed for an expired
- * or refused token.
+ * Answer every subscription of `ws` again and send the ones that changed (`tally.sent` counts the sends the socket took). `ask(path, query,
+ * authorization)` is the cell's own GET. Returns false when the token no longer verifies: the
+ * socket is closed, or, when `quiet` (a publish, S3), left untouched so another caller's commit is
+ * never what ends it; its own next message does.
  */
-export async function evaluate(ws, ask, only) {
+export async function evaluate(ws, ask, only, tally, { quiet = false } = {}) {
   const attachment = ws.deserializeAttachment();
   if (!attachment) return false;
   let changed = false;
@@ -70,7 +112,7 @@ export async function evaluate(ws, ask, only) {
     if (only !== undefined && id !== only) continue;
     const reply = ask(sub.pathname, sub.query, attachment.authorization);
     if (reply.status === 401) {
-      ws.close(4401, "token expired");
+      if (!quiet) ws.close(4401, "token expired");
       return false;
     }
     const value = await digest(`${reply.status}\n${reply.body}`);
@@ -83,7 +125,7 @@ export async function evaluate(ws, ask, only) {
     } catch {
       body = null;
     }
-    send(ws, { type: "snapshot", id, status: reply.status, digest: value, body });
+    if (send(ws, { type: "snapshot", id, status: reply.status, digest: value, body }) && tally !== undefined) tally.sent += 1;
   }
   if (changed) ws.serializeAttachment(attachment);
   return true;
@@ -121,7 +163,13 @@ export async function message(ws, raw, ask) {
   await evaluate(ws, ask, id);
 }
 
-/** After a commit: answer every live subscription on this object again. */
+/**
+ * After a commit: answer every live subscription on `ctx`'s sockets again. Resolves to the number
+ * of changed snapshots the sockets took. A publish never closes a socket (S3): a token that lapsed
+ * is left for the socket's own next message to end.
+ */
 export async function publish(ctx, ask) {
-  for (const ws of ctx.getWebSockets()) await evaluate(ws, ask);
+  const tally = { sent: 0 };
+  for (const ws of ctx.getWebSockets()) await evaluate(ws, ask, undefined, tally, { quiet: true });
+  return tally.sent;
 }

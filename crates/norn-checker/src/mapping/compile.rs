@@ -54,7 +54,9 @@ use norn_ir::{
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::{MappingModel, check_mapping, codes, input_fields, mapping_key};
+use super::{
+    MappingModel, check_mapping, codes, input_fields, input_fields_with_children, mapping_key,
+};
 use crate::lint::coverage::{
     IgnoredSourceField, MappingCoverage, MemberCoverage, MemberRef, MemberStatus, SourceRef,
 };
@@ -506,19 +508,15 @@ pub(super) fn compile_mapping(
                     Span::pointer(""),
                 )]
             })?;
-        let dependencies = root
-            .effect_program
-            .as_ref()
-            .map(|program| {
-                let target = program.target();
-                vec![ArtifactDependency {
-                    artifact_id: target.entity_artifact_id.to_owned(),
-                    kind: ArtifactKind::Entity,
-                    version: Some(target.entity_artifact_version.to_owned()),
-                    required: true,
-                }]
-            })
-            .unwrap_or_default();
+        let dependencies = root.effect_program.as_ref().map_or_default(|program| {
+            let target = program.target();
+            vec![ArtifactDependency {
+                artifact_id: target.entity_artifact_id.to_owned(),
+                kind: ArtifactKind::Entity,
+                version: Some(target.entity_artifact_version.to_owned()),
+                required: true,
+            }]
+        });
         out.action_artifacts.push(ArtifactEnvelope {
             ir_version: SUPPORTED_IR_VERSION.to_owned(),
             artifact_id: root.action_id.clone(),
@@ -785,7 +783,8 @@ fn compile_map(
     let (entity_id, entity_version) = model
         .entity_artifact(object_type.as_str())
         .ok_or_else(unresolved)?;
-    let input_types = input_fields(source, &map.source.dataset).ok_or_else(unresolved)?;
+    let input_types =
+        input_fields_with_children(source, &map.source.dataset).ok_or_else(unresolved)?;
     let compile = |expression: &norn_ir::ZenExpression| {
         Expression::compile(expression.as_str()).map_err(|failure| {
             Box::new(error(
@@ -1662,18 +1661,53 @@ impl CompiledMapping {
         documents: &[SourceDocument],
         recorded_at: &UtcTimestamp,
     ) -> Result<Vec<MappedRecord>, Vec<Diagnostic>> {
+        self.apply_explained(documents, recorded_at)
+            .map_err(|refusals| refusals.iter().map(RowRefusal::diagnostic).collect())
+    }
+
+    /// [`Self::apply`], with each refusal explained (MAP-EXPLAIN-1): the
+    /// mapping rule (map) that refused the row and, when a source field does
+    /// not conform to its declared type, that field, its value and the
+    /// declared type, so a quarantined row says what to fix without parsing
+    /// a message.
+    ///
+    /// # Errors
+    /// As [`Self::apply`], one [`RowRefusal`] per refused map and row.
+    pub fn apply_explained(
+        &self,
+        documents: &[SourceDocument],
+        recorded_at: &UtcTimestamp,
+    ) -> Result<Vec<MappedRecord>, Vec<RowRefusal>> {
+        self.apply_derived(documents, recorded_at, Derivation::CURRENT)
+    }
+
+    /// [`Self::apply_explained`] under an exact runtime [`Derivation`]:
+    /// retained evidence is verified under the derivation it was captured
+    /// with, never re-derived implicitly under a newer one (MAP-DERIVATION-1).
+    ///
+    /// # Errors
+    /// As [`Self::apply_explained`].
+    pub fn apply_derived(
+        &self,
+        documents: &[SourceDocument],
+        recorded_at: &UtcTimestamp,
+        derivation: Derivation,
+    ) -> Result<Vec<MappedRecord>, Vec<RowRefusal>> {
         let mut records = Vec::new();
         let mut findings = Vec::new();
         for map in &self.maps {
             for (index, document) in documents.iter().enumerate() {
                 for row in rows(map, document) {
-                    let at = Span::from_segments(["documents", index.to_string().as_str()]);
-                    match self.apply_row(map, row, document, recorded_at) {
+                    match self.apply_row(map, row, document, recorded_at, derivation) {
                         Ok(Some(record)) => records.push(record),
                         Ok(None) => {}
-                        Err((code, message)) => {
-                            findings.push(error(code, format!("map {:?}: {message}", map.id), at));
-                        }
+                        Err(refused) => findings.push(RowRefusal {
+                            code: refused.code,
+                            map: map.id.clone(),
+                            document: index,
+                            field: refused.field.map(|field| *field),
+                            reason: refused.reason,
+                        }),
                     }
                 }
             }
@@ -1683,6 +1717,31 @@ impl CompiledMapping {
         } else {
             Err(findings)
         }
+    }
+
+    /// INGEST-GROUP-1: the object types a record of `dataset` can write (each
+    /// map that reads it targets one) and the types its links can name. Two
+    /// datasets whose footprints are disjoint, with no link from one into the
+    /// other's writes, map independently of their relative order.
+    #[must_use]
+    pub fn footprint(&self, dataset: &str) -> (BTreeSet<String>, BTreeSet<String>) {
+        let mut writes = BTreeSet::new();
+        let mut links = BTreeSet::new();
+        for map in &self.maps {
+            let reads = match &map.nested_in {
+                None => map.dataset == dataset,
+                Some(nested) => nested.dataset == dataset,
+            };
+            if reads {
+                writes.insert(map.object_type.as_str().to_owned());
+                links.extend(
+                    map.links
+                        .iter()
+                        .map(|link| link.target_type.as_str().to_owned()),
+                );
+            }
+        }
+        (writes, links)
     }
 
     /// Apply a complete source snapshot and reconcile entitlement keys owned
@@ -2183,14 +2242,14 @@ impl CompiledMapping {
                         ),
                     ));
                 }
-                conform(raw, ty).map_err(|reason| {
+                conform(raw, ty, Derivation::V2).map_err(|reason| {
                     (
                         codes::INVALID_RECORD,
                         format!("delete field {field:?} {reason}"),
                     )
                 })?
             } else {
-                conform(raw, ty).unwrap_or(Value::Null)
+                conform(raw, ty, Derivation::V2).unwrap_or(Value::Null)
             };
             input.insert(field.clone(), value);
         }
@@ -2257,17 +2316,28 @@ impl CompiledMapping {
         row: Option<&norn_canonical::JsonValue>,
         document: &SourceDocument,
         recorded_at: &UtcTimestamp,
-    ) -> Result<Option<MappedRecord>, (&'static str, String)> {
+        derivation: Derivation,
+    ) -> Result<Option<MappedRecord>, Refused> {
         let Some(norn_canonical::JsonValue::Object(row)) = row else {
             return Err((
                 codes::INVALID_RECORD,
                 "the record is not an object".to_owned(),
-            ));
+            )
+                .into());
         };
         let mut input = BTreeMap::new();
         for (field, ty) in &map.input_types {
-            let value = conform(row.get(field), ty)
-                .map_err(|reason| (codes::INVALID_RECORD, format!("field {field:?} {reason}")))?;
+            let raw = row.get(field);
+            let value = conform(raw, ty, derivation).map_err(|reason| Refused {
+                code: codes::INVALID_RECORD,
+                reason: format!("field {field:?} {reason}"),
+                field: Some(Box::new(FieldRefusal {
+                    field: field.clone(),
+                    value: raw.map(json_text),
+                    expected: type_name(ty),
+                    reason,
+                })),
+            })?;
             input.insert(field.clone(), value);
         }
         let context = Value::object([("input", Value::Object(input))]);
@@ -2292,6 +2362,7 @@ impl CompiledMapping {
                     &entry.property,
                     &entry.expression,
                     &entry.target_type,
+                    derivation,
                 )?,
                 None => evaluate(&entry.expression, &context)?,
             };
@@ -2648,7 +2719,7 @@ fn entitlement_context(
             return Err(format!("joined alias {alias:?} is not a record object"));
         };
         for (field, ty) in fields {
-            let value = conform(values.get(field), ty)
+            let value = conform(values.get(field), ty, Derivation::V2)
                 .map_err(|reason| format!("field {alias}.{field} {reason}"))?;
             input.insert(format!("{alias}_{field}"), value);
         }
@@ -2766,6 +2837,7 @@ fn select_nested_value(
     property: &PropertyId,
     expression: &Expression,
     target_type: &Type,
+    derivation: Derivation,
 ) -> Result<Value, (&'static str, String)> {
     select_nested_value_with_budget(
         nested,
@@ -2774,6 +2846,7 @@ fn select_nested_value(
         expression,
         target_type,
         EvaluationBudget::default().units(),
+        derivation,
     )
 }
 
@@ -2784,6 +2857,7 @@ fn select_nested_value_with_budget(
     expression: &Expression,
     target_type: &Type,
     total_units: u64,
+    derivation: Derivation,
 ) -> Result<Value, (&'static str, String)> {
     use norn_canonical::JsonValue as Json;
 
@@ -2832,7 +2906,7 @@ fn select_nested_value_with_budget(
         };
         let mut input = BTreeMap::new();
         for (field, ty) in &nested.input_types {
-            let value = conform(child.get(field), ty).map_err(|reason| {
+            let value = conform(child.get(field), ty, derivation).map_err(|reason| {
                 (
                     codes::INVALID_RECORD,
                     format!(
@@ -3014,7 +3088,149 @@ fn text(expression: &Expression, context: &Value) -> Result<String, (&'static st
 }
 
 /// Check one raw field value against its `input` type and convert it.
-fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, String> {
+/// MAP-DERIVATION-1: the runtime derivation a mapping bundle was captured
+/// under. Retained evidence is verified under its own derivation, so a newer
+/// parser never changes what an old bundle proves; reprocessing a row under
+/// a newer derivation is an explicit, governed step, never a replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Derivation {
+    /// Before MAP-DECIMAL-TEXT-1: a declared decimal conforms only as a JSON
+    /// number; decimal text refuses.
+    V1,
+    /// The other unversioned (`1`) derivation: bundles captured after
+    /// MAPPING-DECIMAL-TEXT-1 and before MAP-DERIVATION-1, where exact plain
+    /// decimal text (`"200.50"`) conforms and any other text refuses as a
+    /// value that is not the declared type. An unversioned bundle verifies
+    /// if it matches either this or [`Self::V1`].
+    V1DecimalText,
+    /// MAP-DECIMAL-TEXT-1: exact decimal text conforms to a declared decimal
+    /// through the strict wire decoder ([`norn_ir::Decimal::parse_wire`]).
+    V2,
+}
+
+impl Derivation {
+    /// The derivation new captures use.
+    pub const CURRENT: Self = Self::V2;
+
+    /// Whether exact decimal text conforms to a declared decimal.
+    #[must_use]
+    pub const fn decimal_text(self) -> bool {
+        matches!(self, Self::V1DecimalText | Self::V2)
+    }
+}
+
+/// One map's refusal of one source row (MAP-EXPLAIN-1): the stable code, the
+/// mapping rule that refused it, the document it came from and, when a
+/// source field does not conform to its declared type, which field, what it
+/// held and what was declared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowRefusal {
+    /// The stable diagnostic code (`mapping.runtime.*`).
+    pub code: &'static str,
+    /// The map (mapping rule) that refused the row.
+    pub map: String,
+    /// The refused document's index in the applied batch.
+    pub document: usize,
+    /// The nonconforming field, when the refusal is one.
+    pub field: Option<FieldRefusal>,
+    /// The refusal in words, without the map prefix.
+    pub reason: String,
+}
+
+/// A source field that does not conform to its declared type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldRefusal {
+    /// The source field.
+    pub field: String,
+    /// The value it held, as canonical JSON text; `None` when it was absent.
+    pub value: Option<String>,
+    /// The declared type, in words (`decimal`, `optional text`, ...).
+    pub expected: String,
+    /// Why the value does not conform.
+    pub reason: String,
+}
+
+impl RowRefusal {
+    /// The diagnostic [`CompiledMapping::apply`] reports for this refusal:
+    /// `map "<id>": <reason>` at `/documents/<index>`.
+    #[must_use]
+    pub fn diagnostic(&self) -> Diagnostic {
+        error(
+            self.code,
+            format!("map {:?}: {}", self.map, self.reason),
+            Span::from_segments(["documents", self.document.to_string().as_str()]),
+        )
+    }
+}
+
+/// A row refusal inside [`CompiledMapping::apply_row`], before the map and
+/// document are attached.
+struct Refused {
+    code: &'static str,
+    reason: String,
+    field: Option<Box<FieldRefusal>>,
+}
+
+impl From<(&'static str, String)> for Refused {
+    fn from((code, reason): (&'static str, String)) -> Self {
+        Self {
+            code,
+            reason,
+            field: None,
+        }
+    }
+}
+
+fn json_text(value: &norn_canonical::JsonValue) -> String {
+    norn_canonical::serialize_json(value)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| format!("{value:?}"))
+}
+
+/// A declared source type in words, for a refusal's `expected`.
+fn type_name(ty: &Type) -> String {
+    if let Type::Optional(inner) = ty {
+        return format!("optional {}", type_name(inner));
+    }
+    if let Type::List(inner) = ty {
+        return format!("list of {}", type_name(inner));
+    }
+    if let Type::Decimal { scale, .. } = ty {
+        return format!("decimal (scale {scale}; a JSON number or exact decimal text)");
+    }
+    if let Type::Enum { values } = ty {
+        return format!("one of {values:?}");
+    }
+    let named = [
+        (matches!(ty, Type::Bool), "boolean"),
+        (matches!(ty, Type::Text { .. }), "text"),
+        (matches!(ty, Type::Integer), "integer"),
+        (
+            matches!(ty, Type::Number),
+            "decimal (a JSON number or exact decimal text)",
+        ),
+        (
+            matches!(ty, Type::Timestamp { .. }),
+            "timestamp (RFC 3339 with an offset)",
+        ),
+        (matches!(ty, Type::Date), "date (YYYY-MM-DD)"),
+        (matches!(ty, Type::Duration), "duration"),
+        (matches!(ty, Type::Json), "JSON"),
+    ];
+    named
+        .iter()
+        .find(|(is, _)| *is)
+        .map_or_else(|| format!("{ty:?}"), |(_, name)| (*name).to_owned())
+}
+
+/// `derivation`: how exact decimal text conforms to a declared decimal
+/// (MAP-DECIMAL-TEXT-1, [`Derivation::V2`]); [`Derivation::V1`] refused it.
+fn conform(
+    raw: Option<&norn_canonical::JsonValue>,
+    ty: &Type,
+    derivation: Derivation,
+) -> Result<Value, String> {
     use norn_canonical::JsonValue as Json;
     match (raw, ty) {
         (None | Some(Json::Null), Type::Optional(_)) => Ok(Value::Null),
@@ -3024,8 +3240,8 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
         {
             Ok(Value::Null)
         }
-        (raw, Type::Optional(inner)) => conform(raw, inner),
-        (None | Some(Json::Null), _) => Err("is required".to_owned()),
+        (raw, Type::Optional(inner)) => conform(raw, inner, derivation),
+        (None | Some(Json::Null), _) => Err(format!("is required (expected {})", expected(ty))),
         (Some(Json::String(text)), Type::Enum { values }) => {
             if values.contains(text) {
                 Ok(Value::String(text.clone()))
@@ -3049,9 +3265,78 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
             number_value(number)
         }
         (Some(Json::Number(number)), Type::Number | Type::Decimal { .. }) => number_value(number),
+        // MAP-DECIMAL-TEXT-1: exact decimal text (`"1234.50"`), as the action
+        // boundary takes it (VAL-EXACT-1) and as ERP exports and careful
+        // extractors write money and quantities, conforms to a declared
+        // decimal (a source schema's `decimal` reads as an exact `Number`)
+        // through the same strict JSON-decimal grammar; any other
+        // text (`"1,234"`, `"1e3"`, `" 5"`) still refuses, naming the grammar.
+        (Some(Json::String(text)), Type::Number | Type::Decimal { .. })
+            if derivation == Derivation::V2 =>
+        {
+            // VAL-EXACT-1: the action boundary's own strict wire decoder.
+            norn_ir::Decimal::parse_wire(text).map_err(|failure| failure.to_string())?;
+            number_value(text)
+        }
+        // Derivation::V1DecimalText: the plain-text grammar it shipped with;
+        // other text falls through to the generic refusal below.
+        (Some(Json::String(text)), Type::Number | Type::Decimal { .. })
+            if derivation == Derivation::V1DecimalText
+                && norn_ir::Decimal::is_wire_decimal(text) =>
+        {
+            number_value(text)
+        }
         (Some(Json::Bool(flag)), Type::Bool) => Ok(Value::Bool(*flag)),
-        (Some(value), Type::Json) => any_value(value),
-        (Some(value), ty) => Err(format!("{value:?} does not conform to {ty:?}")),
+        // A declared child table is typed for the checker only; at runtime
+        // its rows convert exactly as opaque JSON does, so bounds and nested
+        // maps see the same value either way.
+        (Some(value), Type::Json) | (Some(value @ Json::Array(_)), Type::List(_)) => {
+            any_value(value)
+        }
+        (Some(value), ty) => Err(format!("value {} is not {}", shown(value), expected(ty))),
+    }
+}
+
+/// A source value as its JSON text, cut at 80 characters.
+fn shown(value: &norn_canonical::JsonValue) -> String {
+    use norn_canonical::JsonValue as Json;
+    let text = match value {
+        Json::Null => "null".to_owned(),
+        Json::Bool(flag) => flag.to_string(),
+        Json::Number(number) => number.clone(),
+        Json::String(text) => serde_json::to_string(text).unwrap_or_default(),
+        Json::Array(items) => format!("[{} items]", items.len()),
+        Json::Object(members) => format!("{{{} members}}", members.len()),
+    };
+    if text.chars().count() > 80 {
+        format!("{}…", text.chars().take(80).collect::<String>())
+    } else {
+        text
+    }
+}
+
+/// The type a source field must have, in words.
+fn expected(ty: &Type) -> String {
+    match ty {
+        Type::Bool => "a boolean (true or false)".to_owned(),
+        Type::Text { .. } => "text (a JSON string)".to_owned(),
+        Type::Integer => "an integer (a JSON number without a fraction)".to_owned(),
+        Type::Decimal { scale, .. } => format!(
+            "a decimal with up to {scale} fraction digits (a JSON number, or exact decimal text such as \"12.50\")"
+        ),
+        Type::DecimalBinding { .. } | Type::Number => "a number (a JSON number)".to_owned(),
+        Type::Timestamp { .. } => {
+            "a timestamp (RFC 3339 text with an offset, such as \"2026-11-19T10:00:00Z\")"
+                .to_owned()
+        }
+        Type::Date => "a date (text such as \"2026-11-19\")".to_owned(),
+        Type::Duration => "a duration (text)".to_owned(),
+        Type::Enum { values } => format!("one of {}", values.join(", ")),
+        Type::Json => "JSON".to_owned(),
+        Type::Record(name) => format!("a {name} record"),
+        Type::List(item) => format!("a list of {}", expected(item)),
+        Type::Optional(inner) => format!("{} or null", expected(inner)),
+        other => format!("{other:?}"),
     }
 }
 
@@ -3176,7 +3461,7 @@ mod nested_budget_tests {
             parent.source_fields,
             ["name", "item_code", "item_name", "variant_of", "attributes"]
         );
-        assert!(parent.markings.is_empty());
+        assert_eq!(parent.markings, []);
     }
 
     #[test]
@@ -3229,6 +3514,7 @@ mod nested_budget_tests {
             &value,
             &Type::Text { format: None },
             combined_budget,
+            Derivation::V2,
         )
         .expect_err("predicate and selected value exceed one shared budget");
         assert_eq!(failure.0, codes::EVALUATION_FAILED);
@@ -3248,9 +3534,188 @@ mod nested_budget_tests {
             &value,
             &Type::Text { format: None },
             predicate_units,
+            Derivation::V2,
         )
         .expect_err("the second predicate cannot restart the consumed budget");
         assert_eq!(failure.0, codes::EVALUATION_FAILED);
         assert!(failure.1.contains("budget exhausted"), "{}", failure.1);
+    }
+
+    /// VAL-EXACT-1 / MAP-DECIMAL-TEXT-1: a mapped decimal field and an action
+    /// wire decimal accept exactly the same text, as the same value: sign,
+    /// leading zeros, exponent, whitespace and precision (the 96-bit decimal
+    /// range). A declared scale bounds both sites after decoding; inputs stay
+    /// within the action site's scale (18) so only the decoders are compared.
+    #[test]
+    fn mapping_and_action_wire_decimals_correspond() {
+        let wire: norn_ir::JsonValue =
+            serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":18}}"#)
+                .expect("schema json");
+        let action = norn_expr::schema::Schema::parse_action(&wire, "amount").expect("schema");
+        for text in [
+            "0",
+            "-0",
+            "5",
+            "-5",
+            "+5",
+            "05",
+            "-05",
+            "00",
+            "0.5",
+            ".5",
+            "5.",
+            "-0.0",
+            "1e3",
+            "1E3",
+            "1.5e-2",
+            " 5",
+            "5 ",
+            "\t5",
+            "1,234",
+            "1_000",
+            "",
+            "-",
+            "1234.5000",
+            "0.000000000000000001",
+            "9999999999.5",
+            "79228162514264337593543950336",
+            "-79228162514264337593543950336",
+            "NaN",
+            "Infinity",
+            "0x10",
+        ] {
+            let mapped = conform(
+                Some(&norn_canonical::JsonValue::String(text.to_owned())),
+                &Type::Number,
+                Derivation::V2,
+            );
+            let wired = action
+                .decode_action_input(norn_ir::RuntimeValue::String(text.to_owned()), "amount");
+            match (&mapped, &wired) {
+                (Ok(Value::Number(mapped)), Ok(norn_ir::RuntimeValue::Number(wired))) => {
+                    assert_eq!(mapped.as_str(), wired.canonical(), "{text:?}");
+                }
+                (Err(_), Err(_)) => {}
+                _ => panic!("{text:?}: mapping {mapped:?}, action {wired:?}"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "fixture values")]
+mod conform_tests {
+    //! MAP-DECIMAL-TEXT-1 (main's MAPPING-DECIMAL-TEXT-1) and the `invalid_record` wording.
+    use super::*;
+    use norn_canonical::JsonValue as Json;
+
+    fn decimal() -> Type {
+        Type::Decimal {
+            scale: 2,
+            unit: None,
+            currency_source: None,
+            per_unit: None,
+            rounding: norn_ir::Rounding::Refuse,
+        }
+    }
+
+    #[test]
+    fn exact_decimal_text_is_a_decimal() {
+        for text in ["2500.00", "0", "-12.5", "0.75", "1000"] {
+            assert_eq!(
+                conform(
+                    Some(&Json::String(text.to_owned())),
+                    &decimal(),
+                    Derivation::V2
+                )
+                .unwrap(),
+                number_value(text).unwrap(),
+                "{text}"
+            );
+        }
+        for text in [
+            "", "1e3", "+5", " 5", "05", "1.", ".5", "1,000.00", "12.5.1",
+        ] {
+            assert!(
+                conform(
+                    Some(&Json::String(text.to_owned())),
+                    &decimal(),
+                    Derivation::V2
+                )
+                .is_err(),
+                "{text:?}"
+            );
+        }
+        // A source field typed `decimal` reads as a number.
+        assert_eq!(
+            conform(
+                Some(&Json::String("7800.00".to_owned())),
+                &Type::Number,
+                Derivation::V2
+            )
+            .unwrap(),
+            number_value("7800.00").unwrap()
+        );
+        // Text stays text for an integer.
+        assert!(
+            conform(
+                Some(&Json::String("5".to_owned())),
+                &Type::Integer,
+                Derivation::V2
+            )
+            .is_err()
+        );
+    }
+
+    /// S1 (#1488): the second unversioned derivation is main's
+    /// MAPPING-DECIMAL-TEXT-1, exactly: plain decimal text conforms and other
+    /// text refuses with the generic wording, never the wire grammar's.
+    #[test]
+    fn the_unversioned_decimal_text_derivation_is_mains() {
+        let text = |value: &str| Json::String(value.to_owned());
+        assert_eq!(
+            conform(Some(&text("200.50")), &decimal(), Derivation::V1DecimalText).unwrap(),
+            number_value("200.50").unwrap()
+        );
+        assert!(conform(Some(&text("200.50")), &decimal(), Derivation::V1).is_err());
+        assert_eq!(
+            conform(
+                Some(&text("1,000.00")),
+                &decimal(),
+                Derivation::V1DecimalText
+            )
+            .unwrap_err(),
+            "value \"1,000.00\" is not a decimal with up to 2 fraction digits (a JSON number, or exact decimal text such as \"12.50\")"
+        );
+    }
+
+    #[test]
+    fn a_refused_value_names_itself_and_the_type_expected() {
+        // Text outside the wire grammar names the grammar (MAP-DECIMAL-TEXT-1).
+        let text = conform(
+            Some(&Json::String("1,000.00".to_owned())),
+            &decimal(),
+            Derivation::V2,
+        )
+        .unwrap_err();
+        assert!(text.contains("JSON decimal"), "{text}");
+        let refused = conform(Some(&Json::Bool(true)), &decimal(), Derivation::V2).unwrap_err();
+        assert_eq!(
+            refused,
+            "value true is not a decimal with up to 2 fraction digits (a JSON number, or exact decimal text such as \"12.50\")"
+        );
+        assert_eq!(
+            conform(None, &Type::Date, Derivation::V2).unwrap_err(),
+            "is required (expected a date (text such as \"2026-11-19\"))"
+        );
+        assert_eq!(
+            conform(
+                Some(&Json::Bool(true)),
+                &Type::enumeration(["EGP", "USD"]),
+                Derivation::V2
+            )
+            .unwrap_err(),
+            "value true is not one of EGP, USD"
+        );
     }
 }

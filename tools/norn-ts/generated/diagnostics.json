@@ -961,6 +961,30 @@
       "no_fix": null
     },
     {
+      "code": "core.engine.downgrade",
+      "tier": "T6",
+      "severity": "error",
+      "message": "the cell was written by a newer storage version than this engine reads",
+      "fix": "Open the cell with a release whose storage version is at least the cell's, or restore a backup taken before the upgrade.",
+      "no_fix": null
+    },
+    {
+      "code": "core.engine.unknown_version",
+      "tier": "T6",
+      "severity": "error",
+      "message": "the cell's engine stamp is not a version this engine can read",
+      "fix": "Open the cell with the release that wrote it or a newer one; if no release wrote this stamp, restore the cell from its export.",
+      "no_fix": null
+    },
+    {
+      "code": "core.engine.upgrade_unsupported",
+      "tier": "T6",
+      "severity": "error",
+      "message": "the cell's storage version cannot be upgraded in place by this engine",
+      "fix": "Open the cell first with a release whose upgrade floor admits the cell's storage version, then with this one; if a migration refused the data, restore the cell from its export.",
+      "no_fix": null
+    },
+    {
       "code": "core.graph.catalog_write",
       "tier": "T2",
       "severity": "error",
@@ -1031,6 +1055,14 @@
       "message": "retained instance membership is missing, ambiguous, stale or exceeds its budget",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+    },
+    {
+      "code": "core.observation.source_disagreement",
+      "tier": "T3",
+      "severity": "warning",
+      "message": "SOURCE-AGREE-1: two sources report different values of a measure's unit, currency or basis for one record; both reports are kept and the record is not excluded.",
+      "fix": "Correct the source that reports the wrong value, or accept the disagreement with a reason (source.agreement.accept); the finding resolves when the record returns to the earlier report.",
+      "no_fix": null
     },
     {
       "code": "core.projection.publication_guard",
@@ -1105,6 +1137,22 @@
       "no_fix": null
     },
     {
+      "code": "derived.validation.column_conflict",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's node outputs two columns with one name",
+      "fix": "Rename one of the columns, or give the join a prefix that keeps every output name unique.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.grain_dropped",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's projection drops or changes a column that identifies its rows",
+      "fix": "Pass every grain column through unchanged under its own name, for example `input.id` as `id`.",
+      "no_fix": null
+    },
+    {
       "code": "derived.validation.incremental_not_supported",
       "tier": "T2",
       "severity": "error",
@@ -1121,12 +1169,76 @@
       "no_fix": null
     },
     {
+      "code": "derived.validation.invalid_plan",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's plan refers to an undeclared input, node or output, has a cycle or an unreachable node, or uses a form ViewIR v1 does not admit",
+      "fix": "Declare every node and input the plan names, keep the plan acyclic with every node feeding the output, and use only entity inputs, recompute_on_read maintenance and the current temporal scope.",
+      "no_fix": null
+    },
+    {
       "code": "derived.validation.io_in_view",
       "tier": "T2",
       "severity": "error",
       "message": "calc kind \"effectful_ts\" is not allowed inside a Derived view (IO must be in an Effect artifact)",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+    },
+    {
+      "code": "derived.validation.join_undeclared",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view joins on something that is neither a declared link nor a declared key of the right type",
+      "fix": "Join along a link the left object type declares, or on a key the right object type declares (or its id), with the right side at that type's identity grain.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.order_not_total",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's window or dedupe orders rows by keys that do not cover the input's row identity",
+      "fix": "Add the input's grain columns to the order (or the partition or key), so every row has one place.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.output_schema_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view declares its own output schema; ViewIR v1 infers it",
+      "fix": "Set `outputSchema` to `{}`; the admitted plan publishes the inferred columns.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.sql_unsupported",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a SQL transform uses a construct with no typed transform operator; it is refused, never run as SQL",
+      "fix": "Write the query in the transform dialect: SELECT, FROM, declared JOINs, WHERE, GROUP BY with SUM/COUNT/MIN/MAX, DATE_TRUNC, window functions and UNION ALL.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.type_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view's expression or column does not have the type its operator needs",
+      "fix": "Make predicates Boolean, keep group and order keys scalar, and give each operator a column of the type it reads.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.union_shape",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view unions inputs whose columns, types, contracts or grain differ",
+      "fix": "Project every union input to the same columns, in the same order, with the same types and contracts.",
+      "no_fix": null
+    },
+    {
+      "code": "derived.validation.unknown_column",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a relational view names a column that its input row does not have",
+      "fix": "Name a column of the input node's row; columns from a join carry the join's prefix.",
+      "no_fix": null
     },
     {
       "code": "entity.deprecation.v1_payload",
@@ -1742,6 +1854,46 @@
       "severity": "error",
       "message": "a description or review state names a locale that has no label",
       "fix": "Add a label for the locale the description or review state names, or remove that locale.",
+      "no_fix": null
+    },
+    {
+      "code": "law.conservation.alias_bound",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer has more key-aliasing cases than the checker enumerates: {detail}",
+      "fix": "Split the writer so it assigns at most 6 coordinates of one stored member, or add preconditions such as input.from != input.to that keep its keys distinct, then check it again.",
+      "no_fix": null
+    },
+    {
+      "code": "law.conservation.alias_unlowerable",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer may write one row through coordinates the checker cannot reconcile: {detail}",
+      "fix": "Give every coordinate its stored row (root type, member and key), and give coordinates that may name one row the same weight, scope and unit.",
+      "no_fix": null
+    },
+    {
+      "code": "law.conservation.key_alias",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer does not balance when its keys name one cell: {detail}",
+      "fix": "Add a precondition that keeps the reported keys distinct (for example input.from != input.to), or make the aliased case balance on its own.",
+      "no_fix": null
+    },
+    {
+      "code": "law.example.mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a law example's verdict differs from its expectation: {detail}",
+      "fix": "Fix the law, its exceptions or the example's expectation so they agree.",
+      "no_fix": null
+    },
+    {
+      "code": "law.example.unsupported",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a law example cannot be evaluated on one value: {detail}",
+      "fix": "Give examples only for untimed always or never laws with predicate responses, and subject values of the law's type.",
       "no_fix": null
     },
     {
@@ -2881,6 +3033,14 @@
       "no_fix": null
     },
     {
+      "code": "mapping.model.link_claim_type_missing",
+      "tier": "T3",
+      "severity": "error",
+      "message": "map {map} declares links, but norn.ObservedLinkClaim is not an object type of the set or the base",
+      "fix": "Include norn.ObservedLinkClaim (registry/core/artifacts/norn.ObservedLinkClaim.entity.json) in the definition set, or install on a host whose trusted base carries it: the cell records every mapped link as an observed link claim.",
+      "no_fix": null
+    },
+    {
       "code": "mapping.model.link_target_mismatch",
       "tier": "T3",
       "severity": "error",
@@ -3268,9 +3428,17 @@
       "code": "metric.validation.mixed_currency",
       "tier": "T3",
       "severity": "error",
-      "message": "Summing multiple currencies requires an explicit conversion.",
+      "message": "Amounts in several currencies aggregate only per currency: group by the currency property, fix it with an eq filter, or convert explicitly.",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+    },
+    {
+      "code": "metric.validation.mixed_unit",
+      "tier": "T3",
+      "severity": "error",
+      "message": "METRIC-UNIT-PARTITION-1: the measure's unit is stored in sibling properties; group by each of them or fix each with an eq filter, so no aggregate mixes units.",
+      "fix": "Add each unit-source property of the measure to the question's grouping, or filter it with eq to one value (eq null included); while the engine admits one grouping dimension, filter: for example unit eq \"g\" and currency eq null.",
+      "no_fix": null
     },
     {
       "code": "metric.validation.ontology_projection",
@@ -3284,7 +3452,7 @@
       "code": "metric.validation.partial_path",
       "tier": "T3",
       "severity": "error",
-      "message": "Mandatory time, currency and rate inputs require total paths.",
+      "message": "Currency and rate inputs require total paths.",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
@@ -3342,6 +3510,118 @@
       "severity": "error",
       "message": "Calculation requires semantics outside the admitted checker profile.",
       "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again.",
+      "no_fix": null
+    },
+    {
+      "code": "model.admission.feature_kind",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's feature or target property has a kind a model cannot read",
+      "fix": "Use a numeric, boolean, enum or text property as a feature, and a numeric, boolean or enum property as the target.",
+      "no_fix": null
+    },
+    {
+      "code": "model.admission.prediction_type_mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's predictions type does not hold its outputs, subject and model version",
+      "fix": "Name an object type that declares text properties subject and model_version and every output as a property of the same type, scale, unit and nullability (an enum with at least the output's values).",
+      "no_fix": null
+    },
+    {
+      "code": "model.admission.unknown_feature",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's feature or target is not a property of its input object type",
+      "fix": "Name a property the input object type declares, inherits, implements or gains from an extension.",
+      "no_fix": null
+    },
+    {
+      "code": "model.admission.unknown_input",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's input object type is not declared by the artifact set or the installed base",
+      "fix": "Include the input object type in the artifact set or the installed base, or name a declared one.",
+      "no_fix": null
+    },
+    {
+      "code": "model.law.personal_data_never_trains",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model trains on a feature or target that carries personal data that is not pseudonymized",
+      "fix": "Declare the marking's mask as a pseudonym, so the model trains on stable pseudonyms, or drop the field from the model's features and target.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.duplicate_id",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model lists a feature, output or contract id twice",
+      "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.invalid_contract",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model contract names no output or does not apply to its output's type",
+      "fix": "Point the contract at a declared output and use a rule its type admits: range and finite for numeric outputs, oneOf for enum or text outputs.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.invalid_id",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model, input, feature, target, output or contract id is malformed",
+      "fix": "Rename the id at the reported path to the grammar the message names.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.invalid_output",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model output is not an inline text, integer, decimal, boolean or enum column",
+      "fix": "Declare the output as an inline text, integer, decimal, boolean or enum type; give a decimal a static unit or none.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.invalid_payload",
+      "tier": "T2",
+      "severity": "error",
+      "message": "model payload does not match its strict root",
+      "fix": "Correct the member at the reported path to match its declared type, schema and constraints.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.target_in_features",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's target is also one of its features",
+      "fix": "Remove the target property from the model's features.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.trust_without_contract",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a contract_checked model declares no contract",
+      "fix": "Add at least one contract on an output, or declare the model's trust as opaque.",
+      "no_fix": null
+    },
+    {
+      "code": "model.validation.unsupported_trust",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a model's trust is not opaque or contract_checked",
+      "fix": "Declare the model's trust as opaque, or as contract_checked with at least one contract.",
+      "no_fix": null
+    },
+    {
+      "code": "object_type.validation.additivity_not_refined",
+      "tier": "T3",
+      "severity": "error",
+      "message": "property {property} declares an additivity other than the one {owner} requires; a member may add additivity where the referenced type declares none, never change a declared one",
+      "fix": "Declare the same additivity the requirement or overridden property declares, or none; declare a different one only where the requirement declares none.",
       "no_fix": null
     },
     {
@@ -4193,12 +4473,36 @@
       "no_fix": null
     },
     {
+      "code": "property_type.validation.invalid_unit_source",
+      "tier": "T2",
+      "severity": "error",
+      "message": "unit source {detail}",
+      "fix": "Name distinct sibling properties that hold the unit as codes (text, enum or a code type), on a decimal with no static unit, currencySource or perUnit, and keep any unit source the referenced or overridden type declares.",
+      "no_fix": null
+    },
+    {
       "code": "property_type.validation.inverted_range",
       "tier": "T2",
       "severity": "error",
       "message": "{lower} is greater than {upper}",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+    },
+    {
+      "code": "property_type.validation.ref_additivity_conflict",
+      "tier": "T2",
+      "severity": "error",
+      "message": "ref {name} declares {declared} additivity, but the type it references declares {referenced}; a use site may only add additivity to a type that declares none",
+      "fix": "Remove the use-site additivity so the referenced type's declaration applies, or reference a type that declares none and state the additivity here.",
+      "no_fix": null
+    },
+    {
+      "code": "property_type.validation.ref_additivity_not_numeric",
+      "tier": "T2",
+      "severity": "error",
+      "message": "ref {name} resolves to a {kind} type; only an integer or decimal declares additivity",
+      "fix": "Remove additivity from this ref, or reference an integer or decimal property type; additivity describes how numbers aggregate.",
+      "no_fix": null
     },
     {
       "code": "property_type.validation.ref_cycle",
@@ -4294,6 +4598,22 @@
       "severity": "error",
       "message": "The time window must be an ordered half-open UTC interval.",
       "fix": "Correct the member at the reported path to match its declared type, schema and constraints.",
+      "no_fix": null
+    },
+    {
+      "code": "question.validation.linked_path",
+      "tier": "T3",
+      "severity": "error",
+      "message": "a question can group across a link only by its linked time, and cannot filter across a link; grouping by another type's field is not supported yet",
+      "fix": "Group by a field of the measured type itself, or by a linked time with a grain. Grouping by a linked type's field (an order line's customer) is not supported yet.",
+      "no_fix": null
+    },
+    {
+      "code": "question.validation.marked_field",
+      "tier": "T3",
+      "severity": "error",
+      "message": "a question cannot group or filter by a field that carries a declared marking (for example pii.contact)",
+      "fix": "Group or filter by an unmarked field instead. A marked field (such as a person's name) can be counted but not used as a group label or filter; read it per row, where it is masked.",
       "no_fix": null
     },
     {
@@ -4495,6 +4815,22 @@
       "message": "branch {statementId} of switch {nodeId} has no outgoing edge, so an event that takes it reaches no node",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+    },
+    {
+      "code": "rule.validation.jdm_unique_overlap",
+      "tier": "T2",
+      "severity": "error",
+      "message": "two rows of a unique decision table match the same input: {detail}",
+      "fix": "Make the rows disjoint over the input, or use first for a classification table or collect to keep every match.",
+      "no_fix": null
+    },
+    {
+      "code": "rule.validation.jdm_unique_unproved",
+      "tier": "T2",
+      "severity": "error",
+      "message": "the checker cannot prove a unique decision table's rows disjoint, so it is refused: {detail}",
+      "fix": "Give the table a finite closed input it reads directly, or use first for a classification table.",
+      "no_fix": null
     },
     {
       "code": "rule.validation.jdm_unknown_column",

@@ -1090,7 +1090,7 @@ fn resolve_property_type(
     let mut constraints = Vec::new();
     let mut visited = BTreeSet::new();
     for _ in 0..=catalog.len() {
-        let PropertyType::Ref { name } = current else {
+        let PropertyType::Ref { name, .. } = current else {
             return Ok((current.clone(), constraints));
         };
         let name = name.as_str();

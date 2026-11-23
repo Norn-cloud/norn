@@ -1,10 +1,79 @@
-import type { LucideIcon } from "lucide-react"
+import { Link } from "@tanstack/react-router"
+import { MenuTrigger } from "@ui-sdk/react/menu"
+import { Ellipsis, type LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
+import { KitMenuContent, KitMenuItem, Menu } from "@/components/kit"
 import { cn } from "@/lib/utils"
 
+export interface PageAction {
+  readonly label: string
+  readonly icon?: LucideIcon
+  /** A route to open, or `onSelect` to run; one of the two. */
+  readonly to?: string
+  readonly onSelect?: () => void
+}
+
 /**
- * A white card with a quiet header row (small muted icon, label, optional
- * action at the end) around an inset well that holds the figure, list or chart.
+ * A page's head, the one pattern every page uses: its title (with small facts beside it), one line
+ * on what the page is for, then on the end side at most one primary action, the page's own controls,
+ * and every other action behind one overflow menu. Breadcrumbs live in the shell's bar above it.
+ */
+export function PageHeader({ title, description, actions, primary, secondary, meta, lang }: {
+  title: ReactNode
+  description?: ReactNode
+  /** The page's own controls (a toggle, a refresh): shown as they are, before the overflow. */
+  actions?: ReactNode
+  /** The one primary action: a solid button. A page has at most one. */
+  primary?: ReactNode
+  /** Everything else the page offers, in an overflow menu so the header stays quiet. */
+  secondary?: readonly PageAction[]
+  /** Small facts beside the title: a count, a status, an id. */
+  meta?: ReactNode
+  lang?: string
+}) {
+  const end = actions !== undefined || primary !== undefined || (secondary?.length ?? 0) > 0
+  return (
+    <header data-slot="page-header" className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+      <div className="min-w-0 flex-1 basis-80 space-y-1">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <h1 lang={lang} className="min-w-0 text-title leading-tight font-semibold tracking-tight [overflow-wrap:anywhere]">{title}</h1>
+          {meta && <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">{meta}</div>}
+        </div>
+        {description && <p className="max-w-[72ch] text-pretty text-muted-foreground">{description}</p>}
+      </div>
+      {end && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {actions}
+          {secondary && secondary.length > 0 && <Overflow actions={secondary} />}
+          {primary}
+        </div>
+      )}
+    </header>
+  )
+}
+
+/** The header's overflow: every secondary action, one menu behind a quiet "More" button. */
+function Overflow({ actions }: { readonly actions: readonly PageAction[] }) {
+  return (
+    <Menu onAction={(value) => actions.find(({ label }) => label === value)?.onSelect?.()}>
+      <MenuTrigger aria-label="More actions" className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent">
+        <Ellipsis aria-hidden className="size-4" />
+      </MenuTrigger>
+      <KitMenuContent align="end">
+        {actions.map(({ label, icon: Icon, to }) => (
+          <KitMenuItem key={label} value={label} label={label} render={to === undefined ? undefined : <Link to={to} />}>
+            {Icon && <Icon aria-hidden />}{label}
+          </KitMenuItem>
+        ))}
+      </KitMenuContent>
+    </Menu>
+  )
+}
+
+/**
+ * A section of a page (design v3): one hairline frame at the frame radius, no shadow, a quiet header
+ * row (small muted icon, label, an optional hint or control at the end), then the list, table or
+ * figure flush inside. A panel inside a panel is a ruled section of it, never a card in a card.
  */
 export function Panel({ icon: Icon, label, action, children, className, id }: {
   icon?: LucideIcon
@@ -15,30 +84,38 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
   id?: string
 }) {
   return (
-    <section id={id} data-slot="panel" className={cn("min-w-0 rounded-lg border bg-card p-1.5", className)}>
-      <header className="flex h-9 items-center gap-2 px-2.5 text-sm">
-        {Icon && <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
-        <h2 className="min-w-0 truncate font-medium">{label}</h2>
-        {action && <div className="ms-auto shrink-0 text-meta text-muted-foreground max-sm:hidden">{action}</div>}
+    <section id={id} data-slot="panel" className={cn("min-w-0 overflow-hidden rounded-lg border bg-card",
+      // A panel inside another panel is a section of it, not a card in a card: one hairline above, no frame.
+      "[[data-slot=well]_&]:rounded-none [[data-slot=well]_&]:border-x-0 [[data-slot=well]_&]:border-b-0 [[data-slot=well]_&]:bg-transparent [[data-slot=well]_&>header]:px-0",
+      className)}>
+      <header className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-1.5 text-sm">
+        {Icon && <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
+        {/* A title wraps (two lines at most) rather than losing its end; a hint goes to the next line when both don't fit. */}
+        <h2 className="line-clamp-2 min-w-0 flex-1 basis-40 text-panel font-medium [overflow-wrap:anywhere]" title={typeof label === "string" ? label : undefined}>{label}</h2>
+        {/* A hint (text) gives way on a phone; a control (an element) stays. */}
+        {action && <div className={cn("ms-auto shrink-0 text-meta text-muted-foreground", typeof action === "string" && "max-sm:hidden")}>{action}</div>}
       </header>
       {children}
     </section>
   )
 }
 
-/** The inset well inside a panel: a slightly grey fill with its own hairline and smaller radius. */
+/** The body of a panel: flush with the card, so a panel is one surface (no inner frame). */
 export function Well({ children, className }: { children: ReactNode; className?: string }) {
-  return <div data-slot="well" className={cn("rounded-md border bg-surface-subtle", className)}>{children}</div>
+  return <div data-slot="well" className={cn("border-t bg-card", className)}>{children}</div>
 }
 
-/** What a well shows when the server has nothing for it: an icon, "No data yet" and one plain sentence. */
-/** An empty well: an icon, a short title ("No data yet" unless given) and a line saying why. */
-export function EmptyState({ icon: Icon, title = "No data yet", children }: { icon: LucideIcon; title?: ReactNode; children: ReactNode }) {
+/**
+ * An empty well: an icon, a short title ("No data yet" unless given), a line saying why, and the
+ * next step when there is one (load data, connect a source, add the first item).
+ */
+export function EmptyState({ icon: Icon, title = "No data yet", children, next }: { icon: LucideIcon; title?: ReactNode; children: ReactNode; next?: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
-      <Icon aria-hidden className="size-5 text-muted-foreground" />
+      <Icon aria-hidden className="size-5 text-muted-foreground/70" />
       <div className="text-sm font-medium">{title}</div>
       <p className="max-w-xs text-meta text-muted-foreground">{children}</p>
+      {next && <div className="flex flex-wrap justify-center gap-2 pt-1">{next}</div>}
     </div>
   )
 }

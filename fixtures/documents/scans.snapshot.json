@@ -1,0 +1,338 @@
+{
+ "connectorInstance": "demo",
+ "mapping": "docs.scans.mapping",
+ "profile": "synthetic-scans/1",
+ "snapshot": [
+  {
+   "dataset": "Journal Entry",
+   "record": {
+    "account_code": "2100-AP",
+    "amount": 30.50,
+    "currency": "USD",
+    "entry_number": "JE-1041",
+    "name": "demo/ledger/JE-1041",
+    "posted_on": "2026-03-12"
+   }
+  },
+  {
+   "dataset": "Journal Entry",
+   "record": {
+    "account_code": "2100-AP",
+    "amount": 72.00,
+    "currency": "USD",
+    "entry_number": "JE-1042",
+    "name": "demo/ledger/JE-1042",
+    "posted_on": "2026-03-14"
+   }
+  },
+  {
+   "dataset": "Journal Entry",
+   "record": {
+    "account_code": "2100-AP",
+    "amount": 72.00,
+    "currency": "USD",
+    "entry_number": "JE-1043",
+    "name": "demo/ledger/JE-1043",
+    "posted_on": "2026-03-16"
+   }
+  },
+  {
+   "dataset": "Scanned Document",
+   "record": {
+    "currency": "USD",
+    "doc_number": "INV-1041",
+    "document_digest": "51a1562d2801485ffa3b1144d1bbf08459c8d56aea9c04b56c4187b89ea0f26e",
+    "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1041.png",
+    "evidence": [
+     {
+      "bbox_h": 0.0350,
+      "bbox_w": 0.2200,
+      "bbox_x": 0.6200,
+      "bbox_y": 0.7100,
+      "confidence_bp": 9100,
+      "document_digest": "51a1562d2801485ffa3b1144d1bbf08459c8d56aea9c04b56c4187b89ea0f26e",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1041.png",
+      "extractor": "tesseract",
+      "extractor_version": "5.3.4+norn-extractor/0.1.0",
+      "field": "total",
+      "media_type": "image/png",
+      "name": "SCAN-INV-1041~total",
+      "page": 1,
+      "parent": "SCAN-INV-1041",
+      "text": "30.50"
+     },
+     {
+      "bbox_h": 0.0300,
+      "bbox_w": 0.1400,
+      "bbox_x": 0.7000,
+      "bbox_y": 0.4000,
+      "confidence_bp": 9400,
+      "document_digest": "51a1562d2801485ffa3b1144d1bbf08459c8d56aea9c04b56c4187b89ea0f26e",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1041.png",
+      "extractor": "tesseract",
+      "extractor_version": "5.3.4+norn-extractor/0.1.0",
+      "field": "lines.1.amount",
+      "media_type": "image/png",
+      "name": "SCAN-INV-1041~lines.1.amount",
+      "page": 1,
+      "parent": "SCAN-INV-1041",
+      "text": "18.50", "row": "SCAN-INV-1041~line-1"},
+     {
+      "bbox_h": 0.0300,
+      "bbox_w": 0.1400,
+      "bbox_x": 0.7000,
+      "bbox_y": 0.4500,
+      "confidence_bp": 9400,
+      "document_digest": "51a1562d2801485ffa3b1144d1bbf08459c8d56aea9c04b56c4187b89ea0f26e",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1041.png",
+      "extractor": "tesseract",
+      "extractor_version": "5.3.4+norn-extractor/0.1.0",
+      "field": "lines.2.amount",
+      "media_type": "image/png",
+      "name": "SCAN-INV-1041~lines.2.amount",
+      "page": 1,
+      "parent": "SCAN-INV-1041",
+      "text": "12.00", "row": "SCAN-INV-1041~line-2"}
+    ],
+    "extractor": "tesseract",
+    "extractor_version": "5.3.4+norn-extractor/0.1.0",
+    "issued_on": "2026-03-12",
+    "kind": "invoice",
+    "ledger_ref": "demo/ledger/JE-1041",
+    "line_count": 2,
+    "lines": [
+     {
+      "amount": 18.50,
+      "description": "Casting flux",
+      "line_no": 1,
+      "name": "SCAN-INV-1041~line-1",
+      "parent": "SCAN-INV-1041"
+     },
+     {
+      "amount": 12.00,
+      "description": "Crucible liner",
+      "line_no": 2,
+      "name": "SCAN-INV-1041~line-2",
+      "parent": "SCAN-INV-1041"
+     }
+    ],
+    "media_type": "image/png",
+    "name": "SCAN-INV-1041",
+    "total": 30.50,
+    "vendor": "Atlas Casting Supply"
+   }
+  },
+  {
+   "dataset": "Scanned Document",
+   "record": {
+    "currency": "USD",
+    "doc_number": "INV-1042",
+    "document_digest": "9ae0926ac6c31b2c5be6b7a114d6a73d1090d58a4abbcadce19f18befaceb07e",
+    "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1042.png",
+    "evidence": [
+     {
+      "bbox_h": 0.0350,
+      "bbox_w": 0.2200,
+      "bbox_x": 0.6200,
+      "bbox_y": 0.7100,
+      "confidence_bp": 9100,
+      "document_digest": "9ae0926ac6c31b2c5be6b7a114d6a73d1090d58a4abbcadce19f18befaceb07e",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1042.png",
+      "extractor": "legacy-ocr",
+      "extractor_version": "4.2 (synthetic export)",
+      "field": "total",
+      "media_type": "image/png",
+      "name": "SCAN-INV-1042~total",
+      "page": 1,
+      "parent": "SCAN-INV-1042",
+      "text": "720"
+     },
+     {
+      "bbox_h": 0.0300,
+      "bbox_w": 0.1400,
+      "bbox_x": 0.7000,
+      "bbox_y": 0.4000,
+      "confidence_bp": 9400,
+      "document_digest": "9ae0926ac6c31b2c5be6b7a114d6a73d1090d58a4abbcadce19f18befaceb07e",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1042.png",
+      "extractor": "legacy-ocr",
+      "extractor_version": "4.2 (synthetic export)",
+      "field": "lines.1.amount",
+      "media_type": "image/png",
+      "name": "SCAN-INV-1042~lines.1.amount",
+      "page": 1,
+      "parent": "SCAN-INV-1042",
+      "text": "30.00", "row": "SCAN-INV-1042~line-1"},
+     {
+      "bbox_h": 0.0300,
+      "bbox_w": 0.1400,
+      "bbox_x": 0.7000,
+      "bbox_y": 0.4500,
+      "confidence_bp": 9400,
+      "document_digest": "9ae0926ac6c31b2c5be6b7a114d6a73d1090d58a4abbcadce19f18befaceb07e",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1042.png",
+      "extractor": "legacy-ocr",
+      "extractor_version": "4.2 (synthetic export)",
+      "field": "lines.2.amount",
+      "media_type": "image/png",
+      "name": "SCAN-INV-1042~lines.2.amount",
+      "page": 1,
+      "parent": "SCAN-INV-1042",
+      "text": "40.00", "row": "SCAN-INV-1042~line-2"},
+     {
+      "bbox_h": 0.0300,
+      "bbox_w": 0.1400,
+      "bbox_x": 0.7000,
+      "bbox_y": 0.5000,
+      "confidence_bp": 9400,
+      "document_digest": "9ae0926ac6c31b2c5be6b7a114d6a73d1090d58a4abbcadce19f18befaceb07e",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1042.png",
+      "extractor": "legacy-ocr",
+      "extractor_version": "4.2 (synthetic export)",
+      "field": "lines.3.amount",
+      "media_type": "image/png",
+      "name": "SCAN-INV-1042~lines.3.amount",
+      "page": 1,
+      "parent": "SCAN-INV-1042",
+      "text": "2.00", "row": "SCAN-INV-1042~line-3"}
+    ],
+    "extractor": "legacy-ocr",
+    "extractor_version": "4.2 (synthetic export)",
+    "issued_on": "2026-03-14",
+    "kind": "invoice",
+    "ledger_ref": "demo/ledger/JE-1042",
+    "line_count": 3,
+    "lines": [
+     {
+      "amount": 30.00,
+      "description": "Gift boxes",
+      "line_no": 1,
+      "name": "SCAN-INV-1042~line-1",
+      "parent": "SCAN-INV-1042"
+     },
+     {
+      "amount": 40.00,
+      "description": "Tissue paper",
+      "line_no": 2,
+      "name": "SCAN-INV-1042~line-2",
+      "parent": "SCAN-INV-1042"
+     },
+     {
+      "amount": 2.00,
+      "description": "Courier fee",
+      "line_no": 3,
+      "name": "SCAN-INV-1042~line-3",
+      "parent": "SCAN-INV-1042"
+     }
+    ],
+    "media_type": "image/png",
+    "name": "SCAN-INV-1042",
+    "total": 720,
+    "vendor": "Northgate Packaging"
+   }
+  },
+  {
+   "dataset": "Scanned Document",
+   "record": {
+    "currency": "USD",
+    "doc_number": "INV-1043",
+    "document_digest": "313328636e2af9f98ad4a97965b740ef3bc73fc34afc9a62190fdc071dcaea5e",
+    "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1043.png",
+    "evidence": [
+     {
+      "bbox_h": 0.0350,
+      "bbox_w": 0.2200,
+      "bbox_x": 0.6200,
+      "bbox_y": 0.7100,
+      "confidence_bp": 9000,
+      "document_digest": "313328636e2af9f98ad4a97965b740ef3bc73fc34afc9a62190fdc071dcaea5e",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1043.png",
+      "extractor": "legacy-ocr",
+      "extractor_version": "4.2 (synthetic export)",
+      "field": "total",
+      "media_type": "image/png",
+      "name": "SCAN-INV-1043~total",
+      "page": 1,
+      "parent": "SCAN-INV-1043",
+      "text": "720"
+     },
+     {
+      "bbox_h": 0.0300,
+      "bbox_w": 0.1400,
+      "bbox_x": 0.7000,
+      "bbox_y": 0.4000,
+      "confidence_bp": 9100,
+      "document_digest": "313328636e2af9f98ad4a97965b740ef3bc73fc34afc9a62190fdc071dcaea5e",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1043.png",
+      "extractor": "legacy-ocr",
+      "extractor_version": "4.2 (synthetic export)",
+      "field": "lines.1.amount",
+      "media_type": "image/png",
+      "name": "SCAN-INV-1043~lines.1.amount",
+      "page": 1,
+      "parent": "SCAN-INV-1043",
+      "text": "720", "row": "SCAN-INV-1043~line-1"}
+    ],
+    "extractor": "legacy-ocr",
+    "extractor_version": "4.2 (synthetic export)",
+    "issued_on": "2026-03-16",
+    "kind": "invoice",
+    "ledger_ref": "demo/ledger/JE-1043",
+    "line_count": 1,
+    "lines": [
+     {
+      "amount": 720,
+      "description": "Freight",
+      "line_no": 1,
+      "name": "SCAN-INV-1043~line-1",
+      "parent": "SCAN-INV-1043"
+     }
+    ],
+    "media_type": "image/png",
+    "name": "SCAN-INV-1043",
+    "total": 720,
+    "vendor": "Meridian Freight"
+   }
+  },
+  {
+   "dataset": "Scanned Document",
+   "record": {
+    "currency": "USD",
+    "doc_number": "RPT-1117",
+    "document_digest": "508b68bc0b7fd8cd0b1b0a512d12ccfcd1a7b7977c72c25a3e97eec4ec12b71f",
+    "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-RPT-1117.png",
+    "evidence": [
+     {
+      "bbox_h": 0.0350,
+      "bbox_w": 0.2200,
+      "bbox_x": 0.6200,
+      "bbox_y": 0.7100,
+      "confidence_bp": 9100,
+      "document_digest": "508b68bc0b7fd8cd0b1b0a512d12ccfcd1a7b7977c72c25a3e97eec4ec12b71f",
+      "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-RPT-1117.png",
+      "extractor": "legacy-ocr",
+      "extractor_version": "4.2 (synthetic export)",
+      "field": "total",
+      "media_type": "image/png",
+      "name": "SCAN-RPT-1117~total",
+      "page": 1,
+      "parent": "SCAN-RPT-1117",
+      "text": "720"
+     }
+    ],
+    "extractor": "legacy-ocr",
+    "extractor_version": "4.2 (synthetic export)",
+    "issued_on": "2026-04-02",
+    "kind": "expense_report",
+    "ledger_ref": null,
+    "line_count": 0,
+    "lines": [],
+    "media_type": "image/png",
+    "name": "SCAN-RPT-1117",
+    "total": 720,
+    "vendor": "Field travel"
+   }
+  }
+ ],
+ "source": "synthetic-scans"
+}

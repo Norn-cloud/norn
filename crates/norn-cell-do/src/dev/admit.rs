@@ -35,9 +35,67 @@ impl Refused {
     }
 }
 
+/// MAPPING-SOURCE-REF-1: the `sha256` the compiler writes for a mapping
+/// bound by reference to a source schema of the same project
+/// (`tools/norn-ts` `PENDING_SOURCE_SHA256`).
+pub(crate) const PENDING_SOURCE_SHA256: &str = "pending:same-project-source-schema";
+
+/// MAPPING-SOURCE-REF-1: each mapping whose source binding is pending gets
+/// the checker's own hash ([`norn_checker::ArtifactRef`]) of the source
+/// schema of the set it names. A binding whose schema is not in the set
+/// stays pending, and the checker refuses it with the hash it expected.
+pub(crate) fn bind_source_schemas(artifacts: &[Value]) -> Vec<Value> {
+    let hash_of = |schema_id: &str, version: &str| {
+        artifacts
+            .iter()
+            .filter(|artifact| {
+                artifact.get("kind").and_then(Value::as_str) == Some("source_schema")
+                    && artifact.get("artifactId").and_then(Value::as_str) == Some(schema_id)
+                    && artifact.get("version").and_then(Value::as_str) == Some(version)
+            })
+            .find_map(|artifact| {
+                let envelope: ArtifactEnvelope = serde_json::from_value(artifact.clone()).ok()?;
+                norn_checker::ArtifactRef::of(&envelope)
+                    .ok()
+                    .map(|reference| reference.sha256)
+            })
+    };
+    artifacts
+        .iter()
+        .map(|artifact| {
+            let mut artifact = artifact.clone();
+            let pending = artifact.get("kind").and_then(Value::as_str) == Some("mapping")
+                && artifact
+                    .pointer("/payload/source/sha256")
+                    .and_then(Value::as_str)
+                    == Some(PENDING_SOURCE_SHA256);
+            if pending {
+                let text = |pointer: &str| {
+                    artifact
+                        .pointer(pointer)
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                let found = hash_of(
+                    &text("/payload/source/schemaId"),
+                    &text("/payload/source/version"),
+                );
+                if let (Some(sha256), Some(slot)) =
+                    (found, artifact.pointer_mut("/payload/source/sha256"))
+                {
+                    *slot = Value::String(sha256);
+                }
+            }
+            artifact
+        })
+        .collect()
+}
+
 /// Admit `artifacts` with the shared checker. Any `core.` or `std.` artifact is
 /// the retained trusted base, as the cell host treats it.
 pub(crate) fn admit(artifacts: &[Value], installed_at: u64) -> Result<Admitted, Refused> {
+    let artifacts = &bind_source_schemas(artifacts)[..];
     let envelopes: Vec<ArtifactEnvelope> = serde_json::from_value(Value::Array(artifacts.to_vec()))
         .map_err(|error| {
             Refused::one(
@@ -139,9 +197,12 @@ pub(crate) fn model_of(artifacts: &[ArtifactEnvelope]) -> Result<Model, String> 
             EntityRoot::V2(root) => objects.push(root.object_type),
             EntityRoot::V2Interface(root) => interfaces.push(root.interface),
             EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
-            EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
+            // A markings catalog declares no object type; reads take it from
+            // the retained set, as the hosted path does.
+            EntityRoot::V2Markings(_) => {}
+            EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
                 return Err(format!(
-                    "{} uses an entity form the dev host does not serve yet (markings, extensions or EntityIR v1)",
+                    "{} uses an entity form the dev host does not serve yet (extensions or EntityIR v1)",
                     artifact.artifact_id
                 ));
             }

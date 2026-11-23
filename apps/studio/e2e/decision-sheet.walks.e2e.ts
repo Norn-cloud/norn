@@ -101,30 +101,59 @@ async function openRefund(page: Page) {
   }
 }
 
+/** Replay `walk` on the refund sheet; `answered` rewrites the stand-in's answer to each outcome. */
+async function replay(page: Page, walk: (typeof all)[number], answered: (next: ReturnType<typeof answer>) => ReturnType<typeof answer> = (next) => next) {
+  const { sheet, queue, release } = await openRefund(page)
+  for (const [index, step] of walk.steps.entries()) {
+    const { msg, transition } = step
+    const next = walk.steps[index + 1]?.msg
+    // The answer a started call gets is the next step's outcome, queued before the person acts.
+    // A call the walk never answers is held, never left to the stand-in: an instant answer would
+    // move the sheet past the state this step asserts.
+    if (transition.effects?.some((effect) => effect.kind === "start")) queue(next?.kind === "outcome" ? answered(answer(next)) : null)
+    if (msg.kind === "user") {
+      const event = machine.events.find((candidate) => candidate.eventId === msg.eventId)!
+      const node = event.source.kind === "user" ? event.source.nodeId : ""
+      if (node === "option-choice") await sheet.locator(`ui-radio[value="${String(msg.payload?.value)}"]`).click()
+      else if (node === "note-input") await sheet.locator("textarea").fill(String(msg.payload?.value ?? ""))
+      else await sheet.locator(`button[data-node="${node}"]`).click()
+    } else if (msg.kind === "outcome") await release()
+    if (msg.kind === "outcome" && msg.outcome === "timeout") {
+      await page.clock.runFor(machine.states.find((state) => state.stateId === transition.from)?.deadlineMs ?? 0)
+    }
+    const where = `${walk.transitionId}: step ${index + 1} (${transition.transitionId})`
+    // A closed machine hands the sheet back to its host, which closes it.
+    if (transition.target === "closed") await expect(sheet, where).toHaveCount(0)
+    else await expect(sheet, where).toHaveAttribute("data-state", transition.target)
+  }
+  return sheet
+}
+
 for (const walk of all) {
   test(`walk: ${walk.transitionId}`, async ({ page }) => {
-    const { sheet, queue, release } = await openRefund(page)
-    for (const [index, step] of walk.steps.entries()) {
-      const { msg, transition } = step
-      const next = walk.steps[index + 1]?.msg
-      // The answer a started call gets is the next step's outcome, queued before the person acts.
-      // A call the walk never answers is held, never left to the stand-in: an instant answer would
-      // move the sheet past the state this step asserts.
-      if (transition.effects?.some((effect) => effect.kind === "start")) queue(next?.kind === "outcome" ? answer(next) : null)
-      if (msg.kind === "user") {
-        const event = machine.events.find((candidate) => candidate.eventId === msg.eventId)!
-        const node = event.source.kind === "user" ? event.source.nodeId : ""
-        if (node === "option-choice") await sheet.locator(`ui-radio[value="${String(msg.payload?.value)}"]`).click()
-        else if (node === "note-input") await sheet.locator("textarea").fill(String(msg.payload?.value ?? ""))
-        else await sheet.locator(`button[data-node="${node}"]`).click()
-      } else if (msg.kind === "outcome") await release()
-      if (msg.kind === "outcome" && msg.outcome === "timeout") {
-        await page.clock.runFor(machine.states.find((state) => state.stateId === transition.from)?.deadlineMs ?? 0)
-      }
-      const where = `${walk.transitionId}: step ${index + 1} (${transition.transitionId})`
-      // A closed machine hands the sheet back to its host, which closes it.
-      if (transition.target === "closed") await expect(sheet, where).toHaveCount(0)
-      else await expect(sheet, where).toHaveAttribute("data-state", transition.target)
-    }
+    await replay(page, walk)
   })
 }
+
+// APPROVAL-RECOVERY-1: a decided approval says where its call stands, exactly as the cell answered
+// it (`call.state`); the sheet only draws the answer.
+const CALLS = [
+  ["committed", { committed: true, state: "committed" }, "The approved call committed."],
+  ["refused", { committed: false, code: "action.precondition_failed", state: "refused" }, "The approved call was refused (action.precondition_failed); this approval never runs it again."],
+  ["not_executed", { committed: false, state: "not_executed" }, "Approved; waiting for the requester to run it."],
+] as const
+for (const [state, call, line] of CALLS) {
+  test(`decided: the approved call reads ${state}`, async ({ page }) => {
+    const accepted = all.find((walk) => walk.transitionId === "sending--accepted")!
+    const sheet = await replay(page, accepted, (next) => next && next.status === 200 ? { ...next, body: { ...(next.body as object), call } } : next)
+    const drawn = sheet.locator('[data-region="outcome-call"]')
+    await expect(drawn).toHaveText(line)
+    await expect(drawn).toHaveAttribute("data-call-state", state)
+  })
+}
+
+test("decided: an answer with no approved call draws no call line", async ({ page }) => {
+  const accepted = all.find((walk) => walk.transitionId === "sending--accepted")!
+  const sheet = await replay(page, accepted)
+  await expect(sheet.locator('[data-region="outcome-call"]')).toBeHidden()
+})

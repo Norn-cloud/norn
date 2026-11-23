@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "action": { "type": "string" },
+    "input": { "type": "object", "additionalProperties": true },
+    "trace": {
+      "type": "object",
+      "properties": {
+        "traceId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "intentRef": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "sessionDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      },
+      "required": ["traceId"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["action", "input"],
+  "additionalProperties": false
+}

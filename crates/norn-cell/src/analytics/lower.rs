@@ -1,0 +1,338 @@
+//! QUERY-ENGINE-1: lower an admitted plan to the engine's typed question,
+//! keeping the shared projection's equality, null and refusal semantics.
+
+use norn_checker::entity_instance::{EffectiveKind, EffectiveProperty};
+use norn_checker::metric::compute::contribution::instant_key;
+use norn_checker::metric::compute::{QuestionPlan, UNSUPPORTED_ENGINE};
+use norn_ir::metric::{FilterOperator, MetricFilter, TimeGrain};
+use norn_ir::{PropertyType, RuntimeValue};
+
+use super::{
+    AsOf, Column, ColumnKind, Dimension, Filter, Grain, Literal, Lowered, Operand, PointLaw,
+    TIME_LINK_COLUMN, TableSchema, Test, TimeLink, Window,
+};
+use crate::CellError;
+
+/// The mirror's row format (2: each version names its model).
+const MIRROR_FORMAT: u32 = 2;
+
+const fn refused() -> CellError {
+    CellError::ComputeRefused(UNSUPPORTED_ENGINE)
+}
+
+/// The storage kind of a stored property; computed properties are not stored.
+pub(crate) fn column_kind(property: &EffectiveProperty) -> Option<ColumnKind> {
+    if property.computed {
+        return None;
+    }
+    Some(match &property.kind {
+        EffectiveKind::Base(PropertyType::Text { .. } | PropertyType::Enum { .. }) => {
+            ColumnKind::Text
+        }
+        EffectiveKind::Base(PropertyType::Integer { .. }) => ColumnKind::Integer,
+        EffectiveKind::Base(PropertyType::Decimal { scale, .. }) => match u32::try_from(scale.0) {
+            Ok(scale) if scale <= 37 => ColumnKind::Decimal { scale },
+            Ok(_) | Err(_) => ColumnKind::Opaque,
+        },
+        EffectiveKind::Base(PropertyType::Boolean {}) => ColumnKind::Boolean,
+        EffectiveKind::Base(PropertyType::Timestamp { .. }) => ColumnKind::Timestamp,
+        EffectiveKind::Base(PropertyType::Date {}) => ColumnKind::Date,
+        EffectiveKind::Base(_) | EffectiveKind::Registry(_) | EffectiveKind::Unresolved => {
+            ColumnKind::Opaque
+        }
+    })
+}
+
+/// BULK-LOAD-1: the pointwise laws a property declares (its enum values and
+/// every conjoined constraint set's bounds and lengths). A pattern is not
+/// evaluated by the engine, so it marks the column [`PointLaw::Unchecked`].
+fn point_laws(property: &EffectiveProperty) -> Vec<PointLaw> {
+    let mut laws = Vec::new();
+    if let EffectiveKind::Base(PropertyType::Enum { values }) = &property.kind {
+        laws.push(PointLaw::OneOf(
+            values.iter().map(|v| v.value.clone()).collect(),
+        ));
+    }
+    for constraints in &property.constraints {
+        let decimal = |literal: &norn_ir::DecimalLiteral| {
+            norn_ir::Decimal::parse(literal.as_str())
+                .map(|d| d.canonical())
+                .ok()
+        };
+        match constraints.min.as_ref().map(decimal) {
+            Some(Some(min)) => laws.push(PointLaw::Min(min)),
+            Some(None) => laws.push(PointLaw::Unchecked),
+            None => {}
+        }
+        match constraints.max.as_ref().map(decimal) {
+            Some(Some(max)) => laws.push(PointLaw::Max(max)),
+            Some(None) => laws.push(PointLaw::Unchecked),
+            None => {}
+        }
+        if let Some(min) = &constraints.min_length {
+            laws.push(PointLaw::MinLength(min.0));
+        }
+        if let Some(max) = &constraints.max_length {
+            laws.push(PointLaw::MaxLength(max.0));
+        }
+        if constraints.pattern.is_some() {
+            laws.push(PointLaw::Unchecked);
+        }
+    }
+    laws
+}
+
+/// The analytical table of `name` with its stored properties, in order, and
+/// a pin over the columns, so a definitions change rebuilds the table.
+///
+/// # Errors
+/// The columns cannot be encoded.
+pub fn table_schema(
+    name: &str,
+    properties: &[EffectiveProperty],
+) -> Result<TableSchema, CellError> {
+    let columns: Vec<Column> = properties
+        .iter()
+        .filter_map(|property| {
+            column_kind(property).map(|kind| Column {
+                id: property.id.as_str().to_owned(),
+                kind,
+                nullable: property.nullable,
+                laws: point_laws(property),
+            })
+        })
+        .collect();
+    // The mirror's row format is part of the pin: a new format resyncs.
+    let pin = crate::codec::hash_json(&(name, &columns, MIRROR_FORMAT))?;
+    Ok(TableSchema {
+        name: name.to_owned(),
+        columns,
+        pin,
+    })
+}
+
+fn property<'a>(plan: &'a QuestionPlan, id: &str) -> Result<&'a EffectiveProperty, CellError> {
+    plan.properties()
+        .iter()
+        .find(|p| p.id.as_str() == id)
+        .ok_or_else(refused)
+}
+
+fn kind(plan: &QuestionPlan, id: &str) -> Result<ColumnKind, CellError> {
+    match column_kind(property(plan, id)?) {
+        Some(ColumnKind::Opaque) | None => Err(refused()),
+        Some(kind) => Ok(kind),
+    }
+}
+
+/// Exact equality of a stored value with a filter literal, as the shared
+/// projection decides it: timestamps by ordering key, everything else by
+/// runtime-value equality.
+fn filter(plan: &QuestionPlan, filter: &MetricFilter) -> Result<Filter, CellError> {
+    if !filter.path.links.is_empty() {
+        return Err(refused());
+    }
+    let negate = match filter.operator {
+        FilterOperator::Eq => false,
+        FilterOperator::Ne => true,
+        FilterOperator::Lt | FilterOperator::Le | FilterOperator::Gt | FilterOperator::Ge => {
+            return Err(refused());
+        }
+    };
+    let column = filter.path.property.as_str();
+    let test = match (kind(plan, column)?, &filter.value) {
+        (_, RuntimeValue::Null) => Test::IsNull,
+        (ColumnKind::Timestamp, RuntimeValue::String(text)) => match instant_key(text, false) {
+            Some((secs, nanos)) => Test::Instant { secs, nanos },
+            None => Test::RefusePresent,
+        },
+        (ColumnKind::Timestamp, _) => Test::RefusePresent,
+        (ColumnKind::Text | ColumnKind::Date, RuntimeValue::String(text)) => {
+            Test::Equals(Literal::Text(text.clone()))
+        }
+        (ColumnKind::Boolean, RuntimeValue::Bool(flag)) => Test::Equals(Literal::Bool(*flag)),
+        (ColumnKind::Integer, RuntimeValue::Number(number)) if number.is_integer() => {
+            Test::Equals(Literal::Number(number.canonical()))
+        }
+        (ColumnKind::Decimal { scale }, RuntimeValue::Number(number))
+            if number.scale() <= scale =>
+        {
+            Test::Equals(Literal::Number(number.canonical()))
+        }
+        // A literal of another kind, or with more fractional digits than any
+        // stored value has, equals no stored value.
+        _ => Test::NeverPresent,
+    };
+    Ok(Filter {
+        column: column.to_owned(),
+        negate,
+        test,
+    })
+}
+
+fn instant_column(plan: &QuestionPlan, id: &str) -> Result<String, CellError> {
+    match kind(plan, id)? {
+        ColumnKind::Timestamp | ColumnKind::Date => Ok(id.to_owned()),
+        ColumnKind::Text
+        | ColumnKind::Integer
+        | ColumnKind::Decimal { .. }
+        | ColumnKind::Boolean
+        | ColumnKind::Opaque => Err(refused()),
+    }
+}
+
+/// METRIC-SNAPSHOT-ASOF-1: the periods of a snapshot sum, exactly as the
+/// shared oracle cuts them: the time grouping's civil periods clipped to the
+/// window, or one period ending at the window's end.
+fn as_of(plan: &QuestionPlan, window: &Window) -> Result<AsOf, CellError> {
+    let [sum] = plan.sums() else {
+        return Err(refused());
+    };
+    let timed: Vec<_> = plan
+        .question()
+        .dimensions
+        .iter()
+        .filter(|d| d.grain.is_some())
+        .collect();
+    let periods = match timed.as_slice() {
+        [] => vec![(None, window.end)],
+        [dimension] if dimension.path.property == sum.time_property => {
+            let grain = dimension.grain.ok_or_else(refused)?;
+            norn_checker::metric::compute::contribution::periods(window.start, window.end, grain)
+                .map_err(|_bound| refused())?
+        }
+        _ => return Err(refused()),
+    };
+    Ok(AsOf {
+        column: window.column.clone(),
+        periods,
+    })
+}
+
+/// METRIC-GRAIN-LINK-1: the link a plan's time is read through, unresolved
+/// (the cell names its mirrored table and target root).
+fn time_link(plan: &QuestionPlan) -> Result<Option<TimeLink>, CellError> {
+    plan.time_link()
+        .map(|link| {
+            if plan.as_of()
+                || !matches!(
+                    column_kind(&link.property),
+                    Some(ColumnKind::Timestamp | ColumnKind::Date)
+                )
+            {
+                return Err(refused());
+            }
+            Ok(TimeLink {
+                link: link.link.as_str().to_owned(),
+                target: link.target_type.as_str().to_owned(),
+                column: link.property.id.as_str().to_owned(),
+            })
+        })
+        .transpose()
+}
+
+const fn grain_of(grain: TimeGrain) -> Grain {
+    match grain {
+        TimeGrain::Day => Grain::Day,
+        TimeGrain::Week => Grain::Week,
+        TimeGrain::Month => Grain::Month,
+        TimeGrain::Quarter => Grain::Quarter,
+        TimeGrain::Year => Grain::Year,
+    }
+}
+
+/// QUERY-ENGINE-1: the plan as the engine's typed question. Anything outside
+/// the lowered profile refuses with `core.compute.unsupported_engine`; it is
+/// never approximated.
+///
+/// # Errors
+/// Unsupported semantics, or a window that is not a pair of timestamps.
+pub fn lower(plan: &QuestionPlan) -> Result<Lowered, CellError> {
+    let question = plan.question();
+    let first = plan.sums().first().ok_or_else(refused)?;
+    // METRIC-GRAIN-LINK-1: the time is the linked object's, read as one column.
+    let time_link = time_link(plan)?;
+    let window = Window {
+        column: match &time_link {
+            Some(_) => TIME_LINK_COLUMN.to_owned(),
+            None => instant_column(plan, first.time_property.as_str())?,
+        },
+        start: instant_key(question.time_window.start.as_str(), false).ok_or_else(refused)?,
+        end: instant_key(question.time_window.end.as_str(), false).ok_or_else(refused)?,
+    };
+    let dimensions = question
+        .dimensions
+        .iter()
+        .map(|dimension| {
+            if !dimension.path.links.is_empty() {
+                // Admission keeps a linked path for the linked time alone.
+                let linked = plan.time_link().is_some_and(|link| {
+                    dimension.path.links.as_slice() == std::slice::from_ref(&link.link)
+                        && dimension.path.property == link.property.id
+                });
+                return match (linked, dimension.grain) {
+                    (true, Some(grain)) => Ok(Dimension::Period {
+                        column: TIME_LINK_COLUMN.to_owned(),
+                        grain: grain_of(grain),
+                    }),
+                    _ => Err(refused()),
+                };
+            }
+            let column = dimension.path.property.as_str();
+            Ok(match dimension.grain {
+                None => {
+                    kind(plan, column)?;
+                    Dimension::Column {
+                        column: column.to_owned(),
+                    }
+                }
+                Some(grain) => Dimension::Period {
+                    column: instant_column(plan, column)?,
+                    grain: grain_of(grain),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, CellError>>()?;
+    let operands = plan
+        .sums()
+        .iter()
+        .map(|sum| {
+            let column = sum.property.id.as_str();
+            match kind(plan, column)? {
+                ColumnKind::Integer | ColumnKind::Decimal { .. } => Ok(Operand {
+                    column: column.to_owned(),
+                    filters: sum
+                        .filters
+                        .iter()
+                        .map(|f| filter(plan, f))
+                        .collect::<Result<_, _>>()?,
+                }),
+                ColumnKind::Text
+                | ColumnKind::Boolean
+                | ColumnKind::Timestamp
+                | ColumnKind::Date
+                | ColumnKind::Opaque => Err(refused()),
+            }
+        })
+        .collect::<Result<Vec<_>, CellError>>()?;
+    if !(1..=2).contains(&operands.len()) {
+        return Err(refused());
+    }
+    let as_of = if plan.as_of() {
+        Some(as_of(plan, &window)?)
+    } else {
+        None
+    };
+    Ok(Lowered {
+        as_of,
+        time_link,
+        filters: question
+            .filters
+            .iter()
+            .map(|f| filter(plan, f))
+            .collect::<Result<_, _>>()?,
+        window,
+        dimensions,
+        operands,
+    })
+}

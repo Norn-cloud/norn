@@ -50,6 +50,14 @@ pub trait PrincipalResolver {
     /// Forget the request's principal. Required: the dispatch calls it when
     /// a request ends, on every exit path ([`RequestScope`]).
     fn end_request(&self);
+
+    /// The slot this resolver records the verified caller into, which the
+    /// cell's policy reads: a run's starter is recorded from it, and a run's
+    /// action steps act as that starter through it (ACTION-STEP-1). `None`
+    /// for a resolver with no slot, whose runs' action steps are denied.
+    fn caller(&self) -> Option<&CallerSlot> {
+        None
+    }
 }
 
 /// The lifetime of one request's verified principal: it ends when this
@@ -81,6 +89,10 @@ impl PrincipalResolver for NoPrincipals {
 
     fn end_request(&self) {
         self.0.record(None);
+    }
+
+    fn caller(&self) -> Option<&CallerSlot> {
+        Some(&self.0)
     }
 }
 
@@ -277,6 +289,10 @@ impl PrincipalResolver for TokenPrincipals {
     fn end_request(&self) {
         self.slot.record(None);
     }
+
+    fn caller(&self) -> Option<&CallerSlot> {
+        Some(&self.slot)
+    }
 }
 
 /// Synthetic principals for tests and local smoke builds, named as
@@ -286,6 +302,8 @@ pub struct FixturePrincipals {
     slot: Arc<CallerSlot>,
     /// Whether the fixtures belong to this cell's organization.
     member: bool,
+    /// The role table the fixtures report.
+    role_table: &'static str,
 }
 
 /// The role table fixture principals report.
@@ -294,9 +312,9 @@ pub const FIXTURE_ROLES: &str = "fixtures/1";
 /// The organization the demo fixtures belong to.
 pub const FIXTURE_ORG: &str = "org_demo";
 
-/// The fixture principals: `viewer@demo` holds `admin`, `guest@demo` `viewer`.
+/// The fixture principals: `admin@demo` holds `admin`, `guest@demo` `viewer`.
 pub const DEMO_FIXTURES: &[(&str, &[&str])] =
-    &[("viewer@demo", &["admin"]), ("guest@demo", &["viewer"])];
+    &[("admin@demo", &["admin"]), ("guest@demo", &["viewer"])];
 
 impl FixturePrincipals {
     /// Fixture principals recording into `slot`.
@@ -309,7 +327,16 @@ impl FixturePrincipals {
             names,
             slot,
             member: true,
+            role_table: FIXTURE_ROLES,
         }
+    }
+
+    /// The fixtures as verified from another role table (a redeployed
+    /// table): the same subjects, another principal.
+    #[must_use]
+    pub const fn with_role_table(mut self, role_table: &'static str) -> Self {
+        self.role_table = role_table;
+        self
     }
 
     /// The fixtures as members of `org` only, as a verified host token is:
@@ -331,7 +358,7 @@ impl PrincipalResolver for FixturePrincipals {
                 subject_id: (*name).to_owned(),
                 roles: roles.iter().map(|role| (*role).to_owned()).collect(),
                 actor_kind: "user",
-                role_table: FIXTURE_ROLES,
+                role_table: self.role_table,
             });
         let subject = caller.as_ref().map(|caller| caller.subject_id.clone());
         self.slot.record(caller);
@@ -339,5 +366,9 @@ impl PrincipalResolver for FixturePrincipals {
     }
     fn end_request(&self) {
         self.slot.record(None);
+    }
+
+    fn caller(&self) -> Option<&CallerSlot> {
+        Some(&self.slot)
     }
 }

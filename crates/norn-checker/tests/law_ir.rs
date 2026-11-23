@@ -126,7 +126,7 @@ fn law_transitive_diamond_is_one_instance_per_subject_with_all_paths() {
     base.reverse();
     assert_eq!(projected(&law, &base), instances);
     let (empty, interfaces) = interface_case(false, "self.total_amount >= 0");
-    assert!(projected(&empty, &interfaces).is_empty());
+    assert_eq!(projected(&empty, &interfaces), []);
     assert!(
         norn_checker::verification::effective_law_instances(
             &[law],
@@ -223,7 +223,7 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
         .collect();
     let holder = pack("toy.instances", "core.Order.interface", Some(nodes));
     base.extend([root, leaf, holder]);
-    assert!(
+    assert_eq!(
         check_artifact_set(
             &base,
             &EntityArtifactSetContext {
@@ -231,8 +231,8 @@ fn membership_case() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
                 base: &[],
                 tenant: None
             }
-        )
-        .is_empty(),
+        ),
+        [],
         "retained fixture admission"
     );
     let mut declaration: LawIR =
@@ -640,7 +640,7 @@ fn law_contained_empty_scoped_implementation_is_not_non_vacuity() {
         serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
     )
     .expect("payload");
-    assert!(projected(&law, &base).is_empty());
+    assert_eq!(projected(&law, &base), []);
     assert!(
         norn_checker::verification::retained_law_membership(
             &law,
@@ -743,7 +743,7 @@ fn law_interface_and_empty_validate_the_declared_contract_without_vacuous_eviden
     for implemented in [false, true] {
         let (artifact, base) = interface_case(implemented, "self.total_amount >= 0");
         let wire = serde_json::to_value(&artifact).expect("wire");
-        assert!(run(vec![wire.clone()], &base).is_empty());
+        assert_eq!(run(vec![wire.clone()], &base).len(), 0);
         assert_eq!(serde_json::to_value(&artifact).expect("original law"), wire);
         let (invalid, base) = interface_case(implemented, "self.implementation_only >= 0");
         assert!(
@@ -779,6 +779,12 @@ proptest::proptest! {
     }
 }
 fn run(values: Vec<Value>, base: &[ArtifactEnvelope]) -> Vec<String> {
+    diagnostics(values, base)
+        .into_iter()
+        .map(|d| d.code.as_str().to_owned())
+        .collect()
+}
+fn diagnostics(values: Vec<Value>, base: &[ArtifactEnvelope]) -> Vec<norn_checker::Diagnostic> {
     let pool: Vec<ArtifactEnvelope> = values
         .into_iter()
         .map(|v| serde_json::from_value(v).expect("envelope"))
@@ -791,9 +797,6 @@ fn run(values: Vec<Value>, base: &[ArtifactEnvelope]) -> Vec<String> {
             tenant: None,
         },
     )
-    .into_iter()
-    .map(|d| d.code.as_str().to_owned())
-    .collect()
 }
 #[test]
 fn erpnext_laws_admit_through_the_shared_set_checker() {
@@ -805,7 +808,7 @@ fn erpnext_laws_admit_through_the_shared_set_checker() {
             tenant: None,
         },
     );
-    assert!(entity_findings.is_empty(), "{entity_findings:?}");
+    assert_eq!(entity_findings, [], "{entity_findings:?}");
     assert_eq!(run(laws(), &entities()), Vec::<String>::new());
 }
 
@@ -850,6 +853,187 @@ fn law_types_and_absent_bindings_fail_closed() {
     law["payload"]["modality"] = json!({"kind":"next"});
     assert!(run(vec![law], &entities()).contains(&codes::INVALID_DOCUMENT.to_owned()));
 }
+/// LAW-LINK-ADMISSION: a law reads one declared to-one forward link of its
+/// subject and that target's properties, typed under its condition.
+#[test]
+fn law_link_reads_admit_one_to_one_hop_only() {
+    let mut values: Vec<Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
+            .expect("entities");
+    let link = |id: &str, target: &str, to: &str| json!({"id": id, "target": target, "cardinality": {"from": "many", "to": to}});
+    values[0]["payload"]["objectType"]["links"] = json!([link("ticket", "erpnext.Request", "one")]);
+    values[1]["payload"]["objectType"]["links"] = json!([
+        link("order", "erpnext.SalesOrder", "one"),
+        link("requests", "erpnext.Request", "many"),
+    ]);
+    let base: Vec<ArtifactEnvelope> = values
+        .into_iter()
+        .map(|value| serde_json::from_value(value).expect("entity"))
+        .collect();
+    let check = |condition: Option<&str>, expression: &str| {
+        let mut law = laws()[1].clone();
+        let payload = law["payload"].as_object_mut().expect("payload");
+        match condition {
+            Some(condition) => payload.insert("condition".into(), json!(condition)),
+            None => payload.remove("condition"),
+        };
+        law["payload"]["response"]["expression"] = json!(expression);
+        diagnostics(vec![law], &base)
+    };
+    let refused = |found: &[norn_checker::Diagnostic], code: &str| {
+        found.iter().any(|found| found.code.as_str() == code)
+    };
+    let says = |found: &[norn_checker::Diagnostic], words: &[&str]| {
+        found.iter().any(|found| {
+            found.code.as_str() == codes::UNKNOWN_BINDING
+                && words.iter().all(|word| found.message.contains(word))
+        })
+    };
+    let admitted = check(Some("self.order != null"), "self.order.paid == true");
+    assert!(
+        !refused(&admitted, codes::UNKNOWN_BINDING) && !refused(&admitted, codes::PREDICATE_TYPE),
+        "{admitted:?}"
+    );
+    // Unguarded, the target may be absent.
+    let unguarded = check(Some("self.status == 'approved'"), "self.order.paid == true");
+    assert!(refused(&unguarded, codes::PREDICATE_TYPE), "{unguarded:?}");
+    // A to-many forward link of an object type and a second hop refuse
+    // admission, each saying what to do. A law sums over the sources of an
+    // inverse role (LAW-LINK-MANY-1, below), which the refusal names.
+    for expression in [
+        "len(self.requests) == 0",
+        "all(self.requests as r, r.status == 'accepted')",
+        "sum(map(self.requests as r, 1)) > 0",
+    ] {
+        let many = check(None, expression);
+        assert!(
+            says(
+                &many,
+                &["`self.requests` is a to-many forward link", "inverse role"]
+            ),
+            "{expression}: {many:?}"
+        );
+    }
+    let second = check(
+        Some("self.order != null"),
+        "self.order.ticket.status == 'accepted'",
+    );
+    assert!(
+        says(&second, &["`self.order.ticket` is a second hop"]),
+        "{second:?}"
+    );
+}
+
+/// The artifacts of the canon itemized-document concept and of the documents
+/// pack's types that implement it, and the core interfaces they rest on.
+fn itemized() -> (Vec<Value>, Vec<ArtifactEnvelope>) {
+    let read = |path: &str| -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path);
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("artifact")).expect("JSON")
+    };
+    let base = [
+        "registry/core/artifacts/norn.SourceDocument.interface.json",
+        "registry/core/artifacts/norn.SourceEvidence.interface.json",
+    ]
+    .map(|path| serde_json::from_value(read(path)).expect("envelope"))
+    .to_vec();
+    let set = [
+        "registry/packs/canon/artifacts/canon.ItemizedDocument.interface.json",
+        "registry/packs/canon/artifacts/canon.LineItem.interface.json",
+        "fixtures/packs/scans/artifacts/docs.SourceDocument.interface.json",
+        "fixtures/packs/scans/artifacts/docs.SourceDocumentLine.interface.json",
+        "fixtures/packs/scans/artifacts/docs.BookedEntry.interface.json",
+        "fixtures/packs/scans/artifacts/docs.LedgerEntry.entity.json",
+        "fixtures/packs/scans/artifacts/docs.ScannedDocument.entity.json",
+        "fixtures/packs/scans/artifacts/docs.DocumentLine.entity.json",
+        "registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json",
+    ]
+    .map(read)
+    .to_vec();
+    (set, base)
+}
+
+/// LAW-LINK-MANY-1 / LAW-INTERFACE-1: the concept owns the law. It is
+/// declared once, on `canon.ItemizedDocument`, and reads the document's lines
+/// through the concept's `lines`, which the scanned document meets with the
+/// inverse role of its line type's link. An implementer cannot escape it by
+/// leaving `lines` out, and another artifact cannot redeclare it weaker.
+#[test]
+fn a_concept_law_sums_its_lines_and_cannot_be_weakened() {
+    let (set, base) = itemized();
+    let admitted = diagnostics(set.clone(), &base);
+    assert_eq!(admitted, [], "{admitted:?}");
+
+    // A second implementer, an order and its lines, is bound by the same law
+    // with no law of its own: implementing the concept is the whole contract.
+    let entity = |name: &str, object: Value| {
+        json!({"artifactId": format!("{name}.entity"), "dependencies": [], "irVersion": "0.1", "kind": "entity",
+            "lifecycle": "active", "name": name, "namespace": "acme", "scope": {}, "version": "0.1.0",
+            "provenance": {"source": "system", "sourcePath": "law_ir.rs"},
+            "payload": {"entityVersion": "2.0", "objectType": object}})
+    };
+    let money = json!({"kind": "decimal", "scale": 2, "currencySource": {"links": [], "property": "currency"}, "additivity": {"kind": "additive"}});
+    let mut orders = set.clone();
+    orders.push(entity("acme.Order", json!({"name": "acme.Order", "implements": ["canon.ItemizedDocument"],
+        "identity": [{"name": "primary", "properties": ["id"]}],
+        "properties": [{"id": "id", "type": {"kind": "text"}}, {"id": "currency", "type": {"kind": "enum", "values": [{"value": "EUR"}]}}, {"id": "total", "type": money}]})));
+    orders.push(entity("acme.OrderLine", json!({"name": "acme.OrderLine", "implements": ["canon.LineItem"],
+        "identity": [{"name": "primary", "properties": ["id"]}],
+        "properties": [{"id": "id", "type": {"kind": "text"}}, {"id": "currency", "type": {"kind": "enum", "values": [{"value": "EUR"}]}}, {"id": "amount", "type": money}],
+        "links": [{"id": "document", "target": "acme.Order", "cardinality": {"to": "one", "from": "many", "required": true}, "inverse": "lines"}]})));
+    let admitted = diagnostics(orders, &base);
+    assert_eq!(admitted, [], "{admitted:?}");
+
+    // The scanned document must meet the concept's `lines`: without the
+    // inverse role on its line type's link it does not implement the concept.
+    let mut no_lines = set.clone();
+    let line = no_lines
+        .iter_mut()
+        .find(|value| value["artifactId"] == "docs.DocumentLine.entity")
+        .expect("line type");
+    line["payload"]["objectType"]["links"][0]
+        .as_object_mut()
+        .expect("link")
+        .remove("inverse");
+    let refused = run(no_lines, &base);
+    assert!(
+        refused.contains(&"object_type.validation.missing_interface_link".to_owned()),
+        "{refused:?}"
+    );
+
+    // A specialization cannot weaken the inherited law: the same law
+    // identity redeclared for the scanned document alone, with a narrower
+    // condition, is refused against the installed concept law.
+    let mut installed = base.clone();
+    installed.extend(
+        set.iter()
+            .map(|value| serde_json::from_value(value.clone()).expect("envelope")),
+    );
+    let mut weaker = set.last().expect("law").clone();
+    weaker["artifactId"] = json!("docs.ScannedDocument.total_matches_lines.law");
+    weaker["dependencies"] = json!([{"artifactId": "docs.ScannedDocument.entity", "kind": "entity", "version": "0.1.0", "required": true}]);
+    weaker["payload"]["subject"] = json!("docs.ScannedDocument");
+    weaker["payload"]["scope"] = json!({"root": {"kind": "entity", "id": "docs.ScannedDocument"}, "objectTypes": ["docs.ScannedDocument"]});
+    weaker["payload"]["condition"] = json!("len(self.lines) > 3");
+    assert!(run(vec![weaker], &installed).contains(&codes::WEAKENS_INHERITED.to_owned()));
+
+    // A second hop past a line is refused; a line's own property is read.
+    let mut hop = set.clone();
+    let law = hop.last_mut().expect("law");
+    law["payload"]["response"]["expression"] =
+        json!("self.total == sum(map(self.lines, #.document.total))");
+    let found = diagnostics(hop, &base);
+    assert!(
+        found
+            .iter()
+            .any(|found| found.code.as_str() == codes::UNKNOWN_BINDING
+                && found.message.contains("is a second hop")),
+        "{found:?}"
+    );
+}
+
 #[test]
 fn unsupported_temporal_combinations_are_stable_errors() {
     let mut law = laws()[0].clone();
@@ -871,7 +1055,7 @@ fn existing_laws_survive_tightening_and_cannot_be_replaced() {
     child["payload"]["modality"] = json!({"kind":"always"});
     assert!(run(vec![child.clone()], &base).contains(&codes::WEAKENS_INHERITED.to_owned()));
     child["payload"]["id"] = json!("erpnext.additional_safety");
-    assert!(run(vec![child], &base).is_empty());
+    assert_eq!(run(vec![child], &base).len(), 0);
 }
 #[test]
 fn whole_set_closure_includes_hidden_new_writers_and_refuses_missing_dependencies() {
@@ -994,7 +1178,10 @@ fn registry_typed_entity_keeps_its_transition_writers_and_refuses_without_regist
         property: "status".into(),
         transition: "shipped".into(),
     }));
-    assert!(norn_checker::verification::check_law_set(&pool, &[], &registry).is_empty());
+    assert_eq!(
+        norn_checker::verification::check_law_set(&pool, &[], &registry),
+        []
+    );
     assert!(conservative_closure(&law, &pool, &BTreeSet::new(), budget).is_err());
     assert!(
         norn_checker::verification::check_law_set(&pool, &[], &BTreeSet::new())
@@ -1020,7 +1207,7 @@ fn conditions_until_state_action_transition_and_deadline_slots_are_checked() {
     assert!(run(vec![law], &entities()).contains(&codes::UNKNOWN_BINDING.to_owned()));
     let mut law = laws()[0].clone();
     law["payload"]["response"] = json!({"kind":"transition", "objectType":"erpnext.SalesOrder", "property":"status", "transitionId":"shipped"});
-    assert!(run(vec![law.clone()], &entities()).is_empty());
+    assert_eq!(run(vec![law.clone()], &entities()).len(), 0);
     law["payload"]["response"]["transitionId"] = json!("absent");
     assert!(run(vec![law], &entities()).contains(&codes::UNKNOWN_BINDING.to_owned()));
     let mut law = laws()[2].clone();
@@ -1033,7 +1220,7 @@ fn conditions_until_state_action_transition_and_deadline_slots_are_checked() {
         .expect("properties")
         .push(json!({"id":"deadline", "type":{"kind":"timestamp", "timezone":"utc"}}));
     base[2] = serde_json::from_value(request).expect("deadline type");
-    assert!(run(vec![law.clone()], &base).is_empty());
+    assert_eq!(run(vec![law.clone()], &base).len(), 0);
     let mut computed = serde_json::to_value(&base[2]).expect("request with deadline");
     computed["payload"]["objectType"]["properties"].as_array_mut().expect("properties").push(json!({"id":"computed_deadline", "type":{"kind":"timestamp", "timezone":"utc"}, "computed":"self.deadline"}));
     base[2] = serde_json::from_value(computed).expect("computed timestamp type");
@@ -1045,7 +1232,7 @@ fn conditions_until_state_action_transition_and_deadline_slots_are_checked() {
             tenant: None,
         },
     );
-    assert!(entity_findings.is_empty(), "{entity_findings:?}");
+    assert_eq!(entity_findings, [], "{entity_findings:?}");
     law["payload"]["timing"]["property"] = json!("computed_deadline");
     assert!(run(vec![law], &base).contains(&codes::UNKNOWN_BINDING.to_owned()));
 }
@@ -1071,7 +1258,7 @@ fn composition_pack_member_kinds_follow_the_canonical_enum() {
             .collect(),
     );
     values.push(pack);
-    assert!(run(values.clone(), &entities()).is_empty());
+    assert_eq!(run(values.clone(), &entities()).len(), 0);
     for kind in [
         json!("derived"),
         json!("unknown"),
@@ -1147,7 +1334,7 @@ fn decimal_binding_findings_with(
 #[test]
 fn interface_decimal_binding_resolves_concrete_units_and_scales_without_defaults() {
     for unit in ["g", "kg"] {
-        assert!(decimal_binding_findings([Some(unit); 3], [3; 3]).is_empty());
+        assert_eq!(decimal_binding_findings([Some(unit); 3], [3; 3]), []);
     }
     assert!(
         decimal_binding_findings([None; 3], [3; 3])
@@ -1165,7 +1352,7 @@ fn interface_decimal_binding_resolves_concrete_units_and_scales_without_defaults
 fn interface_decimal_binding_admits_implementors_with_declared_additivity() {
     for additivity in ["additive", "semi_additive", "non_additive"] {
         let findings = decimal_binding_findings_with([Some("g"); 3], [3; 3], Some(additivity));
-        assert!(findings.is_empty(), "{additivity}: {findings:?}");
+        assert_eq!(findings, [], "{additivity}: {findings:?}");
     }
 }
 

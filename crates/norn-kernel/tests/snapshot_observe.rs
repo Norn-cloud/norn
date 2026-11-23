@@ -306,7 +306,7 @@ fn run_deviation(target: &str, transitions: &Value, reason: SnapshotDeviationRea
                         && state == target
                         && *actual_reason == reason
                 )
-                && matches!(norn_kernel::snapshot_observe::finding_rule_is_violated(&catalog, &key, &values, fact), Err(norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { .. }))
+                && matches!(norn_kernel::snapshot_observe::finding_rule_is_violated(&catalog, &key, &values, fact, &mut norn_kernel::governing_laws::NoLinkTargets), Err(norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { .. }))
                 && fact.provenance == vec![DataQualityLineage::new(
                     provenance.clone(),
                     vec!["observe-1".to_owned()],
@@ -503,9 +503,9 @@ fn mapped_core_order_catches_up_and_same_state_reimport_is_a_consuming_noop() {
     )
     .unwrap();
     assert_eq!(cell.load(&key).unwrap(), before);
-    assert!(receipt.written.is_empty());
-    assert!(cell.ledger()[1].events.is_empty());
-    assert!(cell.ledger()[1].written.is_empty());
+    assert_eq!(receipt.written, []);
+    assert_eq!(cell.ledger()[1].events, []);
+    assert_eq!(cell.ledger()[1].written, []);
     assert!(cell.observe().unwrap().is_none());
 }
 
@@ -1192,7 +1192,7 @@ fn an_observed_delete_without_a_declared_path_tombstones_and_a_recreate_lifts_it
     // The object keeps its values: nothing is erased.
     assert_eq!(state(&cell, &key, "amount"), JsonValue::from(5_i64));
     // Deleting again is a no-op; observing the record again recreates it.
-    assert!(observe_delete(&mut cell, &object_type, &key, None).is_empty());
+    assert_eq!(observe_delete(&mut cell, &object_type, &key, None), []);
     let catalog = TypeCatalog::new([&object_type]);
     let values: JsonObject = serde_json::from_value(json!({ "amount": 7 })).unwrap();
     let provenance = provenance("snapshot.subject");
@@ -1230,7 +1230,7 @@ fn deleting_an_unknown_object_changes_nothing() {
     let object_type = model(&json!([]));
     let key = FactKey::new("test.SnapshotOrder", "SO-404");
     let mut cell = cell();
-    assert!(observe_delete(&mut cell, &object_type, &key, None).is_empty());
+    assert_eq!(observe_delete(&mut cell, &object_type, &key, None), []);
     assert!(!cell.load(&tombstone_key(&key)).unwrap().exists());
 }
 
@@ -1354,18 +1354,18 @@ norn_testkit::proptest::proptest! {
         let changed: JsonObject = serde_json::from_value(json!({"amount": amount})).unwrap();
         norn_testkit::proptest::prop_assert!(
             norn_kernel::snapshot_observe::finding_rule_is_violated(
-                &catalog, &key, &changed, finding,
+                &catalog, &key, &changed, finding, &mut norn_kernel::governing_laws::NoLinkTargets
             ).unwrap()
         );
         norn_testkit::proptest::prop_assert!(
             !norn_kernel::snapshot_observe::verify_finding_values(
-                &catalog, &key, &changed, finding,
+                &catalog, &key, &changed, finding, &mut norn_kernel::governing_laws::NoLinkTargets
             ).unwrap()
         );
         let corrected: JsonObject = serde_json::from_value(json!({"amount": 0})).unwrap();
         norn_testkit::proptest::prop_assert!(
             !norn_kernel::snapshot_observe::finding_rule_is_violated(
-                &catalog, &key, &corrected, finding,
+                &catalog, &key, &corrected, finding, &mut norn_kernel::governing_laws::NoLinkTargets
             ).unwrap()
         );
     }

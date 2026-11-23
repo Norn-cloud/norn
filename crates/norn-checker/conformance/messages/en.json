@@ -362,6 +362,15 @@
     "core.compute.unsupported_engine": {
       "message": "Query semantics are unsupported by the selected compute profile."
     },
+    "core.engine.downgrade": {
+      "message": "the cell was written by a newer storage version than this engine reads"
+    },
+    "core.engine.unknown_version": {
+      "message": "the cell's engine stamp is not a version this engine can read"
+    },
+    "core.engine.upgrade_unsupported": {
+      "message": "the cell's storage version cannot be upgraded in place by this engine"
+    },
     "core.graph.catalog_write": {
       "message": "catalog projections cannot activate definitions"
     },
@@ -388,6 +397,9 @@
     },
     "core.laws.unresolved_scope": {
       "message": "retained instance membership is missing, ambiguous, stale or exceeds its budget"
+    },
+    "core.observation.source_disagreement": {
+      "message": "SOURCE-AGREE-1: two sources report different values of a measure's unit, currency or basis for one record; both reports are kept and the record is not excluded."
     },
     "core.projection.publication_guard": {
       "message": "analytical publication refused by declared policy: {$detail}"
@@ -416,14 +428,44 @@
     "defined_concept.validation.invalid_payload": {
       "message": "defined-concept payload does not match its strict root"
     },
+    "derived.validation.column_conflict": {
+      "message": "a relational view's node outputs two columns with one name"
+    },
+    "derived.validation.grain_dropped": {
+      "message": "a relational view's projection drops or changes a column that identifies its rows"
+    },
     "derived.validation.incremental_not_supported": {
       "message": "maintenance \"incremental\" is reserved for a future IVM phase and is not yet supported; use \"recompute_on_read\""
     },
     "derived.validation.invalid_payload": {
       "message": "DerivedIR payload is invalid at {$path}: {$detail}"
     },
+    "derived.validation.invalid_plan": {
+      "message": "a relational view's plan refers to an undeclared input, node or output, has a cycle or an unreachable node, or uses a form ViewIR v1 does not admit"
+    },
     "derived.validation.io_in_view": {
       "message": "calc kind \"effectful_ts\" is not allowed inside a Derived view (IO must be in an Effect artifact)"
+    },
+    "derived.validation.join_undeclared": {
+      "message": "a relational view joins on something that is neither a declared link nor a declared key of the right type"
+    },
+    "derived.validation.order_not_total": {
+      "message": "a relational view's window or dedupe orders rows by keys that do not cover the input's row identity"
+    },
+    "derived.validation.output_schema_mismatch": {
+      "message": "a relational view declares its own output schema; ViewIR v1 infers it"
+    },
+    "derived.validation.sql_unsupported": {
+      "message": "a SQL transform uses a construct with no typed transform operator; it is refused, never run as SQL"
+    },
+    "derived.validation.type_mismatch": {
+      "message": "a relational view's expression or column does not have the type its operator needs"
+    },
+    "derived.validation.union_shape": {
+      "message": "a relational view unions inputs whose columns, types, contracts or grain differ"
+    },
+    "derived.validation.unknown_column": {
+      "message": "a relational view names a column that its input row does not have"
     },
     "entity.deprecation.v1_payload": {
       "message": "entity {$artifactId} uses the deprecated EntityIR v1 payload form; it is accepted during the migration and lowered to EntityIR v2 on read; author new versions with entityVersion \"2.0\""
@@ -655,6 +697,21 @@
     },
     "labels.validation.unlabelled_locale": {
       "message": "a description or review state names a locale that has no label"
+    },
+    "law.conservation.alias_bound": {
+      "message": "conservation writer has more key-aliasing cases than the checker enumerates: {$detail}"
+    },
+    "law.conservation.alias_unlowerable": {
+      "message": "conservation writer may write one row through coordinates the checker cannot reconcile: {$detail}"
+    },
+    "law.conservation.key_alias": {
+      "message": "conservation writer does not balance when its keys name one cell: {$detail}"
+    },
+    "law.example.mismatch": {
+      "message": "a law example's verdict differs from its expectation: {$detail}"
+    },
+    "law.example.unsupported": {
+      "message": "a law example cannot be evaluated on one value: {$detail}"
     },
     "law.exception.cycle": {
       "message": "law exception overrides chain never reaches its law"
@@ -1082,6 +1139,9 @@
     "mapping.model.lifecycle_member": {
       "message": "{$property} of {$objectType}: a lifecycle property changes only through a lifecycle rule"
     },
+    "mapping.model.link_claim_type_missing": {
+      "message": "map {$map} declares links, but norn.ObservedLinkClaim is not an object type of the set or the base"
+    },
     "mapping.model.link_target_mismatch": {
       "message": "link {$link} of {$objectType} targets {$target}, which does not admit {$produced}"
     },
@@ -1227,13 +1287,16 @@
       "message": "The time axis must be a single-valued date or timestamp."
     },
     "metric.validation.mixed_currency": {
-      "message": "Summing multiple currencies requires an explicit conversion."
+      "message": "Amounts in several currencies aggregate only per currency: group by the currency property, fix it with an eq filter, or convert explicitly."
+    },
+    "metric.validation.mixed_unit": {
+      "message": "METRIC-UNIT-PARTITION-1: the measure's unit is stored in sibling properties; group by each of them or fix each with an eq filter, so no aggregate mixes units."
     },
     "metric.validation.ontology_projection": {
       "message": "Generated semantic datasets or relationships differ from the ontology."
     },
     "metric.validation.partial_path": {
-      "message": "Mandatory time, currency and rate inputs require total paths."
+      "message": "Currency and rate inputs require total paths."
     },
     "metric.validation.ratio_aggregation": {
       "message": "METRIC-ADDITIVITY-1: aggregate the declared numerator and denominator separately, then divide their sums; averaging stored ratios is refused."
@@ -1255,6 +1318,48 @@
     },
     "metric.validation.unsupported_semantics": {
       "message": "Calculation requires semantics outside the admitted checker profile."
+    },
+    "model.admission.feature_kind": {
+      "message": "a model's feature or target property has a kind a model cannot read"
+    },
+    "model.admission.prediction_type_mismatch": {
+      "message": "a model's predictions type does not hold its outputs, subject and model version"
+    },
+    "model.admission.unknown_feature": {
+      "message": "a model's feature or target is not a property of its input object type"
+    },
+    "model.admission.unknown_input": {
+      "message": "a model's input object type is not declared by the artifact set or the installed base"
+    },
+    "model.law.personal_data_never_trains": {
+      "message": "a model trains on a feature or target that carries personal data that is not pseudonymized"
+    },
+    "model.validation.duplicate_id": {
+      "message": "a model lists a feature, output or contract id twice"
+    },
+    "model.validation.invalid_contract": {
+      "message": "a model contract names no output or does not apply to its output's type"
+    },
+    "model.validation.invalid_id": {
+      "message": "a model, input, feature, target, output or contract id is malformed"
+    },
+    "model.validation.invalid_output": {
+      "message": "a model output is not an inline text, integer, decimal, boolean or enum column"
+    },
+    "model.validation.invalid_payload": {
+      "message": "model payload does not match its strict root"
+    },
+    "model.validation.target_in_features": {
+      "message": "a model's target is also one of its features"
+    },
+    "model.validation.trust_without_contract": {
+      "message": "a contract_checked model declares no contract"
+    },
+    "model.validation.unsupported_trust": {
+      "message": "a model's trust is not opaque or contract_checked"
+    },
+    "object_type.validation.additivity_not_refined": {
+      "message": "property {$property} declares an additivity other than the one {$owner} requires; a member may add additivity where the referenced type declares none, never change a declared one"
     },
     "object_type.validation.computed_key_component": {
       "message": "key component {$property} is computed; identity is stored, not derived"
@@ -1574,8 +1679,17 @@
     "property_type.validation.invalid_unit": {
       "message": "unit code {$unit} must be non-blank without whitespace"
     },
+    "property_type.validation.invalid_unit_source": {
+      "message": "unit source {$detail}"
+    },
     "property_type.validation.inverted_range": {
       "message": "{$lower} is greater than {$upper}"
+    },
+    "property_type.validation.ref_additivity_conflict": {
+      "message": "ref {$name} declares {$declared} additivity, but the type it references declares {$referenced}; a use site may only add additivity to a type that declares none"
+    },
+    "property_type.validation.ref_additivity_not_numeric": {
+      "message": "ref {$name} resolves to a {$kind} type; only an integer or decimal declares additivity"
     },
     "property_type.validation.ref_cycle": {
       "message": "ref chain from {$name} returns to itself"
@@ -1612,6 +1726,12 @@
     },
     "question.validation.invalid_window": {
       "message": "The time window must be an ordered half-open UTC interval."
+    },
+    "question.validation.linked_path": {
+      "message": "a question can group across a link only by its linked time, and cannot filter across a link; grouping by another type's field is not supported yet"
+    },
+    "question.validation.marked_field": {
+      "message": "a question cannot group or filter by a field that carries a declared marking (for example pii.contact)"
     },
     "question.validation.mixed_axis_rollup": {
       "message": "Simultaneous time and non-time reductions require an ordered reduction contract."
@@ -1687,6 +1807,12 @@
     },
     "rule.validation.jdm_switch_unconnected_branch": {
       "message": "branch {$statementId} of switch {$nodeId} has no outgoing edge, so an event that takes it reaches no node"
+    },
+    "rule.validation.jdm_unique_overlap": {
+      "message": "two rows of a unique decision table match the same input: {$detail}"
+    },
+    "rule.validation.jdm_unique_unproved": {
+      "message": "the checker cannot prove a unique decision table's rows disjoint, so it is refused: {$detail}"
     },
     "rule.validation.jdm_unknown_column": {
       "message": "row {$rowId} has a cell for {$columnId}, which is not a column of the table"

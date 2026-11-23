@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.marked_field",
+  "message": "a question cannot group or filter by a field that carries a declared marking (for example pii.contact)",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

@@ -29,8 +29,8 @@ aggregation the property's contract forbids. Stored ratios refuse scalar
 aggregation (`metric.validation.ratio_aggregation`); callers must sum their
 operands separately before dividing. Non-additive prices require a declared
 weighting calculation; this bounded aggregate vocabulary provides none.
-Semi-additive balances require the existing snapshot contract, whose unsupported
-execution continues to refuse. Inheritance must preserve the classification.
+Semi-additive balances aggregate only through the snapshot contract of
+METRIC-SNAPSHOT-ASOF-1 below. Inheritance must preserve the classification.
 
 Named scenarios: **METRIC-UNDECLARED** (all numeric aggregates refuse without a
 declaration), **METRIC-RATIO-AVERAGE** (stored-ratio aggregation refuses),
@@ -38,6 +38,140 @@ declaration), **METRIC-RATIO-AVERAGE** (stored-ratio aggregation refuses),
 restriction), **METRIC-DECLARED-SUM** (explicit additive quantities use the same
 keyed compute admission). Conservation-derived candidates and their law
 provenance use the following checked derivation contract.
+
+**METRIC-SNAPSHOT-ASOF-1:** a semi-additive measure (a stock or balance) is
+aggregated as a snapshot. Its metric declares `semi_additive` over time with
+the `last` reduction, and a `non_additive_dimension` naming the metric's time
+dimension with `window_choice: max` and no `window_groupings`: the subject is
+the measured object's identity (other subject keys keep refusing). A
+subject's series is the stored
+versions of the measured object, ordered in valid time by the metric's time
+property, with ties going to the later version. Each output bucket is a civil period of the question's time grouping (day,
+ISO week, month, quarter or year), clipped to the window. A question that is
+ungrouped, or grouped by a non-time property, has one bucket ending at the
+window's end. In each bucket a subject takes its last version at or before the
+bucket's end (the end is exclusive). That value carries forward into later
+buckets until a later version replaces it, and a version from before the window
+counts. A subject with no version yet is absent from the bucket, never 0. The
+question's filters and its non-time grouping read that as-of version. Values
+are then summed across subjects and never across time. A null as-of value is
+skipped and counted, and METRIC-UNIT-PARTITION-1 applies. A semi-additive
+measure aggregated any other way still refuses
+`question.validation.snapshot_aggregation`. For every semi-additive numeric
+property with a direct time property, METRIC-DERIVE-1 also derives this
+snapshot metric ("<property>, as of <time>"). A time grouping must be on the
+metric's own time property, at any grain; the exact engine refuses ratios,
+reaggregation, a knowledge cutoff and more than 1024 periods as an
+unsupported engine shape.
+
+Named scenarios: **METRIC-ASOF-CARRY** (a subject's last value fills later
+weeks with no new version), **METRIC-ASOF-ABSENT** (a subject contributes
+nothing before its first version), **METRIC-ASOF-LAST-NOT-SUM** (two versions
+in one week contribute only the later one), **METRIC-ASOF-FILTER** (a filter
+reads the as-of version, so a subject can enter and leave the answer over
+time), and **METRIC-ASOF-ORACLE** (on generated histories the exact engine
+equals an independent per-subject fold, the oracle for every other engine's
+lowering).
+
+**METRIC-ADDITIVITY-REF-1:** a `ref` may declare `additivity` at its use site,
+so a flow and a stock can share one value type (an event quantity is additive;
+a holding of the same quantity type is semi-additive). Omission means
+`undeclared`, and an undeclared `ref` serializes exactly as before. A
+property's effective additivity is the first one declared along its `ref`
+chain, the use site first, else the base numeric type's own. Use-site
+additivity requires a `ref` that resolves to a local `integer` or `decimal`;
+any other resolved kind refuses
+`property_type.validation.ref_additivity_not_numeric`. A registry `ref`'s kind
+belongs to the registry, and its use-site additivity authorizes nothing until it
+resolves to a local base. Where the referenced type already declares additivity,
+the use site must equal it, else
+`property_type.validation.ref_additivity_conflict`. Against an interface
+requirement, overridden property or parent-interface member declared as a `ref`,
+a member's effective additivity refines the requirement's: undeclared may become
+any declared class, and a declared class is kept exactly, else
+`object_type.validation.additivity_not_refined`. A requirement declared inline
+keeps METRIC-ADDITIVITY-1's exact match. Metric admission, action sums, the
+model diff and METRIC-DERIVE-1 read the effective additivity exactly as they
+read an inline one; `semi_additive` never yields a sum over time.
+
+Named scenarios: **METRIC-REF-FLOW-DERIVES** (a flow `ref` declared additive
+derives one sum per direct time property, and a semi-additive stock of the same
+value type derives only its as-of snapshot), **METRIC-REF-REFINES** (every requirement × member
+class pair is admitted exactly when the requirement is undeclared or equal),
+**METRIC-REF-NUMERIC** and **METRIC-REF-CONFLICT** (use-site additivity on a
+non-numeric type, or against a declared one, refuses), and
+**METRIC-REF-INLINE-EXACT** (an inline requirement still needs the same class).
+
+**METRIC-GRAIN-LINK-1:** a sum's time may be a property of an object reached
+through one to-one link from the measured object (a posting's time is its
+event's). The linked property must be a stored, non-null timestamp or date.
+METRIC-DERIVE-1 uses a linked time only for an object with no time property of
+its own: for each additive property it derives one sum per time property one
+to-one hop away ("<property> by <link>.<time>"). Through a required link every
+row has a time. Through an optional link, a row whose link is absent has no
+time. It is treated exactly like a null measured value: skipped, never given an
+invented time, and counted, with the answer reporting the count as `unlinked`.
+Each row reads the linked object's current version at the answer's frontier,
+so correcting an event's time moves its rows. A snapshot
+(METRIC-SNAPSHOT-ASOF-1) keeps its own valid time: a question over a snapshot
+whose time is linked still refuses `question.validation.snapshot_aggregation`. The question window applies to the linked time. The exact engine
+supports one hop, sums rather than ratios, and a time grouping on that same
+path; anything else refuses as an unsupported engine shape.
+
+Named scenarios: **METRIC-LINK-TIME** (a posting is bucketed by its event's
+time), **METRIC-LINK-UNLINKED** (a row whose optional link is absent is
+skipped and counted, never bucketed), **METRIC-LINK-MOVES** (correcting the
+linked time moves the row), and **METRIC-LINK-OWN-FIRST** (an object with its
+own time derives no linked-time sum).
+
+**METRIC-UNIT-PARTITION-1:** a decimal without a static unit may declare
+`unitSource`: one or more distinct sibling properties whose values together
+are its unit (canon's quantities take theirs from `unit` or, for money,
+`currency`), or what one of it counts (a canon holding's `quantity_basis`:
+on-hand and available grams never add). It is declared inline or at a `ref` use site, under the same
+chain rule as use-site additivity. A decimal declares at most one of a static
+`unit`, `currencySource`, `perUnit` or `unitSource`. Each source must be
+another stored property of the same object type whose values are codes: text
+or enum, or a type whose kind is judged where it is declared (a registry code
+type). A use site never contradicts the source the
+referenced type declares. Against a requirement or overridden property
+declared as a `ref`, a member keeps the declared source and may add one where
+none is declared. Any violation refuses
+`property_type.validation.invalid_unit_source`. A question that aggregates
+such a measure (sum, average, minimum or maximum; counts are exempt) groups by
+each source property, or fixes it with an `eq` filter of the question or of
+the metric's default filters. `eq null` counts, because question filters
+compare nulls as values. Otherwise the question refuses
+`metric.validation.mixed_unit`. A reaggregation never rolls up across a
+source property, and ratio operands are checked the same way. Derived
+candidates expose their source paths as `unit_partition`, and a question
+admitted through the derived metric space is grouped by every source it
+leaves free (within the engine's grouping bound), so rows split by unit
+rather than refuse.
+
+Named scenarios: **METRIC-UNIT-GROUPED** and **METRIC-UNIT-FIXED** (grouping
+by or fixing every source admits), **METRIC-UNIT-MIXED** (leaving any source
+free refuses; `ne` does not fix it), **METRIC-UNIT-ENGINE-SHAPE** (a time
+grouping with `eq` filters on every source lowers to the exact engine), and
+**METRIC-UNIT-DECLARATION** (a source that is the measure itself, missing or
+not a code property, a decimal with a static unit, or a member that drops a
+declared source, refuses).
+
+A decimal's `currencySource` partitions the same way. A metric that converts
+its amounts (`currency.conversion`) or whose source admits a single code needs
+no partition. Otherwise the source path (an ISO 4217 code, or an enum of
+several codes) is a partition path: a question that neither groups by it nor
+fixes it with an `eq` filter refuses `metric.validation.mixed_currency`, a
+reaggregation never rolls up across it, and derived candidates list it in
+`unit_partition`, so a derived question is grouped by currency. An ISO 4217
+registry code is grouped by and `eq`-filtered like a code, with an upper-case
+literal. A nullable source partitions too: amounts without a currency form
+their own group (`eq null` fixes it), and a conversion still requires a
+non-null source (`metric.validation.invalid_currency`). The exact engine sums each partition's stored amounts and still
+refuses a conversion as an unsupported engine shape. Named scenarios:
+**METRIC-CURRENCY-PARTITION** (per currency, grouped or fixed, admits; free or
+`ne` refuses), **METRIC-CURRENCY-SINGLE** (a one-code source and a conversion
+need no partition).
 
 **METRIC-DERIVE-1:** derive a factorized candidate space from effective numeric
 properties, direct/single-link scalar dimensions and existing calendar grains.
@@ -94,6 +228,135 @@ cutoff seam. No timestamp filter or new QuestionIR field represents that cutoff.
 Named scenario **typed_question_lowering** covers positive lowering, refusal,
 symbol identity, object references and bounded construction. This slice adds
 neither natural-language rendering nor ambiguity interpretation.
+
+## Typed transforms (ViewIR v1, #341)
+
+A transform is a `derived` artifact whose `calc` is `relational`: a closed DAG of typed operators over declared inputs (`scan`, `filter`, `project`, `join`, `aggregate`, `window`, `union`, `dedupe`). SQL and dataframe surfaces are authoring syntax that compiles to this plan; nothing in it is executed raw, and there is no function node. The wire kind stays `derived` and ViewIR v0's `field_projection` is unchanged (D84). Admission is `norn_checker::transform::admit` over the same artifact pool as every other check; it grants no read authority.
+
+**VIEW-TYPE-1:** every node has a closed row schema: each column's type (nullable as `Optional`), additivity, the object type its ids name (if any), the stored property it is an unchanged copy of (if any), its column lineage (every stored property it derives from), its effective markings and whether a join repeats it. Expressions are ZEN over `input.<column>` under the input-only environment, checked with the `norn-zen` profile: a `filter` predicate is Boolean (null is not a value a predicate may return), a computed column is a scalar, and `input.c` alone passes column `c` through with its full contract. Admission compiles each expression exactly as evaluation does (VAL-EXACT-1), so an expression every read would refuse is refused at admission (`type_mismatch`): money compared with a bare number, or a per-row currency in arithmetic (a filter on paid orders reads their status, not `amount > 0`). An unknown input, node, column or output, a cycle, a node that does not feed the output and an input scanned twice refuse (`derived.validation.invalid_plan`, `unknown_column`, `type_mismatch`). v1 admits entity inputs, `recompute_on_read` and the current temporal scope only; `outputSchema` is `{}` because the plan infers it (`output_schema_mismatch`). A projected column, group key, measure or window column may declare a `label`, what readers call it (Studio's Business view shows it; queries and the wire keep the `name`). The column keeps its label wherever it passes through unchanged, and a blank label refuses (`invalid_plan`).
+
+**VIEW-GRAIN-1:** every node has a row identity. A scan's is the object `id`; a projection must pass every grain column through unchanged (`grain_dropped`); a to-one join keeps the left grain and a to-many join appends the right id; an aggregate's is its group keys (none means exactly one row); a union's is its branch column then the shared input grain; a dedupe's is its key. Output rows are ordered by grain, nulls last, and no two share one identity.
+
+**VIEW-JOIN-1:** a join's right side is one object type's rows at their identity grain, and rows pair only (a) along a forward link the left column's object type declares, whose target admits the right type, or (b) on a declared key equivalence: the left columns, in component order, equal a key the right type declares (or its `id`) under that key's own normalization, with exactly the component types. The right side is unique on its key, so (b) is many-to-one. Anything else is `derived.validation.join_undeclared`. A value is marked repeated when the join can pair it with more than one row: the left side through a to-many link, the right side through a link whose inverse is to-many or through any key join. Right columns carry the join's `prefix`; output names stay unique (`column_conflict`); a left join makes right columns nullable.
+
+**VIEW-AGG-1:** aggregates reuse METRIC-ADDITIVITY-1 through column lineage. Any aggregate of a numeric column with undeclared additivity refuses `metric.validation.undeclared_additivity`, counts and extrema included; `sum` and `running_sum` need `additive`: a stored ratio refuses `metric.validation.ratio_aggregation`, a semi-additive balance `question.validation.snapshot_aggregation` (stocks are never summed across time), a non-additive value `metric.validation.invalid_additivity`. A computed column's additivity is undeclared unless it passes a column through. Summing a repeated value refuses `core.compute.ambiguous_grain` (QUERY-FANOUT: one holding worth 80 linked to two tags is 80, not 160; aggregate before joining). Every aggregate of a quantity except a count of rows (sum, min, max, a count of distinct values, since 10 USD and 10 EGP are one number but two amounts, and a running sum) partitions by its sources, as METRIC-UNIT-PARTITION-1 does for questions: the group keys (or a running sum's partition) include its per-row currency (`metric.validation.mixed_currency`) and every unit source (`metric.validation.mixed_unit`), so USD never meets EGP and kg never meets lb in one number. A currency held in a non-null one-value enum is one currency and needs no partition. Scans, copies, joins, aggregates and windows carry the sources with the value, and each column on the wire names the columns of its row that hold them (`currencyFrom`, `unitFrom`). Named scenarios: `every_aggregate_of_a_quantity_groups_by_its_unit_and_currency` (`crates/norn-checker/tests/transform.rs`) and the parity row `quantities_grouped_by_unit_and_currency_lower_identically` (`crates/norn-cell/tests/duckdb_transform.rs`). Calendar grains bucket dates and timestamps in ISO/UTC (weeks start Monday) and produce dates. `sum` skips nulls and is null when nothing was summed.
+
+**VIEW-ORDER-1:** a window's partition and order, and a dedupe's key and order, must cover the input grain (`derived.validation.order_not_total`), so ranks, offsets, running totals and the kept row are deterministic. Nulls sort last in both directions.
+
+**VIEW-UNION-1:** union inputs have the same columns in the same order with the same types, additivity, currency and grain (`derived.validation.union_shape`); the branch column names each row's input node and is part of the union's identity, since ids of different types name different objects.
+
+**VIEW-READ-1:** reading a transform needs the transform grant and the HOST-READ-1 collection gate on every object type it reads, transitively, decided before evaluation with one opaque refusal (the QUESTION-ADHOC-1 union rule).
+
+**VIEW-ROWS-1:** v1 evaluates over the reader's readable rows only (Population and Values, HOST-READ-2), so a transform never shows a value its reader may not read. Rows the reader may count but not read are excluded, counted per input, and make the result incomplete. An aggregate is therefore never more disclosing than a question over the same rows; counting Population-only members with DATA-VALUES-1 withholding is a later, separate law.
+
+**VIEW-MARK-1:** an output column's markings are the union of the markings in its lineage. They describe the column; no read path applies masks yet.
+
+**VIEW-LINEAGE-1:** column lineage is static and part of the admitted plan. Each output row lists the input rows it derives from (alias, id, version): one for a scan, filter, projection or dedupe, both sides for a join, every member for an aggregate; a window row lists its own members (its value is a function of its partition up to that row in the declared order).
+
+**VIEW-ENGINE-1 (QUERY-ENGINE-1 extended):** `norn_checker::transform::eval` is the exact reference interpreter. It refuses the whole result on any bound (100,000 rows per node), overflow or runtime expression error. Every result also reports the rows each node produced (`nodeRows`, the plan's volume under the reader's visibility). Other engines lower the same admitted plan and must return canonically equal rows, lineage and node volumes at the same snapshot, and refuse any node past the bound as the exact engine does; operators they cannot lower exactly refuse `core.compute.unsupported_engine`. `CellStore::evaluate_transform_duckdb` lowers to embedded DuckDB over the same authorized snapshot: each scanned input becomes one typed table of the reader's readable rows, each joined link one edge table, and each node one CTE carrying its columns, a sortable instant key per timestamp and its row lineage. Expressions lower through the bounded row tree `norn_expr::RowExpr` (literals, columns, `+ - *`, comparisons, `and`/`or`/`not`, `??`, `?:`); division, functions, comparisons of timestamps, computed timestamps, normalized key joins, decimal scales above 18 and non-scalar columns refuse. Extensions and external access are off and execution is single-threaded. Named scenario (`crates/norn-cell/tests/duckdb_transform.rs`): `duckdb_rows_and_lineage_equal_the_exact_interpreter` (generated orders, customers, links and Population-only rows over a link join, filter, projection, weekly aggregate, ranks, offsets and a running sum, a dedupe and a union: the two envelopes are equal but for the engine label) and `a_normalized_key_join_refuses_the_lowering_not_the_answer`.
+
+**VIEW-MAT-1:** a transform whose `maintenance` is `materialized` keeps one stored result in its cell, refreshed by its `refresh` policy: `on_read` (the default) refreshes when a read finds its inputs changed, unless the stored result is younger than `maxAgeMs`; `manual` refreshes only on `POST /v1/transforms/{transform}:refresh`. The stored result is computed over every input row, with the plan pin and a digest of its whole input snapshot: every scanned row's id and version, every joined link edge and every quarantine exclusion. It is served only to a reader who may read every input row, because rows hidden from a reader can change visible rows through a window, a dedupe, a left join or an aggregate, so a stored result cannot be filtered per reader exactly. Served, it is exact when its digest equals the current snapshot's, and otherwise labelled stale with its frontier (the ledger head it was computed at) and refresh time; nothing stale is served unlabelled. Any other reader gets a live evaluation under their own access, labelled live, and never changes the stored result; a refresh by such a reader refuses with the opaque read refusal. A materialization is a cache of a derived read: it never authorizes a commit, and the ledger never depends on it. Named scenarios: `materialization_is_declared_and_checked` (`crates/norn-checker/tests/transform.rs`), `refresh_needs_every_input_row_and_labels_the_rows` (`crates/norn-api/tests/transform_routes.rs`), and (`crates/norn-cell/tests/transform.rs`) `a_materialization_is_served_exact_until_its_inputs_change`, `a_manual_materialization_serves_its_frontier_labelled_stale`, `a_partial_reader_gets_a_live_evaluation_and_cannot_refresh`.
+
+**VIEW-SQL-1:** SQL is an authoring surface, never an execution path. `norn_checker::transform::sql` parses a restricted dialect (`SELECT … FROM type [AS a] [[LEFT|INNER] JOIN type [AS b] ON …] [WHERE …] [GROUP BY …]`, joined by `UNION ALL`), resolves every name against the effective catalog and lowers it to the operators above; the checker then types that plan like any authored one, so every law applies to SQL unchanged. A join's `ON` names a declared link (`o.customer = c.id`) or a declared key of the joined type (`l.email = c.email`); aggregates are `SUM`, `COUNT`, `COUNT(DISTINCT …)`, `MIN` and `MAX`, `DATE_TRUNC('week', column)` buckets a group key, and windows are `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD` and a running `SUM … OVER`. Every source's id passes through so the grain survives. An ad-hoc join, `ORDER BY`/`LIMIT`, `DISTINCT`, `UNION` without `ALL`, `HAVING`, window frames and any function without an operator refuse `derived.validation.sql_unsupported` and are never passed through. Nothing is lowered to something close to what was written: division (SQL truncates integers), a comparison with a `NULL` literal (never true in SQL), a constant or position as a group or window key (`GROUP BY 1`), a column or alias that is not a plain identifier (it would become part of a ZEN path), and a text holding both quote kinds (ZEN strings take no escapes, so a text is quoted with a kind it does not contain) refuse too, and the SQL keywords the dialect lacks are never read as names (`FROM t FULL JOIN …`). Named scenarios (`crates/norn-checker/tests/transform_sql.rs`): `a_declared_link_join_grouped_by_week_lowers_admits_and_evaluates`, `a_key_join_and_windows_lower_to_typed_operators`, `what_has_no_typed_operator_is_refused_never_run`, `real_world_sql_outside_the_dialect_refuses_cleanly` (a corpus of real-world SQL outside the dialect). Properties (`norn_checker::transform::sql`): `a_printed_query_parses_back_to_itself`, `an_accepted_query_is_admitted_or_refused_with_a_registered_code`, `no_text_panics_and_every_refusal_is_registered`, and `emitted_zen_parses_to_the_sql_tree`: the ZEN text lowering builds, parsed by the engine's own ZEN parser (`norn_expr::row_expression`), equals the SQL expression node for node (operators, column references, literals and null handling) over adversarial names and text.
+
+Named scenarios (`crates/norn-checker/tests/transform.rs`): `link_and_key_joins_are_the_only_joins`, `fanned_sums_refuse_and_aggregating_first_counts_once`, `aggregates_follow_the_metric_additivity_law`, `windows_and_dedupes_need_a_total_order`, `unions_need_one_shape`, `projections_keep_the_grain`, `evaluation_is_deterministic_under_input_order`, `calendar_buckets_follow_iso_utc`.
+
+## The tenant analytics engine (D102)
+
+A hosted cell answers analytical questions, profiles and exports on its
+tenant's analytics engine (DuckDB in a native sidecar next to the cell host),
+never by an analytics scan of the cell's own store. The cell keeps ledger,
+laws, decisions and authorization: it admits and authorizes every request,
+decides the row gates, lowers the admitted plan to a typed engine question and
+verifies every answer. The engine executes only typed operations
+(`norn_cell::analytics`); no request carries SQL, a table or a column
+expression (#733). The exact in-cell engine is the oracle: the equivalence
+property tests run both at the same frontier.
+
+- **ANALYTICS-TENANT-1:** a tenant's database is named by the SHA-256 of the
+  scope key the cell verified; the engine never reads claims and never opens
+  another tenant's file for a request.
+- **ANALYTICS-FRONTIER-1:** the governed-fact mirror keeps every committed
+  object version with its commit interval, synced by the cell in whole
+  commits; an answer at frontier `F` reads exactly the versions current at
+  `F`. A batch that does not continue the mirror's frontier refuses whole.
+- **HOST-READ-5 (engine):** `:profile` on a host with an engine is computed
+  by it over the snapshot an export reads, in the exact profile's shape and
+  semantics (named scenario
+  `the_engine_profile_equals_the_exact_profile_of_every_demo_type`).
+- **QUERY-ENGINE-1 (engine):** within the plan's bound the engine's envelope
+  equals the exact engine's, normalizing only `engine`; the same Core 03
+  refusals apply. Past the bound the engine answers where the exact engine
+  refuses: each bucket carries `memberCount` and `membershipDigest` instead
+  of listing members. The engine pages a bucket's members by identity; the
+  trace route does not page them yet.
+- **METRIC-GRAIN-LINK-1 (engine):** the mirror keeps every link edge's
+  state after its last change, with that change's commit. A linked-time
+  answer joins each row to its one live edge and to the target's version
+  current at the frontier: a row with no edge or no current target is
+  skipped and counted (`unlinked`) when the question's filters and some
+  operand's filters hold; a row with more than one edge refuses; and an
+  answer at a frontier an edge changed after refuses as stale (named
+  scenarios in `linked_time`).
+- **ASOF-KNOWLEDGE-1 (engine):** a question asked as known at a cutoff is
+  answered from the mirror at the cutoff's frontier, read at the cutoff's
+  own clock, in the exact engine's historical envelope: findings exclude as
+  they stood then, disputed members are counted as known then, and a
+  version committed under another model refuses as the exact engine refuses
+  it. The mirror keeps no deletions, so the cell reads every subject deleted
+  under another model as known at the cutoff before the engine runs: where
+  that deletion is the version known then, the answer refuses with the exact
+  engine's code; the engine never answers without the row. A loaded dataset
+  has no history and refuses (named scenarios
+  `answers_known_at_every_earlier_commit_match_the_exact_engine`,
+  `a_deletion_under_another_model_refuses_as_the_exact_engine_refuses`).
+- **MEMBERSHIP-DIGEST-1:** a bucket's digest is SHA-256 over its members in
+  identity (byte) order, each written `<identity bytes>:<identity>,<version>`,
+  then `,<coefficient>` per operand (empty when absent), then `;`.
+  Recomputing it over the paged members gives the same digest.
+- **BULK-LOAD-1:** a dataset loads from the object store at bulk speed into
+  its admitted object type's table. The file's SHA-256 must be the one the
+  cell recorded. Every row is typed exactly by its column: no value is
+  rounded, and a timestamp is admitted exactly when the cell reads it as one,
+  with the cell's own ordering key. A row that cannot be typed, or misses a
+  required value, is quarantined with its first reason (`bulk.*`). A load
+  is decided like any upload load (`SyncSource("upload")`), and each load
+  is reported as a run of its type's `upload` connection, with its counts
+  and reasons, as the cell's own observations (SYNC-REPORT-1).
+- **HOST-READ-3 (dataset):** a loaded dataset's rows live only in the
+  engine, so `GET /v1/objects/{type}` for its type is answered there, in the
+  grid's grammar and visibility: every clause holds (text by bytes, numbers
+  exactly, instants and dates by the cell's ordering key), absent values sort
+  last in either direction, then identity; a caller without Values sees every
+  row withheld and no clause matches. A cursor is an offset bound to the
+  load, the query, the scope and the caller; a reload since it is
+  `object.snapshot_moved`. A sort or filter has no scan bound, and the total
+  is exact. `GET /v1/objects/{type}/{id}` reads one dataset row the same way
+  (named scenario
+  `a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows`).
+- **BULK-LINEAGE-1:** a dataset's current load names its file `(uri,
+  sha256)`; every row is numbered from its file, so each number traces to
+  `(uri, sha256, row)`, and an answer over the dataset is exact at its load.
+
+Laws on loaded datasets, honestly: pointwise laws are checked at load (the
+value types, required values, enum values, numeric bounds and text lengths);
+a property with a constraint the engine does not evaluate (a pattern) refuses
+the load (`bulk.unsupported_law`) rather than admitting unchecked rows. Laws
+that relate rows (uniqueness, conservation, sums, lifecycles, links) and
+invariants that the checker has not lowered to a row predicate are **not**
+enforced on a dataset. A dataset is
+analytical evidence, not governed facts: a fact that must hold under those laws
+goes through the kernel's governed path.
+
+Named scenarios (`crates/norn-cell/tests/analytics_engine.rs`):
+`query_three_scrap_yield_engine_matches_exact_after_correction_and_retraction`,
+`generated_histories_match_exact_envelopes`,
+`an_answer_at_an_earlier_frontier_reads_only_versions_current_then`,
+`a_population_past_the_bound_answers_with_digests_that_paging_recomputes`,
+`a_row_of_another_scope_refuses_as_stale`, `a_sync_that_skips_commits_is_refused`,
+`a_load_types_rows_and_quarantines_refused_ones_with_reasons`,
+`a_loaded_dataset_answers_as_the_same_rows_in_a_cell` and
+`loaded_timestamps_order_exactly_as_the_cell_reads_them`.
 
 ## Evaluation and obligation semantics
 

@@ -19,6 +19,7 @@ function stage() {
     AUTH_DB: db as unknown as D1Database,
     BETTER_AUTH_SECRET: "t".repeat(40),
     BETTER_AUTH_URL: ORIGIN,
+    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     STUDIO_DEFAULT_ORG: DEMO_ORG.id,
   }
   const binding = {
@@ -27,7 +28,7 @@ function stage() {
   } as unknown as import("../../scripts/seed-demo-org-core.ts").SeedDatabase
   const seed = (members = ["viewer@demo.norn.cloud=viewer", "analyst@demo.norn.cloud=member"]) => seedDemoOrg(binding, parseMembers(members), new Date())
   const verify = (email: string) => db.prepare(`update "user" set "emailVerified" = 1 where "email" = ?`).run(email)
-  return { db, env, seed, verify, auth: createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, defaultOrganizationId: DEMO_ORG.id }) }
+  return { db, env, seed, verify, auth: createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, defaultOrganizationId: DEMO_ORG.id }) }
 }
 
 let address = 0
@@ -184,8 +185,10 @@ test("Wrangler is reaped after success and each failure exit", async () => {
 
 test("D1 discovery obeys its deadline", async () => {
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Promise<Response>(() => {}) })
+  // The typed client's request, sent to a local server that never answers.
+  const stalled = ((url: RequestInfo | URL, init?: RequestInit) => fetch(`http://127.0.0.1:${server.port}${new URL(String(url)).pathname}`, init)) as typeof fetch
   try {
-    await expect(discoverD1(`http://127.0.0.1:${server.port}/d1`, {}, 40)).rejects.toMatchObject({ exitCode: SEED_EXIT.timeout })
+    await expect(discoverD1({ credentials: { accountId: "account", apiToken: "token" }, fetch: stalled }, "norn-studio-auth-preview", 40)).rejects.toMatchObject({ exitCode: SEED_EXIT.timeout, message: "D1 discovery timed out" })
   } finally { server.stop(true) }
 })
 

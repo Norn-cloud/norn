@@ -33,6 +33,15 @@ pub struct MetricDefinition {
     pub name: String,
     /// Human-readable MetricFlow label.
     pub label: String,
+    /// How a person would name the metric in a sentence ("quantity on hand"), for
+    /// prompts and suggestions. Generated metrics set it; it never changes what the metric means.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub display: Option<String>,
     /// MetricFlow metric type.
     #[serde(rename = "type")]
     pub metric_type: MetricType,
@@ -438,7 +447,7 @@ pub enum SafeAggregation {
 pub struct MetricCurrency {
     /// ISO 4217 registry property or a closed currency-code enum.
     pub property: DimensionPath,
-    /// Required when summing a source whose currency is not a singleton enum.
+    /// Converts the amounts to one target currency. Without it, amounts whose currency is not a single code aggregate per currency (METRIC-UNIT-PARTITION-1).
     #[serde(
         default,
         deserialize_with = "present_non_null",

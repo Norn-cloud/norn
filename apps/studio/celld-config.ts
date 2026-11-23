@@ -1,5 +1,8 @@
 import { closeSync, fchmodSync, openSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { clientIpHeader, type ClientIpHeader } from "./worker/client-ip.ts"
+import { otelSettings, type OtelSettings } from "./deploy-target.ts"
+import { polarConfig, type PolarConfig } from "./worker/polar-config.ts"
 
 // The self-hosted Studio: the same Worker, assets and bindings that alchemy.run.ts
 // declares on Cloudflare, written as the wrangler.json `celld deploy` reads (#728, D55).
@@ -25,6 +28,18 @@ export interface CelldStudio {
   readonly agent?: { readonly gatewayUrl: string; readonly gatewayToken: string }
   /** The tool gateway Connections uses (#772) and Studio's OAuth client there; without it Connections says none is configured. */
   readonly toolGateway?: { readonly url: string; readonly clientId: string; readonly clientSecret: string }
+  /** Serve /mcp to assistants people connect (STUDIO_MCP=on); the stage's D1 needs migration 0007. */
+  readonly mcp?: true
+  /** Invite-only sign-up (STUDIO_SIGNUP_EMAILS, comma-separated); absent leaves sign-up open. */
+  readonly signUpEmails?: string
+  /** The cell environment a new workspace is provisioned for (STUDIO_DEFAULT_ENVIRONMENT_ID). */
+  readonly defaultEnvironmentId?: string
+  /** The header the stage's edge sets to the client's address: required, never defaulted (#1328). */
+  readonly clientIpHeader: ClientIpHeader
+  /** OpenTelemetry export (worker/telemetry.ts); absent leaves it off. */
+  readonly otel?: OtelSettings
+  /** Hosted billing through Polar (POLAR_*, all four or none); without it nothing is billed or limited. */
+  readonly billing?: PolarConfig
 }
 
 const NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
@@ -58,9 +73,22 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   const toolDeclared = [toolUrl, toolClient, toolSecret].some((value) => value !== undefined)
   if (toolDeclared && toolSettings !== 3) throw new Error("TOOL_GATEWAY_URL, TOOL_GATEWAY_CLIENT_ID and TOOL_GATEWAY_CLIENT_SECRET go together, each non-empty")
   if (toolUrl !== undefined && !isHttpsOrigin(toolUrl)) throw new Error("TOOL_GATEWAY_URL must be an https origin without a path")
+  if (env.STUDIO_MCP !== undefined && env.STUDIO_MCP !== "on") throw new Error(`STUDIO_MCP is "on" or unset, got ${JSON.stringify(env.STUDIO_MCP)}`)
+  // Required and validated here: a celld stage has no Cloudflare in front by default, so a
+  // defaulted cf-connecting-ip would be a header the client writes, and its guesses unlimited.
+  if (env.STUDIO_CLIENT_IP_HEADER === undefined) throw new Error("STUDIO_CLIENT_IP_HEADER is required on celld: the header this stage's edge sets to the client's address (x-real-ip behind Traefik, cf-connecting-ip behind Cloudflare)")
+  const ipHeader = clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)
+  const otel = otelSettings(env)
+  const billing = polarConfig(env)
   return {
+    ...otel === undefined ? {} : { otel },
+    ...billing === undefined ? {} : { billing },
+    ...env.STUDIO_MCP === "on" ? { mcp: true as const } : {},
     stage, build, authUrl, authSecret,
+    clientIpHeader: ipHeader,
     ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrg: env.STUDIO_DEFAULT_ORG },
+    ...env.STUDIO_SIGNUP_EMAILS === undefined ? {} : { signUpEmails: env.STUDIO_SIGNUP_EMAILS },
+    ...env.STUDIO_DEFAULT_ENVIRONMENT_ID === undefined ? {} : { defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID },
     ...host === undefined ? {} : { host },
     ...gatewayUrl === undefined || gatewayToken === undefined ? {} : { agent: { gatewayUrl, gatewayToken } },
     ...!toolDeclared || toolUrl === undefined || toolClient === undefined || toolSecret === undefined ? {} : { toolGateway: { url: toolUrl, clientId: toolClient, clientSecret: toolSecret } },
@@ -70,22 +98,28 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
 /** The wrangler.json for one stage, binding for binding the Cloudflare deploy's. */
 export function celldConfig(studio: CelldStudio): Record<string, unknown> {
   // celld has no node:crypto.scrypt; AUTH_SCRYPT=js runs Better Auth's own hash in pure JS.
-  const vars: Record<string, string> = { BETTER_AUTH_SECRET: studio.authSecret, BETTER_AUTH_URL: studio.authUrl, AUTH_SCRYPT: "js", STUDIO_BUILD: studio.build }
+  const vars: Record<string, string> = { BETTER_AUTH_SECRET: studio.authSecret, BETTER_AUTH_URL: studio.authUrl, AUTH_SCRYPT: "js", STUDIO_BUILD: studio.build, STUDIO_CLIENT_IP_HEADER: studio.clientIpHeader }
   if (studio.defaultOrg !== undefined) vars.STUDIO_DEFAULT_ORG = studio.defaultOrg
   if (studio.agent !== undefined) Object.assign(vars, { AI_GATEWAY_URL: studio.agent.gatewayUrl, AI_GATEWAY_TOKEN: studio.agent.gatewayToken })
   if (studio.toolGateway !== undefined) Object.assign(vars, { TOOL_GATEWAY_URL: studio.toolGateway.url, TOOL_GATEWAY_CLIENT_ID: studio.toolGateway.clientId, TOOL_GATEWAY_CLIENT_SECRET: studio.toolGateway.clientSecret })
+  if (studio.mcp === true) vars.STUDIO_MCP = "on"
+  if (studio.signUpEmails !== undefined) vars.STUDIO_SIGNUP_EMAILS = studio.signUpEmails
+  if (studio.defaultEnvironmentId !== undefined) vars.STUDIO_DEFAULT_ENVIRONMENT_ID = studio.defaultEnvironmentId
+  if (studio.otel !== undefined) {
+    vars.OTEL_EXPORTER_OTLP_ENDPOINT = studio.otel.endpoint
+    if (studio.otel.headers !== undefined) vars.OTEL_EXPORTER_OTLP_HEADERS = studio.otel.headers
+    if (studio.otel.resourceAttributes !== undefined) vars.OTEL_RESOURCE_ATTRIBUTES = studio.otel.resourceAttributes
+  }
+  if (studio.billing !== undefined) Object.assign(vars, { POLAR_ACCESS_TOKEN: studio.billing.accessToken, POLAR_WEBHOOK_SECRET: studio.billing.webhookSecret, POLAR_SERVER: studio.billing.server, POLAR_PLANS: JSON.stringify(studio.billing.table) })
   return {
     name: `norn-studio-${studio.stage}`,
     main: "worker/index.ts",
     compatibility_date: "2026-11-01",
     compatibility_flags: ["nodejs_compat"],
-    assets: { directory: "dist", binding: "ASSETS", not_found_handling: "single-page-application", run_worker_first: ["/api/*"] },
+    // The MCP endpoint and OAuth discovery are answered by the Worker, not the single-page app.
+    assets: { directory: "dist", binding: "ASSETS", not_found_handling: "single-page-application", run_worker_first: studio.mcp === true ? ["/api/*", "/mcp", "/.well-known/*"] : ["/api/*"] },
     d1_databases: [{ binding: "AUTH_DB", database_name: `norn-studio-auth-${studio.stage}`, migrations_dir: "worker/migrations" }],
     ...studio.host === undefined ? {} : { services: [{ binding: "NORN_HOST", service: studio.host }] },
-    ...studio.agent === undefined ? {} : {
-      durable_objects: { bindings: [{ name: "AGENT_BUDGET", class_name: "AgentBudget" }] },
-      migrations: [{ tag: "v1", new_sqlite_classes: ["AgentBudget"] }],
-    },
     vars,
   }
 }

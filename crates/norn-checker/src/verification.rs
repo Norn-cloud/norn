@@ -3,7 +3,7 @@ use crate::entity_artifacts::{Decoded, Layer, decode_v2};
 use crate::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, EffectiveCatalog, Span,
 };
-use norn_expr::env::{FieldSource, RecordKind};
+use norn_expr::env::{FieldSource, RecordKind, RecordType};
 use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
 use norn_graph::{Budget, Direction, Graph, reachability};
 use norn_ir::{
@@ -1064,8 +1064,9 @@ impl LawContext<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         match &law.response {
-            LawResponse::Predicate { expression } => predicate(
+            LawResponse::Predicate { expression } => guarded_predicate(
                 expression.as_str(),
+                law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
                 env,
                 artifact,
                 "/payload/response/expression",
@@ -1158,6 +1159,7 @@ impl LawContext<'_> {
                 );
             }
             self.check_response(law, artifact, subject, env, out);
+            link_reads(law, artifact, subject.name.as_str(), env, out);
             if let Some(LawTiming::BeforeDeadline { property }) = &law.timing
                 && !env
                     .record(subject.name.as_str())
@@ -1193,8 +1195,9 @@ impl LawContext<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         match &law.response {
-            LawResponse::Predicate { expression } => predicate(
+            LawResponse::Predicate { expression } => guarded_predicate(
                 expression.as_str(),
+                law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
                 env,
                 artifact,
                 "/payload/response/expression",
@@ -1354,6 +1357,193 @@ fn predicate(
         .map_err(|e| e.to_string())
         .and_then(|expr| {
             check_expression(&expr, env, &Type::Bool)
+                .map(|_| ())
+                .map_err(|e| format!("{e:?}"))
+        });
+    if let Err(error) = result {
+        out.push(finding(codes::PREDICATE_TYPE, artifact, pointer, error));
+    }
+}
+
+/// The record a to-one link field reaches; `None` for a to-many link.
+fn to_one_target(ty: &Type) -> Option<&str> {
+    let inner = if let Type::Optional(inner) = ty {
+        inner.as_ref()
+    } else {
+        ty
+    };
+    if let Type::Record(name) = inner {
+        Some(name.as_str())
+    } else {
+        None
+    }
+}
+
+/// The record each element of a to-many link field or inverse role is.
+fn to_many_element(ty: &Type) -> Option<&str> {
+    if let Type::List(inner) = ty
+        && let Type::Record(name) = inner.as_ref()
+    {
+        Some(name.as_str())
+    } else {
+        None
+    }
+}
+
+/// LAW-LINK-1 / LAW-LINK-MANY-1: a law reads at most one hop: a declared
+/// to-one forward link of its subject and only its target's properties, or a
+/// to-many inverse role (on an interface: a to-many link requirement, which
+/// each implementer meets with an inverse role) and only its sources' own
+/// properties (`sum(map(self.lines, #.amount))`). A to-many forward link of
+/// an object type, a to-one inverse role or a second hop refuses admission
+/// (LAW-LINK-ADMISSION).
+fn link_reads(
+    law: &LawIR,
+    artifact: &ArtifactEnvelope,
+    subject: &str,
+    env: &ZenTypeEnv,
+    out: &mut Vec<Diagnostic>,
+) {
+    let Some(record) = env.record(subject) else {
+        return;
+    };
+    let response = if let LawResponse::Predicate { expression } = &law.response {
+        Some(("/payload/response/expression", expression.as_str()))
+    } else {
+        None
+    };
+    let sources = law
+        .condition
+        .iter()
+        .map(|condition| ("/payload/condition", condition.as_str()))
+        .chain(response);
+    for (pointer, source) in sources {
+        // An unparsable source is reported by its predicate check.
+        let Ok(paths) = norn_expr::expression_read_paths(source, "self") else {
+            continue;
+        };
+        // LAW-LINK-MANY-1: what each closure reads from the sources of a role.
+        let elements = norn_expr::expression_element_paths(source, "self").unwrap_or_default();
+        // One finding per distinct reason, however often the source repeats a read.
+        let mut said = BTreeSet::new();
+        for message in paths
+            .iter()
+            .filter_map(|path| link_read_refusal(path, record, env))
+            .chain(
+                elements
+                    .iter()
+                    .flat_map(|(collection, reads)| {
+                        reads.iter().map(move |read| (collection, read))
+                    })
+                    .filter_map(|(collection, read)| {
+                        element_read_refusal(collection, read, record, env)
+                    }),
+            )
+        {
+            if said.insert(message.clone()) {
+                out.push(finding(codes::UNKNOWN_BINDING, artifact, pointer, message));
+            }
+        }
+    }
+}
+
+/// Why one read path leaves LAW-LINK-1, in words that say what to do.
+fn link_read_refusal(path: &[String], record: &RecordType, env: &ZenTypeEnv) -> Option<String> {
+    let name = path.first()?;
+    let field = record.fields.get(name)?;
+    let inverse = matches!(field.source, FieldSource::Inverse { .. });
+    if !inverse && !matches!(field.source, FieldSource::Link { .. }) {
+        return None;
+    }
+    let second_hop = |target: &str, member: &str| {
+        env.record(target)
+            .and_then(|target| target.fields.get(member))
+            .is_some_and(|read| !matches!(read.source, FieldSource::Property { .. }))
+    };
+    if !inverse && let Some(target) = to_one_target(&field.ty) {
+        let member = path.get(1)?;
+        return second_hop(target, member).then(|| {
+            format!(
+                "LAW-LINK-1: `self.{name}.{member}` is a second hop; a law reads one to-one link and only its target's properties"
+            )
+        });
+    }
+    let many =
+        to_many_element(&field.ty).filter(|_| inverse || record.kind == RecordKind::Interface);
+    let Some(element) = many else {
+        return Some(if inverse {
+            format!(
+                "LAW-LINK-MANY-1: `self.{name}` is a to-one inverse role; a law reads an inverse role only when many sources link to the subject"
+            )
+        } else {
+            format!(
+                "LAW-LINK-MANY-1: `self.{name}` is a to-many forward link of an object type; a law sums over the sources of an inverse role (declare the link on the line type, with an inverse role on the document)"
+            )
+        });
+    };
+    let member = path.get(1)?;
+    second_hop(element, member).then(|| {
+        format!(
+            "LAW-LINK-MANY-1: `self.{name}.{member}` is a second hop; a law reads an inverse role's sources' own properties only"
+        )
+    })
+}
+
+/// LAW-LINK-MANY-1: why one closure read of a role's sources leaves the
+/// sources' own properties (`map(self.lines, #.amount)` reads `amount`):
+/// the whole source, or a link of it, is a second hop the kernel never binds.
+fn element_read_refusal(
+    collection: &[String],
+    read: &[String],
+    record: &RecordType,
+    env: &ZenTypeEnv,
+) -> Option<String> {
+    let [name] = collection else {
+        return None;
+    };
+    let field = record.fields.get(name)?;
+    if !matches!(
+        field.source,
+        FieldSource::Inverse { .. } | FieldSource::Link { .. }
+    ) {
+        return None;
+    }
+    let element = to_many_element(&field.ty)?;
+    let Some(member) = read.first() else {
+        return Some(format!(
+            "LAW-LINK-MANY-1: a closure over `self.{name}` reads a source as a whole; a law reads an inverse role's sources' own properties only (`#.amount`)"
+        ));
+    };
+    let own = env
+        .record(element)
+        .and_then(|element| element.fields.get(member))
+        .is_some_and(|read| matches!(read.source, FieldSource::Property { .. }));
+    (!own).then(|| {
+        format!(
+            "LAW-LINK-MANY-1: `self.{name}` elements' `{member}` is a second hop; a law reads an inverse role's sources' own properties only"
+        )
+    })
+}
+
+/// A law's response is evaluated only when its condition holds, so it is
+/// checked with every read path the condition proves non-null as non-null
+/// (`when: self.link != null`, then `self.link.amount`).
+fn guarded_predicate(
+    source: &str,
+    condition: Option<&str>,
+    env: &ZenTypeEnv,
+    artifact: &ArtifactEnvelope,
+    pointer: &str,
+    out: &mut Vec<Diagnostic>,
+) {
+    let Some(condition) = condition.and_then(|condition| Expression::compile(condition).ok())
+    else {
+        return predicate(source, env, artifact, pointer, out);
+    };
+    let result = Expression::compile(source)
+        .map_err(|e| e.to_string())
+        .and_then(|expr| {
+            norn_expr::check_expression_under(&expr, &condition, env, &Type::Bool)
                 .map(|_| ())
                 .map_err(|e| format!("{e:?}"))
         });

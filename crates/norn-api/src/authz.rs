@@ -13,10 +13,36 @@ pub enum Operation {
     CallAction(String),
     /// Admit, install or retire a retained (non-kernel) definition.
     WriteDefinitions,
+    /// Start a run of the named installed flow (RUN-ROUTES-1). A run holds no
+    /// grants of its own: this decides only who may start one.
+    StartRun(String),
     /// Create the cell for the request's scope from a submitted definition
     /// set (HOST-PROVISION-1). Decided before the cell exists, so never by
     /// the cell's own policy.
     ProvisionCell,
+    /// Start a sync of the named source connection, or sign, complete, load
+    /// or read an upload (`upload`): a write of the cell's sources, decided
+    /// like a definitions write.
+    SyncSource(String),
+    /// Set, read the status of, connect (OAuth) or revoke the named
+    /// connection's credentials (CONN-AUTHZ-1). Decided by the host's policy
+    /// before any body is read; credentials are never returned to anyone.
+    ManageConnection(String),
+    /// Revoke at the provider the grant the named connection holds
+    /// (GRANT-REVOKE-1). The grant can back sibling connections, so this is
+    /// cell-wide authority: a policy grants it only to a principal who
+    /// manages every connection of the cell (its owners and admins), never
+    /// for holding [`Operation::ManageConnection`] on the one connection.
+    RevokeConnectionGrant(String),
+    /// Decide a decision a flow run waits on, whose request declares these
+    /// decider roles and law (DECISIONS-1). Deciding adds a condition to the
+    /// run; it grants the run nothing.
+    Decide {
+        /// The roles the request declares; the caller must hold one.
+        roles: Vec<String>,
+        /// The law the request names, if any.
+        law: Option<String>,
+    },
 }
 
 /// A scoped host request. The actor is supplied by the trusted transport.
@@ -97,6 +123,40 @@ pub trait Authorizer: Send + Sync {
         _request: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
     ) -> Result<(), norn_kernel::ActionDenial> {
         Err(norn_kernel::ActionDenial::Invisible)
+    }
+
+    /// The cell's model changed: an install committed new object types (a
+    /// flow's Run type, for one). Called under the definitions write epoch,
+    /// before any request sees the new model, so a policy compiled over the
+    /// model's types recompiles here and decides the new types like the
+    /// others. A policy that cannot recompile keeps its rules, so the new
+    /// types stay denied.
+    fn model_changed(&self, _object_types: &[norn_ir::ObjectTypeDef]) {}
+
+    /// The principal this host verified for `actor` in the current request:
+    /// who a call of an approval-gated action parks for, and under whose
+    /// authority it commits once approved (APPROVAL-1). Never rebuilt from
+    /// anything the request carries. `None`, the default, for a host without
+    /// one: its gated calls are denied.
+    fn verified_principal(&self, _actor: &str) -> Option<norn_cell::flow_run::RunStarter> {
+        None
+    }
+
+    /// DEFS-REOPEN-1: whether this policy can serve a cell whose model has
+    /// `object_types`, checked before an install writes it. A model the
+    /// policy cannot serve would leave the cell unopenable after a restart.
+    ///
+    /// # Errors
+    /// The policy does not compile for the candidate model.
+    fn admits_model(&self, _object_types: &[norn_ir::ObjectTypeDef]) -> Result<(), Refusal> {
+        Ok(())
+    }
+
+    /// PRIVACY-2: whether the PDP allows `actor` `norn.reveal` on the marking
+    /// `marking_id` in this cell. Absent policy denies; a document then shows
+    /// the marking's projection and never offers a reveal.
+    fn reveal(&self, _actor: &str, _marking_id: &str) -> bool {
+        false
     }
 
     /// DIAG-DISCLOSE-1: only an explicit scoped PDP grant discloses a diagnostic.
@@ -184,7 +244,12 @@ mod tests {
                 Operation::ReadDefinitions,
                 Operation::CallAction("demo.action".into()),
                 Operation::WriteDefinitions,
+                Operation::StartRun("demo.flow".into()),
                 Operation::ProvisionCell,
+                Operation::Decide {
+                    roles: vec!["viewer".into()],
+                    law: None,
+                },
             ] {
                 let refusal = DenyAll
                     .authorize(&AccessRequest {

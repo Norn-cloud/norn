@@ -8,11 +8,11 @@ import type { Graph } from "./graph.ts"
 import { crossings } from "./drawing.ts"
 
 export interface Spacing { readonly width: number; readonly gap: number; readonly row: number }
-/** Columns and rows for each canvas: a card's width, the gap after it, and the row pitch. */
+/** Columns and rows for each canvas: a card's width, the gap after it, and the row spacing. */
 export const STEP_SPACING: Spacing = { width: 208, gap: 64, row: 110 }
 export const STATE_SPACING: Spacing = { width: 168, gap: 112, row: 150 }
 
-/** The clear space under a card in a column; the row pitch is a card's height plus this, at least `spacing.row`. */
+/** The clear space under a card in a column; the row spacing is a card's height plus this, at least `spacing.row`. */
 const ROW_GAP = 36
 
 /** `height` gives each card's drawn height, so a tall card (a step with many exits) pushes the next row down instead of overlapping it. */
@@ -79,7 +79,7 @@ export function tidyLifecycle(graph: Graph, spacing: Spacing = STATE_SPACING): G
   const terminals = reached.filter((id) => graph.nodes.find((node) => node.id === id)?.config.terminal === "yes")
   const end = [...terminals.length ? terminals : reached].sort((a, b) => dominators.get(b)!.size - dominators.get(a)!.size || distance.get(b)! - distance.get(a)! || ids.indexOf(a) - ids.indexOf(b))[0]!
   const best = [...dominators.get(end)!].sort((a, b) => distance.get(a)! - distance.get(b)!)
-  const pitch = spacing.width + spacing.gap
+  const step = spacing.width + spacing.gap
   const column = new Map(best.map((id, index) => [id, index]))
   const side = graph.nodes.map(({ id }) => id).filter((id) => !column.has(id))
   // A side state sits one column right of the first main-row state that leads into it (so it is always entered
@@ -91,13 +91,13 @@ export function tidyLifecycle(graph: Graph, spacing: Spacing = STATE_SPACING): G
   }))
   const place = (bands: readonly number[]): Graph => {
     const taken = new Set<string>()
-    const at = new Map<string, { x: number; y: number }>(best.map((id, index) => [id, { x: index * pitch, y: 0 }]))
+    const at = new Map<string, { x: number; y: number }>(best.map((id, index) => [id, { x: index * step, y: 0 }]))
     side.forEach((id, index) => {
       const band = bands[index]!
       let col = wanted.get(id)!
       while (taken.has(`${band}:${col}`)) col += 1
       taken.add(`${band}:${col}`)
-      at.set(id, { x: col * pitch, y: band * spacing.row })
+      at.set(id, { x: col * step, y: band * spacing.row })
     })
     return { nodes: graph.nodes.map((node) => ({ ...node, position: at.get(node.id) ?? node.position })), edges: graph.edges }
   }

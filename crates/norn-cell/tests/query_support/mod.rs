@@ -18,6 +18,9 @@ use norn_ir::{
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+#[path = "../support/governed.rs"]
+pub(crate) mod governed;
+
 pub(crate) const TYPE: &str = "demo.Conversion";
 pub(crate) const WORLD: &str = "synthetic-k1";
 pub(crate) const CLOCK: u64 = 1_792_972_800_000;
@@ -230,16 +233,16 @@ pub(crate) fn signed_delta(before: &Decimal, after: &Decimal) -> Decimal {
         .expect("bounded difference");
     Decimal::parse(&format!("{difference}e-6")).expect("exact signed difference")
 }
-pub(crate) fn load(store: &mut CellStore) {
-    store
-        .commit(&CommitBatch {
-            world: WORLD.into(),
-            scope: "synthetic".into(),
-            logical_time: CLOCK,
-            writes: fixture_writes(),
-            ..CommitBatch::default()
-        })
-        .expect("native fixture commit");
+/// The fixture rows in [`WORLD`]: a raw batch, which only `norn-cell`'s own
+/// suites can commit (#1485 S6).
+pub(crate) fn load_batch() -> CommitBatch {
+    CommitBatch {
+        world: WORLD.into(),
+        scope: "synthetic".into(),
+        logical_time: CLOCK,
+        writes: fixture_writes(),
+        ..CommitBatch::default()
+    }
 }
 
 pub(crate) fn loss_plan() -> QuestionPlan {
@@ -274,6 +277,18 @@ pub(crate) fn asof_plan(
     base: &norn_checker::metric::compute::QuestionPlan,
     at: &str,
 ) -> norn_checker::metric::compute::QuestionPlan {
+    let mut question = base.question().clone();
+    question.freshness = norn_ir::metric::FreshnessPolicy::AsOf {
+        at: norn_ir::UtcTimestamp(at.into()),
+    };
+    admit_on(store, base.definitions(), &question)
+}
+/// Admit `question` over `definitions` against the cell's own object type.
+pub(crate) fn admit_on(
+    store: &norn_cell::CellStore,
+    definitions: &[MetricDefinition],
+    question: &QuestionIR,
+) -> norn_checker::metric::compute::QuestionPlan {
     use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, EntityIrVersion, EntityRootV2};
     let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
         "../../../../fixtures/ir/metrics/ontology.json"
@@ -298,12 +313,7 @@ pub(crate) fn asof_plan(
     )
     .expect("payload");
     let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts[..1]);
-    let mut question = base.question().clone();
-    question.freshness = norn_ir::metric::FreshnessPolicy::AsOf {
-        at: norn_ir::UtcTimestamp(at.into()),
-    };
-    norn_checker::metric::compute::admit(base.definitions(), &question, &catalog, 100)
-        .expect("admitted AsOf")
+    norn_checker::metric::compute::admit(definitions, question, &catalog, 100).expect("admitted")
 }
 pub(crate) type QualityHost = norn_cell::SqliteCell<
     norn_kernel::ObservationEvent,
@@ -342,20 +352,22 @@ pub(crate) fn quality_fixture() -> (QualityHost, QuestionPlan, QueryContext) {
         )
         .expect("install");
     context.world = norn_cell::MAIN_WORLD.into();
-    store
-        .commit(&CommitBatch {
-            world: context.world.clone(),
-            scope: context.scope.clone(),
-            logical_time: CLOCK,
-            writes: fixture_writes(),
-            ..CommitBatch::default()
-        })
-        .expect("load");
-    (
-        norn_cell::SqliteCell::new(store, "synthetic", |_| BTreeMap::new()).expect("host"),
-        plan,
-        context,
+    // #1485 S6: the rows land through the kernel path, as any fixture outside
+    // `norn-cell`'s own suites must.
+    let mut host: QualityHost =
+        norn_cell::SqliteCell::new(store, context.scope.clone(), |_| BTreeMap::new())
+            .expect("host");
+    host.advance_to(norn_kernel::LogicalTime::from_millis(CLOCK));
+    let writes = governed::fact_writes(&host, &fixture_writes()).expect("writes");
+    norn_kernel::CellHost::commit(
+        &mut host,
+        norn_kernel::CellCommit {
+            writes,
+            ..norn_kernel::CellCommit::empty()
+        },
     )
+    .expect("load");
+    (host, plan, context)
 }
 pub(crate) fn capture_quality(host: &mut QualityHost, recovered: i64, delivery: &str) {
     use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
@@ -485,6 +497,7 @@ pub(crate) mod fanout {
             currency_source: None,
             per_unit: None,
             rounding: None,
+            unit_source: Vec::new(),
         };
         holding.links = vec![Link {
             id: LinkId("tags".into()),

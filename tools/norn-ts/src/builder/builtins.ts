@@ -42,3 +42,33 @@ export const DECISION_FN: FnRef = fn({
   errors: [taggedError("Expired", S.record({}), { at }), taggedError("Withdrawn", S.record({}), { at })],
   at,
 })
+
+/** Optional provenance trace context forwarded by `norn.action@1` steps. */
+const TRACE_CONTEXT = S.record(
+  {
+    traceId: S.text(),
+    intentRef: S.text(),
+    sessionDigest: S.text(),
+  },
+  ["intentRef", "sessionDigest"],
+)
+
+/**
+ * `norn.action@1` (ACTION-STEP-1): a step that calls the governed action `action` with an input of
+ * `input`'s shape (the action's own input record) and optional `trace` context. The cell executes it
+ * through the ordinary action path, under the run starter's authority for the whole run; a person
+ * who decided an earlier step lends it nothing. Its output is the action's target. Its typed
+ * failures are `Denied` (the starter may not call the action) and `Refused` (any other refusal,
+ * with its `code`). One handle per action: the input schema is the action's, the Function is the
+ * same.
+ */
+export function actionFn(action: string, input: S.ObjectSchema): FnRef {
+  return fn({
+    id: "norn.action",
+    version: "1",
+    input: S.record({ action: S.text([action]), input, trace: TRACE_CONTEXT }, ["trace"]),
+    output: S.record({ objectType: S.text(), objectId: S.text(), version: S.integer }),
+    errors: [taggedError("Denied", S.record({}), { at }), taggedError("Refused", S.record({ code: S.text() }, ["code"]), { at })],
+    at,
+  })
+}

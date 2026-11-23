@@ -389,15 +389,15 @@ fn validate_action_slice(
             ));
         }
         let source_depth = match &entry.key {
-            SliceKey::Parameter { .. } => {
-                diagnostics.push(invalid_diagnostic(
-                    ACTION_CODE,
-                    "parameter slice execution is not qualified in this cut",
-                    format!("{path}.key"),
-                    artifact_id,
-                ));
-                0
-            }
+            SliceKey::Parameter { .. } => validate_action_parameter_slice_key(
+                payload,
+                derivations,
+                &slice,
+                index,
+                &link_depths,
+                diagnostics,
+                artifact_id,
+            ),
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
@@ -619,6 +619,237 @@ fn validate_action_input_slice_key(
             artifact_id,
         ));
     }
+}
+
+fn validate_action_parameter_slice_key(
+    payload: &BTreeMap<String, JsonValue>,
+    derivations: &ActionDerivationCheck,
+    slice: &[SliceDeclaration],
+    index: usize,
+    link_depths: &BTreeMap<String, u32>,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) -> u32 {
+    let Some(entry) = slice.get(index) else {
+        return 0;
+    };
+    let SliceKey::Parameter {
+        from,
+        setting_key,
+        effective_at,
+        precedence,
+        default_from,
+    } = &entry.key
+    else {
+        return 0;
+    };
+    let path = format!("payload.slice[{index}]");
+    let from_depth = validate_parameter_source(
+        slice,
+        index,
+        from,
+        link_depths,
+        &path,
+        diagnostics,
+        artifact_id,
+    );
+    if setting_key.trim().is_empty() {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            "parameter settingKey must be a non-empty string",
+            format!("{path}.key.settingKey"),
+            artifact_id,
+        ));
+    }
+    validate_parameter_effective_at(
+        payload,
+        derivations,
+        effective_at.as_str(),
+        &path,
+        diagnostics,
+        artifact_id,
+    );
+    validate_parameter_precedence(precedence, &path, diagnostics, artifact_id);
+    let default_depth = validate_parameter_default_from(
+        slice,
+        index,
+        default_from.as_deref(),
+        link_depths,
+        &path,
+        diagnostics,
+        artifact_id,
+    );
+    from_depth.max(default_depth)
+}
+
+fn validate_parameter_source(
+    slice: &[SliceDeclaration],
+    index: usize,
+    from: &str,
+    link_depths: &BTreeMap<String, u32>,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) -> u32 {
+    match slice
+        .iter()
+        .take(index)
+        .find(|earlier| earlier.name == from)
+    {
+        None => {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                format!("parameter slice source {from:?} must name an earlier list slice entry"),
+                format!("{path}.key.from"),
+                artifact_id,
+            ));
+            0
+        }
+        Some(earlier) if !earlier.is_list() => {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                format!("parameter slice source {from:?} must be a link-list slice entry"),
+                format!("{path}.key.from"),
+                artifact_id,
+            ));
+            0
+        }
+        Some(earlier) => *link_depths.get(&earlier.name).unwrap_or(&0),
+    }
+}
+
+fn validate_parameter_effective_at(
+    payload: &BTreeMap<String, JsonValue>,
+    derivations: &ActionDerivationCheck,
+    effective_field: &str,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    match action_input_field_type(payload.get("inputSchema"), effective_field) {
+        None => diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            format!(
+                "parameter effectiveAt field {effective_field:?} is not declared in inputSchema"
+            ),
+            format!("{path}.key.effectiveAt"),
+            artifact_id,
+        )),
+        Some(ty) if !is_parameter_effective_at_type(&ty) => diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            format!(
+                "parameter effectiveAt field {effective_field:?} must have a string or timestamp type"
+            ),
+            format!("{path}.key.effectiveAt"),
+            artifact_id,
+        )),
+        Some(_) => {}
+    }
+    if !action_input_key_is_guaranteed(payload, effective_field, derivations) {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            format!(
+                "parameter effectiveAt field {effective_field:?} may be absent; require the final input value"
+            ),
+            format!("{path}.key.effectiveAt"),
+            artifact_id,
+        ));
+    }
+}
+
+fn validate_parameter_precedence(
+    precedence: &[norn_ir::ScopeRef],
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    if precedence.is_empty() {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            "parameter precedence must declare at least one scope",
+            format!("{path}.key.precedence"),
+            artifact_id,
+        ));
+    }
+    for (rank, scope) in precedence.iter().enumerate() {
+        if precedence
+            .get(..rank)
+            .is_some_and(|seen| seen.contains(scope))
+        {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                "duplicate scope in parameter precedence",
+                format!("{path}.key.precedence[{rank}]"),
+                artifact_id,
+            ));
+        }
+        let blank_dimension = [
+            scope.org_id.as_deref(),
+            scope.tenant_id.as_deref(),
+            scope.workspace_id.as_deref(),
+            scope.environment_id.as_deref(),
+            scope.business_unit_id.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|value| value.trim().is_empty());
+        if blank_dimension {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                "parameter precedence scope dimensions must be non-empty strings",
+                format!("{path}.key.precedence[{rank}]"),
+                artifact_id,
+            ));
+        }
+    }
+}
+
+fn validate_parameter_default_from(
+    slice: &[SliceDeclaration],
+    index: usize,
+    default_from: Option<&str>,
+    link_depths: &BTreeMap<String, u32>,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) -> u32 {
+    let Some(default_name) = default_from else {
+        return 0;
+    };
+    match slice
+        .iter()
+        .take(index)
+        .find(|earlier| earlier.name == default_name)
+    {
+        None => {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                format!("parameter defaultFrom {default_name:?} must name an earlier slice entry"),
+                format!("{path}.key.defaultFrom"),
+                artifact_id,
+            ));
+            0
+        }
+        Some(earlier) if earlier.is_list() => {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                format!(
+                    "parameter defaultFrom {default_name:?} must name a single-object slice entry"
+                ),
+                format!("{path}.key.defaultFrom"),
+                artifact_id,
+            ));
+            0
+        }
+        Some(earlier) => *link_depths.get(&earlier.name).unwrap_or(&0),
+    }
+}
+
+fn is_parameter_effective_at_type(ty: &Type) -> bool {
+    if let Type::Optional(inner) = ty {
+        return is_parameter_effective_at_type(inner);
+    }
+    matches!(ty, Type::Text { .. } | Type::Timestamp { .. })
 }
 
 /// Validate ordered derivations against the final input schema, then type
@@ -1905,7 +2136,7 @@ macro_rules! check_root {
 
 /// Check that a payload its kind validator accepted decodes into the strict
 /// typed root of an Access, Widget, Connector, Customization, View, Setting,
-/// `BusinessPack`, Entity, Relation, `DefinedConcept` or `Labels` artifact. See the module docs.
+/// `BusinessPack`, Entity, Relation, `DefinedConcept`, `Labels` or `Model` artifact. See the module docs.
 pub(crate) fn check_typed_root(
     payload: &ArtifactPayload,
     diagnostics: &mut Vec<Diagnostic>,
@@ -2002,6 +2233,7 @@ pub(crate) fn check_typed_root(
             }
         }
         ArtifactPayload::Labels(_) => crate::labels::check_local(payload, diagnostics, artifact_id),
+        ArtifactPayload::Model(_) => crate::model::check_local(payload, diagnostics, artifact_id),
         ArtifactPayload::Action(_) | ArtifactPayload::Rule(_) | ArtifactPayload::Law(_) => {}
     }
 }
@@ -2429,6 +2661,16 @@ fn check_marking_catalog(
                     marking.category
                 ),
                 format!("{path}.category"),
+                artifact_id,
+            ));
+        }
+        if let norn_ir::MaskPolicy::Pseudonym { subject } = &marking.mask
+            && (subject.trim().is_empty() || subject.chars().any(char::is_control))
+        {
+            diagnostics.push(invalid_diagnostic(
+                ENTITY_CODE,
+                "pseudonym mask subject must be a non-blank label",
+                format!("{path}.mask.subject"),
                 artifact_id,
             ));
         }
@@ -3057,7 +3299,7 @@ mod tests {
                         [("action.validation.invalid_schema".to_owned(), path)]
                     );
                 } else {
-                    assert!(found.is_empty(), "{found:?}");
+                    assert_eq!(found, [], "{found:?}");
                 }
             }
         }
@@ -3078,7 +3320,7 @@ mod tests {
         let (mut action, _) = action_with_nested_input_field("recorded_by", &[]);
         action["payload"]["outputSchema"] = json!({"type":"object","additionalProperties":false,
             "properties":{"actor":{"type":"string"},"approved":{"type":"boolean"}}});
-        assert!(findings(action).is_empty());
+        assert_eq!(findings(action), []);
     }
 
     proptest::proptest! {
@@ -3385,15 +3627,15 @@ mod tests {
             "existing".to_owned(),
             Type::Record("fashion.Season".to_owned()),
         )]);
-        assert!(
+        assert_eq!(
             super::check_action_slice_preconditions(
                 &root,
                 records.clone(),
                 slice_fields.clone(),
                 BTreeMap::new(),
                 None,
-            )
-            .is_empty()
+            ),
+            []
         );
 
         let mut invalid = root;
@@ -3571,7 +3813,7 @@ mod tests {
         action["payload"]["outputSchema"] = json!({
             "type": "object", "properties": {}, "additionalProperties": false
         });
-        assert!(findings(action.clone()).is_empty());
+        assert_eq!(findings(action.clone()), []);
         action["payload"]["inputSchema"] = json!({
             "type": ["null", "boolean", "number", "string", "array", "object"]
         });
@@ -3948,7 +4190,7 @@ mod tests {
         rule["payload"]["graph"]["nodes"][4]["content"]["orderedFold"] = fold;
         rule["payload"]["graph"]["nodes"][4]["content"]["inputField"] = json!("slice.items");
         let actual = findings(rule.clone());
-        assert!(actual.is_empty(), "{actual:?}");
+        assert_eq!(actual, [], "{actual:?}");
         // FOLD-ORDER-1: collection selection is mandatory and explicit.
         for selector in [None, Some(json!("")), Some(json!("  "))] {
             let mut bad = rule.clone();

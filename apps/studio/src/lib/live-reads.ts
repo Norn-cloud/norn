@@ -55,7 +55,7 @@ export function useLiveRefresh(path: string | null, queryKey: QueryKey): void {
  * that show exactly what the cell answers, such as a lifecycle's facet counts. Returns the
  * unsubscribe; without a socket it never calls `listener`.
  */
-export function liveAnswer(path: string, scope: StudioScope, listener: (answer: { readonly status: number; readonly body: unknown }) => void): () => void {
+export function liveAnswer(path: string, scope: StudioScope, listener: (answer: { readonly status: number; readonly body: unknown; readonly digest?: string }) => void): () => void {
   if (typeof WebSocket === "undefined") return () => {}
-  return live(scope).subscribe(scopedPath(path, scope), (snapshot) => listener({ status: snapshot.status, body: snapshot.body }))
+  return live(scope).subscribe(scopedPath(path, scope), (snapshot) => listener({ status: snapshot.status, body: snapshot.body, digest: snapshot.digest }))
 }

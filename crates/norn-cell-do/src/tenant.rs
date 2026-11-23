@@ -13,6 +13,11 @@
 //! - A restarted host reopens the cell at its active definitions
 //!   (HOST-REOPEN-1): the model is rebuilt from the retained set and nothing
 //!   is written.
+//! - Governed actions (HOST-ACTION-2, #1252) are decided by the scope's own
+//!   policy ([`ActionPolicy`]), compiled from the active definitions and
+//!   recompiled before the first request after they change. A tenant cell's
+//!   receipt handles are keyed by the stage's lineage key; without one it
+//!   serves no action.
 
 use std::sync::Arc;
 
@@ -27,15 +32,28 @@ use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::CellStore;
 use norn_cell::engine::SqlEngine;
 
+use norn_api::authz::ReadCapability;
+use norn_api::question_routes::{QuestionRuntime, QuestionSnapshot};
+use norn_cell::ObjectRecord;
+use norn_checker::EffectiveCatalog;
+use norn_checker::metric::compute::QuestionPlan;
+use norn_ir::MetricDefinition;
+
+use crate::actions::ActionPolicy;
 use crate::analytics::DemoQuestions;
-use crate::policy::{CallerSlot, GrantTable, Provisioners, ReadPolicy};
+use crate::policy::{ActionSlot, CallerSlot, GrantTable, Provisioners, ReadPolicy, RevealSlot};
 use crate::principal::{PrincipalResolver, RequestScope};
+use crate::questions::DerivedQuestions;
+use crate::reveal::RevealPolicy;
 use crate::seed::SeedError;
 use crate::server::{self, Request, Response};
 
 /// Opens this scope's storage engine: once when the host starts, and again
 /// for a provisioning attempt (a refused attempt consumes its engine).
 pub type OpenEngine<E> = Box<dyn Fn() -> Result<E, String>>;
+
+/// `POST /v1/access:decide`: Studio's connector permission checks (#1036).
+pub const ACCESS_DECIDE_PATH: &str = "/v1/access:decide";
 
 /// The retained-definition kinds every cell of this host admits.
 #[must_use]
@@ -47,7 +65,79 @@ pub fn host_kinds(table: &'static GrantTable) -> DefinitionKinds {
         .with_restater(definition_routes::checker_restatement)
         // A binding runs as a role of the cell's declared grant table.
         .with_roles(table.entries.iter().map(|(role, _)| *role))
+        // A flow's performs may name a registered built-in.
+        .with_builtins(norn_cell::builtin_registered)
 }
+
+/// The receipt-disclosure authority of a cell that publishes no questions:
+/// the handle key that keys its receipt coordinates (D53), and nothing else.
+struct ReceiptHandles {
+    key: Vec<u8>,
+    catalog: EffectiveCatalog,
+}
+
+impl<E: SqlEngine> QuestionRuntime<E> for ReceiptHandles {
+    fn plan(&self, _question: &str) -> Result<QuestionPlan, Refusal> {
+        Err(norn_api::authz::read_denied())
+    }
+    fn snapshot(
+        &self,
+        _store: &CellStore<E>,
+        _plan: &QuestionPlan,
+        _actor: &str,
+    ) -> Result<QuestionSnapshot, Refusal> {
+        Err(norn_api::authz::read_denied())
+    }
+    fn access(
+        &self,
+        _scope: &CellScope,
+        _actor: &str,
+        _question: &str,
+        _capability: ReadCapability,
+        _row: Option<&ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        Err(norn_api::authz::read_denied())
+    }
+    fn min_disclosed_bucket(&self) -> usize {
+        norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET
+    }
+    fn handle_key(&self) -> &[u8] {
+        &self.key
+    }
+}
+
+impl<E: SqlEngine> AdHocQuestions<E> for ReceiptHandles {
+    /// Receipt handles answer no question: a definition naming one is
+    /// refused as unavailable, never as an authorization failure.
+    fn publishes_questions(&self) -> bool {
+        false
+    }
+    fn definitions(&self) -> &[MetricDefinition] {
+        &[]
+    }
+    fn catalog(&self) -> &EffectiveCatalog {
+        &self.catalog
+    }
+    fn max_rows(&self) -> u32 {
+        0
+    }
+    fn max_buckets(&self) -> usize {
+        0
+    }
+    fn admit(
+        &self,
+        question: &norn_ir::QuestionIR,
+        max_rows: u32,
+    ) -> Result<norn_checker::metric::compute::QuestionPlan, Vec<norn_checker::Diagnostic>> {
+        norn_api::question_routes::admit_declared::<E>(self, question, max_rows)
+    }
+    fn unit_partition(&self, _metric: &str) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// The smallest lineage key a cell's receipt handles are keyed with, in bytes.
+pub const MIN_HANDLE_KEY_BYTES: usize = 32;
 
 /// One opened cell and what its requests are served with.
 struct Serving<E: SqlEngine> {
@@ -56,6 +146,18 @@ struct Serving<E: SqlEngine> {
     questions: Option<DemoQuestions>,
     /// The cell's collections, for `GET /v1/access`.
     object_types: Vec<String>,
+    /// The read PDP, asked about one role at a time (`GET /v1/access?objectType=`).
+    role_reads: crate::policy::RoleReads,
+    /// Where the cell's action policy is installed.
+    actions: ActionSlot,
+    /// Where the cell's reveal policy is installed (PRIVACY-2).
+    reveal: RevealSlot,
+    /// The definitions version the installed action policy was compiled from.
+    compiled: Option<u64>,
+    /// Why the active definitions installed no action policy, if they failed.
+    policy_error: Option<String>,
+    /// How many times the action policy was compiled, for the operator.
+    policy_compiles: u64,
 }
 
 impl<E: SqlEngine> Serving<E> {
@@ -70,11 +172,10 @@ impl<E: SqlEngine> Serving<E> {
         // Data reads are decided by the kernel PDP over this cell's own model.
         let policy = ReadPolicy::compile(store.model().object_types(), scope, table)?
             .with_caller(Arc::clone(caller));
-        let object_types = store
-            .model()
-            .object_types()
-            .map(|object_type| object_type.name.as_str().to_owned())
-            .collect();
+        let actions = policy.action_slot();
+        let reveal = policy.reveal_slot();
+        let role_reads = policy.role_reads();
+        let object_types = collections(store.model().object_types());
         let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
             .map_err(|refusal| SeedError(refusal.code))?
             .with_authorizer(policy);
@@ -82,13 +183,290 @@ impl<E: SqlEngine> Serving<E> {
             host,
             questions,
             object_types,
+            role_reads,
+            actions,
+            reveal,
+            compiled: None,
+            policy_error: None,
+            policy_compiles: 0,
         })
+    }
+
+    /// Recompile what the active definitions decide (the action policy and
+    /// the `/v1/access` collections; the read rules follow the install
+    /// through the host's model-changed hook) when their version
+    /// changed since the last compile: a flow install adds its run type to a
+    /// live cell, and it is served at once, never only after a restart. A
+    /// policy that does not compile, or definitions that cannot be read,
+    /// install no action policy: the cell then serves no action, and the
+    /// reason is kept for the operator ([`Tenant::action_policy_error`]).
+    fn refresh_definitions(&mut self) {
+        let version = match self.host.active_definitions_version() {
+            Ok(version) => version,
+            Err(refusal) => {
+                self.clear_reveal();
+                self.install_actions(None, None, Some(refusal.explanation));
+                return;
+            }
+        };
+        if version == self.compiled && version.is_some() {
+            return;
+        }
+        // A changed or unreadable version reveals nothing until its own reveal
+        // policy compiles: the previous version's grants never outlive it.
+        self.clear_reveal();
+        let active = match self.host.active_definitions() {
+            Ok(active) => active,
+            Err(refusal) => {
+                self.install_actions(None, None, Some(refusal.explanation));
+                return;
+            }
+        };
+        let compiled = active.map(|set| {
+            let artifacts = norn_api::kernel_set::retained_artifacts(&set.canonical_set)?;
+            let model = norn_api::kernel_set::kernel_model(&artifacts)
+                .map_err(|error| format!("{error:?}"))?;
+            // The model the store serves: the admitted set's, with the
+            // kernel's action types, as provisioned.
+            // The read rules follow the install itself (the host tells the
+            // read policy its model changed); the access collections follow
+            // here.
+            // Not marked compiled on failure: the next request tries again,
+            // so `/v1/access` never keeps the previous version's collections.
+            let served = norn_api::action_admission::prepare_action_model(&model)
+                .map_err(|refusal| refusal.explanation)?;
+            self.object_types = collections(served.object_types());
+            let reveal = RevealPolicy::compile(&model, &artifacts, self.host.scope())
+                .map_err(|error| error.0)?;
+            if let Ok(mut slot) = self.reveal.write() {
+                *slot = reveal.map(Arc::new);
+            }
+            // The policy itself is the version's: a policy that does not
+            // compile fails the same way on every retry.
+            self.policy_compiles = self.policy_compiles.saturating_add(1);
+            Ok(ActionPolicy::compile(&model, &artifacts, self.host.scope())
+                .map_err(|error| error.0))
+        });
+        match compiled {
+            Some(Ok(Ok(policy))) => self.install_actions(policy, version, None),
+            // Marked compiled: the reason stands until the definitions change.
+            Some(Ok(Err(reason))) => self.install_actions(None, version, Some(reason)),
+            // Not marked compiled: the next request tries again.
+            Some(Err(reason)) => self.install_actions(None, None, Some(reason)),
+            None => self.install_actions(None, version, None),
+        }
+    }
+
+    fn clear_reveal(&self) {
+        if let Ok(mut slot) = self.reveal.write() {
+            *slot = None;
+        }
+    }
+
+    fn install_actions(
+        &mut self,
+        policy: Option<ActionPolicy>,
+        version: Option<u64>,
+        error: Option<String>,
+    ) {
+        if let Ok(mut slot) = self.actions.write() {
+            *slot = policy.map(Arc::new);
+            self.compiled = version;
+            self.policy_error = error;
+        }
+    }
+}
+
+/// Which part of the cell answered a request ([`Tenant::serve`]).
+pub enum Served {
+    /// A source or upload route (#921), with what the host does next.
+    Connect(crate::connect::Routed),
+    /// Any other route.
+    Cell(Response),
+}
+
+/// TENANT-ISOLATION-1 (S1, S2): a scope's membership gate, without its cell.
+///
+/// Who a request reaches the cell as is decided from the scope, the host's
+/// grant table, the request's token and the receipt handles every cell of
+/// the host is served with, and nothing else: no storage is opened or read.
+/// An outsider (a caller the table grants nothing in this organization) is
+/// answered here, with exactly what a scope with no cell answers, after
+/// exactly one verification of their token. The deployed host asks this
+/// before it opens the cell's storage (`apps/norn-cell-do/worker.mjs`), and
+/// [`Tenant::serve`] asks the same gate first, so the two never disagree.
+pub struct Gate {
+    scope: CellScope,
+    table: &'static GrantTable,
+    caller: Arc<CallerSlot>,
+    kinds: DefinitionKinds,
+    handles: Option<ReceiptHandles>,
+    connect: bool,
+}
+
+impl Gate {
+    /// The gate of `scope` under `table`, with the receipt handles keyed by
+    /// `handle_key` as the host's cells are; `connect` when the host serves
+    /// source and upload routes.
+    ///
+    /// # Errors
+    /// A key shorter than [`MIN_HANDLE_KEY_BYTES`], as [`Tenant::open`].
+    pub fn new(
+        scope: CellScope,
+        table: &'static GrantTable,
+        handle_key: Option<&[u8]>,
+        connect: bool,
+    ) -> Result<Self, SeedError> {
+        Ok(Self {
+            scope,
+            table,
+            caller: Arc::default(),
+            kinds: host_kinds(table),
+            handles: handles(handle_key)?,
+            connect,
+        })
+    }
+
+    /// The slot this gate's [`PrincipalResolver`] must record into.
+    #[must_use]
+    pub fn caller(&self) -> Arc<CallerSlot> {
+        Arc::clone(&self.caller)
+    }
+
+    /// `None` when the request reaches the cell (a verified member, or a
+    /// provisioner on `POST /v1/cell:provision`); otherwise the outsider's
+    /// whole answer.
+    #[must_use]
+    pub fn outsider<E: SqlEngine>(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Option<Response> {
+        Outside {
+            scope: &self.scope,
+            table: self.table,
+            caller: &self.caller,
+            kinds: &self.kinds,
+            handles: self.handles.as_ref(),
+            connect: self.connect,
+        }
+        .admit::<E>(principals, request)
+        .err()
+    }
+}
+
+/// Who the gate admits to the cell.
+enum Admitted {
+    /// A verified member of the organization.
+    Member(crate::policy::Caller),
+    /// A provisioner of the scope, on `POST /v1/cell:provision` only.
+    Provisioner,
+}
+
+/// The gate's inputs, borrowed from a [`Gate`] or a [`Tenant`].
+struct Outside<'a> {
+    scope: &'a CellScope,
+    table: &'static GrantTable,
+    caller: &'a Arc<CallerSlot>,
+    kinds: &'a DefinitionKinds,
+    handles: Option<&'a ReceiptHandles>,
+    connect: bool,
+}
+
+impl Outside<'_> {
+    /// Verify the request's token once; admit a member (or a provisioner to
+    /// provision), else answer as a scope with no cell answers anyone.
+    fn admit<E: SqlEngine>(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Result<Admitted, Response> {
+        {
+            // The verified principal lives exactly as long as this decision.
+            let _request = RequestScope::new(principals);
+            let subject = principals.resolve(request.authorization, request.now);
+            let member = subject.as_deref().and_then(|subject| {
+                self.caller
+                    .current()
+                    .filter(|caller| caller.subject_id == subject)
+                    .filter(|caller| !self.table.capabilities(&caller.roles).is_empty())
+            });
+            if let Some(caller) = member {
+                return Ok(Admitted::Member(caller));
+            }
+            if request.path == PROVISION_PATH {
+                return self
+                    .provisioner(subject.as_deref(), request)
+                    .map(|()| Admitted::Provisioner)
+                    .map_err(|refusal| server::respond(Err(refusal)));
+            }
+        }
+        Err(self.answer::<E>(principals, request))
+    }
+
+    /// `POST /v1/cell:provision` by a caller who is not a member: refused as
+    /// at a scope with no cell, unless the table's provisioner role asks.
+    fn provisioner(&self, actor: Option<&str>, request: &Request<'_>) -> Result<(), Refusal> {
+        provision_method(request)?;
+        let mut fields = server::parse(request.query, &["orgId", "environmentId"])?;
+        let scope = ScopeQuery {
+            org_id: fields.remove("orgId"),
+            environment_id: fields.remove("environmentId"),
+        };
+        provision::authorize(
+            &Provisioners::new(self.table, Arc::clone(self.caller)),
+            self.scope,
+            &scope,
+            actor,
+        )
+    }
+
+    /// What a scope with no cell answers a caller it verified as nobody.
+    fn answer<E: SqlEngine>(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Response {
+        if self.connect && crate::connect::serves(request.path) {
+            // The source and upload routes' own answer to a caller they deny.
+            server::outside::<E>(request)
+        } else if request.path == "/v1/access" {
+            server::access_outside::<E>(principals, request)
+        } else if request.path == ACCESS_DECIDE_PATH {
+            // The shared refusal: a caller outside the cell is denied everything.
+            server::respond(Err(norn_api::authz::read_denied()))
+        } else {
+            // Served with what a provisioned cell of this host is served
+            // with (its receipt handles, its kinds), so no route branches
+            // on whether the scope has a cell (#1297 r1).
+            let questions = self
+                .handles
+                .map(|handles| -> &dyn AdHocQuestions<E> { handles });
+            server::outside_with::<E>(questions, self.kinds, request)
+        }
+    }
+}
+
+/// A cell is provisioned with POST.
+fn provision_method(request: &Request<'_>) -> Result<(), Refusal> {
+    if request.method == "POST" {
+        Ok(())
+    } else {
+        Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "a cell is provisioned with POST",
+        ))
     }
 }
 
 enum State<E: SqlEngine> {
     Vacant,
     Serving(Box<Serving<E>>),
+    /// A provisioned cell this host cannot open, and why: served as refusals
+    /// (never a retried open on every request) until an operator restores it.
+    Unopenable(String),
 }
 
 /// The cell of one scope: vacant, or provisioned and served.
@@ -100,6 +478,18 @@ pub struct Tenant<E: SqlEngine> {
     kinds: DefinitionKinds,
     open: OpenEngine<E>,
     state: State<E>,
+    /// The receipt-disclosure authority of a cell with no questions.
+    handles: Option<ReceiptHandles>,
+    /// Ad-hoc questions over the metrics the cell's active definitions
+    /// derive, keyed by the stage's lineage key; none without one.
+    derived: Option<DerivedQuestions>,
+    /// PRIVACY-1: the stage's lineage key, which the cell's pseudonym key
+    /// is derived from with its scope; none without one.
+    pseudonym_secret: Option<Vec<u8>>,
+    /// D102: the link to the tenant analytics engine, once the host has one.
+    engine: Option<crate::olap::Exchange>,
+    /// Studio's connector checks, decided by the PDP (#1036).
+    connectors: crate::policy::ConnectorPolicy,
 }
 
 impl<E: SqlEngine> Tenant<E> {
@@ -113,10 +503,17 @@ impl<E: SqlEngine> Tenant<E> {
         scope: CellScope,
         table: &'static GrantTable,
         open: OpenEngine<E>,
+        handle_key: Option<&[u8]>,
     ) -> Result<Self, SeedError> {
         let caller = Arc::<CallerSlot>::default();
         let engine = open().map_err(SeedError)?;
-        let state = reopen(engine, &scope, table, &caller)?;
+        // A stored cell that does not open is kept as a refusal state: every
+        // request answers at once instead of retrying the open (and queueing).
+        let state = reopen(engine, &scope, table, &caller)?.unwrap_or_else(State::Unopenable);
+        let derived = handle_key
+            .and_then(|key| DerivedQuestions::keyed(key, scope.clone()))
+            .map(|questions| questions.with_label("tenant"));
+        let connectors = crate::policy::CONNECTOR_GRANTS.compile(&scope)?;
         Ok(Self {
             base: crate::base::trusted_base()?,
             kinds: host_kinds(table),
@@ -125,6 +522,11 @@ impl<E: SqlEngine> Tenant<E> {
             caller,
             open,
             state,
+            handles: handles(handle_key)?,
+            derived,
+            pseudonym_secret: handle_key.map(<[u8]>::to_vec),
+            engine: None,
+            connectors,
         })
     }
 
@@ -141,6 +543,7 @@ impl<E: SqlEngine> Tenant<E> {
     ) -> Result<Self, SeedError> {
         let caller = Arc::<CallerSlot>::default();
         let serving = Serving::from_store(store, &scope, table, &caller, questions)?;
+        let connectors = crate::policy::CONNECTOR_GRANTS.compile(&scope)?;
         Ok(Self {
             base: crate::base::trusted_base()?,
             kinds: host_kinds(table),
@@ -149,7 +552,26 @@ impl<E: SqlEngine> Tenant<E> {
             caller,
             open: Box::new(|| Err("a seeded cell is never provisioned again".to_owned())),
             state: State::Serving(Box::new(serving)),
+            handles: None,
+            derived: None,
+            pseudonym_secret: None,
+            engine: None,
+            connectors,
         })
+    }
+
+    /// The same cell, its receipt coordinates keyed with `handle_key` (D53)
+    /// when it publishes no questions of its own: the disclosure authority a
+    /// decision and an action call answer with. Without it such a cell
+    /// decides nothing and serves no action.
+    ///
+    /// # Errors
+    /// A key shorter than [`MIN_HANDLE_KEY_BYTES`]: the cell refuses to serve
+    /// weakly keyed handles.
+    pub fn with_receipt_handles(mut self, handle_key: Option<&[u8]>) -> Result<Self, SeedError> {
+        self.handles = handles(handle_key)?;
+        self.pseudonym_secret = handle_key.map(<[u8]>::to_vec);
+        Ok(self)
     }
 
     /// The slot the cell's policy reads the request's verified principal
@@ -165,6 +587,81 @@ impl<E: SqlEngine> Tenant<E> {
         &self.scope
     }
 
+    /// The served cell's host when the scope is provisioned, for the host's
+    /// own background work (a source sync); requests go through [`Self::handle`].
+    #[must_use]
+    pub fn serving_host(&self) -> Option<&DevHost<E>> {
+        match &self.state {
+            State::Serving(serving) => Some(&serving.host),
+            State::Vacant | State::Unopenable(_) => None,
+        }
+    }
+
+    /// TIMER-ALARM-1: the cell's earliest deadline (logical milliseconds),
+    /// possibly already passed; `None` for a vacant cell or one with nothing
+    /// pending. The host arms its alarm with it after every request.
+    ///
+    /// # Errors
+    /// A host failure reading the cell.
+    pub fn next_due(&self) -> Result<Option<u64>, Refusal> {
+        self.serving_host()
+            .map_or(Ok(None), norn_api::timers::next_due)
+    }
+
+    /// TIMER-ALARM-1: run the cell's work due at `now_ms` (the host's clock)
+    /// through its ordinary commit paths; what it did and when to wake next.
+    /// A vacant cell has nothing due.
+    ///
+    /// # Errors
+    /// A host failure reading the cell; an item that fails stays due.
+    pub fn run_due(&self, now_ms: u64) -> Result<norn_api::timers::DueWork, Refusal> {
+        self.serving_host().map_or_else(
+            || Ok(norn_api::timers::DueWork::default()),
+            |host| norn_api::timers::run_due(host, norn_kernel::LogicalTime::from_millis(now_ms)),
+        )
+    }
+
+    /// Why the cell's active definitions installed no action policy, as of
+    /// the last request: for the operator's log, never for a caller (every
+    /// refused call answers the one opaque action denial).
+    #[must_use]
+    pub fn action_policy_error(&self) -> Option<&str> {
+        match &self.state {
+            State::Serving(serving) => serving.policy_error.as_deref(),
+            State::Vacant | State::Unopenable(_) => None,
+        }
+    }
+
+    /// Why the scope's stored cell does not open, for the operator's log.
+    #[must_use]
+    pub fn open_error(&self) -> Option<&str> {
+        match &self.state {
+            State::Unopenable(reason) => Some(reason),
+            State::Vacant | State::Serving(_) => None,
+        }
+    }
+
+    /// The definitions version the action policy was last settled for, or
+    /// `None` when the next request recompiles: a policy that does not
+    /// compile is settled for its version, a read that failed is not.
+    #[must_use]
+    pub fn action_policy_version(&self) -> Option<u64> {
+        match &self.state {
+            State::Serving(serving) => serving.compiled,
+            State::Vacant | State::Unopenable(_) => None,
+        }
+    }
+
+    /// How many times the cell compiled its action policy since it opened:
+    /// once per definitions version, unless a read failed and was retried.
+    #[must_use]
+    pub fn action_policy_compiles(&self) -> u64 {
+        match &self.state {
+            State::Serving(serving) => serving.policy_compiles,
+            State::Vacant | State::Unopenable(_) => 0,
+        }
+    }
+
     /// Whether the scope has a cell.
     #[must_use]
     pub const fn is_provisioned(&self) -> bool {
@@ -177,54 +674,355 @@ impl<E: SqlEngine> Tenant<E> {
         self.base.sha256()
     }
 
+    /// D102: answer questions, loads and exports on the tenant analytics
+    /// engine the host reaches; without it the cell has no analytics.
+    /// OLAP-CRED-1: `issuer` is the host's signing key; every call carries a
+    /// credential it mints for this cell's own tenant.
+    pub fn enable_analytics(&mut self, issuer: norn_api::olap_credential::Issuer) {
+        let tenant = norn_cell::analytics::TenantId::of_scope(&self.scope.key());
+        self.engine
+            .get_or_insert_with(|| crate::olap::Exchange::new(issuer, tenant));
+    }
+
+    /// Re-enter with the engine's answer to the call the last request ended with.
+    pub fn resume_engine(&self, answer: norn_api::analytics_routes::EngineAnswer) {
+        if let Some(engine) = &self.engine {
+            engine.resume(answer);
+        }
+    }
+
+    /// The engine call the last request ended with, if any, with its
+    /// credential minted at `now_ms` (Unix milliseconds); taken once.
+    #[must_use]
+    pub fn take_engine_call(&self, now_ms: u64) -> Option<norn_api::analytics_routes::EngineCall> {
+        self.engine
+            .as_ref()
+            .and_then(|engine| engine.take_pending(now_ms))
+    }
+
+    /// D102: a load or an export on a served cell with an engine, reading
+    /// `uploads` for loads; `None` for any other request, and for a caller
+    /// who is not a verified member, whom [`Self::handle`] answers as a scope
+    /// with no cell (TENANT-ISOLATION-1): the engine routes never parse,
+    /// read or ask the engine for an outsider.
+    pub fn handle_analytics(
+        &self,
+        principals: &dyn PrincipalResolver,
+        uploads: Option<&dyn norn_api::analytics_routes::Uploads>,
+        request: &Request<'_>,
+    ) -> Option<Response> {
+        self.verified_member(principals, request)?;
+        self.analytics_admitted(principals, uploads, request)
+    }
+
+    /// The engine routes for a caller already admitted as a member.
+    fn analytics_admitted(
+        &self,
+        principals: &dyn PrincipalResolver,
+        uploads: Option<&dyn norn_api::analytics_routes::Uploads>,
+        request: &Request<'_>,
+    ) -> Option<Response> {
+        match (&self.state, &self.engine) {
+            (State::Serving(serving), Some(engine)) => {
+                server::analytics(&serving.host, principals, engine, uploads, request)
+            }
+            (State::Serving(_) | State::Vacant | State::Unopenable(_), _) => None,
+        }
+    }
+
+    /// The membership gate of this cell, as [`Gate`] decides it.
+    fn outside(&self, connect: bool) -> Outside<'_> {
+        Outside {
+            scope: &self.scope,
+            table: self.table,
+            caller: &self.caller,
+            kinds: &self.kinds,
+            handles: self.handles.as_ref(),
+            connect,
+        }
+    }
+
+    /// Serve one request as the deployed host does, in its order: the
+    /// membership gate (decided once, TENANT-ISOLATION-1), the cell's source
+    /// and upload routes (`connect`, #921), then the engine routes (D102,
+    /// reading `connect`'s uploads), then the cell's other routes. The
+    /// Durable Object binding calls exactly this, so the native tests drive
+    /// the deployed dispatch.
+    pub fn serve(
+        &mut self,
+        mut connect: Option<&mut crate::connect::Connect>,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+        now_ms: u64,
+    ) -> Served {
+        // S2: the caller is verified once, here. An outsider is answered by
+        // the gate alone: one verification, whether or not the scope has a
+        // cell, and nothing after it runs for them.
+        let admitted = self
+            .outside(connect.is_some())
+            .admit::<E>(principals, request);
+        let member = match admitted {
+            Ok(Admitted::Member(caller)) => Some(caller),
+            Ok(Admitted::Provisioner) => None,
+            Err(response) => return Served::Cell(response),
+        };
+        if let Some(connect) = connect.as_deref_mut()
+            && let Some(routed) = connect.route(self.serving_host(), principals, request, now_ms)
+        {
+            return Served::Connect(routed);
+        }
+        let uploads = connect
+            .as_deref()
+            .map(|connect| -> &dyn norn_api::analytics_routes::Uploads { connect });
+        if member.is_some()
+            && let Some(response) = self.analytics_admitted(principals, uploads, request)
+        {
+            return Served::Cell(response);
+        }
+        Served::Cell(self.handle_admitted(principals, request, member))
+    }
+
     /// Serve one request; every outcome is a status and a JSON document.
     pub fn handle(
         &mut self,
         principals: &dyn PrincipalResolver,
         request: &Request<'_>,
     ) -> Response {
-        if request.path == PROVISION_PATH {
-            return server::respond(self.provision(principals, request));
-        }
-        match &self.state {
-            State::Serving(serving) if request.path == "/v1/access" => server::access(
-                &serving.host,
-                principals,
-                &self.caller,
-                &serving.object_types,
-                request,
-            ),
-            State::Serving(serving) => {
-                let questions = serving
-                    .questions
-                    .as_ref()
-                    .map(|questions| -> &dyn AdHocQuestions<E> { questions });
-                server::handle_all(&serving.host, principals, questions, &self.kinds, request)
-            }
-            State::Vacant => self.vacant(principals, request),
+        let admitted = self.outside(false).admit::<E>(principals, request);
+        match admitted {
+            Ok(Admitted::Member(caller)) => self.handle_admitted(principals, request, Some(caller)),
+            Ok(Admitted::Provisioner) => self.handle_admitted(principals, request, None),
+            Err(response) => response,
         }
     }
 
-    /// A request to a scope with no cell.
-    fn vacant(&self, principals: &dyn PrincipalResolver, request: &Request<'_>) -> Response {
-        let member = {
-            // The verified principal lives exactly as long as this decision.
-            let _request = RequestScope::new(principals);
-            principals
-                .resolve(request.authorization, request.now)
-                .is_some_and(|subject| {
-                    self.caller
-                        .current()
-                        .filter(|caller| caller.subject_id == subject)
-                        .is_some_and(|caller| !self.table.capabilities(&caller.roles).is_empty())
-                })
+    /// Serve a request the gate admitted: a verified member (`member`), or a
+    /// provisioner of a scope's first cell on `POST /v1/cell:provision`.
+    fn handle_admitted(
+        &mut self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+        member: Option<crate::policy::Caller>,
+    ) -> Response {
+        if request.path == PROVISION_PATH {
+            return server::respond(self.provision(principals, request));
+        }
+        // A caller who is not a verified member of the organization never
+        // gets here (the gate answers them as a scope with no cell answers,
+        // on every route, before the cell does any work of its own:
+        // #1297 r1 B1, TENANT-ISOLATION-1). Only a provisioner is admitted
+        // without membership, and only to provision.
+        let Some(caller) = member else {
+            return server::respond(Err(norn_api::authz::read_denied()));
         };
-        if member && self.names_this_scope(request.query) {
-            server::respond(Err(provision::not_provisioned()))
-        } else if request.path == "/v1/access" {
-            server::access_outside::<E>(principals, request)
+        if let State::Serving(serving) = &mut self.state {
+            serving.refresh_definitions();
+            if !serving.host.has_pseudonym_key() {
+                serving
+                    .host
+                    .set_pseudonym_secret(self.pseudonym_secret.as_deref());
+            }
+        }
+        match &self.state {
+            State::Serving(serving) if request.path == ACCESS_DECIDE_PATH => {
+                self.decide_access(&serving.host, request, &caller)
+            }
+            State::Serving(serving) if request.path == "/v1/access" => {
+                let actions = serving.actions.read().ok().and_then(|slot| slot.clone());
+                server::access(
+                    &serving.host,
+                    principals,
+                    &self.caller,
+                    &serving.object_types,
+                    &server::RoleExplainer {
+                        reads: &serving.role_reads,
+                        actions: actions.as_deref(),
+                    },
+                    request,
+                )
+            }
+            State::Serving(serving) => {
+                if let Some(engine) = &self.engine
+                    && let Some(response) =
+                        server::analytics(&serving.host, principals, engine, None, request)
+                {
+                    return response;
+                }
+                // A cell that publishes no questions answers ad-hoc questions
+                // over its derived metrics; a revision whose metrics do not
+                // derive serves receipt handles only.
+                let derived = match (&serving.questions, &self.derived) {
+                    // A revision whose metrics do not derive publishes none.
+                    (None, Some(derived)) => derived
+                        .questions(&serving.host)
+                        .ok()
+                        .filter(|runtime| !AdHocQuestions::<E>::definitions(runtime).is_empty()),
+                    _ => None,
+                };
+                let questions = serving
+                    .questions
+                    .as_ref()
+                    .map(|questions| -> &dyn AdHocQuestions<E> { questions })
+                    .or_else(|| {
+                        derived
+                            .as_ref()
+                            .map(|runtime| -> &dyn AdHocQuestions<E> { runtime })
+                    })
+                    .or_else(|| {
+                        self.handles
+                            .as_ref()
+                            .map(|handles| -> &dyn AdHocQuestions<E> { handles })
+                    });
+                let on_engine = match (questions, &self.engine) {
+                    (Some(inner), Some(engine)) => {
+                        Some(norn_api::analytics_routes::EngineQuestions::new(
+                            inner,
+                            engine,
+                            &self.scope,
+                        ))
+                    }
+                    (Some(_) | None, _) => None,
+                };
+                let questions = on_engine
+                    .as_ref()
+                    .map(|wrapped| -> &dyn AdHocQuestions<E> { wrapped })
+                    .or(questions);
+                server::handle_all(&serving.host, principals, questions, &self.kinds, request)
+            }
+            State::Vacant => self.vacant(principals, request, &caller, None),
+            State::Unopenable(reason) => self.vacant(principals, request, &caller, Some(reason)),
+        }
+    }
+
+    /// `POST /v1/access:decide` (#1036): the connector checks Studio asks,
+    /// decided for the request's verified principal under the declared
+    /// [`crate::policy::CONNECTOR_GRANTS`], each check decided by the kernel
+    /// PDP: `{checks: [{action, resource: {type, id}}]}` to
+    /// `{decisions: [{action, resource, decision, rule}]}` in the same order.
+    /// `connector.run` reads the binding's `runRole` from its own active
+    /// cell definition, never from the request. A request outside this
+    /// cell's scope gets the shared 403, which Studio reads as deny-all.
+    fn decide_access(
+        &self,
+        host: &DevHost<E>,
+        request: &Request<'_>,
+        caller: &crate::policy::Caller,
+    ) -> Response {
+        const MAX_CHECKS: usize = 32;
+        if request.method != "POST" {
+            return server::respond(Err(Refusal::new(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "route.method_not_allowed",
+                "the route does not accept this method",
+                "permission checks are asked with POST",
+            )));
+        }
+        if !self.names_this_scope(request.query) {
+            return server::respond(Err(norn_api::authz::read_denied()));
+        }
+        let checks = match serde_json::from_str::<serde_json::Value>(request.body) {
+            Ok(body) => body
+                .get("checks")
+                .and_then(serde_json::Value::as_array)
+                .cloned(),
+            Err(_) => None,
+        };
+        let Some(checks) = checks.filter(|checks| checks.len() <= MAX_CHECKS) else {
+            return server::respond(Err(Refusal::invalid(format!(
+                "a permission check is {{\"checks\": [{{\"action\", \"resource\": {{\"type\", \"id\"}}}}]}}, at most {MAX_CHECKS}"
+            ))));
+        };
+        let mut decisions = Vec::with_capacity(checks.len());
+        for check in &checks {
+            let text = |value: Option<&serde_json::Value>| {
+                value
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let action = text(check.get("action"));
+            let kind = text(check.get("resource").and_then(|r| r.get("type")));
+            let id = text(check.get("resource").and_then(|r| r.get("id")));
+            let run_role = if action == "connector.run" && kind == "studio.ToolBinding" {
+                match host.retained_definition(&id) {
+                    Ok(record) => record
+                        .filter(|record| {
+                            record.definition.kind == "binding"
+                                && record.definition.lifecycle
+                                    == norn_cell::retained::RetainedLifecycle::Active
+                        })
+                        .and_then(|record| {
+                            serde_json::from_str::<serde_json::Value>(&record.definition.payload)
+                                .ok()
+                        })
+                        .and_then(|payload| {
+                            payload
+                                .get("runRole")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                        }),
+                    Err(refusal) => return server::respond(Err(refusal)),
+                }
+            } else {
+                None
+            };
+            let rule = self
+                .connectors
+                .decide(caller, &action, (&kind, &id), run_role.as_deref());
+            decisions.push(serde_json::json!({
+                "action": action,
+                "resource": { "type": kind, "id": id },
+                "decision": if rule.is_some() { "permit" } else { "deny" },
+                "rule": rule,
+            }));
+        }
+        server::respond(Ok(serde_json::json!({ "decisions": decisions }).to_string()))
+    }
+
+    /// The request's verified principal, when the declared table grants it
+    /// something in this cell's organization.
+    fn verified_member(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Option<crate::policy::Caller> {
+        // The verified principal lives exactly as long as this decision.
+        let _request = RequestScope::new(principals);
+        principals
+            .resolve(request.authorization, request.now)
+            .and_then(|subject| {
+                self.caller
+                    .current()
+                    .filter(|caller| caller.subject_id == subject)
+                    .filter(|caller| !self.table.capabilities(&caller.roles).is_empty())
+            })
+    }
+
+    /// A verified member's request to a scope with no cell, or with one this
+    /// host cannot open (`unopenable`). Only a member naming this scope
+    /// learns which; anyone else is answered by the gate ([`Gate`]).
+    fn vacant(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+        caller: &crate::policy::Caller,
+        unopenable: Option<&str>,
+    ) -> Response {
+        if self.names_this_scope(request.query) {
+            let refusal = match unopenable {
+                None => provision::not_provisioned(),
+                Some(reason) => provision::unopenable(
+                    self.table
+                        .writes_definitions(&caller.roles)
+                        .then_some(reason),
+                )
+                .with_cause(reason),
+            };
+            server::respond(Err(refusal))
         } else {
-            server::outside::<E>(request)
+            // Another scope named: answered as a scope with no cell answers
+            // anyone (the source and upload routes answered before this).
+            self.outside(false).answer::<E>(principals, request)
         }
     }
 
@@ -255,14 +1053,7 @@ impl<E: SqlEngine> Tenant<E> {
         let _request = RequestScope::new(principals);
         let actor = principals.resolve(request.authorization, request.now);
         let actor = actor.as_deref();
-        if request.method != "POST" {
-            return Err(Refusal::new(
-                StatusCode::METHOD_NOT_ALLOWED,
-                "route.method_not_allowed",
-                "the route does not accept this method",
-                "a cell is provisioned with POST",
-            ));
-        }
+        provision_method(request)?;
         let mut fields = server::parse(request.query, &["orgId", "environmentId"])?;
         let scope = ScopeQuery {
             org_id: fields.remove("orgId"),
@@ -283,6 +1074,16 @@ impl<E: SqlEngine> Tenant<E> {
                 &scope,
                 actor,
             )?,
+            // Its owner is told; provisioning never overwrites a stored cell.
+            State::Unopenable(reason) => {
+                provision::authorize(
+                    &Provisioners::new(self.table, Arc::clone(&self.caller)),
+                    &self.scope,
+                    &scope,
+                    actor,
+                )?;
+                return Err(provision::unopenable(Some(reason)).with_cause(reason));
+            }
         }
         let admitted = provision::admit_submission(&self.base, &self.scope, request.body)?;
         if matches!(self.state, State::Vacant) {
@@ -297,19 +1098,21 @@ impl<E: SqlEngine> Tenant<E> {
             {
                 // Provisioned since this host last looked (a reply it lost):
                 // serve it and answer from its first revision.
-                self.state =
-                    reopen(engine, &self.scope, self.table, &self.caller).map_err(Refusal::host)?;
+                self.state = reopen(engine, &self.scope, self.table, &self.caller)
+                    .map_err(Refusal::host)?
+                    .map_err(Refusal::host)?;
             } else {
                 let (store, receipt) = provision::provision_cell(
                     engine,
                     &self.scope,
                     &self.base,
-                    admitted,
+                    &admitted,
                     request.now.saturating_mul(1000),
                 )?;
                 let serving =
                     Serving::from_store(store, &self.scope, self.table, &self.caller, None)
                         .map_err(Refusal::host)?;
+                install_sources_pack(&serving.host, request.now);
                 self.state = State::Serving(Box::new(serving));
                 return server::document_json(&receipt);
             }
@@ -317,35 +1120,109 @@ impl<E: SqlEngine> Tenant<E> {
         let State::Serving(serving) = &self.state else {
             return Err(Refusal::host("the provisioned cell did not open"));
         };
-        server::document_json(&provision::replay(&serving.host, &self.base, &admitted)?)
+        let replayed = provision::replay(&serving.host, &self.base, &admitted)?;
+        // A replay of the same set also completes a cell whose pack install
+        // was interrupted, or that was provisioned before it was installed.
+        install_sources_pack(&serving.host, request.now);
+        server::document_json(&replayed)
+    }
+}
+
+/// #1358: install the cell's own sources pack (`source.Connection`,
+/// `source.SyncRun`, `source.Upload` and the mapping that lands the cell's
+/// reports) as the governed revision after the provisioned one, so a new cell
+/// answers "which connections?" with an empty list, never a refusal. The
+/// provisioned revision, and so the provisioning receipt and its replay, are
+/// unchanged. Idempotent: a cell that already serves the types installs
+/// nothing. A refused install leaves the cell as provisioned; its first
+/// connection or upload then installs the pack, or refuses there.
+fn install_sources_pack<E: SqlEngine>(host: &DevHost<E>, now_s: u64) {
+    let _installed_or_left_to_first_use =
+        norn_api::sources::ensure_upload_records(host, now_s.saturating_mul(1000));
+}
+
+/// The receipt handles keyed by `key`; none without a key.
+///
+/// # Errors
+/// A key shorter than [`MIN_HANDLE_KEY_BYTES`]: the cell refuses to open
+/// rather than serve unkeyed or weakly keyed handles.
+fn handles(key: Option<&[u8]>) -> Result<Option<ReceiptHandles>, SeedError> {
+    match key {
+        None => Ok(None),
+        Some(key) if key.len() < MIN_HANDLE_KEY_BYTES => Err(SeedError(format!(
+            "the lineage key is {} bytes; at least {MIN_HANDLE_KEY_BYTES} are required",
+            key.len()
+        ))),
+        Some(key) => Ok(Some(ReceiptHandles {
+            key: key.to_vec(),
+            catalog: EffectiveCatalog::default(),
+        })),
     }
 }
 
 /// HOST-REOPEN-1: the cell `engine` holds, at its active definitions with
 /// the model rebuilt from the retained set; vacant when it holds none.
+///
+/// The inner `Err` is a stored cell this host cannot open (its definitions do
+/// not read, or its layout is not the one they rebuild): the caller serves it
+/// as a refusal state.
+///
+/// # Errors
+/// The engine's definitions cannot be read, or the store is bound to
+/// another scope: never served, and never told apart from a vacant scope.
 fn reopen<E: SqlEngine>(
     engine: E,
     scope: &CellScope,
     table: &'static GrantTable,
     caller: &Arc<CallerSlot>,
-) -> Result<State<E>, SeedError> {
+) -> Result<Result<State<E>, String>, SeedError> {
     let fail =
         |context: &str, error: &dyn std::fmt::Display| SeedError(format!("{context}: {error}"));
     let Some(active) =
         CellStore::read_active_definitions(&engine).map_err(|e| fail("definitions", &e))?
     else {
-        return Ok(State::Vacant);
+        return Ok(Ok(State::Vacant));
     };
-    let artifacts = norn_api::kernel_set::retained_artifacts(&active.canonical_set)
-        .map_err(|e| fail("active definitions", &e))?;
-    let model = norn_api::kernel_set::kernel_model(&artifacts)
-        .map_err(|refusal| SeedError(format!("active definitions: {refusal:?}")))?;
-    let mut store = CellStore::from_engine(engine, model).map_err(|e| fail("open", &e))?;
-    // A store bound to another scope is never served under this one.
+    // A store bound to another scope is never served under this one; its
+    // binding is read before its layout is trusted.
+    match CellStore::read_binding(&engine, "scope").map_err(|e| fail("scope", &e))? {
+        Some(bound) if bound != scope.key() => {
+            return Err(SeedError(format!("scope: the store is bound to {bound}")));
+        }
+        Some(_) | None => {}
+    }
+    let opened = (|| {
+        let artifacts = norn_api::kernel_set::retained_artifacts(&active.canonical_set)
+            .map_err(|e| format!("active definitions: {e}"))?;
+        // The serving model every install path checks against (DEFS-REOPEN-1):
+        // the kernel's action types are part of it, as provisioned.
+        let model = norn_api::kernel_set::serving_model(&artifacts)
+            .map_err(|e| format!("active definitions: {e}"))?;
+        CellStore::from_engine(engine, model).map_err(|e| format!("open: {e}"))
+    })();
+    let mut store = match opened {
+        Ok(store) => store,
+        Err(reason) => return Ok(Err(reason)),
+    };
     store
         .bind("scope", &scope.key())
         .map_err(|e| fail("scope", &e))?;
-    Ok(State::Serving(Box::new(Serving::from_store(
+    Ok(Ok(State::Serving(Box::new(Serving::from_store(
         store, scope, table, caller, None,
-    )?)))
+    )?))))
+}
+
+/// The cell's own collections, for `GET /v1/access`: every model type but the
+/// kernel's call records, which only definition writers read (#1297 r2 B2).
+fn collections<'a>(
+    object_types: impl IntoIterator<Item = &'a norn_ir::ObjectTypeDef>,
+) -> Vec<String> {
+    object_types
+        .into_iter()
+        .map(|object_type| object_type.name.as_str())
+        .filter(|name| {
+            *name != norn_kernel::ACTION_CALL_TYPE && *name != norn_kernel::OWNED_ROWS_TYPE
+        })
+        .map(str::to_owned)
+        .collect()
 }

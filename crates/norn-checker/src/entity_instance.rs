@@ -222,7 +222,7 @@ impl EffectiveObjectType {
                 .properties
                 .iter()
                 .filter_map(|property| match &property.property_type {
-                    PropertyType::Ref { name } => Some(name.clone()),
+                    PropertyType::Ref { name, .. } => Some(name.clone()),
                     PropertyType::Text { .. }
                     | PropertyType::Integer { .. }
                     | PropertyType::Decimal { .. }
@@ -1239,9 +1239,18 @@ impl EffectiveProperty {
     }
 }
 
+/// METRIC-ADDITIVITY-REF-1: a `ref`'s use-site additivity is part of the
+/// effective kind, so every aggregation reader sees it as an inline one.
 fn resolved_kind(resolved: &crate::property_types::ResolvedType<'_>) -> EffectiveKind {
     match resolved.resolution {
-        TypeResolution::Base(base) => EffectiveKind::Base(base.clone()),
+        TypeResolution::Base(base) => EffectiveKind::Base(
+            crate::property_types::with_contract(
+                base,
+                resolved.additivity(),
+                resolved.unit_source(),
+            )
+            .into_owned(),
+        ),
         TypeResolution::Registry => resolved
             .names
             .last()
@@ -1599,14 +1608,12 @@ impl EffectiveKey {
             name: key.name.clone(),
             declared_by: owner.clone(),
             components: key.properties.clone(),
-            normalize: rule
-                .map(|rule| {
-                    rule.normalize
-                        .iter()
-                        .map(|entry| (entry.property.clone(), entry.steps.clone()))
-                        .collect()
-                })
-                .unwrap_or_default(),
+            normalize: rule.map_or_default(|rule| {
+                rule.normalize
+                    .iter()
+                    .map(|entry| (entry.property.clone(), entry.steps.clone()))
+                    .collect()
+            }),
             match_policy: rule.and_then(|rule| rule.match_policy.clone()),
             naming_series: key.naming_series.clone(),
         }
@@ -1960,6 +1967,12 @@ impl EffectiveCatalog {
         Some(target_types)
     }
 
+    /// The artifact that declares the object type named `object_type`.
+    #[must_use]
+    pub fn artifact_of(&self, object_type: &str) -> Option<&str> {
+        self.by_name.get(object_type).map(String::as_str)
+    }
+
     /// The effective forward links of an object type, including inherited
     /// and extension links. `None` means the type is unavailable.
     #[must_use]
@@ -2090,7 +2103,7 @@ mod tests {
             );
             for (a, b) in [(&omitted, &explicit), (&explicit, &omitted)] {
                 assert!(a.same_contract(b));
-                assert!(a.narrowing_reasons_from(b).is_empty());
+                assert_eq!(a.narrowing_reasons_from(b).len(), 0);
             }
         }
     }
@@ -2117,8 +2130,9 @@ mod tests {
                     kind["additivity"] = serde_json::json!({"kind":"additive"});
                     let candidate = effective_property(property(kind));
                     assert!(!candidate.same_contract(&previous), "{case}");
-                    assert!(
-                        candidate.narrowing_reasons_from(&previous).is_empty(),
+                    assert_eq!(
+                        candidate.narrowing_reasons_from(&previous).len(),
+                        0,
                         "{case}"
                     );
                     let value =
@@ -2265,7 +2279,7 @@ mod tests {
             candidate.check_runtime_value_from(&previous, &stored),
             Err(InstanceError::Unsupported(_))
         ));
-        assert!(!candidate.narrowing_reasons_from(&previous).is_empty());
+        assert_ne!(candidate.narrowing_reasons_from(&previous).len(), 0);
     }
 
     #[test]
@@ -2319,7 +2333,7 @@ mod tests {
         assert_eq!(utc.canonical_runtime_value(&source), canonical);
         assert_eq!(offset.canonical_runtime_value(&source), canonical);
         assert!(utc.same_contract(&offset));
-        assert!(utc.narrowing_reasons_from(&offset).is_empty());
+        assert_eq!(utc.narrowing_reasons_from(&offset).len(), 0);
         for invalid in [
             "2025-02-29T12:30:00Z",
             "2024-02-29T12:30:00",
@@ -2358,11 +2372,10 @@ mod tests {
         }));
 
         assert!(reordered.same_contract(&previous));
-        assert!(reordered.narrowing_reasons_from(&previous).is_empty());
-        assert!(
-            !partial_replacement
-                .narrowing_reasons_from(&previous)
-                .is_empty()
+        assert_eq!(reordered.narrowing_reasons_from(&previous).len(), 0);
+        assert_ne!(
+            partial_replacement.narrowing_reasons_from(&previous).len(),
+            0
         );
     }
 
@@ -2386,10 +2399,11 @@ mod tests {
 
         assert!(!refactored.same_contract(&previous));
         assert!(with_equivalent_bound.same_contract(&previous));
-        assert!(
+        assert_eq!(
             with_equivalent_bound
                 .narrowing_reasons_from(&previous)
-                .is_empty()
+                .len(),
+            0
         );
     }
 

@@ -12,10 +12,11 @@ use norn_cell_do::analytics::{self, DemoQuestions, QUESTION};
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
 use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::server::{self, Response};
+use norn_cell_do::tenant::Tenant;
 use serde_json::Value;
 
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
-const VIEWER: Option<&str> = Some("Bearer fixture:viewer@demo");
+const VIEWER: Option<&str> = Some("Bearer fixture:admin@demo");
 const GUEST: Option<&str> = Some("Bearer fixture:guest@demo");
 /// The test stage's lineage key (the `NORN_LINEAGE_KEY` Worker secret in a deploy).
 const SECRET: [u8; 32] = [5; 32];
@@ -90,7 +91,7 @@ fn granted_principals_get_the_exact_live_answer() {
     let answer = json(&viewer);
     assert_eq!(answer["freshness"], "exact");
     assert_eq!(answer["complete"], true);
-    assert!(!answer["rows"].as_object().unwrap().is_empty());
+    assert_ne!(answer["rows"].as_object().unwrap().len(), 0);
     // Population alone answers the question with the same aggregate and
     // membership; member amounts are row values and are withheld (DATA-VALUES-1).
     let guest = get(&cell, &answer_path(), SCOPE, GUEST);
@@ -149,6 +150,81 @@ fn ungranted_foreign_and_anonymous_reads_share_one_denial() {
     assert!(!anonymous.body.contains("analytics"));
 }
 
+/// The hosted path: `wasm.rs` serves the analytics scope as a seeded
+/// tenant. A caller who is not a verified member of the organization is
+/// answered exactly as a scope with no cell, decided before any question is
+/// looked up (#1297 r1 B1), so the published question never shows: its
+/// answer, its trace and an unknown question's answer refuse alike, and
+/// identically to a vacant scope (D84: the base's 404 `question.not_found`).
+/// A member is still answered.
+#[test]
+fn an_outsiders_question_is_answered_as_a_scope_with_no_cell_on_the_hosted_tenant() {
+    let scope = analytics::analytics_scope();
+    let opened = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let questions = DemoQuestions::new(opened.plan, scope.clone())
+        .with_handle_key(&SECRET)
+        .with_metrics(opened.definitions, opened.catalog);
+    let mut seeded =
+        Tenant::seeded(scope.clone(), &DEMO_GRANTS, opened.store, Some(questions)).unwrap();
+    let seeded_principals = FixturePrincipals::new(DEMO_FIXTURES, seeded.caller());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("vacant.sqlite");
+    let mut vacant = Tenant::open(
+        scope,
+        &DEMO_GRANTS,
+        Box::new(move || {
+            NativeEngine::open(&path, norn_cell::StoreOptions::default()).map_err(|e| e.to_string())
+        }),
+        Some(&SECRET),
+    )
+    .unwrap();
+    let vacant_principals = FixturePrincipals::new(DEMO_FIXTURES, vacant.caller());
+    let ask = |tenant: &mut Tenant<NativeEngine>,
+               principals: &FixturePrincipals,
+               path: &str,
+               auth: Option<&str>| {
+        let request = server::Request {
+            method: "GET",
+            path,
+            query: SCOPE,
+            authorization: auth,
+            now: 0,
+            body: "",
+        };
+        tenant
+            .handle_analytics(principals, None, &request)
+            .unwrap_or_else(|| tenant.handle(principals, &request))
+    };
+    let member = ask(&mut seeded, &seeded_principals, &answer_path(), VIEWER);
+    assert_eq!(member.status, 200, "{}", member.body);
+    for path in [
+        answer_path(),
+        format!("/v1/questions/{QUESTION}/trace"),
+        "/v1/questions/no.such_question/answer".to_owned(),
+    ] {
+        for auth in [
+            None,
+            Some("Bearer fixture:stranger@demo"),
+            Some("Bearer junk"),
+        ] {
+            let at_seeded = ask(&mut seeded, &seeded_principals, &path, auth);
+            let at_vacant = ask(&mut vacant, &vacant_principals, &path, auth);
+            // D84: exactly the base's opaque 404 `question.not_found`.
+            assert_eq!(
+                (at_seeded.status, &json(&at_seeded)["code"]),
+                (404, &serde_json::json!("question.not_found")),
+                "{path} as {auth:?}: {}",
+                at_seeded.body
+            );
+            assert_eq!(
+                (at_seeded.status, &at_seeded.body),
+                (at_vacant.status, &at_vacant.body),
+                "{path} as {auth:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn traces_disclose_values_only_under_their_own_grant() {
     let cell = cell(NativeEngine::open_in_memory().unwrap());
@@ -160,7 +236,7 @@ fn traces_disclose_values_only_under_their_own_grant() {
         assert_eq!(viewer.status, 200, "{bucket}: {}", viewer.body);
         let viewer = json(&viewer);
         let contributions = viewer["contributions"].as_array().unwrap();
-        assert!(!contributions.is_empty(), "{bucket}");
+        assert_ne!(contributions.len(), 0, "{bucket}");
         assert!(
             contributions
                 .iter()
@@ -380,7 +456,7 @@ fn an_analytics_cell_without_definitions_upgrades_in_place_once() {
         let object = analytics::object_type().unwrap();
         let model = norn_cell::Model::from_definitions(std::slice::from_ref(&object), &[]).unwrap();
         let mut old = norn_cell::CellStore::from_engine(open(), model).unwrap();
-        old.commit(&analytics::k1_batch(&scope).unwrap()).unwrap();
+        norn_cell::provision::k1_conversions(&mut old, &scope.key()).unwrap();
         assert!(old.read().installed_definitions(None).unwrap().is_none());
     }
     let fresh = get(

@@ -742,6 +742,7 @@ fn kind_name(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Law => "law",
         ArtifactKind::DefinedConcept => "defined_concept",
         ArtifactKind::Labels => "labels",
+        ArtifactKind::Model => "model",
     }
 }
 
@@ -842,7 +843,8 @@ fn artifact_removal(artifact: &ArtifactEnvelope, out: &mut Vec<Narrowing>) {
         | ArtifactKind::SourceSchema
         | ArtifactKind::Law
         | ArtifactKind::DefinedConcept
-        | ArtifactKind::Labels => {}
+        | ArtifactKind::Labels
+        | ArtifactKind::Model => {}
     }
 }
 
@@ -998,13 +1000,12 @@ impl EntityModelSnapshot {
                         properties: payload
                             .get("fields")
                             .and_then(Value::as_object)
-                            .map(|fields| {
+                            .map_or_default(|fields| {
                                 fields
                                     .iter()
                                     .map(|(name, value)| (name.clone(), value.clone()))
                                     .collect()
-                            })
-                            .unwrap_or_default(),
+                            }),
                         ..ObjectTypeSnapshot::default()
                     },
                 );
@@ -1043,8 +1044,7 @@ impl EntityModelSnapshot {
         let mut members = definition
             .extends
             .as_deref()
-            .map(|parent| self.effective_properties(parent, seen))
-            .unwrap_or_default();
+            .map_or_default(|parent| self.effective_properties(parent, seen));
         members.extend(definition.properties.clone());
         if let Some(extensions) = self.extensions.get(name) {
             for extension in extensions {
@@ -1066,8 +1066,7 @@ impl EntityModelSnapshot {
         let mut members = definition
             .extends
             .as_deref()
-            .map(|parent| self.effective_links(parent, seen))
-            .unwrap_or_default();
+            .map_or_default(|parent| self.effective_links(parent, seen));
         members.extend(definition.links.clone());
         if let Some(extensions) = self.extensions.get(name) {
             for extension in extensions {
@@ -1093,8 +1092,7 @@ impl EntityModelSnapshot {
         let mut members = definition
             .extends
             .as_deref()
-            .map(|parent| self.effective_owned_collections(parent, seen))
-            .unwrap_or_default();
+            .map_or_default(|parent| self.effective_owned_collections(parent, seen));
         members.extend(definition.owned_collections.clone());
         seen.remove(name);
         members
@@ -1120,8 +1118,7 @@ impl EntityModelSnapshot {
         let mut machines = definition
             .extends
             .as_deref()
-            .map(|parent| self.effective_lifecycles(parent, seen))
-            .unwrap_or_default();
+            .map_or_default(|parent| self.effective_lifecycles(parent, seen));
         machines.retain(|property, _machine| states.contains_key(property));
         for (property, machine) in &mut machines {
             if let Some(property_states) = states.get(property) {
@@ -1161,8 +1158,7 @@ impl EntityModelSnapshot {
         let mut invariants = definition
             .extends
             .as_deref()
-            .map(|parent| self.effective_invariants(parent, seen))
-            .unwrap_or_default();
+            .map_or_default(|parent| self.effective_invariants(parent, seen));
         for (id, invariant) in &definition.invariants {
             invariants.insert(
                 (

@@ -1,0 +1,68 @@
+{
+  "artifactId": "ml.modelversion.promote.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Promote a model version to production",
+  "namespace": "ml",
+  "payload": {
+    "access": {
+      "artifactId": "ml.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "ml.modelversion.promote",
+    "effectProgram": {
+      "entityArtifactId": "ml.ModelVersion.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "version_id",
+      "objectKind": "ml.ModelVersion",
+      "transition": "promote"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Promote a model version to production",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "ml.ModelVersion"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ml/artifacts/ml.modelversion.promote.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

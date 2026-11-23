@@ -16,7 +16,8 @@ use crate::engine::{SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 use crate::model::{ColumnRef, Model};
 use crate::read::{
-    ObjectRecord, StoreReader, column_list, entry_hash, next, placeholders, to_i64, to_u64,
+    LedgerEntry, ObjectRecord, StoreReader, column_list, entry_hash, next, placeholders, to_i64,
+    to_u64,
 };
 use crate::store::{
     CommitBatch, Consumption, EffectRow, FactWriteRow, LinkChange, LinkedRow, OutboxCommand,
@@ -215,6 +216,9 @@ pub(crate) struct Writer<'a, E: SqlEngine> {
     commit_seq: u64,
     batch_output_facts: Option<BTreeSet<(String, String, String, u64)>>,
     pending_snapshot_digests: crate::read::PendingDigests,
+    /// The effective-values catalog, built once per commit: its effective
+    /// model is derived on first use, so a catalog per write re-derived it.
+    catalog: std::cell::OnceCell<TypeCatalog<'a>>,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -232,6 +236,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             commit_seq,
             batch_output_facts: None,
             pending_snapshot_digests: BTreeMap::new(),
+            catalog: std::cell::OnceCell::new(),
         }
     }
 
@@ -266,6 +271,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         }
         let occurrence_inherited = self.occurrence_lineage_markings(&inherited)?;
         let destination_markings = self.value_lineage_markings()?;
+        let mapped = self.mapped_properties();
         self.batch_output_facts = Some(self.emitted_fact_versions()?);
         if let Some(consumption) = &self.batch.consumes {
             self.consume(consumption)?;
@@ -282,7 +288,19 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             )?;
             let changed = self.write_changed_properties(write)?;
             let derived = self.derived_properties(write);
-            let lineage_properties = changed.union(&derived).cloned().collect();
+            // #1355: a property the consumed mapping computed from its source
+            // record alone takes that record's classifications (its
+            // provenance `markings`), its own declaration and its own previous
+            // versions; never what the commit read to validate links or record
+            // findings. Derived outputs and every write without such proof
+            // keep the commit's full read lineage, as unproven ones must.
+            let source = mapped
+                .get(&(write.target().0.to_owned(), write.target().1.to_owned()))
+                .filter(|_| matches!(write, FactWriteRow::Put { .. }));
+            let (from_source, lineage_properties): (BTreeSet<String>, BTreeSet<String>) = changed
+                .union(&derived)
+                .cloned()
+                .partition(|property| source.is_some() && !derived.contains(property));
             let mut row = self.write(write)?;
             Self::record_changed_properties(
                 &mut changed_properties,
@@ -309,6 +327,15 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                         &write_inherited,
                     )?;
                 }
+            } else if lineage_properties.is_empty() && !from_source.is_empty() {
+                // Every changed property came from the source record: the
+                // commit's reads still classify this version's occurrence.
+                self.apply_occurrence_lineage_to_version(
+                    &row.object_type,
+                    &row.key,
+                    row.version,
+                    &write_inherited,
+                )?;
             } else {
                 self.apply_read_lineage_to_version(
                     &row.object_type,
@@ -317,6 +344,17 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     &lineage_properties,
                     &write_inherited,
                 )?;
+            }
+            if let Some(labels) = source.filter(|labels| !labels.is_empty()) {
+                for property in &from_source {
+                    self.extend_marking_snapshot(
+                        &row.object_type,
+                        &row.key,
+                        property,
+                        row.version,
+                        labels,
+                    )?;
+                }
             }
             if !changed.is_empty() || !derived.is_empty() {
                 self.propagate_computed_markings(write.target().0, write.target().1)?;
@@ -685,6 +723,41 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     ),
                     params![commit_seq, observation_id],
                 )?;
+                if observation_id.starts_with("mapping-bundle:") {
+                    self.conn.execute(
+                        &crate::system::claim_endpoints_of("i.\"observation_id\" = ?1"),
+                        params![observation_id],
+                    )?;
+                    // MAP-REPROCESS-1: an explicitly re-derived bundle consumes
+                    // the quarantined row it reprocesses (the guard rechecked
+                    // that it names exactly that row's capture address).
+                    self.conn.execute(
+                        &format!(
+                            "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = ?1 WHERE \"consumed_commit_seq\" IS NULL AND \"observation_id\" = (SELECT json_extract(\"observed\", '$.input.reprocesses') FROM \"{INBOX}\" WHERE \"observation_id\" = ?2)"
+                        ),
+                        params![commit_seq, observation_id],
+                    )?;
+                }
+                if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+                    // OBS-PAGE-1: the page's still-pending members are consumed
+                    // by the commit that consumes the page (the guard checked
+                    // that it applies exactly them).
+                    let members = format!(
+                        "SELECT value FROM json_each((SELECT \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?2), '$.input.members')"
+                    );
+                    self.conn.execute(
+                        &format!(
+                            "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = ?1 WHERE \"consumed_commit_seq\" IS NULL AND \"observation_id\" IN ({members})"
+                        ),
+                        params![commit_seq, observation_id],
+                    )?;
+                    self.conn.execute(
+                        &crate::system::claim_endpoints_of(&format!(
+                            "i.\"consumed_commit_seq\" = ?1 AND i.\"observation_id\" IN ({members})"
+                        )),
+                        params![commit_seq, observation_id],
+                    )?;
+                }
             }
         }
         Ok(())
@@ -893,9 +966,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         object_type: &str,
         values: &BTreeMap<String, Value>,
     ) -> Result<BTreeMap<String, Value>, CellError> {
-        let catalog = TypeCatalog::new(self.model.object_types())
-            .with_interfaces(self.model.interfaces())
-            .with_property_types(self.model.property_types());
+        let catalog = self.catalog.get_or_init(|| self.model.type_catalog());
         catalog
             .effective_object_values(&ObjectTypeName(object_type.to_owned()), values)
             .map_err(|error| match error {
@@ -1210,6 +1281,62 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     serde_json::from_str(&encoded).map_err(CellError::Json)?;
                 Ok((property, labels.into_iter().collect()))
             })
+            .collect()
+    }
+
+    /// The writes of this commit the mapping computed from the consumed
+    /// source records alone, each with those records' classifications: every
+    /// `observed_fact` event naming the written key carries a typed
+    /// provenance with no upstream fact (the transform read no other object)
+    /// and well-formed `markings`. Empty for a commit that consumes no
+    /// observation; a key with any other event stays out (fail closed).
+    fn mapped_properties(&self) -> BTreeMap<(String, String), BTreeSet<String>> {
+        let mut mapped: BTreeMap<(String, String), Option<BTreeSet<String>>> = BTreeMap::new();
+        if !matches!(self.batch.consumes, Some(Consumption::Observation { .. })) {
+            return BTreeMap::new();
+        }
+        for event in &self.batch.events {
+            let Some(fact) = event.get("event") else {
+                continue;
+            };
+            let (Some(object_type), Some(key)) = (
+                fact.get("key")
+                    .and_then(|key| key.get("objectType"))
+                    .and_then(Value::as_str),
+                fact.get("key")
+                    .and_then(|key| key.get("key"))
+                    .and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            let entry = mapped
+                .entry((object_type.to_owned(), key.to_owned()))
+                .or_insert_with(|| Some(BTreeSet::new()));
+            let labels = (event.get("op").and_then(Value::as_str) == Some("observed_fact"))
+                .then(|| event.get("provenance"))
+                .flatten()
+                .filter(|provenance| Self::looks_like_instance_provenance(provenance))
+                .filter(|provenance| {
+                    provenance
+                        .get("upstream")
+                        .is_none_or(|upstream| upstream.as_array().is_some_and(Vec::is_empty))
+                })
+                .and_then(|provenance| match provenance.get("markings") {
+                    None => Some(BTreeSet::new()),
+                    Some(Value::Array(labels)) => labels
+                        .iter()
+                        .map(|label| label.as_str().map(str::to_owned))
+                        .collect::<Option<BTreeSet<_>>>(),
+                    Some(_) => None,
+                });
+            match (entry.as_mut(), labels) {
+                (Some(held), Some(labels)) => held.extend(labels),
+                _ => *entry = None,
+            }
+        }
+        mapped
+            .into_iter()
+            .filter_map(|(key, labels)| labels.map(|labels| (key, labels)))
             .collect()
     }
 
@@ -3092,9 +3219,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         Ok(())
     }
 
-    /// Append the batch's events to the hash chain. Returns the first event's
-    /// sequence number and the head hash after the append.
-    pub(crate) fn append_events(&mut self) -> Result<(u64, String), CellError> {
+    /// Append the batch's events to the ledger. Returns the first sequence,
+    /// the new ledger head and the entries as written, so the export journal
+    /// records them without reading them back (INGEST-JOURNAL-MEMORY-1). Each
+    /// entry's event is the one a ledger reader decodes (#1527 S1): its
+    /// stored canonical text, parsed, with any payload stored apart resolved.
+    pub(crate) fn append_events(&mut self) -> Result<(u64, String, Vec<LedgerEntry>), CellError> {
         for event in &self.batch.events {
             self.reader()
                 .verify_durable_event(self.world, self.commit_seq, event)?;
@@ -3107,9 +3237,17 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         let (mut seq, mut prev) = self.reader().ledger_tail()?;
         let first = next(seq, "seq")?;
         let commit_seq = self.commit_seq_sql()?;
+        let mut entries = Vec::with_capacity(self.batch.events.len());
         for event in &self.batch.events {
             seq = next(seq, "seq")?;
             let hash = entry_hash(seq, self.commit_seq, self.world, event, &prev)?;
+            let (encoded, stored) = crate::payload_storage::encode_event(
+                self.conn,
+                seq,
+                &self.batch.scope,
+                self.world,
+                event,
+            )?;
             self.conn.execute(
                 &format!(
                     "INSERT INTO \"{LEDGER}\" (\"seq\", \"commit_seq\", \"world\", \"event\", \"prev_hash\", \"hash\") VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
@@ -3118,14 +3256,21 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     to_i64(seq, "seq")?,
                     commit_seq,
                     self.world,
-                    crate::payload_storage::encode_event(self.conn, seq, &self.batch.scope, self.world, event)?,
+                    encoded,
                     prev,
                     hash
                 ],
             )?;
-            prev = hash;
+            entries.push(LedgerEntry {
+                seq,
+                commit_seq: self.commit_seq,
+                world: self.world.to_owned(),
+                event: stored,
+                prev_hash: std::mem::replace(&mut prev, hash.clone()),
+                hash,
+            });
         }
-        Ok((first, prev))
+        Ok((first, prev, entries))
     }
 
     /// Apply the outbox and timer effects, in order.

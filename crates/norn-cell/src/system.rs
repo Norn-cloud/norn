@@ -3,7 +3,7 @@
 //!
 //! | table | row | written by |
 //! | --- | --- | --- |
-//! | `_norn_meta` | store format, the model's DDL hash, and the property-column layout | open |
+//! | `_norn_meta` | store format, engine storage-version stamp, the model's DDL hash, and the property-column layout | open |
 //! | `_norn_ledger` | one event, hash-chained to the previous one | commit |
 //! | `_norn_receipt` | one commit: ledger span and head, request hash, consumption, written versions, idempotency key | commit |
 //! | `_norn_outbox` | one command id: its latest generation, its recorded result, and the commit that consumed it (unconsumed rows are the `perform` queue, in enqueue order) | commit; perform |
@@ -30,7 +30,9 @@ use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 
 /// Pre-alpha format /8 binds producing receipts to exact incarnation digests.
-/// Stores /2 through /7 must be recreated, never upgraded in place.
+/// Stores /2 through /7 must be recreated, never upgraded in place. Ledger
+/// events name this format, so it no longer changes: later changes to what
+/// an engine writes are storage versions ([`crate::engine_release`]).
 pub const STORE_FORMAT: &str = "norn.cell.store/8";
 /// Reverse index of pending relation intents, maintained with their records.
 pub(crate) const PENDING_LINK_INDEX: &str = "_norn_pending_link";
@@ -55,6 +57,23 @@ pub(crate) const TIMER: &str = "_norn_timer";
 pub(crate) const RUN: &str = "_norn_run";
 /// Inbox table.
 pub(crate) const INBOX: &str = "_norn_inbox";
+pub(crate) const CLAIM_ENDPOINT: &str = "_norn_claim_endpoint";
+
+/// The link-claim endpoints of the consumed mapping bundles that `?1`
+/// selects (a SQL condition on `i`): a record that clears links names its own
+/// key as a source; a record's links name their `key` (source) and
+/// `targetKey` (target). Only records that carry or clear links count.
+pub(crate) fn claim_endpoints_of(selection: &str) -> String {
+    let records = format!(
+        "FROM \"{INBOX}\" i, json_each(i.\"observed\", '$.input.records') AS record WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' AND i.\"consumed_commit_seq\" IS NOT NULL AND ({selection})"
+    );
+    format!(
+        "INSERT OR IGNORE INTO \"{CLAIM_ENDPOINT}\" (\"side\", \"key\", \"commit_seq\", \"observation_id\", \"bytes\") \
+         SELECT 'source', json_extract(record.value, '$.key'), i.\"consumed_commit_seq\", i.\"observation_id\", octet_length(i.\"observed\") {records} AND json_array_length(json_extract(record.value, '$.clearedLinks')) > 0 AND json_extract(record.value, '$.key') IS NOT NULL \
+         UNION ALL SELECT 'source', json_extract(link.value, '$.key'), i.\"consumed_commit_seq\", i.\"observation_id\", octet_length(i.\"observed\") FROM \"{INBOX}\" i, json_each(i.\"observed\", '$.input.records') AS record, json_each(record.value, '$.links') AS link WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' AND i.\"consumed_commit_seq\" IS NOT NULL AND ({selection}) AND json_type(link.value, '$.key') = 'text' \
+         UNION ALL SELECT 'target', json_extract(link.value, '$.targetKey'), i.\"consumed_commit_seq\", i.\"observation_id\", octet_length(i.\"observed\") FROM \"{INBOX}\" i, json_each(i.\"observed\", '$.input.records') AS record, json_each(record.value, '$.links') AS link WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' AND i.\"consumed_commit_seq\" IS NOT NULL AND ({selection}) AND json_type(link.value, '$.targetKey') = 'text'"
+    )
+}
 /// Version high-water table.
 pub(crate) const VERSIONS: &str = "_norn_version";
 /// Link version table (#3013).
@@ -103,7 +122,14 @@ const MARKING_VERSION_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_marking_v
   "markings" TEXT NOT NULL,
   PRIMARY KEY ("world", "object_type", "subject", "property", "version")
 )"#;
+/// The partial index of the current labels that are not empty.
+pub(crate) const MARKING_CURRENT_NONEMPTY: &str = "_norn_marking_current_nonempty";
 const MARKING_NONEMPTY_DDL: &str = r#"CREATE INDEX IF NOT EXISTS "_norn_marking_current_nonempty" ON "_norn_marking_current" ("world", "object_type", "property") WHERE "markings" != '[]'"#;
+/// The partial index of the version labels that are not empty: a cell's
+/// history holds a label exactly when it has a row (a storage version of its
+/// own, #1547).
+pub(crate) const MARKING_VERSION_NONEMPTY: &str = "_norn_marking_version_nonempty";
+const MARKING_VERSION_NONEMPTY_DDL: &str = r#"CREATE INDEX IF NOT EXISTS "_norn_marking_version_nonempty" ON "_norn_marking_version" ("world", "object_type", "property") WHERE "markings" != '[]'"#;
 const MARKING_SUBJECT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_marking_subject" (
   "subject" INTEGER NOT NULL PRIMARY KEY,
   "world" TEXT NOT NULL,
@@ -122,7 +148,8 @@ fn marking_schema_signature(sql: &str) -> String {
         MARKING_VERSION,
         MARKING_SUBJECT,
         "_norn_marking_subject/identity",
-        "_norn_marking_current_nonempty",
+        MARKING_CURRENT_NONEMPTY,
+        MARKING_VERSION_NONEMPTY,
         "world",
         "object_type",
         "id",
@@ -182,12 +209,18 @@ fn validate_marking_subjects<E: SqlEngine>(engine: &E) -> Result<(), CellError> 
     validate_marking_schema(
         engine,
         "index",
-        "_norn_marking_current_nonempty",
+        MARKING_CURRENT_NONEMPTY,
         MARKING_NONEMPTY_DDL,
     )?;
+    validate_marking_schema(
+        engine,
+        "index",
+        MARKING_VERSION_NONEMPTY,
+        MARKING_VERSION_NONEMPTY_DDL,
+    )?;
     let unexpected: Option<i64> = engine.query_optional(
-        "SELECT 1 FROM sqlite_master WHERE tbl_name IN (?1, ?2, ?3) AND (type = 'trigger' OR (type = 'index' AND sql IS NOT NULL AND name NOT IN (?4, ?5))) LIMIT 1",
-        params![MARKING_CURRENT, MARKING_VERSION, MARKING_SUBJECT, "_norn_marking_subject/identity", "_norn_marking_current_nonempty"],
+        "SELECT 1 FROM sqlite_master WHERE tbl_name IN (?1, ?2, ?3) AND (type = 'trigger' OR (type = 'index' AND sql IS NOT NULL AND name NOT IN (?4, ?5, ?6))) LIMIT 1",
+        params![MARKING_CURRENT, MARKING_VERSION, MARKING_SUBJECT, "_norn_marking_subject/identity", MARKING_CURRENT_NONEMPTY, MARKING_VERSION_NONEMPTY],
         |row| row.get(0),
     )?;
     let invalid: Option<i64> = engine.query_optional(
@@ -354,6 +387,7 @@ pub(crate) fn intern_marking_subjects<E: SqlEngine>(engine: &E) -> Result<(), Ce
             "INSERT INTO \"{MARKING_SUBJECT}\" (\"world\", \"object_type\", \"id\") SELECT DISTINCT \"world\", \"object_type\", \"id\" FROM \"{table}\" WHERE 1 ORDER BY \"world\", \"object_type\", \"id\" ON CONFLICT (\"world\", \"object_type\", \"id\") DO NOTHING"
         ))?;
         engine.execute_batch("DROP INDEX IF EXISTS \"_norn_marking_current_nonempty\"")?;
+        engine.execute_batch("DROP INDEX IF EXISTS \"_norn_marking_version_nonempty\"")?;
         let previous = format!("{table}_uninterned");
         engine.execute_batch(&format!("ALTER TABLE \"{table}\" RENAME TO \"{previous}\""))?;
         engine.execute_batch(ddl)?;
@@ -363,7 +397,8 @@ pub(crate) fn intern_marking_subjects<E: SqlEngine>(engine: &E) -> Result<(), Ce
         verify_marking_copy(engine, &previous, table)?;
         engine.execute_batch(&format!("DROP TABLE \"{previous}\""))?;
     }
-    engine.execute_batch(MARKING_NONEMPTY_DDL)
+    engine.execute_batch(MARKING_NONEMPTY_DDL)?;
+    engine.execute_batch(MARKING_VERSION_NONEMPTY_DDL)
 }
 
 /// The system DDL, in application order.
@@ -499,6 +534,20 @@ pub const SYSTEM_DDL: &[&str] = &[
   PRIMARY KEY ("position")
 )"#,
     r#"CREATE UNIQUE INDEX IF NOT EXISTS "_norn_inbox/id" ON "_norn_inbox" ("observation_id")"#,
+    // Link-claim endpoints of consumed mapping bundles, one row per (side,
+    // key, bundle), written when a bundle is consumed (`CLAIM_ENDPOINTS_OF`):
+    // a plan finds the bundles touching its keys by lookup, not by scanning.
+    r#"CREATE TABLE IF NOT EXISTS "_norn_claim_endpoint" (
+  "side" TEXT NOT NULL,
+  "key" TEXT NOT NULL,
+  "commit_seq" INTEGER NOT NULL,
+  "observation_id" TEXT NOT NULL,
+  "bytes" INTEGER NOT NULL,
+  PRIMARY KEY ("side", "key", "observation_id")
+)"#,
+    // The source event a mapping bundle captures (`source_event_mapping_bundles`):
+    // looked up on every mapping, so an index, not a scan of every bundle.
+    r#"CREATE INDEX IF NOT EXISTS "_norn_inbox/source_event" ON "_norn_inbox" (json_extract("observed", '$.input.input.connectorInstance'), json_extract("observed", '$.input.input.partition'), json_extract("observed", '$.input.raw.source'), json_extract("observed", '$.input.raw.source_id'), json_extract("observed", '$.input.raw.event_id')) WHERE "observation_id" LIKE 'mapping-bundle:%'"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_version" (
   "world" TEXT NOT NULL,
   "root_type" TEXT NOT NULL,
@@ -591,4 +640,5 @@ pub const SYSTEM_DDL: &[&str] = &[
   PRIMARY KEY ("world", "object_type", "id", "version", "is_current")
 )"#,
     MARKING_NONEMPTY_DDL,
+    MARKING_VERSION_NONEMPTY_DDL,
 ];

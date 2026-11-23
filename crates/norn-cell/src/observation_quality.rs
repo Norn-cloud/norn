@@ -136,6 +136,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if world == crate::MAIN_WORLD {
             findings.extend(self.source_conflict_findings(object_type, key)?);
             findings.extend(self.identity_findings(object_type, key)?);
+            findings.extend(self.held_link_findings(object_type, key)?);
         }
         Ok(findings)
     }
@@ -252,6 +253,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                                 &FactKey::new(object_type, key),
                                 &record.values,
                                 &finding,
+                                &mut crate::link_laws::CurrentLinks {
+                                    reader: self,
+                                    world,
+                                    subject: FactKey::new(record.object_type.as_str(), key),
+                                },
                             )
                             .map_err(|error| CellError::QualityEvaluation(Box::new(error)))?
                         {

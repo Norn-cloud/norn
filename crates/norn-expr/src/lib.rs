@@ -2,7 +2,8 @@
 //!
 //! Ring 0 — pure, portable semantic core (see `AGENTS.md`). This crate is the
 //! only Norn crate that depends on `zen-expression`, pinned to the
-//! `Norn-cloud/zen` fork (D19, D32; `zen-fork-ledger.md`). Its public API is
+//! `Norn-cloud/zen` fork, which carries only engine-internal patches
+//! (`crates/norn-skeleton-guard/zen-pin.json`). Its public API is
 //! Norn-owned: [`Expression`], [`Value`], [`Number`], [`EvaluationBudget`],
 //! [`Evaluation`], [`EvaluationAttempt`], [`UnaryTest`], [`ExprError`], the type environment
 //! ([`ZenTypeEnv`], [`Type`], [`RecordType`]), and the checker
@@ -17,9 +18,9 @@
 //!   content-addressed type environment of an `EntityIR` v2 artifact set, with
 //!   the closed [`actor`] operand (T1-EXPR-2, #2419).
 //! - [`check_expression`] type-checks an expression against it under the
-//!   `norn-zen/6` profile: the `norn-expr/4` structural grammar with explicit
-//!   temporal constructors, same-kind ordering and checked arithmetic,
-//!   and bounded string normalization
+//!   `norn-zen/7` profile: the `norn-expr/4` structural grammar with explicit
+//!   temporal constructors, same-kind ordering, checked temporal arithmetic,
+//!   proper-interval and pinned-IANA DST builtins, and bounded string normalization
 //!   ([`check`]). [`check_unary`] checks
 //!   a decision-table [`UnaryTest`] against its column's subject type the same
 //!   way (T1-EXPR-3b, #2521).
@@ -32,7 +33,7 @@
 //!   [`CostEstimate`] within the limit profile's decide fuel budget, and
 //!   evaluation is always metered (T1-EXPR-4, #2522).
 //!
-//! The versioned Norn profile is published in `PROFILE.md` (T1-EXPR-6).
+//! The versioned Norn profile is published in this crate's `README.md` (T1-EXPR-6).
 //! Compilation alone does not imply admission: the checker proves the profile
 //! grammar, types, and static cost against the declared environment.
 //!
@@ -68,6 +69,7 @@ mod expression;
 pub mod graph;
 mod literals;
 mod reads;
+mod row_tree;
 /// Exact validation of the admitted closed JSON schema dialect.
 pub mod schema;
 mod structural_sum;
@@ -76,9 +78,10 @@ mod value;
 
 pub use check::{
     CheckedExpression, ConstructionSource, CostEstimate, Diagnostic, InferredType, RootCostBounds,
-    StructuralLimits, check_expression, check_expression_with, check_expression_with_root_bounds,
-    check_expression_with_sources, check_unary, check_unary_with, validate_evaluation_source,
-    validate_unary_evaluation_source,
+    StructuralLimits, check_expression, check_expression_under, check_expression_with,
+    check_expression_with_root_bounds, check_expression_with_sources, check_unary,
+    check_unary_with, condition_null_guards, validate_evaluation_source,
+    validate_profile_constructs, validate_unary_evaluation_source,
 };
 pub use convert::rescale_decimal;
 pub use env::{
@@ -88,9 +91,13 @@ pub use env::{
 };
 pub use error::ExprError;
 pub use expression::{
-    Evaluation, EvaluationAttempt, EvaluationBudget, Expression, UnaryTest, check_unary_syntax,
+    Evaluation, EvaluationAttempt, EvaluationBudget, Expression, PreparedAdmission, UnaryTest,
+    check_unary_syntax,
 };
 pub use literals::{FieldValue, ObjectLiteral, command_records, object_literals};
-pub use reads::{ExpressionReads, expression_read_paths, expression_reads};
+pub use reads::{
+    ExpressionReads, expression_element_paths, expression_read_paths, expression_reads,
+};
+pub use row_tree::{RowArithmetic, RowComparison, RowExpr, row_expression};
 pub use structural_sum::{StructuralSumEquality, structural_sum_equality};
 pub use value::{Number, Value};

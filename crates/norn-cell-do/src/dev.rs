@@ -21,6 +21,22 @@
 //!   so the manifest's all-grants developer never leaves the machine.
 //! - HOST-REOPEN-1: a restart reopens the cell at its active revision without
 //!   writing.
+//! - DEV-REVIEWER-1: a second local principal, the reviewer
+//!   (`.norn/dev.reviewer.token`), holds the same grants, so an approval the
+//!   developer's call waits on can be decided locally (`dev/policy.rs`).
+//! - DEV-LOAD-REFUSED-1: a recorded snapshot (`--load`) the cell refuses,
+//!   or a row of it the mapping quarantines, ends the session with exit 3
+//!   and the refusal; the session never serves after a refused load, and a
+//!   restart loads the same snapshot again (rows already landed stay landed).
+//! - DEV-DEFINITIONS-1: the sources' retained definitions (approvals) are
+//!   admitted, signed and installed through the hosted riding-apply path, in
+//!   process, as the manifest's actor (`dev/definitions.rs`).
+//! - DEV-DEFINITIONS-ATOMIC-1: a reload commits the set, its approvals (with
+//!   retirements) and the action policy in one step under the serving write
+//!   lock; a refused approval publishes nothing.
+//! - DEV-ACCESS-1: an action whose `access` names a policy is decided by that
+//!   policy for every local principal, as on a hosted cell
+//!   (`dev/policy.rs`).
 //! - DEV-CONFINED-1: the cell and the session files stay inside the project:
 //!   the manifest's cell is a relative path under the project root, and the
 //!   token and descriptor are owner-only files never written through a symlink.
@@ -48,10 +64,13 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 mod admit;
+mod definitions;
 mod http;
+mod load;
 mod policy;
+mod timers;
 
-use policy::{DevPrincipals, DevQuestions, LocalDeveloper};
+use policy::{DevMetrics, DevPrincipals, LocalDeveloper};
 
 /// `norn-dev-host` options. The compile worker command follows `--`; the
 /// authoring CLI's `norn dev` supplies it.
@@ -74,6 +93,10 @@ pub struct DevArgs {
     /// Print one JSON event per line instead of the human view.
     #[arg(long)]
     json: bool,
+    /// A recorded source snapshot to load through the cell's own mapping
+    /// path when the cell opens (repeatable). See `dev/load.rs`.
+    #[arg(long = "load", value_name = "SNAPSHOT")]
+    load: Vec<PathBuf>,
     /// The compile worker command (program and arguments); `norn dev` in the
     /// authoring CLI supplies it.
     #[arg(last = true, required = true)]
@@ -127,7 +150,6 @@ impl Failure {
 }
 
 /// Run the loop until the worker exits or the process is stopped.
-#[must_use]
 pub fn execute(args: &DevArgs) -> ExitCode {
     let mut out = Events { json: args.json };
     match run(args, &mut out) {
@@ -224,16 +246,36 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
     let _lock = lock(&state)?;
     let token = token()?;
     write_private(&state.join("dev.token"), &format!("{}\n", token.bearer))?;
+    write_private(
+        &state.join("dev.reviewer.token"),
+        &format!("{}\n", token.reviewer),
+    )?;
     let scope = CellScope {
         org_id: manifest.scope.org_id.clone(),
         environment_id: manifest.scope.environment_id.clone(),
     };
     let cell_path = cell_path(&root, &manifest.cell)?;
-    let serving: http::Serving = Arc::new(RwLock::new(reopen(
-        &cell_path,
-        &scope,
-        &manifest.dev.actor,
-    )?));
+    let loads = args
+        .load
+        .iter()
+        .map(|path| {
+            path.canonicalize().map_err(|error| {
+                Failure::setup(
+                    "norn.dev.load_missing",
+                    format!("{}: {error}", path.display()),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let actions = policy::dev_actions();
+    let (reopened, loaded) = reopen(&cell_path, &scope, &manifest.dev.actor, &loads, &actions)?;
+    if let Some(loaded) = loaded {
+        out.emit(
+            &json!({ "event": "loaded", "files": loaded.files }),
+            &format!("· loaded {} recorded snapshot(s)", loaded.files.len()),
+        );
+    }
+    let serving: http::Serving = Arc::new(RwLock::new(reopened));
     let listener =
         TcpListener::bind((ip, args.port.unwrap_or(manifest.dev.port))).map_err(|error| {
             if error.kind() == std::io::ErrorKind::AddrInUse {
@@ -252,29 +294,70 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         .local_addr()
         .map_err(|error| Failure::setup("norn.dev.io", error.to_string()))?;
     let url = format!("http://{address}");
-    let principals = DevPrincipals {
-        bearer: token.bearer.clone(),
-        actor: manifest.dev.actor.clone(),
-    };
-    let questions = DevQuestions {
-        handle_key: token.handle_key,
-        catalog: norn_checker::EffectiveCatalog::default(),
-    };
+    let principals = DevPrincipals::new(vec![
+        (token.bearer.clone(), manifest.dev.actor.clone()),
+        (
+            token.reviewer.clone(),
+            policy::reviewer(&manifest.dev.actor),
+        ),
+    ]);
+    let questions = DevMetrics::new(token.handle_key, scope.clone());
+    // D102: a build with `duckdb` answers questions and profiles on the
+    // project's own analytics engine, under `.norn/analytics`.
+    #[cfg(feature = "duckdb")]
+    let engine =
+        norn_cell::analytics::engine::Engine::new(norn_cell::analytics::engine::Settings {
+            root: root.join(".norn/analytics"),
+            memory_limit: "1GB".to_owned(),
+            threads: 2,
+        })
+        .map(crate::olap::InProcess)
+        .map_err(|error| {
+            Failure::setup(
+                "norn.dev.io",
+                format!("cannot open the analytics engine: {error}"),
+            )
+        })?;
+    let connections = http::dev_connections(cell_path.clone())
+        .map_err(|message| Failure::setup("norn.dev.connections_config", message))?;
     {
         let serving = Arc::clone(&serving);
-        std::thread::spawn(move || http::serve(&listener, &serving, &principals, &questions));
+        std::thread::spawn(move || {
+            #[cfg(feature = "duckdb")]
+            let engine: Option<&dyn norn_api::analytics_routes::Transport> = Some(&engine);
+            #[cfg(not(feature = "duckdb"))]
+            let engine: Option<&dyn norn_api::analytics_routes::Transport> = None;
+            http::serve(
+                &listener,
+                &serving,
+                &principals,
+                &questions,
+                engine,
+                &connections,
+            );
+        });
+    }
+    // TIMER-ALARM-1: the dev host's clock runs the cell's due work, as the hosted alarm does.
+    {
+        let serving = Arc::clone(&serving);
+        std::thread::spawn(move || timers::drive(&serving));
     }
     let session = Session {
+        loads: &loads,
+        loaded: std::cell::RefCell::new(None),
         root: &root,
         manifest: &manifest,
         scope: &scope,
         url: &url,
         started_at: now_ms(),
+        actions,
+        ungoverned: std::cell::RefCell::new(None),
     };
     let active =
         active(&serving).map_err(|message| Failure::setup("norn.cell.unreadable", message))?;
     session.header(out, active.as_ref());
     if let Some(active) = &active {
+        session.access(out, &serving);
         session.ready(out, active)?;
     }
     let lines = spawn_worker(&args.worker, &root)?;
@@ -343,18 +426,8 @@ fn spawn_worker(command: &[String], root: &Path) -> Result<Receiver<Value>, Fail
         message: "the worker command is missing after --".to_owned(),
         exit: 2,
     })?;
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the dev host's one capability: running the project's compile worker"
-    )]
-    let mut child = Command::new(program)
-        .args(arguments)
-        .arg("--project")
-        .arg(root)
-        // The worker exits when this pipe closes, so it never outlives the host.
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+    let names = std::env::vars_os().map(|(name, _)| name);
+    let mut child = worker_command(program, arguments, root, names)
         .spawn()
         .map_err(|error| {
             Failure::setup(
@@ -386,12 +459,50 @@ fn spawn_worker(command: &[String], root: &Path) -> Result<Receiver<Value>, Fail
     Ok(receive)
 }
 
+/// The compile worker's command. CONN-SECRET-ENV-1: the vault KEKs and the
+/// OAuth client secrets this host was given never reach the worker, which
+/// runs the project's own code.
+/// `inherited` names the variables the worker would inherit.
+fn worker_command(
+    program: &str,
+    arguments: &[String],
+    root: &Path,
+    inherited: impl Iterator<Item = std::ffi::OsString>,
+) -> Command {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the dev host's one capability: running the project's compile worker"
+    )]
+    let mut command = Command::new(program);
+    command
+        .args(arguments)
+        .arg("--project")
+        .arg(root)
+        // The worker exits when this pipe closes, so it never outlives the host.
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    for name in inherited {
+        if name.to_str().is_some_and(crate::connections::secret_var) {
+            command.env_remove(name);
+        }
+    }
+    command
+}
+
 struct Session<'a> {
+    loads: &'a [PathBuf],
+    /// What a load during the first provision did, reported with its revision.
+    loaded: std::cell::RefCell<Option<load::Loaded>>,
     root: &'a Path,
     manifest: &'a Manifest,
     scope: &'a CellScope,
     url: &'a str,
     started_at: u64,
+    /// The active revision's action policy (DEV-ACCESS-1).
+    actions: policy::DevActions,
+    /// The ungoverned actions last reported, so a change is reported once.
+    ungoverned: std::cell::RefCell<Option<Result<Vec<String>, String>>>,
 }
 
 impl Session<'_> {
@@ -421,6 +532,7 @@ impl Session<'_> {
             "tokenFile": ".norn/dev.token",
             "scope": { "orgId": self.scope.org_id, "environmentId": self.scope.environment_id },
             "actor": self.manifest.dev.actor,
+            "reviewer": { "actor": policy::reviewer(&self.manifest.dev.actor), "tokenFile": ".norn/dev.reviewer.token" },
             "active": { "version": active.version, "receiptSha256": active.receipt_sha256 },
             "startedAt": self.started_at,
         })
@@ -439,7 +551,7 @@ impl Session<'_> {
         out.emit(
             &event,
             &format!(
-                "✓ serving r{} · receipt {}…\n  API  {}/v1   token .norn/dev.token\nwatching sources",
+                "✓ serving r{} · receipt {}…\n  API  {}/v1   token .norn/dev.token (reviewer: .norn/dev.reviewer.token)\nwatching sources",
                 active.version,
                 short(&active.receipt_sha256),
                 self.url
@@ -553,79 +665,213 @@ impl Session<'_> {
                 return Ok(None);
             }
         };
-        if current
-            .as_ref()
-            .is_some_and(|set| set.canonical_set == admitted.input.canonical_set)
-        {
-            out.emit(
-                &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
-                "· unchanged (same definitions)",
-            );
-            return Ok(None);
-        }
+        let definitions = event
+            .get("definitions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        // DEV-DEFINITIONS-ATOMIC-1: the set, its approvals and the action
+        // policy commit together under the serving write lock.
         let result = match current {
             Some(set) => {
-                let guard = serving.read().map_err(|_poisoned| {
+                let guard = serving.write().map_err(|_poisoned| {
                     Failure::setup("norn.cell.unreadable", "serving state poisoned")
                 })?;
-                guard
-                    .as_ref()
-                    .map(|host| {
-                        host.install_definitions(admitted.model, admitted.input, Some(set.version))
-                    })
-                    .ok_or_else(|| {
-                        Failure::setup("norn.cell.unreadable", "the serving host disappeared")
-                    })?
-                    .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))
+                let host = guard.as_ref().ok_or_else(|| {
+                    Failure::setup("norn.cell.unreadable", "the serving host disappeared")
+                })?;
+                definitions::commit(
+                    host,
+                    &self.manifest.dev.actor,
+                    &policy::dev_kinds(),
+                    &definitions,
+                    admitted,
+                    &set,
+                    &self.actions,
+                    now_ms(),
+                )
             }
-            None => self.provision(serving, cell_path, admitted),
+            None => self.provision(serving, cell_path, admitted, &definitions),
         };
         match result {
-            Ok(installed) => Ok(Some(installed)),
-            Err(refusal) => {
-                Self::rejected(
-                    out,
-                    serving,
-                    event,
-                    "install",
-                    std::slice::from_ref(&refusal),
+            Ok(definitions::Committed::Unchanged) => {
+                out.emit(
+                    &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
+                    "· unchanged (same definitions)",
                 );
+                self.access(out, serving);
+                Ok(None)
+            }
+            Ok(definitions::Committed::Installed(installed, events)) => {
+                if let Some(loaded) = self.loaded.take() {
+                    out.emit(
+                        &json!({ "event": "loaded", "files": loaded.files }),
+                        &format!("· loaded {} recorded snapshot(s)", loaded.files.len()),
+                    );
+                }
+                Self::definitions(out, &events);
+                self.access(out, serving);
+                Ok(Some(*installed))
+            }
+            Err(definitions::Rejected { phase, diagnostics }) => {
+                Self::rejected(out, serving, event, phase, &diagnostics);
+                // DEV-LOAD-REFUSED-1: a `--load` the cell refuses ends the
+                // session with that refusal; it never waits unserved for a
+                // source save that cannot change the snapshot.
+                if let Some(refusal) = diagnostics.iter().find(|refusal| {
+                    refusal.get("code").and_then(Value::as_str) == Some("norn.dev.load_refused")
+                }) {
+                    let message = refusal
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("a recorded snapshot was refused")
+                        .to_owned();
+                    return Err(Failure::setup("norn.dev.load_refused", message));
+                }
                 Ok(None)
             }
         }
     }
 
-    /// The first revision of a new cell.
+    /// Report each approval revision a commit appended.
+    fn definitions(out: &mut Events, events: &[Value]) {
+        for event in events {
+            let text = |key: &str| event.get(key).and_then(Value::as_str).unwrap_or_default();
+            out.emit(
+                event,
+                &format!(
+                    "✓ {} {} v{} {}",
+                    text("kind"),
+                    text("id"),
+                    event.get("version").and_then(Value::as_u64).unwrap_or(0),
+                    text("lifecycle"),
+                ),
+            );
+        }
+    }
+
+    /// Recompile the active revision's action policy and report what it
+    /// governs when that changed.
+    fn access(&self, out: &mut Events, serving: &http::Serving) {
+        let refreshed = {
+            let Ok(guard) = serving.read() else {
+                return;
+            };
+            let Some(host) = guard.as_ref() else {
+                return;
+            };
+            policy::refresh_actions(&self.actions, host)
+        };
+        if self.ungoverned.borrow().as_ref() == Some(&refreshed) {
+            return;
+        }
+        match &refreshed {
+            Ok(ungoverned) if ungoverned.is_empty() => {}
+            Ok(ungoverned) => out.emit(
+                &json!({ "event": "access", "ungoverned": ungoverned }),
+                &format!(
+                    "· no access policy governs {}: only the local principals may call them, and a hosted cell would serve none of them",
+                    ungoverned.join(", ")
+                ),
+            ),
+            Err(reason) => out.emit(
+                &json!({ "event": "access", "error": reason }),
+                &format!("✗ the access policies do not compile, so no governed action is served: {reason}"),
+            ),
+        }
+        self.ungoverned.replace(Some(refreshed));
+    }
+
+    /// The first revision of a new cell, with the sources' approvals in the
+    /// provisioning transaction (DEV-DEFINITIONS-ATOMIC-1). The approvals
+    /// are admitted first against the candidate on a scratch in-memory cell,
+    /// so a refused one writes no file; the host is served only once its
+    /// action policy is compiled.
     fn provision(
         &self,
         serving: &http::Serving,
         cell_path: &Path,
         admitted: admit::Admitted,
-    ) -> Result<InstalledDefinitionSet, Value> {
-        let refused = |message: String| json!({ "code": "defs.provision_refused", "severity": "error", "message": message });
+        definitions: &[Value],
+    ) -> Result<definitions::Committed, definitions::Rejected> {
+        let install = |diagnostic: Value| definitions::Rejected {
+            phase: "install",
+            diagnostics: vec![diagnostic],
+        };
+        let refused = |message: String| {
+            install(
+                json!({ "code": "defs.provision_refused", "severity": "error", "message": message }),
+            )
+        };
+        let host_refused = |refusal: norn_api::refusal::Refusal| {
+            install(serde_json::to_value(&refusal).unwrap_or(Value::Null))
+        };
+        let prepared = {
+            let scratch = NativeEngine::open_in_memory()
+                .and_then(|engine| {
+                    CellStore::provision_definitions(
+                        engine,
+                        admitted.model.clone(),
+                        &admitted.input,
+                        &self.scope.key(),
+                    )
+                })
+                .map_err(|error| refused(error.to_string()))?;
+            let scratch = DevHost::from_store(scratch, self.scope.clone(), |command| {
+                command.payload.clone()
+            })
+            .map_err(host_refused)?;
+            definitions::prepare(
+                &scratch,
+                &self.manifest.dev.actor,
+                &policy::dev_kinds(),
+                definitions,
+                &admitted.input.canonical_set,
+                now_ms(),
+            )
+            .map_err(|diagnostics| definitions::Rejected {
+                phase: "definitions",
+                diagnostics,
+            })?
+        };
         let engine = NativeEngine::open(cell_path, StoreOptions::default())
             .map_err(|error| refused(error.to_string()))?;
-        let store = CellStore::provision_definitions(
+        let store = CellStore::provision_definitions_riding(
             engine,
             admitted.model,
             &admitted.input,
             &self.scope.key(),
+            &prepared.riding,
         )
         .map_err(|error| refused(error.to_string()))?;
+        let store = if self.loads.is_empty() {
+            store
+        } else {
+            let (store, loaded) = load::load(store, &self.scope.key(), self.loads).map_err(
+                |message| install(json!({ "code": "norn.dev.load_refused", "severity": "error", "message": message })),
+            )?;
+            self.loaded.replace(Some(loaded));
+            store
+        };
         let host =
             DevHost::from_store(store, self.scope.clone(), |command| command.payload.clone())
-                .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))?
-                .with_authorizer(LocalDeveloper {
-                    actor: self.manifest.dev.actor.clone(),
-                });
+                .map_err(host_refused)?
+                .with_authorizer(LocalDeveloper::for_actor(
+                    &self.manifest.dev.actor,
+                    std::sync::Arc::clone(&self.actions),
+                ));
         let installed = host
             .active_definitions()
-            .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))?
+            .map_err(host_refused)?
             .ok_or_else(|| refused("the provisioned cell has no active revision".to_owned()))?;
+        let _ungoverned = policy::refresh_actions(&self.actions, &host);
         *serving
             .write()
             .map_err(|_poisoned| refused("serving state poisoned".to_owned()))? = Some(host);
-        Ok(installed)
+        Ok(definitions::Committed::Installed(
+            Box::new(installed),
+            prepared.events,
+        ))
     }
 }
 
@@ -641,11 +887,17 @@ fn active(serving: &http::Serving) -> Result<Option<InstalledDefinitionSet>, Str
 /// HOST-REOPEN-1: an existing cell is reopened at its active revision with
 /// the model rebuilt from its retained set; nothing is written. A missing
 /// or empty file waits for the first admitted revision.
+#[allow(
+    clippy::type_complexity,
+    reason = "the reopened host and what the load did, if anything"
+)]
 fn reopen(
     path: &Path,
     scope: &CellScope,
     actor: &str,
-) -> Result<Option<DevHost<NativeEngine>>, Failure> {
+    loads: &[PathBuf],
+    actions: &policy::DevActions,
+) -> Result<(Option<DevHost<NativeEngine>>, Option<load::Loaded>), Failure> {
     let unreadable = |error: String| {
         Failure::setup(
             "norn.cell.unreadable",
@@ -653,26 +905,31 @@ fn reopen(
         )
     };
     if !path.exists() {
-        return Ok(None);
+        return Ok((None, None));
     }
     let engine = NativeEngine::open(path, StoreOptions::default())
         .map_err(|error| unreadable(error.to_string()))?;
     let Some(active) = CellStore::read_active_definitions(&engine)
         .map_err(|error| unreadable(error.to_string()))?
     else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let model = admit::retained_envelopes(&active.canonical_set)
         .and_then(|artifacts| admit::model_of(&artifacts))
         .map_err(unreadable)?;
     let store =
         CellStore::from_engine(engine, model).map_err(|error| unreadable(error.to_string()))?;
+    let (store, loaded) = if loads.is_empty() {
+        (store, None)
+    } else {
+        let (store, loaded) = load::load(store, &scope.key(), loads)
+            .map_err(|message| Failure::setup("norn.dev.load_refused", message))?;
+        (store, Some(loaded))
+    };
     let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
         .map_err(|refusal| Failure::setup("norn.cell.scope_mismatch", refusal.message))?
-        .with_authorizer(LocalDeveloper {
-            actor: actor.to_owned(),
-        });
-    Ok(Some(host))
+        .with_authorizer(LocalDeveloper::for_actor(actor, Arc::clone(actions)));
+    Ok((Some(host), loaded))
 }
 
 /// One running session per project: `.norn/dev.lock` is held exclusively
@@ -696,14 +953,13 @@ fn lock(state: &Path) -> Result<File, Failure> {
             let running = std::fs::read_to_string(state.join("dev.json"))
                 .ok()
                 .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                .map(|session| {
+                .map_or_default(|session| {
                     format!(
                         " (pid {}, {})",
                         session.get("pid").and_then(Value::as_u64).unwrap_or(0),
                         session.get("url").and_then(Value::as_str).unwrap_or("?")
                     )
-                })
-                .unwrap_or_default();
+                });
             Err(Failure::setup(
                 "norn.cell.locked",
                 format!("norn dev is already running for this project{running}; stop it first"),
@@ -714,24 +970,30 @@ fn lock(state: &Path) -> Result<File, Failure> {
 
 struct Token {
     bearer: String,
+    /// The local reviewer's session token (DEV-REVIEWER-1).
+    reviewer: String,
     handle_key: [u8; 32],
 }
 
 fn token() -> Result<Token, Failure> {
-    let mut bytes = [0_u8; 64];
+    let mut bytes = [0_u8; 96];
     getrandom::fill(&mut bytes)
         .map_err(|error| Failure::setup("norn.dev.io", format!("no randomness: {error}")))?;
-    let (bearer, key) = bytes.split_at(32);
+    let (bearers, key) = bytes.split_at(64);
+    let (bearer, reviewer) = bearers.split_at(32);
     let mut handle_key = [0_u8; 32];
     handle_key.copy_from_slice(key);
-    let hex = bearer
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
-            let _written = write!(hex, "{byte:02x}");
-            hex
-        });
+    let hex = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .fold(String::with_capacity(64), |mut hex, byte| {
+                let _written = write!(hex, "{byte:02x}");
+                hex
+            })
+    };
     Ok(Token {
-        bearer: hex,
+        bearer: hex(bearer),
+        reviewer: hex(reviewer),
         handle_key,
     })
 }
@@ -864,6 +1126,40 @@ mod tests {
         (dir, root)
     }
 
+    /// CONN-SECRET-ENV-1: the compile worker never inherits a vault KEK or
+    /// an OAuth client variable; other variables pass through.
+    #[test]
+    fn the_worker_never_inherits_connection_secrets() {
+        let (_dir, root) = project();
+        let inherited = [
+            concat!("NORN_", "VAULT_KEK"),
+            concat!("NORN_", "VAULT_KEK_ID"),
+            concat!("NORN_", "VAULT_KEKS_PREVIOUS"),
+            "NORN_OAUTH_GITHUB_CLIENT_SECRET",
+            "NORN_OAUTH_REDIRECT_URL",
+            "NORN_SOURCE_ALLOWED_HOSTS",
+            "PATH",
+        ]
+        .map(std::ffi::OsString::from);
+        let command = worker_command("worker", &[], &root, inherited.into_iter());
+        let mut removed: Vec<_> = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect();
+        removed.sort();
+        assert_eq!(
+            removed,
+            [
+                "NORN_OAUTH_GITHUB_CLIENT_SECRET",
+                "NORN_OAUTH_REDIRECT_URL",
+                concat!("NORN_", "VAULT_KEK"),
+                concat!("NORN_", "VAULT_KEKS_PREVIOUS"),
+                concat!("NORN_", "VAULT_KEK_ID"),
+            ]
+        );
+    }
+
     #[test]
     fn the_cell_stays_inside_the_project() {
         let (_dir, root) = project();
@@ -986,6 +1282,6 @@ mod tests {
             newest(&receive, &mut pending),
             Some(json!({ "event": "compiled", "gen": 2 }))
         );
-        assert!(pending.is_empty());
+        assert_eq!(pending.len(), 0);
     }
 }

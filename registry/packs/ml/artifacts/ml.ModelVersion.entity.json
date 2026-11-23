@@ -1,0 +1,192 @@
+{
+  "artifactId": "ml.ModelVersion.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Model version",
+  "namespace": "ml",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "version_id"
+          ]
+        }
+      ],
+      "implements": [
+        "ml.ModelVersionEvidence"
+      ],
+      "lifecycles": [
+        {
+          "initial": [
+            "candidate"
+          ],
+          "property": "status",
+          "terminal": [
+            "retired"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "candidate"
+              ],
+              "guards": [
+                "self.contracts_passed and (self.evaluation_revision == self.pinned_dataset_revision)"
+              ],
+              "id": "promote",
+              "to": "production"
+            },
+            {
+              "from": [
+                "candidate",
+                "production"
+              ],
+              "id": "retire",
+              "to": "retired"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "trained_by",
+          "target": "tracking.Run"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "evaluated_by",
+          "target": "tracking.Run"
+        }
+      ],
+      "name": "ml.ModelVersion",
+      "properties": [
+        {
+          "id": "version_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "model_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "version",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "candidate",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "candidate"
+              },
+              {
+                "value": "production"
+              },
+              {
+                "value": "retired"
+              }
+            ]
+          }
+        },
+        {
+          "id": "training_run",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "evaluation_run",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "artifact_uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "artifact_sha256",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "artifact_size",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "input_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "input_revision",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "pinned_dataset_revision",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "evaluation_revision",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "metric_name",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "metric_value",
+          "type": {
+            "kind": "decimal",
+            "scale": 9
+          }
+        },
+        {
+          "id": "contracts_passed",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ml/artifacts/ml.ModelVersion.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

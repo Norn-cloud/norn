@@ -14,13 +14,11 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
 use norn_cell::compute::{QueryContext, Watermark};
 use norn_cell::engine::SqlEngine;
-use norn_cell::{CellStore, CommitBatch, FactWriteRow, ObjectRecord};
+use norn_cell::{CellStore, ObjectRecord};
 use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::{QuestionPlan, admit};
 use norn_ir::metric::{FreshnessPolicy, MetricAdditivity, MetricType, MetricTypeParams};
-use norn_ir::{
-    ArtifactEnvelope, Decimal, MetricDefinition, ObjectTypeDef, QuestionIR, RuntimeValue,
-};
+use norn_ir::{ArtifactEnvelope, MetricDefinition, ObjectTypeDef, QuestionIR};
 use norn_kernel::authz::{AccessRequest, ActorKind, Delegation, PrincipalInput, ResourceInput};
 use serde_json::{Value, json};
 
@@ -28,12 +26,12 @@ use crate::policy::{READ_ACTION, capability_name, scope_key};
 use crate::seed::SeedError;
 
 /// The conversion type the cell is opened with.
-pub const TYPE: &str = "demo.Conversion";
+pub const TYPE: &str = norn_cell::provision::K1_TYPE;
 /// The admitted weekly gold yield question.
 pub const QUESTION: &str = "demo.yield_week";
-const WORLD: &str = "synthetic-k1";
+const WORLD: &str = norn_cell::provision::K1_WORLD;
 /// The recorded K1 observation clock (2026-10-23T00:00:00Z).
-const CLOCK: u64 = 1_792_972_800_000;
+const CLOCK: u64 = norn_cell::provision::K1_CLOCK;
 
 /// The core unit catalog the analytics masses are declared in.
 const UNITS: &str = include_str!("../../../registry/core/artifacts/core.units.json");
@@ -108,8 +106,7 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<Analytics
         .commits
         == 1
     {
-        store
-            .commit(&k1_batch(scope)?)
+        norn_cell::provision::k1_conversions(&mut store, &scope.key())
             .map_err(|e| fail("K1 conversions", e))?;
     }
     let (plan, definitions, catalog) = plan(&object)?;
@@ -118,20 +115,6 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<Analytics
         plan,
         definitions,
         catalog,
-    })
-}
-
-/// The one commit that loads the K1 conversions.
-///
-/// # Errors
-/// The fixture rows do not parse.
-pub fn k1_batch(scope: &CellScope) -> Result<CommitBatch, SeedError> {
-    Ok(CommitBatch {
-        world: WORLD.into(),
-        scope: scope.key(),
-        logical_time: CLOCK,
-        writes: conversions()?,
-        ..CommitBatch::default()
     })
 }
 
@@ -152,35 +135,6 @@ fn entity(object: &ObjectTypeDef, scope: &CellScope) -> Result<ArtifactEnvelope,
         "payload": { "entityVersion": "2.0", "objectType": object },
     }))
     .map_err(|e| fail("entity artifact", e))
-}
-
-fn conversions() -> Result<Vec<FactWriteRow>, SeedError> {
-    let grams = |mg: &str| {
-        Decimal::parse(&format!("{mg}e-3"))
-            .map(RuntimeValue::from)
-            .map_err(|e| fail("mass", e))
-    };
-    include_str!("../../../fixtures/demo/scrap-yield-k1.csv")
-        .lines()
-        .skip(1)
-        .map(|line| {
-            let fields: Vec<&str> = line.split(',').collect();
-            let &[_, _, key, metal, input, recovered, loss, _, at, _] = fields.as_slice() else {
-                return Err(SeedError(format!("malformed conversion row: {line}")));
-            };
-            Ok(FactWriteRow::Put {
-                object_type: TYPE.into(),
-                key: key.into(),
-                values: BTreeMap::from([
-                    ("input".into(), grams(input)?),
-                    ("recovered".into(), grams(recovered)?),
-                    ("loss".into(), grams(loss)?),
-                    ("occurred_at".into(), RuntimeValue::from(at)),
-                    ("metal".into(), RuntimeValue::from(metal)),
-                ]),
-            })
-        })
-        .collect()
 }
 
 /// Admit the weekly yield question: recovered over input, gold only, by week.
@@ -344,6 +298,10 @@ impl DemoQuestions {
 }
 
 impl<E: SqlEngine> QuestionRuntime<E> for DemoQuestions {
+    fn question_names(&self) -> Vec<String> {
+        vec![QUESTION.to_owned()]
+    }
+
     fn plan(&self, question: &str) -> Result<QuestionPlan, Refusal> {
         if question == QUESTION {
             Ok(self.plan.clone())
@@ -471,5 +429,17 @@ impl<E: SqlEngine> norn_api::question_routes::AdHocQuestions<E> for DemoQuestion
 
     fn max_buckets(&self) -> usize {
         AD_HOC_MAX_BUCKETS
+    }
+
+    fn admit(
+        &self,
+        question: &norn_ir::QuestionIR,
+        max_rows: u32,
+    ) -> Result<norn_checker::metric::compute::QuestionPlan, Vec<norn_checker::Diagnostic>> {
+        norn_api::question_routes::admit_declared::<E>(self, question, max_rows)
+    }
+
+    fn unit_partition(&self, _metric: &str) -> Vec<String> {
+        Vec::new()
     }
 }

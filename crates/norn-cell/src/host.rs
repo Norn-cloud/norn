@@ -4,9 +4,9 @@
 //! [`SqliteCell`] implements the kernel's four-verb trait over one
 //! [`CellStore`]:
 //!
-//! - **commit** runs the kernel's own admission check
-//!   ([`check_commit`]) *inside* the store's commit transaction
-//!   ([`CellStore::commit_guarded`]), then writes the consumed delivery, the
+//! - **commit** runs the kernel's own admission check ([`Proposed`] →
+//!   [`Checked`], [`norn_kernel::check_commit`]) *inside* the store's commit transaction
+//!   (`CellStore::commit_guarded_unchecked`), then writes the consumed delivery, the
 //!   whole-object writes, the ledger events, and the command/timer enqueues
 //!   in that one SQLite transaction: commit and enqueue are atomic, and a
 //!   refused commit writes nothing.
@@ -31,13 +31,12 @@ use std::path::Path;
 use norn_ir::RuntimeValue as Value;
 use norn_kernel::cell_host::{JsonObject, ObjectTypeName};
 use norn_kernel::{
-    BoundedFact, CellCommit, CellHost, Command, CommandId, CommitError, CommitModel, CommitReceipt,
-    CommitVersions, CommitView, Consumed, DueTimer, Effect, FactKey, FactMutation, FactState,
-    FactVersion, Generation, LedgerSeq, LinkKey, LinkMutation, LinkReadTarget, LinkState,
-    LogicalTime, ObservationAuthorization, ObservationEvent, ObservationId, Observed,
-    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery, PredicateReadMember, TimerId,
-    TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit, check_commit_identifiers,
-    check_commit_observed, check_commit_owned_rows,
+    BoundedFact, CellCommit, CellHost, Checked, Command, CommandId, CommitError, CommitModel,
+    CommitReceipt, CommitVersions, CommitView, Consumed, DueTimer, Effect, FactKey, FactMutation,
+    FactState, FactVersion, Generation, LedgerSeq, LinkKey, LinkMutation, LinkReadTarget,
+    LinkState, LogicalTime, ObservationAuthorization, ObservationEvent, ObservationId, Observed,
+    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery, PredicateReadMember,
+    Proposed, TimerId, WrittenLinkVersion, WrittenVersion, check_commit_identifiers,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -54,7 +53,7 @@ use crate::store::StoreOptions;
 use crate::store::{
     CellStore, CommitBatch, CommitOutcome, Consumption, EffectRow, FactWriteRow, GuardedError,
     InstalledDefinitionInput, InstalledDefinitionSet, LinkChange, MAIN_WORLD,
-    MarkingDeclassification, OutboxCommand, TimerEntry,
+    MarkingDeclassification, MarkingReveal, OutboxCommand, TimerEntry,
 };
 
 /// The simulated outside world: maps a performed command to the kernel input
@@ -86,6 +85,9 @@ pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
     now: LogicalTime,
     responder: Responder<C, I>,
     published: Vec<CommitReceipt>,
+    /// S6c, S5a: the bookkeeping events the next commit carries, set only
+    /// for the span of [`Self::attributed`].
+    attached: Vec<norn_ir::RuntimeValue>,
     events: PhantomData<fn() -> E>,
 }
 
@@ -126,6 +128,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             now,
             responder: Box::new(responder),
             published: Vec::new(),
+            attached: Vec::new(),
             events: PhantomData,
         })
     }
@@ -134,6 +137,36 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     #[must_use]
     pub const fn store(&self) -> &CellStore<S> {
         &self.store
+    }
+
+    /// Give the store back, for a host that runs this cell's event profile
+    /// on a store it then serves through another (for example, mapping
+    /// recorded observations before serving actions).
+    #[must_use]
+    pub fn into_store(self) -> CellStore<S> {
+        self.store
+    }
+
+    /// This cell, its store, clock and outside world unchanged, under another
+    /// ledger event profile: a host that serves actions maps captured source
+    /// rows under the observation profile on the same store, then turns back.
+    #[must_use]
+    pub fn into_profile<E2>(self) -> SqliteCell<E2, C, I, S> {
+        SqliteCell {
+            store: self.store,
+            scope: self.scope,
+            now: self.now,
+            responder: self.responder,
+            published: self.published,
+            attached: self.attached,
+            events: PhantomData,
+        }
+    }
+
+    /// The store, for in-crate captures the cell makes itself
+    /// (MAP-REPROCESS-1).
+    pub(crate) const fn store_mut(&mut self) -> &mut CellStore<S> {
+        &mut self.store
     }
 
     /// Capture pinned mapping evidence while the cell owns its store.
@@ -146,6 +179,19 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         input: &crate::mapping_bundle::MappingInput,
     ) -> Result<(String, bool), CellError> {
         self.store.inject_mapping_bundle(raw, input)
+    }
+
+    /// Capture a page of raw source records read from one dataset
+    /// (OBS-PAGE-1); see [`CellStore::inject_mapping_page`].
+    ///
+    /// # Errors
+    /// Framing refusals, invalid pins, or the durable inbox failure.
+    pub fn inject_mapping_page(
+        &mut self,
+        raws: &[Observed<Value>],
+        input: &crate::mapping_bundle::MappingInput,
+    ) -> Result<crate::mapping_page::CapturedPage, CellError> {
+        self.store.inject_mapping_page(raws, input)
     }
 
     /// Begin a private rebuild in this native host's world and tenant scope.
@@ -208,7 +254,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .into_iter()
             .map(|event| to_runtime(&event))
             .collect::<Result<Vec<_>, _>>()?;
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time: self.now.as_millis(),
@@ -244,7 +290,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .read()
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
             .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time,
@@ -253,6 +299,62 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             marking_declassifications: vec![change],
             ..CommitBatch::default()
         })
+    }
+
+    /// Append the receipt of one reveal to the ledger, at this host's clock.
+    /// An exact retry under the same key replays the first receipt; a key
+    /// reused for another reveal is a conflict.
+    ///
+    /// # Errors
+    /// An idempotency conflict, serialization or storage failure.
+    pub fn record_reveal(
+        &mut self,
+        idempotency_key: &str,
+        reveal: &MarkingReveal,
+    ) -> Result<CommitOutcome, CellError> {
+        self.record_privacy_event(idempotency_key, reveal.ledger_event()?)
+    }
+
+    /// Append one privacy receipt event (a reveal, a guarded model call) to
+    /// the ledger at this host's clock, under a durable idempotency key. The
+    /// boundary takes one event only: it writes no fact and enqueues nothing.
+    ///
+    /// # Errors
+    /// An idempotency conflict, serialization or storage failure.
+    pub fn record_privacy_event(
+        &mut self,
+        idempotency_key: &str,
+        event: Value,
+    ) -> Result<CommitOutcome, CellError> {
+        let logical_time = self
+            .store
+            .read()
+            .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
+            .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
+        self.store.commit_unchecked(&CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: self.scope.clone(),
+            logical_time,
+            idempotency_key: Some(idempotency_key.to_owned()),
+            events: vec![event],
+            ..CommitBatch::default()
+        })
+    }
+
+    /// MANIFEST-COMMIT-1: commit `manifest` as the current dataset of its
+    /// type in the main world, at this host's clock and bound scope, and
+    /// return its identity and receipt (MANIFEST-04 binds `request`).
+    ///
+    /// # Errors
+    /// As [`CellStore::commit_dataset_manifest`].
+    pub fn commit_dataset_manifest(
+        &mut self,
+        manifest: &crate::dataset_manifest::DatasetManifest,
+        request: Option<&crate::dataset_manifest::DatasetRequest>,
+    ) -> Result<(String, crate::Receipt), CellError> {
+        let logical_time = self.now.as_millis();
+        self.store
+            .commit_dataset_manifest(MAIN_WORLD, &self.scope, logical_time, manifest, request)
     }
 
     /// Commit one complete quantity operation using this host's injected clock
@@ -274,7 +376,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?;
         let logical_time =
             previous.map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time,
@@ -291,6 +393,25 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     /// # Errors
     /// Corrupt timer/reservation correspondence or normal commit refusals.
     pub fn expire_quantity_due(&mut self) -> Result<bool, CellError> {
+        let Some(pending) = self.store.read().due_quantity_timer(self.now.as_millis())? else {
+            return Ok(false);
+        };
+        self.expire_quantity(&pending)?;
+        Ok(true)
+    }
+
+    /// TIMER-RETRY-1: submit the quantity Expire of exactly `pending` (a
+    /// due quantity timer the host selected) through the ordinary atomic
+    /// commit path, consuming that timer incarnation with the release. One
+    /// reservation that cannot expire never blocks another's expiry.
+    ///
+    /// # Errors
+    /// Corrupt timer/reservation correspondence or normal commit refusals;
+    /// nothing is committed.
+    pub fn expire_quantity(
+        &mut self,
+        pending: &crate::read::PendingTimer,
+    ) -> Result<(), CellError> {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Deadline {
@@ -299,9 +420,6 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             reservation: String,
             due: u64,
         }
-        let Some(pending) = self.store.read().due_quantity_timer(self.now.as_millis())? else {
-            return Ok(false);
-        };
         let deadline: Deadline = from_runtime(&pending.timer.timer)?;
         let id = crate::quantity::expiry_timer_id(
             &deadline.world,
@@ -332,7 +450,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .store
             .read()
             .quantity_balance_versions(&deadline.world, &request)?;
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: deadline.world,
             scope: self.scope.clone(),
             logical_time: self.now.as_millis(),
@@ -344,7 +462,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             quantity: Some(request.into()),
             ..CommitBatch::default()
         })?;
-        Ok(true)
+        Ok(())
     }
 
     /// The driver's current logical time.
@@ -415,6 +533,32 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             expected_version,
             &self.scope,
             change,
+        )?;
+        self.advance_to(LogicalTime::from_millis(installed.installed_at));
+        Ok(installed)
+    }
+
+    /// Install a checker-admitted definition set with retained revisions
+    /// riding it, in one transaction; see
+    /// [`CellStore::install_definitions_riding`].
+    ///
+    /// # Errors
+    ///
+    /// A definitions-version or retained-revision conflict, unsafe model
+    /// migration, or store error; any of them installs nothing.
+    pub fn install_definitions_riding(
+        &mut self,
+        candidate_model: Model,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        riding: &[crate::retained::RetainedDefinitionChange],
+    ) -> Result<InstalledDefinitionSet, CellError> {
+        let installed = self.store.install_definitions_riding(
+            candidate_model,
+            input,
+            expected_version,
+            &self.scope,
+            riding,
         )?;
         self.advance_to(LogicalTime::from_millis(installed.installed_at));
         Ok(installed)
@@ -722,6 +866,13 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
                 &key.target.key,
             )
             .map(FactVersion)
+    }
+
+    fn object_values(&self, key: &FactKey) -> Result<Option<norn_ir::RuntimeObject>, CellError> {
+        Ok(self
+            .0
+            .object(MAIN_WORLD, key.object_type.as_str(), &key.key)?
+            .map(|record| record.values))
     }
 
     fn links_of(&self, key: &FactKey) -> Result<Vec<LinkKey>, CellError> {
@@ -1266,9 +1417,15 @@ where
         let reader = self.store.read();
         let mut events: BTreeMap<u64, Vec<E>> = BTreeMap::new();
         for entry in reader.ledger(0)? {
-            // A run start is the store's bookkeeping event (RUN-LEDGER-1); it
-            // stays in the hash-chained ledger but is not an `E` to decode.
-            if crate::flow_run::is_run_start(&entry.event) {
+            // A run start or a decision's resolution is the store's bookkeeping
+            // event (RUN-LEDGER-1, DECISION-LEDGER-1); it stays in the
+            // hash-chained ledger but is not an `E` to decode.
+            if crate::flow_run::is_run_start(&entry.event)
+                || crate::decision_ledger::is_decision_resolved(&entry.event)
+                || crate::decision_ledger::is_approval_refused(&entry.event)
+                || crate::decision_ledger::is_approval_consumed(&entry.event)
+                || crate::decision_ledger::is_step_call_owned(&entry.event)
+            {
                 continue;
             }
             events
@@ -1383,7 +1540,7 @@ where
             self.store.refuse_perform_in_fork()?;
             return Ok(Some(PerformClaim::OutcomeUnknown(command)));
         }
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time: self.now.as_millis(),
@@ -1523,7 +1680,7 @@ where
             &[],
             &[],
             &[],
-            None,
+            &[],
             None,
         )
     }
@@ -1541,7 +1698,7 @@ where
         commit: CellCommit<E, C, I>,
         derived: &[(FactKey, Vec<String>)],
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], None, None)
+        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], &[], None)
     }
 
     /// Commit a kernel-prepared turn that creates a flow's run object, and
@@ -1558,14 +1715,73 @@ where
         commit: CellCommit<E, C, I>,
         start: &crate::flow_run::RunStart,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, Some(start))
+        let event = start.event().map_err(CommitError::Host)?;
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
+    }
+
+    /// Commit a kernel-prepared turn that consumes a parked decision's
+    /// recorded result, and record the decision's resolution in the decision
+    /// ledger in the same transaction (DECISION-LEDGER-1). The commit must
+    /// consume exactly `resolved`'s command and generation, and the decision
+    /// must be open; otherwise the store refuses (`decision.*`) and nothing
+    /// commits.
+    ///
+    /// # Errors
+    /// A [`CommitError`]; nothing was applied.
+    pub fn commit_decision_resolution(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        resolved: &crate::decision_ledger::DecisionResolved,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let event = resolved.event().map_err(CommitError::Host)?;
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
+    }
+
+    /// S6c, S5a: run `act` with `events`, bookkeeping events, attached to
+    /// the first commit it makes that carries none of its own, so that
+    /// commit and its records are one transaction; detached afterwards on
+    /// every return, whether or not anything committed.
+    pub fn attributed<T>(
+        &mut self,
+        events: Vec<norn_ir::RuntimeValue>,
+        act: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        self.attached = events;
+        let answer = act(self);
+        self.attached = Vec::new();
+        answer
+    }
+
+    /// APPROVAL-RECOVERY-1: commit the refusal an approved action call got,
+    /// alone, so the ledger records it and export replay rebuilds it. The
+    /// decision must have approved a call with no refusal recorded yet;
+    /// otherwise the store refuses (`approval.*`) and nothing commits.
+    ///
+    /// # Errors
+    /// A [`CommitError`]; nothing was applied.
+    pub fn commit_approval_refusal(
+        &mut self,
+        refused: &crate::decision_ledger::ApprovalRefused,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let event = refused.event().map_err(CommitError::Host)?;
+        self.commit_with_authorization(
+            CellCommit::empty(),
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            Some(event),
+        )
     }
 
     pub(crate) fn commit_observed_evidence(
         &mut self,
         mut commit: CellCommit<E, C, I>,
         authorization: &ObservationAuthorization,
-        mapped_bundle: Option<&crate::mapping_bundle::MappingBundle>,
+        mapped: &[crate::mapping_bundle::MappingBundle],
     ) -> Result<CommitReceipt, CommitError<CellError>>
     where
         E: From<ObservationEvent>,
@@ -1583,7 +1799,7 @@ where
             &[],
             &references,
             &[],
-            mapped_bundle,
+            mapped,
             None,
         )
     }
@@ -1602,8 +1818,8 @@ where
         derived: &[(FactKey, Vec<String>)],
         references: &[norn_kernel::FactExpectation],
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
-        mapped_bundle: Option<&crate::mapping_bundle::MappingBundle>,
-        run_start: Option<&crate::flow_run::RunStart>,
+        mapped: &[crate::mapping_bundle::MappingBundle],
+        bookkeeping: Option<norn_ir::RuntimeValue>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1632,10 +1848,9 @@ where
         };
         if prior.is_none() {
             let store_model = self.store.model();
-            let catalog = TypeCatalog::new(store_model.object_types())
-                .with_interfaces(store_model.interfaces())
-                .with_governing_laws(store_model.law_artifacts())
-                .with_property_types(store_model.property_types());
+            let catalog = store_model
+                .type_catalog()
+                .with_governing_laws(store_model.law_artifacts());
             let model = CommitModel::new(&catalog);
             let reader = self.store.read();
             let view = GuardView(&reader);
@@ -1668,9 +1883,12 @@ where
             }
         }
         let mut batch = self.batch(&commit).map_err(CommitError::Host)?;
-        if let Some(start) = run_start {
-            // RUN-LEDGER-1: the store records the run in this commit's transaction.
-            batch.events.push(start.event().map_err(CommitError::Host)?);
+        // RUN-LEDGER-1 / DECISION-LEDGER-1: the store records the run start
+        // or the decision's resolution in this commit's transaction; S6c,
+        // S5a: else the events attached for it.
+        match bookkeeping {
+            Some(event) => batch.events.push(event),
+            None => batch.events.append(&mut self.attached),
         }
         // Only the non-serializable, kernel-bound proof reaches this path.
         // Persist additive occurrence inputs so export/restore replays the
@@ -1701,36 +1919,45 @@ where
         }
         let guard = |reader: &StoreReader<'_, S>| {
             // OBS-EVIDENCE-1: preparation cannot authorize a bundle disputed before BEGIN.
-            if let Some(bundle) = mapped_bundle {
+            for bundle in mapped {
                 reader
-                    .recheck_mapping_bundle(bundle)
+                    .check_mapping_bundle(bundle)
                     .map_err(CommitError::Host)?;
-                if reader
-                    .installed_definitions(None)
-                    .map_err(CommitError::Host)?
-                    .map(|d| d.version)
-                    != Some(bundle.definitions_version)
-                {
-                    return Err(CommitError::Host(CellError::MappingBundleMismatch));
+            }
+            if let Some(Consumed::Observation {
+                id: ObservationId(observation_id),
+            }) = &commit.consumes
+            {
+                // OBS-PAGE-1: a page commit applies exactly its still-pending
+                // members, in page order; a bundle commit exactly its bundle.
+                let applied: Vec<String> = mapped
+                    .iter()
+                    .map(|b| format!("mapping-bundle:{}", b.digest))
+                    .collect();
+                let expected = if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+                    reader
+                        .pending_page_member_ids(observation_id)
+                        .map_err(CommitError::Host)?
+                        .ok_or(CommitError::Host(CellError::SourceEvidenceChanged))?
+                } else if mapped.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![observation_id.clone()]
+                };
+                if applied != expected {
+                    return Err(CommitError::Host(CellError::SourceEvidenceChanged));
                 }
-                if reader
-                    .mapping_link_plan(bundle, &commit)
+            } else if !mapped.is_empty() {
+                return Err(CommitError::Host(CellError::MappingBundleMismatch));
+            }
+            if !mapped.is_empty()
+                && reader
+                    .mapping_link_plan(mapped, &commit)
                     .map_err(CommitError::Host)?
                     .links
                     != commit.links
-                {
-                    return Err(CommitError::Host(CellError::SourceEvidenceChanged));
-                }
-                if reader
-                    .mapping_conflict(bundle)
-                    .map_err(CommitError::Host)?
-                    .is_some()
-                    || reader
-                        .mapping_event_is_disputed(bundle)
-                        .map_err(CommitError::Host)?
-                {
-                    return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
-                }
+            {
+                return Err(CommitError::Host(CellError::SourceEvidenceChanged));
             }
             if authorization.is_none() {
                 for key in commit
@@ -1776,21 +2003,14 @@ where
                 }
             }
             let model = reader.model();
-            let catalog = TypeCatalog::new(model.object_types())
-                .with_interfaces(model.interfaces())
-                .with_governing_laws(model.law_artifacts())
-                .with_property_types(model.property_types());
+            let catalog = model
+                .type_catalog()
+                .with_governing_laws(model.law_artifacts());
             let model = CommitModel::new(&catalog);
-            match (authorization, owned_rows) {
-                (Some(authorization), None) => {
-                    check_commit_observed(&commit, &model, &GuardView(reader), authorization)
-                }
-                (None, Some(proof)) => {
-                    check_commit_owned_rows(&commit, &model, &GuardView(reader), proof)
-                }
-                (None, None) => check_commit(&commit, &model, &GuardView(reader)),
-                (Some(_), Some(_)) => Err(CommitError::ObservationAuthorization),
-            }
+            Proposed::new(&commit)
+                .authorize(authorization, owned_rows)?
+                .check(&model, &GuardView(reader))
+                .map(Checked::into_versions)
         };
         match self.store.commit_guarded_submitted(
             &batch,
@@ -2016,7 +2236,7 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, None)
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], None)
     }
 
     fn commit_action_references(
@@ -2036,7 +2256,7 @@ where
             &[],
             proof.reference_reads(),
             proof.property_reads(),
-            None,
+            &[],
             None,
         )
     }
@@ -2068,7 +2288,7 @@ where
             &[],
             &[],
             &[],
-            None,
+            &[],
             None,
         )
     }
@@ -2081,7 +2301,7 @@ where
     where
         E: From<ObservationEvent>,
     {
-        self.commit_observed_evidence(commit, &authorization, None)
+        self.commit_observed_evidence(commit, &authorization, &[])
     }
 
     fn perform(&mut self) -> Result<Option<Performed<I>>, CellError> {

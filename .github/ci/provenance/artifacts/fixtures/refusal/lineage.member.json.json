@@ -1,0 +1,23 @@
+{
+  "sha256": "b987e22413a121f2f524e9e012faeb969f932be6863a79b136f851de790087eb",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-cell-do/tests/refusal_detail.rs",
+    "crates/norn-cell-do/src/server.rs",
+    "crates/norn-cell-do/src/tenant.rs",
+    "crates/norn-cell-do/src/actions.rs",
+    "crates/norn-cell-do/src/policy.rs"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

@@ -11,6 +11,8 @@ import type { Artifact, ObjectPage } from "../src/lib/transport.ts"
 
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
 const { RecordsGrid } = await import("../src/grid/records-grid.tsx")
+const { RecordsTimeline } = await import("../src/grid/records-timeline.tsx")
+const { LocaleProvider } = await import("../src/lib/locale.tsx")
 const { cellText } = await import("../src/grid/cells.tsx")
 const { EMPTY_QUERY, recordsQueryParams, SERVER_QUERY_UNAVAILABLE } = await import("../src/lib/records-query.ts")
 const { blankClause, fromPredicate, sameDraft, settled, toPredicate } = await import("../src/grid/filter-editor.tsx")
@@ -117,4 +119,81 @@ test("'is one of' on a free-form field keeps what was typed, and applying leaves
   // A leftover from an earlier test (extra `values`, untrimmed text) settles the same way.
   const leftover = [{ ...blankClause(name), op: "eq" as const, value: " Gold ", values: ["x"] }]
   expect(settled(leftover, concept.fields)).toEqual([{ property: name.id, op: "eq", value: "Gold", high: "", values: [] }])
+})
+
+test("RecordsTimeline hides stale bars while pending, alerts on filter overflow, and formats headings in Studio's active locale", () => {
+  const client = new QueryClient()
+  const window = { start: Date.UTC(2026, 10, 23), end: Date.UTC(2026, 10, 30) }
+  const row = {
+    record: { objectType: "facilities.EquipmentBooking", id: "booking/1", scope: "s", version: 1, values: { label: "Prototype run", starts_at: "2026-11-23T08:00:00Z", ends_at: "2026-11-23T12:00:00Z" }, withheld: false },
+    at: "/records/0",
+    numbers: new Map(),
+  } as never
+  const noop = () => {}
+  const render = (props: { loaded?: boolean; pending?: boolean; filterOverflow?: number; locale?: "en" | "ar"; rows?: readonly unknown[]; read?: Parameters<typeof RecordsTimeline>[0]["read"] }) =>
+    renderToStaticMarkup(
+      <LocaleProvider initial={props.locale ?? "en"}>
+        <QueryClientProvider client={client}>
+          <RecordsTimeline concept={concept} rows={(props.rows ?? [row]) as never} window={window} zoom="week"
+            loaded={props.loaded ?? (!(props.pending ?? false) && (props.filterOverflow ?? 0) === 0)}
+            pending={props.pending ?? false} fetching={props.pending ?? false} filter={null} filterOverflow={props.filterOverflow ?? 0}
+            read={props.read ?? (async () => ({ kind: "no-cell" }))} onZoom={noop} onStep={noop} onToday={noop} onJump={noop} onOpen={noop} />
+        </QueryClientProvider>
+      </LocaleProvider>,
+    )
+
+  const stalePending = render({ pending: true })
+  expect(stalePending).toContain('aria-label="Reading records"')
+  expect(stalePending).not.toContain("Prototype run")
+
+  // Refused or failed read (`loaded: false`, `rows: []`): neither renders "Nothing in this week" nor fires nearest queries.
+  let nearestCalls = 0
+  const failedRead = render({
+    loaded: false,
+    pending: false,
+    rows: [],
+    read: async () => { nearestCalls += 1; return { kind: "no-cell" } },
+  })
+  expect(failedRead).not.toContain("Nothing in this week")
+  expect(nearestCalls).toBe(0)
+
+  // Confirmed empty page (`loaded: true`, `rows: []`) renders the empty-window state.
+  const confirmedEmpty = render({ loaded: true, pending: false, rows: [] })
+  expect(confirmedEmpty).toContain("Nothing in this week")
+
+  const overflow = render({ filterOverflow: 2 })
+  expect(overflow).toContain("Too many filter conditions for Timeline")
+  expect(overflow).toContain("Remove 2 conditions")
+  expect(overflow).not.toContain("Prototype run")
+
+  const arabic = render({ locale: "ar" })
+  expect(arabic).toContain("Prototype run")
+  expect(arabic).toContain("نوفمبر")
+})
+
+test("RecordsGrid offers the Lifecycle view toggle beside Table and Timeline only when the type declares a lifecycle", async () => {
+  const renderGridFor = async (target: typeof concept, timeline: boolean) => {
+    const client = new QueryClient()
+    const first = live([])
+    client.setQueryData(["records", target.name, recordsQueryParams(EMPTY_QUERY).toString()], first)
+    const root = createRootRoute()
+    const router = createRouter({
+      routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/", component: () => <RecordsGrid concept={target} read={async () => first} timeline={timeline} /> })]),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    })
+    await router.load()
+    return renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
+  }
+
+  expect(await renderGridFor(concept, false)).not.toContain(">Lifecycle<")
+  const restatement = catalog.byName.get("core.analytics.Restatement")
+  if (restatement === undefined) throw new Error("core.analytics.Restatement is not in the recorded catalog")
+  const lifecycleOnly = await renderGridFor(restatement, false)
+  expect(lifecycleOnly).toContain(">Table<")
+  expect(lifecycleOnly).toContain(">Lifecycle<")
+  expect(lifecycleOnly).not.toContain(">Timeline<")
+  const both = await renderGridFor(restatement, true)
+  expect(both).toContain(">Table<")
+  expect(both).toContain(">Timeline<")
+  expect(both).toContain(">Lifecycle<")
 })

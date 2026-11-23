@@ -1,0 +1,24 @@
+{
+  "sha256": "59d1bfff4e3fec32f20b69b40e57769dd6e1572acf8b4ad25f1a7bf2a8241aa4",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-formats/tests/fixtures/synthetic/ledger.nt",
+    "crates/norn-formats/tests/owl.rs",
+    "crates/norn-formats/src/owl.rs",
+    "crates/norn-formats/src/owl_lower.rs",
+    "crates/norn-formats/src/owl_model.rs",
+    "crates/norn-formats/tables/norn.formats.owl.datatypes.json"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

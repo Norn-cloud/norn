@@ -110,8 +110,15 @@ fn check_requirement(
     }
     check_type_members(pointer, &requirement.property_type, out);
     property_types::check_record_refs(pointer, &requirement.property_type, catalog, registry, out);
+    property_types::check_ref_additivity(
+        pointer,
+        &requirement.property_type,
+        catalog,
+        registry,
+        out,
+    );
     let resolved = resolve_type(&requirement.property_type, catalog, registry);
-    if let (norn_ir::PropertyType::Ref { name }, TypeResolution::Unresolved { direct: true }) =
+    if let (norn_ir::PropertyType::Ref { name, .. }, TypeResolution::Unresolved { direct: true }) =
         (&requirement.property_type, &resolved.resolution)
     {
         out.push(error(

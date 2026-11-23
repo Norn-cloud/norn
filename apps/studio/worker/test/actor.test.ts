@@ -19,9 +19,10 @@ function stage(host?: (request: Request) => Response) {
     AUTH_DB: db as unknown as D1Database,
     BETTER_AUTH_SECRET: "t".repeat(40),
     BETTER_AUTH_URL: ORIGIN,
+    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     ...host === undefined ? {} : { NORN_HOST: { fetch: async (request: Request) => { seen.push(request); return host(request) } } as unknown as Fetcher },
   }
-  return { env, db, seen, auth: createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN }) }
+  return { env, db, seen, auth: createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN }) }
 }
 
 let address = 0
@@ -118,7 +119,7 @@ test("a cookie-authenticated write from anywhere but the Studio origin never rea
 test("a live socket (UI-LIVE-1) opens only from the Studio origin and reaches the host with the host token and its handshake", async () => {
   const { env, seen } = stage(() => new Response(null, { status: 204 }))
   const cookie = await signUp(env, "live@example.com")
-  const handshake = { cookie, upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13", "sec-websocket-protocol": "norn.live.v1" }
+  const handshake = { cookie, upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": btoa("the sample nonce"), "sec-websocket-version": "13", "sec-websocket-protocol": "norn.live.v1" }
   // Cross-site socket hijacking: the browser sends the cookie on an upgrade from any page.
   for (const origin of ["https://evil.norn.cloud", "null", undefined]) {
     const headers: Record<string, string> = { ...handshake }
@@ -187,4 +188,28 @@ test("an authorized definition read resolves its signer inside the active organi
   const refused = await read()
   expect(refused.status).toBe(403)
   expect((await refused.json() as { signoff: { displayName?: string } }).signoff.displayName).toBeUndefined()
+})
+
+/** A host reply as the cell runtime streams it: its body cannot be cloned before it is read. */
+function streamed(document: unknown, status = 200): Response {
+  const response = new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(document))); controller.close() } }), { status, headers: { "content-type": "application/json" } })
+  response.clone = () => { throw new TypeError("Cannot clone a streaming response before consumption") }
+  return response
+}
+
+test("a streamed definition read is served without cloning, signed or not", async () => {
+  let document: Record<string, unknown> = {}
+  const { env, auth } = stage(() => streamed(document))
+  const cookie = await signUp(env, "streamed@example.com")
+  const reader = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!reader) throw new Error("no reader")
+  const read = () => call(env, "/api/host/v1/definitions/ops.approve_refund?orgId=x&environmentId=y", { headers: { cookie } })
+  document = { id: "ops.approve_refund", kind: "flow", signoff: { signer: `user:${reader.subjectId}`, signedAtMs: 1, restatementSha256: "a".repeat(64) } }
+  const signed = await read()
+  expect(signed.status).toBe(200)
+  expect((await signed.json() as { signoff: { displayName: string } }).signoff.displayName).toBe("you")
+  document = { id: "ops.approve_refund", kind: "flow", signoff: null }
+  const unsigned = await read()
+  expect(unsigned.status).toBe(200)
+  expect(await unsigned.json() as Record<string, unknown>).toEqual(document)
 })

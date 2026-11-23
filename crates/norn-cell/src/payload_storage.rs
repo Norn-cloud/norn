@@ -59,11 +59,29 @@ fn corrupt() -> CellError {
 fn digest(scope: &str, world: &str, body: &str) -> Result<String, CellError> {
     // The format and both length-delimited identities are part of the address.
     // Body bytes already use the existing Norn1 storage normalization.
-    Ok(
-        HashProfile::Norn1.hash_canonical_bytes(&norn_ir::canonical::canonical_json_of(&(
-            PREFIX, scope, world, body,
-        ))?),
-    )
+    // INGEST-PACK-ONE-PASS-1: the canonical text of the tuple `[PREFIX,
+    // scope, world, body]`, written straight from its parts (before, the body
+    // was copied into a value tree first); debug builds compare the two.
+    let mut preimage = String::with_capacity(
+        PREFIX
+            .len()
+            .saturating_add(scope.len())
+            .saturating_add(world.len())
+            .saturating_add(body.len())
+            // Quotes, commas and the escapes a body's own quotes take.
+            .saturating_add(256),
+    );
+    for (index, part) in [PREFIX, scope, world, body].into_iter().enumerate() {
+        preimage.push(if index == 0 { '[' } else { ',' });
+        norn_ir::canonical::write_canonical_string(part, &mut preimage);
+    }
+    preimage.push(']');
+    debug_assert_eq!(
+        preimage.as_bytes(),
+        norn_ir::canonical::canonical_json_of(&(PREFIX, scope, world, body))?.as_slice(),
+        "INGEST-PACK-ONE-PASS-1: the digest preimage differs from the tuple's canonical JSON"
+    );
+    Ok(HashProfile::Norn1.hash_canonical_bytes(preimage.as_bytes()))
 }
 
 fn normalized(text: &str) -> Result<String, CellError> {
@@ -94,6 +112,18 @@ fn store(
     let world = normalized(world)?;
     check_scope(engine, &scope)?;
     let hash = digest(&scope, &world, body)?;
+    store_at(engine, scope, world, body, hash)
+}
+
+/// [`store`] for an already normalized and checked `scope` and `world`, and
+/// the `body`'s own [`digest`] under them.
+fn store_at(
+    engine: &impl SqlEngine,
+    scope: String,
+    world: String,
+    body: &str,
+    hash: String,
+) -> Result<Reference, CellError> {
     let prior: Option<(String, String, String)> = engine.query_optional(
         r#"SELECT "scope","world","body" FROM "_norn_payload" WHERE "hash"=?1"#,
         params![hash],
@@ -203,22 +233,33 @@ fn placeholder(reference: &Reference) -> Value {
     norn_ir::runtime_object! { "$nornPayload" => reference.hash.clone() }
 }
 
+/// Encode a ledger event for storage. Returns its stored text and the event
+/// exactly as [`decode_event`] reads it back: the stored text parsed, with a
+/// payload stored apart parsed from its body in place of its placeholder.
+/// The writer's journal and receipt proof use that value, so they see what a
+/// ledger reader sees whichever event shapes the classifiers overlap on
+/// (#1527 S1).
 pub(crate) fn encode_event(
     engine: &impl SqlEngine,
     seq: u64,
     scope: &str,
     world: &str,
     event: &Value,
-) -> Result<String, CellError> {
+) -> Result<(String, Value), CellError> {
+    let inline = |event: &Value| -> Result<(String, Value), CellError> {
+        let text = canonical_json(event)?;
+        let decoded = serde_json::from_str(&text)?;
+        Ok((text, decoded))
+    };
     if event.get("type").and_then(Value::as_str) != Some("command.result") {
-        return canonical_json(event);
+        return inline(event);
     }
     let Some(result) = event.get("result") else {
-        return canonical_json(event);
+        return inline(event);
     };
     let body = canonical_json(result)?;
     if body.len() < MIN_BYTES {
-        return canonical_json(event);
+        return inline(event);
     }
     let reference = store(engine, scope, world, &body)?;
     let mut encoded = event.clone();
@@ -235,7 +276,13 @@ pub(crate) fn encode_event(
             reference.hash
         ],
     )?;
-    canonical_json(&encoded)
+    let text = canonical_json(&encoded)?;
+    let mut decoded: Value = serde_json::from_str(&text)?;
+    decoded
+        .as_object_mut()
+        .ok_or_else(corrupt)?
+        .insert("result".to_owned(), serde_json::from_str(&body)?);
+    Ok((text, decoded))
 }
 
 pub(crate) fn decode_event(
@@ -309,18 +356,92 @@ pub(crate) const EXPORT_BYTES: &str = r#"(octet_length(record) + COALESCE((
     WHERE p."commit_seq"="_norn_export_journal"."commit_seq"
 ),0))"#;
 
+/// One value's canonical body and its children's, in the value's own order
+/// (an object's members by key, an array's elements by index).
+struct Body {
+    text: String,
+    children: Vec<Self>,
+}
+
+/// Every node's canonical body, built once from its children's: Norn1 writes
+/// an object as its members sorted by NFC key, each `"key":value`, and an
+/// array as its elements in order, so a node's text is its children's texts
+/// joined. Canonicalizing each node from scratch read the record once per
+/// nesting level. Leaves, and any object Norn1 would refuse (two keys equal
+/// under NFC), are canonicalized directly.
+fn bodies(value: &Value) -> Result<Body, CellError> {
+    match value {
+        Value::Object(object) => {
+            let children = object.values().map(bodies).collect::<Result<Vec<_>, _>>()?;
+            let mut members: Vec<(String, &str, &str)> = object
+                .keys()
+                .zip(&children)
+                .map(|(key, child)| {
+                    (
+                        norn_ir::canonical::nfc(key),
+                        key.as_str(),
+                        child.text.as_str(),
+                    )
+                })
+                .collect();
+            members.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+            if members
+                .windows(2)
+                .any(|pair| matches!(pair, [left, right] if left.0 == right.0))
+            {
+                let text = canonical_json(value)?;
+                return Ok(Body { text, children });
+            }
+            let mut text = String::from("{");
+            for (index, (_, key, child)) in members.iter().enumerate() {
+                if index > 0 {
+                    text.push(',');
+                }
+                text.push_str(&canonical_json(*key)?);
+                text.push(':');
+                text.push_str(child);
+            }
+            text.push('}');
+            Ok(Body { text, children })
+        }
+        Value::Array(values) => {
+            let children = values.iter().map(bodies).collect::<Result<Vec<_>, _>>()?;
+            let mut text = String::from("[");
+            for (index, child) in children.iter().enumerate() {
+                if index > 0 {
+                    text.push(',');
+                }
+                text.push_str(&child.text);
+            }
+            text.push(']');
+            Ok(Body { text, children })
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(Body {
+            text: canonical_json(value)?,
+            children: Vec::new(),
+        }),
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one recursive walk carries the value, its body and the packing state"
+)]
 fn pack(
     engine: &impl SqlEngine,
     scope: &str,
     world: &str,
     value: &Value,
+    body: &Body,
     field: &str,
     path: &mut Vec<PathPart>,
     references: &mut Vec<AtPath>,
+    scope_checked: &mut bool,
 ) -> Result<Value, CellError> {
-    let body = canonical_json(value)?;
-    if body.len() >= MIN_BYTES || field == "ddlSql" {
-        let hash = digest(scope, world, &body)?;
+    if body.text.len() >= MIN_BYTES || field == "ddlSql" {
+        // `scope` and `world` are normalized (`encode_export`), so this is
+        // the address `store` would compute again.
+        let hash = digest(scope, world, &body.text)?;
         let exists = engine
             .query_optional(
                 r#"SELECT 1 FROM "_norn_payload" WHERE "hash"=?1 AND "scope"=?2 AND "world"=?3"#,
@@ -329,9 +450,13 @@ fn pack(
             )?
             .is_some();
         if exists || matches!(field, "ddlSql" | "result" | "outcome") {
+            if !*scope_checked {
+                check_scope(engine, scope)?;
+                *scope_checked = true;
+            }
             references.push(AtPath {
                 path: path.clone(),
-                reference: store(engine, scope, world, &body)?,
+                reference: store_at(engine, scope.to_owned(), world.to_owned(), &body.text, hash)?,
             });
             return Ok(Value::Null);
         }
@@ -339,11 +464,21 @@ fn pack(
     match value {
         Value::Object(object) => {
             let mut packed = BTreeMap::new();
-            for (key, value) in object {
+            for ((key, value), body) in object.iter().zip(&body.children) {
                 path.push(PathPart::Key(key.clone()));
                 packed.insert(
                     key.clone(),
-                    pack(engine, scope, world, value, key, path, references)?,
+                    pack(
+                        engine,
+                        scope,
+                        world,
+                        value,
+                        body,
+                        key,
+                        path,
+                        references,
+                        scope_checked,
+                    )?,
                 );
                 path.pop();
             }
@@ -351,9 +486,19 @@ fn pack(
         }
         Value::Array(values) => {
             let mut packed = Vec::new();
-            for (index, value) in values.iter().enumerate() {
+            for (index, (value, body)) in values.iter().zip(&body.children).enumerate() {
                 path.push(PathPart::Index(index));
-                packed.push(pack(engine, scope, world, value, "", path, references)?);
+                packed.push(pack(
+                    engine,
+                    scope,
+                    world,
+                    value,
+                    body,
+                    "",
+                    path,
+                    references,
+                    scope_checked,
+                )?);
                 path.pop();
             }
             Ok(Value::Array(packed))
@@ -378,28 +523,117 @@ fn target<'a>(value: &'a mut Value, path: &[PathPart]) -> Result<&'a mut Value, 
     Ok(value)
 }
 
+/// Packed encoding of `record`, given its Norn1 canonical text.
+///
+/// INGEST-PACK-ONE-PASS-1: the canonical text is read once into the span of
+/// every node ([`spans`]). Norn1 text is compositional (a node's canonical
+/// body is its own span of the record's text) and already canonical (members
+/// in NFC key order, NFC strings), so each node's body is borrowed from the
+/// text, and the inline text is the record's text with each stored node's
+/// span written as `null`. Before, the text was parsed back into a value, each
+/// node's body was copied at each nesting level, and the inline value was
+/// rebuilt and canonicalized again. The bytes are the same; any text the scan
+/// does not take goes down that former path, and debug builds run both and
+/// require equal bytes.
 pub(crate) fn encode_export(
     engine: &impl SqlEngine,
     record: &crate::export::ExportRecord,
+    canonical: &str,
 ) -> Result<String, CellError> {
-    let value: Value = serde_json::from_str(&canonical_json(record)?)?;
     let scope = normalized(&record.batch.scope)?;
     let world = normalized(&record.batch.world)?;
+    let Some(tree) = spans(canonical) else {
+        return encode_parsed(engine, record, canonical, scope, world);
+    };
     let mut references = Vec::new();
+    let mut stored = Vec::new();
+    pack_spans(
+        engine,
+        &Packing {
+            scope: &scope,
+            world: &world,
+            text: canonical,
+        },
+        &tree,
+        "",
+        &mut Vec::new(),
+        &mut references,
+        &mut stored,
+        // A stored body checks the bound scope first, once per record.
+        &mut false,
+    )?;
+    let mut inline = String::with_capacity(canonical.len());
+    let mut at = 0;
+    for (start, end) in &stored {
+        inline.push_str(canonical.get(at..*start).ok_or_else(corrupt)?);
+        inline.push_str("null");
+        at = *end;
+    }
+    inline.push_str(canonical.get(at..).ok_or_else(corrupt)?);
+    #[cfg(debug_assertions)]
+    {
+        // The former path's bodies and inline value, from the parsed text.
+        let value: Value = serde_json::from_str(canonical)?;
+        let body = bodies(&value)?;
+        debug_assert!(
+            spans_agree(canonical, &tree, &body, &value),
+            "INGEST-PACK-ONE-PASS-1: a node's span differs from its composed body"
+        );
+        let mut former = value;
+        for at in &references {
+            *target(&mut former, &at.path)? = Value::Null;
+        }
+        debug_assert_eq!(
+            canonical_json(&former)?,
+            inline,
+            "INGEST-PACK-ONE-PASS-1: the inline text differs from the former path's"
+        );
+    }
+    finish_export(engine, record, scope, world, inline, references)
+}
+
+/// The former [`encode_export`]: parse the canonical text back, compose every
+/// node's body, pack the value and canonicalize the inline value again.
+fn encode_parsed(
+    engine: &impl SqlEngine,
+    record: &crate::export::ExportRecord,
+    canonical: &str,
+    scope: String,
+    world: String,
+) -> Result<String, CellError> {
+    let value: Value = serde_json::from_str(canonical)?;
+    let mut references = Vec::new();
+    let body = bodies(&value)?;
     let inline = pack(
         engine,
         &scope,
         &world,
         &value,
+        &body,
         "",
         &mut Vec::new(),
         &mut references,
+        // A stored body checks the bound scope first, once per record.
+        &mut false,
     )?;
+    let inline = canonical_json(&inline)?;
+    finish_export(engine, record, scope, world, inline, references)
+}
+
+/// Index a packed record's references and write its envelope.
+fn finish_export(
+    engine: &impl SqlEngine,
+    record: &crate::export::ExportRecord,
+    scope: String,
+    world: String,
+    inline: String,
+    references: Vec<AtPath>,
+) -> Result<String, CellError> {
     let packed = Packed {
         scope,
         world,
         commit_seq: record.receipt.body.commit_seq,
-        inline: canonical_json(&inline)?,
+        inline,
         references,
     };
     for (ordinal, at) in packed.references.iter().enumerate() {
@@ -407,6 +641,211 @@ pub(crate) fn encode_export(
             params![to_i64(packed.commit_seq, "payload export seq")?, i64::try_from(ordinal).map_err(|_overflow| corrupt())?, at.reference.hash])?;
     }
     Ok(format!("{PREFIX}{}", canonical_json(&packed)?))
+}
+
+/// One node of a canonical text: its span, and its members (an object's,
+/// each with its key as parsed) or elements (an array's), in text order.
+struct Span {
+    start: usize,
+    end: usize,
+    children: Vec<(Option<String>, Self)>,
+}
+
+/// Deepest nesting [`spans`] takes; deeper text goes down the former path,
+/// which refuses it as it always has.
+const MAX_SPAN_DEPTH: usize = 64;
+
+/// Every node's span in the Norn1 canonical text `text`, or `None` for any
+/// text this scan does not take (it then goes down the former path, whose
+/// result or refusal is its own). Each number is read as the former path's
+/// parse reads it, so a number that parse refuses is not taken either.
+fn spans(text: &str) -> Option<Span> {
+    let bytes = text.as_bytes();
+    let (span, end) = span_at(text, bytes, 0, 0)?;
+    (end == bytes.len()).then_some(span)
+}
+
+fn span_at(text: &str, bytes: &[u8], start: usize, depth: usize) -> Option<(Span, usize)> {
+    if depth > MAX_SPAN_DEPTH {
+        return None;
+    }
+    let node = |end: usize, children: Vec<(Option<String>, Span)>| {
+        Some((
+            Span {
+                start,
+                end,
+                children,
+            },
+            end,
+        ))
+    };
+    let next = |at: usize| at.checked_add(1);
+    match bytes.get(start)? {
+        first @ (b'n' | b't' | b'f') => {
+            let word = match first {
+                b'n' => "null",
+                b't' => "true",
+                _ => "false",
+            };
+            let end = start.checked_add(word.len())?;
+            (text.get(start..end)? == word).then_some(())?;
+            node(end, Vec::new())
+        }
+        b'"' => node(string_end(bytes, start)?, Vec::new()),
+        b'-' | b'0'..=b'9' => {
+            let mut end = next(start)?;
+            while bytes
+                .get(end)
+                .is_some_and(|byte| matches!(byte, b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-'))
+            {
+                end = next(end)?;
+            }
+            // The former path reads this number through the runtime value's
+            // own parse; one it refuses is refused there.
+            Value::from_json_text(text.get(start..end)?).ok()?;
+            node(end, Vec::new())
+        }
+        open @ (b'[' | b'{') => {
+            let close = if *open == b'[' { b']' } else { b'}' };
+            let mut children = Vec::new();
+            let mut at = next(start)?;
+            if bytes.get(at) != Some(&close) {
+                loop {
+                    let (key, value_at) = if close == b'}' {
+                        let key_end = string_end(bytes, at)?;
+                        let key: String = serde_json::from_str(text.get(at..key_end)?).ok()?;
+                        (bytes.get(key_end) == Some(&b':')).then_some(())?;
+                        (Some(key), next(key_end)?)
+                    } else {
+                        (None, at)
+                    };
+                    let (child, end) = span_at(text, bytes, value_at, next(depth)?)?;
+                    children.push((key, child));
+                    match bytes.get(end)? {
+                        b',' => at = next(end)?,
+                        byte if *byte == close => {
+                            at = end;
+                            break;
+                        }
+                        _ => return None,
+                    }
+                }
+            }
+            node(next(at)?, children)
+        }
+        _ => None,
+    }
+}
+
+/// The end (one past the closing quote) of the JSON string starting at
+/// `start`.
+fn string_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes.get(start) != Some(&b'"') {
+        return None;
+    }
+    let mut at = start.checked_add(1)?;
+    loop {
+        match bytes.get(at)? {
+            b'"' => return at.checked_add(1),
+            b'\\' => at = at.checked_add(2)?,
+            _ => at = at.checked_add(1)?,
+        }
+    }
+}
+
+/// The scope, world and canonical text one [`pack_spans`] walk packs.
+struct Packing<'a> {
+    scope: &'a str,
+    world: &'a str,
+    text: &'a str,
+}
+
+/// [`pack`] over spans: the same nodes, in the same order, stored by the
+/// same rule; a stored node's span is recorded in `stored` (in text order)
+/// instead of rebuilding the value around it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one recursive walk carries the node and the packing state"
+)]
+fn pack_spans(
+    engine: &impl SqlEngine,
+    packing: &Packing<'_>,
+    node: &Span,
+    field: &str,
+    path: &mut Vec<PathPart>,
+    references: &mut Vec<AtPath>,
+    stored: &mut Vec<(usize, usize)>,
+    scope_checked: &mut bool,
+) -> Result<(), CellError> {
+    let body = packing.text.get(node.start..node.end).ok_or_else(corrupt)?;
+    if body.len() >= MIN_BYTES || field == "ddlSql" {
+        // `scope` and `world` are normalized (`encode_export`), so this is
+        // the address `store` would compute again.
+        let hash = digest(packing.scope, packing.world, body)?;
+        let exists = engine
+            .query_optional(
+                r#"SELECT 1 FROM "_norn_payload" WHERE "hash"=?1 AND "scope"=?2 AND "world"=?3"#,
+                params![hash, packing.scope, packing.world],
+                |row| row.get::<i64>(0),
+            )?
+            .is_some();
+        if exists || matches!(field, "ddlSql" | "result" | "outcome") {
+            if !*scope_checked {
+                check_scope(engine, packing.scope)?;
+                *scope_checked = true;
+            }
+            references.push(AtPath {
+                path: path.clone(),
+                reference: store_at(
+                    engine,
+                    packing.scope.to_owned(),
+                    packing.world.to_owned(),
+                    body,
+                    hash,
+                )?,
+            });
+            stored.push((node.start, node.end));
+            return Ok(());
+        }
+    }
+    for (index, (key, child)) in node.children.iter().enumerate() {
+        path.push(match key {
+            Some(key) => PathPart::Key(key.clone()),
+            None => PathPart::Index(index),
+        });
+        pack_spans(
+            engine,
+            packing,
+            child,
+            key.as_deref().unwrap_or(""),
+            path,
+            references,
+            stored,
+            scope_checked,
+        )?;
+        path.pop();
+    }
+    Ok(())
+}
+
+/// Whether every node's span is its composed body, with the same members.
+#[cfg(any(test, debug_assertions))]
+fn spans_agree(text: &str, node: &Span, body: &Body, value: &Value) -> bool {
+    let own = text.get(node.start..node.end) == Some(body.text.as_str())
+        && node.children.len() == body.children.len();
+    own && match value {
+        Value::Object(object) => object.iter().zip(&node.children).zip(&body.children).all(
+            |(((key, value), (span_key, child)), body)| {
+                span_key.as_deref() == Some(key.as_str()) && spans_agree(text, child, body, value)
+            },
+        ),
+        Value::Array(values) => values.iter().zip(&node.children).zip(&body.children).all(
+            |((value, (span_key, child)), body)| {
+                span_key.is_none() && spans_agree(text, child, body, value)
+            },
+        ),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
+    }
 }
 
 pub(crate) fn decode_export(
@@ -501,7 +940,7 @@ mod tests {
                 command: norn_ir::runtime_object! { "kind" => "read" },
             },
         });
-        store.commit(&enqueue).expect("enqueue");
+        store.commit_unchecked(&enqueue).expect("enqueue");
         let outcome =
             norn_ir::runtime_object! { "body" => "payload-marker".repeat(10_000), "ok" => true };
         assert!(
@@ -526,7 +965,7 @@ mod tests {
         consume.events.push(
             norn_ir::runtime_object! { "type" => "command.result", "result" => outcome.clone() },
         );
-        store.commit(&consume).expect("consume");
+        store.commit_unchecked(&consume).expect("consume");
         (store, outcome)
     }
 
@@ -734,7 +1173,9 @@ mod tests {
         input
             .events
             .push(norn_ir::runtime_object! { "type" => "nested", "body" => nested });
-        store.commit(&input).expect("nested event commits");
+        store
+            .commit_unchecked(&input)
+            .expect("nested event commits");
         let record = store
             .export_record(1)
             .expect("nested journal decodes")
@@ -792,7 +1233,9 @@ mod tests {
         input
             .events
             .push(norn_ir::runtime_object! { "type" => "unicode.scope" });
-        store.commit(&input).expect("existing scope commits");
+        store
+            .commit_unchecked(&input)
+            .expect("existing scope commits");
         let record = store
             .export_record(1)
             .expect("normalized journal decodes")
@@ -818,7 +1261,7 @@ mod tests {
                 .expect("store");
         let mut input = batch("literal-marker");
         input.events.push(norn_ir::runtime_object! { "type" => "command.result", "result" => norn_ir::runtime_object! { "$nornPayload" => "literal-user-data" } });
-        legacy.commit(&input).expect("literal event");
+        legacy.commit_unchecked(&input).expect("literal event");
         assert_eq!(
             legacy
                 .read()
@@ -837,7 +1280,7 @@ mod tests {
         let mut input = batch("foreign-scope");
         input.scope = "org_other/dev".to_owned();
         input.events.push(norn_ir::runtime_object! { "type" => "command.result", "result" => norn_ir::runtime_object! { "body" => "x".repeat(2_000) } });
-        assert!(store.commit(&input).is_err());
+        assert!(store.commit_unchecked(&input).is_err());
         assert_eq!(
             store.read().verify_ledger().expect("unchanged ledger").seq,
             0
@@ -849,5 +1292,74 @@ mod tests {
             })
             .expect("content count");
         assert_eq!(rows, 0);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(clippy::expect_used, reason = "canonical body equivalence")]
+mod body_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn values() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            (-10_000i64..10_000, 0u32..1_000).prop_map(|(n, fraction)| {
+                Value::from_json_text(format!("{n}.{fraction:03}")).expect("decimal")
+            }),
+            "[a-zA-Z0-9 \"\\\\\u{7f}\u{e9}\u{301}\u{1f600}\n\t]{0,8}".prop_map(Value::String),
+        ];
+        leaf.prop_recursive(4, 64, 6, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..6).prop_map(Value::Array),
+                prop::collection::btree_map("[a-z\u{e9}\u{301}\"_]{0,4}", inner, 0..6)
+                    .prop_map(Value::Object),
+            ]
+        })
+    }
+
+    fn agrees(body: &Body, value: &Value) -> bool {
+        let direct = canonical_json(value);
+        let own = match &direct {
+            Ok(text) => *text == body.text,
+            // A value Norn1 refuses is refused by the composition too.
+            Err(_) => true,
+        };
+        own && match value {
+            Value::Object(object) => object
+                .values()
+                .zip(&body.children)
+                .all(|(value, body)| agrees(body, value)),
+            Value::Array(values) => values
+                .iter()
+                .zip(&body.children)
+                .all(|(value, body)| agrees(body, value)),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
+        }
+    }
+
+    proptest! {
+        /// Every node's composed body is byte-for-byte its Norn1 canonical
+        /// JSON, keys needing NFC and escapes included.
+        #[test]
+        fn composed_bodies_equal_canonical_json(value in values()) {
+            match bodies(&value) {
+                Ok(body) => prop_assert!(agrees(&body, &value)),
+                Err(_) => prop_assert!(canonical_json(&value).is_err()),
+            }
+        }
+
+        /// INGEST-PACK-ONE-PASS-1: every node's span of the canonical text
+        /// is its composed body, with the members the parsed text has.
+        #[test]
+        fn spans_are_composed_bodies(value in values()) {
+            if let Ok(text) = canonical_json(&value) {
+                let parsed: Value = serde_json::from_str(&text).expect("canonical text parses");
+                let body = bodies(&parsed).expect("canonical text composes");
+                let tree = spans(&text);
+                prop_assert!(tree.is_some_and(|tree| spans_agree(&text, &tree, &body, &parsed)));
+            }
+        }
     }
 }

@@ -20,9 +20,18 @@ export interface Field {
   readonly type: string
   readonly optional: boolean
   /** Declared exact-decimal facts, with the unit or currency fact their type names. */
-  readonly decimal: { readonly unit: string | undefined; readonly perUnit: string | undefined; readonly currencyFrom: string | undefined } | undefined
+  readonly decimal: {
+    readonly unit: string | undefined
+    readonly perUnit: string | undefined
+    readonly currencyFrom: string | undefined
+    readonly scale?: number
+    /** The properties whose value names this value's unit, in order (the use-site `unitSource`): the first one set is its unit. */
+    readonly unitFrom?: readonly string[]
+  } | undefined
   /** The declared value kind after resolving named property types; `enum` carries its declared values in order. */
   readonly scalar: Scalar
+  /** PRIVACY-1 markings the definition declares on this fact: its own, then its named type's. */
+  readonly markings?: readonly string[]
 }
 
 /** A property's value kind as the admitted definition declares it, with named types resolved. */
@@ -54,6 +63,8 @@ export interface Feed {
   readonly dataset: string
   /** Declared sources per fact or relationship id (a link may be declared more than once); one missing here is not mapped by this system. */
   readonly facts: ReadonlyMap<string, readonly Source[]>
+  /** Source fields the mapping leaves out on purpose, each with the reason it declares. */
+  readonly ignored: readonly { readonly field: string; readonly reason: string }[]
 }
 
 /** Read one declared mapping expression: `input.code`, `'on_hand'`, `null` or anything else. */
@@ -86,9 +97,44 @@ export interface Concept {
   readonly fields: readonly Field[]
   readonly relationships: readonly Relationship[]
   readonly rules: readonly string[]
+  /** The admitted laws scoped to this type, as declared. */
+  readonly laws: readonly Law[]
   readonly feeds: readonly Feed[]
   /** The lifecycles an object type declares; interfaces declare none. */
   readonly lifecycles: readonly Lifecycle[]
+}
+
+/** One admitted law, as its LawIR declares it. */
+export interface Law {
+  readonly id: string
+  readonly subject: string
+  readonly rationale: string
+  readonly severity: "error" | "warning"
+  /** The temporal wrapper (`always`, `never`, …) and the response kind (`predicate`, `invariant`, …). */
+  readonly modality: string
+  readonly response: string
+  readonly owner: string
+  /**
+   * The two facts a predicate law holds equal, when it reads `self.a == self.b` (or `self.a == (self.b ?? …)`), or
+   * a total held to the sum over its lines, `self.total == sum(map(self.lines, #.amount))` (then the second is the
+   * path `lines.amount`): what a broken record shows side by side.
+   */
+  readonly compares?: readonly [string, string]
+  /** The concept that declares the law, when a concept inherits it (an interface it implements, a supertype). */
+  readonly inheritedFrom?: string
+}
+
+const IDENT = "[A-Za-z_][A-Za-z0-9_]*"
+const PAIR = new RegExp(`^\\s*self\\.(${IDENT})\\s*==\\s*\\(?\\s*self\\.(${IDENT})\\b`)
+const SUM = new RegExp(`^\\s*self\\.(${IDENT})\\s*==\\s*sum\\(\\s*map\\(\\s*self\\.(${IDENT})\\s*,\\s*#\\.(${IDENT})\\s*\\)\\s*\\)\\s*$`)
+
+/** The two facts an equality law compares, read from its declared predicate; anything else compares nothing. */
+export function comparedFacts(expression: unknown): readonly [string, string] | undefined {
+  if (typeof expression !== "string") return undefined
+  const sum = SUM.exec(expression)
+  if (sum) return [sum[1]!, `${sum[2]!}.${sum[3]!}`]
+  const match = PAIR.exec(expression)
+  return match ? [match[1]!, match[2]!] : undefined
 }
 
 export interface SourceSystem {
@@ -96,6 +142,8 @@ export interface SourceSystem {
   readonly name: string
   readonly datasets: readonly string[]
   readonly feeds: readonly string[]
+  /** The source schema this mapping reads, as its schema declares it: the instance, schema version and when it was observed. */
+  readonly schema: { readonly id: string; readonly instance: string | undefined; readonly version: string | undefined; readonly observedAt: string | undefined } | undefined
 }
 
 export interface Catalog {
@@ -104,12 +152,35 @@ export interface Catalog {
   readonly byName: ReadonlyMap<string, Concept>
 }
 
-const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify" }
+const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo", scans: "Document scans", "norn-connect": "Norn" }
+
+/**
+ * Whether the cell itself writes this source: its schema names the instance `cell` (the sync
+ * reports behind each connection's status). Such a source is Norn's own record, not a connected
+ * system; uploads and outside systems name their own instance.
+ */
+export const cellOwned = (system: SourceSystem): boolean => system.schema?.instance === "cell"
 
 /** `synthetic-erpnext` → `ERPNext`; an unknown system keeps the name the server sent. */
 export function systemName(system: string): string {
   const bare = system.replace(/^synthetic-/, "")
   return SYSTEM_NAMES[bare] ?? bare
+}
+
+/** The tones a source system's chip takes: one per system, never the status tones (green, red, gray). */
+const SYSTEM_TONES = ["blue", "teal", "violet", "amber", "pink", "orange"] as const
+
+/**
+ * One tone per source system, the same on every page: the known systems in a fixed order, any other
+ * by a hash of its name. Display only; it says nothing about the system.
+ */
+export function systemTone(system: string): (typeof SYSTEM_TONES)[number] {
+  const bare = system.replace(/^synthetic-/, "")
+  const known = Object.keys(SYSTEM_NAMES).indexOf(bare)
+  if (known >= 0) return SYSTEM_TONES[known % SYSTEM_TONES.length] ?? "blue"
+  let hash = 0
+  for (const char of bare) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  return SYSTEM_TONES[hash % SYSTEM_TONES.length] ?? "blue"
 }
 
 /** `canon.SettlementObservation` → `Settlement observation`. */
@@ -151,9 +222,27 @@ function scalarOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef
 function decimalOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef>): Field["decimal"] {
   if (type.kind === "ref") {
     const def = types.get(type.name)
-    return def ? decimalOf(def.type, types) : undefined
+    const resolved = def ? decimalOf(def.type, types) : undefined
+    const from = (type as { unitSource?: unknown }).unitSource
+    const unitFrom = Array.isArray(from) && from.every((item) => typeof item === "string") ? from as readonly string[] : undefined
+    return resolved && unitFrom ? { ...resolved, unitFrom } : resolved
   }
-  return type.kind === "decimal" ? { unit: type.unit?.code, perUnit: type.perUnit?.code, currencyFrom: type.currencySource?.property } : undefined
+  if (type.kind !== "decimal") return undefined
+  const scale = (type as { scale?: unknown }).scale
+  return { unit: type.unit?.code, perUnit: type.perUnit?.code, currencyFrom: type.currencySource?.property, ...typeof scale === "number" ? { scale } : {} }
+}
+
+/** A declaration's `markings` list (a property's, or a named property type's). */
+const markingsOf = (declared: unknown): readonly string[] => {
+  const markings = (declared as { markings?: unknown } | null)?.markings
+  return Array.isArray(markings) ? markings.filter((marking): marking is string => typeof marking === "string") : []
+}
+
+/** The markings a property inherits from its named type, following named types to their end. */
+function typeMarkings(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef>, seen: ReadonlySet<string> = new Set()): readonly string[] {
+  if (type.kind !== "ref" || seen.has(type.name)) return []
+  const def = types.get(type.name)
+  return def === undefined ? [] : [...markingsOf(def), ...typeMarkings(def.type, types, new Set([...seen, type.name]))]
 }
 
 /**
@@ -164,9 +253,11 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
   const labels = labelIndex(artifacts)
   const types = new Map<string, PropertyTypeDef>()
   const rules = new Map<string, string[]>()
+  const laws = new Map<string, Law[]>()
   const feeds = new Map<string, Feed[]>()
   const systems: SourceSystem[] = []
   const sourceSystem = new Map<string, string>()
+  const sourceSchema = new Map<string, NonNullable<SourceSystem["schema"]>>()
   const entityName = new Map<string, string>()
   for (const artifact of artifacts) {
     if (artifact.kind === "entity" && "propertyTypes" in artifact.payload) for (const def of artifact.payload.propertyTypes) types.set(def.name, def)
@@ -175,10 +266,16 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
       const name = "objectType" in payload ? payload.objectType.name : "interface" in payload ? payload.interface.name : undefined
       if (name) entityName.set(artifact.artifactId, name)
     }
-    if (artifact.kind === "source_schema") sourceSystem.set(artifact.artifactId, artifact.payload.source.system)
+    if (artifact.kind === "source_schema") {
+      const { source, observedAt } = artifact.payload as { source: { system: string; instance?: string; version?: string }; observedAt?: string }
+      sourceSystem.set(artifact.artifactId, source.system)
+      sourceSchema.set(artifact.artifactId, { id: artifact.artifactId, instance: source.instance, version: source.version, observedAt })
+    }
     if (artifact.kind === "law") {
       const law = artifact.payload
       for (const target of law.scope.objectTypes) rules.set(target, [...rules.get(target) ?? [], law.rationale])
+      const declared: Law = { id: law.id, subject: law.subject, rationale: law.rationale, severity: law.severity, modality: String((law.modality as { kind?: unknown }).kind ?? ""), response: String((law.response as { kind?: unknown }).kind ?? ""), owner: law.owner, ...(comparedFacts((law.response as { expression?: unknown }).expression) ? { compares: comparedFacts((law.response as { expression?: unknown }).expression)! } : {}) }
+      for (const target of new Set([law.subject, ...law.scope.objectTypes])) laws.set(target, [...laws.get(target) ?? [], declared])
     }
   }
   for (const artifact of artifacts) {
@@ -200,10 +297,11 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
         else if (transition !== undefined) add(property, { kind: "transition", expression: transition })
       }
       for (const { member, note, reason } of map.gaps ?? []) facts.set(member, [{ kind: "gap", reason, note }])
-      feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset, facts }])
+      const ignored = (map.ignoredFields ?? []).map(({ field, reason }) => ({ field, reason }))
+      feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset, facts, ignored }])
     }
     const datasets = [...new Set(artifact.payload.maps.map(({ source }) => source.dataset))]
-    systems.push({ id: artifact.artifactId, name: system, datasets, feeds: [...targets] })
+    systems.push({ id: artifact.artifactId, name: system, datasets, feeds: [...targets], schema: sourceSchema.get(artifact.payload.source.schemaId) })
   }
   const concepts: Concept[] = []
   for (const artifact of artifacts) {
@@ -235,20 +333,44 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
       summaryLang: own?.description === undefined ? "en" : own.tag,
       description: def.description,
       parents,
-      fields: (def.properties ?? []).map(({ id, type, constraints }) => {
+      fields: (def.properties ?? []).map((property) => {
+        const { id, type, constraints } = property
         const label = pick(labels, `property:${def.name}.${id}`, locale)
         const scalar = scalarOf(type, types)
         const valueLabels = new Map(scalar.kind === "enum"
           ? scalar.values.flatMap((value) => { const text = pick(labels, `enumValue:${def.name}.${id}=${value}`, locale)?.text; return text === undefined ? [] : [[value, text] as const] })
           : [])
-        return { id, label: label?.text ?? id.replaceAll("_", " "), labelLang: label?.tag ?? "en", valueLabels, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types), scalar }
+        const markings = [...new Set([...markingsOf(property), ...typeMarkings(type, types)])]
+        return { id, label: label?.text ?? id.replaceAll("_", " "), labelLang: label?.tag ?? "en", valueLabels, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types), scalar, ...markings.length > 0 ? { markings } : {} }
       }),
       relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, count: cardinality.to === "many" ? "many" : cardinality.required === true ? "one" : "at most one" })),
       rules: [...invariants, ...rules.get(def.name) ?? []],
+      laws: laws.get(def.name) ?? [],
       feeds: fed,
       lifecycles: "lifecycles" in def ? def.lifecycles ?? [] : [],
     })
   }
-  concepts.sort((a, b) => a.title.localeCompare(b.title, locale))
-  return { concepts, systems, byName: new Map(concepts.map((concept) => [concept.name, concept])) }
+  // LAW-INTERFACE-1: a law declared on a concept governs every concept that implements or extends
+  // it, so each one lists the laws (and rules) of its ancestors too, marked with where they come from.
+  const parentsOf = new Map(concepts.map((concept) => [concept.name, concept.parents]))
+  const ancestors = (name: string): string[] => {
+    const seen = new Set<string>()
+    const pending = [...parentsOf.get(name) ?? []]
+    while (pending.length > 0) {
+      const next = pending.shift()!
+      if (seen.has(next) || next === name) continue
+      seen.add(next)
+      pending.push(...parentsOf.get(next) ?? [])
+    }
+    return [...seen]
+  }
+  const governed = concepts.map((concept) => {
+    const inherited = ancestors(concept.name).flatMap((ancestor) => (laws.get(ancestor) ?? []).map((law) => ({ ...law, inheritedFrom: ancestor })))
+    const fresh = inherited.filter((law, index) => !concept.laws.some(({ id }) => id === law.id) && inherited.findIndex(({ id }) => id === law.id) === index)
+    if (fresh.length === 0) return concept
+    const rationales = fresh.map(({ rationale }) => rationale).filter((rationale) => !concept.rules.includes(rationale))
+    return { ...concept, laws: [...concept.laws, ...fresh], rules: [...concept.rules, ...rationales] }
+  })
+  governed.sort((a, b) => a.title.localeCompare(b.title, locale))
+  return { concepts: governed, systems, byName: new Map(governed.map((concept) => [concept.name, concept])) }
 }

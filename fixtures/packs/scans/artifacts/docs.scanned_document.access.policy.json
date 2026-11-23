@@ -1,0 +1,96 @@
+{
+  "artifactId": "docs.scanned_document.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Scanned document steward",
+  "namespace": "docs",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "docs.scanned_document.access",
+    "rules": [
+      {
+        "actions": [
+          "docs.scanned_document.correct"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "DataSteward",
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "docs.ScannedDocument",
+        "ruleId": "steward",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "docs.document_line.correct"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "DataSteward",
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "docs.DocumentLine",
+        "ruleId": "steward_lines",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "docs.document_line.correct"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "DataSteward",
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "docs.ScannedDocument",
+        "ruleId": "steward_line_documents",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/scans/artifacts/docs.scanned_document.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

@@ -3,6 +3,13 @@ import { readFileSync } from "node:fs"
 import { expect, test } from "@playwright/test"
 import type { Page, Route } from "@playwright/test"
 
+/** Choose a view (Business, Technical) or a language (English, العربية) from the account menu, where they live. */
+async function chooseFromAccountMenu(page: Page, name: string) {
+  await page.getByRole("button", { name: /Account$/ }).click()
+  await page.getByRole("menuitemradio", { name, exact: true }).click()
+}
+
+
 /** The definitions routes' refusals (test/fixtures/definition-call.json, pinned to the routes by crates/norn-cell-do/tests/definitions.rs). */
 type Served = "signoffUnavailable" | "signoffMismatch" | "notFound"
 const SERVED = JSON.parse(readFileSync(new URL("../test/fixtures/definition-call.json", import.meta.url), "utf8")) as Record<Served, object> & { readonly status: Record<Served, number> }
@@ -75,7 +82,7 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
     if (stored) return route.fulfill({ json: { id: stored.id, kind: "question", version: stored.version, payload: stored.payload, restatement: returnedWords ?? stored.text, restatementSha256: digest(returnedWords ?? stored.text), signoff: { signer: "user:analyst-id", displayName: "you", signedAtMs: 1794000000000, restatementSha256: stored.sha256 } } })
     return refuse(route, "notFound")
   })
-  await page.goto("/questions/build")
+  await page.goto("/metrics/build")
   await expect(page.getByLabel("Question name")).toHaveValue("Yield")
   await expect(page.getByRole("button", { name: "Save question" })).toBeDisabled()
   await expect(page.getByText("Sign off on the plain words first.")).toBeVisible()
@@ -113,10 +120,10 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
   await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled()
   await expect(page.locator("main")).not.toContainText("user:analyst-id")
   await expect(page.locator(`span[title="${newHash}"]`)).toHaveCount(0)
-  await page.getByRole("radio", { name: "Technical" }).click()
+  await chooseFromAccountMenu(page, "Technical")
   await expect(page.locator("main")).toContainText("user:analyst-id")
   await expect(page.locator(`span[title="${newHash}"]`)).toBeVisible()
-  await page.getByRole("radio", { name: "Business" }).click()
+  await chooseFromAccountMenu(page, "Business")
   // A later cell restatement cannot inherit the old sign-off.
   returnedWords = currentWords = "The cell now reads the question differently."
   await page.getByRole("button", { name: "Open", exact: true }).click()
@@ -161,7 +168,7 @@ test("a workspace without a data cell cannot call definitions", async ({ page })
   await page.route("**/api/questions/catalog", (route) => route.fulfill({ json: catalog }))
   await page.route("**/api/questions/recommendations", (route) => route.fulfill({ json: tree }))
   await page.route("**/api/questions/check", (route) => route.fulfill({ json: { kind: "question", admitted: true, findings: [], plan: { grain: "week", question: {}, sums: [], metrics: [] }, restatement: { text: "The checked question.", sha256: "a".repeat(64) } } }))
-  await page.goto("/questions/build")
+  await page.goto("/metrics/build")
   await expect(page.getByText("This workspace has no data cell yet.")).toBeVisible()
   await expect(page.getByRole("button", { name: "This is what I asked for" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Save question" })).toBeDisabled()
@@ -173,7 +180,7 @@ test("live signed question is retired after the row", async ({ page }) => {
   const title = `E2E question ${Date.now()} ${Math.floor(Math.random() * 1_000_000)}`
   const id = `studio.${title.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`
   try {
-    await page.goto("/questions/build")
+    await page.goto("/metrics/build")
     await page.getByLabel("Question name").fill(title)
     await page.getByRole("button", { name: "This is what I asked for" }).click()
     await page.getByRole("button", { name: "Save question" }).click()

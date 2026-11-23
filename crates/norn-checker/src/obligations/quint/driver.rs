@@ -309,7 +309,7 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
     let authority = ApprovedContract::approve(
         &original,
         &registry,
-        json!({"expression":"norn-zen/6","lowering":"norn.quint.one-create/1"}),
+        json!({"expression":"norn-zen/7","lowering":"norn.quint.one-create/1"}),
         json!({"store":"empty","objects":1,"steps":1}),
         json!({"level":"exhaustive-finite/bounded"}),
     )?;
@@ -512,7 +512,7 @@ mod tests {
         ]);
         let result = scenario(&trace, &bounds, "preservation").expect("scenario");
         assert!(!result.states[0].exists);
-        assert!(result.states[0].values.is_empty());
+        assert_eq!(result.states[0].values.len(), 0);
         assert_eq!(
             serde_json::to_value(&result.states[1].values["mass"]).expect("typed quantity"),
             json!({"coefficient":"125","scale":2,"unit":{"system":"ucum","code":"g"}})
@@ -615,7 +615,7 @@ mod tests {
         let authority = ApprovedContract::approve(
             &source,
             &registry,
-            json!({"expr":"norn-zen/6"}),
+            json!({"expr":"norn-zen/7"}),
             json!({"store":"empty"}),
             json!({"level":"bounded"}),
         )
@@ -641,7 +641,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let result = documents(&source, &batch, &shared, &goals).expect("documents");
-        assert!(!result.is_empty());
+        assert_ne!(result, []);
         for document in result {
             let actual: serde_json::Value =
                 serde_json::from_str(&document.bounds_json).expect("bounds");
@@ -732,7 +732,7 @@ mod tests {
         let authority = ApprovedContract::approve(
             &original,
             &registry,
-            json!({"expression":"norn-zen/6","lowering":"norn.quint.one-create/1"}),
+            json!({"expression":"norn-zen/7","lowering":"norn.quint.one-create/1"}),
             json!({"store":"empty","objects":1,"steps":1}),
             json!({"level":"exhaustive-finite/bounded"}),
         )
@@ -913,7 +913,7 @@ mod tests {
                     .as_ref()
                     .expect("counterexample");
                 assert!(!trace.states[0].exists);
-                assert!(trace.states[0].values.is_empty());
+                assert_eq!(trace.states[0].values.len(), 0);
                 for (name, expected) in [
                     ("input_fine_g", 2),
                     ("output_fine_g", 1),

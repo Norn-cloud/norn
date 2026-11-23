@@ -6,7 +6,8 @@
 )]
 mod query_support;
 use norn_cell::compute::{Engine, ivm::IncrementalQuestion, lineage::LineageDisclosure};
-use norn_checker::metric::compute::{AMBIGUOUS_GRAIN, UNSUPPORTED_ENGINE, admit};
+use norn_cell::test_door::TestCommit as _;
+use norn_checker::metric::compute::{AMBIGUOUS_GRAIN, admit};
 use norn_ir::metric::{DimensionPath, QuestionDimension, SafeAggregation};
 use norn_ir::{Decimal, LinkId, PropertyId};
 use query_support::WORLD;
@@ -87,7 +88,12 @@ fn query_fanout_unspecified_expanded_tag_grain_refuses_before_execution() {
     definitions[0].norn.safe_aggregation = Some(SafeAggregation::Symmetric);
     let findings =
         admit(&definitions, &expanded, &catalog, 100).expect_err("unqualified linked buckets");
-    assert!(findings.iter().any(|d| d.code == UNSUPPORTED_ENGINE));
+    // Refused by name at the path: a linked bucket is only a linked time.
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.code == norn_checker::metric::codes::LINKED_PATH)
+    );
 }
 
 proptest::proptest! {

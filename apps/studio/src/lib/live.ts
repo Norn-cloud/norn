@@ -28,7 +28,8 @@ export interface Contribution {
   /** `null` when the bucket has a restricted record: the receipt hash commits to the values (DATA-VALUES-1, #1175). */
   readonly receiptHash: string | null
   readonly factDigest: string | null
-  readonly source: { readonly status: "resolved" | "restricted" | "unavailable" }
+  /** Where the record came from: its source record when the reader holds Sources, else why not. */
+  readonly source: { readonly status: "resolved"; readonly provenance?: Schemas["NornInstanceSourceProvenance"] } | { readonly status: "restricted" | "unavailable" }
   readonly commitSeq: number
   readonly recordedAtMs: number
   /** The server withheld this record's values from the reader's role. */
@@ -141,3 +142,55 @@ export const isAccess = (value: unknown): boolean =>
 
 /** The signed-in account's access decisions in the demo cell, computed by the host on each read. */
 export const liveAccess = (fetcher?: Fetch) => hostRead<Access>("/v1/access", fetcher, isAccess)
+
+/** What one declared role alone may do with one action, as the cell's action PDP decided it. */
+export interface RoleAction {
+  readonly actionId: string
+  readonly title: string
+  /** `conditional`: only a rule that also reads the record or the caller grants it; the cell decides it at each call. */
+  readonly decision: "permit" | "deny" | "conditional"
+}
+
+/**
+ * Whether one role sees a collection's records, as the cell answered it: `permit` (its values),
+ * `partial` (which records exist, not their values) or `deny`. Always over the collection: a marked
+ * fact is still masked or withheld for each reader at each read.
+ */
+export interface SeeDecision {
+  readonly decision: "permit" | "partial" | "deny"
+  readonly scope: "collection"
+}
+
+/** What one declared role alone may read of a collection and which of its actions it may call. */
+export interface RoleAccess {
+  readonly role: string
+  /** What every answer here is over: the collection, never one record. */
+  readonly scope: "collection"
+  readonly see: SeeDecision
+  readonly read: Access["capabilities"]
+  readonly actions: readonly RoleAction[]
+}
+
+/** `GET /v1/access?objectType=`: the caller's own decisions over one collection, and each declared role's. */
+export interface TypeAccess extends Access {
+  readonly objectType: string
+  readonly roles: readonly RoleAccess[]
+}
+
+const isRoleAction = (value: unknown): boolean =>
+  isRecord(value) && typeof value.actionId === "string" && typeof value.title === "string" && (value.decision === "permit" || value.decision === "deny" || value.decision === "conditional")
+
+const isSeeDecision = (value: unknown): boolean =>
+  isRecord(value) && (value.decision === "permit" || value.decision === "partial" || value.decision === "deny") && value.scope === "collection"
+
+const isRoleAccess = (value: unknown): boolean =>
+  isRecord(value) && typeof value.role === "string" && value.scope === "collection" && isSeeDecision(value.see) && isRecord(value.read) &&
+  (["population", "values", "sources"] as const).every((name) => isCapability((value.read as Record<string, unknown>)[name])) &&
+  Array.isArray(value.actions) && value.actions.every(isRoleAction)
+
+export const isTypeAccess = (value: unknown): boolean =>
+  isAccess(value) && isRecord(value) && typeof value.objectType === "string" && Array.isArray(value.roles) && value.roles.every(isRoleAccess)
+
+/** Who may read and act on one collection, by declared role, each decided by the cell's PDP (the record page's side rail). */
+export const liveTypeAccess = (objectType: string, fetcher?: Fetch) =>
+  hostRead<TypeAccess>(`/v1/access?objectType=${encodeURIComponent(objectType)}`, fetcher, isTypeAccess)

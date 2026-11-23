@@ -22,8 +22,8 @@ test("MVP-CONSTITUTION compiles removal and restoration of the loss writer", () 
   const dir = mkdtempSync(join(tmpdir(), "norn-constitution-"))
   try {
     const mutant = join(dir, "omitted.source.ts")
-    const coreImport = relative(dir, join(root, "registry/core/src/physics")).split(sep).join("/")
-    writeFileSync(mutant, original.replace(line, "").replace('"../../registry/core/src/physics"', JSON.stringify(coreImport)))
+    const coreImport = relative(dir, join(root, "registry/core/src/rea")).split(sep).join("/")
+    writeFileSync(mutant, original.replace(line, "").replace('"../../registry/core/src/rea"', JSON.stringify(coreImport)))
     const compile = (file: string) => {
       const result = compileDefinitions(file, options)
       if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))

@@ -168,6 +168,39 @@ pub enum DataQualityOutcome {
         /// Concise reason that omits property values.
         detail: String,
     },
+    /// SOURCE-AGREE-1: two sources reported different values of a measure's
+    /// partition source (its unit, currency or basis) for one subject, in
+    /// consecutive versions. Both reports are true facts about what each
+    /// source says; the subject is never excluded for it.
+    SourceDisagreement {
+        /// The partition-source property the sources disagree on.
+        property: PropertyId,
+        /// The earlier version's source and value.
+        earlier: Box<SourceClaim>,
+        /// The later version's source and value.
+        later: Box<SourceClaim>,
+    },
+}
+
+/// SOURCE-AGREE-1: what one source reported for a partition source, and the
+/// version that recorded it.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceClaim {
+    /// The reporting source system (`SourceRecordRef::system`).
+    pub system: String,
+    /// The reported code, or `None` for null.
+    #[serde(
+        default,
+        deserialize_with = "crate::members::present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "String")]
+    pub value: Option<String>,
+    /// The version that recorded it (its commit).
+    pub fact: crate::FactRef,
 }
 
 /// How serious a data quality finding is.
@@ -212,6 +245,8 @@ struct FindingDedupeIdentity {
     evidence_digest: Option<String>,
     outcome: DataQualityOutcome,
     provenance: Vec<FindingLineageIdentity>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    links: std::collections::BTreeMap<String, crate::FactRef>,
 }
 
 /// Stable lineage evidence included in a finding's dedupe key.
@@ -261,6 +296,20 @@ pub struct DataQualityFinding {
     pub last_seen: UtcTimestamp,
     /// Current state of the finding.
     pub status: DataQualityFindingStatus,
+    /// LAW-LINK-1: for a law that reads its subject's to-one links, the exact
+    /// version of each target it read, by link id (a link with no target is
+    /// absent), so the evaluation replays exactly. Empty for every other
+    /// finding, and then omitted.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub links: std::collections::BTreeMap<String, crate::FactRef>,
+    /// DIAG-REASON-1 / LAW-LINK-MANY-1: for a law finding, the stored values
+    /// the law compared, by path, as it read them: the subject's own
+    /// properties (`total`), a to-one target's (`ledger_entry.amount`), and
+    /// an inverse role's sources' as a list (`lines.amount`). Not part of the
+    /// identity: the subject version and `links` fix them. Empty for every
+    /// other finding, and then omitted.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub values: std::collections::BTreeMap<String, crate::RuntimeValue>,
 }
 
 impl DataQualityFinding {
@@ -312,9 +361,38 @@ impl DataQualityFinding {
             first_seen,
             last_seen,
             status,
+            links: std::collections::BTreeMap::new(),
+            values: std::collections::BTreeMap::new(),
         };
         finding.refresh_identity()?;
         Ok(finding)
+    }
+
+    /// LAW-LINK-1: pin the link targets the failing law read, and recompute
+    /// the finding identity (another target version is another finding).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CanonicalJsonError`] if the canonical identity cannot be
+    /// serialized.
+    pub fn with_links(
+        mut self,
+        links: std::collections::BTreeMap<String, crate::FactRef>,
+    ) -> Result<Self, CanonicalJsonError> {
+        self.links = links;
+        self.refresh_identity()?;
+        Ok(self)
+    }
+
+    /// DIAG-REASON-1: record the values the failing law compared. They do
+    /// not change the identity.
+    #[must_use]
+    pub fn with_values(
+        mut self,
+        values: std::collections::BTreeMap<String, crate::RuntimeValue>,
+    ) -> Self {
+        self.values = values;
+        self
     }
 
     /// Add a stable digest of the evidence values and recompute the finding
@@ -370,6 +448,7 @@ impl DataQualityFinding {
             evidence_digest: self.evidence_digest.clone(),
             outcome: self.outcome.clone(),
             provenance,
+            links: self.links.clone(),
         };
         domain_hash_hex(DATA_QUALITY_FINDING_DEDUPE_DOMAIN, &identity)
     }

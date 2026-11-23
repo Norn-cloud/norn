@@ -23,6 +23,7 @@ use norn_cell::retained::{
     RetainedSignoff, payload_sha256,
 };
 use norn_cell::{CellError, InstalledDefinitionInput};
+use norn_ir::metric::{MetricAdditivity, MetricType};
 use norn_ir::{MetricDefinition, QuestionIR, ResourceLimitProfile, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -231,6 +232,7 @@ pub fn checker_restatement(
             restate_dashboard(&payload, metrics).map_err(|error| error.to_string())
         }
         "flow" => crate::flow_definitions::restate(canonical),
+        "approval" => crate::approval_definitions::restate(canonical),
         other => Err(format!("{other} has no restatement")),
     }
 }
@@ -427,6 +429,11 @@ pub struct DefinitionSummary {
     /// With `uses`: the binding version this flow's performs are pinned to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned_version: Option<String>,
+    /// For a flow: whether the caller may start a run of it now, decided by
+    /// exactly the gate `POST /v1/runs` applies (an active flow and the host's
+    /// `StartRun` decision). Absent for other kinds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_start: Option<bool>,
 }
 
 /// One page of definitions, ordered by id.
@@ -631,6 +638,7 @@ fn canonical(payload: &RawValue) -> Result<String, Refusal> {
 }
 
 /// Run `kind`'s validator: the canonical payload and every finding.
+/// `replaces` is the id's revision this payload would replace, if any.
 #[allow(
     clippy::too_many_arguments,
     reason = "a definition's identity, payload and the host context its validator reads"
@@ -644,6 +652,7 @@ fn validate<E: SqlEngine>(
     id: &str,
     kind: &str,
     payload: &RawValue,
+    replaces: Option<u64>,
 ) -> Result<(Admitted, Vec<RefusalDiagnostic>), Refusal> {
     let canonical = canonical(payload)?;
     let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
@@ -662,6 +671,7 @@ fn validate<E: SqlEngine>(
             flow = checked;
         }
         "dashboard" => dashboard(host, scope, actor, questions, &value, &mut findings)?,
+        "view" => saved_view(host, &value, &mut findings)?,
         // A saved question: a bare QuestionIR, admitted as a tile's is.
         "question" => {
             question_findings(
@@ -689,7 +699,19 @@ fn validate<E: SqlEngine>(
         }
         "binding" => {
             let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
-            findings.extend(crate::binding_definitions::check(payload.get(), &roles));
+            let anchor = retained_binding_anchor(host, id, replaces)?;
+            findings.extend(crate::binding_definitions::check(
+                payload.get(),
+                &roles,
+                anchor.as_ref(),
+            ));
+        }
+        "approval" => {
+            let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
+            let (actions, gated) = approval_context(host, id)?;
+            findings.extend(crate::approval_definitions::check(
+                &value, &actions, &roles, &gated,
+            ));
         }
         other => return Err(kind_unknown(other)),
     }
@@ -697,13 +719,13 @@ fn validate<E: SqlEngine>(
     let title_member = match kind {
         "question" => "name",
         "binding" => "label",
+        "approval" => "action",
         _ => "title",
     };
     let title = value
         .get(title_member)
         .and_then(Value::as_str)
-        .map(|title| title.trim().to_owned())
-        .unwrap_or_default();
+        .map_or_default(|title| title.trim().to_owned());
     let title = flow.as_ref().map_or(title, |flow| {
         flow.summary
             .title
@@ -748,6 +770,74 @@ fn active_binding_versions<E: SqlEngine>(
     binding_versions(&cell.store().read())
 }
 
+/// The admitted action ids of the active definitions, and the actions an
+/// active approval other than `id` already gates.
+fn approval_context<E: SqlEngine>(
+    host: &DevHost<E>,
+    id: &str,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), Refusal> {
+    let actions = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        reader
+            .installed_definitions(None)
+            .map_err(Refusal::host)?
+            .map(|active| serde_json::from_str::<Vec<Value>>(&active.canonical_set))
+            .transpose()
+            .map_err(Refusal::host)?
+            .unwrap_or_default()
+            .iter()
+            .filter(|artifact| artifact.get("kind").and_then(Value::as_str) == Some("action"))
+            .filter_map(|artifact| {
+                artifact
+                    .pointer("/payload/actionId")?
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .collect()
+    };
+    Ok((actions, gated_except(host, &|other| other == id)?))
+}
+
+/// The actions an active approval gates, skipping the approvals `skip` names.
+fn gated_except<E: SqlEngine>(
+    host: &DevHost<E>,
+    skip: &dyn Fn(&str) -> bool,
+) -> Result<BTreeSet<String>, Refusal> {
+    let mut gated = BTreeSet::new();
+    for record in active_approvals(host)? {
+        if skip(&record.id) {
+            continue;
+        }
+        let payload: Value = serde_json::from_str(&record.payload).map_err(Refusal::host)?;
+        if let Some(action) = payload.get("action").and_then(Value::as_str) {
+            gated.insert(action.to_owned());
+        }
+    }
+    Ok(gated)
+}
+
+/// Every active approval revision, ordered by id.
+pub(crate) fn active_approvals<E: SqlEngine>(
+    host: &DevHost<E>,
+) -> Result<Vec<RetainedDefinition>, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    let mut approvals = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let page = reader
+            .retained_definitions("approval", false, after.as_deref(), MAX_LIST_LIMIT)
+            .map_err(Refusal::host)?;
+        let full = page.len() >= usize::try_from(MAX_LIST_LIMIT).unwrap_or(usize::MAX);
+        after = page.last().map(|record| record.definition.id.clone());
+        approvals.extend(page.into_iter().map(|record| record.definition));
+        if !full {
+            return Ok(approvals);
+        }
+    }
+}
+
 /// As [`active_binding_versions`], from a reader the caller already holds.
 fn binding_versions<E: SqlEngine>(
     reader: &norn_cell::StoreReader<'_, E>,
@@ -766,6 +856,36 @@ fn binding_versions<E: SqlEngine>(
         }
         after = page.last().map(|record| record.definition.id.clone());
     }
+}
+
+/// The anchor of binding `id`'s retained revision `replaces`: its stored
+/// digest and the exact digest of its stored manifest. `None` when nothing
+/// is replaced or that revision is not a binding.
+fn retained_binding_anchor<E: SqlEngine>(
+    host: &DevHost<E>,
+    id: &str,
+    replaces: Option<u64>,
+) -> Result<Option<crate::binding_definitions::RetainedAnchor>, Refusal> {
+    let Some(replaces) = replaces else {
+        return Ok(None);
+    };
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .retained_definition(id, Some(replaces))
+        .map_err(Refusal::host)?
+        .filter(|record| record.definition.kind == "binding")
+        .and_then(|record| crate::binding_definitions::retained_anchor(&record.definition.payload)))
+}
+
+/// The id's current retained revision, if any: what an install would replace.
+fn current_revision<E: SqlEngine>(host: &DevHost<E>, id: &str) -> Result<Option<u64>, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .retained_definition(id, None)
+        .map_err(Refusal::host)?
+        .map(|record| record.definition.revision))
 }
 
 /// The cell's installed, non-retired binding definitions as agent tool
@@ -824,6 +944,94 @@ fn members<'v>(
     Some(object)
 }
 
+/// VIEW-DEF-1: a saved records view, a title over one declared object type
+/// with the grid query it applies: a filter and sort in the grid's own
+/// grammar, checked by the grid's own parser against the type's properties,
+/// and the columns it shows, each a declared property.
+fn saved_view<E: SqlEngine>(
+    host: &DevHost<E>,
+    value: &Value,
+    findings: &mut Vec<RefusalDiagnostic>,
+) -> Result<(), Refusal> {
+    let Some(object) = members(
+        value,
+        "",
+        &["title", "objectType", "filter", "sort", "columns"],
+        findings,
+    ) else {
+        return Ok(());
+    };
+    title(object.get("title"), "/title", findings);
+    let declared = match object.get("objectType").and_then(Value::as_str) {
+        Some(object_type) => {
+            let cell = host.cell()?;
+            let reader = cell.store().read();
+            if reader.model().has_type(object_type) {
+                Some(
+                    reader
+                        .model()
+                        .effective_property_types(object_type)
+                        .map_err(Refusal::host)?,
+                )
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+    let Some(properties) = declared else {
+        findings.push(RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            "objectType names a declared object type",
+            "/objectType",
+        ));
+        return Ok(());
+    };
+    let sort = match object.get("sort") {
+        None => None,
+        Some(Value::String(text)) => Some(text.clone()),
+        Some(_) => {
+            findings.push(RefusalDiagnostic::error(
+                codes::INVALID_PAYLOAD,
+                "sort is the grid's `property:asc|desc` list, comma separated",
+                "/sort",
+            ));
+            None
+        }
+    };
+    let query = crate::object_query::ObjectQueryParams {
+        filter: object.get("filter").map(Value::to_string),
+        sort,
+        ..crate::object_query::ObjectQueryParams::default()
+    };
+    if let Err(refusal) = crate::object_query::parse(&query, &properties) {
+        findings.extend(refusal.diagnostics);
+    }
+    match object.get("columns") {
+        None => {}
+        Some(Value::Array(columns)) => {
+            for (index, column) in columns.iter().enumerate() {
+                let known = column
+                    .as_str()
+                    .is_some_and(|id| properties.iter().any(|(name, _)| name == id));
+                if !known {
+                    findings.push(RefusalDiagnostic::error(
+                        codes::INVALID_PAYLOAD,
+                        "a column is a declared property of the view's type",
+                        format!("/columns/{index}"),
+                    ));
+                }
+            }
+        }
+        Some(_) => findings.push(RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            "columns is a list of property ids",
+            "/columns",
+        )),
+    }
+    Ok(())
+}
+
 fn pointer_token(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
@@ -854,10 +1062,13 @@ fn dashboard<E: SqlEngine>(
     value: &Value,
     findings: &mut Vec<RefusalDiagnostic>,
 ) -> Result<(), Refusal> {
-    let Some(object) = members(value, "", &["title", "tiles"], findings) else {
+    let Some(object) = members(value, "", &["title", "tiles", "origin"], findings) else {
         return Ok(());
     };
     title(object.get("title"), "/title", findings);
+    if let Some(origin_value) = object.get("origin") {
+        origin(origin_value, findings);
+    }
     let Some(tiles) = object.get("tiles").and_then(Value::as_array) else {
         findings.push(RefusalDiagnostic::error(
             codes::INVALID_PAYLOAD,
@@ -894,7 +1105,13 @@ fn dashboard<E: SqlEngine>(
             ));
         }
         title(tile.get("title"), &format!("{at}/title"), findings);
-        view(tile.get("view"), &format!("{at}/view"), findings);
+        view(
+            tile.get("view"),
+            tile.get("question"),
+            questions.map_or(&[][..], |runtime| runtime.definitions()),
+            &format!("{at}/view"),
+            findings,
+        );
         layout(tile.get("layout"), &format!("{at}/layout"), findings);
         question_findings(
             host,
@@ -941,7 +1158,7 @@ fn question_findings<E: SqlEngine>(
             }
             Some(Ok(question)) => question,
         };
-    let Some(runtime) = questions else {
+    let Some(runtime) = questions.filter(|runtime| runtime.publishes_questions()) else {
         findings.push(RefusalDiagnostic::error(
             codes::QUESTION_UNAVAILABLE,
             "this cell admits no ad-hoc questions",
@@ -955,7 +1172,72 @@ fn question_findings<E: SqlEngine>(
     Ok(())
 }
 
-fn view(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) {
+/// The longest assistant request an origin keeps, in characters.
+pub const MAX_REQUEST_CHARS: usize = 2000;
+
+/// A dashboard's lineage: who authored this version (`studio`, `code` or
+/// `assistant`), and for an assistant's proposal its id, the model and the
+/// person's request, which the restatement quotes and the sign-off covers.
+fn origin(value: &Value, findings: &mut Vec<RefusalDiagnostic>) {
+    let Some(object) = members(
+        value,
+        "/origin",
+        &["by", "proposal", "model", "request"],
+        findings,
+    ) else {
+        return;
+    };
+    let by = object.get("by").and_then(Value::as_str);
+    if !matches!(by, Some("studio" | "code" | "assistant")) {
+        findings.push(RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            "an origin's by is studio, code or assistant",
+            "/origin/by",
+        ));
+    }
+    for (key, limit) in [
+        ("proposal", 128),
+        ("model", 128),
+        ("request", MAX_REQUEST_CHARS),
+    ] {
+        let Some(text) = object.get(key) else {
+            continue;
+        };
+        let ok = text.as_str().is_some_and(|text| {
+            !text.trim().is_empty()
+                && text.chars().count() <= limit
+                && !text.chars().any(|c| c.is_control() && c != '\n')
+        });
+        if !ok || by != Some("assistant") {
+            findings.push(RefusalDiagnostic::error(
+                codes::INVALID_PAYLOAD,
+                format!("an assistant's origin may name its {key}: non-blank text of at most {limit} characters"),
+                format!("/origin/{key}"),
+            ));
+        }
+    }
+}
+
+/// What a view can draw: any answer, one value per measure, or the parts of one whole.
+#[derive(Clone, Copy)]
+enum Drawn {
+    Any,
+    Number,
+    Pie,
+}
+
+/// A tile's view, and whether it can honestly draw its question's answer: a
+/// number shows one value per measure, so its question has no group-by; a pie
+/// shows the parts of one whole, so its question sums one additive, non-ratio
+/// measure over one category (no time grain). A question that does not decode
+/// is the question check's finding, not the view's.
+fn view(
+    value: Option<&Value>,
+    question: Option<&Value>,
+    metrics: &[MetricDefinition],
+    at: &str,
+    findings: &mut Vec<RefusalDiagnostic>,
+) {
     let Some(view) = value else {
         findings.push(RefusalDiagnostic::error(
             codes::VIEW_INVALID,
@@ -969,20 +1251,56 @@ fn view(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) 
     };
     let kind = object.get("kind").and_then(Value::as_str);
     let chart = object.get("chart");
-    let ok = match (kind, chart) {
-        (Some("table" | "chart"), None) => true,
-        (Some("chart"), Some(chart)) => {
-            matches!(chart.as_str(), Some("line" | "bar" | "area"))
-        }
-        _ => false,
+    let drawn = match (kind, chart) {
+        (Some("table" | "chart"), None) => Some(Drawn::Any),
+        (Some("number"), None) => Some(Drawn::Number),
+        (Some("chart"), Some(chart)) => match chart.as_str() {
+            Some("line" | "bar" | "area") => Some(Drawn::Any),
+            Some("pie") => Some(Drawn::Pie),
+            _ => None,
+        },
+        _ => None,
     };
-    if !ok {
+    let Some(drawn) = drawn else {
         findings.push(RefusalDiagnostic::error(
             codes::VIEW_INVALID,
-            "a view is {kind: table} or {kind: chart, chart?: line | bar | area}",
+            "a view is {kind: table}, {kind: number} or {kind: chart, chart?: line | bar | area | pie}",
             at,
         ));
+        return;
+    };
+    let Some(question) =
+        question.and_then(|question| serde_json::from_value::<QuestionIR>(question.clone()).ok())
+    else {
+        return;
+    };
+    let unfit = match drawn {
+        Drawn::Any => None,
+        Drawn::Number => (!question.dimensions.is_empty())
+            .then_some("a number shows one value per measure, so its question has no group-by"),
+        Drawn::Pie => (!pie_fits(&question, metrics)).then_some(
+            "a pie shows the parts of one whole, so its question sums one additive, non-ratio measure over one category without a time grain",
+        ),
+    };
+    if let Some(message) = unfit {
+        findings.push(RefusalDiagnostic::error(codes::VIEW_INVALID, message, at));
     }
+}
+
+/// Whether `question`'s buckets are the parts of one whole: one declared,
+/// summable, non-ratio measure, grouped by one category without a grain.
+fn pie_fits(question: &QuestionIR, metrics: &[MetricDefinition]) -> bool {
+    let ([measure], [dimension]) = (question.metrics.as_slice(), question.dimensions.as_slice())
+    else {
+        return false;
+    };
+    dimension.grain.is_none()
+        && measure.inline.is_none()
+        && metrics.iter().any(|metric| {
+            metric.name == measure.metric
+                && metric.metric_type != MetricType::Ratio
+                && !matches!(metric.norn.additivity, MetricAdditivity::NonAdditive)
+        })
 }
 
 fn layout(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) {
@@ -1037,6 +1355,7 @@ pub fn admit_definition<E: SqlEngine>(
         &request.id,
         &request.kind,
         &request.payload,
+        current_revision(host, &request.id)?,
     )?;
     let admitted = admitted(&diagnostics);
     let (restatement, restatement_sha256) = if admitted {
@@ -1185,8 +1504,19 @@ fn append<E: SqlEngine>(
                     flow,
                     &previously_owned,
                 )?;
+                // The model a restarted host rebuilds from the new set: with
+                // the kernel's action types on a cell that serves actions,
+                // never the bare admitted model there (DEFS-REOPEN-1).
+                let serving = crate::host::serves_actions(cell.store().model());
+                let model = crate::host::reopen_model(&admitted.canonical_set, serving)?;
+                crate::host::check_reopens(&model, &admitted.canonical_set, serving)?;
+                // DEFS-REOPEN-1: the cell's own policy must serve the new
+                // model too; one that cannot refuses before any write.
+                let candidate: Vec<norn_ir::ObjectTypeDef> =
+                    model.object_types().cloned().collect();
+                host.authorizer.admits_model(&candidate)?;
                 (
-                    admitted.model,
+                    model,
                     admitted.canonical_set,
                     admitted.receipt_sha256,
                     Some(admitted.receipt),
@@ -1233,8 +1563,16 @@ fn append<E: SqlEngine>(
                     CellError::RetainedDefinitionConflict { .. }
                     | CellError::DefinitionVersionConflict { .. },
                 ) => return Err(version_conflict()),
-                Err(error) => return Err(Refusal::host(error)),
+                // HOST-INSTALL-LIVE-1: the install's live-law check refused.
+                Err(error) => {
+                    return Err(crate::cell_definitions::live_law_refusal(&error)
+                        .unwrap_or_else(|| Refusal::host(error)));
+                }
             };
+        if flow.is_some() {
+            // A flow added or replaced its Run type in the model.
+            host.model_changed(&cell);
+        }
         RetainedDefinitionRecord {
             definition: change.definition,
             definitions_version: installed.version,
@@ -1286,6 +1624,7 @@ pub fn install_definition<E: SqlEngine>(
         &request.id,
         &request.kind,
         &request.payload,
+        request.expected_version,
     )?;
     if !admitted(&diagnostics) {
         return Err(refused(diagnostics));
@@ -1293,7 +1632,8 @@ pub fn install_definition<E: SqlEngine>(
     // Fable S7: nothing checks a sign-off when a run starts, so a flow is
     // installed only once a signer signs its words. A cell that cannot
     // restate a flow cannot install one (fail closed).
-    if request.kind == "flow" && request.signoff.is_none() {
+    // An approval changes who may complete an action: signed, like a flow.
+    if matches!(request.kind.as_str(), "flow" | "approval") && request.signoff.is_none() {
         return Err(if kinds.restater.is_some() {
             Refusal::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -1347,6 +1687,184 @@ pub fn install_definition<E: SqlEngine>(
     )
 }
 
+/// One approval riding a kernel definitions apply (#1469): admitted against
+/// the candidate set's actions, restated, and (on apply) signed.
+#[derive(Debug)]
+pub(crate) struct RidingApproval {
+    /// The approval id.
+    pub(crate) id: String,
+    /// The id's current revision, if any.
+    pub(crate) from_revision: Option<u64>,
+    /// Whether the active revision is already this approval, signed or not.
+    pub(crate) unchanged: bool,
+    /// The revision to append: on an apply, `None` only when `unchanged`.
+    pub(crate) change: Option<RetainedDefinitionChange>,
+    /// The server's restatement and its digest: what the signer signs.
+    pub(crate) restatement: String,
+    pub(crate) restatement_sha256: String,
+}
+
+/// Admit `request`, an approval of an action in `actions` (the candidate
+/// set's actions), the way `:admit` admits one over the active set. With
+/// `signed_at`, it is an apply: the request's sign-off must match the
+/// restatement and its `expectedVersion` the id's current revision, and the
+/// revision to append is signed by `actor` at that time. `pointer` places the
+/// findings in the change request. An approval in `superseded` is revised or
+/// retired by the same commit, so its current action does not count against
+/// this one (a rename, or a gate moved to another action); the caller checks
+/// the change's own approvals against each other.
+///
+/// # Errors
+/// A non-approval kind, a refused approval, a missing or mismatched sign-off,
+/// a stale revision, or a host failure.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the approval, the candidate's actions, the apply's time and the retiring approvals decide one admission"
+)]
+pub(crate) fn riding_approval<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
+    kinds: &DefinitionKinds,
+    request: &InstallDefinitionRequest,
+    actions: &BTreeSet<String>,
+    signed_at: Option<u64>,
+    pointer: &str,
+    superseded: &BTreeSet<String>,
+) -> Result<RidingApproval, Refusal> {
+    let place = |mut findings: Vec<RefusalDiagnostic>| {
+        for finding in &mut findings {
+            let at = finding
+                .span
+                .as_ref()
+                .map_or("", |span| span.pointer.as_str());
+            finding.span = Some(crate::refusal::RefusalSpan {
+                pointer: format!("{pointer}/payload{at}"),
+            });
+        }
+        refused(findings)
+    };
+    if request.kind != "approval" {
+        return Err(place(vec![RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            "only approvals ride a definitions apply",
+            "",
+        )]));
+    }
+    check_new_id(host, &request.id)?;
+    let canonical = canonical(&request.payload)?;
+    let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
+    let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
+    let gated = gated_except(host, &|other| {
+        other == request.id || superseded.contains(other)
+    })?;
+    let findings = crate::approval_definitions::check(&value, actions, &roles, &gated);
+    if !admitted(&findings) {
+        return Err(place(findings));
+    }
+    let restatement = approval_restatement(kinds, &canonical)?;
+    let restatement_sha256 = payload_sha256(&restatement);
+    let current = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        reader
+            .retained_definition(&request.id, None)
+            .map_err(Refusal::host)?
+    };
+    let from_revision = current.as_ref().map(|current| current.definition.revision);
+    let unchanged = current.as_ref().is_some_and(|current| {
+        current.definition.lifecycle == RetainedLifecycle::Active
+            && current.definition.payload == canonical
+    });
+    let change = match signed_at {
+        Some(signed_at) if !unchanged => Some(signed_approval(
+            kinds,
+            actor,
+            request,
+            canonical,
+            &value,
+            from_revision,
+            signed_at,
+        )?),
+        _ => None,
+    };
+    Ok(RidingApproval {
+        id: request.id.clone(),
+        from_revision,
+        unchanged,
+        change,
+        restatement,
+        restatement_sha256,
+    })
+}
+
+/// The server's words for an approval: what its signer signs.
+fn approval_restatement(kinds: &DefinitionKinds, canonical: &str) -> Result<String, Refusal> {
+    let unavailable = |detail: String| {
+        Refusal::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            codes::SIGNOFF_UNAVAILABLE,
+            "the sign-off cannot be verified",
+            detail,
+        )
+    };
+    let restate = kinds.restater.ok_or_else(|| {
+        unavailable(
+            "this cell has no restatement generator, so it cannot install an approval".to_owned(),
+        )
+    })?;
+    restate("approval", canonical, &[]).map_err(unavailable)
+}
+
+/// The next revision of an approval, signed by `actor` at `signed_at`: the
+/// request's sign-off must match its words, and its `expectedVersion` the
+/// id's current revision.
+fn signed_approval(
+    kinds: &DefinitionKinds,
+    actor: &str,
+    request: &InstallDefinitionRequest,
+    canonical: String,
+    value: &Value,
+    from_revision: Option<u64>,
+    signed_at: u64,
+) -> Result<RetainedDefinitionChange, Refusal> {
+    let claimed = request.signoff.as_ref().ok_or_else(|| {
+        Refusal::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            codes::SIGNOFF_REQUIRED,
+            "an approval is installed by signing the server's words for it",
+            "plan the change, read each approval's restatement, and apply it with signoff.restatementSha256",
+        )
+    })?;
+    let verified = verify_signoff(kinds, "approval", &canonical, &[], claimed)?;
+    if request.expected_version != from_revision {
+        return Err(version_conflict());
+    }
+    let revision = from_revision
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(version_conflict)?;
+    Ok(RetainedDefinitionChange {
+        definition: RetainedDefinition {
+            kind: "approval".to_owned(),
+            id: request.id.clone(),
+            revision,
+            lifecycle: RetainedLifecycle::Active,
+            title: value
+                .get("action")
+                .and_then(Value::as_str)
+                .map_or_default(|title| title.trim().to_owned()),
+            payload_sha256: payload_sha256(&canonical),
+            payload: canonical,
+            signoff: Some(RetainedSignoff {
+                signer: actor.to_owned(),
+                signed_at,
+                restatement_sha256: verified,
+            }),
+        },
+        expected_revision: from_revision,
+    })
+}
+
 /// Recompute the restatement of an admitted payload and check the signer's
 /// claimed digest against it; returns the recomputed digest.
 fn verify_signoff(
@@ -1378,10 +1896,13 @@ fn verify_signoff(
             "the sign-off does not match the definition",
             "the restatement the signer read is not the one this definition restates to; read the returned restatement and sign it",
         );
-        refusal.restatement = Some(Box::new(RefusalRestatement {
-            restatement,
-            restatement_sha256: recomputed,
-        }));
+        refusal
+            .extra
+            .get_or_insert_with(Box::default)
+            .set_restatement(RefusalRestatement {
+                restatement,
+                restatement_sha256: recomputed,
+            });
         return Err(refusal);
     }
     Ok(recomputed)
@@ -1581,10 +2102,17 @@ pub fn list_definitions<E: SqlEngine>(
     } else {
         None
     };
+    let starts = |row: &RetainedDefinitionRecord| {
+        (row.definition.kind == "flow").then(|| {
+            row.definition.lifecycle == norn_cell::retained::RetainedLifecycle::Active
+                && crate::run_routes::may_start(host, actor.unwrap_or_default(), &row.definition.id)
+        })
+    };
     Ok(DefinitionPage {
         items: rows
             .into_iter()
             .map(|(row, pinned_version)| DefinitionSummary {
+                can_start: starts(&row),
                 id: row.definition.id,
                 kind: row.definition.kind,
                 title: row.definition.title,

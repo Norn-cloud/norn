@@ -7,6 +7,7 @@
     reason = "native identity conformance fixtures"
 )]
 mod common;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model, SqliteCell, StoreOptions};
 use norn_ir::{
     ComponentNormalization, IdentityRule, KeyName, KeySpec, Normalization, ObjectTypeDef,
@@ -740,6 +741,7 @@ fn normalization_profile_refuses_unsupported_components_and_step_exhaustion() {
         unit: None,
         currency_source: None,
         per_unit: None,
+        unit_source: Vec::new(),
     };
     defs[0].properties.push(amount);
     defs[0].identity[0]

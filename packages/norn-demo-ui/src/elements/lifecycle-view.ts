@@ -2,9 +2,11 @@
 // it, each state with the cell's live count, and the checker's counterexamples stepped through.
 //
 // Counts are the server's: one live read of the type's facets on the lifecycle property
-// (`GET /v1/objects/{type}:facets?properties=<property>`, HOST-READ-7). A declared state the
-// answer does not list has no rows (0); a count past the cell's scan bound reads as a lower
-// bound; rows the reader may not see are said, never counted. The view computes nothing a count
+// (`GET /v1/objects/{type}:facets?properties=<property>`, HOST-READ-7). When `otherRows === 0`,
+// a declared state the answer does not list has no rows (0); when `otherRows > 0`, an omitted
+// state may belong to those unlisted values and is marked unlisted rather than zero. Past the
+// cell's scan bound (`lowerBound: true`), every count reads honestly as a lower bound ("at least
+// N"). Rows the reader may not see are said, never counted. The view computes nothing a count
 // could be built from. A counterexample is a checker finding's `witness`: its steps name which
 // machine moved and by which transition, so the view highlights each lifecycle transition the
 // run takes and the state it lands in. Nothing is read from a finding's message.
@@ -30,12 +32,13 @@ export interface LifecycleDoc {
   readonly endings?: readonly { readonly state: string; readonly outcome: string }[]
 }
 
-/** The cell's facets answer (HOST-READ-7), as far as the view reads it. */
+/** The cell's facets answer (HOST-READ-7, `object_facets.rs`), as far as the view reads it. */
 export interface FacetsAnswer {
   readonly rows: number
   readonly withheldRows: number
   readonly quarantinedRows: number
-  readonly approximate: boolean
+  readonly lowerBound: boolean
+  readonly scanLimit?: number
   readonly facets: readonly {
     readonly property: string
     readonly values: readonly { readonly value: unknown; readonly count: number }[]
@@ -64,6 +67,8 @@ export type Locale = "en" | "ar"
 export interface LiveAnswer {
   readonly status: number
   readonly body: unknown
+  /** Optional server snapshot digest (UI-LIVE-1) used to detect changes even when bodies are omitted. */
+  readonly digest?: string
 }
 
 /** The view's admitted widget document (`lifecycle-view.widget.json`): its load states as a machine. */
@@ -77,10 +82,10 @@ export interface LifecycleViewOptions {
   readonly lifecycle: LifecycleDoc
   /** The object type's title, as the host names it. */
   readonly title: string
-  /** Read the type's facets on the lifecycle property once (the cell's GET, as the reader). */
-  readonly read: () => Promise<LiveAnswer>
+  /** Read the type's facets on the lifecycle property once (the cell's GET, as the reader). Omit when no live cell is connected. */
+  readonly read?: (signal?: AbortSignal) => Promise<LiveAnswer>
   /** Subscribe to changes of that answer (the live read); each new answer is read again. Returns the unsubscribe. */
-  readonly changes: (listener: (answer: LiveAnswer) => void) => () => void
+  readonly changes?: (listener: (answer: LiveAnswer) => void) => () => void
   /** Findings with a witness for this lifecycle (`widget.lifecycle.*`). */
   readonly findings?: readonly LifecycleFinding[]
   readonly locale?: Locale
@@ -90,14 +95,23 @@ export interface LifecycleViewOptions {
   readonly technical?: boolean
   /** Open one finding's stepper at a step (a deep link, or a design specimen). */
   readonly open?: { readonly finding: number; readonly step: number }
+  /** Hide the inner title heading when hosted inside a titled workbench panel. */
+  readonly hideTitle?: boolean
 }
 
 const WORDS = {
   en: {
-    rows: (n: string) => `${n} records`, start: "start", end: "ending", rests: "can rest here", none: "—",
+    rows: (n: string, count: number, lowerBound: boolean) => lowerBound ? `at least ${n} records` : `${n} ${count === 1 ? "record" : "records"}`,
+    start: "start", end: "ending", rests: "can rest here", none: "—",
     pending: "Counting…", refused: "You can't see these records' counts.", unavailable: "The cell did not answer.",
-    withheld: (n: number) => `${n} withheld from you`, quarantined: (n: number) => `${n} held in quarantine`, unset: (n: number) => `${n} without a state`,
-    other: (n: number) => `${n} in states this view does not list`, atLeast: (n: string) => `≥ ${n}`,
+    noCell: "No live cell is connected; showing the declared lifecycle.",
+    unlisted: "Not listed",
+    unlistedHint: "Omitted by the cell's value limit; may have records in unlisted values",
+    withheld: (n: string) => `${n} withheld from you`, quarantined: (n: string) => `${n} held in quarantine`, unset: (n: string) => `${n} without a state`,
+    other: (n: string, hasUnlisted: boolean) => hasUnlisted ? `${n} in unlisted values (omitted states are not counted as 0)` : `${n} in values outside this lifecycle`,
+    scanBound: (limit: string) => `Scan limit reached (${limit} rows); counts are lower bounds`,
+    atLeast: (n: string) => `at least ${n}`,
+    lowerBoundHint: "Lower bound; the cell's scan limit was reached",
     findings: "Counterexamples the checker found", step: (i: string, n: string) => `Step ${i} of ${n}`, prev: "Previous step", next: "Next step",
     page: "page", object: "object", opened: "Where the page opens",
     stuck: (page: string, type: string, state: string) => `The page can show “${page}” while the ${type} is still “${state}”, and nothing can finish it.`,
@@ -106,10 +120,17 @@ const WORDS = {
     notServed: "This cell does not serve lifecycle counts yet.", failed: "The cell did not answer.", retry: "Try again", again: "Asking again shortly.",
   },
   ar: {
-    rows: (n: string) => `${n} سجل`, start: "البداية", end: "نهاية", rests: "يمكن أن يستقر هنا", none: "—",
+    rows: (n: string, _count: number, lowerBound: boolean) => lowerBound ? `${n} سجل على الأقل` : `${n} سجل`,
+    start: "البداية", end: "نهاية", rests: "يمكن أن يستقر هنا", none: "—",
     pending: "جارٍ العد…", refused: "لا يمكنك رؤية أعداد هذه السجلات.", unavailable: "لم تُجب الخلية.",
-    withheld: (n: number) => `${n} محجوبة عنك`, quarantined: (n: number) => `${n} في الحجر`, unset: (n: number) => `${n} بلا حالة`,
-    other: (n: number) => `${n} في حالات لا يعرضها هذا العرض`, atLeast: (n: string) => `${n} على الأقل`,
+    noCell: "لا توجد خلية متصلة؛ تُعرض دورة الحياة المُعلنة.",
+    unlisted: "غير مدرجة",
+    unlistedHint: "حُذفت بسبب حد قيم الخلية؛ قد توجد سجلات في القيم غير المدرجة",
+    withheld: (n: string) => `${n} محجوبة عنك`, quarantined: (n: string) => `${n} في الحجر`, unset: (n: string) => `${n} بلا حالة`,
+    other: (n: string, hasUnlisted: boolean) => hasUnlisted ? `${n} في قيم غير مدرجة (الحالات غير المدرجة لا تُعدّ صفراً)` : `${n} في قيم خارج دورة الحياة هذه`,
+    scanBound: (limit: string) => `تم بلوغ حد الفحص (${limit} سجل)؛ الأعداد حدود دنيا`,
+    atLeast: (n: string) => `${n} على الأقل`,
+    lowerBoundHint: "حد أدنى؛ تم بلوغ حد الفحص في الخلية",
     findings: "أمثلة مضادة وجدها المدقق", step: (i: string, n: string) => `الخطوة ${i} من ${n}`, prev: "الخطوة السابقة", next: "الخطوة التالية",
     page: "الصفحة", object: "الكائن", opened: "حيث تُفتح الصفحة",
     stuck: (page: string, type: string, state: string) => `قد تعرض الصفحة «${page}» بينما ${type} ما زال «${state}»، ولا شيء يستطيع إنهاءه.`,
@@ -118,6 +139,29 @@ const WORDS = {
     notServed: "هذه الخلية لا تقدّم أعداد دورة الحياة بعد.", failed: "لم تُجب الخلية.", retry: "حاول مرة أخرى", again: "سنسأل مرة أخرى بعد قليل.",
   },
 } as const
+
+/** Display role of a declared state, shared between the type-wide graph and record stepper. */
+export function lifecycleStateRole(lifecycle: Pick<LifecycleDoc, "initial" | "terminal" | "endings">, state: string, locale: Locale = "en"): string {
+  const w = WORDS[locale]
+  const ending = lifecycle.endings?.find((candidate) => candidate.state === state)?.outcome
+  return [
+    lifecycle.initial.includes(state) ? w.start : "",
+    lifecycle.terminal.includes(state) ? w.end : ending === "resting" ? w.rests : "",
+  ].filter(Boolean).join(" · ")
+}
+
+/** Whether `value` has the facets document's shape (`object_facets.rs`). */
+export function isFacetsAnswer(value: unknown): value is FacetsAnswer {
+  const body = value as Partial<FacetsAnswer> | null | undefined
+  return typeof body?.rows === "number"
+    && typeof body.lowerBound === "boolean"
+    && Array.isArray(body.facets)
+    && body.facets.every((facet) =>
+      typeof facet?.property === "string"
+      && Array.isArray(facet.values)
+      && typeof facet.otherRows === "number"
+      && typeof facet.nulls === "number")
+}
 
 /** Columns by shortest distance from an initial state; states no run reaches go last. */
 export function layout(lifecycle: LifecycleDoc): string[][] {
@@ -141,7 +185,7 @@ export function layout(lifecycle: LifecycleDoc): string[][] {
   return columns.filter((column) => column !== undefined)
 }
 
-/** A card's edges, in the board's own coordinates. */
+/** A card's edges, in the stage's own coordinates. */
 export interface Box {
   readonly left: number
   readonly top: number
@@ -217,7 +261,10 @@ export function routeArrow(a: Box, b: Box, hop: number, rtl: boolean, floor: num
   return { start: [x1, y1], segments: rounded([[x1, y1], [leave, y1], [leave, under], [arrive, under], [arrive, y2], [x2, y2]], 8), label: [(leave + arrive) / 2, under - 5] }
 }
 
-export type StateCount = { readonly kind: "count"; readonly count: number; readonly lowerBound: boolean } | { readonly kind: "pending" }
+export type StateCount =
+  | { readonly kind: "count"; readonly count: number; readonly lowerBound: boolean }
+  | { readonly kind: "unlisted" }
+  | { readonly kind: "pending" }
 
 export interface Counts {
   readonly states: ReadonlyMap<string, StateCount>
@@ -225,27 +272,49 @@ export interface Counts {
   readonly refused: string | null
 }
 
-/** The per-state counts of one live answer: the server's numbers, nothing derived but "absent = 0". */
+/**
+ * The per-state counts of one live answer: the server's numbers, nothing derived except that an
+ * omitted declared state has 0 rows ONLY when `facet.otherRows === 0`. When `facet.otherRows > 0`,
+ * values were truncated by the cell's facet limit and an omitted declared state is marked `unlisted`.
+ */
 export function countsFrom(lifecycle: LifecycleDoc, answer: LiveAnswer | null, locale: Locale = "en"): Counts {
   const w = WORDS[locale]
+  const number = new Intl.NumberFormat(locale === "ar" ? "ar-EG" : "en")
   const pending = new Map(lifecycle.states.map((state) => [state, { kind: "pending" } as StateCount]))
   if (answer === null) return { states: pending, notes: [], refused: null }
   if (answer.status === 401 || answer.status === 403 || answer.status === 404) return { states: pending, notes: [], refused: w.refused }
-  if (answer.status >= 400) return { states: pending, notes: [], refused: w.unavailable }
-  const body = answer.body as FacetsAnswer
-  const facet = body.facets?.find((candidate) => candidate.property === lifecycle.property)
+  if (answer.status >= 400) {
+    const message = typeof (answer.body as { message?: unknown } | undefined)?.message === "string"
+      ? (answer.body as { message: string }).message
+      : w.unavailable
+    return { states: pending, notes: [], refused: message }
+  }
+  if (!isFacetsAnswer(answer.body)) return { states: pending, notes: [], refused: w.unavailable }
+  const body = answer.body
+  const facet = body.facets.find((candidate) => candidate.property === lifecycle.property)
   if (!facet) return { states: pending, notes: [], refused: w.unavailable }
-  const lowerBound = body.approximate === true
+  const lowerBound = body.lowerBound === true
+  const hasOther = facet.otherRows > 0
   const states = new Map<string, StateCount>()
+  let anyUnlisted = false
   for (const state of lifecycle.states) {
     const found = facet.values.find((entry) => entry.value === state)
-    states.set(state, { kind: "count", count: found?.count ?? 0, lowerBound })
+    if (found !== undefined) {
+      states.set(state, { kind: "count", count: found.count, lowerBound })
+    } else if (hasOther) {
+      anyUnlisted = true
+      states.set(state, { kind: "unlisted" })
+    } else {
+      states.set(state, { kind: "count", count: 0, lowerBound })
+    }
   }
+  const fmt = (value: number) => lowerBound ? w.atLeast(number.format(value)) : number.format(value)
   const notes = [
-    body.withheldRows > 0 ? w.withheld(body.withheldRows) : "",
-    body.quarantinedRows > 0 ? w.quarantined(body.quarantinedRows) : "",
-    facet.nulls > 0 ? w.unset(facet.nulls) : "",
-    facet.otherRows > 0 ? w.other(facet.otherRows) : "",
+    lowerBound && typeof body.scanLimit === "number" && body.scanLimit > 0 ? w.scanBound(number.format(body.scanLimit)) : "",
+    (body.withheldRows ?? 0) > 0 ? w.withheld(fmt(body.withheldRows)) : "",
+    (body.quarantinedRows ?? 0) > 0 ? w.quarantined(fmt(body.quarantinedRows)) : "",
+    facet.nulls > 0 ? w.unset(fmt(facet.nulls)) : "",
+    facet.otherRows > 0 ? w.other(fmt(facet.otherRows), anyUnlisted) : "",
   ].filter(Boolean)
   return { states, notes, refused: null }
 }
@@ -266,19 +335,24 @@ export function stepState(lifecycle: LifecycleDoc, finding: LifecycleFinding, ta
 
 const escape = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
+const isRouteNotServed = (answer: LiveAnswer | null): boolean => {
+  if (answer === null) return false
+  const code = (answer.body as { code?: unknown } | undefined)?.code
+  return (answer.status === 404 || answer.status === 503) && (typeof code !== "string" || code === "route.not_found")
+}
+
 /** Mount the view into `root`. Returns the disposer (it ends the live read). */
 export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOptions): () => void {
   const { lifecycle } = options
   const locale = options.locale ?? "en"
+  const rtl = locale === "ar"
   const w = WORDS[locale]
   // The definition's ids in words, sentence case ("on_accepted" reads "On accepted").
   const label = options.label ?? ((id: string) => { const words = id.replaceAll(/[_-]/g, " "); return words.charAt(0).toUpperCase() + words.slice(1) })
-  const number = new Intl.NumberFormat(locale === "ar" ? "ar-EG" : "en")
-  const findings = (options.findings ?? []).filter((finding) => finding.witness.steps.length > 0)
+  const number = new Intl.NumberFormat(rtl ? "ar-EG" : "en")
+  const findings = (options.findings ?? []).filter((finding) => finding.witness !== undefined && finding.witness !== null && Array.isArray(finding.witness.steps))
   adoptLifecycleStyles(root.ownerDocument)
-  const endings = new Map((lifecycle.endings ?? []).map((ending) => [ending.state, ending.outcome]))
-  const role = (state: string) =>
-    [lifecycle.initial.includes(state) ? w.start : "", lifecycle.terminal.includes(state) ? w.end : endings.get(state) === "resting" ? w.rests : ""].filter(Boolean).join(" · ")
+  const role = (state: string) => lifecycleStateRole(lifecycle, state, locale)
   /** A finding in the reader's words: the page state and the object's state at the end of its run. */
   const headline = (finding: LifecycleFinding) => {
     const object = stepState(lifecycle, finding, finding.witness.steps.length).state
@@ -289,26 +363,30 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   }
   const columns = layout(lifecycle)
   const column = new Map(columns.flatMap((states, index) => states.map((state) => [state, index] as const)))
-  // An arrow more than one column back runs under the cards; the board keeps room for each.
+  // An arrow more than one column back runs under the cards; the stage keeps room for each.
   const lanes = lifecycle.transitions.reduce((count, transition) =>
     count + transition.from.filter((from) => (column.get(transition.to) ?? 0) - (column.get(from) ?? 0) < -1).length, 0)
+  const prevGlyph = rtl ? "›" : "‹"
+  const nextGlyph = rtl ? "‹" : "›"
   root.innerHTML = `
-    <section class="norn-life" dir="${locale === "ar" ? "rtl" : "ltr"}" lang="${locale}">
+    <section class="norn-life" dir="${rtl ? "rtl" : "ltr"}" lang="${locale}">
       <header class="norn-life-head">
-        <h2 class="norn-life-title">${escape(options.title)} · ${escape(label(lifecycle.property))}</h2>
+        ${options.hideTitle ? "" : `<h2 class="norn-life-title">${escape(options.title)} · ${escape(label(lifecycle.property))}</h2>`}
         <p class="norn-life-meta" data-region="total" aria-live="polite"></p>
       </header>
       <p class="norn-life-refused" data-region="refused" role="status" hidden></p>
       <p class="norn-life-refused" data-region="unavailable" role="status" hidden><span data-region="unavailable-text"></span> <button type="button" class="norn-life-retry" data-node="retry-button">${escape(w.retry)}</button></p>
       <div class="norn-life-board" data-region="board" style="--norn-life-lanes:${lanes}">
-        <svg class="norn-life-arrows" aria-hidden="true"><defs>${["", "-on"].map((on) =>
-          `<marker id="norn-life-head${on}" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 8 4 0 8z"/></marker>`).join("")}</defs></svg>
-        ${columns.map((column) => `<ol class="norn-life-col">${column.map((state) => `
-          <li class="norn-life-state" data-state="${escape(state)}"${lifecycle.terminal.includes(state) ? " data-ending" : ""}>
-            <span class="norn-life-name">${escape(label(state))}</span>
-            <span class="norn-life-count" data-count aria-live="polite"></span>
-            <span class="norn-life-role">${escape(role(state))}</span>
-          </li>`).join("")}</ol>`).join("")}
+        <div class="norn-life-stage" data-region="stage">
+          <svg class="norn-life-arrows" dir="${rtl ? "rtl" : "ltr"}" aria-hidden="true"><defs>${["", "-on"].map((on) =>
+            `<marker id="norn-life-head${on}" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 8 4 0 8z"/></marker>`).join("")}</defs></svg>
+          ${columns.map((columnStates) => `<ol class="norn-life-col">${columnStates.map((state) => `
+            <li class="norn-life-state" data-state="${escape(state)}"${lifecycle.terminal.includes(state) ? " data-ending" : ""}>
+              <span class="norn-life-name">${escape(label(state))}</span>
+              <span class="norn-life-count" data-count aria-live="polite"></span>
+              <span class="norn-life-role">${escape(role(state))}</span>
+            </li>`).join("")}</ol>`).join("")}
+        </div>
       </div>
       <p class="norn-life-foot" data-region="notes" hidden></p>
       ${findings.length === 0 ? "" : `
@@ -324,9 +402,9 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
                 ${finding.witness.steps.map((step, at) => `<li data-step="${at + 1}">${step.moves.map((move) => `<span class="norn-life-side">${escape(move.side === "ui" ? w.page : w.object)}</span> ${escape(label(move.label))}`).join(" · ")}</li>`).join("")}
               </ol>
               <div class="norn-life-step-controls">
-                <button type="button" data-move="-1" aria-label="${escape(w.prev)}">‹</button>
+                <button type="button" data-move="-1" aria-label="${escape(w.prev)}">${prevGlyph}</button>
                 <span data-region="position" aria-live="polite"></span>
-                <button type="button" data-move="1" aria-label="${escape(w.next)}">›</button>
+                <button type="button" data-move="1" aria-label="${escape(w.next)}">${nextGlyph}</button>
               </div>
             </div>
           </article>`).join("")}
@@ -337,14 +415,14 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   let taken = picked === null ? 0 : Math.max(0, Math.min(findings[picked]!.witness.steps.length, options.open?.step ?? 0))
 
   const drawArrows = () => {
-    const board = q('[data-region="board"]')
+    const stage = q('[data-region="stage"]')
     const svg = q<SVGSVGElement>(".norn-life-arrows")
-    if (!board || !svg) return
-    const origin = board.getBoundingClientRect()
+    if (!stage || !svg) return
+    const origin = stage.getBoundingClientRect()
     const box = (state: string) => q(`[data-state="${CSS.escape(state)}"]`)?.getBoundingClientRect()
     const active = picked === null ? new Set<string>() : stepState(lifecycle, findings[picked]!, taken).transitions
-    // Cards in the board's own coordinates; the routes are `routeArrow`'s.
-    const local = (rect: DOMRect): Box => ({ left: rect.left - origin.left + board.scrollLeft, right: rect.right - origin.left + board.scrollLeft, top: rect.top - origin.top, bottom: rect.bottom - origin.top })
+    // Cards in the non-scrolling stage's own coordinates: identical in LTR and RTL at any scroll offset.
+    const local = (rect: DOMRect): Box => ({ left: rect.left - origin.left, right: rect.right - origin.left, top: rect.top - origin.top, bottom: rect.bottom - origin.top })
     const cards = new Map(lifecycle.states.flatMap((state) => { const rect = box(state); return rect ? [[state, local(rect)] as const] : [] }))
     const floor = Math.max(0, ...[...cards.values()].map((card) => card.bottom))
     const parts: string[] = []
@@ -358,13 +436,16 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
         const fromColumn = column.get(from)
         if (!a || fromColumn === undefined) continue
         const hop = toColumn - fromColumn
-        const route = routeArrow(a, to, hop, locale === "ar", floor, hop < -1 ? lane++ : 0)
+        const route = routeArrow(a, to, hop, rtl, floor, hop < -1 ? lane++ : 0)
         const on = active.has(transition.id)
         parts.push(`<path d="${pathData(route)}" marker-end="url(#norn-life-head${on ? "-on" : ""})"${on ? " data-active" : ""}/><text x="${route.label[0]}" y="${route.label[1]}" text-anchor="middle"${on ? " data-active" : ""}>${escape(label(transition.id))}</text>`)
       }
     }
-    svg.setAttribute("width", String(board.scrollWidth))
-    svg.setAttribute("height", String(board.scrollHeight))
+    const width = Math.ceil(origin.width || stage.scrollWidth)
+    const height = Math.ceil(origin.height || stage.scrollHeight)
+    svg.setAttribute("width", String(width))
+    svg.setAttribute("height", String(height))
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`)
     svg.querySelectorAll(":scope > path, :scope > text").forEach((node) => node.remove())
     svg.insertAdjacentHTML("beforeend", parts.join(""))
   }
@@ -394,11 +475,28 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
       const cell = card.querySelector<HTMLElement>("[data-count]")
       const count = counts.states.get(card.dataset.state ?? "")
       if (!cell || !count) continue
-      cell.toggleAttribute("data-pending", count.kind === "pending")
-      cell.textContent = count.kind === "pending" ? (counts.refused || dash ? w.none : w.pending) : count.lowerBound ? w.atLeast(number.format(count.count)) : number.format(count.count)
+      if (count.kind === "unlisted") {
+        cell.removeAttribute("data-pending")
+        cell.removeAttribute("data-lower-bound")
+        cell.setAttribute("data-unlisted", "")
+        cell.title = w.unlistedHint
+        cell.textContent = w.unlisted
+      } else if (count.kind === "count") {
+        cell.removeAttribute("data-pending")
+        cell.removeAttribute("data-unlisted")
+        cell.toggleAttribute("data-lower-bound", count.lowerBound)
+        cell.title = count.lowerBound ? w.lowerBoundHint : ""
+        cell.textContent = count.lowerBound ? w.atLeast(number.format(count.count)) : number.format(count.count)
+      } else {
+        cell.setAttribute("data-pending", "")
+        cell.removeAttribute("data-lower-bound")
+        cell.removeAttribute("data-unlisted")
+        cell.title = ""
+        cell.textContent = counts.refused || dash ? w.none : w.pending
+      }
     }
     const total = q('[data-region="total"]')
-    if (total) total.textContent = rows === null ? "" : w.rows(rows.lowerBound ? w.atLeast(number.format(rows.total)) : number.format(rows.total))
+    if (total) total.textContent = rows === null ? "" : w.rows(number.format(rows.total), rows.total, rows.lowerBound)
     const refused = q('[data-region="refused"]')
     if (refused) {
       refused.textContent = counts.refused ?? ""
@@ -428,28 +526,45 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
     }
   })
 
-  paintCounts(countsFrom(lifecycle, null, locale), null)
+  paintCounts(countsFrom(lifecycle, null, locale), null, options.read === undefined)
   paintSteps()
+  const raf = typeof requestAnimationFrame === "undefined" ? null : requestAnimationFrame(() => drawArrows())
   const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => drawArrows())
   const board = q('[data-region="board"]')
+  const stage = q('[data-region="stage"]')
   if (resize && board) resize.observe(board)
+  if (resize && stage) resize.observe(stage)
 
+  // Declared-only mode (no live cell connected): show the graph and witnesses without network calls.
+  if (options.read === undefined) {
+    q(".norn-life")?.setAttribute("data-machine-state", "declared")
+    const notes = q('[data-region="notes"]')
+    if (notes) {
+      notes.textContent = w.noCell
+      notes.hidden = false
+    }
+    return () => {
+      if (raf !== null && typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(raf)
+      resize?.disconnect()
+    }
+  }
+
+  const read = options.read
   // The machine decides every load state; the view only draws the one it is in.
   const page = options.document.payload.ux.pages[0]
   if (!page) throw new Error("the lifecycle view's document has no page")
   let last: LiveAnswer | null = null
+  let pendingRefresh = false
   const paintState = (state: string) => {
     q(".norn-life")?.setAttribute("data-machine-state", state)
     const unavailable = q('[data-region="unavailable"]')
     if (unavailable) unavailable.hidden = state !== "unavailable"
     const text = q('[data-region="unavailable-text"]')
-    // A bare 404 or 503 (no coded refusal) is a route this cell does not serve, as everywhere in Studio.
-    const coded = typeof (last?.body as { code?: unknown } | undefined)?.code === "string"
-    if (text) text.textContent = state !== "unavailable" ? "" : last !== null && (last.status === 404 || last.status === 503) && !coded ? `${w.notServed} ${w.again}` : `${w.failed} ${w.again}`
+    if (text) text.textContent = state !== "unavailable" ? "" : isRouteNotServed(last) ? `${w.notServed} ${w.again}` : `${w.failed} ${w.again}`
     if (state === "showing" || state === "refused") {
       const counts = countsFrom(lifecycle, last, locale)
-      const body = last && last.status < 400 ? (last.body as Partial<FacetsAnswer>) : null
-      paintCounts(counts, body && typeof body.rows === "number" ? { total: body.rows, lowerBound: body.approximate === true } : null)
+      const body = last && last.status < 400 && isFacetsAnswer(last.body) ? last.body : null
+      paintCounts(counts, body ? { total: body.rows, lowerBound: body.lowerBound === true } : null)
     } else if (state === "unavailable") paintCounts(countsFrom(lifecycle, null, locale), null, true)
     drawArrows()
   }
@@ -460,28 +575,71 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
       throw new Error("the lifecycle view's machine evaluates no expressions")
     },
     transport: {
-      async call() {
-        last = await options.read()
-        return classifyResponse(last.status, last.body)
+      async call(_call, _input, callOptions) {
+        const readOnce = async () => {
+          last = await read(callOptions.signal)
+          if (isRouteNotServed(last)) return { outcome: "network_failure" as const, payload: {} }
+          const classified = classifyResponse(last.status, last.body)
+          if (classified.outcome === "accepted" && !isFacetsAnswer(last.body)) {
+            return { outcome: "network_failure" as const, payload: {} }
+          }
+          return classified
+        }
+        let classified = await readOnce()
+        // A concurrent commit (409 object.snapshot_moved) is retryable once before falling back to unavailable.
+        if (classified.outcome === "answer_moved" && !callOptions.signal.aborted) {
+          classified = await readOnce()
+        }
+        if (classified.outcome === "answer_moved") return { outcome: "network_failure", payload: {} }
+        return classified
       },
     },
-    onStep: (step) => paintState(step.snapshot.stateId),
+    onStep: (step) => {
+      paintState(step.snapshot.stateId)
+      if (pendingRefresh && step.snapshot.stateId !== "reading" && step.snapshot.stateId !== "opening") {
+        pendingRefresh = false
+        if (step.snapshot.stateId === "unavailable") driver.dispatch({ kind: "user", eventId: "retry" })
+        else driver.dispatch({ kind: "subscription", bindingId: "subject" })
+      }
+    },
   })
   paintState(driver.snapshot().stateId)
   driver.dispatch({ kind: "page_opened" })
   root.addEventListener("click", (event) => {
     if ((event.target as Element | null)?.closest('[data-node="retry-button"]')) driver.dispatch({ kind: "user", eventId: "retry" })
   })
+  const triggerRefresh = () => {
+    const state = driver.snapshot().stateId
+    if (state === "reading" || state === "opening") {
+      pendingRefresh = true
+    } else if (state === "unavailable") {
+      driver.dispatch({ kind: "user", eventId: "retry" })
+    } else {
+      driver.dispatch({ kind: "subscription", bindingId: "subject" })
+    }
+  }
   let seen: string | null = null
-  const stop = options.changes((answer) => {
-    // The first answer marks where the view already is; a later one is a commit that moved it.
-    const digest = JSON.stringify(answer)
-    if (seen !== null && digest !== seen) driver.dispatch({ kind: "subscription", bindingId: "subject" })
-    seen = digest
+  const stop = options.changes?.((answer) => {
+    const digest = answer.digest ?? JSON.stringify({ status: answer.status, body: answer.body })
+    if (seen === null) {
+      seen = digest
+      // If a commit already moved the cell between the initial GET and the socket's first snapshot, refresh immediately.
+      if (last !== null && answer.body !== null && answer.body !== undefined) {
+        const snapshotBody = JSON.stringify({ status: answer.status, body: answer.body })
+        const readBody = JSON.stringify({ status: last.status, body: last.body })
+        if (snapshotBody !== readBody) triggerRefresh()
+      }
+      return
+    }
+    if (digest !== seen) {
+      seen = digest
+      triggerRefresh()
+    }
   })
   return () => {
-    stop()
+    stop?.()
     driver.dispose()
+    if (raf !== null && typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(raf)
     resize?.disconnect()
   }
 }

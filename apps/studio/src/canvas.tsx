@@ -28,8 +28,8 @@ export const SAVE_BLOCKED = "Saving to the server needs its admission and govern
 
 type StateNode = Node<{ label: string; flags: string; issues: readonly Issue[] }, "state">
 
-/** The recorded definitions, loaded with the query so importing this page needs no Vite (the transport finds recordings with import.meta.glob). */
-const recordedDefinitions = async () => (await import("./lib/transport.ts")).recordedTransport.definitions()
+/** The definitions, from the connected cell or else the recording, loaded with the query so importing this page needs no Vite (the transport finds recordings with import.meta.glob). */
+const recordedDefinitions = async () => (await import("./lib/transport.ts")).transport.definitions()
 
 export function StateBox({ data, selected }: NodeProps<StateNode>) {
   return (
@@ -276,7 +276,7 @@ export function CanvasPageView({ definitions }: { readonly definitions: Definiti
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-title font-medium">Canvas</h1>
+        <h1 className="text-title font-semibold tracking-tight">Canvas</h1>
         <p className="max-w-2xl text-muted-foreground">Draw how a process moves. Every change is checked as you make it; saving asks the server, which checks again and decides.</p>
       </div>
       <div className="flex flex-wrap gap-1.5">

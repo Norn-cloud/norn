@@ -282,13 +282,18 @@ pub struct JdmSchemaContent {
 
 /// JDM hit policy shared by decision tables and switch nodes.
 ///
-/// DMN policies other than `first` and `collect` translate or are rejected at
-/// DMN ingress (T3-DEC-4); they have no JDM representation.
+/// DMN policies other than `first`, `collect` and `unique` translate or are
+/// rejected at DMN ingress (T3-DEC-4); they have no JDM representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum JdmHitPolicy {
     First,
     Collect,
+    /// DMN `unique`, decision tables only (TABLE-UNIQUE-1, #1176): admission
+    /// proves no two rows match one input, so evaluation selects at most one
+    /// row and row order never decides. A table the checker cannot prove
+    /// disjoint is refused, never admitted on trust.
+    Unique,
 }
 
 /// `executionMode` of a transforming node.

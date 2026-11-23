@@ -1,0 +1,107 @@
+{
+  "artifactId": "ml.predictionbatch.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a prediction batch",
+  "namespace": "ml",
+  "payload": {
+    "access": {
+      "artifactId": "ml.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "ml.predictionbatch.record",
+    "createLinks": [
+      {
+        "link": "applied",
+        "targetIdField": "model_version",
+        "targetType": "ml.ModelVersion"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "ml.PredictionBatch.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "batch_id",
+      "objectKind": "ml.PredictionBatch",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "batch_id": {
+          "type": "string"
+        },
+        "input_revision": {
+          "type": "string"
+        },
+        "input_type": {
+          "type": "string"
+        },
+        "model_version": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "batch_id",
+        "model_version",
+        "input_type",
+        "input_revision",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "batch_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "batch_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.version.status == 'production'"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "model_version"
+          }
+        },
+        "name": "version",
+        "objectType": "ml.ModelVersion"
+      }
+    ],
+    "title": "Record a prediction batch",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "ml.PredictionBatch"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ml/artifacts/ml.predictionbatch.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

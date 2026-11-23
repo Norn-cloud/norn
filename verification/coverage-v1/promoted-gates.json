@@ -258,7 +258,7 @@
     {
       "id": "artifact-direct-write-predicate-runtime",
       "profile": "full",
-      "command": "cargo test --locked -p norn-ir --test artifact_governance",
+      "command": "cargo test --locked -p norn-ir --test suites artifact_governance::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -508,7 +508,7 @@
     {
       "id": "quantity-runtime",
       "profile": "full",
-      "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+      "command": "cargo test --locked -p norn-checker --test suites -- quantity_ledger:: quantity_ledger_properties:: quantity_ledger_expression:: quantity_ledger_boundary::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -531,7 +531,7 @@
     {
       "id": "generic-posting-runtime",
       "profile": "full",
-      "command": "cargo test --locked -p norn-kernel --test accounting_commit",
+      "command": "cargo test --locked -p norn-kernel --test suites accounting_commit::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -550,7 +550,7 @@
     {
       "id": "quantity-authority-runtime-unit",
       "profile": "full",
-      "command": "cargo test --locked -p norn-cell --test quantity_reservations",
+      "command": "cargo test --locked -p norn-cell --lib suites::quantity_reservations::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -866,7 +866,7 @@
     {
       "id": "ontology-runtime-rust",
       "profile": "full",
-      "command": "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+      "command": "cargo test --locked -p norn-checker --test suites -- ontology_pack:: ontology_registry:: quantity_unit_ontology_pack::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -1020,7 +1020,7 @@
     {
       "id": "cala-boundary",
       "profile": "full",
-      "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+      "command": "cargo test --locked -p norn-checker --test suites quantity_ledger_boundary::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -1163,13 +1163,139 @@
     {
       "id": "kernel-v2-commit-conformance",
       "profile": "full",
-      "command": "cargo test --locked -p norn-testkit --test kernel_quint",
+      "command": "cargo test --locked -p norn-cell --lib suites::kernel_quint::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
         {
           "subsystem": "kernel-v2",
           "layer": "runtime"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/hosted-timers-v1/models/hosted-timers.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-quint",
+      "profile": "fast",
+      "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 6",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/hosted-timers-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-progress-quint",
+      "profile": "full",
+      "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --init initOpened --step stepProgress --invariants typeOk dueProgress healthyNotStarved --max-steps 5",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/hosted-timers-progress-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-progress-sim",
+      "profile": "fast",
+      "command": "quint run verification/hosted-timers-v1/models/hosted-timers.qnt --init initOpened --step stepProgress --invariant progress --max-steps 15 --max-samples 10000 --seed 1",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "approval-fencing-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/hosted-timers-v1/models/approval-fencing.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "approval-fencing-quint",
+      "profile": "fast",
+      "command": "quint verify verification/hosted-timers-v1/models/approval-fencing.qnt --backend apalache --invariants typeOk noStaleApprovedExecution --max-steps 10",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/approval-fencing-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-variants",
+      "profile": "full",
+      "command": "python3 verification/hosted-timers-v1/check_variants.py",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-conformance",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-cell-do --test suites -- hosted_timers_quint:: approval_fencing_quint::",
+      "evidenceKind": "rust-tests",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
         }
       ],
       "resultArtifacts": [],

@@ -45,8 +45,22 @@
 //! baseline may only lose entries: CI (`skeleton-guard` job,
 //! `scripts/baseline-shrink-only.sh`) rejects a PR whose baseline gains an
 //! entry relative to the base branch.
+//!
+//! [`ratchet`] holds per-file counts (test honesty, `too_many_lines` allows,
+//! inner allows) in `baseline.json` `ratchets`; a count can only go down, and
+//! it must be lowered in the same PR that removes a violation. [`lint_pin`]
+//! holds the lint set (`[workspace.lints]`, `clippy.toml`, crate-root levels)
+//! to the floor in `lint-pin.json`. [`loc_cap`] enforces the 1,000 non-test
+//! LOC ceiling via the shrink-only `loc-baseline.json`. [`ring0_boundary`]
+//! enforces Ring-0 host-adapter / OLAP / UI crate bans and pins the remaining
+//! Ring-1 UI/widget modules in `norn-checker` (`baseline.json`
+//! `ring0_ui_modules`, #1613).
 
 pub mod ci;
+pub mod lint_pin;
+pub mod loc_cap;
+pub mod ratchet;
+pub mod ring0_boundary;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -120,7 +134,13 @@ const fn rule(name: &'static str, ring: Ring, allowed_norn: &'static [&'static s
 /// The SKELETON.md crate table (rings 0/1 plus unscoped and tooling crates).
 pub const CRATES: &[CrateRule] = &[
     r0("norn-graph", &[], &["rust_decimal"]),
-    r0("norn-canonical", &[], &[]),
+    // Canonical JSON (Norn1 + Legacy0 compatibility), SHA-256 digests, and
+    // Unicode NFC normalization; sole owner of raw `serde_json` byte encoding.
+    r0(
+        "norn-canonical",
+        &[],
+        &["serde", "serde_json", "sha2", "unicode-normalization"],
+    ),
     // Shared data/validator only; no executor.
     r0(
         "norn-datalog",
@@ -135,7 +155,7 @@ pub const CRATES: &[CrateRule] = &[
     r0(
         "norn-expr",
         &["norn-ir"],
-        &["zen-expression", "chrono", "chrono-tz"],
+        &["zen-expression", "jiff", "jiff-tzdb"],
     ),
     // Bounded inheritance classification: Ascent (vendored, clock-free profile)
     // at runtime; norn-datalog and quote only at build time.
@@ -267,30 +287,9 @@ pub const KNOWN_EDGE_VIOLATIONS: &[(&str, &str, &str)] = &[];
 
 /// Known ring-0 third-party dependencies SKELETON.md does not list:
 /// `(crate, dependency, reason)`. Shrink-only; must equal `baseline.json`
-/// `third_party`. Each leaves by the code dropping it or by a dated ruling
-/// amending SKELETON.md (after which the crate's `third_party` list gains it).
-pub const KNOWN_THIRD_PARTY_VIOLATIONS: &[(&str, &str, &str)] = &[
-    (
-        "norn-canonical",
-        "serde",
-        "pre-skeleton; SKELETON.md row names no third-party crates",
-    ),
-    (
-        "norn-canonical",
-        "serde_json",
-        "pre-skeleton; SKELETON.md row names no third-party crates",
-    ),
-    (
-        "norn-canonical",
-        "sha2",
-        "pre-skeleton; SKELETON.md row names no third-party crates",
-    ),
-    (
-        "norn-canonical",
-        "unicode-normalization",
-        "pre-skeleton; SKELETON.md row names no third-party crates",
-    ),
-];
+/// `third_party`. Every pre-skeleton entry has been retired, so the allowlist
+/// is empty (#1582).
+pub const KNOWN_THIRD_PARTY_VIOLATIONS: &[(&str, &str, &str)] = &[];
 
 /// Crates no ring-0 crate may depend on directly (any kind): async runtimes,
 /// JS engines, network clients, storage engines, and other host APIs.
@@ -1035,31 +1034,50 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
 
 fn check_calendar_dependencies(name: &str, dep: &Dependency, out: &mut Vec<Violation>) {
     let dep_name = dep.name.as_str();
-    if matches!(name, "norn-expr" | "norn-importers")
+    if name == "norn-importers"
         && dep_name == "chrono"
         && dep.kind != DependencyKind::Development
         && (dep.uses_default_features || dep.features != ["std"])
     {
         out.push(violation(
-            if name == "norn-expr" {
-                "norn-expr-temporal-features"
-            } else {
-                "norn-importers-calendar-features"
-            },
+            "norn-importers-calendar-features",
             format!("`{name}` must use chrono with default features off and only `std`"),
         ));
     }
+    if name == "norn-expr" && dep_name == "jiff" && dep.kind != DependencyKind::Development {
+        // Any feature beyond `std` admits another timezone source: the host's
+        // zoneinfo (`tz-system`, `tzdb-zoneinfo`), a bundled database other
+        // than the pinned `jiff-tzdb` below (`tzdb-*`), or serde/logging.
+        // `std` alone does NOT keep the clock out: it compiles
+        // `Timestamp::now`, `Zoned::now`, `TimeZone::system`/`try_system` and
+        // `tz::db`, and feature unification (serde_with turns on `tz-system`
+        // and `tzdb-zoneinfo`) can point `tz::db` at host zoneinfo. Those five
+        // are banned in the root `clippy.toml` `disallowed-methods` instead;
+        // `clippy_bans_jiff_clock_and_host_tz` in tests/skeleton.rs pins that.
+        if dep.uses_default_features || dep.features != ["std"] {
+            out.push(violation(
+                "norn-expr-temporal-features",
+                format!("`{name}` must use jiff with default features off and only `std`"),
+            ));
+        }
+        if dep.req.to_string() != "=0.2.37" {
+            out.push(violation(
+                "norn-expr-timezone-features",
+                "`norn-expr` must pin jiff = 0.2.37 (its TZif reader renders naming-series dates)"
+                    .to_owned(),
+            ));
+        }
+    }
+    // The naming-series timezone data: IANA tzdb 2025b, recorded in events as
+    // `NAMING_SERIES_TZDB_VERSION`. A new release is a versioned change (#1440).
     if name == "norn-expr"
-        && dep_name == "chrono-tz"
+        && dep_name == "jiff-tzdb"
         && dep.kind != DependencyKind::Development
-        && (dep.req.to_string() != "=0.10.4"
-            || dep.uses_default_features
-            || dep.features != ["std"])
+        && (dep.req.to_string() != "=0.1.4" || !dep.features.is_empty())
     {
         out.push(violation(
             "norn-expr-timezone-features",
-            "`norn-expr` must use chrono-tz = 0.10.4 with default features off and only `std`"
-                .to_owned(),
+            "`norn-expr` must pin jiff-tzdb = 0.1.4 (tzdb 2025b) with no features".to_owned(),
         ));
     }
 }
@@ -1763,20 +1781,38 @@ fn baseline_set(root: &serde_json::Value, key: &str) -> Result<BTreeSet<String>,
 ///
 /// Returns [`BaselineError`] if the baseline is not the expected JSON shape.
 pub fn check_baseline(baseline_json: &str) -> Result<Vec<Violation>, BaselineError> {
+    check_baseline_against(
+        baseline_json,
+        KNOWN_EDGE_VIOLATIONS,
+        KNOWN_THIRD_PARTY_VIOLATIONS,
+        NORN_IR_VALIDATE_ALLOWLIST,
+    )
+}
+
+/// [`check_baseline`] against explicit allowlists (so the `allowlist-grew`
+/// and `stale-baseline` rules stay testable once every real allowlist is
+/// empty).
+///
+/// # Errors
+///
+/// Returns [`BaselineError`] if the baseline is not the expected JSON shape.
+pub fn check_baseline_against(
+    baseline_json: &str,
+    known_edges: &[(&str, &str, &str)],
+    known_third_party: &[(&str, &str, &str)],
+    norn_ir_validators: &[&str],
+) -> Result<Vec<Violation>, BaselineError> {
     let root: serde_json::Value =
         serde_json::from_str(baseline_json).map_err(|err| BaselineError(err.to_string()))?;
     let pairs = |list: &[(&str, &str, &str)]| -> BTreeSet<String> {
         list.iter().map(|(a, b, _)| format!("{a} -> {b}")).collect()
     };
     let lists: [(&str, BTreeSet<String>); 3] = [
-        ("norn_edges", pairs(KNOWN_EDGE_VIOLATIONS)),
-        ("third_party", pairs(KNOWN_THIRD_PARTY_VIOLATIONS)),
+        ("norn_edges", pairs(known_edges)),
+        ("third_party", pairs(known_third_party)),
         (
             "norn_ir_validators",
-            NORN_IR_VALIDATE_ALLOWLIST
-                .iter()
-                .map(|s| (*s).to_owned())
-                .collect(),
+            norn_ir_validators.iter().map(|s| (*s).to_owned()).collect(),
         ),
     ];
     let mut out = Vec::new();

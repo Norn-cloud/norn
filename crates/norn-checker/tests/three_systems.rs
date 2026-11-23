@@ -134,6 +134,47 @@ fn all_rows(f: &Fixture) -> Vec<Row> {
         .collect()
 }
 
+/// Every registry pack's repo-local `rawMetadata` evidence must hash to its
+/// pin; a scheme URI (`evidence://…`) names evidence outside the repo.
+#[test]
+fn registry_pack_raw_metadata_pins_match_repo_files() {
+    let mut checked = 0;
+    for pack in fs::read_dir(root().join("registry/packs")).expect("packs") {
+        let dir = pack.expect("pack").path().join("artifacts");
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.expect("entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let artifact: Value =
+                serde_json::from_str(&fs::read_to_string(&path).expect("artifact")).expect("json");
+            let raw = &artifact["payload"]["rawMetadata"];
+            let Some(uri) = raw["uri"].as_str() else {
+                continue;
+            };
+            if uri.contains("://") {
+                continue;
+            }
+            let bytes = fs::read(root().join(uri))
+                .unwrap_or_else(|e| panic!("{}: rawMetadata {uri}: {e}", path.display()));
+            assert_eq!(
+                raw["sha256"].as_str(),
+                Some(format!("{:x}", Sha256::digest(bytes)).as_str()),
+                "{}: rawMetadata {uri} drifted from its pin",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 5,
+        "only {checked} repo-local rawMetadata pins found"
+    );
+}
+
 #[test]
 fn mvp_map_three_artifact_set_is_admitted() {
     let set = artifacts();
@@ -189,7 +230,7 @@ fn mvp_map_three_aliases_roles_and_one_economic_identity() {
             assert_eq!(link.target_key, key);
             assert_eq!(link.key, delivery.key);
         }
-        assert!(!delivery.property_provenance.is_empty());
+        assert_ne!(delivery.property_provenance.len(), 0);
         let holding = mapped.iter().find(|r| r.map == "holding").expect("holding");
         for (role, key) in [
             ("owner", "demo/party/owner"),
@@ -245,7 +286,7 @@ fn mvp_item_holding_catalog_and_owner_location_partitions() {
         assert_eq!(items[0].object_type.as_str(), "canon.Item");
         assert_eq!(holdings[0].object_type.as_str(), "canon.Holding");
         assert_ne!(holdings[0].key, holdings[1].key);
-        assert!(items[0].links.is_empty());
+        assert_eq!(items[0].links, []);
     }
 }
 #[test]
@@ -503,4 +544,208 @@ fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
             system != "shopify"
         );
     }
+}
+
+/// METRIC-ADDITIVITY-REF-1 over canon: the flows derive exactly one sum each over
+/// their own time property, and the stock (`Holding`) derives only its as-of
+/// snapshots over `observed_at` (METRIC-SNAPSHOT-ASOF-1). A posting's amount takes
+/// its event's time (METRIC-GRAIN-LINK-1); `SettlementObservation` derives nothing.
+/// Each quantity carries its unit partition (`unit`, `currency`).
+#[test]
+fn three_systems_derive_exactly_the_canon_flow_sums() {
+    let space = norn_checker::metric::derive::derive_metric_space(
+        &artifacts(),
+        &BTreeSet::new(),
+        &norn_ir::LawRoot::Entity("canon.Delivery".to_owned()),
+    )
+    .unwrap_or_else(|d| panic!("{d:#?}"));
+    let derived: BTreeSet<(String, String, String, bool)> = space
+        .candidates()
+        .iter()
+        .map(|candidate| {
+            let params = &candidate.definition.type_params;
+            let model = params
+                .metric_aggregation_params
+                .as_ref()
+                .expect("a derived sum")
+                .semantic_model
+                .as_str()
+                .to_owned();
+            let time = candidate
+                .definition
+                .norn
+                .time_dimension
+                .as_ref()
+                .expect("a time grain")
+                .property
+                .as_str()
+                .to_owned();
+            let snapshot = matches!(
+                candidate.definition.norn.additivity,
+                norn_ir::metric::MetricAdditivity::SemiAdditive { .. }
+            );
+            (
+                model,
+                params.expr.clone().expect("a measure"),
+                time,
+                snapshot,
+            )
+        })
+        .collect();
+    let expected = [
+        ("canon.Delivery", "quantity", "occurred_at", false),
+        ("canon.OrderLine", "quantity", "due_at", false),
+        ("canon.Holding", "quantity", "observed_at", true),
+        ("canon.Holding", "stock_cost", "observed_at", true),
+        // METRIC-GRAIN-LINK-1: a posting has no time of its own; it takes its event's.
+        ("canon.Posting", "amount", "occurred_at", false),
+        // A settlement is summed per currency by its optional event's time; one
+        // without an event is counted as unlinked, never bucketed.
+        (
+            "canon.SettlementObservation",
+            "amount",
+            "occurred_at",
+            false,
+        ),
+    ]
+    .map(|(model, measure, time, snapshot)| {
+        (
+            model.to_owned(),
+            measure.to_owned(),
+            time.to_owned(),
+            snapshot,
+        )
+    });
+    assert_eq!(derived, BTreeSet::from(expected));
+    // METRIC-UNIT-PARTITION-1: each sum names where its unit is stored.
+    for candidate in space.candidates() {
+        let partition: Vec<_> = candidate
+            .unit_partition
+            .iter()
+            .map(|path| path.property.as_str())
+            .collect();
+        let holding = candidate
+            .definition
+            .type_params
+            .metric_aggregation_params
+            .as_ref()
+            .is_some_and(|params| params.semantic_model.0 == "canon.Holding");
+        let expected: &[&str] = match candidate.definition.type_params.expr.as_deref() {
+            // On-hand and available holdings never add (THREE-SYSTEMS.md).
+            Some("quantity") if holding => &["unit", "currency", "quantity_basis"],
+            Some("quantity") => &["unit", "currency"],
+            Some("amount") => &["currency"],
+            // A stock's cost is held per its currency source.
+            Some("stock_cost") => &["cost_currency"],
+            _ => &[],
+        };
+        assert_eq!(partition, expected, "{}", candidate.definition.name);
+    }
+}
+
+/// Every canon currency enum and every pack's currency code set is the one
+/// ISO 4217 list (canon's `ISO_4217`), so a copy cannot drift and a real
+/// source's EGP maps like its USD.
+#[test]
+fn every_currency_enum_and_code_set_is_the_one_iso_4217_list() {
+    let read = |path: &str| -> Value {
+        serde_json::from_str(&fs::read_to_string(root().join(path)).expect("artifact"))
+            .expect("json")
+    };
+    let codes = |values: &Value| -> Vec<String> {
+        values
+            .as_array()
+            .expect("values")
+            .iter()
+            .map(|value| value["value"].as_str().expect("code").to_owned())
+            .collect()
+    };
+    let mut lists = Vec::new();
+    for (artifact, root_key, property) in [
+        ("canon.Settlement.interface", "interface", "currency"),
+        (
+            "canon.SettlementObservation.entity",
+            "objectType",
+            "currency",
+        ),
+        (
+            "canon.StockValuation.interface",
+            "interface",
+            "cost_currency",
+        ),
+        ("canon.Holding.entity", "objectType", "cost_currency"),
+    ] {
+        let document = read(&format!("registry/packs/canon/artifacts/{artifact}.json"));
+        let found = document["payload"][root_key]["properties"]
+            .as_array()
+            .expect("properties")
+            .iter()
+            .find(|candidate| candidate["id"] == property)
+            .expect("the currency property");
+        assert_eq!(found["type"]["kind"], "enum", "{artifact}");
+        lists.push((artifact.to_owned(), codes(&found["type"]["values"])));
+    }
+    for source in [
+        "registry/packs/erpnext/artifacts/erpnext.three",
+        "registry/packs/odoo/artifacts/odoo.three",
+        "registry/packs/shopify/artifacts/shopify.three",
+        "fixtures/packs/erpnext-rest/artifacts/erpnext.rest",
+        "fixtures/packs/odoo-rest/artifacts/odoo.rest",
+    ] {
+        let document = read(&format!("{source}.source.json"));
+        for set in document["payload"]["codeSets"]
+            .as_array()
+            .expect("code sets")
+        {
+            if set["field"]
+                .as_str()
+                .is_some_and(|field| field.ends_with("currency"))
+            {
+                lists.push((format!("{source}#{}", set["id"]), codes(&set["values"])));
+            }
+        }
+    }
+    // Four canon enums and nine pack code sets (three per ERP, one Shopify, one per sandbox).
+    assert_eq!(lists.len(), 13, "{lists:?}");
+    let first = lists[0].1.clone();
+    assert_eq!(first.len(), 176);
+    assert!(
+        first.windows(2).all(|pair| pair[0] < pair[1]),
+        "sorted, unique"
+    );
+    for (at, list) in &lists {
+        assert_eq!(list, &first, "{at}");
+    }
+}
+
+/// A stock's cost is read as of each week, summed per its currency.
+#[test]
+fn the_stock_cost_is_summed_per_its_currency_each_week() {
+    let space = norn_checker::metric::derive::derive_metric_space(
+        &artifacts(),
+        &BTreeSet::new(),
+        &norn_ir::LawRoot::Entity("canon.Delivery".to_owned()),
+    )
+    .unwrap_or_else(|d| panic!("{d:#?}"));
+    let cost = space
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.definition.type_params.expr.as_deref() == Some("stock_cost"))
+        .expect("the stock cost snapshot");
+    let question: norn_ir::QuestionIR = serde_json::from_value(json!({
+        "irVersion": "0.1", "name": "canon.stock_cost_by_week", "objectSet": "canon.Holding",
+        "aggregate": [{"metric": cost.definition.name}],
+        "groupBy": [{"path": {"property": "observed_at"}, "grain": "week"}],
+        "window": {"start": "2026-07-06T00:00:00Z", "end": "2026-08-10T00:00:00Z"},
+        "freshness": {"kind": "live", "maxAgeMs": 5000},
+    }))
+    .expect("question");
+    let plan = space.admit(&question, 100).expect("the stock cost admits");
+    let grouped: Vec<_> = plan
+        .question()
+        .dimensions
+        .iter()
+        .map(|dimension| dimension.path.property.as_str())
+        .collect();
+    assert_eq!(grouped, ["observed_at", "cost_currency"]);
 }

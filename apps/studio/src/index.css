@@ -1,36 +1,44 @@
+@layer ui-sdk;
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "./components/ui/shadcn.css";
-@import "@fontsource-variable/inter";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 @source "../node_modules/streamdown/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Norn Studio theme: monochrome. Near-black or soft-grey canvas, hairline separators,
+ * Norn Studio theme, design v3 (workbench): flat chrome on one neutral ground, as Snowsight and
+ * Retool do it. The rail and sidebar share one quiet tint, the page is the plain background, and
+ * hairlines (not cards or shadows) separate things. Radius 8 for frames and controls, never pills.
+ * Spacing runs on a 4/8 grid. Design v2 notes follow: neutral ramps and type roles follow Polar's open-source Orbit tokens
+ * (polarsource/polar, clients/packages/orbit, Apache-2.0), set in Geist; one accent, the knot's violet
+ * (--action, --ring). Two-tier density: soft rounded chrome (panels, sheets, KPI cards) around crisp,
+ * dense data (13px tabular rows, hairlines, radius 8). Earlier notes, monochrome. Near-black or soft-grey canvas, hairline separators,
  * plain numerals; type does the hierarchy. Colour is reserved for the Norn knot logo,
  * for meaning (destructive, warning, success, all muted) and for the one primary
  * add/create action (--action). Links are foreground, underlined. Chrome is rounded
  * and roomy; data (tables, figures) is dense and tabular.
  */
 :root {
-  --radius: 0.75rem;
-  --canvas: #f3f4f6;
+  --radius: 0.5rem;
+  --canvas: #ffffff;
   --background: #ffffff;
-  --foreground: #0a0a0a;
+  --foreground: #000000;
   --card: #ffffff;
-  --card-foreground: #0a0a0a;
+  --card-foreground: #000000;
   --popover: #ffffff;
   --popover-foreground: #0a0a0a;
-  --primary: #0a0a0a;
+  --primary: #000000;
   --primary-foreground: #ffffff;
-  --secondary: #f3f4f6;
+  --secondary: #f4f4f4;
   --secondary-foreground: #0a0a0a;
-  --muted: #f3f4f6;
-  --muted-foreground: #5b6270;
-  --accent: #eceef1;
+  --muted: #f5f5f5;
+  --muted-foreground: #6b6b6b;
+  --accent: #f0f0f0;
   --accent-foreground: #0a0a0a;
-  --surface-subtle: #f9fafb;
+  --surface-subtle: #fafafa;
   /* Muted semantic colours, each AA as text on white and on the canvas. */
   --destructive: #b83228;
   --destructive-foreground: #ffffff;
@@ -38,28 +46,41 @@
   --destructive-text: #b83228;
   --success: #2a7048;
   --warning: #8f5a0c;
-  --border: #e5e7eb;
-  --input: #e5e7eb;
-  --ring: #6b7280;
+  --border: #e8e8e8;
+  --input: #e8e8e8;
+  --ring: #5b52f0;
   /* Links read as foreground; the underline (or arrow) marks them. */
   --link: var(--foreground);
   /* The one restrained colour: the primary add/create action, as a solid round button. */
-  --action: #2f5fe3;
+  --action: #5b52f0;
   --action-foreground: #ffffff;
-  --chart-1: #0a0a0a;
-  --chart-2: #6b7280;
-  --chart-3: #9ca3af;
-  --chart-4: #c4c8cf;
-  --chart-5: #d9dce1;
-  --sidebar: var(--canvas);
+  /* Detail colour, never a surface: one hue per kind of artefact for its icons and chips; each ≥ 4.5:1 on white and on the canvas. */
+  --kind-source: #0f766e;
+  --kind-mapping: #475569;
+  --kind-object: #4338ca;
+  --kind-transform: #92400e;
+  --kind-question: #a21caf;
+  --kind-workflow: #6d28d9;
+  --kind-guarantee: #166534;
+  --kind-policy: #c2410c;
+  /* Chart series: categorical, told apart by hue and by order in the legend. */
+  --chart-1: #000000;
+  --chart-2: #0f766e;
+  --chart-3: #b45309;
+  --chart-4: #a21caf;
+  --chart-5: #a3a3a3;
+  --sidebar: #fafafa;
   --sidebar-foreground: #0a0a0a;
   --sidebar-primary: #0a0a0a;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e8eaee;
+  --sidebar-accent: #efefef;
   --sidebar-accent-foreground: #0a0a0a;
-  --sidebar-border: #e5e7eb;
-  --sidebar-ring: #6b7280;
-  --elevation-1: 0 1px 2px 0 rgb(10 10 10 / 0.06), 0 1px 3px -1px rgb(10 10 10 / 0.05);
+  --sidebar-border: #ebebeb;
+  --sidebar-ring: #737373;
+  /* The ground the rail and the sidebar share: one tint, so the chrome reads as one quiet surface. */
+  --shell: var(--sidebar);
+  /* Soft depth: a contact shadow only, for the few things that sit above the page (menus, sheets). */
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.04);
   /*
    * Depth model for things that float on a canvas (canvas nodes, the question tree, floating toolbars):
    * a tight contact shadow plus a large, very faint ambient one, a hairline border and a top highlight.
@@ -68,7 +89,7 @@
   --elevation-node: 0 1px 1px rgb(15 23 42 / 0.05), 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 28px -10px rgb(15 23 42 / 0.12);
   --elevation-node-hover: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 4px rgb(15 23 42 / 0.06), 0 18px 40px -12px rgb(15 23 42 / 0.18);
   --elevation-float: 0 1px 2px rgb(15 23 42 / 0.06), 0 8px 24px -8px rgb(15 23 42 / 0.16);
-  --node-border: rgb(15 23 42 / 0.09);
+  --node-border: rgb(0 0 0 / 0.06);
   --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
   --node-radius: 14px;
   --node-ring: color-mix(in oklab, var(--ring) 55%, transparent);
@@ -86,55 +107,78 @@
   --tint-agent: #4338ca;
   --tint-law: #be123c;
   --tint-start: #334155;
+  /*
+   * Tones (design system v1): colour for details only, never a surface. A chip mixes its tone into a
+   * pale fill and uses it for its text and dot; each tone is >= 4.5:1 as text on white.
+   */
+  --tone-gray: #5f5f5f;
+  --tone-green: #187144;
+  --tone-amber: #8a5a00;
+  --tone-red: #b42318;
+  --tone-blue: #2453c9;
+  --tone-violet: #6d3fd1;
+  --tone-teal: #0b6e6e;
+  --tone-pink: #b0246b;
+  --tone-orange: #b4470b;
 }
 
 .dark {
-  --canvas: #0a0a0a;
-  --background: #111111;
-  --foreground: #fafafa;
-  --card: #161616;
+  --canvas: #090909;
+  --background: #090909;
+  --foreground: #ffffff;
+  --card: #111111;
   --card-foreground: #fafafa;
-  --popover: #1a1a1a;
+  --popover: #161616;
   --popover-foreground: #fafafa;
-  --primary: #fafafa;
+  --primary: #ffffff;
   --primary-foreground: #0a0a0a;
-  --secondary: #1a1a1a;
+  --secondary: #212121;
   --secondary-foreground: #fafafa;
   --muted: #1a1a1a;
-  --muted-foreground: #8a8a8a;
+  --muted-foreground: #9e9e9e;
   --accent: #1f1f1f;
   --accent-foreground: #fafafa;
-  --surface-subtle: #141414;
+  --surface-subtle: #111111;
   --destructive: #e5675e;
   --destructive-foreground: #0a0a0a;
   /* Destructive as small text: 5.5:1 on the card. */
   --destructive-text: #e5675e;
   --success: #52b788;
   --warning: #d4a24c;
-  --border: rgb(255 255 255 / 0.08);
-  --input: rgb(255 255 255 / 0.12);
-  --ring: #8a8a8a;
+  --border: #232323;
+  --input: #2a2a2a;
+  --ring: #7c74ff;
   --link: var(--foreground);
-  --action: #3b6cf0;
+  --action: #7c74ff;
   --action-foreground: #ffffff;
-  --chart-1: #fafafa;
-  --chart-2: #8a8a8a;
-  --chart-3: #5f5f5f;
-  --chart-4: #404040;
-  --chart-5: #2a2a2a;
-  --sidebar: var(--canvas);
+  /* The same kinds, lightened: each ≥ 5.9:1 on the dark card. */
+  --kind-source: #2dd4bf;
+  --kind-mapping: #94a3b8;
+  --kind-object: #a5b4fc;
+  --kind-transform: #fbbf24;
+  --kind-question: #f0abfc;
+  --kind-workflow: #c4b5fd;
+  --kind-guarantee: #4ade80;
+  --kind-policy: #fdba74;
+  --chart-1: #ffffff;
+  --chart-2: #2dd4bf;
+  --chart-3: #fbbf24;
+  --chart-4: #f0abfc;
+  --chart-5: #757575;
+  --sidebar: #0f0f0f;
   --sidebar-foreground: #fafafa;
   --sidebar-primary: #fafafa;
   --sidebar-primary-foreground: #0a0a0a;
   --sidebar-accent: #1c1c1c;
   --sidebar-accent-foreground: #fafafa;
-  --sidebar-border: rgb(255 255 255 / 0.08);
+  --sidebar-border: #1f1f1f;
   --sidebar-ring: #8a8a8a;
-  --elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 2px 6px -1px rgb(0 0 0 / 0.35);
+  --shell: var(--sidebar);
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.5);
   --elevation-node: 0 1px 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 14px 32px -10px rgb(0 0 0 / 0.6);
   --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.55), 0 4px 8px rgb(0 0 0 / 0.4), 0 20px 44px -12px rgb(0 0 0 / 0.7);
   --elevation-float: 0 1px 2px rgb(0 0 0 / 0.5), 0 10px 28px -8px rgb(0 0 0 / 0.65);
-  --node-border: rgb(255 255 255 / 0.09);
+  --node-border: rgb(255 255 255 / 0.06);
   --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
   --node-ring: color-mix(in oklab, var(--ring) 65%, transparent);
   --canvas-surface: #151517;
@@ -150,13 +194,38 @@
   --tint-agent: #a5b4fc;
   --tint-law: #fb7185;
   --tint-start: #cbd5e1;
+  --tone-gray: #a3a3a3;
+  --tone-green: #4cc38a;
+  --tone-amber: #f0b44c;
+  --tone-red: #f2786d;
+  --tone-blue: #7aa2ff;
+  --tone-violet: #b69cff;
+  --tone-teal: #3fcfcf;
+  --tone-pink: #f48fc4;
+  --tone-orange: #f59e5b;
+}
+
+/*
+ * Density: Workspace reads comfortably, Builder packs rows tighter. The shell sets data-density from
+ * the perspective; tables and lists size their rows from these, so every page follows.
+ */
+:root {
+  --density-row-scan: 2rem;
+  --density-row-read: 1.75rem;
+  --density-cell: 2.25rem;
+}
+[data-density="compact"] {
+  --density-row-scan: 1.75rem;
+  --density-row-read: 1.5rem;
+  --density-cell: 1.875rem;
 }
 
 @theme inline {
+  /* One radius scale: 4 for chips, 6 for small controls, 8 for frames and buttons; nothing rounder than 12. */
   --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: var(--radius);
-  --radius-lg: calc(var(--radius) + 4px);
-  --radius-xl: calc(var(--radius) + 8px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 2px);
   --color-background: var(--background);
   --color-canvas: var(--canvas);
   --color-surface-subtle: var(--surface-subtle);
@@ -164,7 +233,24 @@
   --color-action: var(--action);
   --color-action-foreground: var(--action-foreground);
   --color-success: var(--success);
+  --color-kind-source: var(--kind-source);
+  --color-kind-mapping: var(--kind-mapping);
+  --color-kind-object: var(--kind-object);
+  --color-kind-transform: var(--kind-transform);
+  --color-kind-question: var(--kind-question);
+  --color-kind-workflow: var(--kind-workflow);
+  --color-kind-guarantee: var(--kind-guarantee);
+  --color-kind-policy: var(--kind-policy);
   --color-warning: var(--warning);
+  --color-tone-gray: var(--tone-gray);
+  --color-tone-green: var(--tone-green);
+  --color-tone-amber: var(--tone-amber);
+  --color-tone-red: var(--tone-red);
+  --color-tone-blue: var(--tone-blue);
+  --color-tone-violet: var(--tone-violet);
+  --color-tone-teal: var(--tone-teal);
+  --color-tone-pink: var(--tone-pink);
+  --color-tone-orange: var(--tone-orange);
   --shadow-elevation: var(--elevation-1);
   --shadow-node: var(--elevation-node);
   --shadow-node-hover: var(--elevation-node-hover);
@@ -173,11 +259,16 @@
   --color-node-border: var(--node-border);
   --color-canvas-surface: var(--canvas-surface);
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Density tiers: scan lists, read key/value rows, the focus inspector. */
+  --spacing-row-scan: var(--density-row-scan);
+  --spacing-row-read: var(--density-row-read);
+  --spacing-cell: var(--density-cell);
+  --spacing-inspector: 20rem;
   --text-meta: 0.8125rem;
-  --text-panel: 0.9375rem;
-  --text-section: 1.0625rem;
-  --text-title: 1.75rem;
-  --text-figure: 2rem;
+  --text-panel: 0.875rem;
+  --text-section: 0.9375rem;
+  --text-title: 1.375rem;
+  --text-figure: 1.75rem;
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -208,15 +299,16 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-shell: var(--shell);
   --font-heading: var(--font-sans);
-  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
-  --radius-2xl: calc(var(--radius) + 12px);
-  /* Cards, inputs and badges use the 3xl/4xl steps; flat and modest, never pill-shaped panels. */
-  --radius-3xl: calc(var(--radius) + 4px);
-  --radius-4xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 4px);
+  /* Cards, buttons, inputs and badges use the 3xl/4xl steps: the frame radius, never pills. */
+  --radius-3xl: var(--radius);
+  --radius-4xl: var(--radius);
   --shadow-md: 0 0 #0000;
 }
 
@@ -226,6 +318,10 @@
   html { @apply font-sans; font-size: 90%; }
   body { @apply bg-canvas text-foreground antialiased; font-size: 0.875rem; line-height: 1.45; font-variant-numeric: tabular-nums; }
   h1, h2, h3 { letter-spacing: -0.02em; }
+  /* The browser's own surfaces carry the palette too: selection, scrollbars, the caret. */
+  ::selection { background: color-mix(in oklab, var(--ring) 24%, transparent); }
+  * { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent; }
+  input, textarea { caret-color: var(--ring); }
 }
 
 /* Shiki's dual themes: each token carries both colours; the page's scheme picks one. */

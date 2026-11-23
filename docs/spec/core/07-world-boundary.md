@@ -88,7 +88,7 @@ after cell-owned recomputation matches the pinned bundle
 CP2 authoritative/governed non-main reads touching a source-disputed or NFC-quarantined subject refuse `core.world.source_dispute_unqualified` until Core 08 retains the source-evidence frontier; they never omit the overlay.
 OBS-EVIDENCE-1 uses NFC only for inbox lookup keys, preserves non-NFC spelling evidence as bytes in a durable “identity normalized; possible collision” finding, and refuses convergence, authoritative promotion and governed reads (rechecked at commit) of every mapped subject in that bucket pending the separate opaque/signed source-byte retention and byte-exact identity bridge.
 
-**MAPPING-PLAN-1:** a store may reuse the decoded mapping, source schema, compiled mapping, artifact pins, definitions digest and retained-model proof for one retained definition version. The reuse key is the version, the mapping id and a digest of every column of the installed definition row read on this call, so any changed column misses and repeats the full retained proof. Every evaluation, hit or miss, re-reads and verifies the export-journal record for the row's `commit_seq`, requires its installed row to equal the row read, requires the stored receipt at `commit_seq` to equal the journal's, and requires the journal model snapshot to equal the one the plan was proven on; the model-hash and governing-law checks are pure functions of that snapshot and the keyed row. A hit therefore refuses exactly what a cold store refuses, and bundles are identical to a cold derivation. Named scenario: **MAPPING-PLAN-REUSE** (warm and cold rechecks agree; changed row columns and tampered receipts or journal records refuse identically warm and cold).
+**MAPPING-PLAN-1:** a store may reuse the decoded mapping, source schema, compiled mapping, artifact pins, definitions digest and retained-model proof for one retained definition version. The reuse key is the version, the mapping id and a digest of every column of the installed definition row read on this call, so any changed column misses and repeats the full retained proof. Every evaluation, hit or miss, re-reads the installed row, the export-journal record for the row's `commit_seq` with the payload bodies it references, and the stored receipt at `commit_seq`. It verifies them in full (the journal record verifies, its installed row equals the row read, the receipt equals the journal's), or finds their raw bytes exactly equal to those of the last copy this store verified in full, which proves the same result. It also requires the journal model snapshot to equal the one the plan was proven on (byte comparison: coordinator ruling 2026-11-12, pending maintainer review); the model-hash and governing-law checks are pure functions of that snapshot and the keyed row. A hit therefore refuses exactly what a cold store refuses, and bundles are identical to a cold derivation. Named scenario: **MAPPING-PLAN-REUSE** (warm and cold rechecks agree; changed row columns and tampered receipts or journal records refuse identically warm and cold).
 
 FEED-CONFLICT implements OBS-EVIDENCE-1 for mapped captures: compare the immutable
 `kind`, `source_version`, `payload_digest` and redaction record for the trusted
@@ -102,6 +102,158 @@ restart add no second conflict finding; ordinary corrections do not resolve it.
 Full cursor convergence and conflict capture for ordinary unmapped submissions
 remain follow-up cuts for this CP2 bundle bridge.
 
+**SOURCE-AGREE-1** (coordinator ruling 2026-11-13; beside FEED-CONFLICT, which
+compares one source event with itself): several sources may report one
+canonical subject, as ERPNext, Odoo and Shopify each report a holding. When
+consecutive versions of a subject change a measure's partition source (a
+`unitSource` member or a direct `currencySource` its type declares: canon's
+`unit`, `currency`, `quantity_basis`, `cost_currency`) from one reported value
+to another, and their field provenance names two different source systems,
+the subject carries a warning finding `core.observation.source_disagreement`
+naming both systems, both values and both versions. A source that reports no
+value (a mapping gap) disagrees with no one. Both reports are true facts about
+what each source says, so the finding never quarantines or excludes its
+subject. It is recomputed from verified history at each read's own frontier and
+never stored: it is open while the value at that frontier differs from the
+earlier report, so it resolves when the subject returns to it, and a later
+change by another source is a finding of its own. A read discloses a
+disagreement only where its caller may read both versions (Population, Values
+and Sources). An answer reports `sourceDisagreements`: per partition source,
+the members with an open disagreement whose two versions the reader may see, at
+the answer's knowledge frontier, counted after either engine by the same host
+function so the exact and analytics engines agree. A read examines at most 500
+candidates; past that `complete` is false and each count is a lower bound
+(HOST-READ-4b). A data steward may accept a disagreement with a reason
+(`source.agreement.accept`, the `sources` pack): the review is keyed by the
+finding's id and marks it `acknowledged`, so it is no longer counted, and a later
+disagreement is a finding of its own; `source.agreement.reopen`, also with a
+reason, makes it open again. Reviews are read at the same frontier. Named
+scenarios: **SOURCE-AGREE-FLIP**
+(a second source's different basis opens the finding, and the holding stays in
+stock answers, counted), **SOURCE-AGREE-RETURN** (returning to the earlier
+report resolves it), **SOURCE-AGREE-HIDDEN** (a reader who cannot read one
+version sees neither its values nor a count) and **SOURCE-AGREE-FRONTIER** (a
+flip after an answer's frontier does not change that answer) and
+**SOURCE-AGREE-ACCEPT** (an accepted disagreement is acknowledged and not
+counted; reopened, it is open again).
+
+**OBS-PAGE-1** (coordinator ruling 2026-11-12, pending maintainer review; an
+addition beside OBS-EVIDENCE-1, T4-CELL-1 unchanged): a raw observation may carry
+a page of 1..K source records. A page is only a unit of delivery. Each record
+keeps its own identity (connector instance, partition, source, source id, event
+id), source version and payload digest, and is captured, conflict-checked,
+dispute-checked, mapped and, when refused, quarantined exactly as if it had
+arrived alone. The cell consumes one delivery per commit: the single commit that
+consumes a page applies every admitted record and records a finding for every
+refused one; no commit applies part of a record and no page is split across
+commits. A host failure aborts the whole commit and the page is redelivered.
+Redelivery of a page, or of a record inside another page, is idempotent per
+record identity. A page holds at most one record per identity (connector
+instance, partition, source, source id): the host splits a source batch before
+a repeated identity, so the repeat is the next page and the next commit, and
+the earlier and later deliveries (a higher `source_version` supersedes; an
+equal version with a different payload digest is a FEED-CONFLICT and is
+quarantined) keep exactly the one-by-one versions, events and CAS chain. A
+record that links to a target arriving later in the same page is pending until
+that target applies, then resolves inside the same commit. A page is refused
+whole only for framing (page digest, size bound, unknown mapping pin, or a
+repeated identity inside the page), before anything is captured. K is at most
+1,000 records and 4 MiB of canonical payload, within the commit envelope's
+`max_events` and the link journal's claim budget; hosts default to 500.
+Equivalence scenario: **OBS-PAGE-EQUIV** (consuming a page equals consuming
+its records one by one in page order, over committed end state: the same facts,
+versions, events, links, findings, quarantine and per-record lineage, modulo
+bundle digests and commit count; events compare as a multiset, with object
+events in page order, and within a commit no event precedes one it depends on:
+a link-claim event follows the object events of both endpoints the commit
+creates or changes; a transient pending row that never commits is not part of
+the comparison; generated pages mix refusals, identities repeated
+across pages, intra-page links in both orders, and pages refused for framing).
+
+**OBS-LINK-DISPUTE-1** (#1490, #1544; beside OBS-PAGE-1): a FEED-CONFLICT or
+identity dispute freezes the observed link claims of the disputed event. They
+keep their standing (they supersede older claims of their contribution, contest
+rivals and keep their edge) but authorize no new edge. The freeze reads the
+dispute rows that exist when the commit runs, on every path; no inbox position
+dates it. An edge committed before the dispute stays committed (a dispute only
+holds `Add`s), and a delivery processed late (a retried record) commits under
+the disputes of its retry, whatever created its endpoints (a mapping or an
+action). Paged delivery equals one by one because a page never captures a
+new dispute row after a record it commits: one by one commits that record
+before the dispute exists. Such a page captures nothing (its capture
+transaction rolls back) and the host delivers its records one at a time,
+each captured and committed in order, which is the one-by-one path itself.
+Every commit of a page then sees the same disputes, so one page commit equals
+its records' commits, including a page captured by an earlier version.
+(Rounds 2 and 3 of #1544 dated each `Add` by inbox position instead; each
+round found a delivery the dating missed: a legacy page dated by its earliest
+member, a target created by an action. Reading the live state needs no date.)
+An edge the freeze withholds is one open
+`core.boundary.link_held` finding on the disputed source subject (one per
+edge, with every holding claim's lineage), derived from the retained evidence,
+for as long as the dispute lasts. It names the target, so a host discloses it,
+and counts it, only to a caller who may see both endpoints, under the policy
+that lists the link itself; that policy runs outside the cell lock, so the read
+then confirms its snapshot, and a commit meanwhile refuses it
+(`object.snapshot_moved`), as the link route does. Releasing a dispute and re-planning its links is
+the governed review action FEED-CONFLICT names; until it exists, a frozen
+claim stays frozen (#1549).
+
+**Ingest rulings** (2026-11-20, from the distributor-1 deployment test, #1484;
+pending maintainer review; additions beside OBS-PAGE-1, which is unchanged):
+
+- **MAP-DECIMAL-TEXT-1:** a source field declared `decimal` conforms when it
+  arrives as a JSON number or as exact decimal text (`"1234.50"`), read by the
+  one strict wire decoder the action boundary also uses (VAL-EXACT-1,
+  `Decimal::parse_wire`): `-?(0|[1-9][0-9]*)(.[0-9]+)?` within the 96-bit
+  decimal range. Any other text (`"1,234"`, `"1e3"`, `"+5"`, `" 5"`) refuses
+  `mapping.runtime.invalid_record` at a mapping and `action.invalid_input` at
+  an action.
+- **MAP-DERIVATION-1:** a retained bundle records the runtime derivation it
+  was captured under (absent: derivation 1, before MAP-DECIMAL-TEXT-1) and is
+  always verified under that derivation, so a newer parser never changes what
+  retained evidence proves. Every derivation shares the capture address: a
+  replay of a captured event finds the row it already has, and a row an older
+  derivation quarantined stays quarantined on replay.
+- **MAP-REPROCESS-1:** a quarantined row that the current derivation accepts
+  lands only through the explicit reprocessing step a trusted host takes on an
+  operator's decision. The re-derived bundle has its own address, names the
+  row it reprocesses, and the commit that lands it consumes that row. Capture
+  and replay never reprocess.
+- **MAP-EXPLAIN-1:** every quarantined row is explained in structure, never by
+  its code alone: the record, its dataset, the code, the mapping rule (map)
+  and, for a field that does not conform, the field, a preview of the value it
+  held and the declared type, plus the reason in words. The retained
+  diagnostic keeps each text bounded (256 bytes): the value itself is the
+  retained raw evidence, so a malformed field never multiplies a row's size.
+- **SEC-QUARANTINE-1:** a row the cell refused at commit is answered with its
+  stable code and fixed, allowlisted words only. The refusal's own text can
+  name a stored subject's live type or values, which a caller allowed only to
+  sync sources may not read; the quarantined row keeps the evidence for an
+  operator who can.
+- **INGEST-GROUP-1:** a host frames a batch in its own order. It groups rows by
+  mapping input first only when the inputs are proven independent: no
+  identity root both write, no link from one into the other's writes, no link
+  target both name, and no source identity under two inputs. Overlapping
+  writes therefore apply in batch order and the last row wins, as one by one.
+- **INGEST-BATCH-1:** a record whose bundle the mapping refused joins no page
+  row; it is quarantined before any commit, exactly as one by one, and it ends
+  the run, so the records before it and after it each commit together
+  (OBS-PAGE-EQUIV holds: no two records share a commit across a refusal). A
+  hosted load is bounded by rows and by a work budget charged for each row
+  captured and each commit the cell actually attempts (page runs, per-record
+  fallbacks, page consumptions). At the budget it stops at the start of the
+  page it is in, after at least one commit, and answers `next`; resuming from
+  `next` frames that page again, its committed runs commit nothing, and every
+  row is reported once.
+- **INGEST-YIELD-1:** a host holds the cell for one commit at a time during a
+  load (a page's capture, each run, each per-record fallback), never for a
+  page or a batch. A read holds a read pin for its whole request, and each
+  load commit waits for reads in flight, so a multi-step read sees one
+  snapshot and waits for at most one commit. The dev host serves several
+  requests at once (DEV-CONCURRENT-1); each request's verified caller stays
+  its own.
+
 ## Perform and recovery semantics
 
 All Functions, including ML/heavy pure computation, run behind perform and return recorded schema-checked receipts. Pin training/input snapshots, model/code/dependency digests, seeds where relevant, bounds and result blobs. ML confidence is not proof or write authority. Reconcile output with input identity/freshness/current authority and publish only through a guarded action.
@@ -112,12 +264,12 @@ At-least-once dispatch preserves operation ID across attempts. Retry ambiguous o
 
 | Invariant / layer | Stable target code (finding codes are not refusals) |
 |---|---|
-| FEED-CURSOR-1: capture/dedup/cursor atomic; ingestion commit | `core.boundary.cursor_gap` |
+| FEED-CURSOR-1: capture/dedup/cursor atomic; ingestion commit | `core.boundary.cursor_gap` (reserved, unimplemented) |
 | OBS-EVIDENCE-1: preserve imported truth/provenance, quarantine violations; capture/evaluation | `core.boundary.import_finding` |
-| EFFECT-IDENTITY-1: attempts retain exact operation identity; dispatch | `core.boundary.identity_mismatch` |
-| EFFECT-UNKNOWN-1: uncertainty never means failed/succeeded; reconciliation | `core.boundary.outcome_unknown` |
-| FUNCTION-CAP-1: pinned typed bounded capability boundary; admission/dispatch | `core.boundary.capability_denied` |
-| RESULT-FRESH-1: output receipt is not mutation authority; governed commit | `core.boundary.stale_result` |
+| EFFECT-IDENTITY-1: attempts retain exact operation identity; dispatch | `core.boundary.identity_mismatch` (reserved, unimplemented) |
+| EFFECT-UNKNOWN-1: uncertainty never means failed/succeeded; reconciliation | `core.boundary.outcome_unknown` (reserved, unimplemented) |
+| FUNCTION-CAP-1: pinned typed bounded capability boundary; admission/dispatch | `core.boundary.capability_denied` (reserved, unimplemented) |
+| RESULT-FRESH-1: output receipt is not mutation authority; governed commit | `core.boundary.stale_result` (reserved, unimplemented) |
 
 Evidence: structural mapping/manifest admission; runtime capability/freshness enforcement; sampled crash/retry/CDC correspondence; external assumptions remain explicit open proof goals. Quarantine is evidence-bearing handling, never a claim of correction.
 
@@ -201,7 +353,7 @@ manifests keep refusing `function.manifest.authored_host`. The decision function
 accept only a manifest the registry handed out (`Registered`), and bind only a
 dispatch pinned to its exact digest.
 
-DECISION-1 (`norn.decision@1`, D58): a flow asks a person by `perform` of this
+DECISION-1 (`norn.decision@1`, #1163): a flow asks a person by `perform` of this
 built-in, then `route` on `choice` with `otherwise` failing; the run waits in
 `awaiting_perform_<step>`. The input is one canonical-JSON blob named `request`,
 a closed record `{question, risk: low|medium|high, options: [{id, label,

@@ -35,8 +35,14 @@
         {
           "id": "amount",
           "type": {
+            "additivity": {
+              "kind": "additive"
+            },
             "kind": "ref",
-            "name": "core.money_amount"
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
           }
         },
         {

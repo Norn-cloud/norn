@@ -1,95 +1,170 @@
 import { useQuery } from "@tanstack/react-query"
+import { GitBranch } from "lucide-react"
 import { useEffect, useState } from "react"
+import { Panel, Well } from "@/components/panel"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { defineLifecycleView, type LifecycleFinding, type LifecycleViewDocument, type NornLifecycleView } from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
 import viewDocument from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.widget.json"
-import type { Concept, Lifecycle } from "../lib/catalog.ts"
-import { loadChecker } from "../lib/canvas/checker.ts"
+import type { Concept, Field, Lifecycle } from "../lib/catalog.ts"
+import { loadChecker, type Checker } from "../lib/canvas/checker.ts"
 import { scopedHostFetch, useStudioScope } from "../lib/definitions.ts"
+import { facetsPath } from "../lib/facets.ts"
 import { liveAnswer } from "../lib/live-reads.ts"
+import { useMode } from "../lib/live-transport.ts"
 import { useLocale } from "../lib/locale.tsx"
-import { useView } from "../lib/view.tsx"
+import { declaredLifecycleStates } from "../lib/objects.ts"
+import type { Predicate } from "../lib/records-query.ts"
 import { transport } from "../lib/transport.ts"
+import { useView } from "../lib/view.tsx"
 
 /**
- * An object type's lifecycle with each state's live count (UI-LIFECYCLE-2). The element
- * `<norn-lifecycle-view>` draws it; this host gives it the lifecycle as the catalog declares it,
- * one live read of the type's facets on the lifecycle property, and the checker's
- * counterexamples for pages that act on this lifecycle. A finding belongs here when the widget it
- * names declares this object type and property in its page machine's `lifecycle`; nothing is read
- * from its message. The checker loads after the view paints, and its findings join once it is here.
+ * An object type's lifecycle with each state's live count (UI-LIFECYCLE-2), hosted inside
+ * Studio's workbench Panel/Well primitives. The element `<norn-lifecycle-view>` draws it; this
+ * host gives it the lifecycle as the catalog declares it, one live read of the type's scoped
+ * facets (`object_facets.rs`) on the lifecycle property, and the checker's counterexamples for
+ * pages that act on this lifecycle. A finding belongs here when the widget page it names declares
+ * this object type and property in its page machine's `lifecycle`; nothing is read from its
+ * message. The checker loads after the view paints, and its findings join once it is here.
  */
 const DOCUMENT = viewDocument as unknown as LifecycleViewDocument
 
-export function LifecycleView({ concept, lifecycle }: { readonly concept: Concept; readonly lifecycle: Lifecycle }) {
+/** Format a lifecycle state, transition, or page state id in words, preferring declared labels. */
+export function lifecycleLabel(id: string, field?: Field): string {
+  return field?.valueLabels?.get(id) ?? sentence(id)
+}
+
+export function LifecycleView({ concept, lifecycle, filter = null }: {
+  readonly concept: Concept
+  readonly lifecycle: Lifecycle
+  readonly filter?: Predicate | null
+}) {
   const { locale } = useLocale()
   const { view: mode } = useView()
-  const scope = useStudioScope().data ?? null
+  const modeRead = useMode()
+  const scopeRead = useStudioScope()
+  const live = modeRead.data?.kind === "live"
+  const scope = live ? (scopeRead.data ?? null) : null
+  const waitingForScope = modeRead.isPending || (live && scopeRead.isPending)
   const definitions = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   const [host, setHost] = useState<HTMLDivElement | null>(null)
   const field = concept.fields.find((candidate) => candidate.id === lifecycle.property)
   const transitions = lifecycle.transitions ?? []
   const terminal = lifecycle.terminal ?? []
-  const states = field?.scalar.kind === "enum" ? field.scalar.values : [...new Set([...lifecycle.initial, ...terminal, ...transitions.flatMap(({ from, to }) => [...from, to])])]
+  const states = declaredLifecycleStates(lifecycle, field)
   const findings = findingsFor(concept.name, lifecycle.property, definitions.data?.document, checker.data)
-  const findingsKey = JSON.stringify(findings.map(({ code, message }) => [code, message]))
+  const findingsKey = JSON.stringify(findings.map(({ code, message, pageState }) => [code, message, pageState ?? ""]))
+  const path = facetsPath(concept.name, filter, [lifecycle.property])
+  const propertyLabel = field?.label ?? sentence(lifecycle.property)
+  const filtered = filter !== null && filter.all.length > 0
 
   useEffect(() => {
-    if (host === null || scope === null) return
+    if (host === null || waitingForScope) return
     defineLifecycleView()
     const view = document.createElement("norn-lifecycle-view") as NornLifecycleView
-    const path = `/v1/objects/${encodeURIComponent(concept.name)}:facets?properties=${encodeURIComponent(lifecycle.property)}`
-    const call = scopedHostFetch((input, init) => fetch(input, init), "/api/host", async () => scope)
+    const call = scope === null ? null : scopedHostFetch((input, init) => fetch(input, init), "/api/host", async () => scope)
     view.options = {
       document: DOCUMENT,
       lifecycle: { property: lifecycle.property, states, initial: lifecycle.initial, terminal, transitions: transitions.map(({ id, from, to }) => ({ id, from, to })), endings: lifecycle.endings ?? [] },
       title: concept.title,
-      // The cell's GET, as the reader; a bare 404 or 503 is a route this cell does not serve.
-      read: async () => {
-        const response = await call(path, { headers: { accept: "application/json" } })
-        const text = await response.text()
-        let body: unknown
-        try { body = text === "" ? undefined : JSON.parse(text) } catch { body = undefined }
-        return { status: response.status, body }
-      },
-      changes: (listener) => liveAnswer(path, scope, listener),
+      hideTitle: true,
+      // When live, read the cell's scoped facets route; when recorded or without a cell, draw the declared lifecycle without calling the network.
+      ...(call !== null && scope !== null ? {
+        read: async (signal?: AbortSignal) => {
+          const response = await call(path, { headers: { accept: "application/json" }, signal })
+          const text = await response.text()
+          let body: unknown
+          try { body = text === "" ? undefined : JSON.parse(text) } catch { body = undefined }
+          return { status: response.status, body }
+        },
+        changes: (listener) => liveAnswer(path, scope, listener),
+      } : {}),
       findings,
       locale: locale === "ar" ? "ar" : "en",
       technical: mode === "technical",
       // A state's label from the definition; a transition or page state id in words, as the definition names it.
-      label: (id) => field?.valueLabels?.get(id) ?? sentence(id),
+      label: (id) => lifecycleLabel(id, field),
     }
     host.replaceChildren(view)
     return () => view.remove()
-    // A different type, property, scope, language or set of findings draws a fresh view.
-  }, [host, concept.name, lifecycle.property, scope?.orgId, scope?.environmentId, locale, findingsKey, mode])
+    // A different type, property, filter, scope, language or set of findings draws a fresh view.
+  }, [host, waitingForScope, concept.name, lifecycle.property, path, scope?.orgId, scope?.environmentId, locale, findingsKey, mode])
 
-  return <div ref={setHost} data-testid="lifecycle-view" />
+  return (
+    <Panel icon={GitBranch} label={`${locale === "ar" ? "دورة الحياة" : "Lifecycle"} · ${propertyLabel}`}
+      action={(filtered || mode === "technical") && (
+        <span className="flex items-center gap-2">
+          {filtered && <Badge variant="outline">{locale === "ar" ? "مُصفّاة" : "Filtered"}</Badge>}
+          {mode === "technical" && <span className="font-mono text-xs">{concept.name}.{lifecycle.property}</span>}
+        </span>
+      )}>
+      <Well className="p-4">
+        {waitingForScope
+          ? <div className="grid gap-3" aria-label="Reading lifecycle"><Skeleton className="h-5 w-48" /><Skeleton className="h-28 w-full" /></div>
+          : <div ref={setHost} data-testid="lifecycle-view" />}
+      </Well>
+    </Panel>
+  )
 }
 
-const sentence = (id: string) => { const words = id.replaceAll(/[_-]/g, " "); return words.charAt(0).toUpperCase() + words.slice(1) }
+export const sentence = (id: string) => { const words = id.replaceAll(/[_-]/g, " "); return words.charAt(0).toUpperCase() + words.slice(1) }
 
-type PageMachine = { readonly initialStateId?: string; readonly transitions?: readonly { readonly transitionId: string; readonly target: string }[]; readonly lifecycle?: { readonly objectType?: string; readonly property?: string } }
-type Envelope = { readonly artifactId?: string; readonly kind?: string; readonly payload?: { readonly ux?: { readonly pages?: readonly { readonly machine?: PageMachine }[] } } }
+type PageMachine = {
+  readonly initialStateId?: string
+  readonly transitions?: readonly { readonly transitionId: string; readonly target: string }[]
+  readonly lifecycle?: { readonly objectType?: string; readonly property?: string }
+}
+type Envelope = {
+  readonly artifactId?: string
+  readonly kind?: string
+  readonly payload?: { readonly ux?: { readonly pages?: readonly { readonly machine?: PageMachine }[] } }
+}
 
-/** The checker's `widget.lifecycle.*` findings with a run, for widgets whose page machines act on this lifecycle. */
-function findingsFor(objectType: string, property: string, definitions: readonly unknown[] | undefined, checker: ((artifacts: readonly unknown[]) => { readonly diagnostics: { readonly diagnostics: readonly unknown[] } }) | undefined): LifecycleFinding[] {
+const PAGE_POINTER = /^\/payload\/ux\/pages\/(\d+)(?:\/|$)/
+
+/** The checker's `widget.lifecycle.*` findings with a witness, for widget pages whose machines act on this lifecycle. */
+export function findingsFor(
+  objectType: string,
+  property: string,
+  definitions: readonly unknown[] | undefined,
+  checker: Checker | undefined,
+): LifecycleFinding[] {
   if (!definitions || !checker) return []
-  const acting = new Set(
-    (definitions as readonly Envelope[])
-      .filter((artifact) => artifact.kind === "widget" && artifact.payload?.ux?.pages?.some((page) => page.machine?.lifecycle?.objectType === objectType && page.machine.lifecycle.property === property))
-      .map((artifact) => artifact.artifactId),
-  )
-  if (acting.size === 0) return []
-  const machineOf = (artifactId: string | undefined) =>
-    (definitions as readonly Envelope[]).find((artifact) => artifact.artifactId === artifactId)?.payload?.ux?.pages?.find((page) => page.machine?.lifecycle?.objectType === objectType)?.machine
-  return (checker(definitions).diagnostics.diagnostics as readonly (LifecycleFinding & { readonly artifactId?: string })[])
-    .filter((finding) => finding.code.startsWith("widget.lifecycle.") && finding.witness !== undefined && acting.has(finding.artifactId))
-    .map((finding) => {
-      // Where the run leaves the page: the target of its last page move in the widget's own machine.
-      const machine = machineOf(finding.artifactId)
-      const lastPage = [...finding.witness.steps].reverse().flatMap((step) => step.moves).find((move) => move.side === "ui")?.label
-      const pageState = lastPage === undefined ? machine?.initialStateId : machine?.transitions?.find((transition) => transition.transitionId === lastPage)?.target
-      return pageState === undefined ? finding : { ...finding, pageState }
+  const envelopes = definitions as readonly Envelope[]
+  const widgets = new Map<string, readonly { readonly machine?: PageMachine }[]>()
+  for (const artifact of envelopes) {
+    if (artifact.kind !== "widget" || typeof artifact.artifactId !== "string") continue
+    const pages = artifact.payload?.ux?.pages
+    if (!pages?.some((page) => page.machine?.lifecycle?.objectType === objectType && page.machine.lifecycle.property === property)) continue
+    widgets.set(artifact.artifactId, pages)
+  }
+  if (widgets.size === 0) return []
+  const machineOf = (artifactId: string | null, pointer: string | undefined): PageMachine | undefined => {
+    if (artifactId === null) return undefined
+    const pages = widgets.get(artifactId)
+    if (!pages) return undefined
+    const match = pointer ? PAGE_POINTER.exec(pointer) : null
+    if (match) {
+      const candidate = pages[Number(match[1])]?.machine
+      return candidate?.lifecycle?.objectType === objectType && candidate.lifecycle.property === property ? candidate : undefined
+    }
+    return pages.find((page) => page.machine?.lifecycle?.objectType === objectType && page.machine.lifecycle.property === property)?.machine
+  }
+  const results: LifecycleFinding[] = []
+  for (const finding of checker(definitions).diagnostics.diagnostics) {
+    if (!finding.code.startsWith("widget.lifecycle.") || finding.witness == null || !Array.isArray(finding.witness.steps)) continue
+    const machine = machineOf(finding.artifactId, finding.span?.pointer)
+    if (!machine) continue
+    // Where the run leaves the page: the target of its last page move in the widget's own machine.
+    const lastPage = [...finding.witness.steps].reverse().flatMap((step) => step.moves).find((move) => move.side === "ui")?.label
+    const pageState = lastPage === undefined ? machine.initialStateId : machine.transitions?.find((transition) => transition.transitionId === lastPage)?.target
+    results.push({
+      code: finding.code,
+      message: finding.message,
+      witness: finding.witness,
+      ...(pageState === undefined ? {} : { pageState }),
     })
+  }
+  return results
 }

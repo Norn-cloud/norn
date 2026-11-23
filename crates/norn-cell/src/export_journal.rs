@@ -13,7 +13,7 @@ use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::{EXPORT_FORMAT, ExportRecord};
 use crate::model::Model;
-use crate::read::{StoreReader, to_i64, to_u64};
+use crate::read::{LedgerEntry, StoreReader, to_i64, to_u64};
 use crate::store::{CellStore, CommitBatch, Consumption, DefinitionInstallRecord, Receipt};
 use crate::system::{GENESIS_HASH, META};
 
@@ -69,14 +69,22 @@ pub(crate) fn consumed_input<E: SqlEngine>(
     match consumed {
         Consumption::Observation { observation_id } => {
             let pending = reader
-                .pending_observations()?
-                .into_iter()
-                .find(|row| row.observation_id == *observation_id)
+                .pending_observation(observation_id)?
                 .ok_or_else(not_pending)?;
+            let members = if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+                let mut members = Vec::new();
+                for id in crate::mapping_page::members(&pending.observed)? {
+                    members.extend(reader.pending_observation(&id)?);
+                }
+                members
+            } else {
+                Vec::new()
+            };
             preimage(&ConsumedInput::Observation {
                 position: pending.position,
                 observation_id: pending.observation_id,
                 observed: pending.observed,
+                members,
             })
         }
         Consumption::Result {
@@ -123,6 +131,10 @@ pub(crate) enum ConsumedInput {
         position: u64,
         observation_id: String,
         observed: Value,
+        /// OBS-PAGE-1: a page's members this commit consumes with it, in page
+        /// order; absent for every other delivery.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        members: Vec<crate::PendingObservation>,
     },
     Result {
         position: u64,
@@ -148,6 +160,20 @@ fn preimage(input: &ConsumedInput) -> Result<Option<Value>, CellError> {
 }
 
 /// Persist a commit's replayable export record in the same engine transaction.
+///
+/// INGEST-JOURNAL-MEMORY-1: `entries` are the ledger entries this commit's
+/// writer just appended (`append_events`), so the record is built from memory
+/// instead of reading the ledger span back. Every `created` and `modified`
+/// event is still proven here, in every build, against this commit's
+/// persisted receipt (#1527 S1): the writer proved it before appending, but
+/// only against its pending snapshot digests, and the exporter's own check
+/// ([`read_record`]) runs after this transaction can no longer roll back.
+/// Debug builds also read the span back and prove it, as the journal did
+/// before, and refuse the commit if the two ever differ.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one commit's record fields, all written in the same transaction"
+)]
 pub(crate) fn record<E: SqlEngine>(
     engine: &E,
     model: &Model,
@@ -156,6 +182,8 @@ pub(crate) fn record<E: SqlEngine>(
     receipt: &Receipt,
     consumed_input: Option<Value>,
     definition_install: Option<DefinitionInstallRecord>,
+    storage_version: Option<u32>,
+    entries: Vec<LedgerEntry>,
 ) -> Result<(), CellError> {
     let commit_seq = receipt.body.commit_seq;
     let prior: Option<(i64, String)> = engine
@@ -179,21 +207,25 @@ pub(crate) fn record<E: SqlEngine>(
         None => String::new(),
     };
 
-    let reader = StoreReader::new(engine, model);
-    let entries: Vec<_> = reader
-        .ledger(receipt.body.first_event_seq)?
-        .into_iter()
-        .filter(|entry| entry.commit_seq == commit_seq)
-        .collect();
     if u64::try_from(entries.len()).map_err(|_overflow| CellError::OutOfRange("event count"))?
         != receipt.body.event_count
+        || entries
+            .first()
+            .is_some_and(|entry| entry.seq != receipt.body.first_event_seq)
+        || entries.iter().any(|entry| entry.commit_seq != commit_seq)
     {
         return Err(CellError::LedgerCorrupt {
             seq: commit_seq,
             reason: "export journal event span disagrees with the receipt".to_owned(),
         });
     }
-
+    // Each proven event as a ledger reader decodes it, against the receipt
+    // just inserted: one read-only pass, so the receipt is verified once.
+    let receipts = std::cell::RefCell::default();
+    let reader = StoreReader::new(engine, model).with_transaction_verified_receipts(&receipts);
+    for entry in &entries {
+        reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
+    }
     let mut bindings = BTreeMap::new();
     let rows = engine.query(&format!(
         "SELECT \"key\", \"value\" FROM \"{META}\" WHERE \"key\" LIKE 'binding:%' ORDER BY \"key\""
@@ -227,12 +259,13 @@ pub(crate) fn record<E: SqlEngine>(
         initial_model: (commit_seq == 1 && definition_install.is_none())
             .then(|| model.definitions_snapshot()),
         definition_install,
+        storage_version,
     };
-    for entry in &export.entries {
-        reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
-    }
-    let hash = export.hash()?;
-    let serialized = crate::payload_storage::encode_export(engine, &export)?;
+    // The record's hash and its packed encoding both start from its canonical
+    // text; canonicalize it once.
+    let canonical = crate::codec::canonical_json(&export)?;
+    let hash = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(canonical.as_bytes());
+    let serialized = crate::payload_storage::encode_export(engine, &export, &canonical)?;
     engine.execute(
         r#"INSERT INTO "_norn_export_journal" ("commit_seq", "hash", "record") VALUES (?1, ?2, ?3)"#,
         params![to_i64(commit_seq, "commit_seq")?, hash, serialized],

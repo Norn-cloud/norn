@@ -1,0 +1,7 @@
+{
+  "code": "model.law.personal_data_never_trains",
+  "message": "a model trains on a feature or target that carries personal data that is not pseudonymized",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

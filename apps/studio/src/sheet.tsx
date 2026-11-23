@@ -91,9 +91,9 @@ const ORDER_LIFECYCLE: LifecycleDoc = {
     { id: "receive", from: ["approved"], to: "received" }, { id: "cancel", from: ["submitted", "approved"], to: "cancelled" },
   ],
 }
-const facets = (values: Record<string, number>, extra: Partial<FacetsAnswer> = {}): LiveAnswer => ({
+const facets = (values: Record<string, number>, extra: Partial<FacetsAnswer> = {}, facetExtra: { readonly otherRows?: number; readonly nulls?: number } = {}): LiveAnswer => ({
   status: 200,
-  body: { rows: Object.values(values).reduce((a, b) => a + b, 0), withheldRows: 0, quarantinedRows: 0, approximate: false, ...extra, facets: [{ property: "status", values: Object.entries(values).map(([value, count]) => ({ value, count })), otherRows: 0, nulls: 0 }] } satisfies FacetsAnswer,
+  body: { rows: Object.values(values).reduce((a, b) => a + b, 0) + (facetExtra.otherRows ?? 0), withheldRows: 0, quarantinedRows: 0, lowerBound: false, ...extra, facets: [{ property: "status", values: Object.entries(values).map(([value, count]) => ({ value, count })), otherRows: facetExtra.otherRows ?? 0, nulls: facetExtra.nulls ?? 0 }] } satisfies FacetsAnswer,
 })
 const STUCK: LifecycleFinding = {
   code: "widget.lifecycle.stuck",
@@ -129,7 +129,8 @@ function LifecycleSpecimen({ answers, ...options }: Omit<LifecycleViewOptions, "
 
 const SPECIMENS: Record<string, () => ReactNode> = {
   "lifecycle-view/counts": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, received: 31 })]} />,
-  "lifecycle-view/lower-bound": () => <LifecycleSpecimen answers={[facets({ draft: 6200, submitted: 1900, received: 1900 }, { approximate: true, withheldRows: 14, quarantinedRows: 2 })]} />,
+  "lifecycle-view/lower-bound": () => <LifecycleSpecimen answers={[facets({ draft: 6200, submitted: 1900, received: 1900 }, { lowerBound: true, scanLimit: 10000, withheldRows: 14, quarantinedRows: 2 })]} />,
+  "lifecycle-view/other-rows": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4 }, {}, { otherRows: 5 })]} />,
   "lifecycle-view/not-served": () => <LifecycleSpecimen answers={[{ status: 404, body: undefined }]} />,
   "lifecycle-view/refused": () => <LifecycleSpecimen answers={[{ status: 403, body: { code: "authz.denied" } }]} />,
   "lifecycle-view/live": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7 }), facets({ draft: 11, submitted: 8 })]} />,
@@ -193,7 +194,7 @@ function Sheet() {
   const states = SHEET.filter(({ id }) => only === null || id === only)
   return (
     <main className="space-y-8 bg-background p-6 text-foreground">
-      {only === null && <h1 className="text-title font-medium">Canvas: every state of every component</h1>}
+      {only === null && <h1 className="text-title font-semibold tracking-tight">Canvas: every state of every component</h1>}
       {states.map((state) => (
         <section key={state.id} data-state={state.id} className="space-y-2">
           {only === null && <header><div className="font-mono text-sm">{state.component} · {state.id}</div><p className="text-meta text-muted-foreground">{state.note}</p></header>}

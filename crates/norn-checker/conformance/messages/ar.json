@@ -482,6 +482,18 @@
       "message": "دلالات الاستعلام غير مدعومة في ملف الحوسبة المختار.",
       "review": "needs_review"
     },
+    "core.engine.downgrade": {
+      "message": "الخلية مكتوبة بإصدار تخزين أحدث مما يقرؤه هذا المحرك",
+      "review": "needs_review"
+    },
+    "core.engine.unknown_version": {
+      "message": "ختم المحرك في الخلية ليس إصدارًا يستطيع هذا المحرك قراءته",
+      "review": "needs_review"
+    },
+    "core.engine.upgrade_unsupported": {
+      "message": "لا يستطيع هذا المحرك ترقية إصدار تخزين الخلية في مكانها",
+      "review": "needs_review"
+    },
     "core.graph.catalog_write": {
       "message": "إسقاطات الكتالوج لا يمكنها تفعيل التعريفات",
       "review": "needs_review"
@@ -516,6 +528,10 @@
     },
     "core.laws.unresolved_scope": {
       "message": "عضوية النسخة المحفوظة مفقودة أو ملتبسة أو قديمة أو تتجاوز ميزانيتها",
+      "review": "needs_review"
+    },
+    "core.observation.source_disagreement": {
+      "message": "SOURCE-AGREE-1: مصدران يبلّغان عن قيمتين مختلفتين لسجل واحد في وحدة المقياس أو عملة المبلغ أو الأساس؛ يُحتفظ بالبلاغين ولا يُستبعد السجل.",
       "review": "needs_review"
     },
     "core.projection.publication_guard": {
@@ -554,6 +570,14 @@
       "message": "حمولة المفهوم المعرَّف لا تطابق جذرها الصارم",
       "review": "needs_review"
     },
+    "derived.validation.column_conflict": {
+      "message": "عقدة في العرض العلائقي تُخرج عمودين بالاسم نفسه",
+      "review": "needs_review"
+    },
+    "derived.validation.grain_dropped": {
+      "message": "إسقاط في العرض العلائقي يحذف أو يغيّر عمودًا يعرّف صفوفه",
+      "review": "needs_review"
+    },
     "derived.validation.incremental_not_supported": {
       "message": "الصيانة \"incremental\" محجوزة لمرحلة IVM مستقبلية وغير مدعومة بعد؛ استخدم \"recompute_on_read\"",
       "review": "needs_review"
@@ -562,8 +586,40 @@
       "message": "حمولة DerivedIR غير صالحة عند {$path}: {$detail}",
       "review": "needs_review"
     },
+    "derived.validation.invalid_plan": {
+      "message": "خطة العرض العلائقي تشير إلى مدخل أو عقدة أو مخرج غير معلن، أو فيها دورة أو عقدة غير موصولة، أو تستخدم شكلًا لا يقبله ViewIR v1",
+      "review": "needs_review"
+    },
     "derived.validation.io_in_view": {
       "message": "نوع الحساب \"effectful_ts\" غير مسموح داخل عرض مشتق (الإدخال والإخراج يكونان في أداة Effect)",
+      "review": "needs_review"
+    },
+    "derived.validation.join_undeclared": {
+      "message": "العرض العلائقي يربط على شيء ليس رابطًا معلنًا ولا مفتاحًا معلنًا للنوع الأيمن",
+      "review": "needs_review"
+    },
+    "derived.validation.order_not_total": {
+      "message": "نافذة أو إزالة تكرار في العرض العلائقي ترتب الصفوف بمفاتيح لا تغطي هوية صفوف المدخل",
+      "review": "needs_review"
+    },
+    "derived.validation.output_schema_mismatch": {
+      "message": "العرض العلائقي يعلن مخطط مخرجاته بنفسه، بينما يستنتجه ViewIR v1",
+      "review": "needs_review"
+    },
+    "derived.validation.sql_unsupported": {
+      "message": "تحويل SQL يستخدم بناءً لا يقابله معامل تحويل مُنمَّط؛ فيُرفض ولا يُنفَّذ أبدًا كـ SQL",
+      "review": "needs_review"
+    },
+    "derived.validation.type_mismatch": {
+      "message": "تعبير أو عمود في العرض العلائقي ليس من النوع الذي يحتاجه المعامل",
+      "review": "needs_review"
+    },
+    "derived.validation.union_shape": {
+      "message": "العرض العلائقي يوحّد مدخلات تختلف أعمدتها أو أنواعها أو عقودها أو حبيبتها",
+      "review": "needs_review"
+    },
+    "derived.validation.unknown_column": {
+      "message": "العرض العلائقي يسمي عمودًا غير موجود في صف مدخله",
       "review": "needs_review"
     },
     "entity.deprecation.v1_payload": {
@@ -872,6 +928,26 @@
     },
     "labels.validation.unlabelled_locale": {
       "message": "وصف أو حالة مراجعة تسمّي لغة ليس لها تسمية",
+      "review": "needs_review"
+    },
+    "law.conservation.alias_bound": {
+      "message": "مُعدِّل حفظ الكمية له حالات تطابق مفاتيح أكثر مما يفحصه المدقق: {$detail}",
+      "review": "needs_review"
+    },
+    "law.conservation.alias_unlowerable": {
+      "message": "مُعدِّل حفظ الكمية قد يكتب صفاً واحداً عبر إحداثيات لا يستطيع المدقق التوفيق بينها: {$detail}",
+      "review": "needs_review"
+    },
+    "law.conservation.key_alias": {
+      "message": "مُعدِّل حفظ الكمية لا يتوازن عندما تشير مفاتيحه إلى الخلية نفسها: {$detail}",
+      "review": "needs_review"
+    },
+    "law.example.mismatch": {
+      "message": "حكم مثال القانون يختلف عن المتوقع: {$detail}",
+      "review": "needs_review"
+    },
+    "law.example.unsupported": {
+      "message": "لا يمكن تقييم مثال القانون على قيمة واحدة: {$detail}",
       "review": "needs_review"
     },
     "law.exception.cycle": {
@@ -1442,6 +1518,10 @@
       "message": "{$property} من {$objectType}: خاصية دورة الحياة لا تتغير إلا بقاعدة دورة حياة",
       "review": "needs_review"
     },
+    "mapping.model.link_claim_type_missing": {
+      "message": "الخريطة {$map} تعلن روابط، لكن norn.ObservedLinkClaim ليس نوع كائن في المجموعة أو الأساس",
+      "review": "needs_review"
+    },
     "mapping.model.link_target_mismatch": {
       "message": "الرابط {$link} من {$objectType} يستهدف {$target}، الذي لا يقبل {$produced}",
       "review": "needs_review"
@@ -1635,7 +1715,11 @@
       "review": "needs_review"
     },
     "metric.validation.mixed_currency": {
-      "message": "جمع عدة عملات يتطلب تحويلًا صريحًا.",
+      "message": "تُجمَّع المبالغ بعدة عملات لكل عملة فقط: جمّع حسب خاصية العملة، أو ثبّتها بمرشح eq، أو حوّلها صراحةً.",
+      "review": "needs_review"
+    },
+    "metric.validation.mixed_unit": {
+      "message": "METRIC-UNIT-PARTITION-1: وحدة المقياس مخزنة في خصائص مجاورة؛ جمّع حسب كل منها أو ثبّت كلًّا منها بمرشح eq، حتى لا يخلط أي تجميع بين الوحدات.",
       "review": "needs_review"
     },
     "metric.validation.ontology_projection": {
@@ -1643,7 +1727,7 @@
       "review": "needs_review"
     },
     "metric.validation.partial_path": {
-      "message": "مُدخلات الزمن والعملة والسعر الإلزامية تتطلب مسارات كاملة.",
+      "message": "مُدخلات العملة والسعر تتطلب مسارات كاملة.",
       "review": "needs_review"
     },
     "metric.validation.ratio_aggregation": {
@@ -1672,6 +1756,62 @@
     },
     "metric.validation.unsupported_semantics": {
       "message": "الحساب يتطلب دلالات خارج ملف المدقق المقبول.",
+      "review": "needs_review"
+    },
+    "model.admission.feature_kind": {
+      "message": "خاصية سمة النموذج أو هدفه من نوع لا يستطيع النموذج قراءته",
+      "review": "needs_review"
+    },
+    "model.admission.prediction_type_mismatch": {
+      "message": "نوع تنبؤات النموذج لا يحمل مُخرجاته ولا الموضوع ولا إصدار النموذج",
+      "review": "needs_review"
+    },
+    "model.admission.unknown_feature": {
+      "message": "سمة النموذج أو هدفه ليست خاصية لنوع الكائن المُدخل",
+      "review": "needs_review"
+    },
+    "model.admission.unknown_input": {
+      "message": "نوع الكائن المُدخل للنموذج لا تعلنه مجموعة الأدوات ولا القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "model.law.personal_data_never_trains": {
+      "message": "يتدرّب النموذج على سمة أو هدف يحمل بيانات شخصية غير مستعارة",
+      "review": "needs_review"
+    },
+    "model.validation.duplicate_id": {
+      "message": "النموذج يذكر معرّف سمة أو مُخرج أو عقد مرتين",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_contract": {
+      "message": "عقد النموذج لا يسمّي مُخرجًا أو لا ينطبق على نوع مُخرجه",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_id": {
+      "message": "معرّف النموذج أو المُدخل أو السمة أو الهدف أو المُخرج أو العقد غير صحيح الصيغة",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_output": {
+      "message": "مُخرج النموذج ليس عمودًا مضمَّنًا من نوع نص أو عدد صحيح أو عشري أو منطقي أو تعداد",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_payload": {
+      "message": "حمولة النموذج لا تطابق جذرها الصارم",
+      "review": "needs_review"
+    },
+    "model.validation.target_in_features": {
+      "message": "هدف النموذج هو أيضًا إحدى سماته",
+      "review": "needs_review"
+    },
+    "model.validation.trust_without_contract": {
+      "message": "نموذج contract_checked لا يعلن أي عقد",
+      "review": "needs_review"
+    },
+    "model.validation.unsupported_trust": {
+      "message": "ثقة النموذج ليست opaque ولا contract_checked",
+      "review": "needs_review"
+    },
+    "object_type.validation.additivity_not_refined": {
+      "message": "الخاصية {$property} تعلن جمعية غير التي يتطلبها {$owner}؛ يجوز للعضو أن يضيف الجمعية حيث لا يعلنها النوع المشار إليه، ولا يجوز أن يغيّر جمعية معلنة",
       "review": "needs_review"
     },
     "object_type.validation.computed_key_component": {
@@ -2098,8 +2238,20 @@
       "message": "رمز الوحدة {$unit} يجب ألا يكون فارغًا وألا يحتوي مسافات",
       "review": "needs_review"
     },
+    "property_type.validation.invalid_unit_source": {
+      "message": "مصدر الوحدة {$detail}",
+      "review": "needs_review"
+    },
     "property_type.validation.inverted_range": {
       "message": "{$lower} أكبر من {$upper}",
+      "review": "needs_review"
+    },
+    "property_type.validation.ref_additivity_conflict": {
+      "message": "ref {$name} يعلن الجمعية {$declared}، لكن النوع الذي يشير إليه يعلن {$referenced}؛ موضع الاستخدام يضيف الجمعية فقط إلى نوع لا يعلن أيًّا منها",
+      "review": "needs_review"
+    },
+    "property_type.validation.ref_additivity_not_numeric": {
+      "message": "ref {$name} يُحَل إلى نوع {$kind}؛ تُعلَن الجمعية على عدد صحيح أو عشري فقط",
       "review": "needs_review"
     },
     "property_type.validation.ref_cycle": {
@@ -2148,6 +2300,14 @@
     },
     "question.validation.invalid_window": {
       "message": "نافذة الزمن يجب أن تكون فترة UTC مرتبة نصف مفتوحة.",
+      "review": "needs_review"
+    },
+    "question.validation.linked_path": {
+      "message": "لا يمكن للسؤال أن يجمّع عبر رابط إلا حسب وقته المرتبط، ولا أن يرشّح عبر رابط؛ التجميع حسب حقل نوع آخر غير مدعوم بعد",
+      "review": "needs_review"
+    },
+    "question.validation.marked_field": {
+      "message": "لا يمكن للسؤال أن يجمّع أو يرشّح حسب حقل يحمل وسماً معلناً (مثل pii.contact)",
       "review": "needs_review"
     },
     "question.validation.mixed_axis_rollup": {
@@ -2248,6 +2408,14 @@
     },
     "rule.validation.jdm_switch_unconnected_branch": {
       "message": "الفرع {$statementId} من المحوّل {$nodeId} ليس له حافة خارجة، فالحدث الذي يسلكه لا يصل إلى أي عقدة",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unique_overlap": {
+      "message": "صفّان في جدول قرار فريد يطابقان المدخل نفسه: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unique_unproved": {
+      "message": "لا يستطيع المدقق إثبات أن صفوف جدول القرار الفريد منفصلة، لذا يُرفض: {$detail}",
       "review": "needs_review"
     },
     "rule.validation.jdm_unknown_column": {

@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "body": {
+    "outcome": "committed",
+    "objectType": "docs.ScannedDocument",
+    "objectId": "SCAN-INV-1041",
+    "version": 2,
+    "receipt": {
+      "receiptHash": "403dc69b304d524b8dab03c2722f17526785b0d765ccb7b17ecac81c4b10f2b3",
+      "commitSeq": 5,
+      "recordedAtMs": 1800000000000
+    }
+  }
+}

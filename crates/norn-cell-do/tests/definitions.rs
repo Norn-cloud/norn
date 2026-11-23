@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
 /// The fixture principal holding `admin`.
-const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
+const ADMIN: Option<&str> = Some("Bearer fixture:admin@demo");
 /// The fixture principal holding `viewer`.
 const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
 /// The host secret the cell's lineage handle key derives from.
@@ -254,6 +254,58 @@ fn admit_runs_the_dashboard_validator_without_side_effects() {
                 && pointer.starts_with("/tiles/1/question/")),
         "{found:?}"
     );
+}
+
+/// A view must fit the answer it draws: a number shows one value per measure
+/// (no group-by); a pie shows the parts of one whole (one summable, non-ratio
+/// measure over one category, no time grain). Each refusal names the view.
+#[test]
+fn a_view_is_admitted_only_when_it_can_draw_its_question_honestly() {
+    let cell = cell(DefinitionKinds::default());
+    let tile = |metric: &str, group_by: Value, view: Value| {
+        let mut question = question();
+        question["aggregate"] = json!([{ "metric": metric }]);
+        question["groupBy"] = group_by;
+        json!({ "id": "t1", "title": "Tile", "question": question, "view": view, "layout": { "x": 0, "y": 0, "w": 1, "h": 1 } })
+    };
+    let admit = |tile: Value| {
+        let body = json!({ "kind": "dashboard", "id": "studio.dashboard.views", "payload": { "title": "Views", "tiles": [tile] } });
+        let (status, document) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+        assert_eq!(status, 200, "{document}");
+        document
+    };
+    let by_metal = json!([{ "path": { "property": "metal" } }]);
+    let by_week = json!([{ "path": { "property": "occurred_at" }, "grain": "week" }]);
+    let number = json!({ "kind": "number" });
+    let pie = json!({ "kind": "chart", "chart": "pie" });
+    for admitted in [
+        tile("demo.yield", json!([]), number.clone()),
+        tile("demo.recovered", by_metal.clone(), pie.clone()),
+    ] {
+        let document = admit(admitted.clone());
+        assert_eq!(document["admitted"], json!(true), "{admitted} {document}");
+    }
+    for refused in [
+        tile("demo.yield", by_week.clone(), number),
+        tile("demo.yield", by_metal.clone(), pie.clone()),
+        tile("demo.recovered", by_week, pie.clone()),
+        tile("demo.recovered", json!([]), pie),
+        tile(
+            "demo.recovered",
+            by_metal,
+            json!({ "kind": "number", "chart": "pie" }),
+        ),
+    ] {
+        let document = admit(refused.clone());
+        assert_eq!(document["admitted"], json!(false), "{refused} {document}");
+        assert!(
+            pointers(&document).contains(&(
+                "definition.view_invalid".to_owned(),
+                "/tiles/0/view".to_owned()
+            )),
+            "{refused} {document}"
+        );
+    }
 }
 
 #[test]
@@ -515,6 +567,75 @@ fn ids_kinds_and_methods_are_checked() {
     assert_eq!(malformed.status, 400, "{}", malformed.body);
 }
 
+/// VIEW-DEF-1: a saved records view is admitted when its type is declared and
+/// its filter, sort and columns hold for that type, by the grid's own rules;
+/// each violation is refused at its pointer, and an admitted view installs,
+/// lists and reads back like any retained definition.
+#[test]
+fn a_saved_view_is_checked_by_the_grid_rules_and_kept_like_any_definition() {
+    let cell = cell(DefinitionKinds::default());
+    let view = json!({
+        "title": "Gold conversions",
+        "objectType": analytics::TYPE,
+        "filter": {"all": [{"property": "metal", "op": "eq", "value": "gold"}]},
+        "sort": "occurred_at:desc",
+        "columns": ["metal", "input", "occurred_at"]
+    });
+    let body =
+        |payload: &Value| json!({ "kind": "view", "id": "studio.view.gold", "payload": payload });
+    let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body(&view));
+    assert_eq!(status, 200, "{admitted}");
+    let wrong = json!({
+        "title": "",
+        "objectType": analytics::TYPE,
+        "filter": {"all": [{"property": "input", "op": "contains", "value": "1"}]},
+        "sort": "nowhere:asc",
+        "columns": ["metal", "nowhere"],
+        "extra": true
+    });
+    let (status, refused) = post(&cell, "/v1/definitions:admit", ADMIN, &body(&wrong));
+    assert_eq!(
+        (status, refused["admitted"].clone()),
+        (200, json!(false)),
+        "{refused}"
+    );
+    let found = pointers(&refused);
+    for pointer in ["/title", "/columns/1", "/extra"] {
+        assert!(
+            found.iter().any(|(_, at)| at == pointer),
+            "{pointer}: {found:?}"
+        );
+    }
+    for prefix in ["/filter", "/sort"] {
+        assert!(
+            found.iter().any(|(_, at)| at.starts_with(prefix)),
+            "{prefix}: {found:?}"
+        );
+    }
+    let unknown = json!({ "title": "X", "objectType": "demo.Missing" });
+    let (status, refused) = post(&cell, "/v1/definitions:admit", ADMIN, &body(&unknown));
+    assert_eq!(
+        (status, refused["admitted"].clone()),
+        (200, json!(false)),
+        "{refused}"
+    );
+    assert_eq!(
+        pointers(&refused),
+        [(
+            "definition.invalid_payload".to_owned(),
+            "/objectType".to_owned()
+        )]
+    );
+    let (status, installed) = post(&cell, "/v1/definitions:install", ADMIN, &body(&view));
+    assert_eq!(status, 200, "{installed}");
+    let (status, listed) = get(&cell, "/v1/definitions:list", "&kind=view", VIEWER);
+    assert_eq!(status, 200, "{listed}");
+    assert!(listed.to_string().contains("Gold conversions"), "{listed}");
+    let (status, read) = get(&cell, "/v1/definitions/studio.view.gold", "", VIEWER);
+    assert_eq!(status, 200, "{read}");
+    assert_eq!(read["payload"]["sort"], json!("occurred_at:desc"));
+}
+
 /// The agent hook: the registered checker sees the canonical payload and the
 /// host's context, and its findings come back with their pointers.
 fn stub_agent(payload: &str, context: &AgentAdmissionContext) -> Vec<Diagnostic> {
@@ -666,7 +787,7 @@ fn a_signoff_is_verified_against_the_recomputed_restatement_and_recorded_by_the_
     assert_eq!(
         document["signoff"],
         json!({
-            "signer": "viewer@demo",
+            "signer": "admin@demo",
             "signedAtMs": installed["receipt"]["recordedAtMs"],
             "restatementSha256": right,
         })
@@ -967,9 +1088,191 @@ fn bindings_are_admitted_against_their_recomputed_digest_and_declared_roles() {
         "/connector/app".to_owned()
     )));
     // A cell that declares no roles admits no binding.
-    let bare = crate::cell(DefinitionKinds::default());
+    let bare = crate::definitions::cell(DefinitionKinds::default());
     let (status, refused) = install_binding(&bare, "studio.binding.issues", &good, None);
     assert_eq!(status, 422, "{refused}");
+}
+
+/// #1526 S1: a binding installed before #1429, whose digest the old check
+/// derived with `serde_json`'s default float parser, stays revisable with its
+/// stored payload; a new id with that digest is refused by the exact reader.
+#[test]
+fn a_binding_retained_before_the_exact_reader_is_revisable_with_its_stored_payload() {
+    use norn_api::binding_definitions::{derived_version, manifest_digest};
+    use norn_cell::retained::{
+        RetainedDefinition, RetainedDefinitionChange, RetainedLifecycle, payload_sha256,
+    };
+    const ID: &str = "studio.binding.legacy";
+    // A schema number serde_json's default parser reads one ULP off.
+    let input = r#"{"type":"object","properties":{"limit":{"type":"number","minimum":333333333.33333329}}}"#;
+    let output = json!({ "type": "object" });
+    let digest_of = |schema: &Value| {
+        manifest_digest("executor", "github", "list_issues", schema, &output).unwrap()
+    };
+    // The old code path's digest: the payload text read by serde_json::from_str.
+    let legacy = digest_of(&serde_json::from_str(input).unwrap());
+    assert_ne!(
+        legacy,
+        digest_of(&norn_api::jcs::read(input).unwrap()),
+        "the number tells the readers apart"
+    );
+    let raw = format!(
+        r#"{{"connector":{{"gateway":"executor","origin":"https://executor.example","app":"github","tool":"list_issues","version":"{}"}},"inputSchema":{input},"outputSchema":{{"type":"object"}},"manifestDigest":"{legacy}","label":"Legacy","inputMapping":{{}},"runRole":"member"}}"#,
+        derived_version(&legacy)
+    );
+    // What the old install stored: the Norn1 canonical text, exact decimal kept.
+    let stored = String::from_utf8(
+        norn_ir::RuntimeValue::from_json_text(&raw)
+            .unwrap()
+            .canonical_json()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(stored.contains("333333333.33333329"), "{stored}");
+    let seeded = stored.clone();
+    let cell = cell_seeded(
+        NativeEngine::open_in_memory().unwrap(),
+        DefinitionKinds::default().with_roles(ROLES),
+        move |store, scope| {
+            let active = store.read().installed_definitions(None).unwrap().unwrap();
+            let change = RetainedDefinitionChange {
+                definition: RetainedDefinition {
+                    kind: "binding".to_owned(),
+                    id: ID.to_owned(),
+                    revision: 1,
+                    lifecycle: RetainedLifecycle::Active,
+                    title: "Legacy".to_owned(),
+                    payload_sha256: payload_sha256(&seeded),
+                    payload: seeded,
+                    signoff: None,
+                },
+                expected_revision: None,
+            };
+            let input = norn_cell::InstalledDefinitionInput {
+                canonical_set: active.canonical_set.clone(),
+                registry: active.registry.clone(),
+                receipt_sha256: active.receipt_sha256.clone(),
+                admission_receipt: active.admission_receipt.clone(),
+                readmission: None,
+                diff: json!({ "added": [], "removed": [], "changed": [], "narrowing": [] }),
+                installed_at: active.installed_at,
+                layout: None,
+            };
+            let model = store.model().clone();
+            store
+                .install_retained_definition(model, &input, Some(active.version), scope, &change)
+                .unwrap();
+        },
+    );
+    let install = |id: &str, expected: Option<u64>| {
+        let expected = expected.map_or(String::new(), |v| format!(r#","expectedVersion":{v}"#));
+        let body = format!(r#"{{"kind":"binding","id":"{id}"{expected},"payload":{stored}}}"#);
+        let response = call(
+            &cell,
+            "POST",
+            "/v1/definitions:install",
+            SCOPE,
+            ADMIN,
+            &body,
+        );
+        let document: Value = serde_json::from_str(&response.body).unwrap();
+        (response.status, document)
+    };
+    // Re-admitting the retained payload keeps the digest its install admitted.
+    let (status, revised) = install(ID, Some(1));
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["version"], json!(2), "{revised}");
+    // The same manifest with its number spelled otherwise is the same revision.
+    let respelled = stored.replace("333333333.33333329", "3.3333333333333329e8");
+    assert_ne!(respelled, stored);
+    let (status, revised) = install_raw(&cell, ID, Some(2), &respelled);
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["version"], json!(3), "{revised}");
+    // A new install is read exactly: the old derivation is refused.
+    let (status, refused) = install("studio.binding.fresh", None);
+    assert_eq!(status, 422, "{refused}");
+    assert!(
+        pointers(&refused).contains(&(
+            "definition.binding_digest_mismatch".to_owned(),
+            "/manifestDigest".to_owned()
+        )),
+        "{refused}"
+    );
+    // A digest change retires the legacy anchor: the old payload no longer
+    // revises the binding it replaced.
+    let changed = stored.replace("333333333.33333329", "5");
+    let changed: Value = serde_json::from_str(&changed).unwrap();
+    let exact = digest_of(&changed["inputSchema"]);
+    let mut changed = changed;
+    changed["manifestDigest"] = json!(exact);
+    changed["connector"]["version"] = json!(derived_version(&exact));
+    let (status, revised) = install_binding(&cell, ID, &changed, Some(3));
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["version"], json!(4), "{revised}");
+    let (status, refused) = install_raw(&cell, ID, Some(4), &stored);
+    assert_eq!(status, 422, "{refused}");
+    assert!(
+        pointers(&refused).contains(&(
+            "definition.binding_digest_mismatch".to_owned(),
+            "/manifestDigest".to_owned()
+        )),
+        "{refused}"
+    );
+}
+
+/// Install a binding payload given as text, so its numbers keep their spelling.
+fn install_raw(cell: &Cell, id: &str, expected: Option<u64>, payload: &str) -> (u16, Value) {
+    let expected = expected.map_or(String::new(), |v| format!(r#","expectedVersion":{v}"#));
+    let body = format!(r#"{{"kind":"binding","id":"{id}"{expected},"payload":{payload}}}"#);
+    let response = call(cell, "POST", "/v1/definitions:install", SCOPE, ADMIN, &body);
+    let document: Value = serde_json::from_str(&response.body).unwrap();
+    (response.status, document)
+}
+
+/// #1526 S1 round 2: a binding installed under the exact reader cannot seed
+/// the legacy fallback. Its manifest's exact digest D is also the legacy
+/// derivation of a different manifest (a schema number one ULP away); that
+/// revision, submitted with D, is a schema change and is refused.
+#[test]
+fn a_fresh_binding_cannot_seed_the_legacy_digest_fallback() {
+    use norn_api::binding_definitions::{derived_version, manifest_digest};
+    const ID: &str = "studio.binding.seeded";
+    let output = json!({ "type": "object" });
+    let digest_of = |schema: &Value| {
+        manifest_digest("executor", "github", "list_issues", schema, &output).unwrap()
+    };
+    // serde_json's default parser reads this number one ULP off.
+    let attack_schema = r#"{"type":"object","properties":{"limit":{"type":"number","minimum":333333333.33333329}}}"#;
+    // The first manifest spells exactly the double the legacy reader lands on.
+    let legacy_value: Value = serde_json::from_str(attack_schema).unwrap();
+    let first_schema = serde_json::to_string(&legacy_value).unwrap();
+    let seeded = digest_of(&norn_api::jcs::read(&first_schema).unwrap());
+    assert_eq!(seeded, digest_of(&legacy_value), "a real legacy collision");
+    let attack_exact = digest_of(&norn_api::jcs::read(attack_schema).unwrap());
+    assert_ne!(attack_exact, seeded, "the two manifests differ exactly");
+    let payload = |schema: &str, digest: &str| {
+        format!(
+            r#"{{"connector":{{"gateway":"executor","origin":"https://executor.example","app":"github","tool":"list_issues","version":"{}"}},"inputSchema":{schema},"outputSchema":{{"type":"object"}},"manifestDigest":"{digest}","label":"Seeded","inputMapping":{{}},"runRole":"member"}}"#,
+            derived_version(digest)
+        )
+    };
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let (status, installed) = install_raw(&cell, ID, None, &payload(&first_schema, &seeded));
+    assert_eq!(status, 200, "{installed}");
+    // The other manifest under the same digest and digest-named version.
+    let (status, refused) = install_raw(&cell, ID, Some(1), &payload(attack_schema, &seeded));
+    assert_eq!(status, 422, "{refused}");
+    assert!(
+        pointers(&refused).contains(&(
+            "definition.binding_digest_mismatch".to_owned(),
+            "/manifestDigest".to_owned()
+        )),
+        "{refused}"
+    );
+    // Under its own exact digest it is an ordinary revision.
+    let (status, revised) = install_raw(&cell, ID, Some(1), &payload(attack_schema, &attack_exact));
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["version"], json!(2), "{revised}");
 }
 
 /// An agent may name only the cell's installed, active bindings, by the
@@ -1233,7 +1536,7 @@ fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
     let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
     assert_eq!(status, 422, "{refused}");
     let unknown = pointers(&refused);
-    assert!(!unknown.is_empty(), "{refused}");
+    assert_ne!(unknown, [], "{refused}");
     for (code, pointer) in &unknown {
         assert_eq!(code, "definition.flow_function_unknown");
         assert!(
@@ -1291,7 +1594,7 @@ fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
         .into_iter()
         .filter_map(|perform| perform.name)
         .collect();
-    assert!(!pairs.is_empty());
+    assert_ne!(pairs, []);
     assert!(
         pairs
             .iter()
@@ -1909,10 +2212,10 @@ fn a_flow_is_installed_by_signing_the_servers_words_for_it() {
         document["signoff"]["restatementSha256"],
         json!(sha256(&words))
     );
-    assert_eq!(document["signoff"]["signer"], json!("viewer@demo"));
+    assert_eq!(document["signoff"]["signer"], json!("admin@demo"));
 
     // A cell that cannot restate a flow cannot install one: fail closed.
-    let bare = crate::cell(DefinitionKinds::default().with_roles(ROLES));
+    let bare = crate::definitions::cell(DefinitionKinds::default().with_roles(ROLES));
     assert_eq!(
         install_binding(&bare, TOOL, &binding("Intent", "member", &json!({})), None).0,
         200
@@ -2011,7 +2314,7 @@ fn a_population_reader_never_sees_a_definition_receipt_hash() {
     }
 
     // A cell without a question runtime holds no handle key: no receipt hash.
-    let bare = crate::cell(DefinitionKinds::default().with_roles(ROLES));
+    let bare = crate::definitions::cell(DefinitionKinds::default().with_roles(ROLES));
     let good = binding("Open issues", "member", &json!({}));
     let body = json!({ "kind": "binding", "id": "studio.binding.bare", "payload": good });
     for (method, path, auth, body) in [
@@ -2107,4 +2410,216 @@ fn binding_strings_and_member_names_are_nfc_so_the_stored_manifest_keeps_its_dig
     )
     .unwrap();
     assert_eq!(stored["manifestDigest"], json!(recomputed));
+}
+
+/// A dashboard may name who authored this version; only an assistant's
+/// origin carries a proposal, model and request, each bounded text.
+#[test]
+fn a_dashboard_origin_names_its_author_and_only_an_assistant_names_a_request() {
+    let cell = cell(DefinitionKinds::default());
+    let admit = |origin: Value| {
+        let mut payload = dashboard("Origins");
+        payload["origin"] = origin;
+        let body =
+            json!({ "kind": "dashboard", "id": "studio.dashboard.origin", "payload": payload });
+        let (status, document) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+        assert_eq!(status, 200, "{document}");
+        document
+    };
+    for admitted in [
+        json!({ "by": "studio" }),
+        json!({ "by": "code" }),
+        json!({ "by": "assistant", "proposal": "prop_1", "model": "claude-sonnet-5-5", "request": "Weekly gold yield\nand inputs" }),
+    ] {
+        assert_eq!(
+            admit(admitted.clone())["admitted"],
+            json!(true),
+            "{admitted}"
+        );
+    }
+    for (refused, pointer) in [
+        (json!({ "by": "robot" }), "/origin/by"),
+        (
+            json!({ "by": "studio", "request": "why" }),
+            "/origin/request",
+        ),
+        (json!({ "by": "assistant", "model": "" }), "/origin/model"),
+        (
+            json!({ "by": "assistant", "request": "x".repeat(2001) }),
+            "/origin/request",
+        ),
+        (json!({ "by": "assistant", "note": "x" }), "/origin/note"),
+    ] {
+        let document = admit(refused.clone());
+        assert_eq!(document["admitted"], json!(false), "{refused}");
+        assert!(
+            pointers(&document)
+                .contains(&("definition.invalid_payload".to_owned(), pointer.to_owned())),
+            "{refused} {document}"
+        );
+    }
+}
+
+/// DASHBOARD-LOWER-1: the dashboard `Norn.dashboard` compiles to
+/// (tools/norn-ts/fixtures/dashboards) is admitted like one saved in Studio,
+/// and the checker's words say it was written as code.
+#[test]
+fn a_code_dashboard_is_admitted_like_one_saved_in_studio() {
+    let cell = cell(
+        DefinitionKinds::default().with_restater(norn_api::definition_routes::checker_restatement),
+    );
+    let compiled: Value = serde_json::from_str(include_str!(
+        "../../../tools/norn-ts/fixtures/dashboards/refinery.dashboard.json"
+    ))
+    .unwrap();
+    let body =
+        json!({ "kind": "dashboard", "id": "code.dashboard.refinery", "payload": compiled[0] });
+    let (status, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+    assert_eq!(status, 200, "{admitted}");
+    assert_eq!(admitted["admitted"], json!(true), "{admitted}");
+    let words = admitted["restatement"].as_str().unwrap();
+    assert!(
+        words.starts_with("Refinery weekly\nWritten as code.\n1. Recovered in total: "),
+        "{words}"
+    );
+}
+
+/// The read policy with one change: no candidate model is servable, as when
+/// a flow's run type is one the cell's read rules cannot compile.
+struct ReadRulesRefuse(ReadPolicy);
+
+impl norn_api::authz::Authorizer for ReadRulesRefuse {
+    fn read(
+        &self,
+        request: &norn_api::authz::ReadRequest<'_>,
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        self.0.read(request)
+    }
+    fn action(
+        &self,
+        request: &norn_kernel::ActionAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        self.0.action(request)
+    }
+    fn action_read(
+        &self,
+        request: &norn_kernel::ActionReadAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        self.0.action_read(request)
+    }
+    fn action_read_type(
+        &self,
+        request: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        self.0.action_read_type(request)
+    }
+    fn admits_model(
+        &self,
+        _object_types: &[norn_ir::ObjectTypeDef],
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        Err(norn_api::refusal::Refusal::new(
+            http::StatusCode::CONFLICT,
+            "defs.migration_refused",
+            "the candidate definitions cannot carry the cell's live data",
+            "the cell's read rules do not compile for the candidate model",
+        ))
+    }
+    fn disclose_refusal_detail(&self, request: &norn_api::authz::RefusalDetailRequest<'_>) -> bool {
+        self.0.disclose_refusal_detail(request)
+    }
+    fn authorize(
+        &self,
+        request: &norn_api::authz::AccessRequest<'_>,
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        self.0.authorize(request)
+    }
+}
+
+/// DEFS-REOPEN-1: a flow install the cell's read policy cannot serve is
+/// refused before anything is written (the route asks the policy first), the
+/// active definitions are unchanged, and the cell reopens as it was.
+#[test]
+fn a_flow_the_read_rules_cannot_serve_is_refused_and_the_cell_reopens() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let open = || NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
+    let before = {
+        let cell = cell_on(open(), flow_kinds());
+        assert_eq!(
+            install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+            200
+        );
+        cell.host.active_definitions().unwrap().unwrap().version
+    };
+    {
+        let scope = analytics::analytics_scope();
+        let opened = analytics::provision(open(), &scope).unwrap();
+        let policy =
+            ReadPolicy::compile(opened.store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+        let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
+        let host = DevHost::from_store(opened.store, scope.clone(), |command| {
+            command.payload.clone()
+        })
+        .unwrap()
+        .with_authorizer(ReadRulesRefuse(policy));
+        let questions = DemoQuestions::new(opened.plan, scope)
+            .with_handle_key(&HANDLE_KEY)
+            .with_metrics(opened.definitions, opened.catalog);
+        let cell = Cell {
+            host,
+            questions,
+            principals,
+            kinds: flow_kinds(),
+        };
+        let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
+        assert_eq!(
+            (status, refused["code"].as_str()),
+            (409, Some("defs.migration_refused")),
+            "{refused}"
+        );
+        assert_eq!(
+            cell.host.active_definitions().unwrap().unwrap().version,
+            before
+        );
+    }
+    let reopened = analytics::provision(open(), &analytics::analytics_scope()).unwrap();
+    assert!(
+        !reopened
+            .store
+            .model()
+            .object_types()
+            .any(|object_type| object_type.name.as_str() == "crm.RouteMessageRun")
+    );
+    assert_eq!(
+        reopened
+            .store
+            .read()
+            .installed_definitions(None)
+            .unwrap()
+            .unwrap()
+            .version,
+        before
+    );
+}
+
+/// The read policy refuses a candidate model whose read rules do not
+/// compile, with the same compile the cell's reopen runs.
+#[test]
+fn the_read_policy_admits_only_models_its_rules_compile_for() {
+    use norn_api::authz::Authorizer as _;
+    let scope = analytics::analytics_scope();
+    let opened = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let types: Vec<norn_ir::ObjectTypeDef> = opened.store.model().object_types().cloned().collect();
+    let policy = ReadPolicy::compile(types.iter(), &scope, &DEMO_GRANTS).unwrap();
+    assert!(policy.admits_model(&types).is_ok());
+    // The same type twice does not compile, so the candidate is refused;
+    // the test pins the refusal, not which compile step rejects it.
+    let mut doubled = types.clone();
+    doubled.push(types[0].clone());
+    let refused = policy.admits_model(&doubled).unwrap_err();
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (409, "defs.migration_refused"),
+        "{refused:?}"
+    );
 }

@@ -1,6 +1,8 @@
 //! Public-core CI: candidate checks and base-owned policy over candidate data.
+pub mod bundle;
 pub mod git;
 pub mod provenance;
+pub mod workflow_lint;
 pub mod yaml;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -22,7 +24,7 @@ const GATE_DIRECTORIES: [&str; 2] = [".cargo/", "crates/norn-skeleton-guard/"];
 /// A gate file absent from the base must stay absent. The toolchain files are gates although
 /// none exists, as defence in depth: rustup reads them from the working directory, but the
 /// gated `validate-runner-policy.py` sets `RUSTUP_TOOLCHAIN`, which takes precedence.
-const GATE_FILES: [&str; 26] = [
+const GATE_FILES: [&str; 32] = [
     // Python isolation (#513): the base-owned check and its canaries, and every file a gated
     // Python file loads by explicit path, so none of them can change what a gate decides.
     "scripts/ci/python_isolation.py",
@@ -37,9 +39,15 @@ const GATE_FILES: [&str; 26] = [
     "rust-toolchain",
     "verification/coverage-v1/fixtures/pull-request-concurrency.json",
     "scripts/ci/core.sh",
+    "scripts/ci/actions-secret-inventory.py",
+    "scripts/ci/infisical-oidc.sh",
+    "scripts/ci/secret-scan.sh",
+    "scripts/ci/test_infisical_oidc.py",
     "scripts/ci/contract_diff.py",
     "scripts/ci/test_contract_diff.py",
     "scripts/ci/contract-breaks.json",
+    "scripts/ci/rivetkit_channel.py",
+    "scripts/ci/test_rivetkit_channel.py",
     "scripts/ci/implementation_receipts.py",
     ".config/nextest.toml",
     "scripts/ci/validate-runner-policy.py",
@@ -54,17 +62,20 @@ const GATE_FILES: [&str; 26] = [
 ];
 
 /// Exact opt-in contract: event payloads and arbitrary variables cannot select a runner.
-/// Boat runs merge groups and same-repository pull requests: a fork head never reaches
-/// a Boat VM. The pull-request arm requires Boat CI's public-repository allowlist
-/// (`boat ci public`): author, actor and re-runner must be that user, so Dependabot or
-/// another user's pull request runs hosted instead of queueing forever. Trusted-policy
-/// jobs stay hosted.
-const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
+/// Boat runs merge groups, same-repository pull requests and merge-queue main pushes: a fork
+/// head never reaches a Boat VM. The pull-request arm requires Boat CI's public-repository
+/// allowlist (`boat ci public`): author, actor and re-runner must be that user, so Dependabot or
+/// another user's pull request runs hosted instead of queueing forever. The main-push arm
+/// (#1369) gives the shared compiler cache, which only a push to main may write, a writer on
+/// Boat: a push of `refs/heads/main` made and started by the merge queue's bot, only while
+/// `NORN_MAIN_RUNNER` is `boat`. Trusted-policy jobs stay hosted. The gate plan is a hosted job
+/// of its own: it needs only git and Python, so no `plan` job may take a Boat start.
+const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
 
 fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
     matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
         || (path == ".github/workflows/ci-policy.yml"
-            && matches!(job, "core" | "plan" | "test" | "full")
+            && matches!(job, "core" | "test" | "full")
             && runner == Some(BOAT_RUNNER))
 }
 
@@ -634,7 +645,7 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
                             job.get("runs-on").and_then(yaml::Value::as_str),
                         ) {
                             errors.push(format!(
-                                "{path}::{name}: runner must be hosted or the exact merge-only Boat opt-in"
+                                "{path}::{name}: runner must be hosted or the exact approved Boat runner expression"
                             ));
                         }
                     }
@@ -1164,8 +1175,10 @@ mod tests {
         let path = ".github/workflows/ci-policy.yml";
         let legacy = r#"${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}"#;
         let merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}";
+        // Before main pushes could reach Boat (#1369).
+        let before_main = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
         for job in ["core", "plan", "test", "phase", "full", "trusted-policy"] {
-            for runner in ["boat", "self-hosted", legacy, merge_only] {
+            for runner in ["boat", "self-hosted", legacy, merge_only, before_main] {
                 assert!(!super::runner_is_admitted(path, job, Some(runner)));
             }
             assert!(super::runner_is_admitted(path, job, Some("ubuntu-24.04")));
@@ -1187,7 +1200,13 @@ mod tests {
                 "{job}: {changed}"
             );
         };
-        for job in ["core", "plan", "test", "full"] {
+        // The gate plan is a hosted job: a plan job on Boat is one start too many.
+        assert!(!super::runner_is_admitted(
+            path,
+            "plan",
+            Some(super::BOAT_RUNNER)
+        ));
+        for job in ["core", "test", "full"] {
             assert!(super::runner_is_admitted(
                 path,
                 job,
@@ -1255,6 +1274,66 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn runner_routing_admits_merge_queue_main_pushes_only_by_opt_in() {
+        let path = ".github/workflows/ci-policy.yml";
+        let main = super::BOAT_RUNNER;
+        // The main arm is the only change to the runner admitted before #1369.
+        assert_eq!(
+            main.replace(
+                " || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')",
+                ""
+            ),
+            "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+        );
+        let reject = |job: &str, changed: &str| {
+            assert_ne!(changed, main, "no-op mutation");
+            assert!(
+                !super::runner_is_admitted(path, job, Some(changed)),
+                "{job}: {changed}"
+            );
+        };
+        assert!(!super::runner_is_admitted(path, "plan", Some(main)));
+        for job in ["trusted-policy", "phase", "unknown"] {
+            assert!(!super::runner_is_admitted(path, job, Some(main)));
+        }
+        assert!(!super::runner_is_admitted(
+            ".github/workflows/trusted-merge-group.yml",
+            "core",
+            Some(main)
+        ));
+        for job in ["core", "test", "full"] {
+            assert!(super::runner_is_admitted(path, job, Some(main)));
+            for removed in [
+                "github.event_name == 'push' && ",
+                " && github.ref == 'refs/heads/main'",
+                " && github.actor == 'github-merge-queue[bot]'",
+                " && github.triggering_actor == 'github-merge-queue[bot]'",
+                " && vars.NORN_MAIN_RUNNER == 'boat'",
+            ] {
+                reject(job, &main.replace(removed, ""));
+            }
+            for (before, after) in [
+                ("'push'", "'workflow_dispatch'"),
+                ("'push'", "'pull_request_target'"),
+                ("'refs/heads/main'", "'refs/heads/demo/robin'"),
+                ("github.ref == 'refs/heads/main'", "github.ref != ''"),
+                (
+                    "github.actor == 'github-merge-queue[bot]'",
+                    "github.actor != 'dependabot[bot]'",
+                ),
+                (
+                    "github.triggering_actor == 'github-merge-queue[bot]'",
+                    "github.triggering_actor == 'dependabot[bot]'",
+                ),
+                ("vars.NORN_MAIN_RUNNER", "vars.NORN_PR_RUNNER"),
+                ("NORN_MAIN_RUNNER == 'boat'", "NORN_MAIN_RUNNER != ''"),
+            ] {
+                reject(job, &main.replace(before, after));
+            }
+        }
+    }
+
     fn concurrency(path: &str, source: &str) -> Option<String> {
         let parsed = super::yaml::parse(source);
         assert_eq!(parsed.as_ref().err(), None, "{path}: fixture did not parse");
@@ -1278,7 +1357,7 @@ mod tests {
             "trusted-merge-group.yml",
         ] {
             let source = workflow(name);
-            assert!(!source.is_empty(), "{name} is missing");
+            assert_ne!(source.len(), 0, "{name} is missing");
             assert_eq!(concurrency(name, &source), None, "{name}");
         }
     }
@@ -1299,8 +1378,7 @@ mod tests {
         let block = VALIDATOR
             .split_once("\nPULL_REQUEST_CONCURRENCY_CASES = {\n")
             .and_then(|(_, rest)| rest.split_once("\n}\n"))
-            .map(|(block, _)| block)
-            .unwrap_or_default();
+            .map_or_default(|(block, _)| block);
         let entries = block
             .lines()
             .map(|line| line.trim().trim_end_matches(','))
@@ -1529,19 +1607,20 @@ mod tests {
         ] {
             let mutated = source.replacen(before, after, 1);
             assert_ne!(mutated, source, "{label}: no-op mutation");
-            assert!(!pinned_steps(&mutated).is_empty(), "{label} was admitted");
+            assert_ne!(pinned_steps(&mutated).len(), 0, "{label} was admitted");
         }
         let test_only = source.replacen(libclang, "      - name: Renamed\n", 2);
         assert_eq!(pinned_steps(&test_only).len(), 2);
         let stats = "          disable_annotations: true\n";
         assert_eq!(source.matches(stats).count(), 2);
         assert_eq!(pinned_steps(&source.replace(stats, "")).len(), 2);
-        assert!(
+        assert_eq!(
             super::pinned_step_errors(
                 ".github/workflows/codeql.yml",
                 &super::yaml::Value::Map(Vec::new())
             )
-            .is_empty()
+            .len(),
+            0
         );
     }
 
@@ -1629,12 +1708,18 @@ mod tests {
         let contract =
             || vec!["scripts/ci/core.sh: gate contract differs from the trusted base".to_owned()];
         assert_eq!(contract_errors(contract(), None), contract());
-        assert!(contract_errors(contract(), Some(Ok("maintainer".to_owned()))).is_empty());
+        assert_eq!(
+            contract_errors(contract(), Some(Ok("maintainer".to_owned()))).len(),
+            0
+        );
         assert_eq!(
             contract_errors(contract(), Some(Err("fork".to_owned()))).len(),
             2
         );
-        assert!(contract_errors(Vec::new(), Some(Err("fork".to_owned()))).is_empty());
+        assert_eq!(
+            contract_errors(Vec::new(), Some(Err("fork".to_owned()))).len(),
+            0
+        );
     }
 
     const IR: &str = "pub enum ArtifactKind { Entity, SourceSchema, Law }";

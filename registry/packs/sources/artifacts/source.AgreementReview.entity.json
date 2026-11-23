@@ -1,0 +1,63 @@
+{
+  "artifactId": "source.AgreementReview.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Source disagreement review",
+  "namespace": "source",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "name": "source.AgreementReview",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "accepted"
+              },
+              {
+                "value": "reopened"
+              }
+            ]
+          }
+        },
+        {
+          "id": "reason",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "reviewed_by",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/sources/artifacts/source.AgreementReview.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -19,7 +19,7 @@ Total: **288** entries in **35** domains.
 | education | 8 | 0 | 0% | 0 | 1 | 1 |
 | einvoicing-tax | 24 | 0 | 0% | 0 | 10 | 1 |
 | energy | 5 | 0 | 0% | 0 | 2 | 2 |
-| finance | 4 | 1 | 25% | 0 | 2 | 1 |
+| finance | 4 | 2 | 50% | 0 | 2 | 1 |
 | geo | 7 | 1 | 14% | 0 | 4 | 0 |
 | governance | 13 | 4 | 31% | 0 | 8 | 7 |
 | healthcare | 5 | 0 | 0% | 0 | 3 | 1 |
@@ -45,14 +45,14 @@ Total: **288** entries in **35** domains.
 | travel | 2 | 0 | 0% | 0 | 0 | 0 |
 | upper-ontology | 7 | 0 | 0% | 0 | 6 | 6 |
 | workspace | 8 | 0 | 0% | 0 | 8 | 4 |
-| **all** | **288** | **28** | **10%** | **11** | **169** | **90** |
+| **all** | **288** | **29** | **10%** | **11** | **169** | **90** |
 
 | Mapping | Entries |
 | --- | ---: |
 | done | 3 |
-| partial | 25 |
+| partial | 26 |
 | planned | 11 |
-| none | 249 |
+| none | 248 |
 
 | Reuse | Entries |
 | --- | ---: |

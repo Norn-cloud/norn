@@ -42,7 +42,7 @@
 //! [`code`]: DecisionRefusal::code
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use norn_checker::entity_instance::InstanceError;
 use norn_checker::entity_model::{EntityContext, EntityModel};
@@ -84,7 +84,42 @@ pub struct TypeCatalog<'a> {
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
     extensions: Vec<&'a ObjectTypeExtension>,
     property_types: Option<&'a [PropertyTypeDef]>,
+    /// Work derived from the object, interface, extension and property-type
+    /// definitions alone, shared with every catalog over the same ones.
+    work: Arc<DefinitionWork>,
+    /// Each retained law's decoded declaration, keyed by the artifact's
+    /// address in this catalog, so never shared.
+    laws: LawMemo,
+}
+
+/// Work a catalog derives from its object, interface, extension and
+/// property-type definitions alone, done once instead of once per checked
+/// row (#1417 P5) or per commit (ADMIT-CACHE-1, #1533): the effective model,
+/// compiled expressions, expression environments and prepared invariants.
+/// Builder methods that change those definitions start a new one;
+/// [`TypeCatalog::with_definition_work`] shares one across catalogs built
+/// over the same definitions (a cell model keeps one per definitions
+/// version). Its keys are names and expression sources, never addresses.
+#[derive(Debug, Default)]
+pub struct DefinitionWork {
     effective_model: OnceLock<Result<EffectiveModel, norn_checker::EffectiveViewRefused>>,
+    expressions: Mutex<BTreeMap<String, Result<Arc<Expression>, String>>>,
+    base_environment: OnceLock<Result<Arc<norn_expr::ZenTypeEnv>, String>>,
+    environments: Mutex<BTreeMap<ObjectTypeName, Result<Arc<norn_expr::ZenTypeEnv>, String>>>,
+    admissions: Mutex<BTreeMap<(ObjectTypeName, String), Arc<norn_expr::PreparedAdmission>>>,
+}
+
+/// The decoded laws of one catalog; a clone starts empty, since its keys are
+/// the addresses of the clone's own law artifacts.
+#[derive(Debug, Default)]
+struct LawMemo(
+    OnceLock<BTreeMap<usize, Result<norn_ir::LawIR, crate::governing_laws::LawEvaluationError>>>,
+);
+
+impl Clone for LawMemo {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 /// The checker-derived effective object and link contracts for one catalog.
@@ -111,6 +146,7 @@ impl<'a> TypeCatalog<'a> {
     /// A catalog over `types` (an admitted artifact set's object types).
     #[must_use]
     pub fn new(types: impl IntoIterator<Item = &'a ObjectTypeDef>) -> Self {
+        norn_ir::counters::bump(norn_ir::counters::Counter::TypeCatalogBuilds);
         Self {
             action_rules: &[],
             types: types
@@ -121,8 +157,28 @@ impl<'a> TypeCatalog<'a> {
             interfaces: BTreeMap::new(),
             extensions: Vec::new(),
             property_types: None,
-            effective_model: OnceLock::new(),
+            work: Arc::default(),
+            laws: LawMemo::default(),
         }
+    }
+
+    /// ADMIT-CACHE-1 (#1533): this catalog's definition work, to share with
+    /// later catalogs over exactly the same object, interface, extension and
+    /// property-type definitions.
+    #[must_use]
+    pub fn definition_work(&self) -> Arc<DefinitionWork> {
+        Arc::clone(&self.work)
+    }
+
+    /// ADMIT-CACHE-1 (#1533): reuse `work` that a catalog over exactly the
+    /// same object, interface, extension and property-type definitions
+    /// derived (from [`Self::definition_work`]). Call it after those
+    /// builders: each of them starts new work. Laws and action rules are not
+    /// part of it and may be bound before or after.
+    #[must_use]
+    pub fn with_definition_work(mut self, work: Arc<DefinitionWork>) -> Self {
+        self.work = work;
+        self
     }
 
     /// Admitted, immutable synchronous writers available to governed actions.
@@ -136,6 +192,7 @@ impl<'a> TypeCatalog<'a> {
     #[must_use]
     pub fn with_governing_laws(mut self, artifacts: &'a [norn_ir::ArtifactEnvelope]) -> Self {
         self.law_artifacts = artifacts.iter().collect();
+        self.laws = LawMemo::default();
         self
     }
 
@@ -152,7 +209,7 @@ impl<'a> TypeCatalog<'a> {
                 .into_iter()
                 .map(|interface| (interface.name.as_str(), interface)),
         );
-        self.effective_model.take();
+        self.work = Arc::default();
         self
     }
 
@@ -165,7 +222,7 @@ impl<'a> TypeCatalog<'a> {
         extensions: impl IntoIterator<Item = &'a ObjectTypeExtension>,
     ) -> Self {
         self.extensions.extend(extensions);
-        self.effective_model.take();
+        self.work = Arc::default();
         self
     }
 
@@ -174,7 +231,7 @@ impl<'a> TypeCatalog<'a> {
     #[must_use]
     pub fn with_property_types(mut self, property_types: &'a [PropertyTypeDef]) -> Self {
         self.property_types = Some(property_types);
-        self.effective_model.take();
+        self.work = Arc::default();
         self
     }
 
@@ -234,12 +291,108 @@ impl<'a> TypeCatalog<'a> {
         &self,
         object_type: &ObjectTypeName,
     ) -> Result<norn_expr::ZenTypeEnv, String> {
-        self.base_expression_environment()?
-            .bind_self(object_type)
-            .map_err(|error| error.to_string())
+        self.shared_expression_environment(object_type)
+            .map(|environment| (*environment).clone())
+    }
+
+    /// [`Self::expression_environment`], derived once per catalog and type.
+    pub(crate) fn shared_expression_environment(
+        &self,
+        object_type: &ObjectTypeName,
+    ) -> Result<Arc<norn_expr::ZenTypeEnv>, String> {
+        let mut environments = self
+            .work
+            .environments
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        environments
+            .entry(object_type.clone())
+            .or_insert_with(|| {
+                self.shared_base_expression_environment()
+                    .and_then(|base| {
+                        (*base)
+                            .clone()
+                            .bind_self(object_type)
+                            .map_err(|error| error.to_string())
+                    })
+                    .map(Arc::new)
+            })
+            .clone()
     }
 
     pub(crate) fn base_expression_environment(&self) -> Result<norn_expr::ZenTypeEnv, String> {
+        self.shared_base_expression_environment()
+            .map(|environment| (*environment).clone())
+    }
+
+    fn shared_base_expression_environment(&self) -> Result<Arc<norn_expr::ZenTypeEnv>, String> {
+        self.work
+            .base_environment
+            .get_or_init(|| self.derive_base_expression_environment().map(Arc::new))
+            .clone()
+    }
+
+    /// The compiled form of `source`, compiled once per catalog. The error is
+    /// the compile error's display text.
+    pub(crate) fn compiled_expression(&self, source: &str) -> Result<Arc<Expression>, String> {
+        let mut expressions = self
+            .work
+            .expressions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(compiled) = expressions.get(source) {
+            return compiled.clone();
+        }
+        let compiled = Expression::compile(source)
+            .map(Arc::new)
+            .map_err(|error| error.to_string());
+        expressions.insert(source.to_owned(), compiled.clone());
+        compiled
+    }
+
+    /// How the invariant `expression` on `object_type` runs as a Boolean in
+    /// `env` (that type's [`Self::shared_expression_environment`]), decided
+    /// once per catalog.
+    pub(crate) fn prepared_invariant(
+        &self,
+        object_type: &ObjectTypeName,
+        expression: &Expression,
+        env: &norn_expr::ZenTypeEnv,
+    ) -> Arc<norn_expr::PreparedAdmission> {
+        let mut admissions = self
+            .work
+            .admissions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(
+            admissions
+                .entry((object_type.clone(), expression.source().to_owned()))
+                .or_insert_with(|| {
+                    Arc::new(expression.prepare_admitted(env, &norn_expr::Type::Bool))
+                }),
+        )
+    }
+
+    /// Every retained law artifact's decoded declaration, decoded once per
+    /// catalog and keyed by the artifact's address in this catalog.
+    pub(crate) fn decoded_laws(
+        &self,
+    ) -> &BTreeMap<usize, Result<norn_ir::LawIR, crate::governing_laws::LawEvaluationError>> {
+        self.laws.0.get_or_init(|| {
+            self.law_artifacts
+                .iter()
+                .map(|artifact| {
+                    (
+                        std::ptr::from_ref(*artifact).addr(),
+                        crate::governing_laws::decode_law(artifact),
+                    )
+                })
+                .collect()
+        })
+    }
+
+    fn derive_base_expression_environment(&self) -> Result<norn_expr::ZenTypeEnv, String> {
+        norn_ir::counters::bump(norn_ir::counters::Counter::ExpressionEnvironmentBuilds);
         let objects: Vec<_> = self.types.values().map(|d| (*d).clone()).collect();
         let interfaces: Vec<_> = self.interfaces.values().map(|d| (*d).clone()).collect();
         let extensions: Vec<_> = self.extensions.iter().map(|d| (*d).clone()).collect();
@@ -446,7 +599,8 @@ impl<'a> TypeCatalog<'a> {
     /// refused view. Returns whether the model was pinned.
     #[cfg(test)]
     pub(crate) fn refuse_effective_view_for_test(&self) -> bool {
-        self.effective_model
+        self.work
+            .effective_model
             .set(Ok(EffectiveModel::default()))
             .is_ok()
     }
@@ -462,13 +616,15 @@ impl<'a> TypeCatalog<'a> {
     }
 
     fn effective_model(&self) -> Result<&EffectiveModel, norn_checker::EffectiveViewRefused> {
-        self.effective_model
+        self.work
+            .effective_model
             .get_or_init(|| self.derive_effective_model())
             .as_ref()
             .map_err(|refusal| *refusal)
     }
 
     fn derive_effective_model(&self) -> Result<EffectiveModel, norn_checker::EffectiveViewRefused> {
+        norn_ir::counters::bump(norn_ir::counters::Counter::EffectiveModelBuilds);
         let object_types: Vec<_> = self
             .types
             .values()
@@ -649,6 +805,24 @@ impl<'a> TypeCatalog<'a> {
                 id,
                 invariant,
             })
+            .collect())
+    }
+
+    /// MANIFEST-LAWS-1: every invariant that applies to `object_type`, with
+    /// its owner, in the order the per-row evaluator checks them. A bulk
+    /// path reads this to evaluate the same declarations, or to refuse.
+    ///
+    /// # Errors
+    /// Returns the name of an interface referenced by the object's lineage
+    /// that is absent from this catalog.
+    pub fn effective_invariants(
+        &self,
+        object_type: &ObjectTypeName,
+    ) -> Result<Vec<(InvariantOwner, &'a Invariant)>, ObjectTypeName> {
+        Ok(self
+            .invariants(object_type)?
+            .into_iter()
+            .map(|effective| (effective.owner, effective.invariant))
             .collect())
     }
 
@@ -2617,9 +2791,9 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    let prepared = prepare_decision_with_limits(catalog, slice, turn, output, limits)?;
+    let commit = decision_cell_commit::<_, _, _, H::Error>(catalog, slice, turn, output, limits)?;
     let counts = EnvelopeCounts::new(
-        prepared.events.len(),
+        commit.events.len(),
         output.commands.len(),
         output.timers.len(),
     );
@@ -2632,16 +2806,6 @@ where
                 actual: exceeded.actual,
             })?;
     }
-    let commit = CellCommit {
-        consumes: prepared.consumes,
-        reads: prepared.reads,
-        writes: prepared.writes,
-        events: prepared.events.into_iter().map(Into::into).collect(),
-        effects: prepared.effects.into_iter().map(widen_effect).collect(),
-        links: Vec::new(),
-        link_reads: Vec::new(),
-        predicate_reads: Vec::new(),
-    };
     match host.commit(commit) {
         Ok(receipt) => {
             if let Some(meter) = meter {
@@ -2664,6 +2828,37 @@ where
         }
         Err(error) => Err(DecisionRefusal::from_commit(error)),
     }
+}
+
+/// The whole commit [`commit_decision`] would submit, for a host that commits
+/// a decision through a host-specific verb (RUN-LEDGER-1's run start). The
+/// host commit still runs every commit check; nothing is committed here.
+///
+/// # Errors
+/// The [`DecisionRefusal`] of preparation.
+pub fn decision_cell_commit<E, C, T, X>(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    output: &DecisionOutput,
+    limits: &EnvelopeLimits,
+) -> Result<CellCommit<E, C, T>, DecisionRefusal<X>>
+where
+    E: From<FactEvent>,
+    C: From<JsonObject>,
+    T: From<JsonObject>,
+{
+    let prepared = prepare_decision_with_limits(catalog, slice, turn, output, limits)?;
+    Ok(CellCommit {
+        consumes: prepared.consumes,
+        reads: prepared.reads,
+        writes: prepared.writes,
+        events: prepared.events.into_iter().map(Into::into).collect(),
+        effects: prepared.effects.into_iter().map(widen_effect).collect(),
+        links: Vec::new(),
+        link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
+    })
 }
 
 pub(crate) fn widen_effect<C: From<JsonObject>, T: From<JsonObject>>(
@@ -3077,8 +3272,7 @@ fn resolve_transition<X>(
                 .transitions
                 .iter()
                 .find(|candidate| candidate.id == *transition)
-                .map(|candidate| candidate.from.clone())
-                .unwrap_or_default(),
+                .map_or_default(|candidate| candidate.from.clone()),
         }),
     }
 }

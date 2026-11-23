@@ -1,9 +1,10 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
+import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
-import { CopyId } from "@/components/copy-id"
+import { CopyId, PathText } from "@/components/copy-id"
 import { EmptyState } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -20,11 +21,16 @@ import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-sou
 import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
-import { offeredFor } from "../lib/screen/call.ts"
-import { alignRight, Cell, isWithheld, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./cells.tsx"
+import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
+import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
+import { FacetsRail, FilterChips } from "./facets-rail.tsx"
+import { RecordsTimeline } from "./records-timeline.tsx"
+import { LifecycleView } from "@/components/lifecycle-view"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { TIMELINE_MAX_USER_CLAUSES, stepAnchor, tryWindowQuery, windowOf, type Zoom } from "../lib/timeline.ts"
 
-const ROW = 36
+const ROW = 32
 const DEFAULT_COLUMNS = 8
 const PAGE_SIZES = [50, 100, LIMITS.maxPageSize] as const
 const HIDDEN_FIELDS = new Set(["id", "label", "display_name"])
@@ -40,11 +46,11 @@ function SortMark({ direction }: { readonly direction: "asc" | "desc" | undefine
   return <ArrowUpDown className="size-3 opacity-40" aria-hidden />
 }
 
-/** The Records card, on the D65 depth model the canvas uses: hairline border, top highlight, contact plus ambient shadow. */
+/** The Records section: flat on the page (design v3), its heading, then the rail, the toolbar and the one framed table. */
 function Shell({ children }: { readonly children: ReactNode }) {
   return (
-    <section aria-label="Records" className="rounded-node border border-node-border bg-card p-3 shadow-[var(--node-highlight),var(--elevation-node)]">
-      <h2 className="flex items-center gap-2 px-1 pb-3 text-panel font-medium"><Rows3 className="size-4 text-muted-foreground" aria-hidden />Records</h2>
+    <section aria-label="Records" className="min-w-0">
+      <h2 className="flex items-center gap-2 pb-3 text-section font-medium"><Rows3 className="size-4 text-muted-foreground" aria-hidden />Records</h2>
       {children}
     </section>
   )
@@ -59,16 +65,36 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
  * doesn't serve the object route, the recorded documents are shown and the controls say why
  * they're off.
  */
-export function RecordsGrid({ concept, read = readRecords }: { readonly concept: Concept; readonly read?: Read }) {
+/** The query a grid shows, as a saved view keeps it. */
+export interface GridQuery { readonly filter: Predicate | null; readonly sort: readonly SortKey[]; readonly columns: readonly string[] }
+
+export function RecordsGrid({ concept, read = readRecords, initial, onQuery, timeline = false }: {
+  readonly concept: Concept
+  readonly read?: Read
+  /** The type is a `core.TimeInterval`: the records can also be read as a timeline (lib/timeline.ts). */
+  readonly timeline?: boolean
+  /** The query to open with: a saved view's. */
+  readonly initial?: Partial<GridQuery>
+  /** Told the query the grid shows, whenever it changes. */
+  readonly onQuery?: (query: GridQuery) => void
+}) {
   const name = concept.name
   const fields = useMemo(() => concept.fields.filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
-  const [sort, setSort] = useState<readonly SortKey[]>([])
-  const [filter, setFilter] = useState<Predicate | null>(null)
-  const [draft, setDraft] = useState<readonly DraftClause[]>([])
+  const markings = useMarkingCatalog()
+  // The Record column shows the record's name: the markings of the name facts it is read from.
+  const nameMarkings = useMemo(() => [...new Set(concept.fields.filter(({ id }) => HIDDEN_FIELDS.has(id)).flatMap(({ markings: marked }) => marked ?? []))], [concept])
+  const [sort, setSort] = useState<readonly SortKey[]>(initial?.sort ?? [])
+  const [filter, setFilter] = useState<Predicate | null>(initial?.filter ?? null)
+  // An opened view's filter is the draft too, so the editor opens on it with nothing unapplied.
+  const [draft, setDraft] = useState<readonly DraftClause[]>(() => fromPredicate(initial?.filter ?? null))
   const [limit, setLimit] = useState<number>(LIMITS.pageSize)
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
   const [pageIndex, setPageIndex] = useState(0)
-  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set(fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)))
+  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set(initial?.columns?.filter((id) => fields.some((field) => field.id === id)) ?? fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)))
+  // The columns in the definition's order, as a view keeps them.
+  const shownList = fields.filter(({ id }) => shown.has(id)).map(({ id }) => id)
+  const reported = JSON.stringify({ filter, sort, shownList })
+  useEffect(() => { onQuery?.({ filter, sort, columns: shownList }) }, [reported])
   const [active, setActive] = useState(0)
   const [opened, setOpened] = useState<GridRow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -83,9 +109,30 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
     : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE : catalog.data?.kind === "refused" ? catalog.data.message : undefined
   const [filterOpen, setFilterOpen] = useState(false)
   const client = useQueryClient()
-  const query: RecordsQuery = { sort, filter, limit, ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] } }
+  const hasLifecycle = concept.lifecycles.length > 0
+  // The Timeline reads the window's records: the reader's filter and the window's clauses, in start order, a full page at a time.
+  // A type with a declared lifecycle also offers the type-wide Lifecycle view (UI-LIFECYCLE-2).
+  const [layout, setLayout] = useState<"table" | "timeline" | "lifecycle">(() => {
+    if (!hasLifecycle || typeof location === "undefined") return "table"
+    const requested = location.hash === "#lifecycle" || new URLSearchParams(location.search).get("view") === "lifecycle"
+    return requested ? "lifecycle" : "table"
+  })
+  const [zoom, setZoom] = useState<Zoom>("week")
+  const [anchor, setAnchor] = useState(() => new Date())
+  const shownTimeline = timeline && layout === "timeline"
+  const shownLifecycle = hasLifecycle && layout === "lifecycle"
+  const hasViewModes = timeline || hasLifecycle
+  const span = useMemo(() => windowOf(zoom, anchor), [zoom, anchor])
+  const windowed = shownTimeline ? tryWindowQuery(span, filter) : null
+  const filterOverflow = windowed?.kind === "too_many" ? windowed.overflow : 0
+  const query: RecordsQuery = {
+    sort: windowed?.kind === "ok" ? windowed.sort : sort,
+    filter: windowed?.kind === "ok" ? windowed.filter : filter,
+    limit: shownTimeline ? LIMITS.maxPageSize : limit,
+    ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] },
+  }
   const key = ["records", name, recordsQueryParams(query).toString()] as const
-  const result = useQuery({ queryKey: key, queryFn: () => read(name, query), placeholderData: keepPreviousData, retry: false })
+  const result = useQuery({ queryKey: key, queryFn: () => read(name, query), placeholderData: keepPreviousData, retry: false, enabled: filterOverflow === 0 })
   const data = result.data
 
   const restart = () => { setCursors([undefined]); setPageIndex(0); setActive(0) }
@@ -116,8 +163,9 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   const rows = useMemo<readonly GridRow[]>(() => page === undefined ? [] : page.read.document.records.map((record, index) => ({ record, at: `/records/${index}`, numbers: page.read.numbers })), [page])
   const columns = fields.filter(({ id }) => shown.has(id))
   // Columns never squeeze below a readable width; past the card's width the grid scrolls sideways.
-  const template = `minmax(14rem,1.4fr) ${columns.map((field) => alignRight(field) ? "minmax(8rem,1fr)" : "minmax(9.5rem,1fr)").join(" ")}`
-  const width = `calc(14rem + ${columns.map((field) => alignRight(field) ? "8rem" : "9.5rem").join(" + ")})`
+  // Wide enough for a money amount with its currency ("7,800.00 USD") and a lifecycle state.
+  const template = `minmax(14rem,1.4fr) ${columns.map((field) => alignRight(field) ? "minmax(10.5rem,1fr)" : "minmax(11rem,1fr)").join(" ")}`
+  const width = `calc(14rem + ${columns.map((field) => alignRight(field) ? "10.5rem" : "11rem").join(" + ")})`
 
   const scroller = useRef<HTMLDivElement>(null)
   const [edges, setEdges] = useState({ right: false })
@@ -162,7 +210,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   }
 
   if (data?.kind === "no-cell") return <Shell><EmptyState icon={Rows3} title="No data cell">{NO_DATA_CELL}</EmptyState></Shell>
-  if (data?.kind === "none") return <Shell><EmptyState icon={Rows3}>Records for this object type are not available yet.</EmptyState></Shell>
+  if (data?.kind === "none") return <Shell><EmptyState icon={Rows3}>Records for this object type are not served by this cell.</EmptyState></Shell>
 
   const refused = data?.kind === "refused" ? data : undefined
   const sortProblems = refused ? diagnosticsAt(refused.diagnostics, "/sort") : []
@@ -171,9 +219,14 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   const off = canQuery ? undefined : SERVER_QUERY_UNAVAILABLE
   const pill = "h-8 rounded-lg px-2.5 text-sm"
 
+  const facets = page?.origin === "live" && <FacetsRail objectType={name} fields={fields} filter={filter} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
   return (
     <Shell>
-      <div className="grid gap-3">
+      <div className={cn("grid gap-4", facets && "xl:grid-cols-[15rem_minmax(0,1fr)]")}>
+      {facets && <aside className="hidden max-h-[70vh] overflow-y-auto pe-1 xl:block">{facets}</aside>}
+      {/* content-start: beside a taller facets rail, the rows keep their own height (no band between them). */}
+      <div className="grid min-w-0 content-start gap-3">
+        {facets && <details className="rounded-lg border border-node-border px-3 py-2 xl:hidden"><summary className="cursor-pointer text-sm font-medium">Narrow by</summary><div className="pt-3">{facets}</div></details>}
         {/* Problems sit above the toolbar, so the filter popover (which opens below it) never covers them. */}
         {refused && (
           <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -191,7 +244,20 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          <div role="toolbar" aria-label="Records" className="flex w-max flex-nowrap items-center gap-0.5 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
+          {hasViewModes && (
+            <ToggleGroup type="single" variant="outline" size="sm" aria-label="Show as" value={layout}
+              onValueChange={(next) => {
+                if (next === "table" || (next === "timeline" && timeline && canQuery) || (next === "lifecycle" && hasLifecycle)) {
+                  setLayout(next)
+                  if (next !== "lifecycle") { restart(); setNotice(null) }
+                }
+              }}>
+              <ToggleGroupItem value="table" className="px-3">Table</ToggleGroupItem>
+              {timeline && <ToggleGroupItem value="timeline" className="px-3" disabled={!canQuery && layout !== "timeline"} title={!canQuery ? off : undefined}>Timeline</ToggleGroupItem>}
+              {hasLifecycle && <ToggleGroupItem value="lifecycle" className="px-3">Lifecycle</ToggleGroupItem>}
+            </ToggleGroup>
+          )}
+          <div role="toolbar" aria-label="Records" className="flex w-max flex-nowrap items-center gap-0.5">
             <Popover open={filterOpen} onOpenChange={(open) => { setFilterOpen(open); if (open && draft.length === 0 && filterCount === 0) { const first = filterable(fields)[0]; if (first) setDraft([blankClause(first)]) } }}>
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="sm" className={pill} disabled={!canQuery || filterable(fields).length === 0} title={off}>
@@ -200,53 +266,77 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-[min(44rem,90vw)] rounded-node border-node-border shadow-float">
-                <FilterEditor fields={fields} draft={draft} onDraft={setDraft} onApply={applyFilter} onClear={clearFilter} applied={applied} diagnostics={refused?.diagnostics ?? []} />
+                <FilterEditor fields={fields} draft={draft} onDraft={setDraft} onApply={applyFilter} onClear={clearFilter} applied={applied} diagnostics={refused?.diagnostics ?? []} maxClauses={shownTimeline ? TIMELINE_MAX_USER_CLAUSES : LIMITS.clauses} />
               </PopoverContent>
             </Popover>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className={pill}><Columns3 /> Columns</Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto rounded-node border-node-border shadow-float">
-                <DropdownMenuLabel>Show columns</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {fields.map((field) => (
-                  <DropdownMenuCheckboxItem key={field.id} checked={shown.has(field.id)} disabled={shown.has(field.id) && shown.size === 1}
-                    onSelect={(event) => event.preventDefault()}
-                    onCheckedChange={(checked) => setShown((current) => { const next = new Set(current); if (checked) next.add(field.id); else next.delete(field.id); return next })}>
-                    {field.id.replaceAll("_", " ")}
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <span className="mx-0.5 h-5 w-px bg-node-border" aria-hidden />
-            <label className="flex items-center gap-1.5 px-1.5 text-meta text-muted-foreground">
-              Per page
-              <select className="h-7 rounded-md border border-node-border bg-background px-1.5 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" value={limit} disabled={!canQuery} title={off}
-                onChange={(event) => changeQuery({ limit: Number(event.target.value) })}>
-                {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
-              </select>
-            </label>
-            {sort.length > 0 && <Button variant="ghost" size="sm" className={pill} onClick={() => changeQuery({ sort: [] })}>Clear sort</Button>}
+            {!shownLifecycle && <>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className={pill}><Columns3 /> Columns</Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto rounded-node border-node-border shadow-float">
+                  <DropdownMenuLabel>Show columns</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {fields.map((field) => (
+                    <DropdownMenuCheckboxItem key={field.id} checked={shown.has(field.id)} disabled={shown.has(field.id) && shown.size === 1}
+                      onSelect={(event) => event.preventDefault()}
+                      onCheckedChange={(checked) => setShown((current) => { const next = new Set(current); if (checked) next.add(field.id); else next.delete(field.id); return next })}>
+                      {field.id.replaceAll("_", " ")}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <span className="mx-0.5 h-5 w-px bg-node-border" aria-hidden />
+              <label className="flex items-center gap-1.5 px-1.5 text-meta text-muted-foreground">
+                Per page
+                <select className="h-7 rounded-md border border-node-border bg-background px-1.5 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" value={limit} disabled={!canQuery || shownTimeline} title={shownTimeline ? "The timeline reads up to 200 records per window." : off}
+                  onChange={(event) => changeQuery({ limit: Number(event.target.value) })}>
+                  {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </label>
+              {sort.length > 0 && !shownTimeline && <Button variant="ghost" size="sm" className={pill} onClick={() => changeQuery({ sort: [] })}>Clear sort</Button>}
+            </>}
           </div>
           <span className="flex-1" />
           {page?.origin === "recorded" && <Badge variant="outline" className="border-node-border" title={RECORDED}>Recorded</Badge>}
           <NewRecord title={concept.title} creates={creates} off={actionsOff} pending={catalog.isPending} onPick={(action) => setActing({ action })} />
-          <span className="text-meta tabular-nums text-muted-foreground" aria-live="polite">
-            {page?.total ? totalText(page.total) : page ? `${rows.length} on this page` : ""}
-          </span>
+          {!shownLifecycle && (
+            <span className="text-meta tabular-nums text-muted-foreground" aria-live="polite">
+              {page?.total ? totalText(page.total) : page ? `${rows.length} on this page` : ""}
+            </span>
+          )}
         </div>
         {off !== undefined && page !== undefined && <p className="text-meta text-muted-foreground">{off}</p>}
+        <FilterChips filter={filter} fields={fields} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
         {notice !== null && <p role="status" className="flex items-center gap-1 text-meta text-muted-foreground"><RefreshCw className="size-3" aria-hidden />{notice}</p>}
         {page !== undefined && page.read.document.quarantineCount > 0 && (
-          <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review.</p>
+          <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review{page.origin === "live" ? "; the Quarantine tab names them" : ""}.</p>
         )}
 
-        <div className="relative overflow-hidden rounded-xl border border-node-border bg-card">
+        {shownTimeline && (() => {
+          const loaded = page !== undefined && !result.isPlaceholderData && !result.isError && filterOverflow === 0
+          return (
+            <RecordsTimeline concept={concept} rows={loaded ? rows : []} window={span} zoom={zoom}
+              loaded={loaded} pending={filterOverflow === 0 && (result.isPending || result.isPlaceholderData)} fetching={result.isFetching} filter={filter}
+              filterOverflow={filterOverflow} read={read}
+              onZoom={(next) => { setZoom(next); restart() }} onStep={(by) => { setAnchor((at) => stepAnchor(zoom, at, by)); restart() }}
+              onToday={() => { setAnchor(new Date()); restart() }} onJump={(at) => { setAnchor(new Date(at)); restart() }}
+              onOpenFilter={() => setFilterOpen(true)} onClearFilter={clearFilter} onSwitchToTable={() => { setLayout("table"); restart(); setNotice(null) }}
+              onOpen={(row) => setOpened(row)} />
+          )
+        })()}
+        {shownLifecycle && (
+          <div className="grid gap-4" data-testid="records-lifecycle">
+            {concept.lifecycles.map((lifecycle) => (
+              <LifecycleView key={`${concept.name}:${lifecycle.property}`} concept={concept} lifecycle={lifecycle} filter={filter} />
+            ))}
+          </div>
+        )}
+        <div className={cn("relative overflow-hidden rounded-lg border bg-card", (shownTimeline || shownLifecycle) && "hidden")}>
           <div ref={scroller} role="grid" tabIndex={0} aria-label={`${concept.title} records`} aria-rowcount={rows.length + 1} aria-colcount={columns.length + 1}
             aria-busy={result.isFetching} aria-activedescendant={rows.length > 0 ? `row-${active}` : undefined} onKeyDown={onKey} onScroll={measureEdges}
             className={cn("max-h-[60vh] overflow-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset", result.isFetching && "opacity-70")}>
             <div style={{ minWidth: width }}>
               <div role="row" aria-rowindex={1} className="sticky top-0 z-20 grid border-b border-node-border bg-muted" style={{ gridTemplateColumns: template }}>
-                <div role="columnheader" className={cn(STICKY, "bg-muted px-3 py-2 font-medium")}>Record</div>
+                <div role="columnheader" className={cn(STICKY, "flex items-center gap-1.5 bg-muted px-3 py-2 font-medium")}>Record<MarkingChips markings={nameMarkings} catalog={markings} className="inline-flex items-center gap-1 font-normal" /></div>
                 {columns.map((field: Field) => {
                   const key = sort.find(({ property }) => property === field.id)
                   const can = canQuery && sortable(field)
@@ -259,6 +349,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
                         <span className="truncate">{label}</span>{can && <SortMark direction={key?.direction} />}
                         {sort.length > 1 && key && <sup className="tabular-nums" aria-hidden>{sort.indexOf(key) + 1}</sup>}
                       </button>
+                      <MarkingChips markings={field.markings} catalog={markings} className="ms-1 inline-flex shrink-0 items-center gap-1 font-normal" />
                     </div>
                   )
                 })}
@@ -283,10 +374,10 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
                       className={cn("group absolute inset-x-0 grid cursor-pointer items-center border-b border-node-border/70", current ? "bg-[color-mix(in_oklab,var(--accent)_75%,var(--card))]" : "bg-card hover:bg-[color-mix(in_oklab,var(--muted)_70%,var(--card))]")}
                       style={{ gridTemplateColumns: template, height: ROW, transform: `translateY(${item.start}px)` }}
                       onClick={() => { setActive(item.index); setOpened(row) }}>
-                      <div role="gridcell" className={cn(STICKY, "truncate bg-inherit px-3 font-medium")}>{nameOf(row)}</div>
+                      <div role="gridcell" className={cn(STICKY, "truncate bg-inherit px-3 font-medium")}><RecordName row={row} fallback={nameOf(row)} /></div>
                       {withheld
                         ? <div role="gridcell" aria-colspan={columns.length} className="min-w-0 px-3" style={{ gridColumn: "2 / -1" }}><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></div>
-                        : columns.map((field) => <div key={field.id} role="gridcell" className={cn("min-w-0 truncate px-3", alignRight(field) && "text-right")}><Cell field={field} row={row} /></div>)}
+                        : columns.map((field) => <div key={field.id} role="gridcell" className={cn("group/cell min-w-0 truncate px-3", alignRight(field) && "text-right")}><TracedCell field={field} row={row} live={page?.origin === "live"} /></div>)}
                     </div>
                   )
                 })}
@@ -296,12 +387,15 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
           {edges.right && <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-30 w-12 bg-gradient-to-l from-card to-transparent" />}
         </div>
 
-        <nav className="flex items-center justify-end gap-2 text-meta text-muted-foreground" aria-label="Pages">
-          <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={pageIndex === 0} onClick={() => { setPageIndex(pageIndex - 1); setActive(0) }}>Previous</Button>
-          <span className="tabular-nums">Page {pageIndex + 1}</span>
-          <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={page?.next === undefined || result.isFetching}
-            onClick={() => { const next = page?.next; if (next === undefined) return; setCursors([...cursors.slice(0, pageIndex + 1), next]); setPageIndex(pageIndex + 1); setActive(0) }}>Next</Button>
-        </nav>
+        {!shownLifecycle && (
+          <nav className="flex items-center justify-end gap-2 text-meta text-muted-foreground" aria-label="Pages">
+            <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={pageIndex === 0} onClick={() => { setPageIndex(pageIndex - 1); setActive(0) }}>Previous</Button>
+            <span className="tabular-nums">Page {pageIndex + 1}</span>
+            <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={page?.next === undefined || result.isFetching}
+              onClick={() => { const next = page?.next; if (next === undefined) return; setCursors([...cursors.slice(0, pageIndex + 1), next]); setPageIndex(pageIndex + 1); setActive(0) }}>Next</Button>
+          </nav>
+        )}
+      </div>
       </div>
       <RecordDrawer concept={concept} fields={fields} row={opened} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
         onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
@@ -335,6 +429,10 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
   readonly actions: readonly ActionSummary[]; readonly actionsOff: string | undefined; readonly onAction: (action: ActionSummary, id: string) => void
 }) {
   const record = row?.record
+  const markings = useMarkingCatalog()
+  // What can act on this record now: the cell narrows the type's catalog to the record's state.
+  const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && origin === "live")
+  const offered = recordCatalog(origin === "live", narrowed, actions)
   const object = useQuery({
     queryKey: ["object", record?.objectType, record?.id],
     queryFn: () => record ? transport.object(record.objectType, record.id) : null,
@@ -346,14 +444,14 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
       <SheetContent className="w-[min(32rem,100vw)] overflow-y-auto border-node-border shadow-float sm:max-w-lg">
         {row !== null && record !== undefined && <>
           <SheetHeader>
-            <SheetTitle>{nameOf(row)}</SheetTitle>
+            <SheetTitle className="[overflow-wrap:break-word]"><PathText value={nameOf(row)} /></SheetTitle>
             <SheetDescription className="flex items-center gap-2"><span>{concept.title}</span><CopyId value={record.id} /></SheetDescription>
           </SheetHeader>
           <div className="grid gap-4 px-4 pb-6">
             {isWithheld(row)
               ? <p className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></p>
               : <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-2 text-sm">
-                {fields.map((field) => <div key={field.id} className="contents"><dt className="text-muted-foreground">{field.id.replaceAll("_", " ")}</dt><dd className="min-w-0 break-words"><Cell field={field} row={row} /></dd></div>)}
+                {fields.map((field) => <div key={field.id} className="contents"><dt className="flex flex-wrap items-center gap-1 text-muted-foreground">{field.id.replaceAll("_", " ")}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="min-w-0 break-words"><TracedCell field={field} row={row} live={origin === "live"} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
                 <dt className="text-muted-foreground">version</dt><dd className="tabular-nums">{record.version}</dd>
               </dl>}
             {!isWithheld(row) && <section className="grid gap-2">
@@ -373,9 +471,11 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
               <h3 className="text-sm font-medium">Actions</h3>
               {actionsOff !== undefined
                 ? <p className="text-meta text-muted-foreground">{actionsOff}</p>
-                : offeredFor(actions, record).length === 0
+                : offered.kind === "reading" ? <Skeleton className="h-8" aria-label="Reading the actions on this record" />
+                : offered.kind === "unreadable" ? <p className="text-meta text-muted-foreground">The cell's actions on this record could not be read.</p>
+                : offeredFor(offered.items, record).length === 0
                   ? <p className="text-meta text-muted-foreground">The cell offers you no actions on {concept.title.toLowerCase()} records.</p>
-                  : <div className="flex flex-wrap gap-2">{offeredFor(actions, record).map((action) => (
+                  : <div className="flex flex-wrap gap-2">{offeredFor(offered.items, record).map((action) => (
                     <Button key={action.actionId} variant="outline" size="sm" className="border-node-border shadow-node" onClick={() => onAction(action, record.id)}>
                       <Play /> {writesWhole(action) ? `${action.title} (edit)` : action.title}
                     </Button>

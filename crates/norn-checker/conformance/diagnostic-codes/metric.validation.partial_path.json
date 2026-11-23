@@ -1,6 +1,6 @@
 {
   "code": "metric.validation.partial_path",
-  "message": "Mandatory time, currency and rate inputs require total paths.",
+  "message": "Currency and rate inputs require total paths.",
   "severity": "error",
   "since": "0.2.0",
   "tier": "T3"

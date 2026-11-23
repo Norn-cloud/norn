@@ -1,0 +1,45 @@
+{
+  "artifactId": "lab.batch.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Batch recorders",
+  "namespace": "lab",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "lab.batch.access",
+    "rules": [
+      {
+        "actions": [
+          "lab.batch.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "lab.Batch",
+        "ruleId": "recorders",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/batches/artifacts/lab.batch.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

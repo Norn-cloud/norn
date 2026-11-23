@@ -79,7 +79,8 @@ use norn_ir::{
 
 use compile::compile_mapping;
 pub use compile::{
-    CompiledMapping, EntitlementCoverageReport, MappedSnapshot, OBJECT_ID_FIELD, SourceDocument,
+    CompiledMapping, Derivation, EntitlementCoverageReport, FieldRefusal, MappedSnapshot,
+    OBJECT_ID_FIELD, RowRefusal, SourceDocument,
 };
 pub use set::{check_mapping_artifacts, compile_mapping_artifact, mapping_key};
 pub use snapshot_lint::lint_observed_deviations;
@@ -149,6 +150,10 @@ pub mod codes {
     /// A link joins to a map whose object type the link's target does not
     /// admit.
     pub const LINK_TARGET_MISMATCH: &str = "mapping.model.link_target_mismatch";
+    /// A map declares links, but the cell-owned claim type that records
+    /// every mapped link (`norn.ObservedLinkClaim`) is not an object type
+    /// of the set or the base: every linked row would refuse at mapping time.
+    pub const LINK_CLAIM_TYPE_MISSING: &str = "mapping.model.link_claim_type_missing";
     /// A rule does not type-check against its source and target.
     pub const EXPRESSION_TYPE: &str = "mapping.model.expression_type";
     /// A mapped property's type has no action-input encoding.
@@ -767,6 +772,27 @@ pub fn check_mapping(
     for (index, map) in mapping.maps.iter().enumerate() {
         check_map(mapping, map, index, source, model, &mut out);
     }
+    // OBS-LINK-CONVERGE-1: the cell records each mapped link as an observed
+    // link claim, so a mapping that declares links is admitted only with the
+    // claim type resolvable from the set or the base. Without it, admission
+    // would pass and every linked row would quarantine at mapping time.
+    let claim_type = norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE;
+    if model.entity_artifact(claim_type).is_none()
+        && let Some((index, map)) = mapping
+            .maps
+            .iter()
+            .enumerate()
+            .find(|(_, map)| !map.links.is_empty())
+    {
+        out.push(error(
+            codes::LINK_CLAIM_TYPE_MISSING,
+            format!(
+                "map {:?} declares links, but {claim_type} is not an object type of the set or the base",
+                map.id
+            ),
+            Span::from_segments(["maps", index.to_string().as_str(), "links"]),
+        ));
+    }
     let mut binding_keys = BTreeSet::new();
     for (index, binding) in mapping.identity_bindings.iter().enumerate() {
         if !exact_entitlement_value(&binding.source_key)
@@ -891,7 +917,7 @@ fn check_entitlement_map(
                     "dataset {:?} is not declared by the source schema",
                     join.dataset
                 ),
-                join_at.clone(),
+                join_at,
             ));
             continue;
         };
@@ -1241,6 +1267,63 @@ pub fn input_fields(source: &SourceSchemaIr, dataset: &str) -> Option<BTreeMap<S
     )
 }
 
+/// The declared child tables of `dataset`: each `parent_child` constraint
+/// whose parent is `dataset`, as (collection field, child dataset).
+fn child_tables<'a>(
+    source: &'a SourceSchemaIr,
+    dataset: &'a str,
+) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
+    source.constraints.iter().filter_map(move |constraint| {
+        let collection = constraint.collection.as_deref()?;
+        (constraint.kind == ConstraintKind::ParentChild
+            && constraint
+                .target
+                .as_ref()
+                .is_some_and(|target| target.dataset == dataset))
+        .then_some((collection, constraint.dataset.as_str()))
+    })
+}
+
+/// The closed records an object map's `input` may read through its declared
+/// child tables: one record per child dataset, named by the dataset id, with
+/// that dataset's `input` fields (one level; a grandchild table stays opaque).
+#[must_use]
+pub fn input_child_records(
+    source: &SourceSchemaIr,
+    dataset: &str,
+) -> BTreeMap<String, BTreeMap<String, Type>> {
+    child_tables(source, dataset)
+        .filter_map(|(_, child)| Some((child.to_owned(), input_fields(source, child)?)))
+        .collect()
+}
+
+/// [`input_fields`] for an object map's transforms: a field the source
+/// declares as a child table (the `collection` of a `parent_child`
+/// constraint) is a list of [`input_child_records`] rather than opaque
+/// JSON, so a transform can read its rows (`sum(map(input.lines, #.amount))`).
+/// Every other context keeps the opaque type.
+#[must_use]
+pub fn input_fields_with_children(
+    source: &SourceSchemaIr,
+    dataset: &str,
+) -> Option<BTreeMap<String, Type>> {
+    let mut fields = input_fields(source, dataset)?;
+    for (collection, child) in child_tables(source, dataset) {
+        if source.dataset(child).is_none() {
+            continue;
+        }
+        if let Some(ty) = fields.get_mut(collection) {
+            let rows = Type::List(Box::new(Type::Record(child.to_owned())));
+            *ty = if matches!(ty, Type::Optional(_)) {
+                rows.optional()
+            } else {
+                rows
+            };
+        }
+    }
+    Some(fields)
+}
+
 fn input_type(source: &SourceSchemaIr, field: &SourceField) -> Type {
     let declared = source.code_sets.iter().find(|set| {
         set.origin == Origin::Declared && set.dataset == field.dataset && set.field == field.name
@@ -1283,7 +1366,13 @@ fn check_map(
         return;
     };
     let object_type = object_type.as_str();
-    let env = match ZenTypeEnv::input_only(fields, EnvOptions::default()) {
+    let dataset = map.source.dataset.as_str();
+    let fields = input_fields_with_children(source, dataset).unwrap_or(fields);
+    let env = match ZenTypeEnv::input_only_with_records(
+        input_child_records(source, dataset),
+        fields,
+        EnvOptions::default(),
+    ) {
         Ok(env) => env,
         Err(reason) => {
             out.push(error(

@@ -1,0 +1,141 @@
+{
+  "objectType": "canon.Party",
+  "records": [
+    {
+      "objectType": "canon.Party",
+      "id": "demo/party/0001",
+      "scope": "org_demo/analytics",
+      "version": 1,
+      "values": {
+        "display_name": "Customer #3A9DJ8JQTE",
+        "kind": "person"
+      },
+      "withheld": false,
+      "withheldProperties": [],
+      "masked": {
+        "display_name": {
+          "mode": "pseudonym",
+          "markings": [
+            "pii.contact"
+          ],
+          "revealable": true
+        }
+      }
+    },
+    {
+      "objectType": "canon.Party",
+      "id": "demo/party/0002",
+      "scope": "org_demo/analytics",
+      "version": 1,
+      "values": {
+        "display_name": "Customer #9FERJX2NGY",
+        "kind": "organization"
+      },
+      "withheld": false,
+      "withheldProperties": [],
+      "masked": {
+        "display_name": {
+          "mode": "pseudonym",
+          "markings": [
+            "pii.contact"
+          ],
+          "revealable": true
+        }
+      }
+    },
+    {
+      "objectType": "canon.Party",
+      "id": "demo/party/0003",
+      "scope": "org_demo/analytics",
+      "version": 1,
+      "values": {
+        "display_name": "Customer #3A9DJ8JQTE",
+        "kind": "person"
+      },
+      "withheld": false,
+      "withheldProperties": [],
+      "masked": {
+        "display_name": {
+          "mode": "pseudonym",
+          "markings": [
+            "pii.contact"
+          ],
+          "revealable": true
+        }
+      }
+    },
+    {
+      "objectType": "canon.Party",
+      "id": "demo/party/0004",
+      "scope": "org_demo/analytics",
+      "version": 1,
+      "values": {
+        "display_name": "Customer #06RXAE0C3P",
+        "kind": "person"
+      },
+      "withheld": false,
+      "withheldProperties": [],
+      "masked": {
+        "display_name": {
+          "mode": "pseudonym",
+          "markings": [
+            "pii.contact"
+          ],
+          "revealable": true
+        }
+      }
+    },
+    {
+      "objectType": "canon.Party",
+      "id": "demo/party/0005",
+      "scope": "org_demo/analytics",
+      "version": 1,
+      "values": {
+        "display_name": "Customer #ADFJP7TS92",
+        "kind": "organization"
+      },
+      "withheld": false,
+      "withheldProperties": [],
+      "masked": {
+        "display_name": {
+          "mode": "pseudonym",
+          "markings": [
+            "pii.contact"
+          ],
+          "revealable": true
+        }
+      }
+    },
+    {
+      "objectType": "canon.Party",
+      "id": "demo/party/0006",
+      "scope": "org_demo/analytics",
+      "version": 1,
+      "values": {
+        "display_name": "Customer #JDMDVYQ540",
+        "kind": "person"
+      },
+      "withheld": false,
+      "withheldProperties": [],
+      "masked": {
+        "display_name": {
+          "mode": "pseudonym",
+          "markings": [
+            "pii.contact"
+          ],
+          "revealable": true
+        }
+      }
+    }
+  ],
+  "quarantineCount": 0,
+  "query": {
+    "sort": [],
+    "filter": null
+  },
+  "next": null,
+  "total": {
+    "count": 6,
+    "approximate": false
+  }
+}

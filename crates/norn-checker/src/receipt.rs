@@ -13,7 +13,7 @@
 //!   type environment's link depth;
 //! - the **ZEN Expression type environment** derived from the set's `EntityIR`
 //!   v2 definitions ([`TypeEnvRef`], `norn.expr.env/1`), and the expression
-//!   checker profile beside it ([`EXPR_PROFILE`], `norn-zen/6`);
+//!   checker profile beside it ([`EXPR_PROFILE`], `norn-zen/7`);
 //! - the **checker** name and version, the **identifier admission profile**,
 //!   and a digest of the findings ([`DiagnosticsDigest`], over
 //!   [`crate::diagnostics_to_json`]).
@@ -77,7 +77,7 @@ pub const CHECKER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The ZEN Expression checker profile a receipt records beside the type
 /// environment: `norn_expr::check::CHECKER_PROFILE`, the versioned Norn
-/// profile `norn-zen/6` published in `crates/norn-expr/PROFILE.md`
+/// profile `norn-zen/7` published in `crates/norn-expr/README.md`
 /// (T1-EXPR-6, #2766).
 pub const EXPR_PROFILE: &str = norn_expr::check::CHECKER_PROFILE;
 
@@ -91,6 +91,7 @@ const HISTORIC_ADMISSION_PROFILES: &[(&str, &str)] = &[
     ("0.1.0", "norn-zen/3"),
     ("0.1.0", "norn-zen/4"),
     ("0.1.0", "norn-zen/5"),
+    ("0.2.0", "norn-zen/6"),
 ];
 
 /// Checker 0.1.0 receipts bound complete envelopes, including inline JDM

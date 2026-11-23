@@ -158,6 +158,7 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                     world: World::Main,
                     consumes: None,
                 },
+                trace: None,
             };
             checked = checked.checked_add(1).ok_or("case count overflow")?;
             match commit_action(&mut cell, &catalog, &request, &Allow) {
