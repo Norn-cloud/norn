@@ -33,11 +33,17 @@
           "transitions": [
             {
               "from": [
-                "draft",
-                "proposed"
+                "draft"
               ],
               "id": "propose",
               "to": "proposed"
+            },
+            {
+              "from": [
+                "proposed"
+              ],
+              "id": "reopen_draft",
+              "to": "draft"
             },
             {
               "from": [

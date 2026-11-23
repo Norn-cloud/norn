@@ -99,7 +99,8 @@ export const Roster = Norn.type({
       terminal: ["superseded"],
       immutable: ["superseded"],
       transitions: [
-        { id: "propose", from: ["draft", "proposed"], to: "proposed" },
+        { id: "propose", from: ["draft"], to: "proposed" },
+        { id: "reopen_draft", from: ["proposed"], to: "draft" },
         {
           id: "publish",
           from: ["proposed"],
