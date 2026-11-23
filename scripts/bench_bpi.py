@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Fetch licensed BPI 2019 at test time; stream schema/counts without redistributing rows."""
+"""Fetch licensed BPI 2019 at test time; profile it or flatten it to CSV outside the checkout, never redistributing rows."""
 import argparse
 import collections
+import csv
 import hashlib
 import json
 from pathlib import Path
@@ -80,11 +81,62 @@ def profile(path):
     print(json.dumps(dict(counts=counts, event_keys=keys, trace_keys=trace_keys, activities=activities, sha256=SHA256), sort_keys=True))
 
 
+def flatten(path, out):
+    """Stream the pinned log into one CSV row per event, with its case's attributes."""
+    if digest(path) != SHA256:
+        raise ValueError("csv requires the pinned original bytes")
+    if out.resolve().is_relative_to(Path(__file__).resolve().parents[1]):
+        raise ValueError("raw data must remain outside the source checkout")
+    event_keys = {"concept:name": "activity", "time:timestamp": "occurred_at", "org:resource": "resource",
+                  "User": "user", "Cumulative net worth (EUR)": "net_worth"}
+    trace_keys = {"concept:name": "case_id", "Item Type": "item_type", "Document Type": "document_type",
+                  "Company": "company", "Vendor": "vendor", "Spend area text": "spend_area",
+                  "Item Category": "item_category"}
+    columns = ["event_id", *trace_keys.values(), *event_keys.values()]
+    rows = 0
+    case = {}
+    stack = []
+    with out.open("x", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=columns, lineterminator="\n")
+        writer.writeheader()
+        for event, node in ET.iterparse(path, events=("start", "end")):
+            tag = node.tag.rsplit("}", 1)[-1]
+            if event == "start":
+                stack.append(node)
+                if tag == "trace":
+                    case = {}
+                continue
+            parent = stack[-2] if len(stack) > 1 else None
+            parent_tag = parent.tag.rsplit("}", 1)[-1] if parent is not None else ""
+            if tag != "event" and parent_tag == "trace" and node.get("key") in trace_keys:
+                case[trace_keys[node.get("key")]] = node.get("value", "")
+            if tag == "event":
+                rows += 1
+                row = {"event_id": f"e{rows}", **case}
+                for attr in node:
+                    key = attr.get("key")
+                    if key in event_keys:
+                        row[event_keys[key]] = attr.get("value", "")
+                writer.writerow(row)
+            if tag in ("event", "trace"):
+                node.clear()
+                if parent is not None:
+                    parent.remove(node)
+            stack.pop()
+    print(json.dumps(dict(rows=rows, columns=columns, sha256=SHA256, out=str(out))))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("fetch", "profile"))
+    parser.add_argument("command", choices=("fetch", "profile", "csv"))
     parser.add_argument("path", type=Path, help="data file path in a task scratch directory; never a repo path")
+    parser.add_argument("out", type=Path, nargs="?", help="csv: the flattened events, outside the checkout")
     args = parser.parse_args()
     if args.path.resolve().is_relative_to(Path(__file__).resolve().parents[1]):
         parser.error("raw data must remain outside the source checkout")
-    {"fetch": fetch, "profile": profile}[args.command](args.path)
+    if args.command == "csv":
+        if args.out is None:
+            parser.error("csv needs an output path")
+        flatten(args.path, args.out)
+    else:
+        {"fetch": fetch, "profile": profile}[args.command](args.path)
