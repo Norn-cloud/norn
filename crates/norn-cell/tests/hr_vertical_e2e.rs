@@ -71,8 +71,8 @@ fn repo_root() -> PathBuf {
 }
 
 fn read_json_value(path: &Path) -> Value {
-    let text = fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    let text =
+        fs::read_to_string(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
     serde_json::from_str(&text).unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
 }
 
@@ -128,15 +128,13 @@ fn action_call_type() -> ObjectTypeDef {
         .map(|id| json!({"id": id, "type": {"kind": "text"}}))
         .collect();
     fields.extend(
-        nullable_text
-            .iter()
-            .map(|id| json!({"id": id, "type": {"kind": "text"}, "constraints": {"nullable": true}})),
+        nullable_text.iter().map(
+            |id| json!({"id": id, "type": {"kind": "text"}, "constraints": {"nullable": true}}),
+        ),
     );
-    fields.extend(
-        nullable_json
-            .iter()
-            .map(|id| json!({"id": id, "type": {"kind": "json-ext"}, "constraints": {"nullable": true}})),
-    );
+    fields.extend(nullable_json.iter().map(
+        |id| json!({"id": id, "type": {"kind": "json-ext"}, "constraints": {"nullable": true}}),
+    ));
     serde_json::from_value(json!({"name": "norn.ActionCall", "properties": fields}))
         .expect("norn.ActionCall schema decodes")
 }
@@ -508,15 +506,13 @@ fn put_fact(object_type: &str, id: &str, values: &Value) -> FactWrite {
     }
 }
 
-fn add_link(
-    from_type: &str,
-    from_id: &str,
-    link: &str,
-    to_type: &str,
-    to_id: &str,
-) -> LinkWrite {
+fn add_link(from_type: &str, from_id: &str, link: &str, to_type: &str, to_id: &str) -> LinkWrite {
     LinkWrite {
-        key: LinkKey::new(FactKey::new(from_type, from_id), link, FactKey::new(to_type, to_id)),
+        key: LinkKey::new(
+            FactKey::new(from_type, from_id),
+            link,
+            FactKey::new(to_type, to_id),
+        ),
         expected: FactVersion::ABSENT,
         mutation: LinkMutation::Add {
             values: JsonObject::new(),
@@ -818,16 +814,76 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
         ),
     ]);
     seed.links.extend([
-        add_link("hr.LeaveBalance", "bal_nour_2026", "owner", "hr.Person", "person_nour"),
-        add_link("hr.LeaveRequest", "lr_valid", "person", "hr.Person", "person_nour"),
-        add_link("hr.LeaveRequest", "lr_valid", "balance", "hr.LeaveBalance", "bal_nour_2026"),
-        add_link("hr.LeaveRequest", "lr_over", "person", "hr.Person", "person_nour"),
-        add_link("hr.LeaveRequest", "lr_over", "balance", "hr.LeaveBalance", "bal_nour_2026"),
-        add_link("hr.LeaveRequest", "lr_zero", "person", "hr.Person", "person_nour"),
-        add_link("hr.LeaveRequest", "lr_zero", "balance", "hr.LeaveBalance", "bal_nour_2026"),
-        add_link("hr.PreferenceProfile", "pref_cairo", "unit", "org.OrgUnit", "unit_cairo_nc"),
-        add_link("hr.PreferenceProfile", "pref_cairo", "calendar", "time.Calendar", "cal_cairo"),
-        add_link("hr.Roster", "roster_no_receipt", "unit", "org.OrgUnit", "unit_cairo_nc"),
+        add_link(
+            "hr.LeaveBalance",
+            "bal_nour_2026",
+            "owner",
+            "hr.Person",
+            "person_nour",
+        ),
+        add_link(
+            "hr.LeaveRequest",
+            "lr_valid",
+            "person",
+            "hr.Person",
+            "person_nour",
+        ),
+        add_link(
+            "hr.LeaveRequest",
+            "lr_valid",
+            "balance",
+            "hr.LeaveBalance",
+            "bal_nour_2026",
+        ),
+        add_link(
+            "hr.LeaveRequest",
+            "lr_over",
+            "person",
+            "hr.Person",
+            "person_nour",
+        ),
+        add_link(
+            "hr.LeaveRequest",
+            "lr_over",
+            "balance",
+            "hr.LeaveBalance",
+            "bal_nour_2026",
+        ),
+        add_link(
+            "hr.LeaveRequest",
+            "lr_zero",
+            "person",
+            "hr.Person",
+            "person_nour",
+        ),
+        add_link(
+            "hr.LeaveRequest",
+            "lr_zero",
+            "balance",
+            "hr.LeaveBalance",
+            "bal_nour_2026",
+        ),
+        add_link(
+            "hr.PreferenceProfile",
+            "pref_cairo",
+            "unit",
+            "org.OrgUnit",
+            "unit_cairo_nc",
+        ),
+        add_link(
+            "hr.PreferenceProfile",
+            "pref_cairo",
+            "calendar",
+            "time.Calendar",
+            "cal_cairo",
+        ),
+        add_link(
+            "hr.Roster",
+            "roster_no_receipt",
+            "unit",
+            "org.OrgUnit",
+            "unit_cairo_nc",
+        ),
         add_link(
             "hr.Roster",
             "roster_no_receipt",
@@ -835,7 +891,13 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
             "hr.PreferenceProfile",
             "pref_cairo",
         ),
-        add_link("hr.Roster", "roster_with_receipt", "unit", "org.OrgUnit", "unit_cairo_nc"),
+        add_link(
+            "hr.Roster",
+            "roster_with_receipt",
+            "unit",
+            "org.OrgUnit",
+            "unit_cairo_nc",
+        ),
         add_link(
             "hr.Roster",
             "roster_with_receipt",
@@ -843,7 +905,13 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
             "hr.PreferenceProfile",
             "pref_cairo",
         ),
-        add_link("hr.ShiftCommitment", "shift_nour_mon", "provider", "hr.Person", "person_nour"),
+        add_link(
+            "hr.ShiftCommitment",
+            "shift_nour_mon",
+            "provider",
+            "hr.Person",
+            "person_nour",
+        ),
         add_link(
             "hr.ShiftCommitment",
             "shift_nour_mon",
@@ -858,7 +926,13 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
             "hr.Roster",
             "roster_with_receipt",
         ),
-        add_link("hr_import.SourceBatch", "batch_cairo_1", "unit", "org.OrgUnit", "unit_cairo_nc"),
+        add_link(
+            "hr_import.SourceBatch",
+            "batch_cairo_1",
+            "unit",
+            "org.OrgUnit",
+            "unit_cairo_nc",
+        ),
         add_link(
             "hr_import.ExtractedCandidate",
             "cand_dirty",
@@ -874,7 +948,8 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
             "batch_cairo_1",
         ),
     ]);
-    cell.commit(seed).expect("seed HR vertical objects and links");
+    cell.commit(seed)
+        .expect("seed HR vertical objects and links");
 
     // 1. Leave submit -> approve succeeds; employee self-approval is denied by AccessIR;
     //    over-balance (10 > 5) and zero-day (0) leave requests are refused without mutation.
@@ -912,8 +987,15 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
         .expect("branch manager approves valid pending leave");
     assert_eq!(status_of(&cell, "hr.LeaveRequest", "lr_valid"), "approved");
 
-    let before_refusals = cell.store().read().dump().expect("snapshot before leave refusals");
-    for (req_id, key) in [("lr_over", "leave-submit-over"), ("lr_zero", "leave-submit-zero")] {
+    let before_refusals = cell
+        .store()
+        .read()
+        .dump()
+        .expect("snapshot before leave refusals");
+    for (req_id, key) in [
+        ("lr_over", "leave-submit-over"),
+        ("lr_zero", "leave-submit-zero"),
+    ] {
         let refusal = fixture
             .invoke(
                 &mut cell,
@@ -927,7 +1009,10 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
         assert_eq!(status_of(&cell, "hr.LeaveRequest", req_id), "draft");
     }
     assert_eq!(
-        cell.store().read().dump().expect("snapshot after leave refusals"),
+        cell.store()
+            .read()
+            .dump()
+            .expect("snapshot after leave refusals"),
         before_refusals
     );
 
@@ -969,7 +1054,10 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
             "roster-propose-no-receipt",
         )
         .expect("solver worker proposes draft roster");
-    assert_eq!(status_of(&cell, "hr.Roster", "roster_no_receipt"), "proposed");
+    assert_eq!(
+        status_of(&cell, "hr.Roster", "roster_no_receipt"),
+        "proposed"
+    );
 
     let no_receipt_publish = fixture
         .invoke(
@@ -981,7 +1069,10 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
         )
         .expect_err("roster without solver_receipt_digest cannot publish");
     assert_eq!(no_receipt_publish.code(), "action.precondition_failed");
-    assert_eq!(status_of(&cell, "hr.Roster", "roster_no_receipt"), "proposed");
+    assert_eq!(
+        status_of(&cell, "hr.Roster", "roster_no_receipt"),
+        "proposed"
+    );
 
     fixture
         .invoke(
@@ -1001,7 +1092,10 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
             "roster-publish-with-receipt",
         )
         .expect("branch manager publishes roster once solver receipt is present");
-    assert_eq!(status_of(&cell, "hr.Roster", "roster_with_receipt"), "published");
+    assert_eq!(
+        status_of(&cell, "hr.Roster", "roster_with_receipt"),
+        "published"
+    );
 
     // 3. Immutable attendance create-only (`hr.attendance.record`): first create succeeds,
     //    exact retry replays, and a distinct call attempting to overwrite is refused.
@@ -1112,7 +1206,11 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
 
     // Durable reopen preserves exact state and hash-chained ledger integrity.
     let dump = cell.store().read().dump().expect("final dump");
-    let head = cell.store().read().verify_ledger().expect("ledger verifies");
+    let head = cell
+        .store()
+        .read()
+        .verify_ledger()
+        .expect("ledger verifies");
     drop(cell);
     let reopened = Cell::open(
         &path,
@@ -1124,7 +1222,11 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
     .expect("reopened HR cell");
     assert_eq!(reopened.store().read().dump().expect("reopened dump"), dump);
     assert_eq!(
-        reopened.store().read().verify_ledger().expect("reopened ledger"),
+        reopened
+            .store()
+            .read()
+            .verify_ledger()
+            .expect("reopened ledger"),
         head
     );
 }
@@ -1183,7 +1285,8 @@ fn hr_pii_markings_persist_and_mask_in_real_cell() {
         "org.OrgUnit",
         "unit_cairo_nc",
     ));
-    cell.commit(seed).expect("commit marked Person and SourceBatch");
+    cell.commit(seed)
+        .expect("commit marked Person and SourceBatch");
 
     // Cell marking storage records every declared PII marking on the persisted facts.
     let person_markings = cell
@@ -1192,8 +1295,14 @@ fn hr_pii_markings_persist_and_mask_in_real_cell() {
         .effective_markings(MAIN_WORLD, "hr.Person", "person_nour", None)
         .expect("effective markings query")
         .expect("complete marking snapshot");
-    assert_eq!(person_markings["national_id"], vec!["pii.gov_id".to_owned()]);
-    assert_eq!(person_markings["gender"], vec!["pii.demographic".to_owned()]);
+    assert_eq!(
+        person_markings["national_id"],
+        vec!["pii.gov_id".to_owned()]
+    );
+    assert_eq!(
+        person_markings["gender"],
+        vec!["pii.demographic".to_owned()]
+    );
     assert_eq!(person_markings["phone"], vec!["pii.demographic".to_owned()]);
     assert!(person_markings["display_name"].is_empty());
 
@@ -1257,7 +1366,9 @@ fn hr_pii_markings_persist_and_mask_in_real_cell() {
     let ledger_after_reveal = cell.store().read().ledger(0).expect("ledger entries");
     let reveal_entry = ledger_after_reveal
         .iter()
-        .find(|entry| entry.event.get("type") == Some(&JsonValue::String("marking.revealed".to_owned())))
+        .find(|entry| {
+            entry.event.get("type") == Some(&JsonValue::String("marking.revealed".to_owned()))
+        })
         .expect("marking.revealed receipt is persisted in ledger");
     let reveal_json = serde_json::to_string(&reveal_entry.event).expect("event serializes");
     assert!(reveal_json.contains("principal:hr_admin"));
@@ -1297,5 +1408,8 @@ fn hr_pii_markings_persist_and_mask_in_real_cell() {
         .expect("complete snapshot");
     assert!(current_after["national_id"].is_empty());
     assert_eq!(historical_v1["national_id"], vec!["pii.gov_id".to_owned()]);
-    cell.store().read().verify_ledger().expect("ledger verifies");
+    cell.store()
+        .read()
+        .verify_ledger()
+        .expect("ledger verifies");
 }
