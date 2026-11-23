@@ -135,7 +135,7 @@ function ScopeSwitcher() {
       <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring data-open:bg-sidebar-accent">
         <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-foreground text-[0.6875rem] font-semibold text-background">{initials(open?.name ?? "")}</span>
         <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
-          <span className="truncate font-medium">{open?.name}</span>
+          <span className="font-medium wrap-anywhere">{open?.name}</span>
           <span className="truncate text-xs text-muted-foreground">{open?.detail}</span>
         </span>
         <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />

@@ -77,7 +77,7 @@ function StateNodeView({ data }: NodeProps<StateNode>) {
       <Handle type="target" position={Position.Top} id="top-in" className={HANDLE} />
       <Handle type="source" position={Position.Top} id="top-out" className={HANDLE} />
       <span aria-label={STATE_KIND[data.kind]} className="size-2 shrink-0 rounded-full" style={{ background: `var(--tone-${STATE_TONE[data.kind]})` }} />
-      <span className="truncate text-xs font-medium">{data.name}</span>
+      <span className="text-[16px] leading-tight font-medium">{data.name}</span>
     </div>
   )
 }
@@ -88,13 +88,17 @@ function TransitionView({ id, sourceX, sourceY, targetX, targetY, sourcePosition
   const reverse = direction === "return-down" || direction === "return-up"
   const vertical = direction === "up" || direction === "down"
   const upper = direction === "return-up"
+  const sameRow = sourceY === targetY
   const [forward, x, y] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 8, offset: 12 })
   const turnY = upper ? Math.min(sourceY, targetY) - lift : Math.max(sourceY, targetY) + lift
   const d = reverse
     ? `M ${sourceX} ${sourceY} C ${sourceX} ${turnY}, ${sourceX} ${turnY}, ${sourceX - 18} ${turnY} H ${targetX + 18} C ${targetX} ${turnY}, ${targetX} ${turnY}, ${targetX} ${targetY}`
     : lift > 0 ? `M ${sourceX} ${sourceY} C ${sourceX + 55} ${sourceY + lift}, ${targetX - 55} ${targetY + lift}, ${targetX} ${targetY}` : forward
-  const labelX = reverse ? (sourceX + targetX) / 2 : vertical ? x + (x < 210 ? 58 : -58) : lift > 0 ? x + 46 : x
-  const labelY = reverse ? turnY + (upper ? -12 : 12) : vertical ? y : lift > 0 ? y + 28 : y - (sourceY === targetY || Math.abs(sourceY - targetY) > 190 ? 18 : 14)
+  const labelX = reverse ? (sourceX + targetX) / 2 : vertical ? x + (x < 210 ? 58 : -58) : lift > 0 && !sameRow ? x + 46 : x
+  const labelY = reverse ? turnY + (upper ? -14 : 14)
+    : vertical ? y
+      : lift > 0 ? y + (sameRow ? lift * 0.75 : 28)
+        : y - (sameRow || Math.abs(sourceY - targetY) > 190 ? 34 : 14)
 
   return (
     <>
@@ -111,7 +115,7 @@ function TransitionView({ id, sourceX, sourceY, targetX, targetY, sourcePosition
           onClick={() => choose(step)}
           title={`${step.command} · ${step.guard}`}
           className={cn(
-            "nodrag nopan pointer-events-auto absolute z-10 rounded-sm border px-1.5 py-0.5 font-mono text-[10px] font-medium whitespace-nowrap transition-colors",
+            "nodrag nopan pointer-events-auto absolute z-10 rounded-sm border px-1.5 py-0.5 font-mono text-[15px] leading-tight font-medium whitespace-nowrap transition-colors",
             selected
               ? "border-foreground bg-foreground text-background"
               : "border-border bg-card text-foreground/85 hover:border-foreground/45",
@@ -140,7 +144,12 @@ function BranchGraph({ phase, selected, onSelect }: { readonly phase: StatePhase
       : source.column === target.column ? source.row > target.row ? "up" : "down"
         : step.command === "activatePlan" || step.command === "keepPromise" ? "return-up" : "return-down"
     const parallel = phase.steps.slice(0, index).filter((previous) => previous.from === step.from && previous.to === step.to).length
-    const lift = direction === "return-up" ? (step.command === "activatePlan" ? 36 : 74) : direction === "return-down" ? 34 + (index % 3) * 18 : parallel * 44
+    const bypassesState = source.row === target.row && Object.values(phase.states).some((state) =>
+      state.row === source.row && state.column > source.column && state.column < target.column,
+    )
+    const lift = direction === "return-up" ? (step.command === "activatePlan" ? 36 : 74)
+      : direction === "return-down" ? 34 + (index % 3) * 18
+        : (bypassesState ? 112 : 0) + parallel * 44
     const sourceHandle = direction === "forward" ? "out" : direction === "up" || direction === "return-up" ? "top-out" : "bottom-out"
     const targetHandle = direction === "forward" ? "in" : direction === "down" || direction === "return-up" ? "top-in" : "bottom-in"
     return [{
@@ -157,7 +166,7 @@ function BranchGraph({ phase, selected, onSelect }: { readonly phase: StatePhase
   const lastRow = Math.max(...Object.values(phase.states).map((state) => state.row))
   const returnAtBottom = edges.some(({ data }) => data?.direction === "return-down" && phase.states[data.step.from]?.row === lastRow)
   return (
-    <div aria-label={`${phase.title} state graph`} className="h-[36rem] w-full bg-canvas-surface">
+    <div aria-label={`${phase.title} state graph`} className="h-[clamp(26rem,52svh,36rem)] w-full bg-canvas-surface">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -194,12 +203,10 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
   const draftCount = Object.keys(drafts).length
 
   return (
-    <Well className="grid lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <div className="min-w-0">
-        <BranchGraph phase={phase} selected={selected} onSelect={(step) => { setSelected(step); setInspectorTab("inspector") }} />
-      </div>
+    <Well>
+      <BranchGraph phase={phase} selected={selected} onSelect={(step) => { setSelected(step); setInspectorTab("inspector") }} />
 
-      <aside aria-label="Transition inspector" className="flex flex-col border-t bg-surface-subtle/40 lg:h-[36rem] lg:border-s lg:border-t-0">
+      <aside aria-label="Transition inspector" className="border-t bg-surface-subtle/40">
         <div className="flex items-center justify-between border-b px-3">
           <div role="tablist" className="flex gap-1">
             <button
@@ -229,7 +236,7 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
         </div>
 
         {inspectorTab === "inspector" ? (
-          <div className="flex-1 divide-y overflow-y-auto px-4 text-meta">
+          <div className="divide-y px-4 text-meta">
             <div className="space-y-1 py-3.5">
               <p className="text-xs text-muted-foreground">Selected transition</p>
               <code className="block text-sm font-medium text-foreground">{selected.declared ?? selected.command}</code>
@@ -317,7 +324,7 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
             </div>
           </div>
         ) : (
-          <ul className="flex-1 divide-y overflow-y-auto">
+          <ul className="divide-y">
             {phase.steps.map((step) => {
               const active = step === selected
               return (

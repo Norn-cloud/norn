@@ -89,7 +89,9 @@ function Root() {
         tools={brand && (
           <span className="me-1 hidden min-w-0 items-center gap-1.5 rounded-md border bg-card px-2 py-1 text-[11px] whitespace-nowrap text-muted-foreground md:inline-flex">
             <span>Prepared for</span>
-            <img src={brand.logoUrl} alt={brand.name} referrerPolicy="no-referrer" className="h-4 max-w-16 object-contain" />
+            <span className="dark:rounded-sm dark:bg-white dark:px-1 dark:py-0.5">
+              <img src={brand.logoUrl} alt={brand.name} referrerPolicy="no-referrer" className="h-4 max-w-16 object-contain" />
+            </span>
           </span>
         )}
       />
