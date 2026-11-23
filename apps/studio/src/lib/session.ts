@@ -1,6 +1,7 @@
 import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
 import { forgetDrafts, sessionKey } from "../actions/kept-drafts.ts"
 import { forgetParkedCalls } from "../actions/parked-calls.ts"
+import { refreshMode } from "./live-transport.ts"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
 export interface Account {
@@ -8,7 +9,16 @@ export interface Account {
   readonly organization: { readonly id: string; readonly name: string; readonly role: string } | null
 }
 
+/** Public auth capabilities the server advertises (/api/auth/config). Display only; the server still enforces everything. */
+export interface AuthConfig {
+  readonly magicLink: boolean
+  readonly inviteOnly: boolean
+}
+
+export const DEFAULT_AUTH_CONFIG: AuthConfig = { magicLink: false, inviteOnly: false }
+
 const SESSION = ["session"] as const
+const AUTH_CONFIG = ["auth-config"] as const
 
 /** A refusal the auth server explained, shown to the user as is. */
 export class AuthRefusal extends Error {}
@@ -22,9 +32,22 @@ async function readAccount(fetcher: Fetch): Promise<Account | null> {
   return (await response.json()) as Account
 }
 
+/** Read which sign-in methods this deployment actually supports; fails closed (magicLink: false) when unavailable. */
+export async function readAuthConfig(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<AuthConfig> {
+  const response = await fetcher("/api/auth/config", { headers: { accept: "application/json" } }).catch(() => null)
+  if (response === null || !response.ok) return DEFAULT_AUTH_CONFIG
+  const body = (await response.json().catch(() => null)) as { magicLink?: unknown; inviteOnly?: unknown } | null
+  return { magicLink: body?.magicLink === true, inviteOnly: body?.inviteOnly === true }
+}
+
+/** Server-reported auth capabilities for the login screen; hides unsupported methods until confirmed. */
+export function useAuthConfig() {
+  return useQuery({ queryKey: AUTH_CONFIG, queryFn: () => readAuthConfig(), staleTime: 60_000, retry: false })
+}
+
 /** Forget every read made as the reader who made it (records, picker choices, the inbox): all but the session itself. */
-function forgetReads(client: QueryClient): void {
-  client.removeQueries({ predicate: (query) => query.queryKey[0] !== SESSION[0] })
+export function forgetReads(client: QueryClient): void {
+  client.removeQueries({ predicate: (query) => query.queryKey[0] !== SESSION[0] && query.queryKey[0] !== AUTH_CONFIG[0] })
 }
 
 /**
@@ -43,6 +66,7 @@ export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init)
         // A parked call's exact input and key are the previous reader's: never kept for the next,
         // nor for the same reader coming back after a tenant switch or an expiry.
         forgetParkedCalls()
+        refreshMode()
         forgetReads(client)
       }
       return account
@@ -61,8 +85,8 @@ export function useAccount() {
 async function call(path: string, body: Record<string, string>): Promise<void> {
   const response = await fetch(`/api/auth${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   if (response.ok) return
-  const reason = await response.json().catch(() => null) as { message?: string } | null
-  throw new AuthRefusal(response.status === 429 ? "Too many attempts. Wait a few minutes and try again." : reason?.message ?? `Sign-in failed (${response.status}).`)
+  const reason = await response.json().catch(() => null) as { message?: string; error?: string } | null
+  throw new AuthRefusal(response.status === 429 ? "Too many attempts. Wait a few minutes and try again." : reason?.message ?? reason?.error ?? `Sign-in failed (${response.status}).`)
 }
 
 export const authApi = {
@@ -90,6 +114,7 @@ export async function endSession(client: QueryClient, signOut: () => Promise<voi
   await signOut()
   forgetDrafts()
   forgetParkedCalls()
+  refreshMode()
   forgetReads(client)
   await client.invalidateQueries({ queryKey: SESSION })
 }

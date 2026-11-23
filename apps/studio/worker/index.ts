@@ -1,5 +1,5 @@
 import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
-import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
+import { activeMembership, createAuth, isOrganizationArchived, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 import { clientIpHeader } from "./client-ip.ts"
 import { connectors } from "./connectors.ts"
@@ -8,7 +8,18 @@ import { cellFor } from "./cell.ts"
 import { questions } from "./questions.ts"
 import { billingDocument, entitlementOf, limitRaised, subscribed, billingOf, type BillingDb, type BillingSettings } from "./billing.ts"
 import { polarConfig, settingsOf } from "./polar-config.ts"
-import { acceptWorkspaceInvitation, createWorkspace } from "./workspaces.ts"
+import {
+  acceptWorkspaceInvitation,
+  activateWorkspace,
+  archiveWorkspace,
+  createWorkspace,
+  createWorkspaceRequest,
+  decideWorkspaceRequest,
+  deleteWorkspace,
+  listWorkspaces,
+  renameWorkspace,
+  restoreWorkspace,
+} from "./workspaces.ts"
 import { cellScope } from "./scope.ts"
 import { instrumented } from "./telemetry.ts"
 
@@ -89,11 +100,15 @@ function trustedOrigins(env: Env): string[] {
 // One Better Auth instance per database binding (per isolate in production).
 const instances = new WeakMap<object, Auth>()
 
+/** Whether this deployment has a mail sender configured for magic-link sign-in. */
+export const magicLinkEnabled = (env: Pick<Env, "EMAIL" | "EMAIL_FROM">): boolean =>
+  env.EMAIL !== undefined && typeof env.EMAIL_FROM === "string" && env.EMAIL_FROM.trim() !== ""
+
 function auth(env: Env): Auth {
   const known = instances.get(env.AUTH_DB)
   if (known !== undefined) return known
   const { EMAIL: mail, EMAIL_FROM: from } = env
-  const sendMagicLink = mail === undefined || from === undefined ? undefined : async ({ to, url }: MagicLinkMail) => {
+  const sendMagicLink = !magicLinkEnabled(env) || mail === undefined || from === undefined ? undefined : async ({ to, url }: MagicLinkMail) => {
     await mail.send({ to, from, subject: "Sign in to Norn Studio", text: `Sign in to Norn Studio: ${url}\n\nThe link expires in 10 minutes. If you did not ask for it, ignore this email.` })
   }
   const { TOOL_GATEWAY_URL: url, TOOL_GATEWAY_CLIENT_ID: clientId, TOOL_GATEWAY_CLIENT_SECRET: clientSecret } = env
@@ -145,16 +160,70 @@ export const SPLIT_WRITE_PATHS: ReadonlyMap<string, string> = new Map([
 /** Matched as Better Auth's router could: any case, with or without a trailing slash. */
 const routePath = (pathname: string) => pathname.toLowerCase().replace(/\/+$/, "")
 
-/** Studio's workspace writes: POST from a trusted origin, as Better Auth's own origin check requires. */
+/** Studio's governed workspace routes: GET for reads; POST/PATCH/DELETE require a trusted origin. */
 async function workspaceRoute(request: Request, env: Env, pathname: string): Promise<Response> {
-  if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
-  const origin = request.headers.get("origin")
-  if (origin === null || !trustedOrigins(env).includes(origin)) return refuse(403, "Cross-origin request refused.")
-  const context = { auth: auth(env), db: env.AUTH_DB, billing: await billingSettings(env), baseURL: env.BETTER_AUTH_URL }
-  const handle = pathname === "/api/workspaces" ? createWorkspace : pathname === "/api/workspaces/invitations/accept" ? acceptWorkspaceInvitation : undefined
-  if (handle === undefined) return refuse(404, "No such endpoint.")
+  const clean = pathname.replace(/\/+$/, "")
+  const tail = clean.slice("/api/workspaces".length)
+  const segments = tail === "" ? [] : tail.slice(1).split("/")
+  const decoded: string[] = []
+  for (const segment of segments) {
+    try { decoded.push(decodeURIComponent(segment)) } catch { return refuse(400, "Invalid path encoding.") }
+  }
+  const write = request.method !== "GET"
+  if (write) {
+    const origin = request.headers.get("origin")
+    if (origin === null || !trustedOrigins(env).includes(origin)) return refuse(403, "Cross-origin request refused.")
+  }
+  const context = {
+    auth: auth(env),
+    db: env.AUTH_DB,
+    billing: await billingSettings(env),
+    baseURL: env.BETTER_AUTH_URL,
+    ...env.NORN_HOST === undefined ? {} : { host: env.NORN_HOST },
+    ...env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() ? { defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID.trim() } : {},
+    ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG },
+  }
+  const run = async (): Promise<Response> => {
+    if (decoded.length === 0) {
+      if (request.method === "GET") return listWorkspaces(request, context)
+      if (request.method === "POST") return createWorkspace(request, context)
+      return refuse(405, "GET or POST only.", { allow: "GET, POST" })
+    }
+    if (decoded.length === 2 && decoded[0] === "invitations" && decoded[1] === "accept") {
+      if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+      return acceptWorkspaceInvitation(request, context)
+    }
+    if (decoded.length === 1 && decoded[0] === "requests") {
+      if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+      return createWorkspaceRequest(request, context)
+    }
+    if (decoded.length === 3 && decoded[0] === "requests" && decoded[2] === "decide" && decoded[1] !== "") {
+      if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+      return decideWorkspaceRequest(request, context, decoded[1]!)
+    }
+    if (decoded.length === 1 && decoded[0] !== "") {
+      if (request.method === "PATCH") return renameWorkspace(request, context, decoded[0]!)
+      if (request.method === "DELETE") return deleteWorkspace(request, context, decoded[0]!)
+      return refuse(405, "PATCH or DELETE only.", { allow: "PATCH, DELETE" })
+    }
+    if (decoded.length === 2 && decoded[0] !== "") {
+      if (decoded[1] === "activate") {
+        if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+        return activateWorkspace(request, context, decoded[0]!)
+      }
+      if (decoded[1] === "archive") {
+        if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+        return archiveWorkspace(request, context, decoded[0]!)
+      }
+      if (decoded[1] === "restore") {
+        if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+        return restoreWorkspace(request, context, decoded[0]!)
+      }
+    }
+    return refuse(404, "No such endpoint.")
+  }
   try {
-    return await handle(request, context)
+    return await run()
   } catch (error) {
     // Rolled back whole (workspaces.ts); a bare 500, as Better Auth answers a database failure.
     console.error(error)
@@ -166,9 +235,14 @@ async function workspaceRoute(request: Request, env: Env, pathname: string): Pro
  * The public answer to a successful sign-up: the same keys in the same order for a new and a
  * registered address, a placeholder id, no server timestamps and no cookie. Better Auth's own
  * body differs between the two (a real row vs a synthetic one, createdAt taken at different points).
+ * Explicit refusals (e.g. 403 INVITE_ONLY or 429 rate-limit) pass through with no-store.
  */
 export async function publicSignUp(response: Response): Promise<Response> {
-  if (!response.ok) return response
+  if (!response.ok) {
+    const headers = new Headers(response.headers)
+    if (!headers.has("cache-control")) headers.set("cache-control", "no-store")
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+  }
   const { user } = (await response.json()) as { user: { email: string; name: string } }
   const body = { token: null, user: { id: crypto.randomUUID(), email: user.email, name: user.name, emailVerified: false } }
   return Response.json(body, { status: 200, headers: { "cache-control": "no-store" } })
@@ -176,16 +250,54 @@ export async function publicSignUp(response: Response): Promise<Response> {
 
 /**
  * Accepting an invitation that is no longer pending: it expired or an admin withdrew it; Better Auth
- * says only "Invitation not found", so say what the person can do about it.
+ * says only "Invitation not found", so say what the person can do about it while keeping every
+ * upstream response header (such as a refreshed Set-Cookie from session middleware).
  */
 export async function acceptInvitation(response: Response): Promise<Response> {
   if (response.status !== 400) return response
   const body = (await response.clone().json().catch(() => null)) as { code?: unknown } | null
   if (body?.code !== "INVITATION_NOT_FOUND") return response
-  return Response.json(
-    { code: "INVITATION_NOT_FOUND", message: "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one." },
-    { status: 400, headers: { "cache-control": "no-store" } },
+  await response.body?.cancel().catch(() => undefined)
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  headers.delete("content-encoding")
+  headers.delete("etag")
+  headers.set("content-type", "application/json; charset=utf-8")
+  headers.set("cache-control", "no-store")
+  return new Response(
+    JSON.stringify({ code: "INVITATION_NOT_FOUND", message: "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one." }),
+    { status: response.status, statusText: response.statusText, headers },
   )
+}
+
+/** Public auth capabilities so LoginPage hides unsupported methods (no 503 Email link tab) and states invite-only clearly. */
+function authConfig(request: Request, env: Env): Response {
+  if (request.method !== "GET") return refuse(405, "GET only.", { allow: "GET" })
+  return Response.json(
+    { magicLink: magicLinkEnabled(env), inviteOnly: signUpEmails(env) !== undefined },
+    { headers: { "cache-control": "no-store" } },
+  )
+}
+
+/** Refuse activating an archived workspace through Better Auth's set-active endpoint without leaking org existence to non-members. */
+async function blockArchivedSetActive(request: Request, env: Env): Promise<Response | null> {
+  if (request.method !== "POST") return null
+  const origin = request.headers.get("origin")
+  if (origin === null || !trustedOrigins(env).includes(origin)) return null
+  const session = await auth(env).api.getSession({ headers: request.headers })
+  if (session === null) return null
+  let organizationId: unknown
+  try {
+    organizationId = (JSON.parse(await request.clone().text()) as { organizationId?: unknown } | null)?.organizationId
+  } catch {
+    return null
+  }
+  if (typeof organizationId !== "string" || organizationId === "") return null
+  if (!(await isOrganizationArchived(auth(env), organizationId))) return null
+  const { adapter } = await auth(env).$context
+  const member = await adapter.findOne<{ id: string }>({ model: "member", where: [{ field: "userId", value: session.user.id }, { field: "organizationId", value: organizationId }] })
+  if (member === null) return null
+  return Response.json({ code: "WORKSPACE_ARCHIVED", message: "Restore this workspace before opening it." }, { status: 409, headers: { "cache-control": "no-store" } })
 }
 
 /** The signed-in user and active organization, for the shell. Display only; Norn decides permissions. */
@@ -294,19 +406,24 @@ const handler = {
     if (mcpOn(env) && OAUTH_DISCOVERY.has(pathname)) return auth(env).handler(request)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
+    if (routePath(pathname) === "/api/auth/config") return authConfig(request, env)
     if (pathname === "/api/auth/sign-in/magic-link" || pathname === "/api/auth/magic-link/verify") {
       const host = new URL(request.url).host
       if ([request.headers.get("host"), request.headers.get("x-forwarded-host")].some((value) => value !== null && value.toLowerCase() !== host.toLowerCase())) return refuse(403, "Magic link host does not match this origin.")
     }
     if (pathname === "/api/auth/magic-link/verify" && !(await verifyMagicLinkOrigin(request, env.BETTER_AUTH_SECRET, trustedOrigins(env)))) return refuse(403, "Magic link is not valid for this origin.")
-    if (pathname === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
+    if (routePath(pathname) === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
     // The gateway provider is link-only: refuse every sign-in that could start from it (social and
     // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
     if (pluginBillingPath(pathname)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
     const moved = SPLIT_WRITE_PATHS.get(routePath(pathname))
     if (moved !== undefined && await billingSettings(env) !== undefined) return Response.json({ code: "USE_STUDIO_ROUTE", message: `With billing on, this goes through ${moved}.`, route: moved }, { status: 404, headers: { "cache-control": "no-store" } })
-    if (pathname === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
+    if (routePath(pathname) === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
+    if (routePath(pathname) === "/api/auth/organization/set-active") {
+      const blocked = await blockArchivedSetActive(request, env)
+      if (blocked !== null) return blocked
+    }
     if (pathname === "/api/workspaces" || pathname.startsWith("/api/workspaces/")) return workspaceRoute(request, env, pathname)
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)

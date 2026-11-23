@@ -1,4 +1,4 @@
-import { activeMembership, type Auth } from "./auth.ts"
+import { activeMembership, isOrganizationArchived, type Auth } from "./auth.ts"
 
 /**
  * Who a request acts as, resolved on the server from the verified session or
@@ -35,6 +35,7 @@ export async function resolveActor(request: Request, auth: Auth): Promise<NornAc
   if (key !== null) {
     const verified = await auth.api.verifyApiKey({ body: { key } })
     if (!verified.valid || verified.key === null) return null
+    if (await isOrganizationArchived(auth, verified.key.referenceId)) return null
     const requested = (verified.key.metadata as { role?: unknown } | null)?.role ?? "viewer"
     if (!SERVICE_ROLES.some((role) => role === requested)) return null
     return { actorKind: "service", subjectId: verified.key.id, orgId: verified.key.referenceId, role: String(requested), authMethod: "api_key" }

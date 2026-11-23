@@ -6,8 +6,10 @@ import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { Account } from "../src/lib/session.ts"
 import { Shell, decoded, diffExpanded, initials, perspectiveOf, sectionOf, target, type MenuEntry, type Section } from "../src/shell.tsx"
+import { isEmptyWorkspace } from "../src/home.tsx"
 import { ViewProvider } from "../src/lib/view.tsx"
 import { WORKSPACES } from "../src/lib/workspaces.ts"
+import { WORKSPACES_QUERY_KEY, type WorkspacesDocument } from "../src/lib/workspaces-api.ts"
 
 const account: Account = { user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" }, organization: { id: "o1", name: "Analytical", role: "viewer" } }
 
@@ -187,4 +189,39 @@ test("collapsing one space records only that branch, leaving untouched destinati
   // Expanding an untouched destination later records only that destination as true while preserving the earlier space collapse.
   const next = diffExpanded(after, [...after, "dest:/metrics"], chosen)
   expect(next).toEqual({ "space:Operations": false, "dest:/metrics": true })
+})
+
+test("#1414: the workspace switcher shows the workspace name and plan/role, never raw org or environment ids", async () => {
+  const rawAccount: Account = {
+    user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" },
+    organization: { id: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", name: "Analytical", role: "owner" },
+  }
+  const client = new QueryClient()
+  client.setQueryData(["session"], rawAccount)
+  client.setQueryData(["studio-scope"], { orgId: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", environmentId: "rehearsal2" })
+  client.setQueryData(["studio-mode"], { kind: "live", catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {} })
+  const doc: WorkspacesDocument = {
+    workspaces: [{ id: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", name: "Analytical", slug: "analytical", role: "owner", active: true, hasCell: true, archived: false, archivedAt: null, canRename: true, canArchive: true, canDelete: true }],
+    archived: [],
+    creation: { mode: "self-serve", allowed: true },
+    requests: [],
+    planLabel: "Free plan",
+  }
+  client.setQueryData(WORKSPACES_QUERY_KEY, doc)
+  const router = createRouter({
+    routeTree: createRootRoute({ component: () => <Shell sections={[sources]} account={rawAccount} onSignOut={() => {}} /> }),
+    history: createMemoryHistory({ initialEntries: ["/sources"] }),
+  })
+  await router.load()
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(html).toContain("Analytical")
+  expect(html).toContain("Live · Free plan")
+  expect(html).not.toContain("MPu3nAkCMSqDEjamX5eb9IB6or836fCS")
+  expect(html).not.toContain("rehearsal2")
+})
+
+test("#1414: isEmptyWorkspace identifies cells holding only trusted base artifacts", () => {
+  expect(isEmptyWorkspace([])).toBe(true)
+  expect(isEmptyWorkspace([{ artifactId: "core.units" }, { artifactId: "std.value_types" }])).toBe(true)
+  expect(isEmptyWorkspace([{ artifactId: "core.units" }, { artifactId: "canon.Holding.entity" }])).toBe(false)
 })

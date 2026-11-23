@@ -2,29 +2,50 @@ import { expect, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
 import { LoginPage, SIGNED_UP, type Mode } from "../src/login.tsx"
+import { readAuthConfig, type AuthConfig } from "../src/lib/session.ts"
 
-const render = (initial: Mode) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><LoginPage initial={initial} /></QueryClientProvider>)
+const render = (initial: Mode, config?: AuthConfig) =>
+  renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><LoginPage initial={initial} config={config} /></QueryClientProvider>)
 
-test("sign-in asks for email and password and offers the other ways in", () => {
-  const html = render("sign-in")
-  expect(html).toContain('autoComplete="current-password"')
-  expect(html).toContain('type="email"')
-  expect(html).toContain("Create account")
-  expect(html).toContain("Email link")
-  expect(html).not.toContain('name="name"')
+test("sign-in asks for email and password and hides Email link unless server config enables it", () => {
+  const withoutMagic = render("sign-in")
+  expect(withoutMagic).toContain('autoComplete="current-password"')
+  expect(withoutMagic).toContain('type="email"')
+  expect(withoutMagic).toContain("Create account")
+  expect(withoutMagic).not.toContain("Email link")
+  expect(withoutMagic).not.toContain('name="name"')
+
+  // Even requesting email-link initially falls back to sign-in when magic links are off.
+  expect(render("email-link", { magicLink: false, inviteOnly: false })).not.toContain("Send link")
+
+  // When server config reports magicLink: true, the Email link tab is shown.
+  const withMagic = render("sign-in", { magicLink: true, inviteOnly: false })
+  expect(withMagic).toContain("Email link")
 })
 
-test("creating an account asks for a name and a 12-character password", () => {
-  const html = render("sign-up")
-  expect(html).toContain('name="name"')
-  expect(html).toContain('minLength="12"')
-  expect(html).toContain('autoComplete="new-password"')
+test("creating an account asks for a name and a 12-character password and states invite-only when configured", () => {
+  const open = render("sign-up", { magicLink: false, inviteOnly: false })
+  expect(open).toContain('name="name"')
+  expect(open).toContain('minLength="12"')
+  expect(open).toContain('autoComplete="new-password"')
+  expect(open).not.toContain("invite-only")
+
+  const inviteOnly = render("sign-up", { magicLink: false, inviteOnly: true })
+  expect(inviteOnly).toContain("invite-only")
+  expect(inviteOnly).not.toContain("Email link")
 })
 
-test("an email link needs only the address", () => {
-  const html = render("email-link")
+test("an email link needs only the address when the server enables magic links", () => {
+  const html = render("email-link", { magicLink: true, inviteOnly: false })
   expect(html).not.toContain('type="password"')
   expect(html).toContain("Send link")
+})
+
+test("readAuthConfig fails closed when unavailable and parses server booleans strictly", async () => {
+  expect(await readAuthConfig(async () => Response.json({ magicLink: true, inviteOnly: true }))).toEqual({ magicLink: true, inviteOnly: true })
+  expect(await readAuthConfig(async () => Response.json({ magicLink: "yes", inviteOnly: 1 }))).toEqual({ magicLink: false, inviteOnly: false })
+  expect(await readAuthConfig(async () => new Response(null, { status: 503 }))).toEqual({ magicLink: false, inviteOnly: false })
+  expect(await readAuthConfig(async () => { throw new TypeError("offline") })).toEqual({ magicLink: false, inviteOnly: false })
 })
 
 test("after sign-up the page asks the user to sign in, never saying whether the address was new", () => {

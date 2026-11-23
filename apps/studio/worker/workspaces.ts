@@ -1,19 +1,21 @@
-import { atomically, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
-import { admitCell, admitMember, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
+import { hostToken, type NornActor } from "./actor.ts"
+import { activeMembership, atomically, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
+import { admitCell, admitMember, entitlementOf, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
 
 /**
- * Creating a workspace and accepting an invitation, each as one database transaction. Better Auth's
- * own routes write the workspace and its owner (or the accepted invitation and the member) in separate
- * statements, so an interruption or a plan-limit refusal between them leaves half a change: a workspace
- * without its owner holding a payer's cell, or an accepted invitation without its member that can never
- * be retried. With billing on, the Worker refuses those routes (index.ts) and serves these instead.
+ * Governed workspace lifecycle: listing, switching, creating (with isolated cell provisioning on
+ * NORN_HOST when configured), renaming, archiving/restoring (undo), permanent deletion, workspace
+ * requests (when self-serve cell provisioning is unavailable), and atomic invitation acceptance.
  *
- * Authorization is Better Auth's, unchanged: its session, and for an invitation the same checks its
- * accept route makes (pending and unexpired, addressed to the session's email, verified address,
- * membership limit). Each check is made again inside the write, against the rows and the database's
- * clock at commit, so nothing that changes between the checks and the write (an expiry, a changed or
- * unverified address, a concurrent acceptance) can pass. The database enforces the plan limits
- * (migration 0011) inside the transaction, so a refusal rolls the whole change back.
+ * Every authorization check runs on the server against D1's membership rows and Better Auth's
+ * verified session; the client receives precomputed capability flags for display only and never
+ * decides permissions itself.
+ *
+ * Creating a workspace and accepting an invitation each run as one database transaction so an
+ * interruption or a plan-limit refusal (migration 0011) never leaves half a change. When NORN_HOST
+ * and STUDIO_DEFAULT_ENVIRONMENT_ID are configured, creating a workspace also provisions an empty
+ * isolated cell via `POST /v1/cell:provision` (HOST-PROVISION-1) and rolls the workspace back if
+ * the host refuses.
  */
 
 export interface WorkspaceContext {
@@ -21,6 +23,48 @@ export interface WorkspaceContext {
   readonly db: D1Database
   readonly billing: BillingSettings | undefined
   readonly baseURL: string
+  readonly host?: Fetcher
+  readonly defaultEnvironmentId?: string
+  readonly defaultOrganizationId?: string
+}
+
+export interface WorkspaceItem {
+  readonly id: string
+  readonly name: string
+  readonly slug: string
+  readonly role: string
+  readonly active: boolean
+  readonly hasCell: boolean
+  readonly archived: boolean
+  readonly archivedAt: string | null
+  readonly canRename: boolean
+  readonly canArchive: boolean
+  readonly canDelete: boolean
+}
+
+export interface WorkspaceRequestItem {
+  readonly id: string
+  readonly name: string
+  readonly note: string
+  readonly status: "pending" | "approved" | "dismissed"
+  readonly requesterName: string
+  readonly requesterEmail: string
+  readonly createdAt: string
+  readonly canManage: boolean
+  readonly canWithdraw: boolean
+}
+
+export type WorkspaceCreation =
+  | { readonly mode: "self-serve"; readonly allowed: true }
+  | { readonly mode: "self-serve"; readonly allowed: false; readonly reason: string; readonly upgradeUrl: string | null }
+  | { readonly mode: "request" }
+
+export interface WorkspacesDocument {
+  readonly workspaces: readonly WorkspaceItem[]
+  readonly archived: readonly WorkspaceItem[]
+  readonly creation: WorkspaceCreation
+  readonly requests: readonly WorkspaceRequestItem[]
+  readonly planLabel: string | null
 }
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } })
@@ -35,38 +79,279 @@ function planLimit(admission: Admission | undefined, fallback: string): Response
 const INVITATION_GONE = "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one."
 /** Better Auth's default membership limit (its accept route refuses at 100 members). */
 const MEMBERSHIP_LIMIT = 100
+const MAX_NAME_LENGTH = 80
+const MAX_NOTE_LENGTH = 500
+const MAX_PENDING_REQUESTS = 5
+const ENVIRONMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+const USER_METHODS = new Set(["password", "magic_link"])
+
+/** Cached trusted-base SHA-256 per NORN_HOST binding so provisioning usually succeeds in one round-trip. */
+const baseDigests = new WeakMap<Fetcher, string>()
+
+const hasRole = (role: string | null | undefined, allowed: readonly string[]): boolean =>
+  typeof role === "string" && role.split(",").map((part) => part.trim()).some((part) => allowed.includes(part))
+const isOwner = (role: string | null | undefined) => hasRole(role, ["owner"])
+const isAdmin = (role: string | null | undefined) => hasRole(role, ["owner", "admin"])
+
+function slugFromName(name: string): string {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "workspace"
+  return `${base}-${crypto.randomUUID().slice(0, 8)}`
+}
+
+function environmentOf(metadata: unknown): string | null {
+  let value = metadata
+  if (typeof value === "string") {
+    try { value = JSON.parse(value) } catch { return null }
+  }
+  const envId = (value as { environmentId?: unknown } | null)?.environmentId
+  return typeof envId === "string" && ENVIRONMENT.test(envId) ? envId : null
+}
+
+function formatPlanLabel(plan: string): string {
+  if (plan === "free") return "Free plan"
+  return `${plan[0]?.toUpperCase() ?? ""}${plan.slice(1)} plan`
+}
 
 async function body(request: Request): Promise<Record<string, unknown> | null> {
   const value = await request.json().catch(() => null)
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
 }
 
-async function first<T>(db: D1Database | ProvisionDb, sql: string, ...params: string[]): Promise<T | null> {
-  const statement = (db as ProvisionDb).prepare(sql)
+type SqlResult = { first<T>(): Promise<T | null>; all<T>(): Promise<{ results: T[] }>; run(): Promise<unknown> }
+type QueryableStatement = { bind?: (...params: (string | null)[]) => SqlResult; get?: (...params: (string | null)[]) => unknown; all?: (...params: (string | null)[]) => unknown[]; run?: (...params: (string | null)[]) => unknown }
+type QueryableDb = { prepare(sql: string): QueryableStatement }
+
+async function first<T>(db: D1Database | ProvisionDb, sql: string, ...params: (string | null)[]): Promise<T | null> {
+  const statement = (db as unknown as QueryableDb).prepare(sql)
   if (statement.bind) return statement.bind(...params).first<T>()
   return (statement.get?.(...params) as T | undefined) ?? null
 }
 
-/** Make the new workspace the session's active one, as Better Auth's routes do. */
-async function activate(auth: Auth, token: string, organizationId: string): Promise<void> {
+async function all<T>(db: D1Database | ProvisionDb, sql: string, ...params: (string | null)[]): Promise<T[]> {
+  const statement = (db as unknown as QueryableDb).prepare(sql)
+  if (statement.bind) return (await statement.bind(...params).all<T>()).results
+  return (statement.all?.(...params) ?? []) as T[]
+}
+
+async function run(db: D1Database | ProvisionDb, sql: string, ...params: (string | null)[]): Promise<void> {
+  const statement = (db as unknown as QueryableDb).prepare(sql)
+  if (statement.bind) await statement.bind(...params).run()
+  else statement.run?.(...params)
+}
+
+const missingTable = (error: unknown, table: string) =>
+  String(error instanceof Error ? error.message : error).includes(`no such table: ${table}`)
+
+/** Make the workspace the session's active one, as Better Auth's routes do. */
+async function activate(auth: Auth, token: string, organizationId: string | null): Promise<void> {
   const context = await auth.$context
   await context.internalAdapter.updateSession(token, { activeOrganizationId: organizationId })
 }
 
-/** POST /api/workspaces { name, slug, logo?, metadata?, keepCurrentActiveOrganization? }: the workspace and its owner in one transaction. */
+/** Find the user's earliest non-archived membership (excluding `excludeId` if given). */
+async function nextActiveWorkspace(db: D1Database, userId: string, excludeId?: string): Promise<string | null> {
+  try {
+    const row = excludeId === undefined
+      ? await first<{ organizationId: string }>(db,
+          `select m."organizationId" from "member" m left join "workspace_archive" a on a."organization_id" = m."organizationId" where m."userId" = ? and a."organization_id" is null order by m."createdAt" asc, m."id" asc limit 1`,
+          userId)
+      : await first<{ organizationId: string }>(db,
+          `select m."organizationId" from "member" m left join "workspace_archive" a on a."organization_id" = m."organizationId" where m."userId" = ? and m."organizationId" <> ? and a."organization_id" is null order by m."createdAt" asc, m."id" asc limit 1`,
+          userId, excludeId)
+    return row?.organizationId ?? null
+  } catch (error) {
+    if (!missingTable(error, "workspace_archive")) throw error
+    const row = excludeId === undefined
+      ? await first<{ organizationId: string }>(db, `select "organizationId" from "member" where "userId" = ? order by "createdAt" asc, "id" asc limit 1`, userId)
+      : await first<{ organizationId: string }>(db, `select "organizationId" from "member" where "userId" = ? and "organizationId" <> ? order by "createdAt" asc, "id" asc limit 1`, userId, excludeId)
+    return row?.organizationId ?? null
+  }
+}
+
+/**
+ * Provision an empty tenant cell on NORN_HOST (HOST-PROVISION-1: `POST /v1/cell:provision` with
+ * `artifacts: []`, prepended by the host's own trusted base). Negotiates the host's trusted-base
+ * SHA-256 once on `cell.base_mismatch` and caches it per host binding.
+ */
+export async function provisionEmptyCell(
+  host: Fetcher,
+  auth: Auth,
+  actor: NornActor,
+  orgId: string,
+  environmentId: string,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly status: number; readonly code: string }> {
+  const token = await hostToken(auth, actor)
+  const query = new URLSearchParams({ orgId, environmentId }).toString()
+  const send = async (baseSha256: string) => host.fetch(new Request(`https://norn-host/v1/cell:provision?${query}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ baseSha256, artifacts: [] }),
+  }))
+  const attempt = async (digest: string, allowRetry: boolean): Promise<{ readonly ok: true } | { readonly ok: false; readonly status: number; readonly code: string }> => {
+    let response: Response
+    try {
+      response = await send(digest)
+    } catch {
+      return { ok: false, status: 503, code: "host.unreachable" }
+    }
+    const payload = (await response.json().catch(() => null)) as { code?: unknown; explanation?: unknown; baseSha256?: unknown } | null
+    if (response.ok) {
+      if (typeof payload?.baseSha256 === "string" && /^[0-9a-f]{64}$/.test(payload.baseSha256)) baseDigests.set(host, payload.baseSha256)
+      else baseDigests.set(host, digest)
+      return { ok: true }
+    }
+    if (allowRetry && response.status === 409 && payload?.code === "cell.base_mismatch" && typeof payload.explanation === "string") {
+      const matched = /sha256 ([0-9a-f]{64})/.exec(payload.explanation)
+      if (matched?.[1] !== undefined) {
+        baseDigests.set(host, matched[1])
+        return attempt(matched[1], false)
+      }
+    }
+    return { ok: false, status: response.status, code: typeof payload?.code === "string" ? payload.code : "host.refused" }
+  }
+  return attempt(baseDigests.get(host) ?? "0".repeat(64), true)
+}
+
+/** GET /api/workspaces: the signed-in user's workspaces, capabilities, creation mode and requests. */
+export async function listWorkspaces(request: Request, context: WorkspaceContext): Promise<Response> {
+  const session = await context.auth.api.getSession({ headers: request.headers })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
+  const active = await activeMembership(context.auth, session.user.id, session.session.activeOrganizationId)
+  type OrgRow = { id: string; name: string; slug: string; metadata: string | null; role: string; archived_at: string | null }
+  let rows: OrgRow[]
+  try {
+    rows = await all<OrgRow>(context.db,
+      `select o."id", o."name", o."slug", o."metadata", m."role", a."archived_at"
+       from "member" m
+       join "organization" o on o."id" = m."organizationId"
+       left join "workspace_archive" a on a."organization_id" = o."id"
+       where m."userId" = ?
+       order by m."createdAt" asc, o."id" asc`,
+      session.user.id)
+  } catch (error) {
+    if (!missingTable(error, "workspace_archive")) throw error
+    rows = (await all<Omit<OrgRow, "archived_at">>(context.db,
+      `select o."id", o."name", o."slug", o."metadata", m."role"
+       from "member" m
+       join "organization" o on o."id" = m."organizationId"
+       where m."userId" = ?
+       order by m."createdAt" asc, o."id" asc`,
+      session.user.id)).map((row) => ({ ...row, archived_at: null }))
+  }
+
+  const workspaces: WorkspaceItem[] = []
+  const archived: WorkspaceItem[] = []
+  for (const row of rows) {
+    const isDefault = context.defaultOrganizationId !== undefined && row.id === context.defaultOrganizationId
+    const isArchived = row.archived_at !== null
+    const owner = isOwner(row.role)
+    const item: WorkspaceItem = {
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      role: row.role,
+      active: !isArchived && active?.organizationId === row.id,
+      hasCell: environmentOf(row.metadata) !== null,
+      archived: isArchived,
+      archivedAt: row.archived_at,
+      canRename: !isArchived && isAdmin(row.role),
+      canArchive: owner && !isDefault,
+      canDelete: owner && !isDefault,
+    }
+    if (isArchived) {
+      // Only owners can restore or permanently delete an archived workspace.
+      if (owner) archived.push(item)
+    } else {
+      workspaces.push(item)
+    }
+  }
+
+  const billingDb = context.db as unknown as BillingDb
+  let creation: WorkspaceCreation
+  if (context.host !== undefined && context.defaultEnvironmentId !== undefined) {
+    const admission = await admitCell(billingDb, context.billing, context.baseURL, session.user.id)
+    creation = admission.kind === "admitted"
+      ? { mode: "self-serve", allowed: true }
+      : { mode: "self-serve", allowed: false, reason: refusalMessage(admission), upgradeUrl: admission.upgradeUrl }
+  } else {
+    creation = { mode: "request" }
+  }
+
+  let planLabel: string | null = null
+  if (context.billing !== undefined) {
+    const entitlement = await entitlementOf(billingDb, context.billing, session.user.id)
+    planLabel = formatPlanLabel(entitlement.plan)
+  }
+
+  const activeIsAdmin = active !== null && isAdmin(active.role)
+  type RequestRow = { id: string; user_id: string; organization_id: string | null; name: string; note: string; status: "pending" | "approved" | "dismissed"; created_at: string; requester_name: string; requester_email: string }
+  let requestRows: RequestRow[] = []
+  try {
+    requestRows = activeIsAdmin
+      ? await all<RequestRow>(context.db,
+          `select r."id", r."user_id", r."organization_id", r."name", r."note", r."status", r."created_at", u."name" as "requester_name", u."email" as "requester_email"
+           from "workspace_request" r
+           join "user" u on u."id" = r."user_id"
+           where r."user_id" = ? or r."organization_id" = ?
+           order by r."created_at" desc limit 50`,
+          session.user.id, active.organizationId)
+      : await all<RequestRow>(context.db,
+          `select r."id", r."user_id", r."organization_id", r."name", r."note", r."status", r."created_at", u."name" as "requester_name", u."email" as "requester_email"
+           from "workspace_request" r
+           join "user" u on u."id" = r."user_id"
+           where r."user_id" = ?
+           order by r."created_at" desc limit 50`,
+          session.user.id)
+  } catch (error) {
+    if (!missingTable(error, "workspace_request")) throw error
+  }
+
+  const requests: WorkspaceRequestItem[] = requestRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    note: row.note,
+    status: row.status,
+    requesterName: row.requester_name,
+    requesterEmail: row.requester_email,
+    createdAt: row.created_at,
+    canManage: row.status === "pending" && activeIsAdmin && row.organization_id === active.organizationId,
+    canWithdraw: row.status === "pending" && row.user_id === session.user.id,
+  }))
+
+  const document: WorkspacesDocument = { workspaces, archived, creation, requests, planLabel }
+  return json(document)
+}
+
+/** POST /api/workspaces { name, slug?, logo?, metadata?, keepCurrentActiveOrganization? }: workspace + owner (+ cell when NORN_HOST is configured). */
 export async function createWorkspace(request: Request, context: WorkspaceContext): Promise<Response> {
   const session = await context.auth.api.getSession({ headers: request.headers })
   if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
+  if (context.host !== undefined && context.defaultEnvironmentId === undefined) {
+    return failure(403, "SELF_SERVE_UNAVAILABLE", "This deployment requires an admin to provision new workspaces. Submit a workspace request instead.")
+  }
+  const method = (session.session as { authMethod?: string | null }).authMethod
+  if (context.host !== undefined && (method == null || !USER_METHODS.has(method))) {
+    return failure(403, "FORBIDDEN", "Sign in with a user session to create a workspace.")
+  }
   const input = await body(request)
   const name = typeof input?.name === "string" ? input.name.trim() : ""
-  const slug = typeof input?.slug === "string" ? input.slug.trim() : ""
+  const explicitSlug = input?.slug
+  if (name === "" || name.length > MAX_NAME_LENGTH) return failure(400, "VALIDATION_ERROR", `A workspace name must be between 1 and ${MAX_NAME_LENGTH} characters.`)
+  if (explicitSlug !== undefined && (typeof explicitSlug !== "string" || explicitSlug.trim() === "")) {
+    return failure(400, "VALIDATION_ERROR", "A workspace needs a name and a slug.")
+  }
+  const slug = typeof explicitSlug === "string" ? explicitSlug.trim() : slugFromName(name)
   const logo = typeof input?.logo === "string" ? input.logo : null
-  if (name === "" || slug === "") return failure(400, "VALIDATION_ERROR", "A workspace needs a name and a slug.")
   if (await first(context.db, `select 1 as "taken" from "organization" where "slug" = ?`, slug) !== null) return failure(400, "ORGANIZATION_ALREADY_EXISTS", "Organization already exists")
   const id = crypto.randomUUID()
   const at = new Date().toISOString()
-  // Server-only keys: the payer, read by migration 0011's triggers, only while billing is on.
-  const metadata = { ...publicMetadata(input?.metadata), ...context.billing === undefined ? {} : { [BILLING_PAYER]: session.user.id, [BILLED]: true } }
+  // Server-only keys: environmentId (from deployment config, never client input) and billing payer (when billing is on).
+  const environmentId = context.defaultEnvironmentId
+  const metadata = {
+    ...publicMetadata(input?.metadata),
+    ...environmentId === undefined ? {} : { environmentId },
+    ...context.billing === undefined ? {} : { [BILLING_PAYER]: session.user.id, [BILLED]: true },
+  }
   const member = { id: crypto.randomUUID(), organizationId: id, userId: session.user.id, role: "owner", createdAt: at }
   try {
     await atomically(context.db as unknown as ProvisionDb, [
@@ -78,8 +363,205 @@ export async function createWorkspace(request: Request, context: WorkspaceContex
     if (/UNIQUE constraint failed: organization\.slug/.test(error instanceof Error ? error.message : "")) return failure(400, "ORGANIZATION_ALREADY_EXISTS", "Organization already exists")
     throw error
   }
+  if (context.host !== undefined && environmentId !== undefined) {
+    const actor: NornActor = { actorKind: "user", subjectId: session.user.id, orgId: id, role: "owner", authMethod: method as NornActor["authMethod"] }
+    const provisioned = await provisionEmptyCell(context.host, context.auth, actor, id, environmentId)
+    if (!provisioned.ok) {
+      // Never leave an unprovisioned org behind or burn the user's billed cell quota.
+      await atomically(context.db as unknown as ProvisionDb, [
+        { sql: `delete from "member" where "organizationId" = ?`, params: [id] },
+        { sql: `delete from "organization" where "id" = ?`, params: [id] },
+      ])
+      return failure(502, "CELL_PROVISION_FAILED", "Could not provision a cell for this workspace right now. Try again shortly.")
+    }
+  }
   if (input?.keepCurrentActiveOrganization !== true) await activate(context.auth, session.session.token, id)
   return json({ id, name, slug, logo, metadata: publicMetadata(metadata), createdAt: at, members: [member] })
+}
+
+/** POST /api/workspaces/:id/activate: switch the session's active workspace (members only, non-archived only). */
+export async function activateWorkspace(request: Request, context: WorkspaceContext, organizationId: string): Promise<Response> {
+  const session = await context.auth.api.getSession({ headers: request.headers })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
+  const membership = await first<{ role: string; name: string; metadata: string | null }>(context.db,
+    `select m."role", o."name", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."organizationId" = ? and m."userId" = ?`,
+    organizationId, session.user.id)
+  if (membership === null) return failure(403, "FORBIDDEN", "You are not a member of this workspace.")
+  try {
+    const archived = await first(context.db, `select 1 as "found" from "workspace_archive" where "organization_id" = ?`, organizationId)
+    if (archived !== null) return failure(409, "WORKSPACE_ARCHIVED", "Restore this workspace before opening it.")
+  } catch (error) {
+    if (!missingTable(error, "workspace_archive")) throw error
+  }
+  await activate(context.auth, session.session.token, organizationId)
+  return json({ activeOrganizationId: organizationId, name: membership.name, role: membership.role, hasCell: environmentOf(membership.metadata) !== null })
+}
+
+/** PATCH /api/workspaces/:id { name }: rename a workspace (owner or admin only; non-archived only). */
+export async function renameWorkspace(request: Request, context: WorkspaceContext, organizationId: string): Promise<Response> {
+  const session = await context.auth.api.getSession({ headers: request.headers })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
+  const membership = await first<{ role: string }>(context.db,
+    `select "role" from "member" where "organizationId" = ? and "userId" = ?`, organizationId, session.user.id)
+  if (membership === null || !isAdmin(membership.role)) {
+    return failure(403, "FORBIDDEN", "Only workspace owners and admins can rename a workspace.")
+  }
+  try {
+    const archived = await first(context.db, `select 1 as "found" from "workspace_archive" where "organization_id" = ?`, organizationId)
+    if (archived !== null) return failure(409, "WORKSPACE_ARCHIVED", "Restore this workspace before renaming it.")
+  } catch (error) {
+    if (!missingTable(error, "workspace_archive")) throw error
+  }
+  const input = await body(request)
+  const name = typeof input?.name === "string" ? input.name.trim() : ""
+  if (name === "" || name.length > MAX_NAME_LENGTH) {
+    return failure(400, "VALIDATION_ERROR", `A workspace name must be between 1 and ${MAX_NAME_LENGTH} characters.`)
+  }
+  await run(context.db, `update "organization" set "name" = ? where "id" = ?`, name, organizationId)
+  return json({ id: organizationId, name })
+}
+
+/** POST /api/workspaces/:id/archive: reversibly archive a workspace (owner only). Keeps billing_workspace intact. */
+export async function archiveWorkspace(request: Request, context: WorkspaceContext, organizationId: string): Promise<Response> {
+  const session = await context.auth.api.getSession({ headers: request.headers })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
+  const membership = await first<{ role: string }>(context.db,
+    `select "role" from "member" where "organizationId" = ? and "userId" = ?`, organizationId, session.user.id)
+  if (membership === null || !isOwner(membership.role)) {
+    return failure(403, "FORBIDDEN", "Only a workspace owner can archive a workspace.")
+  }
+  if (context.defaultOrganizationId !== undefined && organizationId === context.defaultOrganizationId) {
+    return failure(403, "FORBIDDEN", "The deployment's shared default workspace cannot be archived.")
+  }
+  const existing = await first(context.db, `select 1 as "found" from "workspace_archive" where "organization_id" = ?`, organizationId)
+  if (existing !== null) return failure(409, "ALREADY_ARCHIVED", "This workspace is already archived.")
+  const at = new Date().toISOString()
+  await atomically(context.db as unknown as ProvisionDb, [
+    { sql: `insert into "workspace_archive" ("organization_id", "archived_at", "archived_by") values (?, ?, ?)`, params: [organizationId, at, session.user.id] },
+    { sql: `update "session" set "activeOrganizationId" = null where "activeOrganizationId" = ?`, params: [organizationId] },
+  ])
+  const nextId = await nextActiveWorkspace(context.db, session.user.id, organizationId)
+  if (session.session.activeOrganizationId === organizationId || session.session.activeOrganizationId == null) {
+    await activate(context.auth, session.session.token, nextId)
+  }
+  return json({ id: organizationId, archived: true, archivedAt: at, nextActiveOrganizationId: nextId })
+}
+
+/** POST /api/workspaces/:id/restore { activate? }: undo archive (owner only). */
+export async function restoreWorkspace(request: Request, context: WorkspaceContext, organizationId: string): Promise<Response> {
+  const session = await context.auth.api.getSession({ headers: request.headers })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
+  const membership = await first<{ role: string }>(context.db,
+    `select "role" from "member" where "organizationId" = ? and "userId" = ?`, organizationId, session.user.id)
+  if (membership === null || !isOwner(membership.role)) {
+    return failure(403, "FORBIDDEN", "Only a workspace owner can restore a workspace.")
+  }
+  const existing = await first(context.db, `select 1 as "found" from "workspace_archive" where "organization_id" = ?`, organizationId)
+  if (existing === null) return failure(404, "NOT_ARCHIVED", "This workspace is not archived.")
+  const input = await body(request)
+  await run(context.db, `delete from "workspace_archive" where "organization_id" = ?`, organizationId)
+  if (input?.activate === true || session.session.activeOrganizationId == null) {
+    await activate(context.auth, session.session.token, organizationId)
+  }
+  return json({ id: organizationId, archived: false })
+}
+
+/** DELETE /api/workspaces/:id: permanently delete a workspace and revoke its API keys (owner only). */
+export async function deleteWorkspace(request: Request, context: WorkspaceContext, organizationId: string): Promise<Response> {
+  const session = await context.auth.api.getSession({ headers: request.headers })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
+  const membership = await first<{ role: string }>(context.db,
+    `select "role" from "member" where "organizationId" = ? and "userId" = ?`, organizationId, session.user.id)
+  if (membership === null || !isOwner(membership.role)) {
+    return failure(403, "FORBIDDEN", "Only a workspace owner can delete a workspace.")
+  }
+  if (context.defaultOrganizationId !== undefined && organizationId === context.defaultOrganizationId) {
+    return failure(403, "FORBIDDEN", "The deployment's shared default workspace cannot be deleted.")
+  }
+  // Delete child rows explicitly in the same transaction so SQLite without PRAGMA foreign_keys=ON
+  // behaves identically to D1, and revoke organization API keys before deleting the organization.
+  const statements = [
+    { sql: `update "session" set "activeOrganizationId" = null where "activeOrganizationId" = ?`, params: [organizationId] },
+    { sql: `delete from "apikey" where "referenceId" = ?`, params: [organizationId] },
+    { sql: `delete from "invitation" where "organizationId" = ?`, params: [organizationId] },
+    { sql: `delete from "member" where "organizationId" = ?`, params: [organizationId] },
+    { sql: `delete from "organization" where "id" = ?`, params: [organizationId] },
+  ]
+  try {
+    await atomically(context.db as unknown as ProvisionDb, [
+      { sql: `delete from "workspace_archive" where "organization_id" = ?`, params: [organizationId] },
+      ...statements,
+    ])
+  } catch (error) {
+    if (!missingTable(error, "workspace_archive")) throw error
+    await atomically(context.db as unknown as ProvisionDb, statements)
+  }
+  const nextId = await nextActiveWorkspace(context.db, session.user.id, organizationId)
+  if (session.session.activeOrganizationId === organizationId || session.session.activeOrganizationId == null) {
+    await activate(context.auth, session.session.token, nextId)
+  }
+  return json({ id: organizationId, deleted: true, nextActiveOrganizationId: nextId })
+}
+
+/** POST /api/workspaces/requests { name, note? }: record a workspace request for admins to review. */
+export async function createWorkspaceRequest(request: Request, context: WorkspaceContext): Promise<Response> {
+  const session = await context.auth.api.getSession({ headers: request.headers })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
+  const input = await body(request)
+  const name = typeof input?.name === "string" ? input.name.trim() : ""
+  const note = typeof input?.note === "string" ? input.note.trim() : ""
+  if (name === "" || name.length > MAX_NAME_LENGTH) {
+    return failure(400, "VALIDATION_ERROR", `A workspace name must be between 1 and ${MAX_NAME_LENGTH} characters.`)
+  }
+  if (note.length > MAX_NOTE_LENGTH) {
+    return failure(400, "VALIDATION_ERROR", `A note can be at most ${MAX_NOTE_LENGTH} characters.`)
+  }
+  const pending = await first<{ n: number }>(context.db,
+    `select count(*) as "n" from "workspace_request" where "user_id" = ? and "status" = 'pending'`, session.user.id)
+  if ((pending?.n ?? 0) >= MAX_PENDING_REQUESTS) {
+    return failure(429, "TOO_MANY_REQUESTS", `You already have ${MAX_PENDING_REQUESTS} pending workspace requests. Withdraw one or wait for an admin to review them.`)
+  }
+  const active = await activeMembership(context.auth, session.user.id, session.session.activeOrganizationId)
+  const id = crypto.randomUUID()
+  const at = new Date().toISOString()
+  await run(context.db,
+    `insert into "workspace_request" ("id", "user_id", "organization_id", "name", "note", "status", "created_at") values (?, ?, ?, ?, ?, 'pending', ?)`,
+    id, session.user.id, active?.organizationId ?? null, name, note, at)
+  return json({ id, name, note, status: "pending", createdAt: at }, 201)
+}
+
+/** POST /api/workspaces/requests/:id/decide { decision: "approved" | "dismissed" }: admin reviews or requester withdraws. */
+export async function decideWorkspaceRequest(request: Request, context: WorkspaceContext, requestId: string): Promise<Response> {
+  const session = await context.auth.api.getSession({ headers: request.headers })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
+  const input = await body(request)
+  const decision = input?.decision
+  if (decision !== "approved" && decision !== "dismissed") {
+    return failure(400, "VALIDATION_ERROR", `Decision must be "approved" or "dismissed".`)
+  }
+  const row = await first<{ id: string; user_id: string; organization_id: string | null; status: string }>(context.db,
+    `select "id", "user_id", "organization_id", "status" from "workspace_request" where "id" = ?`, requestId)
+  if (row === null) return failure(404, "REQUEST_NOT_FOUND", "No such workspace request.")
+  const selfWithdraw = decision === "dismissed" && row.user_id === session.user.id
+  if (!selfWithdraw) {
+    if (row.organization_id === null) return failure(403, "FORBIDDEN", "Only a workspace admin can decide this request.")
+    const membership = await first<{ role: string }>(context.db,
+      `select "role" from "member" where "organizationId" = ? and "userId" = ?`, row.organization_id, session.user.id)
+    if (membership === null || !isAdmin(membership.role)) {
+      return failure(403, "FORBIDDEN", "Only a workspace admin can decide this request.")
+    }
+  }
+  if (row.status !== "pending") return failure(409, "REQUEST_ALREADY_DECIDED", "This workspace request was already handled.")
+  const at = new Date().toISOString()
+  await run(context.db,
+    `update "workspace_request" set "status" = ?, "decided_at" = ?, "decided_by" = ? where "id" = ? and "status" = 'pending'`,
+    decision, at, session.user.id, requestId)
+  const updated = await first<{ status: string; decided_at: string | null; decided_by: string | null }>(context.db,
+    `select "status", "decided_at", "decided_by" from "workspace_request" where "id" = ?`, requestId)
+  if (updated?.status !== decision || updated.decided_by !== session.user.id || updated.decided_at !== at) {
+    return failure(409, "REQUEST_ALREADY_DECIDED", "This workspace request was already handled.")
+  }
+  return json({ id: requestId, status: decision, decidedAt: at })
 }
 
 /** An invitation's expiry as stored (Better Auth writes dates as text; tests may write epoch ms). */

@@ -2,7 +2,7 @@ import { apiKey } from "@better-auth/api-key"
 import { cimd } from "@better-auth/cimd"
 import { mcp } from "@better-auth/mcp"
 import { betterAuth, getCurrentAdapter, type BetterAuthOptions } from "better-auth"
-import { APIError } from "better-auth/api"
+import { APIError, createAuthMiddleware } from "better-auth/api"
 import { createAccessControl } from "better-auth/plugins/access"
 import { genericOAuth } from "better-auth/plugins/generic-oauth"
 import { jwt } from "better-auth/plugins/jwt"
@@ -308,6 +308,34 @@ async function workspaceIdentity(secret: string, userId: string) {
   return { id, metadata: JSON.stringify({ "norn.provisioningProof": await sign(`owner:${userId}:${id}`) }) }
 }
 
+/** Shown when a non-allowlisted address attempts sign-up on an invite-only deployment. */
+export const INVITE_ONLY_MESSAGE = "This alpha is invite-only; ask your admin for an invitation."
+
+/** Whether an email address may create an account under the deployment's allowlist (undefined = open). */
+export const signUpAllowed = (allowlist: readonly string[] | undefined, email: string): boolean =>
+  allowlist === undefined || allowlist.includes(email.trim().toLowerCase())
+
+/** Database handle per Auth instance, for server-side archive checks without widening callers' signatures. */
+const databases = new WeakMap<object, ProvisionDb>()
+
+/** Whether an organization is archived in `workspace_archive`; false when migration 0013 is absent. */
+async function isArchivedInDb(db: ProvisionDb | undefined, organizationId: string): Promise<boolean> {
+  if (db === undefined) return false
+  try {
+    const statement = db.prepare(`select 1 as "archived" from "workspace_archive" where "organization_id" = ?`)
+    const row = statement.bind ? await statement.bind(organizationId).first<{ archived: number }>() : statement.get?.(organizationId) as { archived: number } | undefined
+    return row != null
+  } catch (error) {
+    if (String(error instanceof Error ? error.message : error).includes("no such table: workspace_archive")) return false
+    throw error
+  }
+}
+
+/** Whether `organizationId` is archived in the database backing `auth`. */
+export function isOrganizationArchived(auth: Auth, organizationId: string): Promise<boolean> {
+  return isArchivedInDb(databases.get(auth), organizationId)
+}
+
 /** The workspace's payer, set at creation while billing is on (workspaces.ts) and read by migration 0011's triggers. */
 export const BILLING_PAYER = "norn.billingPayer"
 /** Set on workspaces created while billing is on: only those are limited (migration 0011). */
@@ -446,13 +474,26 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       ...config.mcp === true ? assistantAuthorization(config.baseURL) : [],
       ...config.billing === undefined ? [] : [polarPlugin(config.billing, config.baseURL)],
     ],
+    hooks: {
+      // Runs after Better Auth's origin check and rate limit, before sign-up/email's handler, so a
+      // non-allowlisted sign-up on an invite-only deployment is explicitly refused (403 INVITE_ONLY)
+      // rather than answered as a synthetic 200.
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path === "/sign-up/email" && config.signUpEmails !== undefined) {
+          const body = ctx.body as { email?: unknown } | undefined
+          if (typeof body?.email === "string" && body.email.trim() !== "" && !signUpAllowed(config.signUpEmails, body.email)) {
+            throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
+          }
+        }
+      }),
+    },
     databaseHooks: {
       user: {
         create: {
-          // Invite-only deployments refuse an uninvited address before any row is written.
+          // Defense in depth: refuse an uninvited address before any row is written, by any path.
           before: async (user) => {
-            if (config.signUpEmails !== undefined && !config.signUpEmails.includes(String(user.email).trim().toLowerCase())) {
-              throw new APIError("FORBIDDEN", { message: "Sign-up on this deployment is by invitation only." })
+            if (!signUpAllowed(config.signUpEmails, String(user.email))) {
+              throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
             }
           },
           // The user-insert trigger commits the pending marker with the user; session creation retries incomplete provisioning.
@@ -468,21 +509,27 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           before: async (session, ctx) => {
             const method = ctx === null ? undefined : AUTH_METHODS[ctx.path as keyof typeof AUTH_METHODS]
             const adapter = ctx === null ? undefined : await getCurrentAdapter(ctx.context.adapter)
-            if (adapter !== undefined && await stateOf(config.database as unknown as ProvisionDb, session.userId) === "pending") {
+            const db = config.database as unknown as ProvisionDb
+            if (adapter !== undefined && await stateOf(db, session.userId) === "pending") {
               const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
               if (user === null) throw new Error("Cannot provision a workspace for a missing user")
-              await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, await billingModeOn(config.database as unknown as BillingDb))
+              await provisionWorkspace(db, config.secret, user, config.defaultEnvironmentId, await billingModeOn(config.database as unknown as BillingDb))
             }
-            const first = (where: { field: string; value: string }[]) => adapter === undefined ? Promise.resolve([]) : adapter.findMany<{ organizationId: string }>({
-              model: "member",
-              where: [{ field: "userId", value: session.userId }, ...where],
-              sortBy: { field: "createdAt", direction: "asc" },
-              limit: 1,
-            })
-            // The stage's default organization when the user belongs to it, else the earliest membership
+            const pick = async (where: { field: string; value: string }[]) => {
+              if (adapter === undefined) return undefined
+              const rows = await adapter.findMany<{ organizationId: string }>({
+                model: "member",
+                where: [{ field: "userId", value: session.userId }, ...where],
+                sortBy: { field: "createdAt", direction: "asc" },
+                limit: 100,
+              })
+              for (const row of rows) if (!(await isArchivedInDb(db, row.organizationId))) return row
+              return undefined
+            }
+            // The stage's default organization when the user belongs to it, else the earliest non-archived membership
             // (the same rule activeMembership uses when a session has none).
-            const preferred = config.defaultOrganizationId === undefined ? [] : await first([{ field: "organizationId", value: config.defaultOrganizationId }])
-            const [member] = preferred.length > 0 ? preferred : await first([])
+            const preferred = config.defaultOrganizationId === undefined ? undefined : await pick([{ field: "organizationId", value: config.defaultOrganizationId }])
+            const member = preferred ?? await pick([])
             return { data: { ...session, authMethod: method ?? null, activeOrganizationId: member?.organizationId ?? null } }
           },
         },
@@ -509,8 +556,18 @@ export interface Membership {
  */
 export async function activeMembership(auth: Auth, userId: string, activeOrganizationId: string | null | undefined): Promise<Membership | null> {
   const { adapter } = await auth.$context
+  if (activeOrganizationId != null && await isOrganizationArchived(auth, activeOrganizationId)) return null
   const where = [{ field: "userId", value: userId }, ...activeOrganizationId == null ? [] : [{ field: "organizationId", value: activeOrganizationId }]]
-  const [member] = await adapter.findMany<{ organizationId: string; role: string }>({ model: "member", where, sortBy: { field: "createdAt", direction: "asc" }, limit: 1 })
+  const rows = await adapter.findMany<{ organizationId: string; role: string }>({
+    model: "member",
+    where,
+    sortBy: { field: "createdAt", direction: "asc" },
+    limit: activeOrganizationId == null ? 100 : 1,
+  })
+  let member: { organizationId: string; role: string } | undefined
+  for (const candidate of rows) {
+    if (!(await isOrganizationArchived(auth, candidate.organizationId))) { member = candidate; break }
+  }
   if (member === undefined) return null
   const org = await adapter.findOne<{ name: string; metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: member.organizationId }] })
   if (org === null) return null
@@ -522,6 +579,7 @@ export function createAuth(config: AuthConfig) {
   const self: Self = {}
   const auth = betterAuth(authOptions(config, self))
   self.auth = auth
+  databases.set(auth, config.database as unknown as ProvisionDb)
   return auth
 }
 export type Auth = ReturnType<typeof createAuth>
