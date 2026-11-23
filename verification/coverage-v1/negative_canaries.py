@@ -904,7 +904,12 @@ def studio_browser_phase_canaries() -> None:
             (bin_dir / name).write_text("#!/bin/sh\n" + body + "\n")
             (bin_dir / name).chmod(0o755)
         build = tree / "crates/norn-checker-wasm/scripts/build-pkg.sh"
-        build.write_text("#!/bin/sh\nmkdir -p \"$1\"\n")
+        build.write_text(
+            '#!/bin/sh\nmkdir -p "$1"\n'
+            'if [ "${NORN_WASM_ENGINE:-0}" = 1 ]; then name=norn_engine_wasm; '
+            'else name=norn_checker_wasm; fi\n'
+            'touch "$1/${name}_bg.wasm" "$1/package.json" "$1/SIZE.txt"\n'
+        )
         build.chmod(0o755)
         config, e2e = tree / "apps/studio/playwright.config.ts", tree / "apps/studio/e2e"
         wasm_libdir = Path(directory) / "wasm32-lib"

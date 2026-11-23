@@ -387,23 +387,26 @@ class AffectedPlanTests(unittest.TestCase):
         task_script.parent.mkdir(parents=True)
         task_script.write_text(r"""set -eu
 printf '%s\n' "$*" >> calls
-if [[ $1 == test && $2 == rest-1 ]]; then
-    [[ ! -e target/debug ]]
-    mkdir -p target/debug/.fingerprint
+if [[ $(wc -l < calls) -eq 1 ]]; then
+    [[ ! -e target/debug && ! -e target/norn-checker-wasm ]]
+    mkdir -p target/debug/.fingerprint target/norn-checker-wasm/pkg
 else
     case "$*" in
-        "test rest-2") [[ -d target/debug/.fingerprint ]] ;;
-        doc) [[ ! -e target/debug ]] ;;
+        "test rest-1"|browser) [[ -d target/debug/.fingerprint && -d target/norn-checker-wasm/pkg ]] ;;
+        doc) [[ ! -e target/debug && ! -e target/norn-checker-wasm ]] ;;
         *) exit 24 ;;
     esac
 fi
 """)
         environment = {**os.environ, "CARGO_TARGET_DIR": str(self.root / "target"),
                        "NORN_CI_PACKAGES": ""}
-        for shared in (False, True):
-            with self.subTest(shared=shared):
-                plan = {"mode": "affected", "shard": ["rest-1", "rest-2"] if shared else ["rest-1"],
-                        "phase": [] if shared else ["doc"]}
+        for label, plan, expected_calls, shared in (
+            ("incompatible", {"mode": "affected", "shard": ["rest-1"], "phase": ["doc"]}, ["test rest-1", "doc"], False),
+            ("shared-test", {"mode": "affected", "shard": ["rest-1", "rest-2"], "phase": []}, ["test rest-2", "test rest-1"], True),
+            ("shared-wasm-pkg", {"mode": "affected", "shard": [], "phase": ["integration-authoring", "browser"]}, ["integration-authoring", "browser"], True),
+        ):
+            with self.subTest(case=label):
+                shutil.rmtree(self.root / "target", ignore_errors=True)
                 packed = subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], cwd=ROOT, text=True)
                 execute = [str(self.built_xtask()), "ci", "bundle"]
                 calls = self.root / "calls"
@@ -416,9 +419,100 @@ fi
                 result = subprocess.run(execute + [packed, "b0"], cwd=self.root,
                                         env=environment, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(calls.read_text().splitlines(), ["test rest-1", "test rest-2" if shared else "doc"])
+                self.assertEqual(calls.read_text().splitlines(), expected_calls)
                 self.assertEqual((self.root / "target/debug").exists(), shared)
+                self.assertEqual((self.root / "target/norn-checker-wasm").exists(), shared)
                 calls.unlink()
+
+    def test_wasm_pkg_cache_reuses_clean_tree_and_rebuilds_when_dirty(self):
+        tools = self.root / "tools/bin"
+        tools.mkdir(parents=True)
+        wasm_bindgen = tools / "wasm-bindgen"
+        wasm_bindgen.write_text("#!/usr/bin/env bash\necho 'wasm-bindgen 0.2.129'\n")
+        wasm_bindgen.chmod(0o755)
+        build_log = self.root / ".git/wasm-build-calls.log"
+        build_script = self.root / "crates/norn-checker-wasm/scripts/build-pkg.sh"
+        build_script.parent.mkdir(parents=True, exist_ok=True)
+        build_script.write_text(f"""#!/usr/bin/env bash
+set -euo pipefail
+out="$1"
+mkdir -p "$out"
+if [[ "${{NORN_WASM_ENGINE:-0}}" == "1" ]]; then
+  printf 'engine\\n' >> "{build_log}"
+  : > "$out/norn_engine_wasm_bg.wasm"
+else
+  printf 'pkg\\n' >> "{build_log}"
+  : > "$out/norn_checker_wasm_bg.wasm"
+fi
+printf '{{}}\\n' > "$out/package.json"
+printf 'ok\\n' > "$out/SIZE.txt"
+""")
+        build_script.chmod(0o755)
+        self.commit("crates/norn-checker/src/lib.rs")
+        target_dir = self.root / ".git/wasm-target"
+        out_pkg = self.root / ".git/out-pkg"
+        out_engine = self.root / ".git/out-engine"
+        env = {
+            **os.environ,
+            "PATH": f"{tools}:{os.environ['PATH']}",
+            "CARGO_TARGET_DIR": str(target_dir),
+        }
+        harness = (
+            'eval "$(sed \'/^case "${1:-all}" in$/,$d\' "$1")"\n'
+            'ensure_checker_wasm_pkg "$2"\n'
+            'ensure_checker_wasm_engine "$3"\n'
+        )
+        def run_ensure():
+            stamp = target_dir / ".norn-built-tree"
+            if stamp.exists():
+                past = stamp.stat().st_mtime - 10
+                os.utime(stamp, (past, past))
+            result = subprocess.run(
+                ["bash", "-c", harness, "_", str(ROOT / "scripts/ci/core.sh"), str(out_pkg), str(out_engine)],
+                cwd=self.root, env=env, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return build_log.read_text().splitlines()
+
+        # Cold clean tree builds both packages once and copies them to out dirs.
+        self.assertEqual(run_ensure(), ["pkg", "engine"])
+        self.assertTrue((out_pkg / "norn_checker_wasm_bg.wasm").is_file())
+        self.assertTrue((out_engine / "norn_engine_wasm_bg.wasm").is_file())
+        # Second run on the same clean tree reuses both cached packages.
+        self.assertEqual(run_ensure(), ["pkg", "engine"])
+        # Untracked files outside Rust/WASM inputs do not invalidate reuse.
+        scratch = self.root / "apps/studio/src/checker/untracked.txt"
+        scratch.parent.mkdir(parents=True, exist_ok=True)
+        scratch.write_text("copied output\n")
+        self.assertEqual(run_ensure(), ["pkg", "engine"])
+        # Uncommitted edit to a tracked file under crates/ invalidates both caches.
+        tracked = self.root / "crates/norn-checker/src/lib.rs"
+        tracked.write_text("// dirty edit\n")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 2)
+        # Reverting back to clean HEAD must NOT reuse the dirty build; it rebuilds clean once,
+        # and then a subsequent clean run reuses the clean cache.
+        self.git("checkout", "--", "crates/norn-checker/src/lib.rs")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 3)
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 3)
+        # Untracked file under crates/ also invalidates both caches.
+        untracked_rs = self.root / "crates/norn-checker/src/new_file.rs"
+        untracked_rs.write_text("pub fn extra() {}\n")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 4)
+        untracked_rs.unlink()
+        # Dirty Cargo.toml also invalidates both caches.
+        manifest = self.root / "Cargo.toml"
+        original_manifest = manifest.read_text()
+        manifest.write_text(original_manifest + "\n# dirty\n")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 5)
+        manifest.write_text(original_manifest)
+
+        # A direct overwrite with a clean tree and fresh SIZE.txt still forces a rebuild.
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 6)
+        canonical = target_dir / "norn-checker-wasm"
+        (canonical / "pkg/norn_checker_wasm_bg.wasm").write_bytes(b"overwritten checker")
+        (canonical / "engine/norn_engine_wasm_bg.wasm").write_bytes(b"overwritten engine")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 7)
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 7)
 
     def test_bundle_executor_logs_success_and_propagates_failure(self):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
