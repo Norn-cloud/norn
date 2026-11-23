@@ -1,10 +1,3 @@
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    missing_docs,
-    reason = "decimal-binding zero-comparison admission tests"
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv};
@@ -12,7 +5,24 @@ use norn_ir::{
     InterfaceDef, InterfaceName, PropertyId, UnitRef, UnitSystem, metric::DimensionPath,
 };
 
-fn binding_env() -> ZenTypeEnv {
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+fn compile(source: &str) -> TestResult<Expression> {
+    Expression::compile(source).map_err(|err| format!("compile `{source}`: {err:?}").into())
+}
+
+fn assert_refused(env: &ZenTypeEnv, source: &str, expected: &Type, code: &str) -> TestResult {
+    let Err(err) = compile(source)?.check_typed(env, expected) else {
+        return Err(format!("{source} -> {expected:?} must refuse with {code}").into());
+    };
+    assert!(
+        err.iter().any(|d| d.code == code),
+        "{source} -> {expected:?} expected {code}, got {err:?}"
+    );
+    Ok(())
+}
+
+fn binding_env() -> TestResult<ZenTypeEnv> {
     let bound_mass = Type::DecimalBinding {
         group: "mass".into(),
     };
@@ -60,12 +70,12 @@ fn binding_env() -> ZenTypeEnv {
         ("opaque".into(), Type::Json),
     ]);
     ZenTypeEnv::input_only_with_records(records, fields, EnvOptions::default())
-        .expect("binding env")
+        .map_err(|err| format!("binding env: {err:?}").into())
 }
 
 #[test]
-fn decimal_binding_admits_unit_invariant_comparisons_against_literal_zero() {
-    let env = binding_env();
+fn decimal_binding_admits_unit_invariant_comparisons_against_literal_zero() -> TestResult {
+    let env = binding_env()?;
     for source in [
         "input.quantity > 0",
         "input.quantity >= 0",
@@ -80,16 +90,16 @@ fn decimal_binding_admits_unit_invariant_comparisons_against_literal_zero() {
         "input.quantity > 0.00",
         "input.quantity >= -0",
     ] {
-        let checked = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&env, &Type::Bool);
+        let checked = compile(source)?.check_typed(&env, &Type::Bool);
         assert!(checked.is_ok(), "{source} should be admitted: {checked:?}");
     }
+    Ok(())
 }
 
 #[test]
-fn decimal_binding_refuses_bound_vs_bound_same_group_operations_join_and_destination() {
-    let env = binding_env();
+fn decimal_binding_refuses_bound_vs_bound_same_group_operations_join_and_destination() -> TestResult
+{
+    let env = binding_env()?;
     for source in [
         "input.quantity == input.other_mass",
         "input.quantity != input.other_mass",
@@ -99,28 +109,14 @@ fn decimal_binding_refuses_bound_vs_bound_same_group_operations_join_and_destina
         "input.quantity * input.other_mass > 0",
         "input.quantity / input.other_mass > 0",
     ] {
-        let err = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&env, &Type::Bool)
-            .expect_err(&format!("{source} must refuse Bound vs Bound"));
-        assert!(
-            err.iter().any(|d| d.code == "core.values.unit_mismatch"),
-            "{source} expected core.values.unit_mismatch, got {err:?}"
-        );
+        assert_refused(&env, source, &Type::Bool, "core.values.unit_mismatch")?;
     }
 
     for source in [
         "(input.count > 0 ? input.quantity : input.other_mass) > 0",
         "(input.count > 0 ? input.quantity : 0) > 0",
     ] {
-        let err = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&env, &Type::Bool)
-            .expect_err(&format!("{source} must refuse Bound in join/ternary"));
-        assert!(
-            err.iter().any(|d| d.code == "expr.type.error"),
-            "{source} expected expr.type.error from join refusal, got {err:?}"
-        );
+        assert_refused(&env, source, &Type::Bool, "expr.type.error")?;
     }
 
     let bound_mass = Type::DecimalBinding {
@@ -131,22 +127,15 @@ fn decimal_binding_refuses_bound_vs_bound_same_group_operations_join_and_destina
         ("0", &bound_mass),
         ("input.quantity", &Type::Integer),
     ] {
-        let err = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&env, expected)
-            .expect_err(&format!(
-                "{source} -> {expected:?} must refuse Bound destination"
-            ));
-        assert!(
-            err.iter().any(|d| d.code == "core.values.unit_mismatch"),
-            "{source} -> {expected:?} expected core.values.unit_mismatch, got {err:?}"
-        );
+        assert_refused(&env, source, expected, "core.values.unit_mismatch")?;
     }
+    Ok(())
 }
 
 #[test]
-fn decimal_binding_refuses_non_zero_bare_literals_mixed_groups_and_arithmetic_with_literals() {
-    let env = binding_env();
+fn decimal_binding_refuses_non_zero_bare_literals_mixed_groups_and_arithmetic_with_literals()
+-> TestResult {
+    let env = binding_env()?;
     for source in [
         "input.quantity > 1",
         "input.quantity >= 1",
@@ -164,46 +153,36 @@ fn decimal_binding_refuses_non_zero_bare_literals_mixed_groups_and_arithmetic_wi
         "input.quantity + input.volume > 0",
         "input.quantity + input.grams > 0",
     ] {
-        let err = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&env, &Type::Bool)
-            .expect_err(&format!("{source} must be refused"));
-        assert!(
-            err.iter().any(|d| d.code == "core.values.unit_mismatch"),
-            "{source} expected core.values.unit_mismatch, got {err:?}"
-        );
+        assert_refused(&env, source, &Type::Bool, "core.values.unit_mismatch")?;
     }
+    Ok(())
 }
 
 #[test]
-fn unresolved_currency_source_remains_fail_closed_even_against_literal_zero() {
-    let env = binding_env();
-    let err = Expression::compile("input.unresolved_money > 0")
-        .expect("compiles")
-        .check_typed(&env, &Type::Bool)
-        .expect_err("unresolved currency source must fail closed against zero");
-    assert!(
-        err.iter().any(|d| d.code == "core.values.unit_mismatch"),
-        "expected core.values.unit_mismatch, got {err:?}"
-    );
+fn unresolved_currency_source_remains_fail_closed_even_against_literal_zero() -> TestResult {
+    let env = binding_env()?;
+    assert_refused(
+        &env,
+        "input.unresolved_money > 0",
+        &Type::Bool,
+        "core.values.unit_mismatch",
+    )
 }
 
 #[test]
-fn unbodied_or_non_scalar_json_property_remains_fail_closed_opaque() {
-    let env = binding_env();
-    let err = Expression::compile("input.opaque != null")
-        .expect("compiles")
-        .check_typed(&env, &Type::Bool)
-        .expect_err("opaque json read must fail closed");
-    assert!(
-        err.iter().any(|d| d.code == "expr.read.opaque"),
-        "expected expr.read.opaque, got {err:?}"
-    );
+fn unbodied_or_non_scalar_json_property_remains_fail_closed_opaque() -> TestResult {
+    let env = binding_env()?;
+    assert_refused(
+        &env,
+        "input.opaque != null",
+        &Type::Bool,
+        "expr.read.opaque",
+    )
 }
 
 #[test]
-fn decimal_binding_refuses_sum_rounding_truncation_interval_and_temporal_bypasses() {
-    let env = binding_env();
+fn decimal_binding_refuses_sum_rounding_truncation_interval_and_temporal_bypasses() -> TestResult {
+    let env = binding_env()?;
     for source in [
         "sum(input.quantities) > 0",
         "sum(map(input.lines, #.quantity)) > 0",
@@ -222,14 +201,7 @@ fn decimal_binding_refuses_sum_rounding_truncation_interval_and_temporal_bypasse
         "input.quantity in [0..5]",
         "add_days(date('2026-01-01'), input.quantity) == date('2026-01-01')",
     ] {
-        let err = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&env, &Type::Bool)
-            .expect_err(&format!("{source} must refuse with unit mismatch"));
-        assert!(
-            err.iter().any(|d| d.code == "core.values.unit_mismatch"),
-            "{source} expected core.values.unit_mismatch, got {err:?}"
-        );
+        assert_refused(&env, source, &Type::Bool, "core.values.unit_mismatch")?;
     }
 
     for source in [
@@ -238,10 +210,9 @@ fn decimal_binding_refuses_sum_rounding_truncation_interval_and_temporal_bypasse
         "avg(input.quantities) > 0",
         "median(input.quantities) > 0",
     ] {
-        let err = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&env, &Type::Bool)
-            .expect_err(&format!("{source} must be refused"));
+        let Err(err) = compile(source)?.check_typed(&env, &Type::Bool) else {
+            return Err(format!("{source} must be refused").into());
+        };
         assert!(
             err.iter()
                 .any(|d| d.code == "expr.construct.unsupported"
@@ -249,11 +220,12 @@ fn decimal_binding_refuses_sum_rounding_truncation_interval_and_temporal_bypasse
             "{source} expected unsupported or unit mismatch, got {err:?}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn decimal_binding_preserves_unit_invariant_unary_sign_and_abs_zero_checks() {
-    let env = binding_env();
+fn decimal_binding_preserves_unit_invariant_unary_sign_and_abs_zero_checks() -> TestResult {
+    let env = binding_env()?;
     for source in [
         "-input.quantity < 0",
         "-input.quantity <= 0",
@@ -261,9 +233,7 @@ fn decimal_binding_preserves_unit_invariant_unary_sign_and_abs_zero_checks() {
         "-(input.quantity) == 0",
         "round(input.grams, 2, 'half_even') > 0",
     ] {
-        let checked = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&env, &Type::Bool);
+        let checked = compile(source)?.check_typed(&env, &Type::Bool);
         assert!(checked.is_ok(), "{source} should be admitted: {checked:?}");
     }
 
@@ -277,10 +247,9 @@ fn decimal_binding_preserves_unit_invariant_unary_sign_and_abs_zero_checks() {
         "abs(-input.quantity) >= 0",
         "sum(input.grams_list) > 0",
     ] {
-        let err = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&env, &Type::Bool)
-            .expect_err(&format!("{source} is outside exact scaled VM function set"));
+        let Err(err) = compile(source)?.check_typed(&env, &Type::Bool) else {
+            return Err(format!("{source} is outside exact scaled VM function set").into());
+        };
         assert!(
             !err.iter().any(|d| d.code == "core.values.unit_mismatch"),
             "{source} must not fail unit algebra, got {err:?}"
@@ -291,21 +260,19 @@ fn decimal_binding_preserves_unit_invariant_unary_sign_and_abs_zero_checks() {
         );
     }
 
-    let err = Expression::compile("abs(input.quantity) > 1")
-        .expect("compiles")
-        .check_typed(&env, &Type::Bool)
-        .expect_err("abs(Bound) > 1 must fail unit algebra");
-    assert!(
-        err.iter().any(|d| d.code == "core.values.unit_mismatch"),
-        "expected core.values.unit_mismatch, got {err:?}"
-    );
+    assert_refused(
+        &env,
+        "abs(input.quantity) > 1",
+        &Type::Bool,
+        "core.values.unit_mismatch",
+    )
 }
 
-fn interface_def(json: &str) -> InterfaceDef {
-    serde_json::from_str(json).expect("interface def")
+fn interface_def(json: &str) -> TestResult<InterfaceDef> {
+    Ok(serde_json::from_str(json)?)
 }
 
-fn interface_env(interfaces: &[InterfaceDef], self_interface: &str) -> ZenTypeEnv {
+fn interface_env(interfaces: &[InterfaceDef], self_interface: &str) -> TestResult<ZenTypeEnv> {
     let defs = EntityDefinitions {
         property_types: &[],
         interfaces,
@@ -313,13 +280,13 @@ fn interface_env(interfaces: &[InterfaceDef], self_interface: &str) -> ZenTypeEn
         extensions: &[],
     };
     ZenTypeEnv::from_artifact_set_for_checking(&defs, &BTreeSet::new(), EnvOptions::default())
-        .expect("interface env")
+        .map_err(|err| format!("interface env: {err:?}"))?
         .bind_interface_self(&InterfaceName(self_interface.to_owned()))
-        .expect("bind self")
+        .map_err(|err| format!("bind self: {err:?}").into())
 }
 
-fn test_interfaces() -> [InterfaceDef; 5] {
-    [
+fn test_interfaces() -> TestResult<[InterfaceDef; 5]> {
+    Ok([
         interface_def(
             r#"{
                 "name": "core.Conversion",
@@ -334,7 +301,7 @@ fn test_interfaces() -> [InterfaceDef; 5] {
                     {"id": "others", "target": "core.Conversion", "cardinality": {"from": "many", "to": "many", "required": false}}
                 ]
             }"#,
-        ),
+        )?,
         interface_def(
             r#"{
                 "name": "toy.ChildConversion",
@@ -343,7 +310,7 @@ fn test_interfaces() -> [InterfaceDef; 5] {
                     {"id": "child_qty", "type": {"kind": "decimal-binding", "group": "conversion"}}
                 ]
             }"#,
-        ),
+        )?,
         interface_def(
             r#"{
                 "name": "toy.I1",
@@ -355,7 +322,7 @@ fn test_interfaces() -> [InterfaceDef; 5] {
                     {"id": "peer", "target": "toy.I2", "cardinality": {"from": "many", "to": "one", "required": true}}
                 ]
             }"#,
-        ),
+        )?,
         interface_def(
             r#"{
                 "name": "toy.I2",
@@ -363,21 +330,22 @@ fn test_interfaces() -> [InterfaceDef; 5] {
                     {"id": "b", "type": {"kind": "decimal-binding", "group": "g"}}
                 ]
             }"#,
-        ),
+        )?,
         interface_def(
             r#"{
                 "name": "toy.I3",
                 "extends": ["toy.I1", "toy.I2"],
                 "properties": []
             }"#,
-        ),
-    ]
+        )?,
+    ])
 }
 
 #[test]
-fn interface_decimal_binding_admits_same_owner_same_instance_and_refuses_owner_mismatches() {
-    let all = test_interfaces();
-    let conv_env = interface_env(&all, "core.Conversion");
+fn interface_decimal_binding_admits_same_owner_same_instance_and_refuses_owner_mismatches()
+-> TestResult {
+    let all = test_interfaces()?;
+    let conv_env = interface_env(&all, "core.Conversion")?;
     for source in [
         "self.input == self.output + self.loss",
         "self.input - self.output == self.loss",
@@ -388,23 +356,20 @@ fn interface_decimal_binding_admits_same_owner_same_instance_and_refuses_owner_m
         "self.input > 0",
         "-self.input < 0",
     ] {
-        let checked = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&conv_env, &Type::Bool);
+        let checked = compile(source)?.check_typed(&conv_env, &Type::Bool);
         assert!(checked.is_ok(), "{source} should be admitted: {checked:?}");
     }
 
-    let child_env = interface_env(&all, "toy.ChildConversion");
+    let child_env = interface_env(&all, "toy.ChildConversion")?;
     assert!(
-        Expression::compile("self.input == self.output + self.loss")
-            .expect("compiles")
+        compile("self.input == self.output + self.loss")?
             .check_typed(&child_env, &Type::Bool)
             .is_ok(),
         "inherited same-declaring-interface fields on same instance must be admitted"
     );
 
-    let i1_env = interface_env(&all, "toy.I1");
-    let i3_env = interface_env(&all, "toy.I3");
+    let i1_env = interface_env(&all, "toy.I1")?;
+    let i3_env = interface_env(&all, "toy.I3")?;
     for (env, source) in [
         (&child_env, "self.input == self.child_qty"),
         (&child_env, "self.input + self.child_qty > 0"),
@@ -417,33 +382,24 @@ fn interface_decimal_binding_admits_same_owner_same_instance_and_refuses_owner_m
         (&i3_env, "self.a - self.b == 0"),
         (&i3_env, "self.a > self.b"),
     ] {
-        let err = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(env, &Type::Bool)
-            .expect_err(&format!("{source} must refuse distinct declaring owners"));
-        assert!(
-            err.iter().any(|d| d.code == "core.values.unit_mismatch"),
-            "{source} expected core.values.unit_mismatch, got {err:?}"
-        );
+        assert_refused(env, source, &Type::Bool, "core.values.unit_mismatch")?;
     }
-    let err = Expression::compile("(self.flag ? self.a : self.b) > 0")
-        .expect("compiles")
-        .check_typed(&i3_env, &Type::Bool)
-        .expect_err("multi-parent join must refuse");
-    assert!(
-        err.iter().any(|d| d.code == "expr.type.error"),
-        "expected expr.type.error, got {err:?}"
-    );
+    assert_refused(
+        &i3_env,
+        "(self.flag ? self.a : self.b) > 0",
+        &Type::Bool,
+        "expr.type.error",
+    )
 }
 
 #[test]
-fn interface_decimal_binding_refuses_cross_instance_sum_rounding_and_destinations() {
-    let all = test_interfaces();
-    let conv_env = interface_env(&all, "core.Conversion")
+fn interface_decimal_binding_refuses_cross_instance_sum_rounding_and_destinations() -> TestResult {
+    let all = test_interfaces()?;
+    let conv_env = interface_env(&all, "core.Conversion")?
         .bind_operand("a", Type::Record("core.Conversion".into()))
-        .expect("bind a")
+        .map_err(|err| format!("bind a: {err:?}"))?
         .bind_operand("b", Type::Record("core.Conversion".into()))
-        .expect("bind b");
+        .map_err(|err| format!("bind b: {err:?}"))?;
     for source in [
         "self.input == self.other.input",
         "self.input + self.other.input > 0",
@@ -462,36 +418,20 @@ fn interface_decimal_binding_refuses_cross_instance_sum_rounding_and_destination
         "self.input * self.output > 0",
         "self.input / self.output > 0",
     ] {
-        let err = Expression::compile(source)
-            .expect("compiles")
-            .check_typed(&conv_env, &Type::Bool)
-            .expect_err(&format!(
-                "{source} must refuse cross-instance / non-invariant op"
-            ));
-        assert!(
-            err.iter().any(|d| d.code == "core.values.unit_mismatch"),
-            "{source} expected core.values.unit_mismatch, got {err:?}"
-        );
+        assert_refused(&conv_env, source, &Type::Bool, "core.values.unit_mismatch")?;
     }
-    let err = Expression::compile("(self.flag ? self.input : self.other.input) > 0")
-        .expect("compiles")
-        .check_typed(&conv_env, &Type::Bool)
-        .expect_err("cross-instance join must refuse");
-    assert!(
-        err.iter().any(|d| d.code == "expr.type.error"),
-        "expected expr.type.error, got {err:?}"
-    );
-    let err = Expression::compile("0")
-        .expect("compiles")
-        .check_typed(
-            &conv_env,
-            &Type::DecimalBinding {
-                group: "conversion".into(),
-            },
-        )
-        .expect_err("LiteralZero -> Bound destination must remain refused");
-    assert!(
-        err.iter().any(|d| d.code == "core.values.unit_mismatch"),
-        "expected core.values.unit_mismatch, got {err:?}"
-    );
+    assert_refused(
+        &conv_env,
+        "(self.flag ? self.input : self.other.input) > 0",
+        &Type::Bool,
+        "expr.type.error",
+    )?;
+    assert_refused(
+        &conv_env,
+        "0",
+        &Type::DecimalBinding {
+            group: "conversion".into(),
+        },
+        "core.values.unit_mismatch",
+    )
 }

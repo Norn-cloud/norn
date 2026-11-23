@@ -1,10 +1,3 @@
-#![allow(
-    clippy::expect_used,
-    clippy::panic,
-    missing_docs,
-    reason = "registry correspondence and invariant admission tests"
-)]
-
 #[path = "../../../registry/core/src/value_types.rs"]
 mod value_types;
 
@@ -20,23 +13,22 @@ use norn_ir::{
 };
 use serde_json::json;
 
-fn extract_catalog(pack: ArtifactEnvelope) -> Vec<PropertyTypeDef> {
-    pack.validate().expect("ordinary entity admission");
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+fn extract_catalog(pack: ArtifactEnvelope) -> TestResult<Vec<PropertyTypeDef>> {
+    pack.validate()
+        .map_err(|err| format!("ordinary entity admission: {err:?}"))?;
     let ArtifactPayload::Entity(payload) = pack.payload else {
-        panic!("entity catalog")
+        return Err("expected entity catalog".into());
     };
-    let root: PropertyTypeCatalogRootV2 =
-        serde_json::from_str(&serde_json::to_string(&payload).expect("typed root"))
-            .expect("catalog root");
-    root.property_types
+    let root: PropertyTypeCatalogRootV2 = serde_json::from_str(&serde_json::to_string(&payload)?)?;
+    Ok(root.property_types)
 }
 
-fn combined_catalog() -> Vec<PropertyTypeDef> {
-    let mut catalog = extract_catalog(value_types::core_pack().expect("core value types"));
-    catalog.extend(extract_catalog(
-        value_types::std_pack().expect("std value types"),
-    ));
-    catalog
+fn combined_catalog() -> TestResult<Vec<PropertyTypeDef>> {
+    let mut catalog = extract_catalog(value_types::core_pack()?)?;
+    catalog.extend(extract_catalog(value_types::std_pack()?)?);
+    Ok(catalog)
 }
 
 fn property(name: &str, catalog: &[PropertyTypeDef]) -> EffectiveProperty {
@@ -59,47 +51,47 @@ fn property(name: &str, catalog: &[PropertyTypeDef]) -> EffectiveProperty {
     )
 }
 
-fn assert_generated_catalog(relative_path: &str, pack: ArtifactEnvelope) {
+fn assert_generated_catalog(relative_path: &str, pack: ArtifactEnvelope) -> TestResult {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
-    let exact = RuntimeValue::from_json(serde_json::to_value(&pack).expect("wire"))
-        .expect("exact runtime value");
-    let rendered = format!(
-        "{}\n",
-        serde_json::to_string_pretty(&exact).expect("serializes")
-    );
+    let exact = RuntimeValue::from_json(serde_json::to_value(&pack)?)
+        .map_err(|err| format!("exact runtime value: {err:?}"))?;
+    let rendered = format!("{}\n", serde_json::to_string_pretty(&exact)?);
     if std::env::var_os("NORN_CHECKER_UPDATE_GOLDENS").is_some() {
-        std::fs::write(&path, &rendered).expect("regenerate");
+        std::fs::write(&path, &rendered)?;
     }
     assert_eq!(
-        std::fs::read_to_string(&path).expect("generated catalog"),
+        std::fs::read_to_string(&path)?,
         rendered,
         "{relative_path} drifted from registry/core/src/value_types.rs"
     );
-    let defs = extract_catalog(pack);
+    let defs = extract_catalog(pack)?;
     assert_eq!(check_property_type_defs(&defs, &BTreeSet::new()), []);
+    Ok(())
 }
 
 #[test]
-fn core_and_std_value_types_match_generated_admitted_catalogs() {
+fn core_and_std_value_types_match_generated_admitted_catalogs() -> TestResult {
     assert_generated_catalog(
         "../../registry/core/artifacts/core.value_types.entity.json",
-        value_types::core_pack().expect("core pack"),
-    );
+        value_types::core_pack()?,
+    )?;
     assert_generated_catalog(
         "../../registry/core/artifacts/std.value_types.entity.json",
-        value_types::std_pack().expect("std pack"),
-    );
+        value_types::std_pack()?,
+    )?;
+    Ok(())
 }
 
 #[test]
-fn iso4217_table_matches_canon_records_and_is_strictly_sorted() {
+fn iso4217_table_matches_canon_records_and_is_strictly_sorted() -> TestResult {
     assert_eq!(value_types::ISO_4217.len(), 176);
     for pair in value_types::ISO_4217.windows(2) {
+        let [prev, next] = pair else {
+            return Err("expected 2-element window".into());
+        };
         assert!(
-            pair[0] < pair[1],
-            "ISO_4217 must be strictly sorted and unique: {:?} >= {:?}",
-            pair[0],
-            pair[1]
+            prev < next,
+            "ISO_4217 must be strictly sorted and unique: {prev:?} >= {next:?}",
         );
     }
     for code in value_types::ISO_4217 {
@@ -117,21 +109,22 @@ fn iso4217_table_matches_canon_records_and_is_strictly_sorted() {
     let canon_records = include_str!("../../../registry/packs/canon/records.ts");
     let (_, rest) = canon_records
         .split_once("export const ISO_4217 = [")
-        .expect("ISO_4217 export in registry/packs/canon/records.ts");
+        .ok_or("ISO_4217 export in registry/packs/canon/records.ts")?;
     let (body, _) = rest
         .split_once("] as const")
-        .expect("closing `] as const` for ISO_4217");
+        .ok_or("closing `] as const` for ISO_4217")?;
     let canon_codes: Vec<&str> = body.split('"').skip(1).step_by(2).collect();
     assert_eq!(
         canon_codes.as_slice(),
         value_types::ISO_4217.as_slice(),
         "ISO_4217 in registry/core/src/value_types.rs drifted from registry/packs/canon/records.ts"
     );
+    Ok(())
 }
 
 #[test]
-fn materialized_value_types_validate_scalars_and_iso4217_codes() {
-    let catalog = combined_catalog();
+fn materialized_value_types_validate_scalars_and_iso4217_codes() -> TestResult {
+    let catalog = combined_catalog()?;
 
     let currency = property("iso4217.currency_code", &catalog);
     for valid in ["USD", "EUR", "EGP", "JPY", "GBP", "XAU"] {
@@ -164,16 +157,12 @@ fn materialized_value_types_validate_scalars_and_iso4217_codes() {
     );
 
     let quantity = property("core.quantity", &catalog);
-    assert!(
-        quantity
-            .check_runtime_value(&RuntimeValue::from_json(json!(12.345_678)).expect("decimal"))
-            .is_ok()
-    );
-    assert!(
-        quantity
-            .check_runtime_value(&RuntimeValue::from_json(json!(12.345_678_9)).expect("decimal"))
-            .is_err()
-    );
+    let valid_qty = RuntimeValue::from_json(json!(12.345_678))
+        .map_err(|err| format!("valid decimal: {err:?}"))?;
+    assert!(quantity.check_runtime_value(&valid_qty).is_ok());
+    let invalid_qty = RuntimeValue::from_json(json!(12.345_678_9))
+        .map_err(|err| format!("invalid decimal: {err:?}"))?;
+    assert!(quantity.check_runtime_value(&invalid_qty).is_err());
 
     let date = property("iso8601.date", &catalog);
     assert!(
@@ -184,14 +173,12 @@ fn materialized_value_types_validate_scalars_and_iso4217_codes() {
         date.check_runtime_value(&RuntimeValue::from("2026-11-23T00:00:00Z"))
             .is_err()
     );
+    Ok(())
 }
 
 #[test]
-fn core_rea_interfaces_admit_with_materialized_value_types_and_pinned_dependencies() {
-    let base = vec![
-        value_types::core_pack().expect("core"),
-        value_types::std_pack().expect("std"),
-    ];
+fn core_rea_interfaces_admit_with_materialized_value_types_and_pinned_dependencies() -> TestResult {
+    let base = vec![value_types::core_pack()?, value_types::std_pack()?];
     let artifacts: Vec<ArtifactEnvelope> = [
         include_str!("../../../registry/core/artifacts/core.Agent.interface.json"),
         include_str!("../../../registry/core/artifacts/core.AgentRole.interface.json"),
@@ -206,8 +193,8 @@ fn core_rea_interfaces_admit_with_materialized_value_types_and_pinned_dependenci
         include_str!("../../../registry/core/artifacts/core.Exchange.interface.json"),
     ]
     .into_iter()
-    .map(|raw| serde_json::from_str(raw).expect("REA interface"))
-    .collect();
+    .map(serde_json::from_str)
+    .collect::<Result<Vec<_>, _>>()?;
 
     let registry = BTreeSet::new();
     let findings = check_artifact_set(
@@ -223,11 +210,12 @@ fn core_rea_interfaces_admit_with_materialized_value_types_and_pinned_dependenci
         [],
         "REA interfaces must admit cleanly over materialized core/std value types"
     );
+    Ok(())
 }
 
 #[test]
-fn unbodied_and_non_scalar_refs_remain_fail_closed_in_invariants() {
-    let catalog = combined_catalog();
+fn unbodied_and_non_scalar_refs_remain_fail_closed_in_invariants() -> TestResult {
+    let catalog = combined_catalog()?;
     let registry = BTreeSet::from([PropertyTypeName("external.unbodied_code".to_owned())]);
 
     let unbodied: ObjectTypeDef = serde_json::from_value(json!({
@@ -238,8 +226,7 @@ fn unbodied_and_non_scalar_refs_remain_fail_closed_in_invariants() {
         "invariants": [
             { "id": "reads_ext", "expression": "self.ext != ''", "message": "must be non-empty" }
         ]
-    }))
-    .expect("unbodied object type");
+    }))?;
 
     let findings = check_entity_model(
         &EntityModel {
@@ -268,8 +255,7 @@ fn unbodied_and_non_scalar_refs_remain_fail_closed_in_invariants() {
         "invariants": [
             { "id": "reads_health", "expression": "self.health != null", "message": "must exist" }
         ]
-    }))
-    .expect("non-scalar object type");
+    }))?;
 
     let findings = check_entity_model(
         &EntityModel {
@@ -289,18 +275,18 @@ fn unbodied_and_non_scalar_refs_remain_fail_closed_in_invariants() {
             && d.message.contains("opaque")),
         "non-scalar json-ext ref must remain fail-closed (opaque): {findings:?}"
     );
+    Ok(())
 }
 
 #[test]
-fn single_object_invariant_scope_still_refuses_cross_object_link_reads() {
-    let catalog = combined_catalog();
+fn single_object_invariant_scope_still_refuses_cross_object_link_reads() -> TestResult {
+    let catalog = combined_catalog()?;
     let parent: ObjectTypeDef = serde_json::from_value(json!({
         "name": "test.Owner",
         "properties": [
             { "id": "code", "type": { "kind": "ref", "name": "core.code" } }
         ]
-    }))
-    .expect("owner");
+    }))?;
     let child: ObjectTypeDef = serde_json::from_value(json!({
         "name": "test.Item",
         "properties": [
@@ -312,8 +298,7 @@ fn single_object_invariant_scope_still_refuses_cross_object_link_reads() {
         "invariants": [
             { "id": "cross_owner", "expression": "self.quantity > 0 and self.owner.code != ''", "message": "cross-object must refuse" }
         ]
-    }))
-    .expect("item");
+    }))?;
 
     let findings = check_entity_model(
         &EntityModel {
@@ -333,4 +318,5 @@ fn single_object_invariant_scope_still_refuses_cross_object_link_reads() {
             && d.message.contains("reads a link or inverse role")),
         "cross-object invariant must remain refused: {findings:?}"
     );
+    Ok(())
 }

@@ -1,10 +1,3 @@
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    missing_docs,
-    reason = "kernel commit-time invariant enforcement over registry-typed properties"
-)]
-
 //! Verifies that `norn-kernel` enforces interface invariants reading
 //! registry-typed (`Norn.ref`) properties at commit time (#1583).
 
@@ -15,26 +8,26 @@ use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
 
 type Cell = MemoryCell<FactEvent, JsonObject, JsonObject>;
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn core_property_types() -> Vec<PropertyTypeDef> {
-    [
+fn core_property_types() -> TestResult<Vec<PropertyTypeDef>> {
+    let mut out = Vec::new();
+    for raw in [
         include_str!("../../../registry/core/artifacts/core.value_types.entity.json"),
         include_str!("../../../registry/core/artifacts/std.value_types.entity.json"),
-    ]
-    .into_iter()
-    .flat_map(|raw| {
-        let artifact: Value = serde_json::from_str(raw).unwrap();
+    ] {
+        let artifact: Value = serde_json::from_str(raw)?;
         let types = artifact
             .get("payload")
             .and_then(|payload| payload.get("propertyTypes"))
-            .expect("propertyTypes")
+            .ok_or("missing payload.propertyTypes")?
             .clone();
-        serde_json::from_value::<Vec<PropertyTypeDef>>(types).unwrap()
-    })
-    .collect()
+        out.extend(serde_json::from_value::<Vec<PropertyTypeDef>>(types)?);
+    }
+    Ok(out)
 }
 
-fn core_interfaces() -> Vec<InterfaceDef> {
+fn core_interfaces() -> TestResult<Vec<InterfaceDef>> {
     [
         include_str!("../../../registry/core/artifacts/core.Agent.interface.json"),
         include_str!("../../../registry/core/artifacts/core.Resource.interface.json"),
@@ -46,19 +39,19 @@ fn core_interfaces() -> Vec<InterfaceDef> {
     ]
     .into_iter()
     .map(|raw| {
-        let artifact: Value = serde_json::from_str(raw).unwrap();
+        let artifact: Value = serde_json::from_str(raw)?;
         let interface = artifact
             .get("payload")
             .and_then(|payload| payload.get("interface"))
-            .expect("interface")
+            .ok_or("missing payload.interface")?
             .clone();
-        serde_json::from_value::<InterfaceDef>(interface).unwrap()
+        Ok(serde_json::from_value::<InterfaceDef>(interface)?)
     })
     .collect()
 }
 
-fn rea_object_types() -> Vec<ObjectTypeDef> {
-    vec![
+fn rea_object_types() -> TestResult<Vec<ObjectTypeDef>> {
+    Ok(vec![
         serde_json::from_value(json!({
             "name": "test.Holding",
             "implements": ["core.Resource"],
@@ -69,8 +62,7 @@ fn rea_object_types() -> Vec<ObjectTypeDef> {
                 { "id": "currency", "type": { "kind": "ref", "name": "core.code" }, "constraints": { "nullable": true } },
                 { "id": "valuation_method", "type": { "kind": "enum", "values": [{ "value": "fifo" }, { "value": "moving_average" }] }, "constraints": { "nullable": true } }
             ]
-        }))
-        .unwrap(),
+        }))?,
         serde_json::from_value(json!({
             "name": "test.OrderLine",
             "implements": ["core.Commitment"],
@@ -81,8 +73,7 @@ fn rea_object_types() -> Vec<ObjectTypeDef> {
                 { "id": "unit", "type": { "kind": "ref", "name": "ucum.unit_code" }, "constraints": { "nullable": true } },
                 { "id": "currency", "type": { "kind": "ref", "name": "core.code" }, "constraints": { "nullable": true } }
             ]
-        }))
-        .unwrap(),
+        }))?,
         serde_json::from_value(json!({
             "name": "test.Reservation",
             "implements": ["core.Hold"],
@@ -93,8 +84,7 @@ fn rea_object_types() -> Vec<ObjectTypeDef> {
                 { "id": "currency", "type": { "kind": "ref", "name": "core.code" }, "constraints": { "nullable": true } },
                 { "id": "expires_at", "type": { "kind": "ref", "name": "iso8601.timestamp" }, "constraints": { "nullable": true } }
             ]
-        }))
-        .unwrap(),
+        }))?,
         serde_json::from_value(json!({
             "name": "test.Delivery",
             "implements": ["core.EconomicEvent"],
@@ -105,8 +95,7 @@ fn rea_object_types() -> Vec<ObjectTypeDef> {
                 { "id": "unit", "type": { "kind": "ref", "name": "ucum.unit_code" }, "constraints": { "nullable": true } },
                 { "id": "currency", "type": { "kind": "ref", "name": "core.code" }, "constraints": { "nullable": true } }
             ]
-        }))
-        .unwrap(),
+        }))?,
         serde_json::from_value(json!({
             "name": "test.Posting",
             "implements": ["core.LedgerEffect"],
@@ -115,8 +104,7 @@ fn rea_object_types() -> Vec<ObjectTypeDef> {
                 { "id": "amount", "type": { "kind": "ref", "name": "core.money_amount" } },
                 { "id": "currency", "type": { "kind": "ref", "name": "core.code" } }
             ]
-        }))
-        .unwrap(),
+        }))?,
         serde_json::from_value(json!({
             "name": "test.Receivable",
             "implements": ["core.Claim"],
@@ -125,16 +113,15 @@ fn rea_object_types() -> Vec<ObjectTypeDef> {
                 { "id": "currency", "type": { "kind": "ref", "name": "core.code" } },
                 { "id": "due_date", "type": { "kind": "ref", "name": "iso8601.date" } }
             ]
-        }))
-        .unwrap(),
-    ]
+        }))?,
+    ])
 }
 
-fn rea_cell() -> Cell {
-    Cell::new(|command| command.payload.clone())
-        .with_types(rea_object_types())
-        .with_interfaces(core_interfaces())
-        .with_property_types(core_property_types())
+fn rea_cell() -> TestResult<Cell> {
+    Ok(Cell::new(|command| command.payload.clone())
+        .with_types(rea_object_types()?)
+        .with_interfaces(core_interfaces()?)
+        .with_property_types(core_property_types()?))
 }
 
 fn put(cell: &mut Cell, object_type: &str, key: &str, values: Value) -> Result<(), String> {
@@ -152,8 +139,8 @@ fn put(cell: &mut Cell, object_type: &str, key: &str, values: Value) -> Result<(
 }
 
 #[test]
-fn core_rea_invariants_admit_valid_records_at_commit() {
-    let mut cell = rea_cell();
+fn core_rea_invariants_admit_valid_records_at_commit() -> TestResult {
+    let mut cell = rea_cell()?;
 
     // Valid records: depleted resource (0), monetary resource, positive commitment/hold/event,
     // signed credit & debit ledger effects, positive claim.
@@ -249,11 +236,12 @@ fn core_rea_invariants_admit_valid_records_at_commit() {
             "{object_type}/{key} should admit"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn core_rea_invariants_refuse_violations_at_commit() {
-    let mut cell = rea_cell();
+fn core_rea_invariants_refuse_violations_at_commit() -> TestResult {
+    let mut cell = rea_cell()?;
 
     // Violations must refuse with commit.invariant_violation and leave no fact committed.
     let bad_cases = [
@@ -305,22 +293,27 @@ fn core_rea_invariants_refuse_violations_at_commit() {
     ];
 
     for (object_type, key, values) in bad_cases {
-        let err = put(&mut cell, object_type, key, values)
-            .expect_err(&format!("{object_type}/{key} must refuse"));
+        let Err(err) = put(&mut cell, object_type, key, values) else {
+            return Err(format!("{object_type}/{key} must refuse").into());
+        };
         assert_eq!(
             err, "commit.invariant_violation",
             "{object_type}/{key} expected commit.invariant_violation"
         );
         assert!(
-            !cell.load(&FactKey::new(object_type, key)).unwrap().exists(),
+            !cell
+                .load(&FactKey::new(object_type, key))
+                .map_err(|load_err| format!("load {object_type}/{key}: {load_err:?}"))?
+                .exists(),
             "{object_type}/{key} must not persist after refusal"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn core_rea_single_measure_handles_omitted_nullable_keys() {
-    let mut cell = rea_cell();
+fn core_rea_single_measure_handles_omitted_nullable_keys() -> TestResult {
+    let mut cell = rea_cell()?;
 
     // Omitting nullable `currency` while supplying `unit` satisfies single_measure.
     assert_eq!(
@@ -353,7 +346,7 @@ fn core_rea_single_measure_handles_omitted_nullable_keys() {
     );
 
     // Omitting both nullable `unit` and `currency` violates single_measure.
-    let err = put(
+    let Err(err) = put(
         &mut cell,
         "test.Holding",
         "h-omitted-both",
@@ -361,14 +354,16 @@ fn core_rea_single_measure_handles_omitted_nullable_keys() {
             "resource_code": "GOLD-OMITTED-BOTH",
             "quantity": 5
         }),
-    )
-    .expect_err("omitting both unit and currency must refuse");
+    ) else {
+        return Err("omitting both unit and currency must refuse".into());
+    };
     assert_eq!(err, "commit.invariant_violation");
     assert!(
         !cell
             .load(&FactKey::new("test.Holding", "h-omitted-both"))
-            .unwrap()
+            .map_err(|load_err| format!("load h-omitted-both: {load_err:?}"))?
             .exists(),
         "refused omitted-measure holding must not persist"
     );
+    Ok(())
 }
