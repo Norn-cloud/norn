@@ -15,19 +15,25 @@
 //!
 //! # Non-test LOC definition
 //!
-//! Files under any `tests/` path component and files reached exclusively
-//! through `#[cfg(test)] mod ...;` declarations (discovered with the same
-//! module-graph walk as [`crate::ratchet`]) are test files and are excluded.
-//! Inside every remaining `.rs` file, physical lines belonging to `#[cfg(test)]`
-//! (or `#[cfg(all(test, ...))]`) items — whether an inline `mod tests { ... }`
-//! block at the end of the file, a `#[cfg(test)] mod sub_tests;` declaration,
-//! or an inline `#[cfg(test)]` helper item — are excluded; every other line
-//! counts toward the file's non-test LOC.
+//! Only crate-level integration tests (`crates/<crate>/tests/...`) and module
+//! files reached **exclusively** through `#[cfg(test)] mod ...;` declarations
+//! (never reachable via any non-test `mod` edge and never a crate root such as
+//! `lib.rs`, `main.rs`, `build.rs`, or `src/bin/*.rs`) are excluded as test
+//! files. Inside every remaining `.rs` file, physical lines wholly belonging to
+//! `#[cfg(test)]` (or `#[cfg(all(test, ...))]`) AST items (`mod`, `fn`,
+//! `struct`, `enum`, `impl`, `trait`, `const`, `static`, `type`, `use`,
+//! `extern`, `macro_rules!`, associated `impl`/`trait` items) are excluded via
+//! `syn` + `proc-macro2` source spans; non-item `#[cfg(test)]` attributes on
+//! struct fields, enum variants, function parameters, or closure parameters
+//! never exclude production code.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
-use crate::ratchet::{cfg_is_test, find_test_files};
+use proc_macro2::Span;
+use syn::visit::Visit;
+
+use crate::ratchet::{cfg_is_test, has_cfg_test};
 use crate::{BaselineError, ScanError, Violation, violation};
 
 /// Maximum permitted non-test lines for any `.rs` file not grandfathered in
@@ -43,370 +49,535 @@ pub struct LocBaseline {
     pub files: BTreeMap<String, usize>,
 }
 
-/// Active `#[cfg(test)]` item state while scanning a Rust source file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TestRegion {
-    None,
-    Pending {
-        start_line: usize,
-        base_brace_depth: usize,
-    },
-    Braced {
-        start_line: usize,
-        base_brace_depth: usize,
-    },
+fn first_cfg_test_attr_span(attrs: &[syn::Attribute]) -> Option<Span> {
+    attrs.iter().find_map(|attr| {
+        if matches!(attr.style, syn::AttrStyle::Outer)
+            && attr.path().is_ident("cfg")
+            && attr
+                .parse_args::<syn::Meta>()
+                .is_ok_and(|meta| cfg_is_test(&meta))
+        {
+            Some(attr.pound_token.span)
+        } else {
+            None
+        }
+    })
 }
 
-struct LocScanner<'a> {
-    source: &'a str,
-    bytes: &'a [u8],
+fn macro_delim_close(delim: &syn::MacroDelimiter) -> Span {
+    match delim {
+        syn::MacroDelimiter::Paren(token) => token.span.close(),
+        syn::MacroDelimiter::Brace(token) => token.span.close(),
+        syn::MacroDelimiter::Bracket(token) => token.span.close(),
+    }
+}
+
+struct CfgTestSpanVisitor<'a> {
+    lines: Vec<&'a str>,
     test_lines: Vec<bool>,
-    i: usize,
-    line: usize,
-    brace_depth: usize,
-    paren_depth: usize,
-    bracket_depth: usize,
-    region: TestRegion,
 }
 
-impl<'a> LocScanner<'a> {
-    fn new(source: &'a str, total_lines: usize) -> Self {
+impl<'a> CfgTestSpanVisitor<'a> {
+    fn new(source: &'a str) -> Self {
+        let lines: Vec<&'a str> = source.lines().collect();
+        let count = lines.len();
         Self {
-            source,
-            bytes: source.as_bytes(),
-            test_lines: vec![false; total_lines],
-            i: 0,
-            line: 0,
-            brace_depth: 0,
-            paren_depth: 0,
-            bracket_depth: 0,
-            region: TestRegion::None,
+            lines,
+            test_lines: vec![false; count],
         }
     }
 
-    fn scan(mut self) -> usize {
-        while let Some(&byte) = self.bytes.get(self.i) {
-            if !self.step_token(byte) {
-                self.step_delimiter(byte);
-                self.i = self.i.saturating_add(1);
+    fn mark_if_cfg_test(&mut self, attrs: &[syn::Attribute], end_span: Option<Span>) -> bool {
+        let Some(start_span) = first_cfg_test_attr_span(attrs) else {
+            return false;
+        };
+        if let Some(end_span) = end_span {
+            self.mark_span(start_span, end_span);
+        }
+        true
+    }
+
+    fn mark_span(&mut self, start_span: Span, end_span: Span) {
+        if self.lines.is_empty() {
+            return;
+        }
+        let start = start_span.start();
+        let end = end_span.end();
+        let mut first = start.line.saturating_sub(1);
+        let mut last = end
+            .line
+            .saturating_sub(1)
+            .min(self.lines.len().saturating_sub(1));
+
+        if let Some(line_text) = self.lines.get(first)
+            && !line_text
+                .chars()
+                .take(start.column)
+                .all(char::is_whitespace)
+        {
+            first = first.saturating_add(1);
+        }
+
+        if let Some(line_text) = self.lines.get(last) {
+            let rest: String = line_text.chars().skip(end.column).collect();
+            let trimmed = rest.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with("//") {
+                let Some(prev) = last.checked_sub(1) else {
+                    return;
+                };
+                last = prev;
             }
         }
+
+        if first <= last
+            && let Some(slice) = self.test_lines.get_mut(first..=last)
+        {
+            for slot in slice {
+                *slot = true;
+            }
+        }
+    }
+
+    fn non_test_count(&self) -> usize {
         self.test_lines.iter().filter(|is_test| !**is_test).count()
     }
+}
 
-    fn step_token(&mut self, byte: u8) -> bool {
-        if byte == b'\n' {
-            self.line = self.line.saturating_add(1);
-            self.i = self.i.saturating_add(1);
-            return true;
+impl<'ast> Visit<'ast> for CfgTestSpanVisitor<'_> {
+    fn visit_item_const(&mut self, node: &'ast syn::ItemConst) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.semi_token.span)) {
+            syn::visit::visit_item_const(self, node);
         }
-        if byte == b'/' && self.bytes.get(self.i.saturating_add(1)) == Some(&b'/') {
-            self.i = skip_line_comment(self.bytes, self.i);
-            return true;
-        }
-        if byte == b'/' && self.bytes.get(self.i.saturating_add(1)) == Some(&b'*') {
-            let (next_i, added_lines) = skip_block_comment(self.bytes, self.i);
-            self.i = next_i;
-            self.line = self.line.saturating_add(added_lines);
-            return true;
-        }
-        if let Some((next_i, added_lines)) = try_skip_raw_string(self.bytes, self.i) {
-            self.i = next_i;
-            self.line = self.line.saturating_add(added_lines);
-            return true;
-        }
-        if byte == b'"' {
-            let (next_i, added_lines) = skip_quoted_string(self.bytes, self.i);
-            self.i = next_i;
-            self.line = self.line.saturating_add(added_lines);
-            return true;
-        }
-        if byte == b'\'' {
-            self.i = skip_char_or_lifetime(self.source, self.bytes, self.i);
-            return true;
-        }
-        if byte == b'#' && self.bytes.get(self.i.saturating_add(1)) == Some(&b'[') {
-            let attr_start_line = self.line;
-            let inner_start = self.i.saturating_add(2);
-            let (after_attr, inner_end, added_lines) =
-                scan_bracketed(self.source, self.bytes, self.i);
-            if matches!(self.region, TestRegion::None)
-                && let Some(inner) = self.source.get(inner_start..inner_end)
-                && is_cfg_test_attr(inner)
-            {
-                self.region = TestRegion::Pending {
-                    start_line: attr_start_line,
-                    base_brace_depth: self.brace_depth,
-                };
-            }
-            self.i = after_attr;
-            self.line = self.line.saturating_add(added_lines);
-            return true;
-        }
-        false
     }
 
-    fn step_delimiter(&mut self, byte: u8) {
-        match byte {
-            b'(' => self.paren_depth = self.paren_depth.saturating_add(1),
-            b')' => self.paren_depth = self.paren_depth.saturating_sub(1),
-            b'[' => self.bracket_depth = self.bracket_depth.saturating_add(1),
-            b']' => self.bracket_depth = self.bracket_depth.saturating_sub(1),
-            b'{' => {
-                if let TestRegion::Pending {
-                    start_line,
-                    base_brace_depth,
-                } = self.region
-                    && self.brace_depth == base_brace_depth
-                    && self.paren_depth == 0
-                    && self.bracket_depth == 0
-                {
-                    self.region = TestRegion::Braced {
-                        start_line,
-                        base_brace_depth,
-                    };
-                }
-                self.brace_depth = self.brace_depth.saturating_add(1);
-            }
-            b'}' => {
-                self.brace_depth = self.brace_depth.saturating_sub(1);
-                if let TestRegion::Braced {
-                    start_line,
-                    base_brace_depth,
-                } = self.region
-                    && self.brace_depth == base_brace_depth
-                {
-                    mark_lines(&mut self.test_lines, start_line, self.line);
-                    self.region = TestRegion::None;
-                }
-            }
-            b';' => {
-                if let TestRegion::Pending {
-                    start_line,
-                    base_brace_depth,
-                } = self.region
-                    && self.brace_depth == base_brace_depth
-                    && self.paren_depth == 0
-                    && self.bracket_depth == 0
-                {
-                    mark_lines(&mut self.test_lines, start_line, self.line);
-                    self.region = TestRegion::None;
-                }
-            }
-            _ => {}
+    fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.brace_token.span.close())) {
+            syn::visit::visit_item_enum(self, node);
         }
     }
+
+    fn visit_item_extern_crate(&mut self, node: &'ast syn::ItemExternCrate) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.semi_token.span)) {
+            syn::visit::visit_item_extern_crate(self, node);
+        }
+    }
+
+    fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.block.brace_token.span.close())) {
+            syn::visit::visit_item_fn(self, node);
+        }
+    }
+
+    fn visit_item_foreign_mod(&mut self, node: &'ast syn::ItemForeignMod) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.brace_token.span.close())) {
+            syn::visit::visit_item_foreign_mod(self, node);
+        }
+    }
+
+    fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.brace_token.span.close())) {
+            syn::visit::visit_item_impl(self, node);
+        }
+    }
+
+    fn visit_item_macro(&mut self, node: &'ast syn::ItemMacro) {
+        let end = node
+            .semi_token
+            .as_ref()
+            .map_or_else(|| macro_delim_close(&node.mac.delimiter), |tok| tok.span);
+        if !self.mark_if_cfg_test(&node.attrs, Some(end)) {
+            syn::visit::visit_item_macro(self, node);
+        }
+    }
+
+    fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+        let end = node
+            .content
+            .as_ref()
+            .map(|(brace, _)| brace.span.close())
+            .or_else(|| node.semi.as_ref().map(|tok| tok.span));
+        if !self.mark_if_cfg_test(&node.attrs, end) {
+            syn::visit::visit_item_mod(self, node);
+        }
+    }
+
+    fn visit_item_static(&mut self, node: &'ast syn::ItemStatic) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.semi_token.span)) {
+            syn::visit::visit_item_static(self, node);
+        }
+    }
+
+    fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
+        let end = node
+            .semi_token
+            .as_ref()
+            .map(|tok| tok.span)
+            .or_else(|| match &node.fields {
+                syn::Fields::Named(fields) => Some(fields.brace_token.span.close()),
+                syn::Fields::Unnamed(fields) => Some(fields.paren_token.span.close()),
+                syn::Fields::Unit => None,
+            });
+        if !self.mark_if_cfg_test(&node.attrs, end) {
+            syn::visit::visit_item_struct(self, node);
+        }
+    }
+
+    fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.brace_token.span.close())) {
+            syn::visit::visit_item_trait(self, node);
+        }
+    }
+
+    fn visit_item_trait_alias(&mut self, node: &'ast syn::ItemTraitAlias) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.semi_token.span)) {
+            syn::visit::visit_item_trait_alias(self, node);
+        }
+    }
+
+    fn visit_item_type(&mut self, node: &'ast syn::ItemType) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.semi_token.span)) {
+            syn::visit::visit_item_type(self, node);
+        }
+    }
+
+    fn visit_item_union(&mut self, node: &'ast syn::ItemUnion) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.fields.brace_token.span.close())) {
+            syn::visit::visit_item_union(self, node);
+        }
+    }
+
+    fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.semi_token.span)) {
+            syn::visit::visit_item_use(self, node);
+        }
+    }
+
+    fn visit_impl_item_const(&mut self, node: &'ast syn::ImplItemConst) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.semi_token.span)) {
+            syn::visit::visit_impl_item_const(self, node);
+        }
+    }
+
+    fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.block.brace_token.span.close())) {
+            syn::visit::visit_impl_item_fn(self, node);
+        }
+    }
+
+    fn visit_impl_item_macro(&mut self, node: &'ast syn::ImplItemMacro) {
+        let end = node
+            .semi_token
+            .as_ref()
+            .map_or_else(|| macro_delim_close(&node.mac.delimiter), |tok| tok.span);
+        if !self.mark_if_cfg_test(&node.attrs, Some(end)) {
+            syn::visit::visit_impl_item_macro(self, node);
+        }
+    }
+
+    fn visit_impl_item_type(&mut self, node: &'ast syn::ImplItemType) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.semi_token.span)) {
+            syn::visit::visit_impl_item_type(self, node);
+        }
+    }
+
+    fn visit_trait_item_const(&mut self, node: &'ast syn::TraitItemConst) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.semi_token.span)) {
+            syn::visit::visit_trait_item_const(self, node);
+        }
+    }
+
+    fn visit_trait_item_fn(&mut self, node: &'ast syn::TraitItemFn) {
+        let end = node
+            .default
+            .as_ref()
+            .map(|block| block.brace_token.span.close())
+            .or_else(|| node.semi_token.as_ref().map(|tok| tok.span));
+        if !self.mark_if_cfg_test(&node.attrs, end) {
+            syn::visit::visit_trait_item_fn(self, node);
+        }
+    }
+
+    fn visit_trait_item_macro(&mut self, node: &'ast syn::TraitItemMacro) {
+        let end = node
+            .semi_token
+            .as_ref()
+            .map_or_else(|| macro_delim_close(&node.mac.delimiter), |tok| tok.span);
+        if !self.mark_if_cfg_test(&node.attrs, Some(end)) {
+            syn::visit::visit_trait_item_macro(self, node);
+        }
+    }
+
+    fn visit_trait_item_type(&mut self, node: &'ast syn::TraitItemType) {
+        if !self.mark_if_cfg_test(&node.attrs, Some(node.semi_token.span)) {
+            syn::visit::visit_trait_item_type(self, node);
+        }
+    }
+}
+
+fn non_test_loc_parsed(source: &str, file: &syn::File) -> usize {
+    let mut visitor = CfgTestSpanVisitor::new(source);
+    if visitor.lines.is_empty() {
+        return 0;
+    }
+    visitor.visit_file(file);
+    visitor.non_test_count()
 }
 
 /// Scans a single Rust source file and returns the number of physical lines
-/// outside `#[cfg(test)]` items.
+/// outside `#[cfg(test)]` AST items. Fails closed (counts all lines) if the
+/// source cannot be parsed as Rust.
 #[must_use]
 pub fn non_test_loc(source: &str) -> usize {
     let total_lines = source.lines().count();
     if total_lines == 0 {
         return 0;
     }
-    LocScanner::new(source, total_lines).scan()
-}
-
-fn mark_lines(test_lines: &mut [bool], start_line: usize, end_line: usize) {
-    let clamped_end = end_line.min(test_lines.len().saturating_sub(1));
-    if let Some(slice) = test_lines.get_mut(start_line..=clamped_end) {
-        for slot in slice {
-            *slot = true;
-        }
-    }
-}
-
-fn is_cfg_test_attr(inner: &str) -> bool {
-    let Ok(syn::Meta::List(list)) = syn::parse_str::<syn::Meta>(inner) else {
-        return false;
+    let Ok(file) = syn::parse_file(source) else {
+        return total_lines;
     };
-    list.path.is_ident("cfg")
-        && list
-            .parse_args::<syn::Meta>()
-            .is_ok_and(|meta| cfg_is_test(&meta))
+    non_test_loc_parsed(source, &file)
 }
 
-fn skip_line_comment(bytes: &[u8], start: usize) -> usize {
-    let mut i = start.saturating_add(2);
-    while let Some(&byte) = bytes.get(i) {
-        if byte == b'\n' {
-            break;
+/// A `mod name;` declaration: its resolved file candidates and whether it is
+/// test-only (`#[cfg(test)]` on it or an enclosing inline module).
+pub(crate) struct ModDecl {
+    pub(crate) candidates: Vec<PathBuf>,
+    pub(crate) test_only: bool,
+}
+
+/// Collects the out-of-line module declarations of one file.
+struct ModDecls<'a> {
+    dir: PathBuf,
+    file_dir: &'a Path,
+    inline: Vec<String>,
+    test_depth: usize,
+    found: Vec<ModDecl>,
+}
+
+impl<'ast> Visit<'ast> for ModDecls<'_> {
+    fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+        let test = has_cfg_test(&node.attrs);
+        let test_only = test || self.test_depth > 0;
+        let name = node.ident.to_string();
+        if node.content.is_none() {
+            let explicit = node.attrs.iter().find_map(|attr| {
+                if let syn::Meta::NameValue(pair) = &attr.meta
+                    && pair.path.is_ident("path")
+                    && let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(path),
+                        ..
+                    }) = &pair.value
+                {
+                    Some(path.value())
+                } else {
+                    None
+                }
+            });
+            let candidates = if let Some(path) = explicit {
+                let base = if self.inline.is_empty() {
+                    self.file_dir.to_path_buf()
+                } else {
+                    self.inline
+                        .iter()
+                        .fold(self.dir.clone(), |dir, m| dir.join(m))
+                };
+                vec![base.join(path)]
+            } else {
+                let dir = self
+                    .inline
+                    .iter()
+                    .fold(self.dir.clone(), |dir, m| dir.join(m));
+                vec![
+                    dir.join(format!("{name}.rs")),
+                    dir.join(&name).join("mod.rs"),
+                ]
+            };
+            self.found.push(ModDecl {
+                candidates,
+                test_only,
+            });
+            return;
         }
-        i = i.saturating_add(1);
-    }
-    i
-}
-
-fn skip_block_comment(bytes: &[u8], start: usize) -> (usize, usize) {
-    let mut i = start.saturating_add(2);
-    let mut depth = 1_usize;
-    let mut lines = 0_usize;
-    while depth > 0 {
-        let Some(&byte) = bytes.get(i) else {
-            break;
-        };
-        if byte == b'\n' {
-            lines = lines.saturating_add(1);
-            i = i.saturating_add(1);
-        } else if byte == b'/' && bytes.get(i.saturating_add(1)) == Some(&b'*') {
-            depth = depth.saturating_add(1);
-            i = i.saturating_add(2);
-        } else if byte == b'*' && bytes.get(i.saturating_add(1)) == Some(&b'/') {
-            depth = depth.saturating_sub(1);
-            i = i.saturating_add(2);
-        } else {
-            i = i.saturating_add(1);
+        self.inline.push(name);
+        if test {
+            self.test_depth = self.test_depth.saturating_add(1);
         }
+        syn::visit::visit_item_mod(self, node);
+        if test {
+            self.test_depth = self.test_depth.saturating_sub(1);
+        }
+        self.inline.pop();
     }
-    (i, lines)
 }
 
-fn is_ident_continue(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
-fn try_skip_raw_string(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
-    let prev_is_ident = start
-        .checked_sub(1)
-        .and_then(|idx| bytes.get(idx))
-        .is_some_and(|byte| is_ident_continue(*byte));
-    if prev_is_ident {
-        return None;
-    }
-    let after_prefix = match bytes.get(start)? {
-        b'r' => start.saturating_add(1),
-        b'b' | b'c' if bytes.get(start.saturating_add(1)) == Some(&b'r') => start.saturating_add(2),
-        _ => return None,
+pub(crate) fn module_decls(path: &Path, file: &syn::File) -> Vec<ModDecl> {
+    let file_dir = path.parent().unwrap_or_else(|| Path::new(""));
+    let mod_rs = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|name| matches!(name, "lib.rs" | "main.rs" | "mod.rs" | "build.rs"));
+    let dir = if mod_rs {
+        file_dir.to_path_buf()
+    } else {
+        file_dir.join(path.file_stem().unwrap_or_default())
     };
-    let mut i = after_prefix;
-    let mut hashes = 0_usize;
-    while bytes.get(i) == Some(&b'#') {
-        hashes = hashes.saturating_add(1);
-        i = i.saturating_add(1);
-    }
-    if bytes.get(i) != Some(&b'"') {
-        return None;
-    }
-    i = i.saturating_add(1);
-    let mut lines = 0_usize;
-    while let Some(&byte) = bytes.get(i) {
-        if byte == b'\n' {
-            lines = lines.saturating_add(1);
-            i = i.saturating_add(1);
-            continue;
-        }
-        if byte == b'"' {
-            let mut matched = 0_usize;
-            while matched < hashes
-                && bytes.get(i.saturating_add(1).saturating_add(matched)) == Some(&b'#')
-            {
-                matched = matched.saturating_add(1);
-            }
-            if matched == hashes {
-                return Some((i.saturating_add(1).saturating_add(hashes), lines));
-            }
-        }
-        i = i.saturating_add(1);
-    }
-    Some((i, lines))
+    let mut decls = ModDecls {
+        dir,
+        file_dir,
+        inline: Vec::new(),
+        test_depth: 0,
+        found: Vec::new(),
+    };
+    decls.visit_file(file);
+    decls.found
 }
 
-fn skip_quoted_string(bytes: &[u8], start: usize) -> (usize, usize) {
-    let mut i = start.saturating_add(1);
-    let mut lines = 0_usize;
-    while let Some(&byte) = bytes.get(i) {
-        if byte == b'\\' {
-            if bytes.get(i.saturating_add(1)) == Some(&b'\n') {
-                lines = lines.saturating_add(1);
+/// Normalizes `a/b/../c` to `a/c` without touching the file system.
+pub(crate) fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::ParentDir => {
+                out.pop();
             }
-            i = i.saturating_add(2).min(bytes.len());
-            continue;
+            Component::CurDir => {}
+            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => out.push(part),
         }
-        if byte == b'\n' {
-            lines = lines.saturating_add(1);
+    }
+    out
+}
+
+fn normal_components(rel: &Path) -> Vec<&str> {
+    rel.components()
+        .filter_map(|part| match part {
+            Component::Normal(segment) => segment.to_str(),
+            Component::Prefix(_)
+            | Component::RootDir
+            | Component::CurDir
+            | Component::ParentDir => None,
+        })
+        .collect()
+}
+
+/// Returns true only for crate-level integration tests (`crates/<crate>/tests/...`),
+/// never for production modules named `tests` under `crates/<crate>/src/...`.
+fn is_crate_integration_test(rel: &Path) -> bool {
+    matches!(
+        normal_components(rel).as_slice(),
+        ["crates", _, "tests", ..]
+    )
+}
+
+/// Returns true for Cargo target root files (`lib.rs`, `main.rs`, `build.rs`,
+/// `src/bin/*.rs`, `examples/*.rs`, `benches/*.rs`), which can never be
+/// exempted as `#[cfg(test)]`-only module files.
+fn is_crate_root(rel: &Path) -> bool {
+    matches!(
+        normal_components(rel).as_slice(),
+        ["crates", _, "build.rs"]
+            | ["crates", _, "src", "lib.rs" | "main.rs"]
+            | ["crates", _, "src", "bin", _]
+            | ["crates", _, "src", "bin", _, "main.rs"]
+            | ["crates", _, "examples" | "benches", _]
+            | ["crates", _, "examples" | "benches", _, "main.rs"]
+    )
+}
+
+/// Fail-closed test-file classifier for the LOC cap:
+///
+/// 1. Crate-level integration tests (`crates/<crate>/tests/...`) are test files
+///    unless also reached via a non-test `mod` edge.
+/// 2. A `#[cfg(test)]`-declared module file (and its transitive submodules) is
+///    excluded ONLY if it is NOT a crate root AND NOT reachable via any
+///    non-test `mod` edge.
+fn find_loc_test_files(files: &BTreeMap<PathBuf, syn::File>) -> BTreeSet<PathBuf> {
+    let decls: BTreeMap<&PathBuf, Vec<ModDecl>> = files
+        .iter()
+        .map(|(path, file)| (path, module_decls(path, file)))
+        .collect();
+
+    let mut has_incoming: BTreeSet<PathBuf> = BTreeSet::new();
+    for found in decls.values() {
+        for decl in found {
+            for candidate in &decl.candidates {
+                let candidate = normalize(candidate);
+                if files.contains_key(&candidate) {
+                    has_incoming.insert(candidate);
+                }
+            }
         }
-        i = i.saturating_add(1);
-        if byte == b'"' {
+    }
+
+    let mut non_test: BTreeSet<PathBuf> = files
+        .keys()
+        .filter(|path| {
+            is_crate_root(path)
+                || (!is_crate_integration_test(path) && !has_incoming.contains(*path))
+        })
+        .cloned()
+        .collect();
+
+    loop {
+        let mut grew = false;
+        for (parent, found) in &decls {
+            if !non_test.contains(*parent) {
+                continue;
+            }
+            for decl in found {
+                if decl.test_only {
+                    continue;
+                }
+                for candidate in &decl.candidates {
+                    let candidate = normalize(candidate);
+                    if files.contains_key(&candidate) && non_test.insert(candidate) {
+                        grew = true;
+                    }
+                }
+            }
+        }
+        if !grew {
             break;
         }
     }
-    (i, lines)
-}
 
-fn skip_char_or_lifetime(source: &str, bytes: &[u8], start: usize) -> usize {
-    let next = start.saturating_add(1);
-    if bytes.get(next) == Some(&b'\\') {
-        let mut i = next.saturating_add(2).min(bytes.len());
-        while let Some(&byte) = bytes.get(i) {
-            if byte == b'\'' {
-                return i.saturating_add(1);
-            }
-            if byte == b'\n' {
-                return i;
-            }
-            i = i.saturating_add(1);
-        }
-        return i;
-    }
-    if let Some(tail) = source.get(next..)
-        && let Some(ch) = tail.chars().next()
-        && ch != '\n'
-    {
-        let after_ch = next.saturating_add(ch.len_utf8());
-        if bytes.get(after_ch) == Some(&b'\'') {
-            return after_ch.saturating_add(1);
-        }
-    }
-    next
-}
+    let mut test_files: BTreeSet<PathBuf> = files
+        .keys()
+        .filter(|path| is_crate_integration_test(path) && !non_test.contains(*path))
+        .cloned()
+        .collect();
 
-/// Scans an outer attribute starting at `#[` and returns
-/// `(index_after_closing_bracket, index_of_closing_bracket, newlines_crossed)`.
-fn scan_bracketed(source: &str, bytes: &[u8], start: usize) -> (usize, usize, usize) {
-    let mut i = start.saturating_add(2);
-    let mut depth = 1_usize;
-    let mut lines = 0_usize;
-    while let Some(&byte) = bytes.get(i) {
-        if byte == b'\n' {
-            lines = lines.saturating_add(1);
-            i = i.saturating_add(1);
-        } else if byte == b'/' && bytes.get(i.saturating_add(1)) == Some(&b'/') {
-            i = skip_line_comment(bytes, i);
-        } else if byte == b'/' && bytes.get(i.saturating_add(1)) == Some(&b'*') {
-            let (next_i, added) = skip_block_comment(bytes, i);
-            i = next_i;
-            lines = lines.saturating_add(added);
-        } else if let Some((next_i, added)) = try_skip_raw_string(bytes, i) {
-            i = next_i;
-            lines = lines.saturating_add(added);
-        } else if byte == b'"' {
-            let (next_i, added) = skip_quoted_string(bytes, i);
-            i = next_i;
-            lines = lines.saturating_add(added);
-        } else if byte == b'\'' {
-            i = skip_char_or_lifetime(source, bytes, i);
-        } else if byte == b'[' {
-            depth = depth.saturating_add(1);
-            i = i.saturating_add(1);
-        } else if byte == b']' {
-            depth = depth.saturating_sub(1);
-            if depth == 0 {
-                return (i.saturating_add(1), i, lines);
+    loop {
+        let mut grew = false;
+        for (parent, found) in &decls {
+            let parent_is_test = test_files.contains(*parent);
+            for decl in found {
+                if !(decl.test_only || parent_is_test) {
+                    continue;
+                }
+                for candidate in &decl.candidates {
+                    let candidate = normalize(candidate);
+                    if files.contains_key(&candidate)
+                        && !is_crate_root(&candidate)
+                        && !non_test.contains(&candidate)
+                        && test_files.insert(candidate)
+                    {
+                        grew = true;
+                    }
+                }
             }
-            i = i.saturating_add(1);
-        } else {
-            i = i.saturating_add(1);
+        }
+        if !grew {
+            break;
         }
     }
-    (i, i, lines)
+
+    test_files
 }
 
 /// Counts non-test lines for every non-test `.rs` file under
-/// `<workspace_root>/crates` (`target/` directories, `tests/` directories, and
-/// `#[cfg(test)]`-only module files are excluded). Paths are `/`-separated
-/// relative to `workspace_root`.
+/// `<workspace_root>/crates` (`target/` directories, crate-level `tests/`
+/// directories, and exclusively `#[cfg(test)]`-reachable module files are
+/// excluded). Paths are `/`-separated relative to `workspace_root`.
 ///
 /// # Errors
 ///
@@ -436,14 +607,18 @@ pub fn loc_counts(workspace_root: &Path) -> Result<BTreeMap<String, usize>, Scan
         sources.insert(rel.clone(), source);
         parsed.insert(rel, file);
     }
-    let test_files: BTreeSet<PathBuf> = find_test_files(&parsed);
+    let test_files: BTreeSet<PathBuf> = find_loc_test_files(&parsed);
     let mut out = BTreeMap::new();
     for (rel, source) in &sources {
         if test_files.contains(rel) {
             continue;
         }
         let key = rel.to_string_lossy().replace('\\', "/");
-        out.insert(key, non_test_loc(source));
+        let count = parsed.get(rel).map_or_else(
+            || non_test_loc(source),
+            |file| non_test_loc_parsed(source, file),
+        );
+        out.insert(key, count);
     }
     Ok(out)
 }

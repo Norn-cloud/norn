@@ -18,11 +18,12 @@
 //!    `ring0_ui_modules` until `#1613` extracts them to `norn-ui-checker`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use cargo_metadata::{DependencyKind, Metadata};
 use syn::visit::Visit;
 
+use crate::loc_cap::normalize;
 use crate::{BaselineError, CRATES, Ring, ScanError, Violation, crate_rule, violation};
 
 /// The five core Ring-0 crates explicitly pinned by #1612 (all must remain
@@ -287,29 +288,103 @@ pub fn is_ui_widget_segment(segment: &str) -> bool {
     lower == "ui" || lower.starts_with("ui_") || lower.ends_with("_ui") || lower.contains("widget")
 }
 
-/// Finds inline `mod <name> { ... }` items whose identifier matches
-/// [`is_ui_widget_segment`].
-#[derive(Default)]
-struct InlineUiModVisitor {
+fn path_has_ui_segment(rel_src: &Path) -> bool {
+    rel_src.components().any(|component| {
+        let text = component.as_os_str().to_string_lossy();
+        let stem = text.strip_suffix(".rs").unwrap_or(&text);
+        is_ui_widget_segment(stem)
+    })
+}
+
+/// Finds inline `mod <name> { ... }` items and out-of-line `mod <name>;` items
+/// (such as `#[path = "presentation.rs"] pub mod ui_dialog;`) whose identifier
+/// matches [`is_ui_widget_segment`] without already resolving to a tracked UI
+/// file or canonical `norn-ir` schema file.
+struct UiModVisitor<'a> {
+    workspace_root: &'a Path,
+    crate_name: &'a str,
+    src_dir: &'a Path,
+    dir: PathBuf,
+    file_dir: &'a Path,
+    inline: Vec<String>,
     found: Vec<String>,
 }
 
-impl<'ast> Visit<'ast> for InlineUiModVisitor {
+impl UiModVisitor<'_> {
+    fn out_of_line_is_covered(&self, node: &syn::ItemMod, name: &str) -> bool {
+        let explicit = node.attrs.iter().find_map(|attr| {
+            if let syn::Meta::NameValue(pair) = &attr.meta
+                && pair.path.is_ident("path")
+                && let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(path),
+                    ..
+                }) = &pair.value
+            {
+                Some(path.value())
+            } else {
+                None
+            }
+        });
+        let candidates = if let Some(path) = explicit {
+            let base = if self.inline.is_empty() {
+                self.file_dir.to_path_buf()
+            } else {
+                self.inline
+                    .iter()
+                    .fold(self.dir.clone(), |dir, m| dir.join(m))
+            };
+            vec![base.join(path)]
+        } else {
+            let dir = self
+                .inline
+                .iter()
+                .fold(self.dir.clone(), |dir, m| dir.join(m));
+            vec![
+                dir.join(format!("{name}.rs")),
+                dir.join(name).join("mod.rs"),
+            ]
+        };
+
+        candidates.into_iter().any(|candidate| {
+            let rel_workspace = normalize(&candidate);
+            let full = self.workspace_root.join(&rel_workspace);
+            if !full.is_file() {
+                return false;
+            }
+            let rel_str = rel_workspace.to_string_lossy().replace('\\', "/");
+            if self.crate_name == "norn-ir"
+                && NORN_IR_SCHEMA_WIDGET_MODULES.contains(&rel_str.as_str())
+            {
+                return true;
+            }
+            full.strip_prefix(self.src_dir)
+                .is_ok_and(path_has_ui_segment)
+        })
+    }
+}
+
+impl<'ast> Visit<'ast> for UiModVisitor<'_> {
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
-        if node.content.is_some() {
-            let name = node.ident.to_string();
-            if is_ui_widget_segment(&name) {
+        let name = node.ident.to_string();
+        if node.content.is_none() {
+            if is_ui_widget_segment(&name) && !self.out_of_line_is_covered(node, &name) {
                 self.found.push(name);
             }
+            return;
         }
+        if is_ui_widget_segment(&name) {
+            self.found.push(name.clone());
+        }
+        self.inline.push(name);
         syn::visit::visit_item_mod(self, node);
+        self.inline.pop();
     }
 }
 
 /// Scans `src/` of every [`Ring::Zero`] crate under `workspace_root` and
-/// returns all UI/widget module files (and any inline UI/widget `mod` blocks
-/// in otherwise non-UI files), excluding the canonical IR schema files
-/// [`NORN_IR_SCHEMA_WIDGET_MODULES`].
+/// returns all UI/widget module files (and any inline or out-of-line UI/widget
+/// `mod` items in otherwise non-UI files), excluding the canonical IR schema
+/// files [`NORN_IR_SCHEMA_WIDGET_MODULES`].
 ///
 /// # Errors
 ///
@@ -335,21 +410,13 @@ pub fn ring0_ui_modules(workspace_root: &Path) -> Result<BTreeSet<String>, ScanE
             if !entry.file_type().is_file() || path.extension().is_none_or(|ext| ext != "rs") {
                 continue;
             }
-            let rel_workspace = path
-                .strip_prefix(workspace_root)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('\\', "/");
+            let rel_path = path.strip_prefix(workspace_root).unwrap_or(path);
+            let rel_workspace = rel_path.to_string_lossy().replace('\\', "/");
             if NORN_IR_SCHEMA_WIDGET_MODULES.contains(&rel_workspace.as_str()) {
                 continue;
             }
             let rel_src = path.strip_prefix(&src_dir).unwrap_or(path);
-            let path_is_ui = rel_src.components().any(|component| {
-                let text = component.as_os_str().to_string_lossy();
-                let stem = text.strip_suffix(".rs").unwrap_or(&text);
-                is_ui_widget_segment(stem)
-            });
-            if path_is_ui {
+            if path_has_ui_segment(rel_src) {
                 found.insert(rel_workspace);
                 continue;
             }
@@ -357,7 +424,25 @@ pub fn ring0_ui_modules(workspace_root: &Path) -> Result<BTreeSet<String>, ScanE
                 .map_err(|err| ScanError::Io(path.to_path_buf(), err))?;
             let file = syn::parse_file(&source)
                 .map_err(|err| ScanError::Parse(path.to_path_buf(), err))?;
-            let mut visitor = InlineUiModVisitor::default();
+            let file_dir = rel_path.parent().unwrap_or_else(|| Path::new(""));
+            let mod_rs = rel_path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|name| matches!(name, "lib.rs" | "main.rs" | "mod.rs" | "build.rs"));
+            let dir = if mod_rs {
+                file_dir.to_path_buf()
+            } else {
+                file_dir.join(rel_path.file_stem().unwrap_or_default())
+            };
+            let mut visitor = UiModVisitor {
+                workspace_root,
+                crate_name: rule.name,
+                src_dir: &src_dir,
+                dir,
+                file_dir,
+                inline: Vec::new(),
+                found: Vec::new(),
+            };
             visitor.visit_file(&file);
             for mod_name in visitor.found {
                 found.insert(format!("{rel_workspace}::mod {mod_name}"));

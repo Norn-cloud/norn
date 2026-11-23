@@ -24,7 +24,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::ratchet::lint_levels;
 use crate::{BaselineError, ScanError, Violation, violation};
 
 /// Lint levels, weakest first. `expect` reads as `allow`.
@@ -112,8 +111,46 @@ fn lints_json(table: Option<&toml::Value>) -> serde_json::Map<String, serde_json
     out
 }
 
+fn lint_path_name(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+/// Extracts ONLY unconditional `#![warn|deny|forbid(...)]` lint levels from an
+/// inner attribute meta. Never traverses `cfg_attr`, so conditional attributes
+/// like `#![cfg_attr(any(), deny(...))]` can never satisfy a pinned floor.
+fn unconditional_inner_levels(meta: &syn::Meta) -> Vec<(Level, String)> {
+    let syn::Meta::List(list) = meta else {
+        return Vec::new();
+    };
+    let Some(level) = list
+        .path
+        .get_ident()
+        .and_then(|ident| Level::parse(&ident.to_string()))
+        .filter(|level| *level > Level::Allow)
+    else {
+        return Vec::new();
+    };
+    let Ok(nested) = list.parse_args_with(
+        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+    ) else {
+        return Vec::new();
+    };
+    nested
+        .into_iter()
+        .filter_map(|item| match item {
+            syn::Meta::Path(path) => Some((level, lint_path_name(&path))),
+            syn::Meta::List(_) | syn::Meta::NameValue(_) => None,
+        })
+        .collect()
+}
+
 /// The top-level lint levels of each file under `crates/`: per path, per lint,
-/// the highest `warn`/`deny`/`forbid` among the file's inner attributes.
+/// the highest unconditional `warn`/`deny`/`forbid` among the file's inner
+/// attributes.
 ///
 /// # Errors
 ///
@@ -142,10 +179,7 @@ pub fn inner_levels(root: &Path) -> Result<BTreeMap<String, BTreeMap<String, Lev
             if !matches!(attr.style, syn::AttrStyle::Inner(_)) {
                 continue;
             }
-            for (name, lint) in lint_levels(&attr.meta) {
-                let Some(level) = Level::parse(name).filter(|level| *level > Level::Allow) else {
-                    continue;
-                };
+            for (level, lint) in unconditional_inner_levels(&attr.meta) {
                 let slot = out
                     .entry(rel.clone())
                     .or_default()
@@ -326,6 +360,45 @@ fn check_clippy_toml(
     }
 }
 
+fn check_shadow_clippy_toml(root: &Path, out: &mut Vec<Violation>) -> Result<(), BaselineError> {
+    let walker = walkdir::WalkDir::new(root)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| {
+            !matches!(
+                entry.file_name().to_str(),
+                Some(".git" | "target" | "node_modules")
+            )
+        });
+    for entry in walker {
+        let entry = entry.map_err(|e| err(format!("walk for clippy.toml: {e}")))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str() else {
+            continue;
+        };
+        if name != "clippy.toml" && name != ".clippy.toml" {
+            continue;
+        }
+        let rel = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap_or_else(|_| entry.path())
+            .to_string_lossy()
+            .replace('\\', "/");
+        if rel != "clippy.toml" {
+            out.push(violation(
+                "shadow-clippy-toml",
+                format!(
+                    "{rel}: shadow clippy config is forbidden; all Clippy configuration must live in the pinned root `clippy.toml`."
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn check_member_lints(root: &Path, out: &mut Vec<Violation>) -> Result<(), BaselineError> {
     let crates =
         std::fs::read_dir(root.join("crates")).map_err(|e| err(format!("read crates/: {e}")))?;
@@ -421,6 +494,7 @@ pub fn check_lint_pin(root: &Path, pin_json: &str) -> Result<Vec<Violation>, Bas
             }
         }
     }
+    check_shadow_clippy_toml(root, &mut out)?;
     check_member_lints(root, &mut out)?;
     Ok(out)
 }

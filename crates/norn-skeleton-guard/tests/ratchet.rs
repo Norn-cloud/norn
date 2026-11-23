@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use norn_skeleton_guard::Violation;
 use norn_skeleton_guard::ratchet::{
-    IGNORE_WITHOUT_ISSUE, RatchetCounts, TEST_SLEEP, TEST_WITHOUT_ASSERTION, TOO_MANY_LINES_ALLOW,
-    check_ratchets, count_source, links_issue, ratchet_counts, ratchets_json,
+    IGNORE_WITHOUT_ISSUE, INNER_ALLOW, RatchetCounts, TEST_SLEEP, TEST_WITHOUT_ASSERTION,
+    TOO_MANY_LINES_ALLOW, check_ratchets, count_source, links_issue, ratchet_counts, ratchets_json,
 };
 use serde_json::json;
 
@@ -216,4 +216,65 @@ fn malformed_baselines_are_refused() {
             "{baseline}"
         );
     }
+}
+
+#[test]
+fn cfg_attr_boolean_predicates_do_not_bypass_ratchets() {
+    let too_many = r#"
+        #[cfg_attr(true, allow(clippy::too_many_lines, reason = "x"))]
+        fn a() {}
+        #[cfg_attr(all(true, not(false)), expect(clippy::too_many_lines, reason = "x"))]
+        fn b() {}
+    "#;
+    assert_eq!(count(too_many, false, TOO_MANY_LINES_ALLOW), 2);
+
+    let inner = r#"
+        #![cfg_attr(true, allow(clippy::unwrap_used, reason = "x"))]
+    "#;
+    assert_eq!(count(inner, false, INNER_ALLOW), 1);
+
+    let ignored = r"
+        #[test]
+        #[cfg_attr(true, ignore)]
+        fn a() { assert!(f()); }
+        #[test]
+        #[cfg_attr(all(true, test), ignore)]
+        fn b() { assert!(f()); }
+    ";
+    assert_eq!(count(ignored, true, IGNORE_WITHOUT_ISSUE), 2);
+
+    // Malformed cfg_attr (missing comma) must fail closed rather than silently returning 0.
+    assert!(count_source("#[cfg_attr(true)]\nfn a() {}\n", false).is_err());
+}
+
+#[test]
+fn aliased_clock_modules_and_item_level_blanket_allows_are_caught() {
+    let aliased_sleep = r"
+        use std::thread as t;
+        use tokio::time::{self as tm};
+        #[test]
+        fn a() {
+            t::sleep(D);
+            tm::sleep(D);
+            tokio::select! { _ = t::sleep(D) => {} }
+            assert!(f());
+        }
+    ";
+    assert_eq!(count(aliased_sleep, false, TEST_SLEEP), 3);
+
+    let item_blankets = r#"
+        #[allow(clippy::pedantic, reason = "x")]
+        fn a() {}
+        #[allow(clippy::all, reason = "x")]
+        fn b() {}
+        #[cfg_attr(true, expect(clippy::pedantic, reason = "x"))]
+        fn c() {}
+    "#;
+    assert_eq!(count(item_blankets, false, TOO_MANY_LINES_ALLOW), 3);
+
+    // Crate/module-level `#![allow(clippy::pedantic)]` is ratcheted under INNER_ALLOW,
+    // not double-counted under TOO_MANY_LINES_ALLOW.
+    let inner_pedantic = "#![allow(clippy::pedantic, reason = \"x\")]\n";
+    assert_eq!(count(inner_pedantic, false, INNER_ALLOW), 1);
+    assert_eq!(count(inner_pedantic, false, TOO_MANY_LINES_ALLOW), 0);
 }

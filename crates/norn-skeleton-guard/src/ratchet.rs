@@ -31,6 +31,7 @@ use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
+use crate::loc_cap::{ModDecl, module_decls, normalize};
 use crate::{BaselineError, ScanError, Violation, violation};
 
 /// `#[ignore]` without a linked issue.
@@ -69,8 +70,9 @@ pub const RULES: &[(&str, &str)] = &[
     ),
     (
         TOO_MANY_LINES_ALLOW,
-        "an `allow` or `expect` of `clippy::too_many_lines` (outer, inner or in `cfg_attr`). Fix: \
-         split the function into named steps instead of allowing the lint.",
+        "an `allow` or `expect` of `clippy::too_many_lines` (outer, inner or in `cfg_attr`), or \
+         an item-level `#[allow|expect(clippy::pedantic|clippy::all, ...)]`. Fix: split the \
+         function into named steps instead of allowing the lint.",
     ),
     (
         INNER_ALLOW,
@@ -168,23 +170,76 @@ fn is_test_attr(attr: &syn::Attribute) -> bool {
     name == "test" || name == "rstest" || name == "test_case" || name.ends_with("_test")
 }
 
-fn nested_metas(list: &syn::MetaList) -> Vec<syn::Meta> {
+fn parse_nested_metas(list: &syn::MetaList) -> Result<Vec<syn::Meta>, syn::Error> {
     list.parse_args_with(Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
-        .map_or_default(|metas| metas.into_iter().collect())
+        .map(|metas| metas.into_iter().collect())
+}
+
+/// Parses the gated attribute list inside `cfg_attr(<predicate>, <attr1>, ...)`.
+///
+/// Consumes arbitrary predicate token trees up to the first top-level comma so
+/// Rust 1.88+ boolean predicates (`true`, `false`, `all(true, ...)`) never
+/// prevent parsing the gated attributes. Fails closed if the comma is missing
+/// or any gated attribute cannot be parsed as a [`syn::Meta`].
+fn parse_cfg_attr_metas(list: &syn::MetaList) -> Result<Vec<syn::Meta>, syn::Error> {
+    list.parse_args_with(|input: syn::parse::ParseStream<'_>| {
+        let mut saw_comma = false;
+        while !input.is_empty() {
+            if input.peek(syn::Token![,]) {
+                let _comma: syn::Token![,] = input.parse()?;
+                saw_comma = true;
+                break;
+            }
+            let _tt: TokenTree = input.parse()?;
+        }
+        if !saw_comma {
+            return Err(input.error("cfg_attr missing `,` after predicate"));
+        }
+        let metas = Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input)?;
+        Ok(metas.into_iter().collect())
+    })
+}
+
+/// Parses comma-separated entries inside `cfg(all(...))`, tolerating Rust
+/// 1.88+ boolean predicates (`true`, `false`).
+fn cfg_all_is_test(list: &syn::MetaList) -> bool {
+    let Ok(is_test) = list.parse_args_with(|input: syn::parse::ParseStream<'_>| {
+        let mut saw_test = false;
+        while !input.is_empty() {
+            if input.peek(syn::LitBool) {
+                let flag: syn::LitBool = input.parse()?;
+                if !flag.value {
+                    return Ok(false);
+                }
+            } else {
+                let meta: syn::Meta = input.parse()?;
+                if cfg_is_test(&meta) {
+                    saw_test = true;
+                }
+            }
+            if input.peek(syn::Token![,]) {
+                let _comma: syn::Token![,] = input.parse()?;
+            } else if !input.is_empty() {
+                return Err(input.error("expected `,` in cfg(all(...))"));
+            }
+        }
+        Ok(saw_test)
+    }) else {
+        return false;
+    };
+    is_test
 }
 
 /// `cfg(test)`, `cfg(all(test, ..))`: the item exists only in test builds.
 pub(crate) fn cfg_is_test(meta: &syn::Meta) -> bool {
     match meta {
         syn::Meta::Path(path) => path.is_ident("test"),
-        syn::Meta::List(list) if list.path.is_ident("all") => {
-            nested_metas(list).iter().any(cfg_is_test)
-        }
+        syn::Meta::List(list) if list.path.is_ident("all") => cfg_all_is_test(list),
         syn::Meta::List(_) | syn::Meta::NameValue(_) => false,
     }
 }
 
-fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
+pub(crate) fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| {
         attr.path().is_ident("cfg")
             && attr
@@ -193,9 +248,15 @@ fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-/// Counts `#[ignore]`s without an issue link and `too_many_lines` allows in
-/// one attribute meta, looking through `cfg_attr`.
-fn count_meta(meta: &syn::Meta, counts: &mut BTreeMap<&'static str, usize>) {
+/// Counts `#[ignore]`s without an issue link and `too_many_lines` allows
+/// (including item-level `#[allow|expect(clippy::pedantic|clippy::all, ...)]`)
+/// in one attribute meta, looking through `cfg_attr`. Fails closed if
+/// `cfg_attr` or `allow`/`expect` arguments fail to parse.
+fn count_meta(
+    meta: &syn::Meta,
+    is_outer: bool,
+    counts: &mut BTreeMap<&'static str, usize>,
+) -> Result<(), syn::Error> {
     let path = meta.path();
     if path.is_ident("ignore") {
         let linked = match meta {
@@ -209,57 +270,64 @@ fn count_meta(meta: &syn::Meta, counts: &mut BTreeMap<&'static str, usize>) {
         if !linked {
             bump(counts, IGNORE_WITHOUT_ISSUE);
         }
-        return;
+        return Ok(());
     }
     let syn::Meta::List(list) = meta else {
-        return;
+        return Ok(());
     };
     if path.is_ident("cfg_attr") {
-        for nested in nested_metas(list).iter().skip(1) {
-            count_meta(nested, counts);
+        for nested in parse_cfg_attr_metas(list)? {
+            count_meta(&nested, is_outer, counts)?;
         }
     } else if path.is_ident("allow") || path.is_ident("expect") {
-        for nested in nested_metas(list) {
-            let segments: Vec<String> = nested
-                .path()
+        for nested in parse_nested_metas(list)? {
+            let syn::Meta::Path(lint_path) = nested else {
+                continue;
+            };
+            let segments: Vec<String> = lint_path
                 .segments
                 .iter()
                 .map(|segment| segment.ident.to_string())
                 .collect();
-            if segments == ["clippy", "too_many_lines"] {
+            let is_too_many_lines = segments == ["clippy", "too_many_lines"];
+            let is_outer_blanket =
+                is_outer && (segments == ["clippy", "pedantic"] || segments == ["clippy", "all"]);
+            if is_too_many_lines || is_outer_blanket {
                 bump(counts, TOO_MANY_LINES_ALLOW);
             }
         }
     }
+    Ok(())
 }
 
 /// Every lint an `allow`/`expect`/`warn`/`deny`/`forbid` attribute meta names,
 /// with that level (`expect` reads as `allow`), looking through `cfg_attr`.
-pub(crate) fn lint_levels(meta: &syn::Meta) -> Vec<(&'static str, String)> {
+/// Fails closed if `cfg_attr` or lint list arguments fail to parse.
+fn lint_levels(meta: &syn::Meta) -> Result<Vec<(&'static str, String)>, syn::Error> {
     let syn::Meta::List(list) = meta else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     if list.path.is_ident("cfg_attr") {
-        return nested_metas(list)
-            .iter()
-            .skip(1)
-            .flat_map(lint_levels)
-            .collect();
+        let mut out = Vec::new();
+        for nested in parse_cfg_attr_metas(list)? {
+            out.extend(lint_levels(&nested)?);
+        }
+        return Ok(out);
     }
     let level = match last_segment(&list.path).as_str() {
         "allow" | "expect" => "allow",
         "warn" => "warn",
         "deny" => "deny",
         "forbid" => "forbid",
-        _ => return Vec::new(),
+        _ => return Ok(Vec::new()),
     };
-    nested_metas(list)
-        .iter()
-        .filter_map(|nested| match nested {
-            syn::Meta::Path(path) => Some((level, lint_name(path))),
-            syn::Meta::List(_) | syn::Meta::NameValue(_) => None,
-        })
-        .collect()
+    let mut out = Vec::new();
+    for nested in parse_nested_metas(list)? {
+        if let syn::Meta::Path(path) = nested {
+            out.push((level, lint_name(&path)));
+        }
+    }
+    Ok(out)
 }
 
 fn lint_name(path: &syn::Path) -> String {
@@ -276,6 +344,7 @@ fn count_macro_tokens(
     toks: &[Tok],
     in_test: bool,
     sleep_aliases: &BTreeSet<String>,
+    clock_module_aliases: &BTreeSet<String>,
     counts: &mut BTreeMap<&'static str, usize>,
 ) {
     for (at, tok) in toks.iter().enumerate() {
@@ -294,7 +363,11 @@ fn count_macro_tokens(
             bump(counts, TOO_MANY_LINES_ALLOW);
         }
         if in_test {
-            let qualified = path_pair_at(toks, at, &["thread", "time"], "sleep");
+            let qualified = path_pair_at(toks, at, &["thread", "time"], "sleep")
+                || (matches!(tok, Tok::Ident(name) if clock_module_aliases.contains(name))
+                    && is_punct(next(1), ':')
+                    && is_punct(next(2), ':')
+                    && is_ident(next(3), "sleep"));
             let previous = at.checked_sub(1).and_then(|index| toks.get(index));
             let bare = matches!(tok, Tok::Ident(name) if sleep_aliases.contains(name))
                 && !is_punct(previous, ':')
@@ -401,10 +474,12 @@ fn test_checks_something(node: &syn::ItemFn) -> bool {
     finder.found
 }
 
-/// Names a `use` brings `thread::sleep` / `time::sleep` in under.
+/// Names a `use` brings `thread::sleep` / `time::sleep` (or aliased `thread` /
+/// `time` modules) in under.
 #[derive(Default)]
 struct SleepImports {
     aliases: BTreeSet<String>,
+    clock_module_aliases: BTreeSet<String>,
 }
 
 impl SleepImports {
@@ -428,6 +503,12 @@ impl SleepImports {
             syn::UseTree::Rename(rename) => {
                 if rename.ident == "sleep" && parent_is_clock(prefix) {
                     self.aliases.insert(rename.rename.to_string());
+                }
+                if rename.ident == "thread"
+                    || rename.ident == "time"
+                    || (rename.ident == "self" && parent_is_clock(prefix))
+                {
+                    self.clock_module_aliases.insert(rename.rename.to_string());
                 }
             }
             syn::UseTree::Group(group) => {
@@ -454,8 +535,10 @@ impl<'ast> Visit<'ast> for SleepImports {
 struct RuleCounter {
     test_depth: usize,
     sleep_aliases: BTreeSet<String>,
+    clock_module_aliases: BTreeSet<String>,
     counts: BTreeMap<&'static str, usize>,
     inner_allows: BTreeMap<String, usize>,
+    parse_error: Option<syn::Error>,
 }
 
 impl RuleCounter {
@@ -472,17 +555,31 @@ impl RuleCounter {
             self.test_depth = self.test_depth.saturating_sub(1);
         }
     }
+
+    fn record_error(&mut self, err: syn::Error) {
+        if self.parse_error.is_none() {
+            self.parse_error = Some(err);
+        }
+    }
 }
 
 impl<'ast> Visit<'ast> for RuleCounter {
     fn visit_attribute(&mut self, node: &'ast syn::Attribute) {
-        count_meta(&node.meta, &mut self.counts);
+        let is_outer = matches!(node.style, syn::AttrStyle::Outer);
+        if let Err(err) = count_meta(&node.meta, is_outer, &mut self.counts) {
+            self.record_error(err);
+        }
         if matches!(node.style, syn::AttrStyle::Inner(_)) {
-            for (level, lint) in lint_levels(&node.meta) {
-                if level == "allow" {
-                    let count = self.inner_allows.entry(lint).or_insert(0);
-                    *count = count.saturating_add(1);
+            match lint_levels(&node.meta) {
+                Ok(levels) => {
+                    for (level, lint) in levels {
+                        if level == "allow" {
+                            let count = self.inner_allows.entry(lint).or_insert(0);
+                            *count = count.saturating_add(1);
+                        }
+                    }
                 }
+                Err(err) => self.record_error(err),
             }
         }
     }
@@ -518,11 +615,11 @@ impl<'ast> Visit<'ast> for RuleCounter {
                 .collect();
             let qualified = names.len() >= 2
                 && names.last().is_some_and(|last| last == "sleep")
-                && names
-                    .iter()
-                    .rev()
-                    .nth(1)
-                    .is_some_and(|parent| parent == "thread" || parent == "time");
+                && names.iter().rev().nth(1).is_some_and(|parent| {
+                    parent == "thread"
+                        || parent == "time"
+                        || self.clock_module_aliases.contains(parent)
+                });
             let bare = node.leading_colon.is_none()
                 && names.len() == 1
                 && names
@@ -538,7 +635,13 @@ impl<'ast> Visit<'ast> for RuleCounter {
     fn visit_macro(&mut self, node: &'ast syn::Macro) {
         let toks = tokens_of(&node.tokens);
         let in_test = self.in_test();
-        count_macro_tokens(&toks, in_test, &self.sleep_aliases, &mut self.counts);
+        count_macro_tokens(
+            &toks,
+            in_test,
+            &self.sleep_aliases,
+            &self.clock_module_aliases,
+            &mut self.counts,
+        );
         syn::visit::visit_macro(self, node);
     }
 }
@@ -548,13 +651,14 @@ impl<'ast> Visit<'ast> for RuleCounter {
 ///
 /// # Errors
 ///
-/// [`syn::Error`] if `source` does not parse.
+/// [`syn::Error`] if `source` does not parse or contains a malformed
+/// `cfg_attr` / lint-level attribute.
 pub fn count_source(
     source: &str,
     test_file: bool,
 ) -> Result<BTreeMap<&'static str, usize>, syn::Error> {
     let file = syn::parse_file(source)?;
-    let (mut counts, inner_allows) = count_file(&file, test_file);
+    let (mut counts, inner_allows) = count_file(&file, test_file)?;
     let total = inner_allows
         .values()
         .fold(0_usize, |sum, n| sum.saturating_add(*n));
@@ -567,130 +671,22 @@ pub fn count_source(
 /// Rule counts and, per lint, the inner allows of one file.
 type FileCounts = (BTreeMap<&'static str, usize>, BTreeMap<String, usize>);
 
-fn count_file(file: &syn::File, test_file: bool) -> FileCounts {
+fn count_file(file: &syn::File, test_file: bool) -> Result<FileCounts, syn::Error> {
     let mut imports = SleepImports::default();
     imports.visit_file(file);
     let mut counter = RuleCounter {
         test_depth: usize::from(test_file),
         sleep_aliases: imports.aliases,
+        clock_module_aliases: imports.clock_module_aliases,
         counts: BTreeMap::new(),
         inner_allows: BTreeMap::new(),
+        parse_error: None,
     };
     counter.visit_file(file);
-    (counter.counts, counter.inner_allows)
-}
-
-/// A `mod name;` declaration: its resolved file candidates and whether it is
-/// test-only (`#[cfg(test)]` on it or an enclosing inline module).
-struct ModDecl {
-    candidates: Vec<PathBuf>,
-    test_only: bool,
-}
-
-/// Collects the out-of-line module declarations of one file.
-struct ModDecls<'a> {
-    /// Directory child modules of the file live in.
-    dir: PathBuf,
-    /// Directory the file itself is in (`#[path]` is relative to it).
-    file_dir: &'a Path,
-    inline: Vec<String>,
-    test_depth: usize,
-    found: Vec<ModDecl>,
-}
-
-impl<'ast> Visit<'ast> for ModDecls<'_> {
-    fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
-        let test = has_cfg_test(&node.attrs);
-        let test_only = test || self.test_depth > 0;
-        let name = node.ident.to_string();
-        if node.content.is_none() {
-            let explicit = node.attrs.iter().find_map(|attr| {
-                if let syn::Meta::NameValue(pair) = &attr.meta
-                    && pair.path.is_ident("path")
-                    && let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(path),
-                        ..
-                    }) = &pair.value
-                {
-                    Some(path.value())
-                } else {
-                    None
-                }
-            });
-            let candidates = if let Some(path) = explicit {
-                let base = if self.inline.is_empty() {
-                    self.file_dir.to_path_buf()
-                } else {
-                    self.inline
-                        .iter()
-                        .fold(self.dir.clone(), |dir, m| dir.join(m))
-                };
-                vec![base.join(path)]
-            } else {
-                let dir = self
-                    .inline
-                    .iter()
-                    .fold(self.dir.clone(), |dir, m| dir.join(m));
-                vec![
-                    dir.join(format!("{name}.rs")),
-                    dir.join(&name).join("mod.rs"),
-                ]
-            };
-            self.found.push(ModDecl {
-                candidates,
-                test_only,
-            });
-            return;
-        }
-        self.inline.push(name);
-        if test {
-            self.test_depth = self.test_depth.saturating_add(1);
-        }
-        syn::visit::visit_item_mod(self, node);
-        if test {
-            self.test_depth = self.test_depth.saturating_sub(1);
-        }
-        self.inline.pop();
+    if let Some(err) = counter.parse_error {
+        return Err(err);
     }
-}
-
-fn module_decls(path: &Path, file: &syn::File) -> Vec<ModDecl> {
-    let file_dir = path.parent().unwrap_or_else(|| Path::new(""));
-    let mod_rs = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .is_some_and(|name| matches!(name, "lib.rs" | "main.rs" | "mod.rs" | "build.rs"));
-    let dir = if mod_rs {
-        file_dir.to_path_buf()
-    } else {
-        file_dir.join(path.file_stem().unwrap_or_default())
-    };
-    let mut decls = ModDecls {
-        dir,
-        file_dir,
-        inline: Vec::new(),
-        test_depth: 0,
-        found: Vec::new(),
-    };
-    decls.visit_file(file);
-    decls.found
-}
-
-/// Normalizes `a/b/../c` to `a/c` without touching the file system.
-fn normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for part in path.components() {
-        match part {
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            std::path::Component::CurDir => {}
-            std::path::Component::Normal(_)
-            | std::path::Component::RootDir
-            | std::path::Component::Prefix(_) => out.push(part),
-        }
-    }
-    out
+    Ok((counter.counts, counter.inner_allows))
 }
 
 /// Discovers all test-only files among `files`: files under a `tests/` path
@@ -764,7 +760,8 @@ pub fn ratchet_counts(workspace_root: &Path) -> Result<RatchetCounts, ScanError>
         .collect();
     for (path, file) in &files {
         let key = path.to_string_lossy().replace('\\', "/");
-        let (counts, inner_allows) = count_file(file, test_files.contains(path));
+        let (counts, inner_allows) = count_file(file, test_files.contains(path))
+            .map_err(|err| ScanError::Parse(workspace_root.join(path), err))?;
         for (rule, count) in counts {
             out.entry(rule.to_owned())
                 .or_default()

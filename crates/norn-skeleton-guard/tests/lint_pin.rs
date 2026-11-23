@@ -224,6 +224,42 @@ fn crate_root_levels_and_member_lint_tables_are_held() {
         format!("{text}\n[lints.rust]\nunsafe_code = \"allow\"\n")
     });
     assert_eq!(rules_of(&own), ["crate-lints"], "{}", render(&own));
+
+    // Conditional `#![cfg_attr(..., deny(...))]` must NEVER satisfy a pinned floor.
+    for conditional in [
+        "#![cfg_attr(any(), deny(clippy::disallowed_types))]\n",
+        "#![cfg_attr(feature = \"never\", deny(clippy::disallowed_types))]\n",
+        "#![cfg_attr(true, deny(clippy::disallowed_types))]\n",
+    ] {
+        let v = after("crates/a/src/lib.rs", |_| conditional.to_owned());
+        assert_eq!(
+            rules_of(&v),
+            ["inner-level-lowered"],
+            "{conditional}\n{}",
+            render(&v)
+        );
+    }
+}
+
+#[test]
+fn shadow_clippy_toml_files_are_rejected() {
+    for shadow in [
+        ".clippy.toml",
+        "crates/a/clippy.toml",
+        "crates/a/.clippy.toml",
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        seed(dir.path());
+        let pin = current_pin(dir.path()).expect("pin").to_string();
+        write(dir.path(), shadow, "allow-unwrap-in-tests = true\n");
+        let v = check_lint_pin(dir.path(), &pin).expect("ok");
+        assert_eq!(
+            rules_of(&v),
+            ["shadow-clippy-toml"],
+            "shadow `{shadow}`:\n{}",
+            render(&v)
+        );
+    }
 }
 
 #[test]

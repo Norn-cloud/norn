@@ -349,3 +349,168 @@ fn shrink_only_script_rejects_loc_ratchet_and_ui_growth() {
     let (ok, out) = run_shrink_gate(root);
     assert!(!ok && out.contains("ring0_ui_modules"), "{out}");
 }
+
+#[test]
+fn shrink_only_script_rejects_empty_and_malformed_json() {
+    let base_baseline = json!({
+        "norn_edges": [],
+        "third_party": [],
+        "norn_ir_validators": [],
+        "ring0_ui_modules": ["crates/norn-checker/src/ui_view.rs"],
+        "ratchets": {
+            "ignore-without-issue": {},
+            "test-sleep": {},
+            "test-without-assertion": {},
+            "too-many-lines-allow": { "crates/a/src/lib.rs": 2 },
+            "inner-allow": {}
+        }
+    });
+    let base_loc = json!({
+        "max_non_test_loc": MAX_NON_TEST_LOC,
+        "files": { "crates/a/src/lib.rs": 1_200 }
+    });
+    let dir = init_shrink_repo(&base_baseline, &base_loc);
+    let root = dir.path();
+
+    // Empty, malformed, or wrong-typed JSON files must fail closed standalone.
+    for (rel, bad_payload) in [
+        ("crates/norn-skeleton-guard/loc-baseline.json", ""),
+        ("crates/norn-skeleton-guard/loc-baseline.json", "null"),
+        ("crates/norn-skeleton-guard/loc-baseline.json", "{}"),
+        (
+            "crates/norn-skeleton-guard/loc-baseline.json",
+            r#"{"max_non_test_loc": 1000, "files": null}"#,
+        ),
+        (
+            "crates/norn-skeleton-guard/loc-baseline.json",
+            r#"{"max_non_test_loc": "1000", "files": {}}"#,
+        ),
+        ("crates/norn-skeleton-guard/baseline.json", ""),
+        ("crates/norn-skeleton-guard/baseline.json", "null"),
+        ("crates/norn-skeleton-guard/baseline.json", "{}"),
+        (
+            "crates/norn-skeleton-guard/baseline.json",
+            r#"{"norn_edges":[],"third_party":[],"norn_ir_validators":[],"ring0_ui_modules":null,"ratchets":{}}"#,
+        ),
+    ] {
+        write_file(
+            root,
+            "crates/norn-skeleton-guard/baseline.json",
+            &base_baseline.to_string(),
+        );
+        write_file(
+            root,
+            "crates/norn-skeleton-guard/loc-baseline.json",
+            &base_loc.to_string(),
+        );
+        write_file(root, rel, bad_payload);
+        let (ok, out) = run_shrink_gate(root);
+        assert!(
+            !ok,
+            "{rel} with `{bad_payload}` must fail closed; got:\n{out}"
+        );
+    }
+}
+
+#[test]
+fn non_item_cfg_test_attributes_cannot_swallow_production_lines() {
+    let over = MAX_NON_TEST_LOC.saturating_add(5);
+    let body = repeat_lines(over);
+
+    // Struct field `#[cfg(test)]` followed by >1,000 production lines.
+    let struct_field = format!("struct S {{\n    #[cfg(test)]\n    _x: (),\n}}\n{body}");
+    assert!(
+        non_test_loc(&struct_field) > MAX_NON_TEST_LOC,
+        "struct field #[cfg(test)] leaked: counted {}",
+        non_test_loc(&struct_field)
+    );
+
+    // Enum variant `#[cfg(test)]` followed by >1,000 production lines.
+    let enum_variant = format!("enum E {{\n    #[cfg(test)]\n    Variant,\n}}\n{body}");
+    assert!(
+        non_test_loc(&enum_variant) > MAX_NON_TEST_LOC,
+        "enum variant #[cfg(test)] leaked: counted {}",
+        non_test_loc(&enum_variant)
+    );
+
+    // Function parameter `#[cfg(test)]` followed by >1,000 lines in fn body.
+    let mut fn_body = String::new();
+    for idx in 0..over {
+        writeln!(fn_body, "    let _v_{idx} = {idx};").expect("write stmt");
+    }
+    let fn_param = format!("pub fn huge(#[cfg(test)] _x: ()) {{\n{fn_body}}}\n");
+    assert!(
+        non_test_loc(&fn_param) > MAX_NON_TEST_LOC,
+        "fn parameter #[cfg(test)] leaked: counted {}",
+        non_test_loc(&fn_param)
+    );
+
+    // Closure parameter `#[cfg(test)]` followed by >1,000 lines in closure body.
+    let closure_param =
+        format!("pub fn wrap() {{\n    let _f = |#[cfg(test)] _x: ()| {{\n{fn_body}    }};\n}}\n");
+    assert!(
+        non_test_loc(&closure_param) > MAX_NON_TEST_LOC,
+        "closure parameter #[cfg(test)] leaked: counted {}",
+        non_test_loc(&closure_param)
+    );
+
+    // Same-line production code next to a `#[cfg(test)]` item still counts.
+    let same_line =
+        "const A: usize = 1; #[cfg(test)] mod t {}\n#[cfg(test)] mod u {} const B: usize = 2;\n";
+    assert_eq!(non_test_loc(same_line), 2);
+}
+
+#[test]
+fn dual_included_and_src_tests_production_files_are_not_exempted() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let baseline = loc_baseline_json(&BTreeMap::new()).to_string();
+    let over_body = repeat_lines(MAX_NON_TEST_LOC.saturating_add(5));
+
+    // Dual-included production file: `pub mod huge;` + `#[cfg(test)] #[path = "huge.rs"] mod _alias;`.
+    write_file(
+        dir.path(),
+        "crates/foo/src/lib.rs",
+        "pub mod huge;\n#[cfg(test)]\n#[path = \"huge.rs\"]\nmod _alias;\npub mod tests;\n",
+    );
+    write_file(dir.path(), "crates/foo/src/huge.rs", &over_body);
+
+    // Production file under `crates/foo/src/tests/big.rs` reached via `pub mod tests;`.
+    write_file(dir.path(), "crates/foo/src/tests/mod.rs", "pub mod big;\n");
+    write_file(dir.path(), "crates/foo/src/tests/big.rs", &over_body);
+
+    let counts = loc_counts(dir.path()).expect("scan");
+    assert!(
+        counts
+            .get("crates/foo/src/huge.rs")
+            .is_some_and(|loc| *loc > MAX_NON_TEST_LOC),
+        "dual-included file was wrongly exempted: {counts:?}"
+    );
+    assert!(
+        counts
+            .get("crates/foo/src/tests/big.rs")
+            .is_some_and(|loc| *loc > MAX_NON_TEST_LOC),
+        "src/tests/big.rs production file was wrongly exempted: {counts:?}"
+    );
+
+    let violations = check_loc_cap(&counts, &baseline).expect("check");
+    assert_eq!(
+        rules_of(&violations),
+        ["loc-cap-exceeded", "loc-cap-exceeded"],
+        "{}",
+        render(&violations)
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.message.contains("crates/foo/src/huge.rs")),
+        "{}",
+        render(&violations)
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.message.contains("crates/foo/src/tests/big.rs")),
+        "{}",
+        render(&violations)
+    );
+}

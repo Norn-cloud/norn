@@ -251,6 +251,30 @@ fn new_ui_or_widget_modules_in_ring0_are_rejected_and_removals_drain_baseline() 
         "pub fn ok() {}\n",
     );
 
+    // Adding an out-of-line `#[path = "presentation.rs"] pub mod ui_dialog;` inside a
+    // Ring-0 crate fails closed too.
+    write_file(
+        dir.path(),
+        "crates/norn-kernel/src/presentation.rs",
+        "pub fn draw() {}\n",
+    );
+    write_file(
+        dir.path(),
+        "crates/norn-kernel/src/lib.rs",
+        "#[path = \"presentation.rs\"]\npub mod ui_dialog;\n",
+    );
+    let v = check_ring0_ui_modules(&ring0_ui_modules(dir.path()).expect("scan"), &baseline)
+        .expect("check");
+    assert_eq!(rules_of(&v), ["ring0-ui-module"], "{}", render(&v));
+    assert!(v[0].message.contains("ui_dialog"), "{}", render(&v));
+    std::fs::remove_file(dir.path().join("crates/norn-kernel/src/presentation.rs"))
+        .expect("cleanup");
+    write_file(
+        dir.path(),
+        "crates/norn-kernel/src/lib.rs",
+        "pub fn ok() {}\n",
+    );
+
     // Removing a frozen module forces draining `baseline.json` `ring0_ui_modules`.
     std::fs::remove_file(dir.path().join(frozen)).expect("remove frozen");
     let v = check_ring0_ui_modules(&ring0_ui_modules(dir.path()).expect("scan"), &baseline)
