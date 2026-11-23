@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { instantText, isDiagnosticPlaced, offsetText, pickerDateTime, resolveDateTime, runtimeWallOffsets, selectedAlternative, type LocalWallOffsets } from "../src/lib/actions.ts"
+import { instantText, isDiagnosticPlaced, offsetSuffix, offsetText, pickerDateTime, resolveDateTime, runtimeWallOffsets, selectedAlternative, type LocalWallOffsets } from "../src/lib/actions.ts"
 import { BOOK_EQUIPMENT } from "../e2e/interval-fixtures.ts"
 import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
@@ -393,6 +393,17 @@ test("DST spring gap is flagged without shifting; fall repeat matches by epoch i
   expect(selectedAlternative("2026-11-01T06:30:00Z", repeat.kind === "ok" ? repeat.alternatives : [])).toBe("2026-11-01T01:30:00-05:00")
   expect(selectedAlternative("2026-11-01T05:30:00Z", repeat.kind === "ok" ? repeat.alternatives : [])).toBe("2026-11-01T01:30:00-04:00")
 
+  // Fractional seconds on DST repeat: preserved in both alternatives, epoch match selects second occurrence, and offsetSuffix stays clean.
+  const fractional = resolveDateTime("2026-11-01T01:30:00.250", newYork)
+  expect(fractional).toEqual({
+    kind: "ok",
+    text: "2026-11-01T01:30:00.250-04:00",
+    alternatives: ["2026-11-01T01:30:00.250-04:00", "2026-11-01T01:30:00.250-05:00"],
+  })
+  expect(selectedAlternative("2026-11-01T06:30:00.250Z", fractional.kind === "ok" ? fractional.alternatives : [])).toBe("2026-11-01T01:30:00.250-05:00")
+  expect(offsetSuffix("2026-11-01T01:30:00.250-05:00")).toBe("-05:00")
+  expect(offsetSuffix("2026-11-01T06:30:00.250Z")).toBe("Z")
+
   // 2-hour fall-back repeat (Antarctica/Troll: +02:00 -> Z): both occurrences are exposed and matched by instant.
   const troll: LocalWallOffsets = (p) =>
     p.year === 2026 && p.month === 10 && p.day === 25 && p.hour === 1 ? [120, 0] : [0]
@@ -414,6 +425,15 @@ test("DST spring gap is flagged without shifting; fall repeat matches by epoch i
     expect(utcSecond.kind).toBe("ok")
     if (utcSecond.kind === "ok") {
       expect(selectedAlternative(utcSecond.text, utcSecond.alternatives)).toBe("2026-11-01T01:30:00-05:00")
+    }
+    const utcFracSecond = resolveDateTime("2026-11-01T06:30:00.250Z")
+    expect(utcFracSecond).toEqual({
+      kind: "ok",
+      text: "2026-11-01T06:30:00.250Z",
+      alternatives: ["2026-11-01T01:30:00.250-04:00", "2026-11-01T01:30:00.250-05:00"],
+    })
+    if (utcFracSecond.kind === "ok") {
+      expect(selectedAlternative(utcFracSecond.text, utcFracSecond.alternatives)).toBe("2026-11-01T01:30:00.250-05:00")
     }
   }
 

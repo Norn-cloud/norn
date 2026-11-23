@@ -15,7 +15,7 @@ import type { RecordsRead } from "../lib/records-source.ts"
 import type { LinkPage } from "../lib/transport.ts"
 import {
   ENDS_AT, NEAREST_MAX_USER_CLAUSES, STARTS_AT, TIMELINE_MAX_USER_CLAUSES, ZOOMS,
-  clampFocus, clockText, formatLocale, geometry, groupLanes, instantOf, laneLinks, nearestQuery, ticksOf, timeText, windowTitle, zoneOf,
+  clampFocus, clockText, formatLocale, geometry, groupLanes, instantOf, laneLinks, nearestJumpTarget, nearestQuery, resolveBarFocus, ticksOf, timeText, windowTitle, zoneOf,
   type LaneTarget, type Span, type Zoom,
 } from "../lib/timeline.ts"
 import { isWithheld, type GridRow } from "./cells.tsx"
@@ -100,23 +100,25 @@ export function RecordsTimeline({ concept, rows, window, zoom, pending, fetching
   const activeIndex = clampFocus(focused, order.length)
 
   useEffect(() => {
-    const nextIndex = clampFocus(focused, order.length)
-    const previousId = focusedId.current
-    const stillPresent = previousId === null ? -1 : order.findIndex((entry) => entry.bar.item.record.id === previousId)
-    if (stillPresent >= 0) {
-      if (stillPresent !== focused) setFocused(stillPresent)
-      return
-    }
-    if (nextIndex !== focused) setFocused(nextIndex)
-    const replacement = order[nextIndex]
     const activeEl = typeof document === "undefined" ? null : document.activeElement
-    const wasInside = focusInBars.current || (activeEl !== null && barsGroupRef.current?.contains(activeEl) === true)
-    if (replacement !== undefined && wasInside && (activeEl === null || activeEl === document.body || barsGroupRef.current?.contains(activeEl) === true)) {
-      focusedId.current = replacement.bar.item.record.id
-      barRefs.current.get(replacement.bar.item.record.id)?.focus()
-    } else if (replacement === undefined) {
+    const bodyEl = typeof document === "undefined" ? null : document.body
+    const resolution = resolveBarFocus({
+      orderIds: order.map((entry) => entry.bar.item.record.id),
+      focusedIndex: focused,
+      focusedId: focusedId.current,
+      wasInside: focusInBars.current,
+      activeElement: activeEl,
+      bodyElement: bodyEl,
+      activeInsideGroup: activeEl !== null && barsGroupRef.current?.contains(activeEl) === true,
+      buttonFor: (id) => barRefs.current.get(id),
+    })
+    if (resolution.index !== focused) setFocused(resolution.index)
+    if (resolution.id === null) {
       focusedId.current = null
       focusInBars.current = false
+    } else if (resolution.focusTarget !== null) {
+      focusedId.current = resolution.id
+      resolution.focusTarget.focus()
     }
   }, [order, focused])
 
@@ -148,11 +150,11 @@ export function RecordsTimeline({ concept, rows, window, zoom, pending, fetching
   const nearestAllowed = empty && (filter?.all.length ?? 0) <= NEAREST_MAX_USER_CLAUSES
   const after = useQuery({ queryKey: ["timeline-nearest", concept.name, "after", window.end, JSON.stringify(filter)], enabled: nearestAllowed, retry: false, queryFn: () => read(concept.name, { ...nearestQuery(window, filter, "after"), limit: 1 }) })
   const before = useQuery({ queryKey: ["timeline-nearest", concept.name, "before", window.start, JSON.stringify(filter)], enabled: nearestAllowed, retry: false, queryFn: () => read(concept.name, { ...nearestQuery(window, filter, "before"), limit: 1 }) })
-  const nearestAt = (result: RecordsRead | undefined) => {
+  const nearestOf = (result: RecordsRead | undefined, direction: "after" | "before") => {
     const record = result?.kind === "page" ? result.read.document.records[0] : undefined
-    return record === undefined || record.values === null ? null : instantOf(record.values[STARTS_AT])
+    return nearestJumpTarget(record?.values, direction)
   }
-  const next = nearestAt(after.data), previous = nearestAt(before.data)
+  const next = nearestOf(after.data, "after"), previous = nearestOf(before.data, "before")
   const now = Date.now()
   const zoneNote = Intl.DateTimeFormat().resolvedOptions().timeZone
 
@@ -212,8 +214,8 @@ export function RecordsTimeline({ concept, rows, window, zoom, pending, fetching
               <EmptyState icon={CalendarRange} title={`Nothing in this ${zoom}`}>
                 No {concept.title.toLowerCase()} records fall in {windowTitle(zoom, window, intlLocale)}{filter !== null && filter.all.length > 0 ? " with this filter" : ""}.
                 <span className="mt-3 flex flex-wrap justify-center gap-2">
-                  {previous !== null && <Button variant="outline" size="sm" onClick={() => onJump(previous)}><ChevronLeft /> Latest before ({timeText(previous, null, intlLocale)})</Button>}
-                  {next !== null && <Button variant="outline" size="sm" onClick={() => onJump(next)}>Next after ({timeText(next, null, intlLocale)}) <ChevronRight /></Button>}
+                  {previous !== null && <Button variant="outline" size="sm" onClick={() => onJump(previous.jumpAt)}><ChevronLeft /> Latest before ({timeText(previous.at, null, intlLocale)})</Button>}
+                  {next !== null && <Button variant="outline" size="sm" onClick={() => onJump(next.jumpAt)}>Next after ({timeText(next.at, null, intlLocale)}) <ChevronRight /></Button>}
                 </span>
               </EmptyState>
             </div>

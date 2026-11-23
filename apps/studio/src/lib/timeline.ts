@@ -153,12 +153,37 @@ export function windowQuery(window: Span, filter: Predicate | null): { readonly 
   return { filter: { all: [...filter?.all ?? [], ...clauses] }, sort: [{ property: STARTS_AT, direction: "asc" }] }
 }
 
-/** The nearest records outside a window, for the empty state's "jump": the first after it, or the last before it. */
+/**
+ * The nearest records outside a window, for the empty state's "jump":
+ * - `after`: the earliest interval starting at or after `window.end` (`starts_at:asc`),
+ * - `before`: the latest interval ending at or before `window.start` (`ends_at:desc`), so a long
+ *   interval ending just before the window wins over a shorter interval that started later but
+ *   ended days earlier.
+ */
 export function nearestQuery(window: Span, filter: Predicate | null, direction: "after" | "before"): { readonly filter: Predicate; readonly sort: readonly SortKey[] } {
   const clause: Clause = direction === "after"
     ? { property: STARTS_AT, op: "gte", value: new Date(window.end).toISOString() }
     : { property: ENDS_AT, op: "lte", value: new Date(window.start).toISOString() }
-  return { filter: { all: [...filter?.all ?? [], clause] }, sort: [{ property: STARTS_AT, direction: direction === "after" ? "asc" : "desc" }] }
+  const sortProperty = direction === "after" ? STARTS_AT : ENDS_AT
+  return { filter: { all: [...filter?.all ?? [], clause] }, sort: [{ property: sortProperty, direction: direction === "after" ? "asc" : "desc" }] }
+}
+
+/**
+ * The display timestamp (`at`) and jump anchor (`jumpAt`) for the nearest record outside a window.
+ * For `before`, jumps to `end - 1` (clamped to `>= start`) so the interval's end is guaranteed to
+ * fall inside the destination half-open window even when `end === window.start`.
+ */
+export function nearestJumpTarget(
+  values: Readonly<Record<string, unknown>> | null | undefined,
+  direction: "after" | "before",
+): { readonly at: number; readonly jumpAt: number } | null {
+  if (values === null || values === undefined) return null
+  const start = instantOf(values[STARTS_AT])
+  const end = instantOf(values[ENDS_AT])
+  if (direction === "after") return start === null ? null : { at: start, jumpAt: start }
+  if (end === null) return start === null ? null : { at: start, jumpAt: start }
+  const jumpAt = start !== null ? Math.max(start, end - 1) : end - 1
+  return { at: end, jumpAt }
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
@@ -268,6 +293,34 @@ export function groupLanes<T>(
 /** Clamp a roving-focus index into `[0, length - 1]` (or `0` when empty). */
 export const clampFocus = (focused: number, length: number): number =>
   length <= 0 ? 0 : Math.max(0, Math.min(length - 1, focused))
+
+/**
+ * Decide which bar index should hold roving focus after `orderIds` changes (e.g. when a link
+ * resolves and remounts the focused bar into another lane, or when the focused bar disappears),
+ * and whether DOM `.focus()` should be restored to that bar's current DOM button without stealing
+ * focus from unrelated controls outside the timeline.
+ */
+export function resolveBarFocus<E extends { readonly focus: () => void }>(params: {
+  readonly orderIds: readonly string[]
+  readonly focusedIndex: number
+  readonly focusedId: string | null
+  readonly wasInside: boolean
+  readonly activeElement: unknown
+  readonly bodyElement: unknown
+  readonly activeInsideGroup: boolean
+  readonly buttonFor: (id: string) => E | undefined
+}): { readonly index: number; readonly id: string | null; readonly focusTarget: E | null } {
+  const { orderIds, focusedIndex, focusedId, wasInside, activeElement, bodyElement, activeInsideGroup, buttonFor } = params
+  if (orderIds.length === 0) return { index: 0, id: null, focusTarget: null }
+  const stillPresent = focusedId === null ? -1 : orderIds.indexOf(focusedId)
+  const index = stillPresent >= 0 ? stillPresent : clampFocus(focusedIndex, orderIds.length)
+  const id = orderIds[index] ?? null
+  const button = id === null ? undefined : buttonFor(id)
+  const inside = wasInside || activeInsideGroup
+  const lostToRemountOrRemoval = activeElement === null || activeElement === bodyElement || activeInsideGroup
+  const focusTarget = inside && lostToRemountOrRemoval && button !== undefined && activeElement !== button ? button : null
+  return { index, id, focusTarget }
+}
 
 /**
  * Stack a lane's spans into the fewest sub-rows where none share time (interval partitioning, in

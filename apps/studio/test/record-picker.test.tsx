@@ -9,7 +9,7 @@ import { BOOK_EQUIPMENT, INTERVAL_ARTIFACTS } from "../e2e/interval-fixtures.ts"
 const catalog = catalogOf(INTERVAL_ARTIFACTS as unknown as readonly Artifact[])
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { RecordPicker, pickedTitle, pickerMode, pickerPage, pickerQuery, pickerSnapshotMoved, titleProperty } = await import("../src/actions/record-picker.tsx")
+const { RecordPicker, fetchPickerPage, pickedTitle, pickerMode, pickerPage, pickerPageError, pickerQuery, pickerSnapshotMoved, titleProperty } = await import("../src/actions/record-picker.tsx")
 const { ActionForm } = await import("../src/actions/action-form.tsx")
 
 // ACTION-CATALOG-LINKS-1: the picker titles and searches records by the type's declared title property.
@@ -71,7 +71,26 @@ test("a snapshot_moved page on Show more stays a combobox (does not collapse to 
   expect(html).toContain('role="combobox"')
 })
 
-test("ActionForm DateTimePicker preserves an explicit fall-back offset (-05:00) and matches UTC Z instants by epoch", () => {
+test("a refusal on page 2 throws to preserve page 1 and surface Retry rather than collapsing to a null page", async () => {
+  const refused: RecordsRead = { kind: "refused", status: 403, code: "authz.denied", message: "Access changed.", diagnostics: [] }
+  expect(pickerPageError(refused)).toBe("Access changed.")
+  // Page 1 (`after: undefined`) returns null so RecordPicker falls back to typing an id.
+  expect(await fetchPickerPage(async () => refused, "purchasing.Supplier", "", "label", undefined)).toBeNull()
+  // Page 2 (`after: "c2"`) throws the cell's refusal message so TanStack Query preserves page 1 and keeps the cursor retryable.
+  await expect(fetchPickerPage(async () => refused, "purchasing.Supplier", "", "label", "c2")).rejects.toThrow("Access changed.")
+
+  // With a page-2 failure state, page 1 stays in combobox mode (does not collapse to a typed input).
+  const client = new QueryClient()
+  client.setQueryData(["picker", "purchasing.Supplier", null, ""], {
+    pages: [{ records: [{ id: "SUP-0001", title: "Acme" }], next: "c2", failed: "Access changed." }],
+    pageParams: [undefined],
+  })
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><RecordPicker objectKind="purchasing.Supplier" value="SUP-0001" onPick={() => {}} aria={{ "aria-label": "Supplier" }} /></QueryClientProvider>)
+  expect(html).toContain('role="combobox"')
+  expect(html).toContain("Acme")
+})
+
+test("ActionForm DateTimePicker preserves an explicit fall-back offset (-05:00) and matches UTC Z instants (including fractional seconds) by epoch", () => {
   const client = new QueryClient()
   const html = renderToStaticMarkup(
     <QueryClientProvider client={client}>
@@ -85,11 +104,13 @@ test("ActionForm DateTimePicker preserves an explicit fall-back offset (-05:00) 
   const utcHtml = renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <ActionForm action={BOOK_EQUIPMENT as never} objectTitle="Equipment booking"
-        remembered={{ id: "b/2", label: "Fall back UTC", equipment: "equipment/1", starts_at: "2026-11-01T06:30:00Z", ends_at: "2026-11-01T08:00:00Z", inspect_on: "", daily_check: "" }} />
+        remembered={{ id: "b/2", label: "Fall back UTC", equipment: "equipment/1", starts_at: "2026-11-01T06:30:00.250Z", ends_at: "2026-11-01T08:00:00Z", inspect_on: "", daily_check: "" }} />
     </QueryClientProvider>,
   )
-  expect(utcHtml).toContain("2026-11-01T06:30:00Z")
+  expect(utcHtml).toContain("2026-11-01T06:30:00.250Z")
   if (Intl.DateTimeFormat().resolvedOptions().timeZone === "America/New_York") {
-    expect(utcHtml).toContain('value="2026-11-01T01:30:00-05:00" selected=""')
+    expect(utcHtml).toContain('value="2026-11-01T01:30:00.250-05:00" selected=""')
+    expect(utcHtml).toContain("-05:00 (second occurrence)")
+    expect(utcHtml).not.toContain(".250-05:00 (second occurrence)")
   }
 })

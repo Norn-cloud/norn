@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { catalogOf } from "../src/lib/catalog.ts"
 import type { Artifact } from "../src/lib/transport.ts"
 import {
-  TIMELINE_MAX_USER_CLAUSES, clampFocus, clockText, descendsFrom, formatLocale, geometry, groupLanes, instantOf, laneLinks, nearestQuery, offersTimeline, stack, stepAnchor, ticksOf, timelineFilterOverflow, timeText, tryWindowQuery, windowOf, windowQuery, windowTitle, zoneOf,
+  TIMELINE_MAX_USER_CLAUSES, clampFocus, clockText, descendsFrom, formatLocale, geometry, groupLanes, instantOf, laneLinks, nearestJumpTarget, nearestQuery, offersTimeline, resolveBarFocus, stack, stepAnchor, ticksOf, timelineFilterOverflow, timeText, tryWindowQuery, windowOf, windowQuery, windowTitle, zoneOf,
 } from "../src/lib/timeline.ts"
 import { INTERVAL_ARTIFACTS } from "../e2e/interval-fixtures.ts"
 
@@ -44,7 +44,80 @@ test("the window is asked of the cell as the overlap test, after the reader's ow
     sort: [{ property: "starts_at", direction: "asc" }],
   })
   expect(nearestQuery(window, null, "after")).toEqual({ filter: { all: [{ property: "starts_at", op: "gte", value: "2026-11-30T00:00:00.000Z" }] }, sort: [{ property: "starts_at", direction: "asc" }] })
-  expect(nearestQuery(window, null, "before")).toEqual({ filter: { all: [{ property: "ends_at", op: "lte", value: "2026-11-23T00:00:00.000Z" }] }, sort: [{ property: "starts_at", direction: "desc" }] })
+  expect(nearestQuery(window, null, "before")).toEqual({ filter: { all: [{ property: "ends_at", op: "lte", value: "2026-11-23T00:00:00.000Z" }] }, sort: [{ property: "ends_at", direction: "desc" }] })
+})
+
+test("Latest before sorts by end descending and jumps so a long interval's end is visible inside the destination window", () => {
+  const emptyWindow = { start: Date.UTC(2026, 10, 23), end: Date.UTC(2026, 10, 30) }
+  const longEndingJustBefore = { id: "long", starts_at: "2026-11-01T00:00:00Z", ends_at: "2026-11-23T00:00:00Z" }
+  const shortStartedLater = { id: "short", starts_at: "2026-11-10T00:00:00Z", ends_at: "2026-11-10T02:00:00Z" }
+  // Sorting by `nearestQuery(..., "before").sort` (`ends_at:desc`) picks the long interval over the shorter one.
+  const q = nearestQuery(emptyWindow, null, "before")
+  expect(q.sort).toEqual([{ property: "ends_at", direction: "desc" }])
+  const ordered = [shortStartedLater, longEndingJustBefore].sort((a, b) => Date.parse(b.ends_at) - Date.parse(a.ends_at))
+  expect(ordered[0]!.id).toBe("long")
+  // Jumping uses `end - 1` so even an interval ending at the exact midnight boundary (`window.start`)
+  // lands in the preceding week where it satisfies `ends_at > dest.start` (not back in the empty window).
+  const target = nearestJumpTarget(longEndingJustBefore, "before")
+  expect(target).not.toBeNull()
+  expect(target!.at).toBe(Date.UTC(2026, 10, 23, 0, 0, 0))
+  expect(target!.jumpAt).toBe(Date.UTC(2026, 10, 23, 0, 0, 0) - 1)
+  expect(target!.jumpAt).toBeLessThan(emptyWindow.start)
+  expect(target!.jumpAt).toBeGreaterThanOrEqual(Date.parse(longEndingJustBefore.starts_at))
+})
+
+test("resolveBarFocus restores DOM focus after a lane-change remount or bar removal, and never steals focus from external controls", () => {
+  const body = { tag: "BODY" }
+  const externalInput = { tag: "INPUT" }
+  let focusedNew = 0
+  const remountedBtn = { id: "booking/1", focus: () => { focusedNew += 1 } }
+  let focusedClamped = 0
+  const remainingBtn = { id: "booking/2", focus: () => { focusedClamped += 1 } }
+
+  // 1. Focused bar remounts under a new lane (same record id, old DOM button unmounted -> activeElement fell back to body).
+  const onRemount = resolveBarFocus({
+    orderIds: ["booking/2", "booking/1"],
+    focusedIndex: 0,
+    focusedId: "booking/1",
+    wasInside: true,
+    activeElement: body,
+    bodyElement: body,
+    activeInsideGroup: false,
+    buttonFor: (id) => (id === "booking/1" ? remountedBtn : remainingBtn),
+  })
+  expect(onRemount.index).toBe(1)
+  expect(onRemount.focusTarget).toBe(remountedBtn)
+  onRemount.focusTarget?.focus()
+  expect(focusedNew).toBe(1)
+
+  // 2. Focused bar disappears completely while focus was in bars -> clamps and restores focus to replacement bar.
+  const onRemoval = resolveBarFocus({
+    orderIds: ["booking/2"],
+    focusedIndex: 2,
+    focusedId: "booking/9",
+    wasInside: true,
+    activeElement: body,
+    bodyElement: body,
+    activeInsideGroup: false,
+    buttonFor: () => remainingBtn,
+  })
+  expect(onRemoval.index).toBe(0)
+  expect(onRemoval.focusTarget).toBe(remainingBtn)
+  onRemoval.focusTarget?.focus()
+  expect(focusedClamped).toBe(1)
+
+  // 3. Unrelated external control holds focus -> never steals focus even when bars change.
+  const external = resolveBarFocus({
+    orderIds: ["booking/1"],
+    focusedIndex: 0,
+    focusedId: "booking/1",
+    wasInside: false,
+    activeElement: externalInput,
+    bodyElement: body,
+    activeInsideGroup: false,
+    buttonFor: () => remountedBtn,
+  })
+  expect(external.focusTarget).toBeNull()
 })
 
 test("instants read with their offsets; a record's zone is used only when the runtime knows it", () => {

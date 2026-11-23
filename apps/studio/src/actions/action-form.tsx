@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, instantText, isDiagnosticPlaced, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
 import { parkedOf, type ParkedCall, type Phase } from "../lib/screen/call.ts"
@@ -389,7 +389,7 @@ function DateTimePicker({ aria, value, onChange }: { readonly aria: Aria; readon
             onChange={(e) => onChange(e.target.value)}>
             {alternatives.map((iso, idx) => (
               <option key={iso} value={iso}>
-                {iso.slice(19)} ({idx === 0 ? "first occurrence" : "second occurrence"})
+                {offsetSuffix(iso)} ({idx === 0 ? "first occurrence" : "second occurrence"})
               </option>
             ))}
           </select>

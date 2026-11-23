@@ -321,8 +321,8 @@ export function offsetText(minutesEast: number): string {
   return `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`
 }
 
-const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
-const RFC3339_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?$/
+const RFC3339_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
 
 /** Wall-clock parts of a local date-time (`month` is 1..12). */
 export interface WallParts {
@@ -387,8 +387,11 @@ export function selectedAlternative(sent: string | null, alternatives: readonly 
 }
 
 const pad2 = (n: number) => String(n).padStart(2, "0")
-const formatWall = (p: WallParts, offsetMinutes: number) =>
-  `${String(p.year).padStart(4, "0")}-${pad2(p.month)}-${pad2(p.day)}T${pad2(p.hour)}:${pad2(p.minute)}:${pad2(p.second)}${offsetText(offsetMinutes)}`
+const formatWall = (p: WallParts, offsetMinutes: number, fraction = "") =>
+  `${String(p.year).padStart(4, "0")}-${pad2(p.month)}-${pad2(p.day)}T${pad2(p.hour)}:${pad2(p.minute)}:${pad2(p.second)}${fraction}${offsetText(offsetMinutes)}`
+
+/** Extract the trailing RFC 3339 offset (`Z` or `±HH:MM`) regardless of fractional seconds. */
+export const offsetSuffix = (iso: string): string => /(Z|[+-]\d{2}:\d{2})$/.exec(iso)?.[1] ?? iso.slice(19)
 
 export type DateTimeResolution =
   | { readonly kind: "ok"; readonly text: string; readonly alternatives: readonly string[] }
@@ -396,14 +399,15 @@ export type DateTimeResolution =
   | { readonly kind: "passthrough"; readonly text: string }
 
 /**
- * Resolve a draft date-time value to what will be sent, detecting DST gaps and repeats.
- * - A zoneless picker value (`YYYY-MM-DDTHH:MM[:SS]`): resolves against `wallOffsets` (default:
- *   the reader's local zone). A spring-forward gap returns `nonexistent` (leaving `text` zoneless
- *   rather than silently shifting an hour); a fall-back repeat returns both valid RFC 3339 instants
- *   in `alternatives`.
+ * Resolve a draft date-time value to what will be sent, detecting DST gaps and repeats while
+ * preserving any sub-second fraction (e.g. `.250`).
+ * - A zoneless picker value (`YYYY-MM-DDTHH:MM[:SS[.fff]]`): resolves against `wallOffsets`
+ *   (default: the reader's local zone). A spring-forward gap returns `nonexistent` (leaving `text`
+ *   zoneless rather than silently shifting an hour); a fall-back repeat returns both valid RFC 3339
+ *   instants in `alternatives`.
  * - Text that already carries an RFC 3339 offset (a prefilled/restored instant, or an explicitly
- *   disambiguated fall-back instant): preserves its exact offset in `text` and, when its local wall
- *   time is a fall-back repeat, still exposes both valid `alternatives` so the picker can switch.
+ *   disambiguated fall-back instant): preserves its exact offset and fractional seconds in `text`
+ *   and in `alternatives` so epoch comparison and occurrence switching never lose precision.
  */
 export function resolveDateTime(value: string, wallOffsets: LocalWallOffsets = runtimeWallOffsets): DateTimeResolution {
   const trimmed = value.trim()
@@ -413,9 +417,10 @@ export function resolveDateTime(value: string, wallOffsets: LocalWallOffsets = r
       year: Number(local[1]), month: Number(local[2]), day: Number(local[3]),
       hour: Number(local[4]), minute: Number(local[5]), second: Number(local[6] ?? "0"),
     }
+    const fraction = local[7] ?? ""
     const offsets = wallOffsets(parts)
     if (offsets.length === 0) return { kind: "nonexistent", text: value }
-    const alternatives = offsets.map((offset) => formatWall(parts, offset))
+    const alternatives = offsets.map((offset) => formatWall(parts, offset, fraction))
     return { kind: "ok", text: alternatives[0]!, alternatives }
   }
   const zoned = RFC3339_OFFSET.exec(trimmed)
@@ -427,8 +432,9 @@ export function resolveDateTime(value: string, wallOffsets: LocalWallOffsets = r
         year: asLocal.getFullYear(), month: asLocal.getMonth() + 1, day: asLocal.getDate(),
         hour: asLocal.getHours(), minute: asLocal.getMinutes(), second: asLocal.getSeconds(),
       }
+      const fraction = zoned[7] ?? ""
       const offsets = wallOffsets(parts)
-      const alternatives = offsets.map((offset) => formatWall(parts, offset))
+      const alternatives = offsets.map((offset) => formatWall(parts, offset, fraction))
       return { kind: "ok", text: trimmed, alternatives }
     }
   }
@@ -447,9 +453,9 @@ export function instantText(value: string, offsetAt?: (local: Date) => number): 
   if (offsetAt === undefined) return resolveDateTime(value).text
   const local = LOCAL_DATE_TIME.exec(value.trim())
   if (local === null) return value
-  const [, y, mo, d, h, mi, sec = "00"] = local
+  const [, y, mo, d, h, mi, sec = "00", frac = ""] = local
   const wall = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec))
-  return `${y}-${mo}-${d}T${h}:${mi}:${sec}${offsetText(offsetAt(wall))}`
+  return `${y}-${mo}-${d}T${h}:${mi}:${sec}${frac}${offsetText(offsetAt(wall))}`
 }
 
 /** What a date-time picker shows for a draft value: a zoneless wall time as is; an instant in the reader's zone. */

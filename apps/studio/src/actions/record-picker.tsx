@@ -20,8 +20,13 @@ export const control = "h-9 w-full rounded-lg border border-node-border bg-backg
 /** One record a picker offers: its id (the value it sets) and its title (what it reads as). */
 export interface PickedRecord { readonly id: string; readonly title: string }
 
-/** One page of a picker's records, and the cursor to the next; `snapshotMoved` signals 409 `object.snapshot_moved`. */
-export interface PickerPage { readonly records: readonly PickedRecord[]; readonly next: string | undefined; readonly snapshotMoved?: true }
+/** One page of a picker's records, and the cursor to the next; `snapshotMoved` signals 409 `object.snapshot_moved`, `failed` signals a subsequent-page refusal/error. */
+export interface PickerPage {
+  readonly records: readonly PickedRecord[]
+  readonly next: string | undefined
+  readonly snapshotMoved?: true
+  readonly failed?: string
+}
 
 const PAGE = 25
 
@@ -74,6 +79,33 @@ export function pickerMode(read: { readonly data: PickerPage | null | undefined;
   return read.data === null || read.isError ? "type" : "search"
 }
 
+/** Error text for a failed subsequent picker page ("Show more"), or null for a readable/restart page. */
+export function pickerPageError(read: RecordsRead): string | null {
+  if (read.kind === "page" || read.kind === "restart") return null
+  if (read.kind === "refused") return read.message
+  if (read.kind === "no-cell") return "This workspace has no data cell yet."
+  return "More records could not be read from this cell."
+}
+
+/**
+ * Fetch one picker page: on page 1 (`after === undefined`), returns `null` for unreadable types so
+ * `RecordPicker` falls back to a typed ID input; on subsequent pages (`after !== undefined`), a
+ * refusal or unreadable response throws so TanStack Query preserves page 1, keeps the cursor, and
+ * surfaces an inline error with Retry.
+ */
+export async function fetchPickerPage(
+  read: typeof readRecords,
+  objectKind: string,
+  search: string,
+  property: string | undefined,
+  after: string | undefined,
+): Promise<PickerPage | null> {
+  const result = await read(objectKind, pickerQuery(search, property, after))
+  const page = pickerPage(result, property)
+  if (page !== null || after === undefined) return page
+  throw new Error(pickerPageError(result) ?? "Could not load more records.")
+}
+
 /** Whether any loaded picker page hit 409 `object.snapshot_moved` and pagination must restart from page 1. */
 export const pickerSnapshotMoved = (pages: readonly (PickerPage | null | undefined)[] | undefined): boolean =>
   (pages ?? []).some((page) => page?.snapshotMoved === true)
@@ -102,15 +134,18 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
   const pages = useInfiniteQuery({
     queryKey,
     initialPageParam: undefined as string | undefined,
-    queryFn: async ({ pageParam }) => pickerPage(await read(objectKind, pickerQuery(search, property, pageParam)), property),
+    queryFn: ({ pageParam }) => fetchPickerPage(read, objectKind, search, property, pageParam),
     getNextPageParam: (last) => last?.snapshotMoved ? undefined : last?.next,
     retry: false, staleTime: 30_000,
   })
   const first = pages.data?.pages[0]
   const moved = pickerSnapshotMoved(pages.data?.pages)
+  const pageFailure = pages.isFetchNextPageError
+    ? (pages.error instanceof Error ? pages.error.message : "Could not load more records.")
+    : (pages.data?.pages ?? []).find((page) => typeof page?.failed === "string")?.failed ?? null
   const records = moved ? [] : (pages.data?.pages ?? []).flatMap((page) => page?.records ?? [])
-  // Only the unsearched read decides that the type can't be read; a refused search keeps the list.
-  if (search.trim() === "" && !moved && pickerMode({ data: first, isError: pages.isError }) === "type") {
+  // Only the unsearched first page decides that the type can't be read; a refused search or page-2 failure keeps the list.
+  if (search.trim() === "" && !moved && pickerMode({ data: first, isError: pages.isError && first === undefined }) === "type") {
     return <Input {...aria} className="h-9" placeholder="Type the record's id" value={value} onChange={(e) => onPick(e.target.value)} />
   }
   const pick = (id: string, title?: string) => {
@@ -170,9 +205,12 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
                   ))}
                 </CommandGroup>
               )}
-              {!moved && pages.hasNextPage && (
+              {!moved && pageFailure !== null && (
+                <p role="alert" className="px-3 py-2 text-meta text-destructive">{pageFailure}</p>
+              )}
+              {!moved && (pages.hasNextPage || pageFailure !== null) && (
                 <CommandItem value="__more" onSelect={() => void pages.fetchNextPage()} disabled={pages.isFetchingNextPage}>
-                  {pages.isFetchingNextPage ? "Reading…" : "Show more"}
+                  {pages.isFetchingNextPage ? "Reading…" : pageFailure !== null ? "Retry" : "Show more"}
                 </CommandItem>
               )}
               {typed !== "" && !records.some((record) => record.id === typed) && (
