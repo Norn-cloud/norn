@@ -54,6 +54,10 @@ export interface ActionSummary {
   readonly inputSchema: unknown
   /** The kernel's effective effects: destructive can be true without being declared. */
   readonly uiEffects: UiEffects
+  /** Input fields that name an existing record of `objectKind`: the form offers a picker (ACTION-CATALOG-LINKS-1). */
+  readonly inputLinks?: readonly { readonly field: string; readonly objectKind: string }[]
+  /** A transition's target state, so the receipt says what the record is now. */
+  readonly toState?: string
 }
 
 /** Whether an action writes a record whole (creating it when the id is new): offered as "New …". */
@@ -130,11 +134,15 @@ async function scoped(fetcher: Fetch) {
   return scope === null ? null : scopedHostFetch(fetcher, "/api/host", async () => scope)
 }
 
-export async function listActions(objectKind: string | undefined, fetcher: Fetch = defaultFetch): Promise<CatalogRead> {
+/**
+ * The catalog for `objectKind`; with `objectId`, only what can act on that record in its current
+ * state (ACTION-CATALOG-STATE-1). The cell decides the list; Studio filters nothing.
+ */
+export async function listActions(objectKind: string | undefined, fetcher: Fetch = defaultFetch, objectId?: string): Promise<CatalogRead> {
   let call
   try { call = await scoped(fetcher) } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
   if (call === null) return { kind: "no-cell" }
-  const query = objectKind === undefined ? "" : `?${new URLSearchParams({ objectKind })}`
+  const query = objectKind === undefined ? "" : `?${new URLSearchParams({ objectKind, ...objectId === undefined ? {} : { objectId } })}`
   const response = await call(`/v1/actions${query}`, { headers: { accept: "application/json" } })
   const text = await response.text()
   if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
@@ -322,6 +330,52 @@ function encodeValue(spec: Spec, draft: Draft): string | undefined {
   return text === "" ? undefined : encodeLeaf(spec, text)
 }
 
+/**
+ * The members of an encoded `input` object, each as the text that was sent: a string as its text, any
+ * other value (a number, `null`, a list, an object) as its JSON, byte for byte, so no digit is
+ * rounded. Null when the text is not one JSON object.
+ */
+export function sentMembers(input: string): readonly { readonly name: string; readonly text: string }[] | null {
+  let parsed: unknown
+  try { parsed = JSON.parse(input) } catch { return null }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  const members: { name: string; text: string }[] = []
+  let at = 0
+  const space = () => { while (at < input.length && " \t\n\r".includes(input[at]!)) at++ }
+  // One JSON value's extent from `at`: a string, a nested list or object, or a bare token.
+  const value = (): string => {
+    const start = at
+    if (input[at] === "\"") { string(); return input.slice(start, at) }
+    if (input[at] === "{" || input[at] === "[") {
+      let depth = 0
+      do {
+        const char = input[at]
+        if (char === "\"") { string(); continue }
+        if (char === "{" || char === "[") depth++
+        else if (char === "}" || char === "]") depth--
+        at++
+      } while (depth > 0 && at < input.length)
+      return input.slice(start, at)
+    }
+    while (at < input.length && !",}] \t\n\r".includes(input[at]!)) at++
+    return input.slice(start, at)
+  }
+  const string = () => { at++; while (at < input.length && input[at] !== "\"") at += input[at] === "\\" ? 2 : 1; at++ }
+  space(); at++ // {
+  for (;;) {
+    space()
+    if (input[at] === "}") break
+    const name = JSON.parse(value()) as string
+    space(); at++ // :
+    space()
+    const raw = value()
+    members.push({ name, text: raw.startsWith("\"") ? JSON.parse(raw) as string : raw })
+    space()
+    if (input[at] === ",") at++
+  }
+  return members
+}
+
 /** The draft as the `input` object's JSON text. Fields left empty are omitted; the cell says which it requires. */
 export function encodeObject(fields: readonly FormField[], draft: { readonly [name: string]: Draft }): string {
   const members = fields.flatMap((field) => {
@@ -376,6 +430,16 @@ export const decimalExample = (scale: number | null) => scale === null || scale 
 const IRREGULAR: Readonly<Record<string, string>> = { send: "sent", make: "made", pay: "paid", set: "set", put: "put", run: "ran", take: "taken", give: "given", get: "got", hold: "held", sell: "sold", buy: "bought", split: "split", write: "written", begin: "begun", shut: "shut", cut: "cut", reset: "reset" }
 
 /** The past tense of an action's leading verb ("Open a holding" → "opened"), for the business sentence; null when it isn't a plain verb. */
+/**
+ * What the record is after a committed call, from the cell's own answer: a transition's target
+ * state ("is now submitted"), a first version ("created") or a later one ("updated"). Never a
+ * verb guessed from the action's title.
+ */
+export function receiptVerb(action: ActionSummary, version: number): string {
+  if (action.effect === "fire_transition") return action.toState === undefined ? "updated" : `is now ${action.toState.replaceAll("_", " ")}`
+  return version === 1 ? "created" : "updated"
+}
+
 export function pastTense(title: string): string | null {
   const verb = title.trim().split(/\s+/)[0]?.toLowerCase() ?? ""
   if (!/^[a-z]{2,}$/.test(verb)) return null

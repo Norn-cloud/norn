@@ -224,9 +224,7 @@ fn materialize_historical_values(
     object_type: &norn_ir::ObjectTypeName,
     stored: &BTreeMap<String, Value>,
 ) -> Result<BTreeMap<String, Value>, CellError> {
-    let catalog = norn_kernel::TypeCatalog::new(model.object_types())
-        .with_interfaces(model.interfaces())
-        .with_property_types(model.property_types());
+    let catalog = model.type_catalog();
     let retained = stored
         .iter()
         .filter(|(property, _)| model.column(object_type.as_str(), property).is_ok())
@@ -433,6 +431,30 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             cache.receipts.insert(commit, Arc::clone(&receipt));
         }
         Ok(Some(receipt))
+    }
+
+    /// The version of `id` (an `object_type` identity) in `world` as of the
+    /// commit `commit_seq`: the last version committed at or before it, `0`
+    /// when none was (S5b).
+    ///
+    /// # Errors
+    /// Unknown object type; engine failures.
+    pub fn version_as_of(
+        &self,
+        world: &str,
+        object_type: &str,
+        id: &str,
+        commit_seq: u64,
+    ) -> Result<u64, CellError> {
+        let root = self.root_type(object_type)?;
+        let version: Option<Option<i64>> = self.conn.query_optional(
+            &format!("SELECT MAX(\"version\") FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND \"commit_seq\" <= ?4"),
+            params![world, root, id, to_i64(commit_seq, "commit sequence")?],
+            |row| row.get(0),
+        )?;
+        version
+            .flatten()
+            .map_or(Ok(0), |version| to_u64(version, "version"))
     }
 
     /// Authenticate the receipt that emitted one exact committed fact version.
@@ -1191,15 +1213,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         commit_seq: u64,
         value: &Value,
     ) -> Result<(), CellError> {
-        let event = if value.get("op").and_then(Value::as_str) == Some("observed_fact") {
-            value.get("event").unwrap_or(value)
-        } else {
-            value
-        };
-        if matches!(
-            event.get("op").and_then(Value::as_str),
-            Some("created" | "modified")
-        ) {
+        if durable_event_is_proven(value) {
             self.verify_event_values(world, Some(commit_seq), value)?;
         }
         Ok(())
@@ -2085,9 +2099,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(values) = snapshot.values else {
             return Ok(None);
         };
-        let catalog = norn_kernel::TypeCatalog::new(model.object_types())
-            .with_interfaces(model.interfaces())
-            .with_property_types(model.property_types())
+        let catalog = model
+            .type_catalog()
             .with_governing_laws(model.law_artifacts());
         let mut links = crate::link_laws::PinnedLinks {
             reader: self,
@@ -2468,6 +2481,20 @@ fn decode_input(input: &norn_ir::RuntimeValue) -> Result<ConsumedInput, String> 
         }
         _ => Err("unknown consumed input kind".to_owned()),
     }
+}
+
+/// Whether [`StoreReader::verify_durable_event`] proves `value` against its
+/// commit's receipt: a `created` or `modified` event, bare or observed.
+pub(crate) fn durable_event_is_proven(value: &Value) -> bool {
+    let event = if value.get("op").and_then(Value::as_str) == Some("observed_fact") {
+        value.get("event").unwrap_or(value)
+    } else {
+        value
+    };
+    matches!(
+        event.get("op").and_then(Value::as_str),
+        Some("created" | "modified")
+    )
 }
 
 pub(crate) fn decode_snapshot(

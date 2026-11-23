@@ -9,15 +9,11 @@
 //! artifact installed since (such as flows), never wiping the cell
 //! (`open_governed`).
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use norn_api::scope::CellScope;
-use norn_cell::{
-    CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
-    engine::SqlEngine,
-};
-use norn_ir::{ArtifactEnvelope, RuntimeValue};
+use norn_cell::{CellStore, InstalledDefinitionInput, Model, engine::SqlEngine};
+use norn_ir::ArtifactEnvelope;
 
 const DEFINITIONS: &str =
     include_str!("../../../fixtures/demo/explorer/three-systems.definitions.json");
@@ -183,86 +179,32 @@ pub(crate) fn admit_set(
 
 /// The idempotency key of the demo rows' one commit: a restarted Durable
 /// Object replays it without writing, and nothing is ever wiped.
-pub const SEED_ROWS_KEY: &str = "demo.seed.rows/1";
-
-/// Logical time of the demo rows' commit; fixed so every boot is identical.
-const SEEDED_AT: u64 = 2;
+pub const SEED_ROWS_KEY: &str = norn_cell::provision::DEMO_ROWS_KEY;
 
 /// Synthetic catalog items and parties (no real or shop data) in the main
-/// world, committed once through the governed write path. The demo grants
-/// give the `viewer` role Population alone, so these rows are listed for it
-/// with their values withheld (D67), and read whole by `admin`.
-pub const SEED_ITEMS: [(&str, &str, &str); 6] = [
-    ("SYN-ITEM-01", "BAR-1KG", "Synthetic gold bar, 1 kg"),
-    ("SYN-ITEM-02", "BAR-100G", "Synthetic gold bar, 100 g"),
-    ("SYN-ITEM-03", "COIN-1OZ", "Synthetic silver coin, 1 oz"),
-    ("SYN-ITEM-04", "GRAIN-AU", "Synthetic gold grain"),
-    ("SYN-ITEM-05", "SCRAP-AG", "Synthetic silver scrap"),
-    ("SYN-ITEM-06", "WIRE-PT", "Synthetic platinum wire"),
-];
+/// world, committed once by the fixed-input provisioning operation
+/// ([`norn_cell::provision::demo_rows`]). The demo grants give the `viewer`
+/// role Population alone, so these rows are listed for it with their values
+/// withheld (D67), and read whole by `admin`.
+pub const SEED_ITEMS: [(&str, &str, &str); 6] = norn_cell::provision::DEMO_ITEMS;
 
 /// Synthetic parties: id, display name and kind.
-pub const SEED_PARTIES: [(&str, &str, &str); 4] = [
-    ("SYN-PARTY-01", "Synthetic Refinery A", "organization"),
-    ("SYN-PARTY-02", "Synthetic Vault B", "organization"),
-    ("SYN-PARTY-03", "Synthetic Assayer", "person"),
-    ("SYN-PARTY-04", "Synthetic Ledger Feed", "system"),
-];
+pub const SEED_PARTIES: [(&str, &str, &str); 4] = norn_cell::provision::DEMO_PARTIES;
 
-/// Commit the demo rows once; a restarted cell replays the commit.
+/// Commit the demo rows once; a restarted cell replays nothing.
 fn seed_rows<E: SqlEngine>(store: &mut CellStore<E>, scope: &CellScope) -> Result<(), SeedError> {
-    let text = |value: &str| RuntimeValue::from(value);
-    let items = SEED_ITEMS
-        .iter()
-        .map(|(id, code, label)| FactWriteRow::Put {
-            object_type: "canon.Item".into(),
-            key: (*id).into(),
-            values: BTreeMap::from([
-                ("id".to_owned(), text(id)),
-                ("code".to_owned(), text(code)),
-                ("label".to_owned(), text(label)),
-            ]),
-        });
-    let parties = SEED_PARTIES
-        .iter()
-        .map(|(id, name, kind)| FactWriteRow::Put {
-            object_type: "canon.Party".into(),
-            key: (*id).into(),
-            values: BTreeMap::from([
-                ("display_name".to_owned(), text(name)),
-                ("kind".to_owned(), text(kind)),
-            ]),
-        });
-    // A seeded cell keeps its one receipt: nothing is re-sent, so a later
-    // clock never conflicts with it. A cell that committed past the seed time
-    // before it was seeded takes the rows at its clock floor, never behind it.
-    let floor = {
-        let reader = store.read();
-        if reader
-            .receipt_by_idempotency_key(MAIN_WORLD, SEED_ROWS_KEY)
-            .map_err(|e| fail("demo rows")(&e))?
-            .is_some()
-        {
-            return Ok(());
-        }
-        reader.clock_floor().map_err(|e| fail("demo rows")(&e))?
-    };
-    store
-        .commit(&CommitBatch {
-            world: MAIN_WORLD.into(),
-            scope: scope.key(),
-            logical_time: SEEDED_AT.max(floor),
-            idempotency_key: Some(SEED_ROWS_KEY.into()),
-            writes: items.chain(parties).collect(),
-            ..CommitBatch::default()
-        })
-        .map(|_outcome| ())
-        .map_err(|e| fail("demo rows")(&e))
+    norn_cell::provision::demo_rows(store, &scope.key()).map_err(|e| fail("demo rows")(&e))
 }
+
+// #1485 S6: this crate's fixtures write through the kernel path, never a raw door.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../../norn-cell/tests/support/governed.rs"]
+pub(crate) mod governed;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "seed regression")]
+    use super::governed::GovernedCommit as _;
     use super::{
         DEFINITIONS, INSTALLED_AT, SEED_ITEMS, SEED_PARTIES, SEED_ROWS_KEY, demo_scope,
         open_governed, seed_rows,

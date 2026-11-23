@@ -247,8 +247,9 @@ fn every_catalog_covers_every_code_with_its_placeholders() {
                     .any(|c| matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')),
                 "{locale} {code}: bidi embedding, override or isolate control"
             );
-            assert!(
-                !entry.message.trim().is_empty(),
+            assert_ne!(
+                entry.message.trim().len(),
+                0,
                 "{locale} {code}: blank message"
             );
         }
@@ -330,7 +331,7 @@ fn arabic_messages_use_the_glossary_terms() {
     let mut misses = Vec::new();
     for term in &glossary.terms {
         assert!(matches!(term.domain.as_str(), "business" | "norn"));
-        assert!(!term.ar.is_empty(), "{} has no Arabic form", term.en);
+        assert_ne!(term.ar.len(), 0, "{} has no Arabic form", term.en);
         for (code, entry) in &english.messages {
             if says(&english_prose(&entry.message), &term.en) {
                 let translated = arabic_stem(&arabic.messages[code].message);
@@ -344,8 +345,9 @@ fn arabic_messages_use_the_glossary_terms() {
             }
         }
     }
-    assert!(
-        misses.is_empty(),
+    assert_eq!(
+        misses.len(),
+        0,
         "glossary terms not used:\n{}",
         misses.join("\n")
     );

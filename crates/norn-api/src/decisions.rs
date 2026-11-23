@@ -37,8 +37,7 @@ use norn_kernel::{CommandId, Generation, LogicalTime};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::actions::ActionAnswer;
-use crate::approvals::HeldCall;
+use crate::approvals::{CallState, HeldCall};
 use crate::authz::{AccessRequest, Operation, ReadCapability, ReadRequest};
 use crate::flow_definitions::DECISION_FUNCTION;
 use crate::flow_driver::{AsStarter, Delivery, result_turn};
@@ -327,25 +326,64 @@ pub struct Decided {
     /// The run, or for an approval of a direct action call the parked call's
     /// id with no state.
     pub run: DecidedRun,
-    /// For an approved action call (APPROVAL-1), what committing it as its
-    /// requester answered; on a replay, present only while a run's step still
-    /// waits on the call, as what dispatching it again through the
-    /// approval's fence answered.
+    /// For an approved action call (APPROVAL-1), where it stands after this
+    /// call (APPROVAL-RECOVERY-1): on a replay its recorded outcome, or, while
+    /// it is approved and not yet executed, what running it now answered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call: Option<DecidedCall>,
 }
 
-/// What committing an approved call as its requester answered (APPROVAL-1).
-/// The approval stands either way: the requester's own retry of the call
-/// commits it.
+/// Where an approved action call stands (APPROVAL-RECOVERY-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DecidedCallState {
+    /// Exactly the approved call committed.
+    Committed,
+    /// It was refused when it ran (`code`), for good: its approval never
+    /// runs it again.
+    Refused,
+    /// Approved, not yet executed: no request of the requester's has run
+    /// it yet, the host stopped before it committed, or its try could not
+    /// commit it (`code` says why). Only the requester's own retry runs it,
+    /// once, under the requester's current authority.
+    NotExecuted,
+}
+
+/// What the approved call is now (APPROVAL-1, APPROVAL-RECOVERY-1). The
+/// approval stands either way.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DecidedCall {
     /// Whether the call committed.
     pub committed: bool,
-    /// The requester's refusal code when it did not.
+    /// The refusal code when it did not: its recorded refusal, or why this
+    /// try could not run it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+    /// Where it stands.
+    pub state: DecidedCallState,
+}
+
+impl DecidedCall {
+    fn of(state: &CallState, tried: Option<String>) -> Self {
+        match state {
+            CallState::Committed(_) => Self {
+                committed: true,
+                code: None,
+                state: DecidedCallState::Committed,
+            },
+            CallState::Refused(code) => Self {
+                committed: false,
+                code: Some(code.clone()),
+                state: DecidedCallState::Refused,
+            },
+            CallState::NotExecuted => Self {
+                committed: false,
+                code: tried,
+                state: DecidedCallState::NotExecuted,
+            },
+        }
+    }
 }
 
 /// Who resolved a decision first (409 `decision.resolved`).
@@ -360,6 +398,11 @@ pub struct DecisionResolution {
     pub at_ms: u64,
     /// The chosen option, only for a reader who may read the run.
     pub choice: Option<String>,
+    /// For an approval of a parked action call, where the call stands
+    /// (APPROVAL-RECOVERY-1), read only: nothing runs. Present for the
+    /// approver and for a reader of the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call: Option<DecidedCall>,
 }
 
 /// A refused decide call: the shared refusal, and on `decision.resolved` who
@@ -643,15 +686,21 @@ fn options(request: &DecisionRequest) -> Vec<DecisionOptionDocument> {
         .collect()
 }
 
-/// The run a parked call's step belongs to, when a flow step made the call;
-/// else the parked call's own id, which is not a run.
+/// The run a parked call's step belongs to, when a flow step made the call:
+/// the step attempt recorded when it parked (S6b), so an attempt that ended
+/// before the decision still names its run; else the parked call's own id,
+/// which is not a run.
 fn call_run<E: SqlEngine>(
     store: &CellStore<E>,
     decision: &OpenDecision,
     call: &HeldCall,
 ) -> Result<DecisionRun, Refusal> {
-    let Some(run_id) = crate::flow_driver::run_waiting_on(store, &call.call.idempotency_key)?
-    else {
+    let run_id = match &call.call.attempt {
+        Some(attempt) => Some(attempt.run_id.clone()),
+        // Parked before attempts were recorded.
+        None => crate::flow_driver::run_waiting_on(store, &call.call.idempotency_key)?,
+    };
+    let Some(run_id) = run_id else {
         return Ok(DecisionRun {
             id: decision.run_id.clone(),
             generation: decision.generation.0,
@@ -867,6 +916,330 @@ pub fn list_decisions<E: SqlEngine>(
     })
 }
 
+/// `GET /v1/decisions:requested` query.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[into_params(parameter_in = Query, rename_all = "camelCase")]
+pub struct RequestedQuery {
+    /// Organization (required).
+    #[param(required = true, nullable = false)]
+    pub org_id: Option<String>,
+    /// Environment (required).
+    #[param(required = true, nullable = false)]
+    pub environment_id: Option<String>,
+    /// Only this decision, in whatever state it stands (the id a parked
+    /// call's `202` answer named). Without it, the calls that wait: those
+    /// pending a decider and those approved and not yet run.
+    pub id: Option<String>,
+}
+
+/// Where the caller's parked call stands with its approval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestedStatus {
+    /// It waits for a decider.
+    Pending,
+    /// A decider approved it; `call.state` says whether it ran.
+    Approved,
+    /// A decider rejected it; it never runs.
+    Rejected,
+    /// No one decided before its deadline; it never runs.
+    Expired,
+    /// It was withdrawn before anyone decided.
+    Withdrawn,
+}
+
+/// The parked call itself, exactly as it waits: retrying it means calling
+/// `action` with `encodedInput` as the input and `idempotencyKey` as the key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestedCall {
+    /// The action called.
+    pub action: String,
+    /// The approval definition that gates it.
+    pub definition: String,
+    /// The call's admitted input.
+    #[schema(value_type = BTreeMap<String, serde_json::Value>)]
+    pub input: RuntimeValue,
+    /// The same input as canonical JSON text, numbers digit for digit, so a
+    /// client that parses JSON into binary floats can still send it back
+    /// exactly.
+    pub encoded_input: String,
+    /// The call's idempotency key.
+    pub idempotency_key: String,
+    /// Once it is approved, where the call stands (APPROVAL-RECOVERY-1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<DecidedCall>,
+}
+
+/// One approval-gated call the caller made, as its requester sees it
+/// (APPROVAL-1): never a decider's view, and never anyone else's call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestedDecision {
+    /// The opaque decision id.
+    pub id: String,
+    /// The approval's question.
+    pub question: String,
+    /// How much is at stake.
+    pub risk: DecisionRisk,
+    /// When the call parked (logical milliseconds).
+    pub requested_at_ms: u64,
+    /// When the decision expires (logical milliseconds).
+    pub expires_at_ms: u64,
+    /// Where it stands.
+    pub status: RequestedStatus,
+    /// When it was resolved (logical milliseconds), once it was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_at_ms: Option<u64>,
+    /// The call.
+    pub call: RequestedCall,
+    /// The cell offers the caller to run it now: it is approved, not yet
+    /// executed, a direct call (a flow step's call runs by retrying its
+    /// run), and the caller is its requester. An offer, not a grant: the
+    /// retry is decided again under the caller's current authority.
+    pub can_run: bool,
+}
+
+/// The caller's own approval-gated calls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestedPage {
+    /// Soonest deadline first, ties to the oldest request, then id.
+    pub items: Vec<RequestedDecision>,
+    /// More calls were not examined.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub total_capped: bool,
+    /// The cell's clock when the page was read (logical milliseconds).
+    pub server_now_ms: u64,
+}
+
+/// Whether `held` is a direct call `principal` made: exactly the requester
+/// its dispatch admits (subject, actor kind and role table,
+/// [`crate::approvals::is_requester`]); a flow step's call is its run's,
+/// and the run's retry drives it.
+fn requested_by<E: SqlEngine>(
+    store: &CellStore<E>,
+    held: &HeldCall,
+    principal: &RunStarter,
+) -> Result<bool, Refusal> {
+    Ok(
+        crate::approvals::is_requester(Some(principal), &held.call.requester)
+            && held.call.attempt.is_none()
+            && crate::flow_driver::run_waiting_on(store, &held.call.idempotency_key)?.is_none(),
+    )
+}
+
+fn requested_document(
+    decision: &OpenDecision,
+    held: &HeldCall,
+    status: RequestedStatus,
+    resolved_at_ms: Option<u64>,
+    state: Option<&CallState>,
+) -> Result<RequestedDecision, Refusal> {
+    let input = RuntimeValue::Object(held.call.input.clone());
+    let encoded_input =
+        String::from_utf8(input.canonical_json().map_err(Refusal::host)?).map_err(Refusal::host)?;
+    Ok(RequestedDecision {
+        id: decision.id.clone(),
+        question: decision.request.question.clone(),
+        risk: risk(&decision.request),
+        requested_at_ms: decision.requested_at_ms,
+        expires_at_ms: decision.expires_at_ms,
+        status,
+        resolved_at_ms,
+        can_run: status == RequestedStatus::Approved
+            && matches!(state, Some(CallState::NotExecuted)),
+        call: RequestedCall {
+            action: held.call.action.clone(),
+            definition: held.definition.clone(),
+            input,
+            encoded_input,
+            idempotency_key: held.call.idempotency_key.clone(),
+            state: state.map(|state| DecidedCall::of(state, None)),
+        },
+    })
+}
+
+/// The parked call `command_id` (at `generation`, decision `decision_id`)
+/// as its requester `principal` sees it; `None` when it is not a direct call
+/// of theirs, or no longer the call that id names. Its payload is loaded
+/// only here, for a row [`StoreReader::parked_calls_of`] already found to be
+/// the principal's own.
+///
+/// [`StoreReader::parked_calls_of`]: norn_cell::read::StoreReader::parked_calls_of
+fn requested_call<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    (command_id, generation, decision_id): (&str, u64, &str),
+    principal: &RunStarter,
+    now_ms: u64,
+) -> Result<Option<RequestedDecision>, Refusal> {
+    let store = cell.store();
+    let Some(pending) = store
+        .read()
+        .outbox_entry(command_id)
+        .map_err(Refusal::host)?
+        .filter(|pending| pending.command.generation == generation)
+    else {
+        return Ok(None);
+    };
+    let Some(decision) = parked_decision(store, &pending)? else {
+        return Ok(None);
+    };
+    let Some(held) = decision.call.as_ref() else {
+        return Ok(None);
+    };
+    if decision.id != decision_id || !requested_by(store, held, principal)? {
+        return Ok(None);
+    }
+    if pending.result.is_none() {
+        // Its deadline passed and the expiry is not recorded yet: it never
+        // runs, whatever records it.
+        let status = if decision.expires_at_ms <= now_ms {
+            RequestedStatus::Expired
+        } else {
+            RequestedStatus::Pending
+        };
+        return requested_document(&decision, held, status, None, None).map(Some);
+    }
+    let Some(row) = store
+        .read()
+        .decision_resolution(MAIN_WORLD, decision_id)
+        .map_err(Refusal::host)?
+        .filter(|row| row.resolved.command_id == command_id)
+    else {
+        // A result is recorded and its resolving commit is still to come.
+        return Ok(None);
+    };
+    let approved = row.resolved.resolution == Resolution::Decided
+        && row.resolved.choice.as_deref() == Some(crate::approvals::APPROVE);
+    let status = match row.resolved.resolution {
+        Resolution::Decided if approved => RequestedStatus::Approved,
+        Resolution::Decided => RequestedStatus::Rejected,
+        Resolution::Expired => RequestedStatus::Expired,
+        Resolution::Withdrawn => RequestedStatus::Withdrawn,
+    };
+    let state = if approved {
+        let Some(approved_row) = store
+            .read()
+            .approved_call(MAIN_WORLD, decision_id)
+            .map_err(Refusal::host)?
+        else {
+            return Ok(None);
+        };
+        let (_held, state) = crate::approvals::approved_state(cell, &approved_row)?;
+        // A call approved before approved calls were recorded as direct is
+        // offered only when its approval still binds it to a direct call.
+        if crate::approvals::binding(cell, &approved_row, held)?
+            != crate::approvals::Binding::Direct
+        {
+            return Ok(None);
+        }
+        Some(state)
+    } else {
+        None
+    };
+    requested_document(
+        &decision,
+        held,
+        status,
+        Some(row.resolved_at_ms),
+        state.as_ref(),
+    )
+    .map(Some)
+}
+
+/// `GET /v1/decisions:requested`: the caller's own approval-gated calls, as
+/// their requester sees them (APPROVAL-1, APPROVAL-RECOVERY-1). A requester
+/// never decides their call and never lists it among the decisions waiting
+/// on them; this is where they learn that it was approved and retry it
+/// (`canRun`), with the exact input and key it parked with. Without `id`:
+/// the calls pending a decider before their deadline and those approved and
+/// not yet run. With `id`: that decision in any state, or no item when it is
+/// not the caller's direct call (the cell does not say which).
+///
+/// The caller is the host's verified principal, compared as the dispatch
+/// compares it (subject, actor kind and role table): the same subject under
+/// another kind or role table is someone else, and reads nothing. Its calls
+/// are found by that identity before any parked payload is loaded, so
+/// another requester's id costs what an id that exists nowhere costs.
+///
+/// # Errors
+/// Missing or foreign scope; a missing caller (one opaque 403); an invalid
+/// id; a host failure.
+#[utoipa::path(get, path = "/v1/decisions:requested", params(RequestedQuery), responses((status = 200, description = "The caller's own approval-gated calls.", body = RequestedPage), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn requested_decisions<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &RequestedQuery,
+    actor: Option<&str>,
+    now: LogicalTime,
+) -> Result<RequestedPage, Refusal> {
+    let _epoch = host.definition_read()?;
+    host.scope()
+        .admit(query.org_id.as_deref(), query.environment_id.as_deref())?;
+    let actor = actor
+        .filter(|actor| !actor.trim().is_empty())
+        .ok_or_else(crate::authz::read_denied)?;
+    let wanted = query.id.as_deref();
+    if wanted.is_some_and(|id| id.is_empty() || id.len() > MAX_IDEMPOTENCY_KEY_BYTES) {
+        return Err(Refusal::invalid("id must be a decision id"));
+    }
+    let cell = host.cell()?;
+    let now_ms = now.as_millis().max(cell.now().as_millis());
+    let mut items = Vec::new();
+    let mut capped = false;
+    // No verified principal: nobody's requester, so nothing is theirs.
+    if let Some(principal) = host.authorizer.verified_principal(actor) {
+        let own = cell
+            .store()
+            .read()
+            .parked_calls_of(
+                MAIN_WORLD,
+                (
+                    &principal.subject,
+                    &principal.actor_kind,
+                    &principal.role_table,
+                ),
+                wanted.is_none(),
+            )
+            .map_err(Refusal::host)?;
+        for (command_id, generation) in own {
+            let id = decision_id(&command_id, generation)?;
+            if wanted.is_some_and(|wanted| wanted != id) {
+                continue;
+            }
+            let Some(item) =
+                requested_call(&cell, (&command_id, generation, &id), &principal, now_ms)?
+            else {
+                continue;
+            };
+            // Without an id only the calls that wait: pending a decider
+            // before their deadline, or approved and not yet run.
+            if wanted.is_none() && !(item.status == RequestedStatus::Pending || item.can_run) {
+                continue;
+            }
+            // The limit counts only the caller's own calls that wait.
+            if items.len() == MAX_DECISION_SCAN {
+                capped = true;
+                break;
+            }
+            items.push(item);
+        }
+    }
+    items.sort_by(|left, right| {
+        (left.expires_at_ms, left.requested_at_ms, left.id.as_str()).cmp(&(
+            right.expires_at_ms,
+            right.requested_at_ms,
+            right.id.as_str(),
+        ))
+    });
+    Ok(RequestedPage {
+        items,
+        total_capped: capped,
+        server_now_ms: now_ms,
+    })
+}
+
 fn request_hash(body: &DecideRequest) -> Result<String, Refusal> {
     norn_ir::canonical::domain_hash_hex(b"norn.decision.decide/1\0", &(&body.choice, &body.note))
         .map_err(Refusal::host)
@@ -887,9 +1260,12 @@ fn by(row: &DecisionRow, actor: &str) -> Option<String> {
 ///
 /// For the approval of a parked action call (APPROVAL-1) the decider is
 /// never the call's requester (#618), and no flow turn runs: the answer is
-/// recorded, and an approved call then commits through the shared action
-/// dispatch as its requester ([`AsStarter`] makes the requester the host's
-/// verified caller for that one call), its authority decided again there.
+/// recorded, and an approved call then runs through the shared action
+/// dispatch only under the requester's current authority ([`AsStarter`]:
+/// the host runs it only when it can establish that authority, which a
+/// decider's request never does). Otherwise the answer's `call` is
+/// `not_executed` and the requester's own authenticated retry runs it
+/// (APPROVAL-RECOVERY-1).
 ///
 /// # Errors
 /// In this order: 404 `decision.not_found` (also for a caller who may not
@@ -907,50 +1283,23 @@ pub fn decide<E: SqlEngine>(
     as_requester: AsStarter<'_>,
 ) -> Result<Decided, Box<DecideRefusal>> {
     let (mut decided, approved) = decide_held(host, request, access, disclosure)?;
-    // The cell and the definitions epoch are released: the approved call
-    // goes through the ordinary dispatch as its requester.
-    match approved {
-        None => {}
-        Some(Approval::Now(call)) => {
-            decided.call = Some(commit_approved(
-                host,
-                &call,
-                disclosure,
-                request.now,
-                as_requester,
-            ));
-        }
-        Some(Approval::Replayed(command)) => {
-            decided.call = commit_replayed(
-                host,
-                &decided.run.id,
-                &command,
-                disclosure,
-                request.now,
-                as_requester,
-            )
+    // The cell and the definitions epoch are released: an approved call
+    // still to run goes through the ordinary dispatch as its requester.
+    if let Some(decision_id) = approved {
+        decided.call = run_approved(host, &decision_id, disclosure, request.now, as_requester)
             .map_err(Box::from)?;
-        }
     }
     Ok(decided)
 }
 
-/// An approval [`decide_held`] leaves to commit once the cell is released.
-enum Approval {
-    /// Approved by this call.
-    Now(Box<HeldCall>),
-    /// The caller's own earlier approval, replayed: the approved command.
-    Replayed(String),
-}
-
-/// [`decide`] under the cell: the decision, and an approved call to commit
-/// once the cell is released.
+/// [`decide`] under the cell: the decision, and the decision whose approved
+/// call to answer once the cell is released.
 fn decide_held<E: SqlEngine>(
     host: &DevHost<E>,
     request: &DecideCall<'_>,
     access: ReadAccess<'_>,
     disclosure: &dyn QuestionRuntime<E>,
-) -> Result<(Decided, Option<Approval>), Box<DecideRefusal>> {
+) -> Result<(Decided, Option<String>), Box<DecideRefusal>> {
     let DecideCall {
         scope,
         actor,
@@ -1001,137 +1350,96 @@ fn decide_held<E: SqlEngine>(
         return resolved_answer(&reader, &cell, id, body);
     }
     let decided = answer(&reader, &cell, id, body, DecideOutcome::Decided)?;
-    let approved = decision
-        .call
-        .filter(|_| body.choice == crate::approvals::APPROVE)
-        .map(|call| Approval::Now(Box::new(call)));
+    let approved = (decision.call.is_some() && body.choice == crate::approvals::APPROVE)
+        .then(|| decision.id.clone());
     Ok((decided, approved))
 }
 
-/// Commit an approved call through the shared action dispatch, as its
-/// requester: the requester's authority is decided again, and the approval
-/// lets exactly this call past its gate.
-fn commit_approved<E: SqlEngine>(
+/// APPROVAL-RECOVERY-1: the approved call of `decision_id` as it stands, and
+/// while it is approved and not yet executed, run once now through the
+/// shared action dispatch under the requester's current authority when the
+/// host can establish it (`as_requester`; else nothing runs), and the
+/// dispatch lets only exactly the approved call past
+/// its gate (APPROVAL-REVISION-1, APPROVAL-PIN-1), recording a refusal that
+/// decides it. A committed or refused call is answered as recorded and
+/// nothing runs. `None` when the decision approved no call (an approval
+/// recorded before approved calls were is backfilled when the cell opens).
+///
+/// # Errors
+/// A host failure reading the call.
+fn run_approved<E: SqlEngine>(
     host: &DevHost<E>,
-    call: &HeldCall,
-    disclosure: &dyn QuestionRuntime<E>,
-    now: LogicalTime,
-    as_requester: AsStarter<'_>,
-) -> DecidedCall {
-    let request = crate::actions::ActionRequest {
-        input: RuntimeValue::Object(call.call.input.clone()),
-        idempotency_key: call.call.idempotency_key.clone(),
-    };
-    // APPROVAL-REVISION-1: the approval covers the action and its gate as
-    // they were when the call parked. The dispatch compares both inside its
-    // own epoch and cell hold, before anything parks or writes, so a
-    // definition installed at any moment never runs under this approval.
-    let approved = crate::actions::Approved::Held {
-        action_digest: &call.call.action_digest,
-        gate_definition: &call.definition,
-        gate_revision: call.revision,
-    };
-    commit_as_requester(
-        host,
-        &call.call.requester,
-        &call.call.action,
-        &request,
-        &approved,
-        call.call.definitions_version,
-        disclosure,
-        now,
-        as_requester,
-    )
-}
-
-/// APPROVAL-REVISION-1: a replayed approval of a flow step's call commits
-/// that call through the same fence as the first dispatch: it must park as
-/// exactly the approved command under the gate and action active now, so a
-/// retired or changed gate never runs it. `None` when no step waits on the
-/// approval (a direct call's requester retries the call itself).
-fn commit_replayed<E: SqlEngine>(
-    host: &DevHost<E>,
-    run_id: &str,
-    command: &str,
+    decision_id: &str,
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
     as_requester: AsStarter<'_>,
 ) -> Result<Option<DecidedCall>, Refusal> {
-    let Some(waiting) = crate::flow_driver::waiting_call(host, run_id)? else {
-        return Ok(None);
+    let missing = || Refusal::host("an approved call lost its record");
+    let (held, command) = {
+        let _epoch = host.definition_read()?;
+        let cell = host.cell()?;
+        let Some((held, state)) = crate::approvals::approved_call(&cell, decision_id)? else {
+            return Ok(None);
+        };
+        if !matches!(state, CallState::NotExecuted) {
+            return Ok(Some(DecidedCall::of(&state, None)));
+        }
+        let command = cell
+            .store()
+            .read()
+            .approved_call(MAIN_WORLD, decision_id)
+            .map_err(Refusal::host)?
+            .ok_or_else(missing)?
+            .command_id;
+        (held, command)
     };
     let request = crate::actions::ActionRequest {
-        input: RuntimeValue::Object(waiting.input),
-        idempotency_key: waiting.idempotency_key,
+        input: RuntimeValue::Object(held.call.input.clone()),
+        idempotency_key: held.call.idempotency_key.clone(),
     };
-    Ok(Some(commit_as_requester(
-        host,
-        &waiting.starter,
-        &waiting.action,
-        &request,
-        &crate::actions::Approved::Parked(command),
-        // A run's step calls unpinned.
-        None,
-        disclosure,
-        now,
-        as_requester,
-    )))
-}
-
-/// One approved call through the shared dispatch as `requester`, fenced by
-/// `approved`.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one dispatch shared by a fresh approval and its replay"
-)]
-fn commit_as_requester<E: SqlEngine>(
-    host: &DevHost<E>,
-    requester: &RunStarter,
-    action_id: &str,
-    request: &crate::actions::ActionRequest,
-    approved: &crate::actions::Approved<'_>,
     // APPROVAL-PIN-1: the requester's pin holds at approval too.
-    version: Option<u64>,
-    disclosure: &dyn QuestionRuntime<E>,
-    now: LogicalTime,
-    as_requester: AsStarter<'_>,
-) -> DecidedCall {
     let query = crate::actions::ActionQuery {
         org_id: Some(host.scope().org_id.clone()),
         environment_id: Some(host.scope().environment_id.clone()),
-        version,
+        version: held.call.definitions_version,
     };
     let mut commit = || {
+        // S2: the request's own authenticated principal, as the host's
+        // trusted seam verified it for this try; the dispatch compares it
+        // with the parked requester under its own hold.
+        let principal = host
+            .authorizer
+            .verified_principal(&held.call.requester.subject);
         crate::actions::call_action_bound(
             host,
             &crate::actions::ActionCall {
                 query: &query,
-                actor: Some(&requester.subject),
-                action_id,
-                request,
+                actor: Some(&held.call.requester.subject),
+                principal: principal.as_ref(),
+                // S5a: the step attempt the call was parked for, as the
+                // trusted flow dispatch recorded it; none for a direct call.
+                attempt: held.call.attempt.as_ref(),
+                action_id: &held.call.action,
+                request: &request,
                 now,
             },
             disclosure,
-            Some(approved),
+            Some(&command),
         )
     };
-    let refused = |code: &str| DecidedCall {
-        committed: false,
-        code: Some(code.to_owned()),
+    let tried = match as_requester(&held.call.requester, &mut commit) {
+        Some(Ok(_answer)) => None,
+        Some(Err(refusal)) => Some(refusal.code),
+        // The requester's current authority cannot be established on this
+        // request (it is not the requester's own): nothing runs, and the call
+        // stays approved and not executed for the requester's retry.
+        None => None,
     };
-    match as_requester(requester, &mut commit) {
-        Some(Ok(ActionAnswer::Receipt(_))) => DecidedCall {
-            committed: true,
-            code: None,
-        },
-        // Parking anew is impossible past the fence; never a commit.
-        Some(Ok(ActionAnswer::Pending(_))) => {
-            refused(crate::approvals::approval_codes::DEFINITION_CHANGED)
-        }
-        Some(Err(refusal)) => refused(&refusal.code),
-        // The host cannot act as the requester: the call is denied.
-        None => refused(&crate::actions::action_denied().code),
-    }
+    let _epoch = host.definition_read()?;
+    let cell = host.cell()?;
+    let (_held, state) =
+        crate::approvals::approved_call(&cell, decision_id)?.ok_or_else(missing)?;
+    Ok(Some(DecidedCall::of(&state, tried)))
 }
 
 /// One decide call: scope, the verified caller, the decision and the answer.
@@ -1480,7 +1788,7 @@ fn resolved_answer<E: SqlEngine>(
     cell: &ActionCell<E>,
     id: &str,
     body: &DecideRequest,
-) -> Result<(Decided, Option<Approval>), Box<DecideRefusal>> {
+) -> Result<(Decided, Option<String>), Box<DecideRefusal>> {
     let Some(row) = cell
         .store()
         .read()
@@ -1499,7 +1807,7 @@ fn resolved_answer<E: SqlEngine>(
                     .resolved
                     .command_id
                     .starts_with(crate::approvals::COMMAND_PREFIX))
-            .then(|| Approval::Replayed(row.resolved.command_id.clone()));
+            .then(|| row.resolved.decision_id.clone());
             Ok((
                 answer(reader, cell, id, body, DecideOutcome::Replayed)?,
                 approved,
@@ -1532,6 +1840,8 @@ fn resolved_answer<E: SqlEngine>(
         } else {
             None
         },
+        call: crate::approvals::approved_call(cell, id)?
+            .map(|(_held, state)| DecidedCall::of(&state, None)),
     };
     Err(Box::new(DecideRefusal {
         refusal,

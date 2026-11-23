@@ -210,8 +210,8 @@ fn loaded_with(path: &Path, marked: bool, sources: &str, extra: &[Value]) -> (Ce
     let vars = json!({
         "NORN_S3_ENDPOINT": "https://storage.example.test",
         "NORN_S3_BUCKET": "uploads-bucket",
-        "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
-        "NORN_SECRET_S3_SECRET_ACCESS_KEY": "secret",
+        "NORN_S3_ACCESS_KEY_ID": "key-id",
+        "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
     let mut connect = Connect::new(sources, &vars.to_string()).expect("configuration");
     let scans = std::fs::read_to_string(root().join("fixtures/documents/scans.snapshot.json"))
@@ -306,7 +306,7 @@ fn held_back_records_are_grouped_by_law_with_the_fix_only_for_who_may_make_it() 
     let others = disputed["otherFindings"]
         .as_array()
         .expect("the laws that disagree");
-    assert!(!others.is_empty(), "{disputed}");
+    assert_ne!(others.len(), 0, "{disputed}");
     // INV-1042's fix keeps every other law it takes, so it is still offered (above).
     let held = section(&inbox, "held_back");
     assert!(held["count"].as_u64().unwrap() >= 2, "{held}");

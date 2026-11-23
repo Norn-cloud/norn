@@ -438,22 +438,24 @@ fn definitions<E: SqlEngine>(
         },
         Some(actor),
     )
-    .map(|callable| {
+    .map_or_default(|callable| {
         callable
             .actions
             .into_iter()
             .map(|(_, action)| action)
             .collect()
-    })
-    .unwrap_or_default();
+    });
     Ok(Definitions { laws, callable })
 }
 
-/// One quarantined row and its open findings, as scanned.
+/// One quarantined row and the open findings the caller may see.
 struct Held {
     row: ObjectRecord,
     open: Vec<DataQualityFinding>,
 }
+
+/// One quarantined row and its open findings, as scanned under the lock.
+type Scanned = (ObjectRecord, Vec<crate::object_links::GatedFinding>);
 
 /// Scan `object_type` from its first row, at most `budget` rows; the held
 /// rows and whether the type was read to its end.
@@ -463,7 +465,7 @@ fn scan_type<E: SqlEngine>(
     object_type: &str,
     budget: &mut usize,
     start: &mut Option<(u64, Option<(u64, u64)>)>,
-) -> Result<(Vec<Held>, bool), Refusal> {
+) -> Result<(Vec<Scanned>, bool), Refusal> {
     let mut after: Option<String> = None;
     let mut held = Vec::new();
     loop {
@@ -495,7 +497,9 @@ fn scan_type<E: SqlEngine>(
                     .filter(|finding| finding.status == DataQualityFindingStatus::Open)
                     .collect();
                 if !open.is_empty() {
-                    batch.push(Held { row, open });
+                    let open =
+                        crate::object_links::gate_findings(reader, open).map_err(Refusal::host)?;
+                    batch.push((row, open));
                 }
             }
             Ok(((batch, scanned), last, done))
@@ -545,15 +549,24 @@ fn held_back<E: SqlEngine>(
         let mut start = None;
         let (held, exhausted) = scan_type(host, access, &object_type, &mut budget, &mut start)?;
         approximate |= !exhausted;
-        // The quarantined list's row gate, outside the cell lock.
-        let visible: Vec<Held> = held
+        // The quarantined list's row gate, outside the cell lock; a held link
+        // is disclosed as the link would be, and the snapshot is confirmed
+        // after the policy whether or not a record below reads evidence
+        // (OBS-LINK-DISPUTE-1).
+        let readable: Vec<Scanned> = held
             .into_iter()
-            .filter(|held| {
+            .filter(|(row, _)| {
                 [Population, Values]
                     .into_iter()
-                    .all(|capability| permitted(host, access, actor, &held.row, capability))
+                    .all(|capability| permitted(host, access, actor, row, capability))
             })
             .collect();
+        let visible: Vec<Held> =
+            crate::object_links::disclosed_findings(host, access, actor, &mut start, readable)?
+                .into_iter()
+                .map(|(row, open)| Held { row, open })
+                .filter(|held| !held.open.is_empty())
+                .collect();
         let mut by_rule: BTreeMap<DataQualityRuleRef, Vec<(&Held, &DataQualityFinding)>> =
             BTreeMap::new();
         for held in &visible {
@@ -685,7 +698,7 @@ fn neighbors<E: SqlEngine>(
                     evidence.push(found.clone());
                 }
                 if direction == LinkDirection::Out {
-                    outbound.push((edge.edge.link.clone(), found.clone()));
+                    outbound.push((edge.edge.link, found.clone()));
                 }
                 rows.push(found);
             }
@@ -883,16 +896,13 @@ fn record<E: SqlEngine>(
         let mut projected = row.clone();
         let outcome =
             crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut projected);
-        let marked = markings
-            .as_ref()
-            .map(|markings| {
-                markings
-                    .iter()
-                    .filter(|(_, ids)| !ids.is_empty())
-                    .map(|(property, _)| property.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let marked = markings.as_ref().map_or_default(|markings| {
+            markings
+                .iter()
+                .filter(|(_, ids)| !ids.is_empty())
+                .map(|(property, _)| property.clone())
+                .collect()
+        });
         let (neighbors, evidence, outbound) =
             if finding.values.keys().any(|path| path.contains('.'))
                 || !definitions.callable.is_empty()
@@ -1413,15 +1423,14 @@ fn offer<E: SqlEngine>(
     let required: Vec<String> = schema
         .get("required")
         .and_then(serde_json::Value::as_array)
-        .map(|required| {
+        .map_or_default(|required| {
             required
                 .iter()
                 .filter_map(serde_json::Value::as_str)
                 .filter(|field| !derived.contains(*field))
                 .map(str::to_owned)
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     let mut arguments = BTreeMap::from([
         (
             object_id_field.as_str().to_owned(),
@@ -1503,8 +1512,7 @@ fn offer<E: SqlEngine>(
         | RuntimeValue::Object(_) => {
             let text = value
                 .canonical_json()
-                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-                .unwrap_or_default();
+                .map_or_default(|bytes| String::from_utf8_lossy(&bytes).into_owned());
             format!("Use {text}")
         }
     };

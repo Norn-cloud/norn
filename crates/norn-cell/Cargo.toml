@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "shared cell store with native SQLite adapters (ring 1; see AGENTS.md)"
+# #1485 S6: the suites that commit raw are compiled inside the crate
+# (src/suites.rs); the integration tests are listed below.
+autotests = false
 
 [lib]
 path = "src/lib.rs"
@@ -24,16 +27,8 @@ name = "constitution"
 test = true
 
 [[test]]
-name = "analytics_engine"
-required-features = ["duckdb", "native"]
-
-[[test]]
-name = "duckdb_transform"
-required-features = ["duckdb", "native"]
-
-[[test]]
-name = "dataset_laws"
-required-features = ["duckdb", "native"]
+name = "suites"
+path = "tests/suites.rs"
 
 [features]
 default = ["native"]
@@ -50,8 +45,6 @@ ct-merkle = "=0.3.0"
 transparency-sha2 = { package = "sha2", version = "0.11" }
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 norn-checker = { path = "../norn-checker" }
-# MANIFEST-LAWS-1: a dataset's rules are lowered through the row subset.
-norn-expr = { path = "../norn-expr" }
 norn-ir = { path = "../norn-ir" }
 norn-builtins = { path = "../norn-builtins" }
 norn-kernel = { path = "../norn-kernel" }
@@ -60,7 +53,7 @@ norn-projections = { path = "../norn-projections" }
 # cache, no wasm32 backend).
 rusqlite = { version = "0.41.0", default-features = false, features = ["backup", "bundled", "cache", "hooks"], optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+serde_json = { version = "1.0.150", features = ["raw_value"] }
 thiserror = "2.0.20"
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 object_store = { version = "0.14.2", default-features = false, features = ["fs"], optional = true }

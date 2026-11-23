@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
+import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
 
 // Real admitted actions from the cell's own fixtures: an upsert with exact decimals and a transition.
@@ -240,4 +240,38 @@ test("a list names its entries: the items' own title, else its label made singul
   expect([itemNoun(null, "Lots"), itemNoun(null, "Entries"), itemNoun(null, "Boxes"), itemNoun(null, "Status"), itemNoun(null, "Stock")]).toEqual(["lot", "entry", "box", "status", "stock"])
   const restock = fieldsOf(RESTOCK_HOLDING.inputSchema).find((f) => f.name === "lots")
   expect(restock?.spec).toMatchObject({ kind: "array", itemTitle: null })
+})
+
+test("a record's catalog is narrowed by the cell to what its state can take", async () => {
+  const live = cell(() => Response.json({ items: [] }))
+  await listActions("purchasing.PurchaseRequest", live.fetcher, "PR-1")
+  expect(Object.fromEntries(live.calls[0]!.url.searchParams)).toEqual({ objectKind: "purchasing.PurchaseRequest", objectId: "PR-1", orgId: "org_demo", environmentId: "analytics" })
+})
+
+test("a receipt says what the record is now, from the cell's answer, never a guessed past tense", () => {
+  const action = (effect: "upsert_input_object" | "fire_transition", toState?: string) =>
+    ({ actionId: "a", title: effect === "fire_transition" ? "Submit for approval" : "New purchase request", description: null, objectKind: "purchasing.PurchaseRequest", effect, objectIdField: "request_id", inputSchema: {}, uiEffects: { irreversible: false, destructive: false, money: [] }, ...toState === undefined ? {} : { toState } }) as const
+  expect(receiptVerb(action("upsert_input_object"), 1)).toBe("created")
+  expect(receiptVerb(action("upsert_input_object"), 3)).toBe("updated")
+  expect(receiptVerb(action("fire_transition", "submitted"), 2)).toBe("is now submitted")
+  expect(receiptVerb(action("fire_transition", "on_hold"), 2)).toBe("is now on hold")
+  expect(receiptVerb(action("fire_transition"), 2)).toBe("updated")
+})
+
+test("a refusal's request is the input as sent: every member, lists, objects and explicit nulls too, digit for digit", async () => {
+  const { sentMembers } = await import("../src/lib/actions.ts")
+  const sent = '{"id":"SCAN-INV-1041","total":"30.00","qty":12345678901234567890.10,"note":null,"lines":[{"amount":"18.50"},{"amount":"12.00"}],"meta":{"by":"scan \\"7\\""},"empty":""}'
+  expect(sentMembers(sent)).toEqual([
+    { name: "id", text: "SCAN-INV-1041" },
+    { name: "total", text: "30.00" },
+    // A number the form sent goes back as its own digits, never through a float.
+    { name: "qty", text: "12345678901234567890.10" },
+    { name: "note", text: "null" },
+    { name: "lines", text: '[{"amount":"18.50"},{"amount":"12.00"}]' },
+    { name: "meta", text: '{"by":"scan \\"7\\""}' },
+    { name: "empty", text: "" },
+  ])
+  expect(sentMembers("{}")).toEqual([])
+  expect(sentMembers(' { "a" : 1 , "b" : [ 1 , 2 ] } ')).toEqual([{ name: "a", text: "1" }, { name: "b", text: "[ 1 , 2 ]" }])
+  for (const text of ["", "null", "[1]", "{"]) expect(sentMembers(text)).toBeNull()
 })

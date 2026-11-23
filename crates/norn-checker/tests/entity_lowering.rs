@@ -11,7 +11,7 @@
 //! golden lowering in `fixtures/ir/entity-v2/lowered/<fixture file name>`:
 //! the lowered `EntityRootV2` for an entity, and `{ source, link }` for a
 //! relation. Regenerate with
-//! `NORN_CHECKER_UPDATE_GOLDENS=1 cargo test -p norn-checker --test entity_lowering`.
+//! `NORN_CHECKER_UPDATE_GOLDENS=1 cargo test -p norn-checker --test suites entity_lowering::`.
 
 use std::{
     collections::BTreeSet,
@@ -157,7 +157,7 @@ fn every_v1_entity_and_relation_fixture_has_a_current_lowering_golden() {
         }
         assert!(
             path.exists() && read_json(&path) == *lowered,
-            "{} is missing or stale; regenerate with `{UPDATE_ENV}=1 cargo test -p norn-checker --test entity_lowering`",
+            "{} is missing or stale; regenerate with `{UPDATE_ENV}=1 cargo test -p norn-checker --test suites entity_lowering::`",
             path.display()
         );
     }

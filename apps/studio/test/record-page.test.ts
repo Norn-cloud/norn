@@ -3,24 +3,9 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { ObjectVersion } from "../src/evidence/review.ts"
 import { lineageGraph, NODE_CAP } from "../src/lib/lineage-graph.ts"
-import { byValidTime, countText, keyFacts, linkGroups, timePropertyOf, timeline, writerCounts, type CountedLinkPage } from "../src/lib/record-page.ts"
+import { byValidTime, countText, linkGroups, timePropertyOf, timeline, writerCounts, type CountedLinkPage } from "../src/lib/record-page.ts"
 import type { SourceLineage } from "../src/lib/transport.ts"
 
-const field = (id: string, kind = "text") => ({ id, type: kind, optional: false, decimal: undefined, scalar: { kind } }) as never
-
-test("key facts follow the definition's order, skip the title facts and nested values, and stop at six", () => {
-  const fields = ["id", "label", "code", "payload", "a", "b", "c", "d", "e", "f"].map((id) => field(id, id === "payload" ? "json-ext" : "text"))
-  expect(keyFacts({ fields }).map(({ id }) => id)).toEqual(["code", "a", "b", "c", "d", "e"])
-})
-
-test("a measure's unit and currency sources are read inside it, and an empty fact takes no slot", () => {
-  const measure = (id: string, decimal: object) => ({ id, type: "decimal", optional: false, scalar: { kind: "decimal" }, decimal }) as never
-  const quantity = measure("quantity", { unit: undefined, perUnit: undefined, currencyFrom: undefined, unitFrom: ["unit", "currency"] })
-  const cost = measure("stock_cost", { unit: undefined, perUnit: undefined, currencyFrom: "cost_currency" })
-  const fields = [field("resource_code"), quantity, field("unit"), field("currency"), field("location"), cost, field("cost_currency")] as never
-  expect(keyFacts({ fields }).map(({ id }) => id)).toEqual(["resource_code", "quantity", "location", "stock_cost"])
-  expect(keyFacts({ fields }, { resource_code: "GOLD", quantity: 200, location: null, stock_cost: 9000 }).map(({ id }) => id)).toEqual(["resource_code", "quantity", "stock_cost"])
-})
 
 const item = { name: "canon.Item", relationships: [] }
 const incoming = [{ from: { name: "canon.Holding", title: "Holding" }, relationship: { id: "item" } }]
@@ -47,7 +32,7 @@ test("without counts every declared relationship is a group, uncounted, never a 
 
 const version = (at: number, kind: "mapping" | "action" | "other", observed?: string): ObjectVersion => ({
   version: at, commit: 10 + at, logicalTime: Date.UTC(2026, 10, at), values: observed === undefined ? {} : { observed_at: observed },
-  writer: kind === "action" ? { kind, actionId: "a", actor: "admin@demo", input: {} } : kind === "mapping" ? { kind, lineage: {} as SourceLineage } : { kind },
+  writer: kind === "action" ? { kind, actionId: "a", actor: "admin@demo" } : kind === "mapping" ? { kind, lineage: {} as SourceLineage } : { kind },
 })
 
 test("the timeline keeps the server's knowledge order; valid time orders by the time property and puts untimed versions last", () => {

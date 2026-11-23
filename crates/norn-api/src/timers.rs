@@ -21,18 +21,27 @@
 //! expiry whose resolving commit failed is resumed from its recorded result.
 //! A flow timer runs under its run's pinned rule and environment
 //! (TIMER-PIN-1).
+//!
+//! APPROVAL-RECOVERY-1: a wake never calls an action. An action step whose
+//! approved call already has its outcome (it committed, or its refusal is
+//! recorded) while its run has not consumed it is due work: the wake
+//! delivers that outcome to the run, and it stays due until the run
+//! consumes it. An approved call
+//! that did not commit is not due work: it stays visibly approved and not
+//! executed until the requester's own retry runs it.
 
 use norn_cell::MAIN_WORLD;
-use norn_cell::due_retry::{decision_item, timer_item};
+use norn_cell::due_retry::{approval_item, decision_item, timer_item};
 use norn_cell::engine::SqlEngine;
 use norn_cell::read::PendingTimer;
 use norn_ir::RuntimeObject;
 use norn_kernel::{
     CellCommit, CellHost, DecisionTurn, DueTimer, EnvelopeLimits, FactEvent, FactKey, LogicalTime,
-    TypeCatalog, World,
+    World,
 };
 
 use crate::decisions::OpenDecision;
+use crate::flow_driver::RecordedStep;
 use crate::host::{ActionCell, DevHost};
 use crate::refusal::Refusal;
 
@@ -62,6 +71,9 @@ pub struct DueWork {
     pub timers: u32,
     /// Decisions resolved as expired.
     pub decisions: u32,
+    /// Approved action steps whose recorded outcome was delivered to their
+    /// runs (APPROVAL-RECOVERY-1); no action was called.
+    pub steps: u32,
     /// Why each item that was due could not be handled, for the operator's
     /// log; such an item stays due and is retried after its backoff.
     pub failed: Vec<String>,
@@ -76,13 +88,14 @@ impl DueWork {
     /// Whether anything was committed.
     #[must_use]
     pub const fn committed(&self) -> bool {
-        self.expired_reservations > 0 || self.timers > 0 || self.decisions > 0
+        self.expired_reservations > 0 || self.timers > 0 || self.decisions > 0 || self.steps > 0
     }
 }
 
 /// The earliest time the cell has work to try (logical milliseconds): a
-/// timer (quantity or flow), an open decision's expiry, or a recorded expiry
-/// still to resolve, each no earlier than its retry eligibility when it
+/// timer (quantity or flow), an open decision's expiry, a recorded expiry
+/// still to resolve, or an approved step's outcome still to deliver, each no
+/// earlier than its retry eligibility when it
 /// failed before (TIMER-RETRY-1). It may already have passed: the host then
 /// wakes at once. `None` when nothing is pending.
 ///
@@ -99,6 +112,7 @@ enum Item {
     Quantity(PendingTimer),
     Timer(PendingTimer),
     Decision(Box<OpenDecision>),
+    Step(Box<RecordedStep>),
 }
 
 impl Item {
@@ -108,6 +122,7 @@ impl Item {
             Self::Quantity(pending) => (pending.timer.due, 0, &pending.timer.timer_id),
             Self::Timer(pending) => (pending.timer.due, 1, &pending.timer.timer_id),
             Self::Decision(decision) => (decision.expires_at_ms, 2, &decision.id),
+            Self::Step(step) => (step.approved_at_ms, 3, &step.decision_id),
         }
     }
 
@@ -118,6 +133,7 @@ impl Item {
                 (timer_item(&pending.timer.timer_id), pending.commit_seq)
             }
             Self::Decision(decision) => (decision_item(&decision.id), decision.generation.0),
+            Self::Step(step) => (approval_item(&step.decision_id), 1),
         }
     }
 }
@@ -168,6 +184,11 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
             Item::Decision(decision) => expire_decision(&mut cell, decision, now)
                 .map(|()| &mut work.decisions)
                 .map_err(|why| format!("decision {}: {why}", decision.id)),
+            Item::Step(step) => crate::flow_driver::deliver_recorded(&mut cell, step, now)
+                .map(|()| &mut work.steps)
+                .map_err(|refusal| {
+                    format!("approved step {}: {}", step.decision_id, why(&refusal))
+                }),
         };
         match handled {
             Ok(count) => {
@@ -220,6 +241,20 @@ fn eligible<E: SqlEngine>(cell: &ActionCell<E>, at: u64) -> Result<Vec<Item>, Re
             })
             .map(|decision| Item::Decision(Box::new(decision))),
     );
+    let step_retries = reader
+        .due_retries(&approval_item(""))
+        .map_err(Refusal::host)?;
+    items.extend(
+        crate::flow_driver::recorded_steps(cell)?
+            .into_iter()
+            .filter(|step| {
+                step.approved_at_ms <= at
+                    && step_retries
+                        .get(&approval_item(&step.decision_id))
+                        .is_none_or(|retry| retry.eligible_at <= at)
+            })
+            .map(|step| Item::Step(Box::new(step))),
+    );
     items.sort_by(|left, right| left.order().cmp(&right.order()));
     items.truncate(bound);
     Ok(items)
@@ -255,7 +290,8 @@ fn expire_decision<E: SqlEngine>(
 }
 
 /// When the cell next has work to try: the earliest timer or decision
-/// deadline, each no earlier than its retry eligibility (TIMER-RETRY-1).
+/// deadline, or approved step outcome to deliver, each no earlier than its
+/// retry eligibility (TIMER-RETRY-1).
 fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal> {
     let reader = cell.store().read();
     let timer = reader.next_eligible_timer().map_err(Refusal::host)?;
@@ -272,7 +308,19 @@ fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal>
             decision.expires_at_ms.max(eligible)
         })
         .min();
-    Ok(min(timer, decision))
+    let step_retries = reader
+        .due_retries(&approval_item(""))
+        .map_err(Refusal::host)?;
+    let step = crate::flow_driver::recorded_steps(cell)?
+        .into_iter()
+        .map(|step| {
+            let eligible = step_retries
+                .get(&approval_item(&step.decision_id))
+                .map_or(0, |retry| retry.eligible_at);
+            step.approved_at_ms.max(eligible)
+        })
+        .min();
+    Ok(min(min(timer, decision), step))
 }
 
 /// What an item's refusal says for the operator: its host cause, else its code.
@@ -338,9 +386,8 @@ fn fire_timer<E: SqlEngine>(
                     )
                     .map_err(|error| Refusal::host(error.to_string()))?;
                     let model = cell.store().model().clone();
-                    let catalog = TypeCatalog::new(model.object_types())
-                        .with_property_types(model.property_types())
-                        .with_interfaces(model.interfaces())
+                    let catalog = model
+                        .type_catalog()
                         .with_governing_laws(model.law_artifacts());
                     let turn = DecisionTurn {
                         id: format!(

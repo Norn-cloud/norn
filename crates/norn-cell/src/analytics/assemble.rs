@@ -21,10 +21,10 @@ use crate::compute::{Engine, Member, QueryContext, QueryResult, QueryRow, decima
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::read::LedgerHead;
 use crate::system::LEDGER;
+use crate::{CellError, CellStore};
 
 /// MANIFEST-MARK-1: a question over a dataset's marked column refuses.
 const MARKED_COLUMN: &str = "privacy.marked_column";
-use crate::{CellError, CellStore};
 
 /// The bucket value a group key stands for, as the shared projection gives it.
 ///

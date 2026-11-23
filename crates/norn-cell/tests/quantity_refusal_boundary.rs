@@ -6,6 +6,7 @@
 //! Dependency discovery and admission must agree before selecting a remainder.
 mod quantity_support;
 
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, CommitOutcome, Model, StoreOptions};
 use norn_ir::quantity_ledger::{
     LedgerFundingPolicy, QuantityBalanceVersion, QuantityOperation, QuantityRequest,
@@ -485,7 +486,7 @@ fn all_sixteen_quint_terminal_mismatches_are_retained_as_reduced_trace_regressio
             .expect("read")
             .expect("record");
         assert_eq!(closed.status, "expired");
-        assert!(closed.remaining.is_empty());
+        assert_eq!(closed.remaining, []);
         assert_eq!(case["outcome"], "terminal");
         let state = QuantityState {
             reservation: Some(closed),

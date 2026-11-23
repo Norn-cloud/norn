@@ -202,8 +202,8 @@ fn loaded(path: &Path) -> Cell {
     let vars = json!({
         "NORN_S3_ENDPOINT": "https://storage.example.test",
         "NORN_S3_BUCKET": "uploads-bucket",
-        "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
-        "NORN_SECRET_S3_SECRET_ACCESS_KEY": "secret",
+        "NORN_S3_ACCESS_KEY_ID": "key-id",
+        "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
     let connect = Connect::new("[]", &vars.to_string()).expect("configuration");
     let mut cell = Cell {
@@ -284,7 +284,7 @@ fn a_property_carries_only_the_markings_of_the_values_it_was_computed_from() {
 
     // A Holding declares no marking: nothing of it is masked.
     let holdings = cell.masked("canon.Holding");
-    assert!(!holdings.is_empty());
+    assert_ne!(holdings, []);
     for (id, masked) in &holdings {
         assert!(
             masked.as_object().is_none_or(serde_json::Map::is_empty),

@@ -5,7 +5,7 @@
  * points at. Every decision is the server's: a read the caller may not make
  * is the cell's refusal, shown as it is.
  */
-import { cellRead } from "../lib/live-transport.ts"
+import { cellRead, NotServed } from "../lib/live-transport.ts"
 import { member, type Read } from "../lib/exact.ts"
 import type { ObjectRecord, SourceLineage } from "../lib/transport.ts"
 
@@ -43,7 +43,8 @@ export interface ObjectFindings {
 
 export type VersionWriter =
   | { readonly kind: "mapping"; readonly lineage: SourceLineage }
-  | { readonly kind: "action"; readonly actionId: string; readonly actor: string; readonly input: Readonly<Record<string, unknown>> }
+  /** The action and its verified actor; the cell never lists the call's input. */
+  | { readonly kind: "action"; readonly actionId: string; readonly actor: string }
   | { readonly kind: "other" }
 
 export interface ObjectVersion {
@@ -87,6 +88,14 @@ export const readFindings = (objectType: string, id: string): Promise<Read<Objec
 
 export const readHistory = (objectType: string, id: string): Promise<Read<ObjectHistory>> =>
   cellRead<ObjectHistory>(objectPath(objectType, id, "history"), "History")
+
+/**
+ * What a history panel says when the read fails: a cell that does not serve history says so, and
+ * any refusal or failure is one plain state. A refusal is opaque (absent and withheld read alike),
+ * so its text is never shown.
+ */
+export const historyUnavailable = (error: unknown): string =>
+  error instanceof NotServed ? "This cell does not serve record history yet." : "History unavailable"
 
 /** One evidence object, its decimals at their exact text. */
 export async function readEvidence(ref: EvidenceRef): Promise<Evidence> {

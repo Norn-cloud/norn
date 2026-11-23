@@ -50,16 +50,8 @@ fn file_name(path: &str) -> String {
 pub fn config_ignores(config: &str) -> Result<Vec<Ignore>, String> {
     let root = yaml::parse(config)?;
     let mut out = Vec::new();
-    for (rule, body) in root
-        .get("rules")
-        .map(yaml::Value::entries)
-        .unwrap_or_default()
-    {
-        for entry in body
-            .get("ignore")
-            .map(yaml::Value::items)
-            .unwrap_or_default()
-        {
+    for (rule, body) in root.get("rules").map_or_default(yaml::Value::entries) {
+        for entry in body.get("ignore").map_or_default(yaml::Value::items) {
             let text = entry
                 .as_str()
                 .ok_or_else(|| format!("zizmor.yml {rule}: ignore entries are strings"))?;
@@ -197,19 +189,17 @@ pub fn check(root: &Path, report: &str) -> Vec<String> {
             Ok(ignores) => ignores,
             Err(error) => return vec![error],
         };
-    let mut workflows: Vec<_> = std::fs::read_dir(root.join(".github/workflows"))
-        .map(|dir| {
+    let mut workflows: Vec<_> =
+        std::fs::read_dir(root.join(".github/workflows")).map_or_default(|dir| {
             dir.filter_map(Result::ok)
                 .map(|entry| entry.path())
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     workflows.sort();
     for path in workflows {
         let name = path
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy().into_owned());
         let yaml = path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("yml") || ext.eq_ignore_ascii_case("yaml"));

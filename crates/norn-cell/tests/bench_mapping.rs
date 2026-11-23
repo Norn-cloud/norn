@@ -212,7 +212,7 @@ fn candidate_mapping_admission_and_rows() {
                 observed_at: LogicalTime::from_millis(1_793_750_400_000),
             },
             input: norn_ir::runtime_object! {"contract"=>"norn.raw_observation/v1", "source"=>"Trial",
-            "source_id"=>source_id.clone(), "event_id"=>source_id.clone(), "source_version"=>"1",
+            "source_id"=>source_id.clone(), "event_id"=>source_id, "source_version"=>"1",
             "pipeline_version"=>"pipeline/1", "kind"=>"upsert", "extracted_at"=>1_793_750_400_000u64,
             "payload"=>payload, "payload_digest"=>hash},
         };

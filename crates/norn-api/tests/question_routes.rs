@@ -21,6 +21,7 @@ use norn_api::{
     refusal::{Refusal, RefusalCategory},
     scope::{CellScope, ScopeQuery},
 };
+// #1485 S6: fixtures write through the kernel path, never the raw door.
 use norn_cell::{
     CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, LedgerHead, ObjectRecord,
     compute::{
@@ -38,6 +39,7 @@ use norn_kernel::{
         AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
     },
 };
+use query_support::governed::GovernedCommit as _;
 use query_support::*;
 use std::{
     collections::BTreeMap,
@@ -200,9 +202,11 @@ impl QuestionRuntime<NativeEngine> for Runtime {
 fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
     let (mut store, mut plan, mut context) = fixture();
     context.scope = physical().key();
+    // #1485 S6: fixtures land through the kernel path, in the main world.
+    context.world = norn_cell::MAIN_WORLD.into();
     let initial = store
         .commit(&CommitBatch {
-            world: WORLD.into(),
+            world: norn_cell::MAIN_WORLD.into(),
             scope: context.scope.clone(),
             logical_time: CLOCK,
             writes: fixture_writes(),
@@ -230,7 +234,7 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
             cutoff_receipt = Some(receipt.hash.clone());
             let corrected = store
                 .commit(&CommitBatch {
-                    world: WORLD.into(),
+                    world: norn_cell::MAIN_WORLD.into(),
                     scope: context.scope.clone(),
                     logical_time: CLOCK + 1000,
                     writes: vec![put(
@@ -273,7 +277,7 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
             assert_eq!(moved.len(), 3, "WEEK has three other members");
             store
                 .commit(&CommitBatch {
-                    world: WORLD.into(),
+                    world: norn_cell::MAIN_WORLD.into(),
                     scope: context.scope.clone(),
                     logical_time: CLOCK + 1000,
                     writes: moved,
@@ -724,7 +728,7 @@ fn sdk_fixture(contract: &serde_json::Value, documents: Vec<SdkDocument>) -> Str
             .iter_errors(&document)
             .map(|e| e.to_string())
             .collect();
-        assert!(errors.is_empty(), "{name}: {errors:?}");
+        assert_eq!(errors.len(), 0, "{name}: {errors:?}");
         if root == "NornNumericTrace" {
             assert!(document["contributions"][0]["source"].is_object());
             let mut extended = document.clone();
@@ -1042,10 +1046,12 @@ fn a_historical_cutoff_on_a_restricted_single_write_withholds_its_receipt_hash()
 fn with_value_events(historical: bool) -> (DevHost<NativeEngine>, Runtime, Chain) {
     let (mut store, base, mut context) = fixture();
     context.scope = physical().key();
+    // #1485 S6: fixtures land through the kernel path, in the main world.
+    context.world = norn_cell::MAIN_WORLD.into();
     let writes = fixture_writes();
     store
         .commit(&CommitBatch {
-            world: WORLD.into(),
+            world: norn_cell::MAIN_WORLD.into(),
             scope: context.scope.clone(),
             logical_time: CLOCK,
             events: created_events(&writes),
@@ -1063,7 +1069,7 @@ fn with_value_events(historical: bool) -> (DevHost<NativeEngine>, Runtime, Chain
     );
     let k2 = store
         .commit(&CommitBatch {
-            world: WORLD.into(),
+            world: norn_cell::MAIN_WORLD.into(),
             scope: context.scope.clone(),
             logical_time: CLOCK + 1000,
             events: vec![set_event(&corrected, "recovered").expect("set event")],
@@ -1110,7 +1116,7 @@ fn with_value_events(historical: bool) -> (DevHost<NativeEngine>, Runtime, Chain
         );
         store
             .commit(&CommitBatch {
-                world: WORLD.into(),
+                world: norn_cell::MAIN_WORLD.into(),
                 scope: context.scope.clone(),
                 logical_time: CLOCK + 2000,
                 events: vec![set_event(&later, "recovered").expect("set event")],
@@ -1296,7 +1302,7 @@ fn a_shared_commit_withholds_its_receipt_hash_from_every_bucket_it_wrote() {
         ("mixed", other.as_str()),
     ] {
         let traced = trace(actor, bucket);
-        assert!(!traced.contributions.is_empty(), "{actor} {bucket}");
+        assert_ne!(traced.contributions, [], "{actor} {bucket}");
         for member in &traced.contributions {
             assert!(
                 !member.restricted && member.values.is_some(),
@@ -1380,7 +1386,7 @@ fn the_public_lineage_handle_is_keyed_and_not_a_guessing_oracle() {
     let (mut store, plan, _) = fixture();
     store
         .commit(&CommitBatch {
-            world: WORLD.into(),
+            world: norn_cell::MAIN_WORLD.into(),
             scope: physical().key(),
             logical_time: CLOCK,
             writes: fixture_writes(),
@@ -1743,6 +1749,256 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
     assert!(linked > 0);
 }
 
+/// Install a catalog declaring `pii.contact` and no marking on any property
+/// of the conversion, so only a runtime label marks `metal`.
+fn install_runtime_marking(store: &mut CellStore, scope: &str) {
+    let model = store.model().clone();
+    let artifacts = serde_json::json!([
+        {"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object_type()}},
+        {"irVersion":"0.1","artifactId":"demo.markings.entity","kind":"entity","namespace":"demo","name":"Markings","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":[{"id":"pii.contact","label":"Contact","severity":"high","category":"pii.contact","mask":{"kind":"pseudonym","subject":"Conversion"}}]}}
+    ]);
+    store
+        .install_definitions(
+            model,
+            norn_cell::InstalledDefinitionInput {
+                canonical_set: serde_json::to_string(&artifacts).expect("set"),
+                registry: vec![],
+                receipt_sha256: "runtime-labels".into(),
+                admission_receipt: None,
+                readmission: None,
+                diff: serde_json::json!({}),
+                installed_at: 1,
+                layout: None,
+            },
+            Some(0),
+            scope,
+        )
+        .expect("definitions with a marking catalog");
+}
+
+/// The fixture conversions' keys.
+fn fixture_keys() -> Vec<String> {
+    fixture_writes()
+        .iter()
+        .filter_map(|write| {
+            if let FactWriteRow::Put { key, .. } = write {
+                Some(key.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// S2 (#1547): a deleted row keeps its labelled versions. A source labelled
+/// every conversion's `metal` (`pii.contact`), then every conversion was
+/// deleted, so no live row carries the label and the live check passes. An
+/// as-of answer at the cutoff before the delete, and a live trace as answered
+/// at that frontier, would group or filter by the retained labelled values;
+/// both refuse with `question.marked_history`. The current answer, which
+/// reads no deleted row, is still served.
+#[test]
+fn a_historical_question_on_a_deleted_labelled_field_is_refused() {
+    let (mut store, base, mut context) = fixture();
+    context.scope = physical().key();
+    context.world = norn_cell::MAIN_WORLD.into();
+    install_runtime_marking(&mut store, &context.scope);
+    let keys = fixture_keys();
+    let labelled = store
+        .commit(&CommitBatch {
+            world: norn_cell::MAIN_WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK,
+            writes: fixture_writes(),
+            events: vec![
+                norn_ir::RuntimeValue::from_json(serde_json::json!({
+                    "type": "observation.recorded",
+                    "mapped": keys.iter().map(|key| serde_json::json!({
+                        "objectType": TYPE,
+                        "key": key,
+                        "propertyProvenance": {"metal": {"markings": ["pii.contact"]}}
+                    })).collect::<Vec<_>>()
+                }))
+                .expect("event"),
+            ],
+            ..CommitBatch::default()
+        })
+        .expect("K1");
+    let labelled = labelled.receipt().clone();
+    store
+        .commit(&CommitBatch {
+            world: norn_cell::MAIN_WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK + 1000,
+            writes: keys
+                .iter()
+                .map(|key| FactWriteRow::Delete {
+                    object_type: TYPE.into(),
+                    key: key.clone(),
+                })
+                .collect(),
+            ..CommitBatch::default()
+        })
+        .expect("K2 deletes every labelled row");
+    let historical = asof_plan(&store, &base, "2026-10-26T00:00:00Z");
+    let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+        .expect("host")
+        .with_authorizer(Policy);
+    let runtime = |plan: &QuestionPlan, cutoff| Runtime {
+        bad_row: false,
+        plan: plan.clone(),
+        context: context.clone(),
+        cutoff,
+        cutoff_receipt: None,
+        resolved: Arc::new(AtomicUsize::new(0)),
+        min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+    };
+    let at_cutoff = runtime(
+        &historical,
+        Some(KnowledgeCutoff {
+            recorded_at: LogicalTime::from_millis(labelled.body.logical_time),
+            frontier: labelled.body.commit_seq,
+        }),
+    );
+    let refused = get_answer(&host, &scope(), Some("reader"), QUESTION, &at_cutoff)
+        .expect_err("the as-of answer reads the deleted labelled values");
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (422, norn_api::question_routes::MARKED_HISTORY),
+        "{refused:?}"
+    );
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code == norn_api::question_routes::MARKED_HISTORY),
+        "{refused:?}"
+    );
+
+    let live = runtime(&base, None);
+    let mut answered = trace_query("any");
+    answered.known_as_of = Some(labelled.body.commit_seq);
+    answered.now_ms = Some(labelled.body.logical_time);
+    let traced = get_numeric_trace(&host, &answered, Some("reader"), QUESTION, &live)
+        .expect_err("a trace as answered before the delete reads the labelled values");
+    assert_eq!(
+        traced.code,
+        norn_api::question_routes::MARKED_HISTORY,
+        "{traced:?}"
+    );
+
+    assert!(
+        get_answer(&host, &scope(), Some("reader"), QUESTION, &live).is_ok(),
+        "the current answer reads no deleted row"
+    );
+}
+
+/// S2a (#1547): a metric's default filter is a predicate on row values too.
+/// The question neither groups nor filters by anything; its sums carry
+/// `metal = gold` as their metrics' default, the only predicate it reads. Every conversion's `metal` was
+/// labelled and then deleted, so the as-of total at the cutoff before the
+/// delete would still reveal whether a deleted labelled value matched. It
+/// refuses with `question.marked_history`, pointing at the default filter.
+#[test]
+fn a_historical_sum_whose_default_filter_reads_a_deleted_labelled_field_is_refused() {
+    let (mut store, base, mut context) = fixture();
+    context.scope = physical().key();
+    context.world = norn_cell::MAIN_WORLD.into();
+    install_runtime_marking(&mut store, &context.scope);
+    let keys = fixture_keys();
+    let labelled = store
+        .commit(&CommitBatch {
+            world: norn_cell::MAIN_WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK,
+            writes: fixture_writes(),
+            events: vec![
+                norn_ir::RuntimeValue::from_json(serde_json::json!({
+                    "type": "observation.recorded",
+                    "mapped": keys.iter().map(|key| serde_json::json!({
+                        "objectType": TYPE,
+                        "key": key,
+                        "propertyProvenance": {"metal": {"markings": ["pii.contact"]}}
+                    })).collect::<Vec<_>>()
+                }))
+                .expect("event"),
+            ],
+            ..CommitBatch::default()
+        })
+        .expect("K1")
+        .receipt()
+        .clone();
+    store
+        .commit(&CommitBatch {
+            world: norn_cell::MAIN_WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK + 1000,
+            writes: keys
+                .iter()
+                .map(|key| FactWriteRow::Delete {
+                    object_type: TYPE.into(),
+                    key: key.clone(),
+                })
+                .collect(),
+            ..CommitBatch::default()
+        })
+        .expect("K2 deletes every labelled row");
+    let gold: Vec<norn_ir::metric::MetricFilter> = serde_json::from_value(serde_json::json!(
+        [{"path":{"property":"metal"},"operator":"eq","value":"gold"}]
+    ))
+    .expect("default filter");
+    let mut definitions = base.definitions().to_vec();
+    for definition in &mut definitions {
+        if definition.metric_type != norn_ir::metric::MetricType::Ratio {
+            definition.norn.default_filters.clone_from(&gold);
+        }
+    }
+    let mut question = base.question().clone();
+    question.dimensions.clear();
+    question.filters.clear();
+    question.freshness = norn_ir::metric::FreshnessPolicy::AsOf {
+        at: norn_ir::UtcTimestamp("2026-10-26T00:00:00Z".into()),
+    };
+    let historical = admit_on(&store, &definitions, &question);
+    assert!(
+        historical.question().dimensions.is_empty()
+            && historical.question().filters.is_empty()
+            && historical.sums().iter().all(|sum| sum.filters == gold),
+        "the predicate is the metrics' default, not the question's"
+    );
+    let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+        .expect("host")
+        .with_authorizer(Policy);
+    let at_cutoff = Runtime {
+        bad_row: false,
+        plan: historical,
+        context,
+        cutoff: Some(KnowledgeCutoff {
+            recorded_at: LogicalTime::from_millis(labelled.body.logical_time),
+            frontier: labelled.body.commit_seq,
+        }),
+        cutoff_receipt: None,
+        resolved: Arc::new(AtomicUsize::new(0)),
+        min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+    };
+    let refused = get_answer(&host, &scope(), Some("reader"), QUESTION, &at_cutoff)
+        .expect_err("the as-of total reads the deleted labelled values");
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (422, norn_api::question_routes::MARKED_HISTORY),
+        "{refused:?}"
+    );
+    assert!(
+        refused.diagnostics.iter().any(|d| {
+            d.code == norn_api::question_routes::MARKED_HISTORY
+                && d.span
+                    .as_ref()
+                    .is_some_and(|span| span.pointer.ends_with("/norn/defaultFilters/0"))
+        }),
+        "{refused:?}"
+    );
+}
+
 /// PRIVACY-4 at answer time. `metal` declares no marking, so admission admits
 /// the question that filters by it; but a source classified the conversions'
 /// `metal` at runtime (`pii.contact`), so its values carry that label. The
@@ -1758,39 +2014,11 @@ fn a_question_on_a_field_whose_values_carry_a_runtime_label_is_refused_at_answer
     let labeled = |labels: bool| {
         let (mut store, plan, mut context) = fixture();
         context.scope = physical().key();
-        let model = store.model().clone();
-        let artifacts = serde_json::json!([
-            {"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object_type()}},
-            {"irVersion":"0.1","artifactId":"demo.markings.entity","kind":"entity","namespace":"demo","name":"Markings","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":[{"id":"pii.contact","label":"Contact","severity":"high","category":"pii.contact","mask":{"kind":"pseudonym","subject":"Conversion"}}]}}
-        ]);
-        store
-            .install_definitions(
-                model,
-                norn_cell::InstalledDefinitionInput {
-                    canonical_set: serde_json::to_string(&artifacts).expect("set"),
-                    registry: vec![],
-                    receipt_sha256: "runtime-labels".into(),
-                    admission_receipt: None,
-                    readmission: None,
-                    diff: serde_json::json!({}),
-                    installed_at: 1,
-                    layout: None,
-                },
-                Some(0),
-                &context.scope,
-            )
-            .expect("definitions with a marking catalog");
+        // #1485 S6: fixtures land through the kernel path, in the main world.
+        context.world = norn_cell::MAIN_WORLD.into();
+        install_runtime_marking(&mut store, &context.scope);
         let writes = fixture_writes();
-        let keys: Vec<String> = writes
-            .iter()
-            .filter_map(|write| {
-                if let FactWriteRow::Put { key, .. } = write {
-                    Some(key.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let keys = fixture_keys();
         let events = if labels {
             vec![
                 norn_ir::RuntimeValue::from_json(serde_json::json!({
@@ -1808,7 +2036,7 @@ fn a_question_on_a_field_whose_values_carry_a_runtime_label_is_refused_at_answer
         };
         store
             .commit(&CommitBatch {
-                world: WORLD.into(),
+                world: norn_cell::MAIN_WORLD.into(),
                 scope: context.scope.clone(),
                 logical_time: CLOCK,
                 writes,

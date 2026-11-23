@@ -213,7 +213,7 @@ Structural bounds (`StructuralLimits::NORN_EXPR_4`) and the static cost bound ag
 
 ## Conformance
 
-`cargo test -p norn-expr --test profile_conformance` has one positive and one negative fixture per rule section above, plus the mandatory counterexamples of the zen adoption review (§3, F1/F2/F5):
+`cargo test -p norn-expr --test suites profile_conformance::` has one positive and one negative fixture per rule section above, plus the mandatory counterexamples of the zen adoption review (§3, F1/F2/F5):
 - `o[k] - 1`
 - `keys(o)` over a 40-key object
 - `rand` and the ambient-now forms

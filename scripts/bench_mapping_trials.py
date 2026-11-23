@@ -2,12 +2,12 @@
 """Agent mapping trials: a model authors MappingIR, the real checker admits or refuses, and we iterate.
 
 The gateway URL and token come from the environment at run time and are never stored. The checker
-transport is `cargo_transport` (the ignored `bench_mapping` test binary); per-token prices come from
+transport is `cargo_transport` (the ignored `bench_mapping` suite); per-token prices come from
 fixtures/bench/mapping-trial-prices.json. Rows and transcripts stay in the caller's scratch directory.
 
-    cargo test --locked -p norn-cell --test bench_mapping --no-run   # prints the test binary path
+    cargo test --locked -p norn-cell --test suites --no-run   # prints the test binary path
     NORN_BENCH_GATEWAY_URL=... NORN_BENCH_GATEWAY_TOKEN=... python3 scripts/bench_mapping_trials.py \
-        --binary target/debug/deps/bench_mapping-HASH --rows ROWS.json --scratch DIR \
+        --binary target/debug/deps/suites-HASH --rows ROWS.json --scratch DIR \
         --models google/gemini-3.8-flash,openai/gpt-5.4-mini --repeats 3 --cap 20
 
 ROWS.json maps each task's `rows` name (olist_products, olist_customers, olist_sellers, uci_lines) to a
@@ -390,7 +390,7 @@ def cargo_transport(binary, scratch):
         env = {k: v for k, v in os.environ.items() if not k.startswith("NORN_BENCH_GATEWAY_")}
         env["NORN_BENCH_CANDIDATE"] = str(path)
         try:
-            done = subprocess.run([binary, "candidate_mapping_admission_and_rows", "--exact", "--ignored", "--nocapture"],
+            done = subprocess.run([binary, "bench_mapping::candidate_mapping_admission_and_rows", "--exact", "--ignored", "--nocapture"],
                                   capture_output=True, text=True, env=env, timeout=600, check=False)
         except subprocess.TimeoutExpired:
             return {"admitted": False, "diagnostics": [{"code": "harness.transport", "message": "checker timed out"}]}

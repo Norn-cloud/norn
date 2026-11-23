@@ -87,13 +87,12 @@ fn texts(extra: &serde_json::Map<String, serde_json::Value>, key: &str) -> Vec<S
     extra
         .get(key)
         .and_then(|v| v.as_array())
-        .map(|items| {
+        .map_or_default(|items| {
             items
                 .iter()
                 .filter_map(|v| v.as_str().map(str::to_owned))
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 /// The generated providers, by id.

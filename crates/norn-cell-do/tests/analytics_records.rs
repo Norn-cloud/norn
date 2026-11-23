@@ -1,8 +1,10 @@
 //! D102 / HOST-READ-3: a loaded dataset's records page is the native grid's.
-//! Each demo type's rows are read through the cell's own grid, then loaded as
-//! that type's dataset, whose grid the engine answers: every filter operator
-//! and sort direction gives the same rows, totals and order, and a caller
-//! without Values sees every row withheld, as the native grid shows it.
+//! Upload types are defined and loaded through observations (their admitted
+//! mappings, MANIFEST-03); each type's rows are read through the cell's own
+//! grid, then loaded as that type's dataset, whose grid the engine answers:
+//! every filter operator and sort direction gives the same rows, totals and
+//! order, and a caller without Values sees every row withheld, as the
+//! native grid shows it. A demo type no plain mapping binds is refused.
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -20,7 +22,7 @@ use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, UploadReco
 use norn_api::host::DevHost;
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
-    Column, ColumnKind, LandRequest, PointLaw, SettleRequest, TableSchema, hex_digest,
+    Column, ColumnKind, LandRequest, PointLaw, SettleRequest, StoreRequest, TableSchema, hex_digest,
 };
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::olap::InProcess;
@@ -41,42 +43,37 @@ impl Transport for Loading {
         None
     }
     fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
-        let (request, landed) = match call.op.as_str() {
+        let engine = &self.0.0;
+        let landed = match call.op.as_str() {
             "land" => {
+                // MANIFEST-02: the download goes into the attempt's own file.
                 let request: LandRequest = serde_json::from_str(&call.body).expect("a landing");
                 let bytes = self.1.lock().unwrap()[&request.load.file.url].clone();
-                let path = self
-                    .0
-                    .0
-                    .scratch()
-                    .join(format!("load-{}", request.load.load));
-                std::fs::write(&path, bytes).expect("scratch file");
-                let landed = self.0.0.land(&request, &path);
-                std::fs::remove_file(&path).expect("scratch removed");
-                (request, landed)
+                engine.land(&request, |mut file| {
+                    use std::io::Write as _;
+                    file.write_all(&bytes).expect("source file");
+                    Ok(())
+                })
             }
             "settle" => {
                 let request: SettleRequest = serde_json::from_str(&call.body).expect("a settle");
-                let landed = self.0.0.settle(&request);
-                (request.land, landed)
+                engine.settle(&request)
+            }
+            "store" => {
+                // MANIFEST-LAND-1: the landed files go to their PUT URLs.
+                let request: StoreRequest = serde_json::from_str(&call.body).expect("a store");
+                engine.store(&request, |data, held| {
+                    let mut files = self.1.lock().unwrap();
+                    for (url, path) in [(&request.data.url, data), (&request.held.url, held)] {
+                        files.insert(url.clone(), std::fs::read(path).expect("landed file"));
+                    }
+                    Ok(())
+                })
             }
             _ => return self.0.call(call),
         };
         let (status, body) = match landed {
-            Ok(landed) => {
-                // MANIFEST-LAND-1: the landed files go to their PUT URLs.
-                let mut files = self.1.lock().unwrap();
-                for (url, file) in [
-                    (&request.data_url, &landed.data),
-                    (&request.held_url, &landed.held),
-                ] {
-                    if let Some(file) = file {
-                        files.insert(url.clone(), std::fs::read(file).expect("landed file"));
-                        std::fs::remove_file(file).expect("landed file removed");
-                    }
-                }
-                (200, serde_json::to_string(&landed.response).unwrap())
-            }
+            Ok(landed) => (200, serde_json::to_string(&landed).unwrap()),
             Err(refused) => (422, serde_json::to_string(&refused).unwrap()),
         };
         Some(EngineAnswer {
@@ -101,6 +98,9 @@ impl Uploads for Files<'_> {
             content_type: "text/csv".into(),
             file_name: format!("{id}.csv"),
         })
+    }
+    fn issued(&self, id: &str, _scope_key: &str, uri: &str) -> bool {
+        self.record(id).is_some_and(|record| record.uri == uri)
     }
     fn presigned_get(&self, uri: &str, _seconds: u64, _now_ms: u64) -> Option<String> {
         let id = uri
@@ -220,6 +220,15 @@ fn csv(table: &TableSchema, records: &[Value]) -> Option<String> {
 /// takes `eq`, `ne` and `in` only).
 fn clauses(column: &Column, value: &Value) -> Vec<Value> {
     let id = column.id.as_str();
+    // A query value is a JSON string (a boolean excepted): a number the grid
+    // answers is asked back by its text.
+    let text;
+    let value = if let Value::Number(number) = value {
+        text = Value::String(number.to_string());
+        &text
+    } else {
+        value
+    };
     let enumerated = column
         .laws
         .iter()
@@ -277,15 +286,38 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
     let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).expect("demo");
     let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
     let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
-    let tables: BTreeMap<String, TableSchema> = store
+    let host = DevHost::from_store(store, scope, |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(policy);
+    // MANIFEST-03: types an admitted mapping binds, loaded as observations.
+    let uploads = [
+        (
+            "Orders",
+            "order,region,units,price,paid,placed\nO1,north,3,1.50,true,2026-10-21T08:00:00Z\nO2,south,5,2.25,false,2026-10-22T09:30:00Z\nO3,north,1,10.00,true,2026-10-23T12:00:00Z\n",
+        ),
+        ("Regions", "code,label\nN,North\nS,South\nE,East\n"),
+    ];
+    // After the demo rows (`DEMO_ROWS_AT`), each install and load at its own
+    // later time: the cell's clock never runs back.
+    let times = (norn_cell::provision::DEMO_ROWS_AT + 1..).step_by(2);
+    for (at, (name, text)) in times.zip(uploads) {
+        let table = norn_api::uploads::parse_csv(text).unwrap();
+        let request: norn_api::uploads::LoadRequest =
+            serde_json::from_value(json!({"typeName": name})).unwrap();
+        let uri = format!("s3://uploads/demo/{name}.csv");
+        let sha256 = hex_digest(text.as_bytes());
+        let generated =
+            norn_api::uploads::generate(&table, &request, &uri, &sha256, "2026-11-12T12:00:00Z")
+                .unwrap();
+        norn_api::uploads::install(&host, &generated, at).unwrap();
+        norn_api::uploads::load_rows(&host, &generated, &table, &uri, &sha256, at + 1).unwrap();
+    }
+    let tables: BTreeMap<String, TableSchema> = host
         .analytics_tables()
         .unwrap()
         .into_iter()
         .map(|table| (table.name.clone(), table))
         .collect();
-    let host = DevHost::from_store(store, scope, |command| command.payload.clone())
-        .unwrap()
-        .with_authorizer(policy);
     let dir = tempfile::tempdir().unwrap();
     let transport = Loading(
         InProcess(
@@ -382,8 +414,14 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
         .expect("the load route");
         let loaded: Value = serde_json::from_str(&load.body).unwrap();
         if load.status != 200 || loaded["rejected"] != 0 {
-            // A type whose laws the engine does not evaluate, or whose rows a
-            // CSV cannot carry as themselves, is not a correspondence case.
+            // A type no plain mapping binds (MANIFEST-03), whose laws the
+            // engine does not evaluate, or whose rows a CSV cannot carry as
+            // themselves, is not a correspondence case.
+            assert!(
+                !matches!(name.as_str(), "upload.Orders" | "upload.Regions"),
+                "{name}: {}",
+                load.body
+            );
             continue;
         }
         // MANIFEST-LINEAGE-1: a dataset row traces to the manifest that
@@ -493,5 +531,5 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
         );
         compared += 1;
     }
-    assert!(compared >= 2, "at least two demo types correspond");
+    assert!(compared >= 2, "at least the two upload types correspond");
 }

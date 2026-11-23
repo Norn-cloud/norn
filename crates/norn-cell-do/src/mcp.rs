@@ -292,10 +292,7 @@ impl Catalog {
         let mut actions = BTreeMap::new();
         let mut remedies: BTreeMap<String, Vec<String>> = BTreeMap::new();
         if questions.is_some() {
-            for (_, action) in callable
-                .map(|callable| callable.actions)
-                .unwrap_or_default()
-            {
+            for (_, action) in callable.map_or_default(|callable| callable.actions) {
                 let Ok(mut tool) = norn_projections::mcp::action_tool(&action) else {
                     continue;
                 };
@@ -570,7 +567,14 @@ fn generic_tools(
                 "title": "Plan a definitions change",
                 "description": "Check compiled definition artifacts (a pack's artifact envelopes) against the workspace without changing it: what they add and replace, the new object types, the checker's findings, and stored records the new laws would refuse. Returns baseVersion: pass it to norn_apply_definitions as expectedVersion.",
                 "inputSchema": {"type": "object", "additionalProperties": false, "required": ["artifacts"], "properties": {
-                    "artifacts": {"type": "array", "minItems": 1, "maxItems": 500, "items": {"type": "object"}, "description": "Compiled artifact envelopes; none in a reserved namespace (core., std.)."}
+                    "artifacts": {"type": "array", "minItems": 1, "maxItems": 500, "items": {"type": "object"}, "description": "Compiled artifact envelopes; none in a reserved namespace (core., std.)."},
+                    "approvals": {"type": "array", "maxItems": 100, "description": "The pack's approvals: admitted against these artifacts' actions and installed with them in one transaction, so a new action is never live without its gate. A plan returns each one's restatement and restatementSha256; an apply carries each one's signoff of it and the plan's fromRevision as expectedVersion. Any refusal installs nothing.", "items": {"type": "object", "additionalProperties": false, "required": ["kind", "id", "payload"], "properties": {
+                        "kind": {"type": "string", "enum": ["approval"]},
+                        "id": {"type": "string"},
+                        "payload": {"type": "object"},
+                        "expectedVersion": {"type": "integer", "minimum": 0, "description": "The approval's fromRevision from the plan; omitted for a new approval."},
+                        "signoff": {"type": "object", "additionalProperties": false, "required": ["restatementSha256"], "properties": {"restatementSha256": {"type": "string", "description": "The plan's restatementSha256 for this approval: the words the caller signs."}}}
+                    }}}
                 }},
                 "annotations": read_only(),
             }),
@@ -583,7 +587,14 @@ fn generic_tools(
                 "description": "Install the artifacts a plan checked, compare-and-set on the plan's baseVersion: refused with nothing written if the workspace moved, the checker refuses, or stored records break the new laws. The answer is the installed version and its receipt. The pack's actions are callable at once with norn_call_action, before their own tools appear.",
                 "inputSchema": {"type": "object", "additionalProperties": false, "required": ["artifacts", "expectedVersion"], "properties": {
                     "artifacts": {"type": "array", "minItems": 1, "maxItems": 500, "items": {"type": "object"}},
-                    "expectedVersion": {"type": "integer", "minimum": 0, "description": "The baseVersion norn_plan_definitions returned."}
+                    "expectedVersion": {"type": "integer", "minimum": 0, "description": "The baseVersion norn_plan_definitions returned."},
+                    "approvals": {"type": "array", "maxItems": 100, "description": "The pack's approvals: admitted against these artifacts' actions and installed with them in one transaction, so a new action is never live without its gate. A plan returns each one's restatement and restatementSha256; an apply carries each one's signoff of it and the plan's fromRevision as expectedVersion. Any refusal installs nothing.", "items": {"type": "object", "additionalProperties": false, "required": ["kind", "id", "payload"], "properties": {
+                        "kind": {"type": "string", "enum": ["approval"]},
+                        "id": {"type": "string"},
+                        "payload": {"type": "object"},
+                        "expectedVersion": {"type": "integer", "minimum": 0, "description": "The approval's fromRevision from the plan; omitted for a new approval."},
+                        "signoff": {"type": "object", "additionalProperties": false, "required": ["restatementSha256"], "properties": {"restatementSha256": {"type": "string", "description": "The plan's restatementSha256 for this approval: the words the caller signs."}}}
+                    }}}
                 }},
                 "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
             }),
@@ -849,6 +860,20 @@ impl<E: SqlEngine> Loopback<'_, E> {
                     ));
                 };
                 let mut body = vec![("artifacts", artifacts.clone())];
+                // #1469 S3: the pack's approvals and their sign-offs reach the
+                // same shared route as over HTTP, which admits them with the
+                // set and installs both or nothing.
+                match arguments.get("approvals") {
+                    None => {}
+                    Some(approvals @ RuntimeValue::Array(_)) => {
+                        body.push(("approvals", approvals.clone()));
+                    }
+                    Some(_) => {
+                        return Err(Refusal::invalid(
+                            "approvals must be an array of { kind, id, payload, expectedVersion, signoff }",
+                        ));
+                    }
+                }
                 let path = if name == "norn_apply_definitions" {
                     let Some(version @ RuntimeValue::Number(_)) = arguments.get("expectedVersion")
                     else {
@@ -1093,13 +1118,12 @@ fn titled_metrics(mut value: RuntimeValue) -> RuntimeValue {
             let links: Vec<String> = snapshot
                 .get("timeLinks")
                 .and_then(RuntimeValue::as_array)
-                .map(|links| {
+                .map_or_default(|links| {
                     links
                         .iter()
                         .filter_map(|link| link.as_str().map(str::to_owned))
                         .collect()
-                })
-                .unwrap_or_default();
+                });
             let latest = snapshot
                 .pointer("/additivity/aggregate")
                 .and_then(RuntimeValue::as_str)
@@ -1116,13 +1140,12 @@ fn titled_metrics(mut value: RuntimeValue) -> RuntimeValue {
             let links: Vec<String> = snapshot
                 .pointer("/x-norn/timeDimension/links")
                 .and_then(RuntimeValue::as_array)
-                .map(|links| {
+                .map_or_default(|links| {
                     links
                         .iter()
                         .filter_map(|link| link.as_str().map(str::to_owned))
                         .collect()
-                })
-                .unwrap_or_default();
+                });
             let time = snapshot
                 .pointer("/x-norn/timeDimension/property")
                 .and_then(RuntimeValue::as_str)

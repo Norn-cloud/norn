@@ -1,26 +1,35 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useView } from "@/lib/view"
 import { conceptTitle } from "../lib/catalog.ts"
 import { listActions, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
+import { useAccount } from "../lib/session.ts"
 import { ActionForm } from "./action-form.tsx"
-
-/** The actions the cell offers this reader for one object type (the server filters; Studio shows what it gets). */
-export function useActions(objectKind: string) {
-  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind], queryFn: () => listActions(objectKind), retry: false, staleTime: 60_000 })
-}
+import { keptDrafts, sessionKey } from "./kept-drafts.ts"
+import { parkedCalls } from "./parked-calls.ts"
+import type { ParkedCall } from "../lib/screen/call.ts"
 
 /**
- * Drafts kept for later in this tab, by action and the record it was opened on. Memory only:
- * nothing is written to the cell or the browser's storage, and a reload forgets them.
+ * The actions the cell offers this reader for one object type, or for one record in its current
+ * state (the server filters; Studio shows what it gets).
  */
-const kept = new Map<string, Draft>()
+export function useActions(objectKind: string, objectId?: string, enabled = true) {
+  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind, objectId ?? null], queryFn: () => listActions(objectKind, undefined, objectId), retry: false, staleTime: objectId === undefined ? 60_000 : 0, enabled })
+}
+
 const draftKey = (open: OpenAction) => `${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}`
 
-export interface OpenAction { readonly action: ActionSummary; readonly prefill?: Readonly<Record<string, string>> }
+export interface OpenAction {
+  readonly action: ActionSummary
+  readonly prefill?: Readonly<Record<string, string>>
+  /** Open on this parked call (the inbox's "Approved, run it"), as the cell serves it. */
+  readonly parked?: ParkedCall
+  /** Run the parked call as soon as the cell offers it. */
+  readonly runNow?: boolean
+}
 
 /**
  * A governed action's form in a sheet. Closing a draft with unsent changes asks first; so does
@@ -28,6 +37,9 @@ export interface OpenAction { readonly action: ActionSummary; readonly prefill?:
  */
 export function ActionSheet({ open, onClose, onView }: { readonly open: OpenAction | null; readonly onClose: () => void; readonly onView?: (objectId: string) => void }) {
   const { view } = useView()
+  // Kept drafts belong to the session that wrote them (#1469 S6).
+  const session = sessionKey(useAccount().data)
+  const kept = { get: (k: string) => keptDrafts.get(session, k), set: (k: string, d: Draft) => keptDrafts.set(session, k, d), delete: (k: string) => keptDrafts.delete(session, k) }
   const technical = view === "technical"
   const [dirty, setDirty] = useState(false)
   const [asking, setAsking] = useState(false)
@@ -36,13 +48,21 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
   const [generation, setGeneration] = useState(0)
   const [banner, setBanner] = useState(false)
   useEffect(() => {
-    const draft = open === null ? undefined : kept.get(draftKey(open))
+    const draft = open === null ? undefined : keptDrafts.get(session, draftKey(open))
     latest.current = draft ?? null
     setRestored(draft)
     setBanner(draft !== undefined)
-  }, [open])
+  }, [open, session])
   const client = useQueryClient()
+  // A call this form sent that parked: the form reopens on it until it commits or a new draft starts.
+  // Read when the sheet opens on a form; the form reports later changes to the store, not to this value.
+  const parked = useMemo<ParkedCall | undefined>(() => open === null ? undefined : open.parked ?? parkedCalls.get(session, draftKey(open)), [open, session])
   useEffect(() => { if (open === null) { setDirty(false); setAsking(false) } }, [open])
+  // A form opened as one reader never stays open as another (a tenant switch, an expiry, someone
+  // else signing in): its parked call and draft were that reader's, so the sheet closes.
+  const openedAs = useRef(session)
+  useEffect(() => { openedAs.current = session }, [open])
+  useEffect(() => { if (open !== null && openedAs.current !== session) { setDirty(false); setAsking(false); onClose() } }, [session])
   useEffect(() => {
     if (!dirty) return
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault() }
@@ -50,7 +70,13 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
     return () => window.removeEventListener("beforeunload", warn)
   }, [dirty])
   const close = () => {
-    if (open !== null) void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })
+    if (open !== null) {
+      void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })
+      // A record's offered actions follow its state.
+      void client.invalidateQueries({ queryKey: ["actions", open.action.objectKind] })
+      // A parked call that ran, or one that parked, moves the requester's list.
+      void client.invalidateQueries({ queryKey: ["decisions"] })
+    }
     onClose()
   }
   const request = () => (dirty ? setAsking(true) : close())
@@ -71,15 +97,18 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
                 : <SheetDescription className="sr-only">{open.action.title}</SheetDescription>}
             </SheetHeader>
             <div className="px-6">
-              {banner && (
+              {banner && parked === undefined && (
                 <p role="status" className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-node-border bg-muted/50 px-3 py-2 text-sm">
                   Restored your draft from earlier in this session.
                   <span className="flex-1" />
                   <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => { kept.delete(draftKey(open)); latest.current = null; setRestored(undefined); setBanner(false); setDirty(false); setGeneration((g) => g + 1) }}>Start over</Button>
                 </p>
               )}
-              <ActionForm key={`${draftKey(open)}:${generation}:${restored === undefined ? "new" : "kept"}`} action={open.action} objectTitle={conceptTitle(open.action.objectKind)}
-                remembered={restored} onDraft={(draft) => { latest.current = draft }} onCommitted={() => { kept.delete(draftKey(open)); setBanner(false) }}
+              <ActionForm key={`${session}:${draftKey(open)}:${generation}:${restored === undefined ? "new" : "kept"}:${parked?.decision.id ?? "draft"}`} action={open.action} objectTitle={conceptTitle(open.action.objectKind)}
+                remembered={parked === undefined ? restored : undefined} onDraft={(draft) => { latest.current = draft }}
+                onCommitted={() => { kept.delete(draftKey(open)); parkedCalls.delete(session, draftKey(open)); setBanner(false) }}
+                parked={parked} runNow={open.runNow === true && parked === open.parked}
+                onParked={(call) => parkedCalls.set(session, draftKey(open), call)} onUnparked={() => parkedCalls.delete(session, draftKey(open))}
                 onChanged={() => void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })}
                 technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />

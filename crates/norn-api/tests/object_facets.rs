@@ -21,6 +21,10 @@ use norn_api::object_routes::ObjectAccess;
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
+// #1485 S6: fixtures write through the kernel path, never the raw door.
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+use governed::GovernedCommit as _;
 use norn_cell::{CellStore, CommitBatch, MAIN_WORLD, Model, ObjectRecord};
 use norn_ir::FactChange;
 use norn_kernel::authz::{
@@ -248,7 +252,7 @@ fn a_row_the_caller_cannot_see_or_whose_values_are_withheld_is_never_counted() {
     let pop = facets(&host, "pop", Some("status"), None).unwrap();
     assert_eq!(pop.rows, 0);
     assert_eq!(pop.withheld_rows, 5);
-    assert!(read(&pop, "status").0.is_empty());
+    assert_eq!(read(&pop, "status").0, []);
 }
 
 #[test]

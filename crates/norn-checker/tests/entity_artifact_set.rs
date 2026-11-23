@@ -90,7 +90,7 @@ fn located(finding: norn_checker::Diagnostic) -> (String, String, String) {
     (
         finding.artifact_id.unwrap_or_default(),
         finding.code.as_str().to_owned(),
-        finding.span.map(|span| span.pointer).unwrap_or_default(),
+        finding.span.map_or_default(|span| span.pointer),
     )
 }
 
@@ -136,7 +136,7 @@ fn check_layer(
             (
                 finding.artifact_id.unwrap_or_default(),
                 finding.code.as_str().to_owned(),
-                finding.span.map(|span| span.pointer).unwrap_or_default(),
+                finding.span.map_or_default(|span| span.pointer),
             )
         })
         .collect()

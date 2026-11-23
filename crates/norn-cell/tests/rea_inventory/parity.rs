@@ -115,11 +115,11 @@ fn observe_case(trace: &Value, fixture: &Fixture) -> (Value, Vec<Value>) {
     let mut cell = open(&directory.path().join("parity.sqlite"), fixture);
     seed_book(&mut cell, false);
     assert_eq!(balance(&cell), (0, 0));
-    assert!(native_rows(&cell, "Holding").is_empty());
-    assert!(native_rows(&cell, "Allocation").is_empty());
-    assert!(native_rows(&cell, "Event").is_empty());
-    assert!(native_rows(&cell, "Leg").is_empty());
-    assert!(native_rows(&cell, "Exchange").is_empty());
+    assert_eq!(native_rows(&cell, "Holding").len(), 0);
+    assert_eq!(native_rows(&cell, "Allocation").len(), 0);
+    assert_eq!(native_rows(&cell, "Event").len(), 0);
+    assert_eq!(native_rows(&cell, "Leg").len(), 0);
+    assert_eq!(native_rows(&cell, "Exchange").len(), 0);
     let mut evidence = vec![snapshot(&cell, fixture)];
     let mut stock = Vec::<Value>::new();
     let mut checkpoints = Vec::new();
@@ -202,7 +202,7 @@ fn observe_case(trace: &Value, fixture: &Fixture) -> (Value, Vec<Value>) {
         let (quantity, value) = balance(&cell);
         assert_eq!(quantity - previous_balance.0, quantity_delta);
         assert_eq!(value - previous_balance.1, value_delta);
-        assert!(cell.store().read().pending_commands().unwrap().is_empty());
+        assert_eq!(cell.store().read().pending_commands().unwrap(), []);
         stock.push(json!({"id":event_id,"requestId":request,"line":format!("{request}:1"),"warehouse":"a","quantityDelta":decimal(quantity_delta,3),"valueDelta":decimal(value_delta,2),"quantity":decimal(quantity,3),"value":decimal(value,2),"incomingRate":null,"valuationRate":null,"fifo":null,"cancelled":false}));
         let mut gross_balance = 0;
         let gl: Vec<_> = legs.iter().map(|(id, leg)| {
@@ -302,10 +302,5 @@ fn unsupported_profile_cannot_be_reported_as_parity() {
             .iter()
             .all(|case| case["status"] == "unsupported")
     );
-    assert!(
-        dump["versions"]["durability"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
+    assert_eq!(dump["versions"]["durability"].as_array().unwrap().len(), 0);
 }

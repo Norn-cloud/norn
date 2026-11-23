@@ -711,3 +711,512 @@ fn a_call_that_leaves_its_target_unwritten_reports_its_current_version() {
         (committed.version, &committed.receipt)
     );
 }
+
+/// S5b: a call that left its target unwritten reports the target's version
+/// as of its own commit, on every replay: a later write to the target never
+/// changes what the call's recovery or replay reports.
+#[test]
+fn a_replay_reports_the_version_as_of_its_commit_after_a_later_write() {
+    let host = rows_host();
+    let query = scoped("org_demo");
+    let operator = Some(OPERATOR);
+    let body = |values: &str, version: &str, key: &str| {
+        format!(
+            r#"{{"input":{{"parentId":"order-1","parentValues":{values},"parentVersion":"{version}","rowOps":[]}},"idempotencyKey":"{key}"}}"#
+        )
+    };
+    let created = call(
+        &host,
+        &query,
+        operator,
+        ORDER_EDIT,
+        &body(r#"{"title":"first"}"#, "0", "create"),
+    )
+    .unwrap();
+    let unchanged = body("{}", &created.version.to_string(), "noop");
+    let committed = call(&host, &query, operator, ORDER_EDIT, &unchanged).unwrap();
+    assert_eq!(committed.version, created.version);
+    let later = call(
+        &host,
+        &query,
+        operator,
+        ORDER_EDIT,
+        &body(
+            r#"{"title":"second"}"#,
+            &created.version.to_string(),
+            "later",
+        ),
+    )
+    .unwrap();
+    assert!(later.version > created.version);
+    let replayed = call(&host, &query, operator, ORDER_EDIT, &unchanged).unwrap();
+    assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
+    assert_eq!(
+        (replayed.version, &replayed.receipt),
+        (committed.version, &committed.receipt),
+        "the version as of the call's commit, never the later write's"
+    );
+}
+
+/// ADMIT-CACHE-1 (#1533): one melt cell on a file, provisioned with `writer`,
+/// and a byte copy of it: the same cell twice.
+fn twin_files(writer: &str) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("a.sqlite"), dir.path().join("b.sqlite"));
+    drop(open_melt(&a, writer));
+    for suffix in ["", "-wal"] {
+        let from = std::path::PathBuf::from(format!("{}{suffix}", a.display()));
+        if from.exists() {
+            std::fs::copy(&from, format!("{}{suffix}", b.display())).unwrap();
+        }
+    }
+    (dir, a, b)
+}
+
+/// The melt cell on the file `path`, opened (and its definitions verified)
+/// afresh: a new store, a new model and a host with nothing cached.
+fn open_melt(path: &std::path::Path, writer: &str) -> DevHost<NativeEngine> {
+    let engine = NativeEngine::open(path, norn_cell::StoreOptions::default()).unwrap();
+    host_of(action_cell::melt_store_on(
+        engine,
+        writer,
+        crate::action_admission::prepare_action_model,
+    ))
+}
+
+/// Every call of an ERP-shaped sequence over the melt action: commits, a
+/// replay, a reused key with another payload, a refused precondition, a
+/// pinned version (current and stale), an unknown action and a denied actor.
+fn mixed_calls() -> Vec<(ActionQuery, Option<&'static str>, &'static str, String)> {
+    let current = ActionQuery {
+        version: Some(1),
+        ..scoped("org_demo")
+    };
+    let stale = ActionQuery {
+        version: Some(9),
+        ..scoped("org_demo")
+    };
+    let mut calls = Vec::new();
+    for (n, output) in ["10", "9", "8", "10", "9", "8"].into_iter().enumerate() {
+        let body = melt_body(&format!("melt-{n}"), "12", output, &format!("k{n}"));
+        calls.push((
+            scoped("org_demo"),
+            Some(OPERATOR),
+            MELT_ACTION,
+            body.clone(),
+        ));
+        calls.push((scoped("org_demo"), Some(OPERATOR), MELT_ACTION, body));
+    }
+    calls.push((
+        scoped("org_demo"),
+        Some(OPERATOR),
+        MELT_ACTION,
+        melt_body("melt-0", "12", "7", "k0"),
+    ));
+    calls.push((
+        scoped("org_demo"),
+        Some(OPERATOR),
+        MELT_ACTION,
+        melt_body("melt-p", "4", "9", "pre"),
+    ));
+    calls.push((
+        current,
+        Some(OPERATOR),
+        MELT_ACTION,
+        melt_body("melt-v", "12", "10", "pin"),
+    ));
+    calls.push((
+        stale,
+        Some(OPERATOR),
+        MELT_ACTION,
+        melt_body("melt-s", "12", "10", "stale"),
+    ));
+    calls.push((
+        scoped("org_demo"),
+        Some(OPERATOR),
+        "shop.unknown",
+        melt_body("melt-u", "12", "10", "u"),
+    ));
+    calls.push((
+        scoped("org_demo"),
+        Some(HOST_ONLY),
+        MELT_ACTION,
+        melt_body("melt-h", "12", "10", "h"),
+    ));
+    calls.push((
+        scoped("org_demo"),
+        Some(AUDITOR),
+        MELT_ACTION,
+        melt_body("melt-a", "12", "10", "a"),
+    ));
+    calls.push((
+        scoped("org_other"),
+        Some(OPERATOR),
+        MELT_ACTION,
+        melt_body("melt-o", "12", "10", "o"),
+    ));
+    calls
+}
+
+#[test]
+fn cached_and_uncached_definitions_admit_and_refuse_identically() {
+    // ADMIT-CACHE-1 (#1533): a host keeps the verified definitions, the
+    // caller's PDP and the model's catalog work across calls. The reference
+    // reopens its copy of the same cell for every call, so each call verifies
+    // the retained set and derives every catalog from nothing. Every answer,
+    // and the whole store after, must be byte-identical.
+    for writer in [DERIVES_LOSS, OMITS_LOSS] {
+        let (_dir, a, b) = twin_files(writer);
+        let cached = open_melt(&a, writer);
+        let mut answers = (Vec::new(), Vec::new());
+        for (n, (query, actor, action, body)) in mixed_calls().into_iter().enumerate() {
+            let now = LogicalTime::from_millis(1_700_000_000_000 + u64::try_from(n).unwrap());
+            answers.0.push(format!(
+                "{:?}",
+                call_at(&cached, &query, actor, action, &body, now)
+            ));
+            let fresh = open_melt(&b, writer);
+            answers.1.push(format!(
+                "{:?}",
+                call_at(&fresh, &query, actor, action, &body, now)
+            ));
+        }
+        assert_eq!(answers.0, answers.1, "{writer}");
+        // The lawful writer commits; the lawless one is refused by the law.
+        let expected = if writer == DERIVES_LOSS {
+            "Ok"
+        } else {
+            "core.laws.violated"
+        };
+        assert!(
+            answers.0.iter().any(|answer| answer.contains(expected)),
+            "{answers:?}"
+        );
+        assert!(
+            answers.0.iter().any(|answer| answer.starts_with("Err")),
+            "{answers:?}"
+        );
+        assert_eq!(dump(&cached), dump(&open_melt(&b, writer)), "{writer}");
+    }
+}
+
+#[test]
+fn a_changed_definitions_identity_is_verified_again_before_any_call() {
+    // ADMIT-CACHE-1: the cache serves only the identity it verified. Another
+    // receipt digest on the active row (here a forged one) misses and is
+    // verified, and the forged receipt refuses the call.
+    let (_dir, a, _b) = twin_files(DERIVES_LOSS);
+    let host = open_melt(&a, DERIVES_LOSS);
+    let operator = Some(OPERATOR);
+    call(
+        &host,
+        &scoped("org_demo"),
+        operator,
+        MELT_ACTION,
+        &melt_body("melt-1", "12", "10", "one"),
+    )
+    .unwrap();
+    let raw = NativeEngine::open(&a, norn_cell::StoreOptions::default()).unwrap();
+    norn_cell::engine::SqlEngine::definition_writes(&raw, || {
+        norn_cell::engine::SqlEngine::execute(
+            &raw,
+            "UPDATE \"_norn_definition_version\" SET \"receipt_sha256\" = ?1 WHERE \"version\" = 1",
+            &[norn_cell::engine::SqlValue::Text("0".repeat(64))],
+        )
+    })
+    .unwrap();
+    drop(raw);
+    let before = dump(&host);
+    let refused = call(
+        &host,
+        &scoped("org_demo"),
+        operator,
+        MELT_ACTION,
+        &melt_body("melt-2", "12", "10", "two"),
+    )
+    .unwrap_err();
+    assert_eq!(refused.status, 500, "{refused:?}");
+    assert_eq!(dump(&host), before, "a refused call writes nothing");
+}
+
+/// Edit `column` of `table`'s version-1 row in place through another
+/// connection, as an out-of-process editor would; the receipt digest column
+/// on the active row stays as it was.
+fn edit_in_place(path: &std::path::Path, table: &str, column: &str, edit: fn(&mut Value)) {
+    use norn_cell::engine::{SqlEngine, SqlValue};
+    let raw = NativeEngine::open(path, norn_cell::StoreOptions::default()).unwrap();
+    let digest = |raw: &NativeEngine| {
+        raw.query_row(
+            "SELECT \"receipt_sha256\" FROM \"_norn_definition_version\" WHERE \"version\" = 1",
+            &[],
+            |row| row.get::<String>(0),
+        )
+        .unwrap()
+    };
+    let held = digest(&raw);
+    let text = raw
+        .query_row(
+            &format!("SELECT \"{column}\" FROM \"{table}\" WHERE \"version\" = 1"),
+            &[],
+            |row| row.get::<String>(0),
+        )
+        .unwrap();
+    let mut value: Value = serde_json::from_str(&text).unwrap();
+    edit(&mut value);
+    let edited = serde_json::to_string(&value).unwrap();
+    assert_ne!(edited, text, "the edit changes the retained bytes");
+    raw.definition_writes(|| {
+        raw.execute(
+            &format!("UPDATE \"{table}\" SET \"{column}\" = ?1 WHERE \"version\" = 1"),
+            &[SqlValue::Text(edited)],
+        )
+    })
+    .unwrap();
+    assert_eq!(digest(&raw), held, "the digest column is held constant");
+}
+
+#[test]
+fn a_warm_host_refuses_definitions_edited_in_place_as_a_fresh_host_does() {
+    // C1 (#1547): the cache is keyed by the definitions identity and by the
+    // store's foreign-write revision, so an in-place edit of the retained
+    // set or of its receipt that keeps the digest column misses the warm
+    // cache and is verified again. The warm host must refuse exactly as a
+    // host opened afresh on an identical, identically edited file.
+    let drop_last_artifact: fn(&mut Value) = |set| {
+        set.as_array_mut().unwrap().pop().unwrap();
+    };
+    let annotate_receipt: fn(&mut Value) = |receipt| {
+        receipt
+            .as_object_mut()
+            .unwrap()
+            .insert("edited".into(), json!(true));
+    };
+    for (table, column, edit) in [
+        (
+            "_norn_definition_version",
+            "canonical_set",
+            drop_last_artifact,
+        ),
+        (
+            "_norn_definition_admission_receipt",
+            "receipt",
+            annotate_receipt,
+        ),
+    ] {
+        let (_dir, a, b) = twin_files(DERIVES_LOSS);
+        let warm = open_melt(&a, DERIVES_LOSS);
+        let operator = Some(OPERATOR);
+        let first = LogicalTime::from_millis(1_700_000_000_000);
+        let later = LogicalTime::from_millis(1_700_000_000_001);
+        let warming = melt_body("melt-1", "12", "10", "one");
+        // The first call verifies and keeps the retained set; the twin takes
+        // the same commit, so both files hold the same cell.
+        call_at(
+            &warm,
+            &scoped("org_demo"),
+            operator,
+            MELT_ACTION,
+            &warming,
+            first,
+        )
+        .unwrap();
+        call_at(
+            &open_melt(&b, DERIVES_LOSS),
+            &scoped("org_demo"),
+            operator,
+            MELT_ACTION,
+            &warming,
+            first,
+        )
+        .unwrap();
+        for path in [&a, &b] {
+            edit_in_place(path, table, column, edit);
+        }
+        let before = dump(&warm);
+        let body = melt_body("melt-2", "12", "10", "two");
+        let answer = |host: &DevHost<NativeEngine>| {
+            call_at(
+                host,
+                &scoped("org_demo"),
+                operator,
+                MELT_ACTION,
+                &body,
+                later,
+            )
+        };
+        let warm_answer = answer(&warm);
+        let fresh = {
+            let (model, input) = action_cell::melt_install(
+                DERIVES_LOSS,
+                crate::action_admission::prepare_action_model,
+                1,
+            );
+            let engine = NativeEngine::open(&b, norn_cell::StoreOptions::default()).unwrap();
+            CellStore::provision_definitions(engine, model, &input, "org_demo/dev").map(host_of)
+        };
+        let refused = warm_answer.as_ref().expect_err(column);
+        match fresh {
+            // A fresh host that opens refuses the call itself: the same answer.
+            Ok(fresh) => assert_eq!(
+                format!("{warm_answer:?}"),
+                format!("{:?}", answer(&fresh)),
+                "{column}"
+            ),
+            // A fresh host that refuses to open serves nothing: a host refusal.
+            Err(_refused_open) => assert_eq!(refused.status, 500, "{column}: {refused:?}"),
+        }
+        assert_eq!(
+            dump(&warm),
+            before,
+            "{column}: a refused call writes nothing"
+        );
+        // A refused verification is never kept: the next call refuses again.
+        assert_eq!(
+            format!("{:?}", answer(&warm)),
+            format!("{warm_answer:?}"),
+            "{column}"
+        );
+    }
+}
+
+/// The retained definition bytes of `path`, read through another connection.
+fn retained_bytes(path: &std::path::Path) -> Vec<String> {
+    use norn_cell::engine::SqlEngine;
+    let raw = NativeEngine::open(path, norn_cell::StoreOptions::default()).unwrap();
+    raw.query(
+        "SELECT \"canonical_set\" || ' ' || \"receipt_sha256\" FROM \"_norn_definition_version\" ORDER BY \"version\"",
+        &[],
+    )
+    .unwrap()
+    .into_iter()
+    .map(|row| format!("{row:?}"))
+    .collect()
+}
+
+#[test]
+fn a_trigger_installed_from_outside_cannot_edit_the_definitions_on_a_host_commit() {
+    // S1 (#1547): another connection adds a trigger that rewrites the
+    // retained set on an ordinary host commit. That write rides the serving
+    // connection's own commit, which `data_version` does not count, so the
+    // warm cache would serve the old actions while a fresh host refuses. The
+    // serving connection refuses any statement that fires such a trigger, so
+    // the warm host answers as a fresh host does and the set is untouched.
+    use norn_cell::engine::SqlEngine;
+    let (_dir, a, b) = twin_files(DERIVES_LOSS);
+    let warm = open_melt(&a, DERIVES_LOSS);
+    let operator = Some(OPERATOR);
+    let first = LogicalTime::from_millis(1_700_000_000_000);
+    let later = LogicalTime::from_millis(1_700_000_000_001);
+    let warming = melt_body("melt-1", "12", "10", "one");
+    for host in [&warm, &open_melt(&b, DERIVES_LOSS)] {
+        call_at(
+            host,
+            &scoped("org_demo"),
+            operator,
+            MELT_ACTION,
+            &warming,
+            first,
+        )
+        .unwrap();
+    }
+    for path in [&a, &b] {
+        let raw = NativeEngine::open(path, norn_cell::StoreOptions::default()).unwrap();
+        raw.execute_batch(
+            "CREATE TRIGGER \"rewrite_definitions\" AFTER INSERT ON \"_norn_ledger\" BEGIN \
+             UPDATE \"_norn_definition_version\" SET \"canonical_set\" = '[]' WHERE \"version\" = 1; \
+             END",
+        )
+        .unwrap();
+    }
+    let retained = retained_bytes(&a);
+    let before = dump(&warm);
+    let body = melt_body("melt-2", "12", "10", "two");
+    let answer = |host: &DevHost<NativeEngine>| {
+        call_at(
+            host,
+            &scoped("org_demo"),
+            operator,
+            MELT_ACTION,
+            &body,
+            later,
+        )
+    };
+    let warm_answer = answer(&warm);
+    let refused = warm_answer
+        .as_ref()
+        .expect_err("the commit fires the trigger");
+    assert_eq!(refused.status, 500, "{refused:?}");
+    assert_eq!(
+        retained_bytes(&a),
+        retained,
+        "the retained set is untouched"
+    );
+    assert_eq!(dump(&warm), before, "a refused call writes nothing");
+    // The next call refuses the same way: nothing stale was served or kept.
+    assert_eq!(format!("{:?}", answer(&warm)), format!("{warm_answer:?}"));
+    let fresh = {
+        let (model, input) = action_cell::melt_install(
+            DERIVES_LOSS,
+            crate::action_admission::prepare_action_model,
+            1,
+        );
+        let engine = NativeEngine::open(&b, norn_cell::StoreOptions::default()).unwrap();
+        CellStore::provision_definitions(engine, model, &input, "org_demo/dev").map(host_of)
+    };
+    if let Ok(fresh) = fresh {
+        assert_eq!(format!("{:?}", answer(&fresh)), format!("{warm_answer:?}"));
+    }
+}
+
+#[test]
+fn an_install_drops_the_verified_definitions_of_the_last_revision() {
+    // ADMIT-CACHE-1: an install clears the cache, and the next call runs under
+    // the new revision, verified on its first call.
+    let host = host();
+    let operator = Some(OPERATOR);
+    let pinned = |version| ActionQuery {
+        version: Some(version),
+        ..scoped("org_demo")
+    };
+    call(
+        &host,
+        &pinned(1),
+        operator,
+        MELT_ACTION,
+        &melt_body("melt-1", "12", "10", "one"),
+    )
+    .unwrap();
+    let (model, input) = action_cell::melt_install(
+        DERIVES_LOSS,
+        crate::action_admission::prepare_action_model,
+        // After the first call: the cell's clock never runs backwards.
+        1_700_000_000_001,
+    );
+    let later = LogicalTime::from_millis(1_700_000_000_002);
+    assert_eq!(
+        host.install_definitions(model, input, Some(1))
+            .unwrap()
+            .version,
+        2
+    );
+    let stale = call_at(
+        &host,
+        &pinned(1),
+        operator,
+        MELT_ACTION,
+        &melt_body("melt-2", "12", "10", "two"),
+        later,
+    )
+    .unwrap_err();
+    assert_eq!((stale.status, stale.code.as_str()), (409, "defs.stale"));
+    let committed = call_at(
+        &host,
+        &pinned(2),
+        operator,
+        MELT_ACTION,
+        &melt_body("melt-3", "12", "10", "three"),
+        later,
+    )
+    .unwrap();
+    assert_eq!(committed.outcome, ActionCallOutcome::Committed);
+}

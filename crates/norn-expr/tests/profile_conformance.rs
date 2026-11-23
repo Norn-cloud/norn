@@ -37,7 +37,7 @@ use support::{Model, fields, roomy_limits};
 
 /// The Norn1 hash of `PROFILE.md`, pinned with the profile id: editing the
 /// profile without bumping `CHECKER_PROFILE` (and re-pinning) fails here.
-const PROFILE_MD_HASH: &str = "9a29ba0542a8cb690ddcee4f2164b9ea46d561798237c69abf69f980fe6e9f85";
+const PROFILE_MD_HASH: &str = "aa66039ec5c4fcc9feb72de7fcd0ff13d4836f1cd1e8af4f0b39f229f0d768ef";
 
 fn probe_env() -> ZenTypeEnv {
     let model = Model::retail();

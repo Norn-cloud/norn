@@ -57,6 +57,7 @@ struct Demo {
     tokens: TokenPrincipals,
     caller: std::sync::Arc<norn_cell_do::policy::CallerSlot>,
     object_types: Vec<String>,
+    role_reads: norn_cell_do::policy::RoleReads,
 }
 
 fn demo() -> Demo {
@@ -76,6 +77,7 @@ fn demo_with(issuer_keys: &[(u8, &str)]) -> Demo {
     )
     .unwrap();
     let caller = policy.caller();
+    let role_reads = policy.role_reads();
     let object_types = store
         .model()
         .object_types()
@@ -89,6 +91,7 @@ fn demo_with(issuer_keys: &[(u8, &str)]) -> Demo {
         tokens,
         caller,
         object_types,
+        role_reads,
     }
 }
 
@@ -217,6 +220,10 @@ fn access(demo: &Demo, query: &str, authorization: Option<&str>) -> server::Resp
         &demo.tokens,
         &demo.caller,
         &demo.object_types,
+        &server::RoleExplainer {
+            reads: &demo.role_reads,
+            actions: None,
+        },
         &request,
     )
 }
@@ -255,6 +262,55 @@ fn the_access_document_reports_each_roles_decisions() {
             "{capability}"
         );
     }
+}
+
+/// `GET /v1/access?objectType=`: each declared role's read decisions on that
+/// one collection, from the read PDP; a collection the cell does not publish
+/// is the shared denial.
+#[test]
+fn the_access_document_tells_each_roles_reads_of_one_collection() {
+    let demo = demo();
+    let member = sign(1, "k1", &claims("user", "org_demo", "member", "password"));
+    let object_type = demo.object_types[0].clone();
+    let response = access(
+        &demo,
+        &format!("{SCOPE}&objectType={object_type}"),
+        Some(&member),
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    let document: Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(document["objectType"], json!(object_type));
+    let decisions: Vec<(String, [Value; 3])> = document["roles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|role| {
+            (
+                role["role"].as_str().unwrap().to_owned(),
+                ["population", "values", "sources"]
+                    .map(|name| role["read"][name]["decision"].clone()),
+            )
+        })
+        .collect();
+    let (permit, deny) = (json!("permit"), json!("deny"));
+    assert_eq!(
+        decisions,
+        [
+            (
+                "viewer".to_owned(),
+                [permit.clone(), deny.clone(), deny.clone()]
+            ),
+            ("member".to_owned(), [permit.clone(), permit.clone(), deny]),
+            (
+                "admin".to_owned(),
+                [permit.clone(), permit.clone(), permit.clone()]
+            ),
+            ("owner".to_owned(), [permit.clone(), permit.clone(), permit]),
+        ]
+    );
+    assert_eq!(document["roles"][0]["actions"].as_array().unwrap().len(), 0);
+    let unknown = access(&demo, &format!("{SCOPE}&objectType=no.Such"), Some(&member));
+    assert_eq!(unknown.status, 403, "{}", unknown.body);
 }
 
 #[test]

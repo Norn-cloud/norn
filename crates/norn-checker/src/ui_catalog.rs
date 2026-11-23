@@ -70,8 +70,7 @@ pub(crate) fn check(
             &format!("{base}/root"),
             page.machine
                 .as_ref()
-                .map(|m| m.fields.as_slice())
-                .unwrap_or_default(),
+                .map_or_default(|m| m.fields.as_slice()),
             &mut placed,
             &mut findings,
         );

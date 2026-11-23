@@ -96,7 +96,7 @@ fn lifecycle_diagram_artifacts_match_their_goldens() {
         });
         assert_eq!(
             golden, diagram.mermaid,
-            "{} is stale; regenerate with {UPDATE_ENV}=1 cargo test -p norn-projections --test lifecycle_diagram",
+            "{} is stale; regenerate with {UPDATE_ENV}=1 cargo test -p norn-projections --test suites lifecycle_diagram::",
             diagram.path
         );
     }

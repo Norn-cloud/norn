@@ -34,7 +34,7 @@ function scaleOf(artifacts: readonly Artifact[], objectType: string, property: s
 /**
  * The governed change to the value this evidence was read for: the newest version of the value's
  * subject that an action wrote and that changed that property. It shows what the value became, who
- * changed it (the verified actor), why, and in which commit, whichever action did it (a line's
+ * changed it (the verified actor), and in which commit, whichever action did it (a line's
  * correction restates its document's total too).
  */
 function Correction({ evidence, subject }: { readonly evidence: Evidence; readonly subject: EvidenceRef }) {
@@ -49,12 +49,11 @@ function Correction({ evidence, subject }: { readonly evidence: Evidence; readon
   const value = correction.values?.[property]
   if (value === undefined || value === null) return null
   const scale = scaleOf(catalog.data?.document ?? [], subject.objectType, property)
-  const reason = correction.writer.input.correction_reason
   return (
     <div className="flex flex-wrap items-baseline gap-x-1.5 rounded-sm bg-emerald-500/10 px-1.5 py-0.5 text-foreground">
       <PencilLine aria-hidden className="size-3.5 self-center text-emerald-700 dark:text-emerald-400" />
       <span>Read <span className="font-mono">“{evidence.text}”</span> → corrected to <span className="font-mono font-medium">{atScale(String(value), scale)}</span></span>
-      <span className="text-muted-foreground">by {correction.writer.actor}{typeof reason === "string" && reason !== "" ? <> · “{reason}”</> : null} ·</span>
+      <span className="text-muted-foreground">by {correction.writer.actor} ·</span>
       <Link to="/sources/$concept/$" params={{ concept: subject.objectType, _splat: subject.id }} hash="lineage" className="underline underline-offset-4" title="The correction's receipt and lineage">commit {correction.commit}</Link>
     </div>
   )

@@ -473,23 +473,42 @@ pub struct Caller {
 
 /// Where the resolver records the current request's verified principal for
 /// the policy. Every request records first (possibly nobody), so a caller
-/// never outlives its request; the cell serves one request at a time.
+/// never outlives its request. A request runs on one thread from resolution
+/// to answer, and the slot keeps each thread's caller apart, so requests a
+/// host serves concurrently (the dev host's workers, DEV-CONCURRENT-1) never
+/// see each other's caller.
 #[derive(Debug, Default)]
-pub struct CallerSlot(Mutex<Option<Caller>>);
+pub struct CallerSlot(Mutex<Vec<(Option<std::thread::ThreadId>, Caller)>>);
 
 impl CallerSlot {
-    /// Record the request's verified principal, or nobody.
+    /// Record the request's verified principal, or nobody, for the calling
+    /// thread's request.
     pub fn record(&self, caller: Option<Caller>) {
+        let me = this_thread();
         if let Ok(mut slot) = self.0.lock() {
-            *slot = caller;
+            slot.retain(|(thread, _)| *thread != me);
+            if let Some(caller) = caller {
+                slot.push((me, caller));
+            }
         }
     }
 
-    /// The current request's verified principal, if any.
+    /// The calling thread's request's verified principal, if any.
     #[must_use]
     pub fn current(&self) -> Option<Caller> {
-        self.0.lock().ok().and_then(|slot| slot.clone())
+        let me = this_thread();
+        self.0.lock().ok().and_then(|slot| {
+            slot.iter()
+                .find(|(thread, _)| *thread == me)
+                .map(|(_, caller)| caller.clone())
+        })
     }
+}
+
+/// The calling thread, on a host with threads; the Durable Object cell has
+/// one thread and serves one request at a time.
+fn this_thread() -> Option<std::thread::ThreadId> {
+    (!cfg!(target_arch = "wasm32")).then(|| std::thread::current().id())
 }
 
 /// The compiled read rules with no grant, one per object type of the cell's
@@ -639,7 +658,7 @@ pub type RevealSlot = Arc<RwLock<Option<Arc<crate::reveal::RevealPolicy>>>>;
 /// The compiled policy for one cell.
 pub struct ReadPolicy {
     /// The compiled rules with no grant; each request adds its caller's.
-    base: ReadRules,
+    base: Arc<ReadRules>,
     key: ScopeKey,
     table: &'static GrantTable,
     caller: Arc<CallerSlot>,
@@ -672,7 +691,7 @@ impl ReadPolicy {
         table: &'static GrantTable,
     ) -> Result<Self, SeedError> {
         Ok(Self {
-            base: ReadRules::new(ReadRules::compile(object_types)?),
+            base: Arc::new(ReadRules::new(ReadRules::compile(object_types)?)),
             key: scope_key(scope),
             table,
             caller: Arc::default(),
@@ -694,6 +713,18 @@ impl ReadPolicy {
     #[must_use]
     pub fn reveal_slot(&self) -> RevealSlot {
         Arc::clone(&self.reveal)
+    }
+
+    /// The read PDP as `GET /v1/access?objectType=` asks it about one
+    /// declared role at a time ([`RoleReads`]); it follows the rules'
+    /// recompiles, so a type added later is decided like every other.
+    #[must_use]
+    pub fn role_reads(&self) -> RoleReads {
+        RoleReads {
+            base: Arc::clone(&self.base),
+            key: self.key.clone(),
+            table: self.table,
+        }
     }
 
     /// The installed action policy, if any.
@@ -1038,6 +1069,73 @@ pub fn collection_access(
     collection_access_key(&scope_key(scope), subject, capability, object_type)
 }
 
+/// The subject id a declared role is decided under when no caller holds it:
+/// a role is asked about, never a person, so no grant of a real subject is
+/// built or kept for it.
+#[must_use]
+pub fn role_subject(role: &str) -> String {
+    format!("norn:role/{role}")
+}
+
+/// The cell's read PDP, asked what one declared role alone may read
+/// (`GET /v1/access?objectType=`). Each answer is the PDP's own decision for
+/// a principal holding exactly the grant the table gives that role, as a
+/// caller holding only that role would be decided; nothing here grants.
+pub struct RoleReads {
+    base: Arc<ReadRules>,
+    key: ScopeKey,
+    table: &'static GrantTable,
+}
+
+impl std::fmt::Debug for RoleReads {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RoleReads")
+            .field("table", &self.table.version)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RoleReads {
+    /// The roles the declared table names, in its order.
+    #[must_use]
+    pub fn roles(&self) -> Vec<&'static str> {
+        self.table.entries.iter().map(|(role, _)| *role).collect()
+    }
+
+    /// The table's identity.
+    #[must_use]
+    pub fn table(&self) -> &'static str {
+        self.table.version
+    }
+
+    /// Whether `role` alone may read `capability` of `object_type`: the PDP's
+    /// decision, as for any caller holding only that role. The kernel's own
+    /// call records are read by definition writers only, as for a caller.
+    #[must_use]
+    pub fn permits(&self, role: &str, capability: ReadCapability, object_type: &str) -> bool {
+        let roles = [role.to_owned()];
+        let kernel_record = object_type == norn_kernel::ACTION_CALL_TYPE
+            || object_type == norn_kernel::OWNED_ROWS_TYPE;
+        if kernel_record && !self.table.writes_definitions(&roles) {
+            return false;
+        }
+        let capabilities = self.table.capabilities(&roles);
+        if capabilities.is_empty() {
+            return false;
+        }
+        let subject = role_subject(role);
+        self.base
+            .granted(&self.key, &subject, &capabilities)
+            .is_some_and(|pdp| {
+                authz::authorize(
+                    &pdp,
+                    &collection_access_key(&self.key, &subject, capability, object_type),
+                )
+                .is_ok()
+            })
+    }
+}
+
 fn collection_access_key(
     key: &ScopeKey,
     subject: &str,
@@ -1089,5 +1187,46 @@ impl norn_api::object_routes::ObjectAccess for CellObjectAccess {
             row.id.clone_into(&mut request.resource.id);
         }
         Ok(request)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "caller slot scenarios")]
+mod caller_slot_tests {
+    use super::{Caller, CallerSlot};
+
+    fn caller(subject: &str) -> Caller {
+        Caller {
+            subject_id: subject.to_owned(),
+            roles: Vec::new(),
+            actor_kind: "user",
+            role_table: "test",
+        }
+    }
+
+    /// DEV-CONCURRENT-1: two requests in flight on two threads each see
+    /// their own caller, and ending one never ends the other's.
+    #[test]
+    fn concurrent_requests_never_see_each_others_caller() {
+        let slot = CallerSlot::default();
+        let (arrived, go) = (std::sync::Barrier::new(2), std::sync::Barrier::new(2));
+        std::thread::scope(|scope| {
+            for subject in ["alice", "bob"] {
+                let (slot, arrived, go) = (&slot, &arrived, &go);
+                scope.spawn(move || {
+                    slot.record(Some(caller(subject)));
+                    arrived.wait();
+                    // Both are recorded now; each still reads its own.
+                    assert_eq!(
+                        slot.current().map(|c| c.subject_id),
+                        Some(subject.to_owned())
+                    );
+                    go.wait();
+                    slot.record(None);
+                    assert_eq!(slot.current(), None);
+                });
+            }
+        });
+        assert_eq!(slot.current(), None, "this thread recorded nobody");
     }
 }

@@ -4,6 +4,7 @@ import { RouterProvider, createMemoryHistory, createRootRoute, createRoute, crea
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
+import type { ReactNode } from "react"
 import { readDocument } from "../src/lib/exact.ts"
 import type { SourceLineage } from "../src/lib/transport.ts"
 
@@ -41,8 +42,17 @@ test("a record page names its type and copyable id, and offers every tab", async
   const html = await page("canon.Item", "demo/item/gold")
   expect(html).toContain("Gold scrap")
   expect(html).toContain("Copy demo/item/gold")
-  for (const tab of ["Overview", "Lineage", "Guarantees", "Access"]) expect(html).toContain(`>${tab}</button>`)
-  expect(html).toContain("No personal data marked")
+  for (const tab of ["Overview", "Lineage", "Guarantees"]) expect(html).toContain(`>${tab}</button>`)
+  // Who may act is the cell's decision: the rail is there, and the recorded demo says no role was decided.
+  expect(html).not.toContain(">Access</button>")
+  expect(html).toContain("Who can see or act")
+  expect(html).toContain("The recorded demo has no sign-in, so the cell decided no role&#x27;s access.")
+  expect(html).toContain("Rules it keeps")
+})
+
+test("each fact carries the system its field provenance names", async () => {
+  const html = await page("canon.Item", "demo/item/gold")
+  expect(html).toMatch(/data-fact="label"[\s\S]*?data-source="ERPNext"/)
 })
 
 test("a value the server recorded a source for opens its provenance", async () => {
@@ -257,28 +267,24 @@ test("an English summary under an Arabic title is marked lang=en; an Arabic one 
   expect(catalogOf(document, "en").byName.get("canon.Holding")).toMatchObject({ titleLang: "en", summary: "Owner and location partitioned holding", summaryLang: "en" })
 })
 
-test("a refusal with no detail lists the record's open law finding with the facts it compared, as the finding read them, when the record is held in quarantine", async () => {
+test("a refusal with no detail reads nothing but the refusal: a warm cache's findings, record and history name no rule and no value", async () => {
   const { RedactedLawRefusal } = await import("../src/actions/law-refusal.tsx")
   const artifact = (file: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/packs/scans/artifacts", file), "utf8")) as unknown
   const client = new QueryClient()
   client.setQueryData(["catalog"], readDocument(JSON.stringify([artifact("docs.ScannedDocument.entity.json"), JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json"), "utf8"))]), "live"))
   const id = "SCAN-INV-1042"
+  // What this page read earlier, under a grant since revoked: the finding's law and the values it compared.
   client.setQueryData(["findings", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
     findings: [{ id: "f-1", ruleRef: { kind: "law", artifactId: "canon.ItemizedDocument.total_matches_lines.law", lawId: "canon.ItemizedDocument.total_matches_lines", version: "0.1" }, severity: "error", message: "total 720 vs lines 72", status: "open", firstSeen: "", lastSeen: "", values: { total: 720, "lines.amount": [30, 40, 2] } }] }), "live"))
-  // Quarantined: the object route serves nothing; the history still carries the stored values.
   client.setQueryData(["object", "docs.ScannedDocument", id], null)
   client.setQueryData(["history", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, truncated: false,
     versions: [{ version: 1, commit: 2975, logicalTime: 0, values: { total: 720 }, writer: { kind: "other" } }] }), "live"))
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><ViewProvider><RedactedLawRefusal objectType="docs.ScannedDocument" id={id} code="core.laws.violated" message="a declared precondition does not hold" technical={false} /></ViewProvider></QueryClientProvider>)
+  // Handed the record it refused (as the form once did), the panel still reads none of it.
+  const Panel = RedactedLawRefusal as unknown as (props: Readonly<Record<string, unknown>>) => ReactNode
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><ViewProvider><Panel objectType="docs.ScannedDocument" id={id} code="core.laws.violated" message="a declared precondition does not hold" technical={false} /></ViewProvider></QueryClientProvider>)
   expect(html).toContain("Refused by a law. Nothing was written.")
-  expect(html).toContain("Open findings on this record")
-  // The law is the canon concept's, inherited by the scanned document (LAW-INTERFACE-1).
-  expect(html).toContain("total must equal the sum of its lines")
-  expect(html).toMatch(/720\.00/)
-  // The line objects the law summed, as the finding recorded them (LAW-LINK-MANY-1).
-  expect(html).toMatch(/sum of lines/)
-  expect(html).toContain("72.00 (30.00 + 40.00 + 2.00)")
-  expect(html).not.toContain(">—<")
+  expect(html).toContain("It does not say which law, or which values, to your role.")
+  for (const disclosed of ["Open findings", "sum of its lines", "total 720", "720", "72.00", "30.00", "sum of lines"]) expect(html).not.toContain(disclosed)
 })
 
 test("a held record's finding shows the values its law compared, a summed list as its exact sum and parts", async () => {

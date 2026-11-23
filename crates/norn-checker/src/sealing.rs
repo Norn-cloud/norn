@@ -16,6 +16,11 @@ fn seal_validation_result(diagnostics: Vec<Diagnostic>) -> SealValidationResult 
 }
 
 /// Runs a seal pass without IO. Policy denials are reported as Diagnostics.
+///
+/// # Errors
+///
+/// Currently infallible for well-typed inputs; reserved for future [`SealError`]
+/// transport or policy-envelope failures.
 pub fn seal(input: SealInput) -> Result<SealOutcome, SealError> {
     Ok(match input {
         SealInput::CustomizationOverlay {
@@ -42,6 +47,9 @@ pub fn seal(input: SealInput) -> Result<SealOutcome, SealError> {
     })
 }
 
+/// Validates customization overlay operations against base seals and declared
+/// extension points.
+#[must_use]
 pub fn validate_customization_overlay(
     base_seals: &[SealAnnotation],
     extension_points: &[ExtensionPointDefinition],
@@ -63,7 +71,7 @@ fn validate_overlay_operations(
     for (index, operation) in operations.iter().enumerate() {
         match operation {
             operation @ CustomizationOverlayOperation::Add { .. } => {
-                validate_additive(operation, seals, points, index, diagnostics)
+                validate_additive(operation, seals, points, index, diagnostics);
             }
             CustomizationOverlayOperation::Unseal { .. } => diagnostics.push(diag(
                 "sealing.monotonic.unseal_forbidden",
@@ -132,6 +140,9 @@ fn validate_overlay_operations(
     }
 }
 
+/// Verifies that runtime code holds every capability required to access a
+/// sealed node.
+#[must_use]
 pub fn validate_runtime_capability_backstop(
     requested_node_id: &str,
     seals: &[SealAnnotation],
@@ -152,6 +163,9 @@ pub fn validate_runtime_capability_backstop(
     seal_validation_result(diagnostics)
 }
 
+/// Validates that a base-seal upgrade is monotonic and revalidates downstream
+/// overlay operations against the upgraded seals.
+#[must_use]
 pub fn validate_seal_upgrade(
     previous_base_seals: &[SealAnnotation],
     upgraded_base_seals: &[SealAnnotation],
@@ -210,7 +224,7 @@ fn validate_additive(
     } else if node_id
         .strip_prefix(tenant_namespace)
         .and_then(|suffix| suffix.strip_prefix('.'))
-        .is_none_or(|suffix| suffix.is_empty())
+        .is_none_or(str::is_empty)
         || scope.tenant_id.as_deref() != Some(tenant_namespace)
     {
         diagnostics.push(diag(
@@ -337,7 +351,7 @@ fn validate_contract_payload(
     let schema = JsonValue::Object(contract.clone());
     let value = JsonValue::Object(payload.clone());
     if let Err(reason) = validate_contract_schema(&schema, "$")
-        .and_then(|_| validate_contract_value(&value, &schema, "$"))
+        .and_then(|()| validate_contract_value(&value, &schema, "$"))
     {
         diagnostics.push(diag(
             "sealing.extension_point.contract_violation",
@@ -362,7 +376,7 @@ fn validate_contract_schema(schema: &JsonValue, path: &str) -> Result<(), String
     for (keyword, value) in keywords {
         match keyword.as_str() {
             "$schema" | "$id" | "$comment" | "title" | "description" | "default" | "examples"
-            | "deprecated" | "readOnly" | "writeOnly" => {}
+            | "deprecated" | "readOnly" | "writeOnly" | "const" => {}
             "type" => {
                 let supported = match value {
                     JsonValue::String(kind) => is_supported_contract_type(kind),
@@ -406,7 +420,6 @@ fn validate_contract_schema(schema: &JsonValue, path: &str) -> Result<(), String
                     return Err(format!("{path}.enum must be a non-empty array"));
                 }
             }
-            "const" => {}
             _ => {
                 return Err(format!(
                     "{path} uses unsupported contract keyword `{keyword}`"
@@ -479,8 +492,7 @@ fn validate_contract_value(
                     Some(JsonValue::Bool(false)) => {
                         return Err(format!("{path}.{name} is not an allowed property"));
                     }
-                    Some(additional_schema @ JsonValue::Object(_))
-                    | Some(additional_schema @ JsonValue::Bool(true)) => {
+                    Some(additional_schema @ (JsonValue::Object(_) | JsonValue::Bool(true))) => {
                         validate_contract_value(
                             property_value,
                             additional_schema,
