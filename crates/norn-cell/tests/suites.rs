@@ -27,6 +27,8 @@ mod bench_mapping;
 mod bench_rules;
 #[path = "cell_host.rs"]
 mod cell_host;
+#[path = "cell_host_dst.rs"]
+mod cell_host_dst;
 #[path = "commit_path.rs"]
 mod commit_path;
 #[cfg(all(feature = "duckdb", feature = "native"))]

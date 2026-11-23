@@ -45,8 +45,22 @@
 //! baseline may only lose entries: CI (`skeleton-guard` job,
 //! `scripts/baseline-shrink-only.sh`) rejects a PR whose baseline gains an
 //! entry relative to the base branch.
+//!
+//! [`ratchet`] holds per-file counts (test honesty, `too_many_lines` allows,
+//! inner allows) in `baseline.json` `ratchets`; a count can only go down, and
+//! it must be lowered in the same PR that removes a violation. [`lint_pin`]
+//! holds the lint set (`[workspace.lints]`, `clippy.toml`, crate-root levels)
+//! to the floor in `lint-pin.json`. [`loc_cap`] enforces the 1,000 non-test
+//! LOC ceiling via the shrink-only `loc-baseline.json`. [`ring0_boundary`]
+//! enforces Ring-0 host-adapter / OLAP / UI crate bans and pins the remaining
+//! Ring-1 UI/widget modules in `norn-checker` (`baseline.json`
+//! `ring0_ui_modules`, #1613).
 
 pub mod ci;
+pub mod lint_pin;
+pub mod loc_cap;
+pub mod ratchet;
+pub mod ring0_boundary;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
