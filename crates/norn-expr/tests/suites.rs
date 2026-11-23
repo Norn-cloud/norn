@@ -26,6 +26,8 @@ mod cost;
 mod fixtures;
 #[path = "profile_conformance.rs"]
 mod profile_conformance;
+#[path = "temporal_intervals.rs"]
+mod temporal_intervals;
 #[path = "timezone_corpus.rs"]
 mod timezone_corpus;
 #[path = "type_env.rs"]

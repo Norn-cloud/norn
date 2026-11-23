@@ -60,7 +60,7 @@ const GOLDEN: &str = "tests/golden/check-receipt.retail.json";
 /// receipt's bytes changed: review the golden diff (a field or meaning change
 /// is a new `RECEIPT_FORMAT`).
 const RETAIL_RECEIPT_SHA256: &str =
-    "c4f1873c8393a5148cc6b039bcb4e01355345f45e4d921ee55d0d0c8766b803e";
+    "e6a99657a0874af298ade5b697194467a03d57db545719f66ecefa79d4e857e5";
 
 fn json_of(source: &str) -> Value {
     serde_json::from_str(source).expect("fixture should parse")
@@ -287,7 +287,7 @@ fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
         value["checker"],
         json!({ "name": CHECKER_NAME, "version": CHECKER_VERSION })
     );
-    assert_eq!(value["exprProfile"], "norn-zen/6");
+    assert_eq!(value["exprProfile"], "norn-zen/7");
     assert_eq!(value["identifierProfile"], IDENTIFIER_ADMISSION_PROFILE);
     assert_eq!(EXPR_PROFILE, norn_expr::check::CHECKER_PROFILE);
     assert_eq!(value["typeEnv"]["id"], norn_expr::TYPE_ENV_ID);
@@ -1048,4 +1048,21 @@ fn pre_diagnostic_v2_receipt_still_verifies() {
         &ResourceLimitProfile::norn_limits_v1(),
     )
     .expect("pre-change receipt remains valid without rewriting diagnostic bytes");
+}
+
+#[test]
+fn historic_zen6_receipt_remains_verifiable_under_zen7() {
+    let mut legacy = json_of(include_str!("golden/check-receipt.retail.json"));
+    legacy["exprProfile"] = json!("norn-zen/6");
+    let stored = compact_value(&legacy);
+    let digest = admission_receipt_sha256(&stored).expect("zen6 receipt hash");
+    let verified = verify_admission_receipt(
+        &stored,
+        &digest,
+        &envelopes(&registry_layer()),
+        &[],
+        &ResourceLimitProfile::norn_limits_v1(),
+    )
+    .expect("historical (0.2.0, norn-zen/6) receipt remains valid under norn-zen/7");
+    assert_eq!(verified.expr_profile(), "norn-zen/6");
 }
