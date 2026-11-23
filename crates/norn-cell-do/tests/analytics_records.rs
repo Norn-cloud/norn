@@ -569,7 +569,7 @@ fn dataset_lineage_requires_values_and_sources_capabilities() {
     norn_api::uploads::install(&host, &generated, norn_cell::provision::DEMO_ROWS_AT + 1).unwrap();
 
     // Row 1 is valid; row 2 fails integer typing so it is held back.
-    let data_csv = "code,units\nA1,10\nA2,not-an-int\n";
+    let data_csv = "row_id,code,units\nr1,A1,10\nr2,A2,not-an-int\n";
     let dir = tempfile::tempdir().unwrap();
     let transport = Loading(
         InProcess(
@@ -691,11 +691,23 @@ fn dataset_lineage_requires_values_and_sources_capabilities() {
 /// update after a dataset was already loaded (with `manifest.markings == {}`)
 /// immediately governs every dataset read path:
 /// 1. `page_objects` and `record_object` mask the column (and refuse filter/sort),
-/// 2. `profile_objects` refuses with `privacy.marked_column` before touching DuckDB,
+/// 2. `profile_objects` refuses with `privacy.marked_column` before touching `DuckDB`,
 /// 3. questions over the dataset refuse with `privacy.marked_column`,
 /// 4. `export_objects` refuses.
-/// Furthermore, a load-time marked manifest continues to refuse `:profile` even
-/// if a later definitions version removes the marking declaration.
+struct PanicTransport;
+
+impl Transport for PanicTransport {
+    fn resumed(&self) -> Option<EngineAnswer> {
+        None
+    }
+    fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
+        panic!(
+            "profile must not reach DuckDB for a marked dataset: {}",
+            call.op
+        );
+    }
+}
+
 #[test]
 fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
     use norn_api::analytics_routes::EngineQuestions;
@@ -714,8 +726,11 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
 
     let csv_text = "contact_id,email,score,recorded_at\nC1,alice@example.com,10,2026-10-21T08:00:00Z\nC2,bob@example.com,90,2026-10-22T09:00:00Z\n";
     let table = norn_api::uploads::parse_csv(csv_text).unwrap();
-    let load_req: norn_api::uploads::LoadRequest =
-        serde_json::from_value(json!({"typeName": "Contacts"})).unwrap();
+    let load_req: norn_api::uploads::LoadRequest = serde_json::from_value(json!({
+        "typeName": "Contacts",
+        "columns": [{"id": "score", "type": "integer", "measure": true}]
+    }))
+    .unwrap();
     let uri = "s3://uploads/demo/contacts.csv";
     let sha256 = hex_digest(csv_text.as_bytes());
     let generated =
@@ -735,11 +750,12 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
         ),
         Mutex::default(),
     );
+    let data_csv = "row_id,contact_id,email,score,recorded_at\nr1,C1,alice@example.com,10,2026-10-21T08:00:00Z\nr2,C2,bob@example.com,90,2026-10-22T09:00:00Z\n";
     transport
         .1
         .lock()
         .unwrap()
-        .insert("file://contacts".into(), csv_text.as_bytes().to_vec());
+        .insert("file://contacts".into(), data_csv.as_bytes().to_vec());
     let files = Files(&transport);
     let uploads: &dyn Uploads = &files;
     let load = server::analytics(
@@ -791,9 +807,8 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
     assert_eq!(profile_v1_doc["engine"], "duckdb");
     assert_eq!(profile_v1_doc["rows"], 2);
 
-    let derived_v1 = DerivedQuestions::new([7; 32], scope.clone())
-        .questions(&host)
-        .expect("derived metrics at v1");
+    let dq_v1 = DerivedQuestions::new([7; 32], scope.clone());
+    let derived_v1 = dq_v1.questions(&host).expect("derived metrics at v1");
     let engine_q_v1 = EngineQuestions::new(&derived_v1, &transport, host.scope());
     let q_v1: &dyn AdHocQuestions<NativeEngine> = &engine_q_v1;
     let listed = server::handle_with(
@@ -887,7 +902,6 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
             prop["markings"] = json!(["pii.contact"]);
         }
     }
-    contacts_entity_json["version"] = json!("0.2.0");
     let marked_contacts_entity: ArtifactEnvelope =
         serde_json::from_value(contacts_entity_json).unwrap();
     host.install_artifacts(
@@ -972,18 +986,6 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
     );
 
     // 2. `profile_objects` refuses with `privacy.marked_column` before touching DuckDB.
-    struct PanicTransport;
-    impl Transport for PanicTransport {
-        fn resumed(&self) -> Option<EngineAnswer> {
-            None
-        }
-        fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
-            panic!(
-                "profile must not reach DuckDB for a marked dataset: {}",
-                call.op
-            );
-        }
-    }
     let profile_v2 = server::analytics(
         &host,
         &principals,
@@ -1006,9 +1008,8 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
     );
 
     // 3. Questions over the dataset refuse with `privacy.marked_column`.
-    let derived_v2 = DerivedQuestions::new([7; 32], scope.clone())
-        .questions(&host)
-        .expect("derived metrics at v2");
+    let dq_v2 = DerivedQuestions::new([7; 32], scope);
+    let derived_v2 = dq_v2.questions(&host).expect("derived metrics at v2");
     let engine_q_v2 = EngineQuestions::new(&derived_v2, &PanicTransport, host.scope());
     let q_v2: &dyn AdHocQuestions<NativeEngine> = &engine_q_v2;
     let answer_v2 = server::handle_with(
@@ -1050,7 +1051,7 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
 }
 
 /// B2 + B3 / MANIFEST-MARK-1: a dataset whose manifest carries markings at load
-/// time refuses `:profile` with `privacy.marked_column` before touching DuckDB,
+/// time refuses `:profile` with `privacy.marked_column` before touching `DuckDB`,
 /// and stays refused even if a later model drops the marking declaration
 /// (monotone union). Unauthorized callers still receive opaque `authz.denied`.
 #[test]
@@ -1062,19 +1063,6 @@ fn profile_refuses_load_time_marked_dataset_and_stays_monotone() {
         },
     };
     use norn_ir::ObjectTypeDef;
-
-    struct PanicTransport;
-    impl Transport for PanicTransport {
-        fn resumed(&self) -> Option<EngineAnswer> {
-            None
-        }
-        fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
-            panic!(
-                "profile must not reach DuckDB for a marked dataset: {}",
-                call.op
-            );
-        }
-    }
 
     let make_model = |marked: bool| -> Model {
         let email_prop = if marked {
@@ -1106,11 +1094,7 @@ fn profile_refuses_load_time_marked_dataset_and_stays_monotone() {
     let db_path = dir.path().join("marked-dataset.sqlite");
 
     // Load time: commit a manifest with `email` marked `pii.contact`.
-    let mut store = CellStore::open(
-        NativeEngine::open(&db_path, StoreOptions::default()).unwrap(),
-        make_model(true),
-    )
-    .unwrap();
+    let mut store = CellStore::open(&db_path, make_model(true), StoreOptions::default()).unwrap();
     let table = store.analytics_table("test.Customer").unwrap();
     let binding = BTreeMap::new();
     let (data_sha, held_sha) = ("11".repeat(32), "22".repeat(32));
@@ -1211,11 +1195,8 @@ fn profile_refuses_load_time_marked_dataset_and_stays_monotone() {
 
     // 2. Reopen with an unmarked model: the manifest's stamped marking is
     //    monotone and still refuses `:profile` without touching DuckDB.
-    let store_unmarked = CellStore::open(
-        NativeEngine::open(&db_path, StoreOptions::default()).unwrap(),
-        make_model(false),
-    )
-    .unwrap();
+    let store_unmarked =
+        CellStore::open(&db_path, make_model(false), StoreOptions::default()).unwrap();
     let policy_unmarked =
         ReadPolicy::compile(store_unmarked.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
     let principals_unmarked = FixturePrincipals::new(DEMO_FIXTURES, policy_unmarked.caller());

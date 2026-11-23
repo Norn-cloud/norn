@@ -146,8 +146,8 @@ export interface paths {
          * MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the
          *     records grid names it, to the manifest that admitted it, the source
          *     upload and the data file, each by content hash and row offset, with what
-         *     held it back. Held-back rows are traced too. Read like the type's
-         *     records; no value is disclosed.
+         *     held it back. Held-back rows are traced too. Requires Population, Values
+         *     and Sources on the type; no value is disclosed.
          * @description # Errors
          *     A denied gate (one opaque 403), no dataset or no such row (404), or an
          *     unreachable engine.

@@ -657,7 +657,7 @@
         "tags": [
           "crate::analytics_routes"
         ],
-        "summary": "MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the\nrecords grid names it, to the manifest that admitted it, the source\nupload and the data file, each by content hash and row offset, with what\nheld it back. Held-back rows are traced too. Read like the type's\nrecords; no value is disclosed.",
+        "summary": "MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the\nrecords grid names it, to the manifest that admitted it, the source\nupload and the data file, each by content hash and row offset, with what\nheld it back. Held-back rows are traced too. Requires Population, Values\nand Sources on the type; no value is disclosed.",
         "description": "# Errors\nA denied gate (one opaque 403), no dataset or no such row (404), or an\nunreachable engine.",
         "operationId": "dataset_lineage",
         "parameters": [
