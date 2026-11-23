@@ -13,12 +13,14 @@ import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useLocale } from "@/lib/locale"
 import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
 import { SUPPRESSED } from "../lib/answer.ts"
 import { humanize } from "../lib/cell-read.ts"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
 import { FRESHNESS, stamp } from "../lib/format.ts"
+import { labelIndex, pick } from "../lib/labels.ts"
 import { writesWhole } from "../lib/actions.ts"
 import { VERDICTS, type Verdict } from "../lib/learning/episode.ts"
 import {
@@ -79,9 +81,10 @@ function RateCell({ figure }: { readonly figure: RateFigure | null }) {
  */
 export function MisfitPage() {
   const { view } = useView()
+  const { locale } = useLocale()
   const technical = view === "technical"
   const client = useQueryClient()
-  const { catalog } = useCatalog()
+  const { read: catalogRead, catalog } = useCatalog()
   const [acting, setActing] = useState<OpenAction | null>(null)
 
   const misfitRead = useQuery({ queryKey: ["learning", "misfit-by-law"], queryFn: () => readMisfitByLaw(), retry: false })
@@ -91,9 +94,15 @@ export function MisfitPage() {
     ? proposalCatalog.data.items.find((a) => a.actionId === "learning.draft_gap_proposal") ?? proposalCatalog.data.items.find(writesWhole)
     : undefined
 
+  const labels = catalogRead.data?.document ? labelIndex(catalogRead.data.document) : null
   const lawTitle = (lawId: string): string => {
-    const found = catalog?.laws.find((l) => l.id === lawId)
-    return found?.title ?? humanize(lawId)
+    const labelled = labels ? pick(labels, `law:${lawId}`, locale)?.text : undefined
+    if (labelled) return labelled
+    for (const concept of catalog?.concepts ?? []) {
+      const found = concept.laws.find((l) => l.id === lawId)
+      if (found?.rationale) return found.rationale
+    }
+    return humanize(lawId)
   }
 
   const refresh = () => {

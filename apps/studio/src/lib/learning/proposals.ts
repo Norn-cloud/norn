@@ -223,8 +223,10 @@ export function proposalFilterPredicate(status: ProposalStatus | undefined): Pre
 
 /** Read back the proposal status filter the server echoed. */
 export function proposalStatusFromServed(served: Served | null): ProposalStatus | undefined {
-  const clause = served?.filter?.all.find((c) => c.property === "status" && c.op === "eq")
-  return typeof clause?.value === "string" && PROPOSAL_STATUSES.includes(clause.value as ProposalStatus)
-    ? clause.value as ProposalStatus
-    : undefined
+  for (const c of served?.filter?.all ?? []) {
+    if (c.property === "status" && c.op === "eq" && typeof c.value === "string" && PROPOSAL_STATUSES.includes(c.value as ProposalStatus)) {
+      return c.value as ProposalStatus
+    }
+  }
+  return undefined
 }

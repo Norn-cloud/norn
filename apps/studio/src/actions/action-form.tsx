@@ -73,6 +73,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const fields = useMemo(() => fieldsOf(action.inputSchema), [action])
   const sections = useMemo(() => sectionsOf(fields, groupsOf(action.inputSchema), action.objectIdField), [fields, action])
   const blocked = useMemo(() => unsupported(fields), [fields])
+  const lookupEnum = useMemo<EnumLabelLookup>(() => enumLabel ?? (() => undefined), [enumLabel])
   const initial = useMemo(() => Object.entries(prefill).reduce<Draft>((draft, [name, value]) => withDraftAt(draft, `/${name}`, value), emptyDraft(fields)), [fields, prefill])
   const [draft, setDraft] = useState<Draft>(remembered ?? initial)
   // A kept draft is unsent work: the sheet treats it as dirty from the start.
@@ -166,7 +167,6 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const counts = problemsBySection(sections, diagnostics, draft)
   const go = (to: number) => { moved.current = true; setStep(to); setReached((r) => Math.max(r, to)); dispatch({ kind: "back" }) }
   const shown = wizard ? (step < review ? [sections[step]!] : []) : sections
-  const lookupEnum = useMemo<EnumLabelLookup>(() => enumLabel ?? (() => undefined), [enumLabel])
   return (
     <EnumLabels.Provider value={lookupEnum}>
     <Links.Provider value={links}>

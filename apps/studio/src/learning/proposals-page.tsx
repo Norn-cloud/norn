@@ -455,10 +455,10 @@ function ReplayIsland({ replay, technical }: { readonly replay: ProposalReplay |
         )}
 
         <StatStrip>
-          <KpiTile label="Replayed cases" value={replay.totalCases} sub={`Replayed ${when(replay.replayedAtMs)}`} />
-          <KpiTile label="Unchanged" value={replay.totalCases - replay.flippedCount} sub="Same outcome as before" />
-          <KpiTile label="Would change / refuse" value={replay.flippedCount} sub="Outcome flips under proposed limit" />
-          <KpiTile label="Protected flipped" value={replay.protectedFlippedCount} sub={replay.protectedFlippedCount > 0 ? "Blocks admission unless superseded" : "None flipped"} />
+          <KpiTile label="Replayed cases" value={replay.totalCases} sub={`${replay.evalSetName} v${replay.evalSetVersion}`} />
+          <KpiTile label="Unchanged" value={replay.totalCases - replay.flippedCount} sub="Same outcome" />
+          <KpiTile label="Would change" value={replay.flippedCount} sub="Outcome flips" />
+          <KpiTile label="Protected flipped" value={replay.protectedFlippedCount} sub={replay.protectedFlippedCount > 0 ? "Blocks admission" : "None flipped"} />
         </StatStrip>
 
         <div className="flex flex-wrap items-center justify-between gap-2">

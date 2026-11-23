@@ -219,14 +219,14 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
   await page.route("**/api/host/v1/objects/learning.CuratedCase**", (route) => {
     if (options.unserved) return route.fulfill({ status: 404, json: { code: "object.type_unknown", message: "Not served" } })
     return route.fulfill({
-      json: { objectType: "learning.CuratedCase", records: cases, total: { count: cases.length, exact: true }, next: null, quarantineCount: 0 },
+      json: { objectType: "learning.CuratedCase", records: cases, total: { count: cases.length, approximate: false }, next: null, quarantineCount: 0 },
     })
   })
 
   await page.route("**/api/host/v1/objects/learning.EvalSet**", (route) => {
     if (options.unserved) return route.fulfill({ status: 404, json: { code: "object.type_unknown", message: "Not served" } })
     return route.fulfill({
-      json: { objectType: "learning.EvalSet", records: evalSets, total: { count: evalSets.length, exact: true }, next: null, quarantineCount: 0 },
+      json: { objectType: "learning.EvalSet", records: evalSets, total: { count: evalSets.length, approximate: false }, next: null, quarantineCount: 0 },
     })
   })
 

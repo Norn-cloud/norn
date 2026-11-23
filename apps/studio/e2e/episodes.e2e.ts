@@ -227,7 +227,7 @@ test("triage: the cell's refusal reads in the form and nothing changes", async (
   await open(page, "ep_demo_overridden", "fixture", { serve: "catalog", refuseNext: true })
   await triage(page, "noise", "Wrong customer on the delivery")
   await sheet(page).getByRole("button", { name: "Triage", exact: true }).click()
-  await expect(sheet(page).getByRole("alert")).toContainText("the request conflicts with current state")
+  await expect(sheet(page).getByRole("alert")).toContainText("This request was already used for a different change")
   await shoot(page, "triage-refused")
   await page.keyboard.press("Escape")
   await page.getByRole("button", { name: "Discard" }).click()
@@ -268,6 +268,7 @@ test("triage: served L-i18n enum labels show in the Verdict dropdown while sendi
   await verdict.selectOption("pattern")
   await sheet(page).getByLabel("Reason").fill("Confirmed via L-i18n label")
   await sheet(page).getByRole("button", { name: "Triage", exact: true }).click()
+  await expect(sheet(page).getByRole("status")).toContainText("ep_demo_overridden")
   expect(calls[0]!.input["verdict"]).toBe("pattern")
 })
 
@@ -288,7 +289,7 @@ test("list: Workspace Learning space lists episodes, sends all five server filte
     queries.push(url)
     if (failSnapshotOnce) {
       failSnapshotOnce = false
-      return route.fulfill({ status: 409, json: { code: "query.snapshot_moved", message: "Snapshot moved" } })
+      return route.fulfill({ status: 409, json: { code: "object.snapshot_moved", message: "Snapshot moved" } })
     }
     const rawFilter = url.searchParams.get("filter")
     const filter = rawFilter ? (JSON.parse(rawFilter) as { all?: { property: string; op: string; value?: unknown }[] }) : null
@@ -306,7 +307,7 @@ test("list: Workspace Learning space lists episodes, sends all five server filte
       ? [...matched, { objectType: "learning.Episode", id: "ep_withheld_1", scope: "org_demo/analytics", version: null, values: null, withheld: true, withheldProperties: [] }]
       : matched
     return route.fulfill({
-      json: { objectType: "learning.Episode", records: rows, query: { sort: [], filter }, total: { count: rows.length, exact: true }, next: null, quarantineCount: 0 },
+      json: { objectType: "learning.Episode", records: rows, query: { sort: [], filter }, total: { count: rows.length, approximate: false }, next: null, quarantineCount: 0 },
     })
   })
 
@@ -332,8 +333,9 @@ test("list: Workspace Learning space lists episodes, sends all five server filte
   await page.getByLabel("Law id").fill("demo.credit.hold_over_limit")
   await page.getByRole("button", { name: "Apply" }).first().click()
   await expect(page.getByText("law: demo.credit.hold_over_limit")).toBeVisible()
-  await page.getByLabel("Producer pin").fill("sha256:9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c")
+  await page.getByLabel("Producer pin").fill("sha256:1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d")
   await page.getByRole("button", { name: "Apply" }).nth(1).click()
+  await expect(page.getByText(/pin: sha256:1c2d/)).toBeVisible()
   await expect(table.locator("tbody tr")).toHaveCount(1)
 
   const lastFilter = JSON.parse(queries.at(-1)!.searchParams.get("filter") ?? "null")
@@ -342,7 +344,7 @@ test("list: Workspace Learning space lists episodes, sends all five server filte
       { property: "agreement", op: "eq", value: "overridden" },
       { property: "outcome.state", op: "eq", value: "recorded" },
       { property: "ruleOutcomes.lawId", op: "eq", value: "demo.credit.hold_over_limit" },
-      { property: "recommendation.producer.manifestPin", op: "eq", value: "sha256:9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c" },
+      { property: "recommendation.producer.manifestPin", op: "eq", value: "sha256:1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d" },
       { property: "triage.verdict", op: "empty" },
     ],
   })

@@ -47,8 +47,9 @@ export function CasesPage() {
   const technical = view === "technical"
   const client = useQueryClient()
   const [tab, setTab] = useState<"cases" | "eval-sets">("cases")
-  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null)
+  const [openedCase, setOpenedCase] = useState<{ readonly kind: "ok"; readonly item: CuratedCase; readonly record: ObjectRecord } | null>(null)
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null)
+  const [lastSet, setLastSet] = useState<{ readonly kind: "ok"; readonly item: EvalSet; readonly record: ObjectRecord } | null>(null)
 
   const casesRead = useQuery({
     queryKey: ["learning", "cases"],
@@ -78,10 +79,16 @@ export function CasesPage() {
     (r): r is { readonly kind: "ok"; readonly item: EvalSet; readonly record: ObjectRecord } => r.kind === "ok",
   )
 
-  const selectedCase = selectedCaseId === null ? null : caseEntries.find((c) => c.item.id === selectedCaseId) ?? null
-  const activeSet = setEntries.find((s) => s.item.id === selectedSetId) ?? setEntries[0] ?? null
+  // Keep the opened case/set sheet stable across refetches (for example after uncurate/delete)
+  // so RecordActions and ActionSheet stay mounted with the receipt and server-offered Undo.
+  const selectedCase = openedCase === null
+    ? null
+    : caseEntries.find((c) => c.item.id === openedCase.item.id) ?? openedCase
+  const activeSet = setEntries.find((s) => s.item.id === selectedSetId) ?? setEntries[0] ?? lastSet
 
   useEffect(() => {
+    const live = setEntries.find((s) => s.item.id === selectedSetId) ?? setEntries[0] ?? null
+    if (live !== null) setLastSet(live)
     if (selectedSetId !== null && !setEntries.some((s) => s.item.id === selectedSetId)) {
       setSelectedSetId(setEntries[0]?.item.id ?? null)
     }
@@ -178,11 +185,11 @@ export function CasesPage() {
                       }
                       const c = row.item
                       return (
-                        <TableRow key={c.id} data-case-row={c.id} className="cursor-pointer" onClick={() => setSelectedCaseId(c.id)}>
+                        <TableRow key={c.id} data-case-row={c.id} className="cursor-pointer" onClick={() => setOpenedCase(row)}>
                           <TableCell className="max-w-md whitespace-normal">
                             <div className="grid gap-0.5 py-1">
                               <button type="button" className="text-start font-medium underline-offset-4 hover:underline"
-                                onClick={(event) => { event.stopPropagation(); setSelectedCaseId(c.id) }}>
+                                onClick={(event) => { event.stopPropagation(); setOpenedCase(row) }}>
                                 {c.question}
                               </button>
                               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -360,7 +367,7 @@ export function CasesPage() {
         </TabsContent>
       </Tabs>
 
-      <Sheet open={selectedCase !== null} onOpenChange={(open) => { if (!open) setSelectedCaseId(null) }}>
+      <Sheet open={selectedCase !== null} onOpenChange={(open) => { if (!open) setOpenedCase(null) }}>
         <SheetContent className="w-[min(34rem,100vw)] overflow-y-auto border-node-border shadow-float sm:max-w-lg">
           {selectedCase && (
             <>

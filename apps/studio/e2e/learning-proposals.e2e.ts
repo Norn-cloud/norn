@@ -164,7 +164,7 @@ async function mountCell(page: Page, options: { mode?: "fixture" | "unserved" | 
         objectType: "learning.GapProposal",
         records: filtered,
         query: { sort: [], filter },
-        total: { count: filtered.length, exact: true },
+        total: { count: filtered.length, approximate: false },
         next: null,
         quarantineCount: 0,
       },
@@ -399,7 +399,8 @@ test("proposals lifecycle: server-filter list, draft, edit, withdraw + undo, sub
   await actions.getByRole("button", { name: "Submit for replay" }).click()
   await dialog(page).getByRole("button", { name: "Submit for replay", exact: true }).click()
   await dialog(page).getByRole("button", { name: "Done" }).click()
-  await expect(page.getByRole("table", { name: "Replayed cases" })).toContainText("case_credit_phone_01")
+  await expect(page.getByRole("table", { name: "Replayed cases" })).toContainText("Release the held shipment? (phone-confirmed payment)")
+  await expect(page.getByRole("table", { name: "Replayed cases" }).locator('tr[data-replay-case="case_credit_phone_01"]')).toBeVisible()
 
   // Ratify the admitted proposal (irreversible confirm) → Ruling receipt appears.
   await actions.getByRole("button", { name: "Ratify proposal" }).click()

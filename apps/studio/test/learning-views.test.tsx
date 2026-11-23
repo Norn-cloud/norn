@@ -22,6 +22,8 @@ const proposalsFixture = JSON.parse(readFileSync(new URL("./fixtures/learning-pr
 }
 
 interface OpenApiSchema {
+  readonly type?: string | readonly string[]
+  readonly enum?: readonly string[]
   readonly required?: readonly string[]
   readonly properties?: Readonly<Record<string, { readonly type?: string | readonly string[]; readonly enum?: readonly string[]; readonly $ref?: string }>>
   readonly additionalProperties?: boolean | object
@@ -153,8 +155,8 @@ test("misfit_by_law decodes exact percentages, preserves D53 suppression and rej
     "demo.discount.max_margin",
     "demo.refund.window_days",
   ])
-  expect(decoded.data.rows[0]!.override).toMatchObject({ exact: "0.417", percent: "41.7%", numerator: "5", denominator: "12", suppressed: false })
-  expect(decoded.data.rows[0]!.exception).toMatchObject({ exact: "0.25", percent: "25%", numerator: "3", denominator: "12", suppressed: false })
+  expect(decoded.data.rows[0]!.override).toMatchObject({ exact: "0.417", percent: "41.70%", numerator: "5", denominator: "12", suppressed: false })
+  expect(decoded.data.rows[0]!.exception).toMatchObject({ exact: "0.25", percent: "25.00%", numerator: "3", denominator: "12", suppressed: false })
   expect(decoded.data.rows[2]!.override).toMatchObject({ suppressed: true, exact: null, percent: null, plotPercent: null })
   expect(decoded.data.rows[2]!.anySuppressed).toBe(true)
 
@@ -164,7 +166,7 @@ test("misfit_by_law decodes exact percentages, preserves D53 suppression and rej
     '"demo.credit.hold_over_limit"': { bucket: "demo.credit.hold_over_limit", totals: [1, 4], value: 0.25, members: { ep_1: { version: 1, amounts: [1, 1] } } },
   }
   const singleDecoded = decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(singleKey), "live"))
-  expect(singleDecoded.kind === "ok" && singleDecoded.data.rows[0]!.override?.percent).toBe("25%")
+  expect(singleDecoded.kind === "ok" && singleDecoded.data.rows[0]!.override?.percent).toBe("25.00%")
 
   // Invalid bucket and duplicate law+signal fail closed.
   const badBucket = structuredClone(misfitFixture.misfitByLaw)
@@ -261,17 +263,17 @@ test("gap proposals decode fail-closed on wrong-kind leaves and replay/ruling co
 })
 
 test("cases, eval sets and proposal readers call generic object routes and keep unavailable/no-cell apart", async () => {
-  const casesPage = cell(() => Response.json({ objectType: "learning.CuratedCase", records: casesFixture.cases, total: { count: 2, exact: true }, next: null, quarantineCount: 0 }))
+  const casesPage = cell(() => Response.json({ objectType: "learning.CuratedCase", records: casesFixture.cases, total: { count: 2, approximate: false }, next: null, quarantineCount: 0 }))
   const cRes = await listCuratedCases(EMPTY_QUERY, casesPage.fetcher)
   expect(cRes.kind === "page" && cRes.rows.length).toBe(2)
   expect(casesPage.calls[0]!.pathname).toBe("/api/host/v1/objects/learning.CuratedCase")
 
-  const setsPage = cell(() => Response.json({ objectType: "learning.EvalSet", records: casesFixture.evalSets, total: { count: 2, exact: true }, next: null, quarantineCount: 0 }))
+  const setsPage = cell(() => Response.json({ objectType: "learning.EvalSet", records: casesFixture.evalSets, total: { count: 2, approximate: false }, next: null, quarantineCount: 0 }))
   const sRes = await listEvalSets(EMPTY_QUERY, setsPage.fetcher)
   expect(sRes.kind === "page" && sRes.rows.length).toBe(2)
   expect(setsPage.calls[0]!.pathname).toBe("/api/host/v1/objects/learning.EvalSet")
 
-  const propPage = cell(() => Response.json({ objectType: "learning.GapProposal", records: proposalsFixture.records, total: { count: 4, exact: true }, next: null, quarantineCount: 0 }))
+  const propPage = cell(() => Response.json({ objectType: "learning.GapProposal", records: proposalsFixture.records, total: { count: 4, approximate: false }, next: null, quarantineCount: 0 }))
   const pRes = await listGapProposals(EMPTY_QUERY, propPage.fetcher)
   expect(pRes.kind === "page" && pRes.rows.length).toBe(4)
   expect(propPage.calls[0]!.pathname).toBe("/api/host/v1/objects/learning.GapProposal")
@@ -292,6 +294,7 @@ test("ActionForm renders L-i18n enum labels while preserving raw wire values and
   const action: ActionSummary = {
     actionId: "learning.triage_episode",
     title: "Triage",
+    description: "Triage one episode.",
     objectKind: "learning.Episode",
     effect: "fire_transition",
     objectIdField: "episodeId",

@@ -130,7 +130,7 @@ test("listing episodes: server filters encode all five clauses, echo back cleanl
       { ...fixture.records[0], id: "ep_bad", values: { ...fixture.records[0]!.values, agreement: "accepted" } },
     ],
     query: { sort: [], filter: pred },
-    total: { count: 3, exact: true },
+    total: { count: 3, approximate: false },
     next: "cursor_2",
     quarantineCount: 1,
   }))
@@ -142,7 +142,7 @@ test("listing episodes: server filters encode all five clauses, echo back cleanl
   expect(page.next).toBe("cursor_2")
   expect(page.quarantineCount).toBe(1)
 
-  expect(await listEpisodes(EMPTY_QUERY, cell(() => Response.json({ code: "query.snapshot_moved", message: "moved" }, { status: 409 })).fetcher)).toEqual({ kind: "restart" })
+  expect(await listEpisodes(EMPTY_QUERY, cell(() => Response.json({ code: "object.snapshot_moved", message: "moved" }, { status: 409 })).fetcher)).toEqual({ kind: "restart" })
   expect(await listEpisodes(EMPTY_QUERY, cell(() => Response.json({ code: "authz.denied", message: "denied" }, { status: 403 })).fetcher)).toEqual({ kind: "refused", status: 403, code: "authz.denied", message: "denied", diagnostics: [] })
   expect(await listEpisodes(EMPTY_QUERY, cell(() => Response.json({ code: "object.type_unknown" }, { status: 404 })).fetcher)).toEqual({ kind: "unavailable" })
   const none = cell(() => { throw new Error("no call") }, { ...ME, environmentId: null })

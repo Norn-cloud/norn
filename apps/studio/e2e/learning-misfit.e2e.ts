@@ -112,9 +112,9 @@ test("misfit board & learning charts: renders both charts, exact tables, D53 sup
   // Exact figures and D53 suppression in the board table.
   const misfitTable = page.getByRole("table", { name: "Misfit by law" })
   const creditRow = misfitTable.locator('tr[data-misfit-law="demo.credit.hold_over_limit"]')
-  await expect(creditRow).toContainText("41.7%")
+  await expect(creditRow).toContainText("41.70%")
   await expect(creditRow).toContainText("(5/12)")
-  await expect(creditRow).toContainText("25%")
+  await expect(creditRow).toContainText("25.00%")
   await expect(creditRow).toContainText("(3/12)")
 
   const suppressedRow = misfitTable.locator('tr[data-misfit-law="demo.refund.window_days"]')
@@ -157,8 +157,8 @@ test("misfit board & learning charts: renders both charts, exact tables, D53 sup
 
 test("misfit board: refused and unserved answers say so honestly", async ({ page }) => {
   await openMisfit(page, "refused")
-  await expect(page.getByText("Your role may not read misfit metrics.")).toBeVisible()
-  await expect(page.getByText("Your role may not read triage trends.")).toBeVisible()
+  await expect(page.getByText("Your role may not read misfit metrics.").first()).toBeVisible()
+  await expect(page.getByText("Your role may not read triage trends.").first()).toBeVisible()
 
   await page.unrouteAll({ behavior: "ignoreErrors" })
   await openMisfit(page, "unserved")
