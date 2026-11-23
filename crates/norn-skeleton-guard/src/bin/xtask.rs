@@ -17,7 +17,13 @@ enum Top {
 #[derive(Subcommand)]
 enum Gate {
     /// Run one bundle from a checked plan.
-    Bundle { plan: String, id: String },
+    #[command(disable_help_flag = true)]
+    Bundle {
+        #[arg(allow_hyphen_values = true)]
+        plan: String,
+        #[arg(allow_hyphen_values = true)]
+        id: String,
+    },
     /// Pack a planner document.
     BundlePlan { plan: String },
     /// Check the exact deterministic bundle inventory.
