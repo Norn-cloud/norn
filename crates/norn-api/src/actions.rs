@@ -34,6 +34,76 @@ pub const MAX_IDEMPOTENCY_KEY_CHARS: usize = 128;
 /// Longest idempotency key, in UTF-8 bytes.
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
 
+fn present_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+/// Optional provenance trace context attached to an action call and retained
+/// on its committed receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TraceContext {
+    /// Opaque correlation identifier tying multi-step causes and effects
+    /// together (1 to 256 UTF-8 bytes, no control characters or outer whitespace).
+    #[schema(min_length = 1, max_length = 256)]
+    pub trace_id: String,
+    /// Optional reference to the goal, prompt, commitment, or decision that
+    /// initiated the action (1 to 512 UTF-8 bytes, no control characters or
+    /// outer whitespace).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_non_null"
+    )]
+    #[schema(nullable = false, min_length = 1, max_length = 512)]
+    pub intent_ref: Option<String>,
+    /// Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)
+    /// of an off-ledger agent or user session transcript. Raw transcript text
+    /// is never stored in the ledger.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_non_null"
+    )]
+    #[schema(nullable = false, pattern = "^sha256:[0-9a-f]{64}$")]
+    pub session_digest: Option<String>,
+}
+
+impl TraceContext {
+    /// Validate and convert this wire trace context to the canonical kernel
+    /// [`norn_ir::TraceContext`].
+    ///
+    /// # Errors
+    /// `request.invalid` (400) pointing to the malformed trace member.
+    pub fn to_ir(&self) -> Result<norn_ir::TraceContext, Refusal> {
+        let ir = norn_ir::TraceContext {
+            trace_id: self.trace_id.clone(),
+            intent_ref: self.intent_ref.clone(),
+            session_digest: self
+                .session_digest
+                .as_ref()
+                .map(|digest| norn_ir::function::Digest(digest.clone())),
+        };
+        ir.validate()
+            .map_err(|error| invalid_at(error.pointer(), &error.to_string()))?;
+        Ok(ir)
+    }
+}
+
+impl From<norn_ir::TraceContext> for TraceContext {
+    fn from(value: norn_ir::TraceContext) -> Self {
+        Self {
+            trace_id: value.trace_id,
+            intent_ref: value.intent_ref,
+            session_digest: value.session_digest.map(|digest| digest.0),
+        }
+    }
+}
+
 /// `POST /v1/actions/{actionId}`: one call. The actor never travels in the body.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -46,6 +116,10 @@ pub struct ActionRequest {
     pub input: RuntimeValue,
     /// The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes.
     pub idempotency_key: String,
+    /// Optional provenance trace context persisted on the committed receipt.
+    #[serde(default, deserialize_with = "present_non_null")]
+    #[schema(nullable = false)]
+    pub trace: Option<TraceContext>,
 }
 
 /// Explicit scope and an optional definitions pin, from the query string.
@@ -102,6 +176,10 @@ pub struct ActionReceipt {
     pub version: u64,
     /// The original commit, the same on every replay.
     pub receipt: ActionCommit,
+    /// Optional provenance trace context retained from the original call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub trace: Option<TraceContext>,
 }
 
 fn action_input_schema() -> utoipa::openapi::Ref {
@@ -166,6 +244,9 @@ pub fn decode_action_request(body: &str) -> Result<ActionRequest, Refusal> {
             "/idempotencyKey",
             "idempotencyKey must be 1 to 128 printable characters and at most 256 bytes",
         ));
+    }
+    if let Some(trace) = &request.trace {
+        trace.to_ir()?;
     }
     Ok(request)
 }
@@ -372,6 +453,11 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     let RuntimeValue::Object(input) = &request.input else {
         return Err(invalid_at("/input", "input must be a JSON object"));
     };
+    let trace = request
+        .trace
+        .as_ref()
+        .map(TraceContext::to_ir)
+        .transpose()?;
     let mut cell = host.cell()?;
     // ADMIT-CACHE-1 (#1533): verified once per definitions version.
     let (installed_version, admitted) = host
@@ -411,6 +497,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
             world: cell.store().world(),
             consumes: None,
         },
+        trace,
     };
     // APPROVAL-REVISION-1: an approval binds to the action as defined now,
     // with what it writes.
@@ -622,6 +709,7 @@ fn through_gate<E: SqlEngine>(
                     requester: &kernel_call.actor,
                     input: &kernel_call.input,
                     definitions_version,
+                    trace: kernel_call.trace.as_ref(),
                 },
             )
         })
@@ -687,6 +775,7 @@ fn through_gate<E: SqlEngine>(
                 definitions_version,
                 // S6b: the step attempt making this call, recorded now.
                 attempt: attempt.cloned(),
+                trace: kernel_call.trace.clone(),
             };
             Ok(
                 match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {
@@ -868,6 +957,7 @@ fn caller_receipt<E: SqlEngine>(
             commit_seq: receipt.body.commit_seq,
             recorded_at_ms: receipt.body.logical_time,
         },
+        trace: record.trace.map(TraceContext::from),
     })
 }
 

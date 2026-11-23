@@ -97,6 +97,17 @@
       "items": {
         "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
       }
+    },
+    "trace": {
+      "description": "Optional provenance trace context supplied by the caller.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TraceContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -171,6 +182,35 @@
         "expression",
         "satisfied"
       ]
+    },
+    "TraceContext": {
+      "description": "Optional provenance trace context attached to an action call and persisted\non its committed receipt.\n\nStrictly optional and additive: callers without trace context are unaffected,\nand raw transcript text is never stored (`sessionDigest` admits only a\ncontent-addressed SHA-256 digest).",
+      "type": "object",
+      "properties": {
+        "traceId": {
+          "description": "Opaque correlation identifier tying multi-step causes and effects\ntogether (1 to 256 UTF-8 bytes, no control characters or outer whitespace).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "intentRef": {
+          "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
+          "type": "string"
+        },
+        "sessionDigest": {
+          "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "traceId"
+      ]
+    },
+    "Digest": {
+      "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
     }
   }
 }

@@ -104,7 +104,8 @@ pub use action::{
     AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation, ActionCompensation,
     ActionCreateLink, ActionInputDerivation, ActionLinkSource, ActionQuantityEffect,
     ActionQuantityOperation, ActionQuantityParameter, ActionRoot, ActionRuleRef, ActionUiEffect,
-    ActionUiEffects, ActionWrite, McpTool, McpToolAnnotations, WriteChange,
+    ActionUiEffects, ActionWrite, MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, McpTool,
+    McpToolAnnotations, TraceContext, TraceContextError, WriteChange,
 };
 pub use aggregate_input::{ActionAggregateInput, AggregateFunction, AggregateWindow};
 pub use business_pack::{

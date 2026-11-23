@@ -695,7 +695,18 @@ fn generic_tools(
                 "description": "Call any governed action you may call, by its action id (norn_catalog lists them; an action installed during this conversation is callable here before its own tool appears). The input is the action's input object; fields the server fills (the actor, the clock) are not yours to send. The workspace's laws and policy decide it: the answer is a receipt or a refusal with its reason.",
                 "inputSchema": {"type": "object", "additionalProperties": false, "required": ["action", "input"], "properties": {
                     "action": {"type": "string", "description": "An action id, for example lab.batch.record."},
-                    "input": {"type": "object", "description": "The action's input; decimals as exact strings."}
+                    "input": {"type": "object", "description": "The action's input; decimals as exact strings."},
+                    "trace": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["traceId"],
+                        "description": "Optional provenance trace context persisted on the action receipt (no raw transcript text; sessionDigest is sha256:<64 hex>).",
+                        "properties": {
+                            "traceId": {"type": "string", "minLength": 1, "maxLength": 256},
+                            "intentRef": {"type": "string", "minLength": 1, "maxLength": 512},
+                            "sessionDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+                        }
+                    }
                 }},
                 "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false},
             }),
@@ -981,17 +992,27 @@ impl<E: SqlEngine> Loopback<'_, E> {
                 let Some(RuntimeValue::Object(input)) = arguments.get("input") else {
                     return Err(Refusal::invalid("input must be the action's input object"));
                 };
-                self.action_call(&action, input, metadata, scoped)?
+                let arg_trace = arguments.get("trace").map(parse_trace).transpose()?;
+                self.action_call(&action, input, arg_trace.as_ref(), metadata, scoped)?
             }
             _ => {
                 let action = self
                     .actions
                     .get(name)
                     .ok_or_else(|| Refusal::invalid("unknown tool"))?;
-                self.action_call(action, arguments, metadata, scoped)?
+                self.action_call(action, arguments, None, metadata, scoped)?
             }
         })
     }
+}
+
+fn parse_trace(value: &RuntimeValue) -> Result<norn_ir::TraceContext, Refusal> {
+    let trace: norn_ir::TraceContext = norn_ir::runtime::decode(value)
+        .map_err(|error| Refusal::invalid(format!("trace is malformed: {error}")))?;
+    trace
+        .validate()
+        .map_err(|error| Refusal::invalid(error.to_string()))?;
+    Ok(trace)
 }
 
 impl<E: SqlEngine> Loopback<'_, E> {
@@ -1001,35 +1022,58 @@ impl<E: SqlEngine> Loopback<'_, E> {
         &self,
         action: &str,
         input: &RuntimeObject,
+        arg_trace: Option<&norn_ir::TraceContext>,
         metadata: &RuntimeObject,
         mut scoped: Vec<(&'static str, String)>,
     ) -> Result<Routed, Refusal> {
+        let meta_trace = metadata.get("norn/trace").map(parse_trace).transpose()?;
+        let trace = match (arg_trace, meta_trace) {
+            (Some(left), Some(right)) if *left != right => {
+                return Err(Refusal::invalid(
+                    "conflicting trace context in arguments and _meta",
+                ));
+            }
+            (Some(trace), _) => Some(trace.clone()),
+            (None, meta) => meta,
+        };
         let key = if let Some(RuntimeValue::String(key)) = metadata.get("norn/idempotencyKey") {
             key.clone()
         } else {
-            idempotency_key(action, input)?
+            idempotency_key(action, input, trace.as_ref())?
         };
         scoped.push(("version", self.version.to_string()));
+        let mut fields = vec![
+            ("input", RuntimeValue::Object(input.clone())),
+            ("idempotencyKey", RuntimeValue::String(key)),
+        ];
+        if let Some(trace) = &trace {
+            fields.push(("trace", trace.to_runtime_value()));
+        }
         Ok(Routed {
             method: "POST",
             path: format!("/v1/actions/{}", segment(action)),
             query: scoped,
-            body: json_text(&object(vec![
-                ("input", RuntimeValue::Object(input.clone())),
-                ("idempotencyKey", RuntimeValue::String(key)),
-            ]))?,
+            body: json_text(&object(fields))?,
         })
     }
 }
 
 /// Without a caller-supplied key, a call's retry identity is its content: the
-/// same action with the same input is one call, and a host's automatic retry
-/// returns the original receipt instead of committing twice.
-fn idempotency_key(action: &str, arguments: &RuntimeObject) -> Result<String, Refusal> {
-    let content = json_text(&object(vec![
+/// same action with the same input (and trace, when present) is one call, and
+/// a host's automatic retry returns the original receipt instead of committing twice.
+fn idempotency_key(
+    action: &str,
+    arguments: &RuntimeObject,
+    trace: Option<&norn_ir::TraceContext>,
+) -> Result<String, Refusal> {
+    let mut fields = vec![
         ("action", RuntimeValue::String(action.to_owned())),
         ("input", RuntimeValue::Object(arguments.clone())),
-    ]))?;
+    ];
+    if let Some(trace) = trace {
+        fields.push(("trace", trace.to_runtime_value()));
+    }
+    let content = json_text(&object(fields))?;
     let digest = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(content.as_bytes());
     Ok(format!("mcp:{digest}"))
 }

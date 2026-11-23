@@ -1220,3 +1220,85 @@ fn an_install_drops_the_verified_definitions_of_the_last_revision() {
     .unwrap();
     assert_eq!(committed.outcome, ActionCallOutcome::Committed);
 }
+
+#[test]
+fn action_request_and_receipt_thread_optional_trace_and_refuse_invalid_trace() {
+    let host = host();
+    let query = scoped("org_demo");
+    let digest = format!("sha256:{}", "d".repeat(64));
+
+    // Omitting trace omits `trace` in the serialized receipt JSON.
+    let plain = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        MELT_ACTION,
+        &melt_body("melt-plain", "12", "10", "k-plain"),
+    )
+    .unwrap();
+    assert_eq!(plain.trace, None);
+    let plain_json = serde_json::to_value(&plain).unwrap();
+    assert!(
+        plain_json.get("trace").is_none(),
+        "absent trace must stay omitted from serialized ActionReceipt: {plain_json}"
+    );
+
+    // Supplying trace persists and returns it on commit and replay.
+    let traced_body = json!({
+        "input": { "id": "melt-traced", "input_fine_g": "12", "output_fine_g": "10" },
+        "idempotencyKey": "k-traced",
+        "trace": {
+            "traceId": "trace-api-1",
+            "intentRef": "prompt:sha256:intent",
+            "sessionDigest": digest,
+        }
+    })
+    .to_string();
+    let committed = call(&host, &query, Some(OPERATOR), MELT_ACTION, &traced_body).unwrap();
+    let expected = TraceContext {
+        trace_id: "trace-api-1".to_owned(),
+        intent_ref: Some("prompt:sha256:intent".to_owned()),
+        session_digest: Some(digest),
+    };
+    assert_eq!(committed.outcome, ActionCallOutcome::Committed);
+    assert_eq!(committed.trace.as_ref(), Some(&expected));
+    let replayed = call(&host, &query, Some(OPERATOR), MELT_ACTION, &traced_body).unwrap();
+    assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
+    assert_eq!(replayed.trace.as_ref(), Some(&expected));
+    assert_eq!(replayed.receipt, committed.receipt);
+
+    // Conflicting trace under the same idempotency key refuses 409.
+    let conflict_body = json!({
+        "input": { "id": "melt-traced", "input_fine_g": "12", "output_fine_g": "10" },
+        "idempotencyKey": "k-traced",
+        "trace": { "traceId": "trace-api-other" }
+    })
+    .to_string();
+    let conflict = call(&host, &query, Some(OPERATOR), MELT_ACTION, &conflict_body).unwrap_err();
+    assert_eq!(
+        (conflict.status, conflict.code.as_str()),
+        (409, "action.idempotency_conflict")
+    );
+
+    // Malformed trace refuses 400 before touching storage.
+    let before = dump(&host);
+    for bad_trace in [
+        json!(null),
+        json!({}),
+        json!({ "traceId": "" }),
+        json!({ "traceId": "t1", "sessionDigest": "raw transcript text" }),
+        json!({ "traceId": "t1", "unknown": "x" }),
+        json!({ "traceId": "t".repeat(257) }),
+        json!({ "traceId": "t1", "intentRef": null }),
+    ] {
+        let body = json!({
+            "input": { "id": "melt-bad", "input_fine_g": "12", "output_fine_g": "10" },
+            "idempotencyKey": "k-bad",
+            "trace": bad_trace,
+        })
+        .to_string();
+        let refused = decode_action_request(&body).unwrap_err();
+        assert_eq!(refused.status, 400, "bad trace must refuse 400: {body}");
+    }
+    assert_eq!(dump(&host), before, "malformed trace must mutate nothing");
+}

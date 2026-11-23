@@ -2,7 +2,17 @@
   "type": "object",
   "properties": {
     "action": { "type": "string" },
-    "input": { "type": "object", "additionalProperties": true }
+    "input": { "type": "object", "additionalProperties": true },
+    "trace": {
+      "type": "object",
+      "properties": {
+        "traceId": { "type": "string" },
+        "intentRef": { "type": "string" },
+        "sessionDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      },
+      "required": ["traceId"],
+      "additionalProperties": false
+    }
   },
   "required": ["action", "input"],
   "additionalProperties": false

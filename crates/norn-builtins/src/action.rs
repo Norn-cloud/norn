@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use norn_ir::RuntimeValue;
+use norn_ir::{RuntimeValue, TraceContext};
 
 /// The Function id.
 pub const FUNCTION_ID: &str = "norn.action";
@@ -32,20 +32,22 @@ pub const MAX_ACTION_ID_BYTES: usize = 256;
 /// bound.
 pub const MAX_INPUT_BYTES: u64 = 256 * 1024;
 
-/// One action step: the action to call and its input.
+/// One action step: the action to call, its input, and optional trace context.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActionStep {
     /// The admitted action id.
     pub action: String,
     /// The action's input object.
     pub input: BTreeMap<String, RuntimeValue>,
+    /// Optional provenance trace context forwarded to the governed action call.
+    pub trace: Option<TraceContext>,
 }
 
 /// Why a perform input is not an action step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepRefusal {
-    /// The input is not `{action, input}` with a bounded action id and an
-    /// input object.
+    /// The input is not `{action, input, trace?}` with a bounded action id,
+    /// an input object, and an optional valid trace context.
     Shape,
     /// The input is larger than [`MAX_INPUT_BYTES`].
     TooLarge,
@@ -70,7 +72,8 @@ pub fn parse_step(input: &RuntimeValue) -> Result<ActionStep, StepRefusal> {
     let RuntimeValue::Object(members) = input else {
         return Err(StepRefusal::Shape);
     };
-    if members.len() != 2 {
+    let expected_len = if members.contains_key("trace") { 3 } else { 2 };
+    if members.len() != expected_len {
         return Err(StepRefusal::Shape);
     }
     let (Some(RuntimeValue::String(action)), Some(RuntimeValue::Object(step_input))) =
@@ -81,6 +84,15 @@ pub fn parse_step(input: &RuntimeValue) -> Result<ActionStep, StepRefusal> {
     if action.trim().is_empty() || action.len() > MAX_ACTION_ID_BYTES {
         return Err(StepRefusal::Shape);
     }
+    let trace = match members.get("trace") {
+        None => None,
+        Some(value) => {
+            let decoded: TraceContext =
+                norn_ir::runtime::decode(value).map_err(|_decode| StepRefusal::Shape)?;
+            decoded.validate().map_err(|_invalid| StepRefusal::Shape)?;
+            Some(decoded)
+        }
+    };
     let size = input
         .canonical_json()
         .map_err(|_canonical| StepRefusal::Shape)?
@@ -91,5 +103,47 @@ pub fn parse_step(input: &RuntimeValue) -> Result<ActionStep, StepRefusal> {
     Ok(ActionStep {
         action: action.clone(),
         input: step_input.clone(),
+        trace,
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "fixture assertions")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_step_accepts_optional_trace_and_refuses_malformed_trace() {
+        let digest = format!("sha256:{}", "c".repeat(64));
+        let plain =
+            RuntimeValue::from_json_text(r#"{"action":"ops.melt.convert","input":{"id":"m1"}}"#)
+                .unwrap();
+        let step = parse_step(&plain).unwrap();
+        assert_eq!(step.action, "ops.melt.convert");
+        assert_eq!(step.trace, None);
+
+        let traced = RuntimeValue::from_json_text(format!(
+            r#"{{"action":"ops.melt.convert","input":{{"id":"m1"}},"trace":{{"traceId":"tr-1","intentRef":"run:r1","sessionDigest":"{digest}"}}}}"#
+        ))
+        .unwrap();
+        let step = parse_step(&traced).unwrap();
+        assert_eq!(
+            step.trace,
+            Some(TraceContext {
+                trace_id: "tr-1".to_owned(),
+                intent_ref: Some("run:r1".to_owned()),
+                session_digest: Some(norn_ir::function::Digest(digest)),
+            })
+        );
+
+        for bad in [
+            r#"{"action":"ops.melt.convert","input":{"id":"m1"},"trace":null}"#,
+            r#"{"action":"ops.melt.convert","input":{"id":"m1"},"trace":{"traceId":""}}"#,
+            r#"{"action":"ops.melt.convert","input":{"id":"m1"},"trace":{"traceId":"t1","sessionDigest":"raw transcript"}}"#,
+            r#"{"action":"ops.melt.convert","input":{"id":"m1"},"trace":{"traceId":"t1","extra":"bad"}}"#,
+        ] {
+            let value = RuntimeValue::from_json_text(bad).unwrap();
+            assert_eq!(parse_step(&value), Err(StepRefusal::Shape), "{bad}");
+        }
+    }
 }

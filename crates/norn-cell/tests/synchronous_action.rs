@@ -160,6 +160,7 @@ fn call(action: &ActionRoot) -> ActionCall<'_> {
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 fn open(path: &Path, definitions: &[ObjectTypeDef]) -> Cell {

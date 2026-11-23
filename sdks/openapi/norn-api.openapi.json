@@ -5086,6 +5086,10 @@
             "$ref": "#/components/schemas/ActionCommit",
             "description": "The original commit, the same on every replay."
           },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context retained from the original call."
+          },
           "version": {
             "type": "integer",
             "format": "int64",
@@ -5108,6 +5112,10 @@
           },
           "input": {
             "$ref": "#/components/schemas/NornActionInput"
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context persisted on the committed receipt."
           }
         },
         "additionalProperties": false
@@ -5595,6 +5603,10 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context carried by the parked call."
           }
         }
       },
@@ -6684,6 +6696,17 @@
             "type": "string",
             "description": "The state it entered."
           },
+          "trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornActionTraceContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional provenance trace context supplied by the caller."
+          },
           "transition": {
             "type": "string",
             "description": "The fired transition."
@@ -6717,6 +6740,11 @@
             "description": "The callable actions an effect program can run, ordered by identity."
           }
         }
+      },
+      "NornActionDigest": {
+        "type": "string",
+        "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+        "pattern": "^sha256:[0-9a-f]{64}$"
       },
       "NornActionEffect": {
         "type": "string",
@@ -6842,6 +6870,31 @@
             "description": "The effects a caller must handle."
           }
         }
+      },
+      "NornActionTraceContext": {
+        "type": "object",
+        "description": "Optional provenance trace context attached to an action call and persisted\non its committed receipt.\n\nStrictly optional and additive: callers without trace context are unaffected,\nand raw transcript text is never stored (`sessionDigest` admits only a\ncontent-addressed SHA-256 digest).",
+        "required": [
+          "traceId"
+        ],
+        "properties": {
+          "intentRef": {
+            "type": "string",
+            "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace)."
+          },
+          "sessionDigest": {
+            "type": "string",
+            "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "traceId": {
+            "type": "string",
+            "description": "Opaque correlation identifier tying multi-step causes and effects\ntogether (1 to 256 UTF-8 bytes, no control characters or outer whitespace).",
+            "maxLength": 256,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
       },
       "NornActionUiEffects": {
         "type": "object",
@@ -34958,6 +35011,10 @@
                 "enum": [
                   "action"
                 ]
+              },
+              "trace": {
+                "$ref": "#/components/schemas/TraceContext",
+                "description": "Optional provenance trace context recorded on the action call."
               }
             }
           },
@@ -35479,6 +35536,10 @@
                 "type": "null"
               }
             ]
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context carried by the parked call."
           }
         }
       },
@@ -35974,6 +36035,33 @@
           "executor",
           "timer"
         ]
+      },
+      "TraceContext": {
+        "type": "object",
+        "description": "Optional provenance trace context attached to an action call and retained\non its committed receipt.",
+        "required": [
+          "traceId"
+        ],
+        "properties": {
+          "intentRef": {
+            "type": "string",
+            "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
+            "maxLength": 512,
+            "minLength": 1
+          },
+          "sessionDigest": {
+            "type": "string",
+            "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "traceId": {
+            "type": "string",
+            "description": "Opaque correlation identifier tying multi-step causes and effects\ntogether (1 to 256 UTF-8 bytes, no control characters or outer whitespace).",
+            "maxLength": 256,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
       }
     },
     "securitySchemes": {

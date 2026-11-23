@@ -108,6 +108,10 @@ pub enum NornVersionWriter {
         /// frozen contract keeps its shape.
         #[schema(schema_with = withheld_input_schema)]
         input: WithheldInput,
+        /// Optional provenance trace context recorded on the action call.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(nullable = false)]
+        trace: Option<crate::actions::TraceContext>,
     },
     /// Another writer (an import, a migration or a kernel rule), or one this
     /// caller is not told: an action whose call record the caller may not
@@ -410,10 +414,18 @@ fn action_writer<E: SqlEngine>(
     let (Some(action_id), Some(actor)) = (text("actionId"), text("actor")) else {
         return Ok(None);
     };
+    let trace = record
+        .values
+        .get("trace")
+        .filter(|value| !value.is_null())
+        .and_then(|value| norn_ir::runtime::decode::<norn_ir::TraceContext>(value).ok())
+        .filter(|trace| trace.validate().is_ok())
+        .map(crate::actions::TraceContext::from);
     Ok(Some(NornVersionWriter::Action {
         action_id,
         actor,
         input: WithheldInput,
+        trace,
     }))
 }
 
