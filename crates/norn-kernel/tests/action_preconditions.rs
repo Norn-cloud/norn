@@ -100,6 +100,7 @@ fn invocation(action: &ActionRoot) -> ActionCall<'_> {
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 

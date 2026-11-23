@@ -2489,7 +2489,7 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
             rules["example.fold.step.rule"].clone(),
         )]),
         DecisionBinding {
-            profile_id: "norn-zen/6".into(),
+            profile_id: "norn-zen/7".into(),
             environment_hash: "fold-membership".into(),
         },
     )

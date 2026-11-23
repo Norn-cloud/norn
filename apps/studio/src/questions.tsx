@@ -1,7 +1,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
-import { CalendarRange, ChartLine, Clock, Database, Plus, Rows3, Sigma, X } from "lucide-react"
+import { CalendarRange, ChartLine, Clock, Database, ListTree, Plus, Rows3, Sigma, X } from "lucide-react"
 import { FactChip } from "@/components/chip"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
@@ -322,8 +322,9 @@ export function QuestionsPage() {
   const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard, enabled: mode.data?.kind === "recorded" })
   return (
     <section className="space-y-6">
-      <PageHeader title="Metrics" description="The numbers your records add up to, answered exactly by the server. Every number opens to the records behind it."
-        actions={<><Button asChild variant="outline" size="sm"><Link to="/metrics/build">Step by step</Link></Button><Button asChild size="sm"><Link to="/metrics/new"><Plus />Explore a metric</Link></Button></>} />
+      <PageHeader title="Metrics" description="The numbers your records add up to, answered exactly by the cell. Every number opens to the records behind it."
+        primary={<Button asChild><Link to="/metrics/new"><Plus />Explore a metric</Link></Button>}
+        secondary={[{ label: "Build step by step", icon: ListTree, to: "/metrics/build" }]} />
       {mode.isError && <p className="text-destructive">{mode.error.message}</p>}
       {live ? <LiveQuestionsBoard /> : mode.data && <>
         {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}

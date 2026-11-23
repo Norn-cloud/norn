@@ -154,12 +154,14 @@ where
         effective_input: preparation.recorded_effective_input(),
         derived_values: preparation.derived_values.clone(),
         precondition_outcomes: Vec::new(),
+        parameter_pins: Vec::new(),
         actor: call.actor.clone(),
         turn: call.turn.id.clone(),
         transition: String::new(),
         from: String::new(),
         to: String::new(),
         row_operations: Vec::new(),
+        trace: call.trace.clone(),
     };
     let recorded = host.load(&record_key).map_err(host_failure)?;
     if !state.exists() && recorded.exists() {
@@ -204,6 +206,7 @@ where
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
+    record.parameter_pins.clone_from(&slice.parameter_pins);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
 
     let mut business_input =

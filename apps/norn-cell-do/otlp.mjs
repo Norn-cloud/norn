@@ -432,6 +432,7 @@ export const CELL_ROUTES = [
   "/v1/uploads/{upload}:define",
   "/v1/observations:load",
   "/v1/datasets:load",
+  "/v1/datasets/{type}/rows/{row}:lineage",
   "/v1/mcp",
   "/v1/runs",
   "/v1/runs/{run}",

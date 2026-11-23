@@ -67,6 +67,14 @@ pub enum InternalFunction {
     SecondsBetween,
     #[strum(serialize = "add_seconds")]
     AddSeconds,
+    #[strum(serialize = "intervals_overlap")]
+    IntervalsOverlap,
+    #[strum(serialize = "interval_gap_seconds")]
+    IntervalGapSeconds,
+    #[strum(serialize = "interval_intersection_seconds")]
+    IntervalIntersectionSeconds,
+    #[strum(serialize = "resolve_local_timestamp")]
+    ResolveLocalTimestamp,
 }
 
 impl From<&InternalFunction> for Rc<dyn FunctionDefinition> {
@@ -348,7 +356,11 @@ impl From<&InternalFunction> for Rc<dyn FunctionDefinition> {
             | IF::DaysBetween
             | IF::AddDays
             | IF::SecondsBetween
-            | IF::AddSeconds => crate::temporal::definition(*value),
+            | IF::AddSeconds
+            | IF::IntervalsOverlap
+            | IF::IntervalGapSeconds
+            | IF::IntervalIntersectionSeconds
+            | IF::ResolveLocalTimestamp => crate::temporal::definition(*value),
 
             // Norn (#3404): `d()` is never registered (`FunctionRegistry` skips it);
             // the signatures stay for the analyser and the call is refused.

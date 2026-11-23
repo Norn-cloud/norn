@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { ShieldAlert } from "lucide-react"
+import { FactStatusBadge } from "@/components/fact-status-badge"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { Findings as FindingsPanel } from "./evidence/findings.tsx"
@@ -29,7 +30,10 @@ export function QuarantinedRecord({ objectType, id, onDone }: { readonly objectT
       <div role="status" className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
         <ShieldAlert aria-hidden className="mt-0.5 size-5 shrink-0 text-destructive" />
         <div className="space-y-1">
-          <p className="font-medium">Held in quarantine</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium">Held in quarantine</p>
+            <FactStatusBadge status="quarantined" />
+          </div>
           <p className="text-sm text-muted-foreground">The cell loaded this record but does not serve it: it breaks a law. It stays out of every answer until it is corrected.</p>
         </div>
       </div>

@@ -71,7 +71,18 @@ export const RegisterModelVersion = Norn.action({
     { name: "evaluation", type: "tracking.Run", key: { property: { from: "input", property: "evaluation_run" } } },
   ],
   // Both runs finished: a version is never registered from a run still writing, or one that failed.
-  preconditions: [Norn.unsafeZen<boolean>('slice.training.status == "FINISHED" and slice.evaluation.status == "FINISHED"')],
+  preconditions: [
+    Norn.expression(
+      Schema.Struct({
+        slice: Schema.Struct({
+          training: Schema.Struct({ status: Schema.String }),
+          evaluation: Schema.Struct({ status: Schema.String }),
+        }),
+      }),
+      (ctx) => ctx.slice.training.status === "FINISHED" && ctx.slice.evaluation.status === "FINISHED",
+      { root: "context" },
+    ),
+  ],
   createLinks: [
     { link: "trained_by", targetType: "tracking.Run", targetIdField: "training_run" },
     { link: "evaluated_by", targetType: "tracking.Run", targetIdField: "evaluation_run" },

@@ -112,3 +112,93 @@ fn a_decider_lends_the_run_none_of_its_rights() {
         "{run}"
     );
 }
+
+/// #1587: a flow's `norn.action@1` step may carry an optional `trace` context
+/// that propagates into the committed `norn.ActionCall` record and object
+/// version history.
+#[test]
+fn a_flow_action_step_propagates_optional_trace_context() {
+    let cell = step_cell::cell_on(
+        norn_cell::engine::NativeEngine::open_in_memory().unwrap(),
+        false,
+    );
+    let session_digest = format!("sha256:{}", "c".repeat(64));
+    let expected_trace = json!({
+        "traceId": "trc_flow_step_01",
+        "intentRef": "goal:flow-melt-7",
+        "sessionDigest": session_digest,
+    });
+    let mut artifacts: Vec<Value> = serde_json::from_str(step_cell::LOWERED).unwrap();
+    for artifact in &mut artifacts {
+        artifact["scope"] = json!({ "orgId": "org_demo", "environmentId": "dev" });
+    }
+    let rule = &mut artifacts[1]["payload"];
+    let rules = rule["graph"]["nodes"][1]["content"]["rules"]
+        .as_array_mut()
+        .unwrap();
+    let convert_rule = rules
+        .iter_mut()
+        .find(|entry| entry["_id"] == "awaiting_perform_ask_review/result/1")
+        .unwrap();
+    convert_rule["o_commands"] = json!(format!(
+        "[{{kind: 'perform', runId: slice.run.run_id, step: 'convert', function: 'norn.action', functionVersion: '1', idempotencyKey: slice.run.run_id + ':convert', attempt: 1, input: {{convert: {{action: 'constitution.melt.convert', input: {{id: 'melt-7', input_fine_g: '12', output_fine_g: '10'}}, trace: {{traceId: 'trc_flow_step_01', intentRef: 'goal:flow-melt-7', sessionDigest: '{session_digest}'}}}}}}}}]"
+    ));
+    rule["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]["properties"]
+        ["convert"]["properties"]["trace"] = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["traceId"],
+        "properties": {
+            "traceId": { "type": "string" },
+            "intentRef": { "type": "string" },
+            "sessionDigest": { "type": "string" }
+        }
+    });
+    let mut body = json!({
+        "kind": "flow",
+        "id": FLOW_ID,
+        "payload": {
+            "flow": { "id": FLOW_ID, "version": "1.0.0", "title": "Approve a melt" },
+            "artifacts": artifacts,
+        }
+    });
+    let (status, admitted) = call(
+        &cell,
+        "POST",
+        "/v1/definitions:admit",
+        OPERATOR,
+        &body.to_string(),
+    );
+    assert_eq!(status, 200, "{admitted}");
+    body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    let (status, installed) = call(
+        &cell,
+        "POST",
+        "/v1/definitions:install",
+        OPERATOR,
+        &body.to_string(),
+    );
+    assert_eq!(status, 200, "{installed}");
+
+    let decided = start_and_approve(&cell, OPERATOR, "melt-run-traced");
+    assert_eq!(decided["run"]["state"], json!("completed"), "{decided}");
+    assert_eq!(melt(&cell), 200);
+
+    let (status, history) = call(
+        &cell,
+        "GET",
+        "/v1/objects/constitution.Melt/melt-7/history",
+        OPERATOR,
+        "",
+    );
+    assert_eq!(status, 200, "{history}");
+    assert_eq!(
+        history["versions"][0]["writer"]["kind"],
+        json!("action"),
+        "{history}"
+    );
+    assert_eq!(
+        history["versions"][0]["writer"]["trace"], expected_trace,
+        "{history}"
+    );
+}

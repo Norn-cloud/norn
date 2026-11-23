@@ -75,7 +75,7 @@
       "type": "object"
     },
     "preconditions": [
-      "input.seq == 0 and startsWith(input.log_id, input.run_id + \"/\")"
+      "(input.seq == 0) and startsWith(input.log_id, input.run_id + '/')"
     ],
     "scopeRequired": [
       "orgId",

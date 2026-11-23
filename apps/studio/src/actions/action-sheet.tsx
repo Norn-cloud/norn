@@ -69,9 +69,15 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
     window.addEventListener("beforeunload", warn)
     return () => window.removeEventListener("beforeunload", warn)
   }, [dirty])
+  const invalidate = (objectKind: string) => {
+    void client.invalidateQueries({ queryKey: ["records", objectKind] })
+    // Lane links and empty-state nearest jumps can change when an action writes links or intervals.
+    void client.invalidateQueries({ queryKey: ["timeline-lane"] })
+    void client.invalidateQueries({ queryKey: ["timeline-nearest"] })
+  }
   const close = () => {
     if (open !== null) {
-      void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })
+      invalidate(open.action.objectKind)
       // A record's offered actions follow its state.
       void client.invalidateQueries({ queryKey: ["actions", open.action.objectKind] })
       // A parked call that ran, or one that parked, moves the requester's list.
@@ -109,7 +115,7 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
                 onCommitted={() => { kept.delete(draftKey(open)); parkedCalls.delete(session, draftKey(open)); setBanner(false) }}
                 parked={parked} runNow={open.runNow === true && parked === open.parked}
                 onParked={(call) => parkedCalls.set(session, draftKey(open), call)} onUnparked={() => parkedCalls.delete(session, draftKey(open))}
-                onChanged={() => void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })}
+                onChanged={() => invalidate(open.action.objectKind)}
                 technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />
             </div>

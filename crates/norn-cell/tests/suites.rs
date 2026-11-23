@@ -18,12 +18,17 @@
 mod bench_clauses;
 #[path = "bench_import.rs"]
 mod bench_import;
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "bench_manifest.rs"]
+mod bench_manifest;
 #[path = "bench_mapping.rs"]
 mod bench_mapping;
 #[path = "bench_rules.rs"]
 mod bench_rules;
 #[path = "cell_host.rs"]
 mod cell_host;
+#[path = "cell_host_dst.rs"]
+mod cell_host_dst;
 #[path = "commit_path.rs"]
 mod commit_path;
 #[cfg(all(feature = "duckdb", feature = "native"))]

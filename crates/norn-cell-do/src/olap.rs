@@ -116,6 +116,7 @@ impl Transport for InProcess {
             "members" => Self::run(&call.body, |r| engine.members(r)),
             "profile" => Self::run(&call.body, |r| engine.profile(r)),
             "page" => Self::run(&call.body, |r| engine.page(r)),
+            "lineage" => Self::run(&call.body, |r| engine.lineage(r)),
             _ => (404, String::new()),
         };
         Some(EngineAnswer {

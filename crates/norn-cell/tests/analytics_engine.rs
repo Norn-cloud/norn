@@ -2713,6 +2713,7 @@ fn a_manifest_commits_once_per_request_and_is_the_current_dataset() {
             held_by_rules: 0,
         },
         valid_time: response.valid_time,
+        markings: BTreeMap::new(),
     };
     assert!(store.dataset_manifest(WORLD, TYPE).expect("read").is_none());
     let head = store.verified_head().expect("head").commits;
