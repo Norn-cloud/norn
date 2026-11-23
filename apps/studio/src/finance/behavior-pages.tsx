@@ -157,7 +157,7 @@ function BranchGraph({ phase, selected, onSelect }: { readonly phase: StatePhase
   const lastRow = Math.max(...Object.values(phase.states).map((state) => state.row))
   const returnAtBottom = edges.some(({ data }) => data?.direction === "return-down" && phase.states[data.step.from]?.row === lastRow)
   return (
-    <div aria-label={`${phase.title} state graph`} className="h-[34rem] w-full bg-canvas-surface">
+    <div aria-label={`${phase.title} state graph`} className="h-[36rem] w-full bg-canvas-surface">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -199,7 +199,7 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
         <BranchGraph phase={phase} selected={selected} onSelect={(step) => { setSelected(step); setInspectorTab("inspector") }} />
       </div>
 
-      <aside aria-label="Transition inspector" className="flex flex-col border-t bg-surface-subtle/40 lg:h-[34rem] lg:border-s lg:border-t-0">
+      <aside aria-label="Transition inspector" className="flex flex-col border-t bg-surface-subtle/40 lg:h-[36rem] lg:border-s lg:border-t-0">
         <div className="flex items-center justify-between border-b px-3">
           <div role="tablist" className="flex gap-1">
             <button

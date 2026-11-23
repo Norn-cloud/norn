@@ -402,17 +402,17 @@ export function FinanceMarkings() {
 
       <Panel icon={Fingerprint} label="Personally identifiable information" action="Role reveal policy">
         <TableCard>
-          <Table>
+          <Table aria-label="PII role reveal matrix">
             <TableHeader>
               <TableRow>
-                <TableHead>Marked field</TableHead>
-                {MARKING_ROLES.map((role) => <TableHead key={role} className="w-[18%]">{role}</TableHead>)}
+                <TableHead scope="col">Marked field</TableHead>
+                {MARKING_ROLES.map((role) => <TableHead key={role} scope="col" className="w-[18%]">{role}</TableHead>)}
               </TableRow>
             </TableHeader>
             <TableBody>
               {MARKING_FIELDS.map((field) => (
                 <TableRow key={field.field}>
-                  <TableCell>
+                  <th scope="row" className="h-cell px-3 py-1.5 text-start align-middle font-normal whitespace-nowrap">
                     <div className="flex items-center gap-2.5">
                       <TypeTile type={field.type} />
                       <div>
@@ -420,7 +420,7 @@ export function FinanceMarkings() {
                         <code className="text-xs text-muted-foreground">{field.field}</code>
                       </div>
                     </div>
-                  </TableCell>
+                  </th>
                   {MARKING_ROLES.map((role) => (
                     <TableCell key={role}>
                       {canRevealSample(role) ? (

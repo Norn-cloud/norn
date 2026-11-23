@@ -134,7 +134,7 @@ function IdentityReview({ decisions, decide }: {
                 <Chip tone="green" icon={Check}>{decisions[id]} in preview</Chip>
               ) : (
                 <>
-                  <Button size="sm" className="h-7 text-xs" onClick={() => decide(id, "Merged")}>Merge</Button>
+                  <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => decide(id, "Merged")}>Merge</Button>
                   <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => decide(id, "Kept separate")}>Keep separate</Button>
                 </>
               )}
