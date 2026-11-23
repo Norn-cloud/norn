@@ -8,7 +8,7 @@
   "parents": [
     "Cargo.lock",
     "crates/norn-kernel/Cargo.toml",
-    "crates/norn-kernel/src/action_commit.rs",
+    "crates/norn-kernel/src/action_commit/types.rs",
     "crates/norn-kernel/src/cell_host.rs",
     "crates/norn-ir/src/runtime.rs",
     "crates/norn-ir/src/lib.rs"

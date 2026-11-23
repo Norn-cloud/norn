@@ -370,7 +370,10 @@ PY
       # tenant engine's correspondence suite and the transform backend); full plans run this
       # phase, and affected plans run it whenever norn-cell is reached. The in-process
       # `duckdb_question` target was retired with the SQL question path (#1395).
-      cargo test --locked -p norn-cell --features duckdb --lib -- suites::analytics_engine:: suites::duckdb_transform::
+      cargo test --locked -p norn-cell --features duckdb --lib -- suites::analytics_engine:: suites::duckdb_transform:: analytics::engine::tests::
+      # MANIFEST-LAWS-1 (#1514): compare set-based laws with the per-row path in the
+      # DuckDB-only dataset_laws module of the integration suite.
+      cargo test --locked -p norn-cell --features duckdb --test suites dataset_laws::
       ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api

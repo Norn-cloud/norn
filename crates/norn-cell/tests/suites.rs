@@ -26,6 +26,9 @@ mod bench_rules;
 mod cell_host;
 #[path = "commit_path.rs"]
 mod commit_path;
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "dataset_laws.rs"]
+mod dataset_laws;
 #[path = "explorer_documents.rs"]
 mod explorer_documents;
 #[path = "jewelry_pricing.rs"]
