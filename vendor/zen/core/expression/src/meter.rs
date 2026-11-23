@@ -150,6 +150,9 @@ pub mod cost {
     pub const REGEX_COMPILE: u64 = 64;
     /// Checked temporal arithmetic (in addition to shallow argument sizes).
     pub const TEMPORAL_ARITHMETIC: u64 = 8;
+    /// Pinned IANA timezone lookup and DST wall-time resolution (in addition
+    /// to shallow argument sizes).
+    pub const TEMPORAL_TZ_RESOLVE: u64 = 16;
     /// One zen-engine graph node visit.
     pub const NODE_VISIT: u64 = 1;
     /// One zen-engine decision-table row considered.

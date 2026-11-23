@@ -246,6 +246,18 @@ fn function_info(fk: &FunctionKind) -> String {
             InternalFunction::AddDays | InternalFunction::AddSeconds => {
                 "Adds an integer amount with checked range"
             }
+            InternalFunction::IntervalsOverlap => {
+                "Returns whether two proper half-open timestamp intervals overlap"
+            }
+            InternalFunction::IntervalGapSeconds => {
+                "Returns the exact gap in seconds between two proper half-open timestamp intervals"
+            }
+            InternalFunction::IntervalIntersectionSeconds => {
+                "Returns the exact intersection duration in seconds of two proper half-open timestamp intervals"
+            }
+            InternalFunction::ResolveLocalTimestamp => {
+                "Resolves a local wall-clock timestamp in a pinned IANA timezone under an explicit DST policy"
+            }
             InternalFunction::Merge => "Merges multiple objects into one",
             InternalFunction::MergeDeep => "Deeply merges multiple objects into one",
         },
@@ -335,6 +347,14 @@ fn function_param_names(fk: &FunctionKind) -> Vec<&'static str> {
                 vec!["start", "end"]
             }
             InternalFunction::AddDays | InternalFunction::AddSeconds => vec!["value", "amount"],
+            InternalFunction::IntervalsOverlap
+            | InternalFunction::IntervalGapSeconds
+            | InternalFunction::IntervalIntersectionSeconds => {
+                vec!["aStart", "aEnd", "bStart", "bEnd"]
+            }
+            InternalFunction::ResolveLocalTimestamp => {
+                vec!["localWallTime", "ianaTz", "dstPolicy"]
+            }
             InternalFunction::Merge | InternalFunction::MergeDeep => vec!["objects"],
         },
         FunctionKind::Deprecated(d) => match d {

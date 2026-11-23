@@ -1,5 +1,5 @@
 //! The static cost estimate under the `norn-expr/4` structural grammar and
-//! `norn-zen/6` language profile (T1-EXPR-4, #2522): a proved
+//! `norn-zen/7` language profile (T1-EXPR-4, #2522): a proved
 //! upper bound on the units the metered evaluator charges for one evaluation
 //! of an admitted expression on a **conforming slice**.
 //!
@@ -1006,13 +1006,15 @@ impl<'a, 'n> Estimator<'a, 'n> {
                     ..Val::default()
                 }
             }
-            FunctionKind::Internal(InternalFunction::Timestamp | InternalFunction::AddSeconds) => {
-                Val {
-                    size: Lin::constant(1),
-                    copy_size: Some(Lin::constant(30)),
-                    ..Val::default()
-                }
-            }
+            FunctionKind::Internal(
+                InternalFunction::Timestamp
+                | InternalFunction::AddSeconds
+                | InternalFunction::ResolveLocalTimestamp,
+            ) => Val {
+                size: Lin::constant(1),
+                copy_size: Some(Lin::constant(30)),
+                ..Val::default()
+            },
             // Unicode case mapping grows UTF-8 text by at most 3x (upper:
             // `ΐ`, 2 bytes, is 3 characters, 6 bytes) and 1.5x (lower: `İ`).
             FunctionKind::Internal(InternalFunction::Upper) => Val::sized(first.scaled(3)),
@@ -1102,9 +1104,17 @@ impl<'a, 'n> Estimator<'a, 'n> {
                     | InternalFunction::AddDays
                     | InternalFunction::SecondsBetween
                     | InternalFunction::AddSeconds
+                    | InternalFunction::IntervalsOverlap
+                    | InternalFunction::IntervalGapSeconds
+                    | InternalFunction::IntervalIntersectionSeconds
             )
         ) {
             cost = cost.plus(zen_expression::meter::cost::TEMPORAL_ARITHMETIC);
+        } else if matches!(
+            kind,
+            FunctionKind::Internal(InternalFunction::ResolveLocalTimestamp)
+        ) {
+            cost = cost.plus(zen_expression::meter::cost::TEMPORAL_TZ_RESOLVE);
         }
         Out { cost, val }
     }

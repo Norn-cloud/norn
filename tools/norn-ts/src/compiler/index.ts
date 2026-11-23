@@ -192,14 +192,28 @@ export function checkClosure(program: ts.Program, source: ts.SourceFile, limits:
 }
 
 /** Batched profile recognition shares one Program; rejected roots never reach lowering. */
-export function compileFiles(files: ReadonlyArray<string>, options: BuildOptions, overrides: Partial<CompilerLimits> = {}): CompileResult[] {
+export function compileFiles(
+  files: ReadonlyArray<string>,
+  options: BuildOptions & { readonly forbidUnsafeZen?: boolean },
+  overrides: Partial<CompilerLimits> = {},
+): CompileResult[] {
   const { started, limits, profile, program, expansion, accepted, failed } = prepareCompilation(files, overrides)
   const results = new Map<string, CompileResult>()
   for (const [path, diagnostics] of failed) results.set(path, { ok: false, diagnostics })
   for (const path of accepted) {
     const source = program!.getSourceFile(path)!
     try {
-      const lowering = new SyntaxCompiler(profile, program!, source, started, limits, expansion, resolve(options.sourceRoot ?? resolve(TOOL_ROOT, "../..")))
+      const lowering = new SyntaxCompiler(
+        profile,
+        program!,
+        source,
+        started,
+        limits,
+        expansion,
+        resolve(options.sourceRoot ?? resolve(TOOL_ROOT, "../..")),
+        undefined,
+        options.forbidUnsafeZen === true,
+      )
       const definition = lowering.compile()
       expansion.assert(definition)
       const built = B.lowerFlow(definition, { ...options, expansionBudget: expansion })
@@ -230,7 +244,13 @@ export function compileFiles(files: ReadonlyArray<string>, options: BuildOptions
   return files.map((file) => results.get(resolve(file))!)
 }
 
-export function compileFile(file: string, options: BuildOptions, limits: Partial<CompilerLimits> = {}): CompileResult { return compileFiles([file], options, limits)[0]! }
+export function compileFile(
+  file: string,
+  options: BuildOptions & { readonly forbidUnsafeZen?: boolean },
+  limits: Partial<CompilerLimits> = {},
+): CompileResult {
+  return compileFiles([file], options, limits)[0]!
+}
 
 export class SyntaxCompiler {
   private readonly checker: ts.TypeChecker
@@ -245,7 +265,20 @@ export class SyntaxCompiler {
   private ordinal = 0
   private depth = 0
   private readonly schemaBudget: SchemaBudget
-  constructor(private readonly profile: ProfileChecker, private readonly program: ts.Program, private readonly source: ts.SourceFile, private readonly started: number, private readonly limits: CompilerLimits, private readonly expansion: ExpansionBudget, private readonly sourceRoot: string, private readonly subDecision?: (call: ts.CallExpression, input: Expr) => Expr) { this.checker = program.getTypeChecker(); this.schemaBudget = new SchemaBudget(expansion) }
+  constructor(
+    private readonly profile: ProfileChecker,
+    private readonly program: ts.Program,
+    private readonly source: ts.SourceFile,
+    private readonly started: number,
+    private readonly limits: CompilerLimits,
+    private readonly expansion: ExpansionBudget,
+    private readonly sourceRoot: string,
+    private readonly subDecision?: (call: ts.CallExpression, input: Expr) => Expr,
+    private readonly forbidUnsafeZen = false,
+  ) {
+    this.checker = program.getTypeChecker()
+    this.schemaBudget = new SchemaBudget(expansion)
+  }
 
   checkBudget(node: ts.Node): void {
     if (Date.now() - this.started >= this.limits.maxMillis || this.depth > this.limits.maxDepth) throw new CompileError("NORN-FLOW-UNBOUNDED", "compiler time or nesting bound exceeded", node)
@@ -459,6 +492,7 @@ export class SyntaxCompiler {
         if (id === "@norn/authoring#Norn.unsafeZen") {
           const text = this.scalar(e.arguments[0]!)
           if (typeof text !== "string" || !e.typeArguments?.[0]) throw new CompileError("NORN-FLOW-TYPE", "unsafeZen<T> requires its declared result type and literal ZEN text", e)
+          if (this.forbidUnsafeZen) throw new CompileError("NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen is forbidden (--forbid-unsafe-zen); replace it with typed TypeScript authoring", e)
           this.warnings.push(diagnostic(e, "NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen bypasses typed authoring; replace it with plain TypeScript"))
           return B.X.unsafeZen(text, valueSchema(this.checker, this.checker.getTypeFromTypeNode(e.typeArguments[0]), e, new Set(), this.schemaBudget))
         }
@@ -468,11 +502,41 @@ export class SyntaxCompiler {
           return B.X.call(id.endsWith("parseDate") ? "date" : "timestamp", this.data(e.arguments[0]!, env))
         }
         if (id === "@norn/authoring#Norn.dateBefore") return B.X.call("dateBefore", ...e.arguments.map((a) => this.data(a, env)))
-        if (id === "@norn/authoring#Norn.sum" || id === "@norn/authoring#Norn.daysBetween" || id === "@norn/authoring#Norn.addDays") {
+        if (id === "@norn/authoring#Norn.timestampBefore" || id === "@norn/authoring#Norn.timestampAtOrBefore") {
+          const args = e.arguments.map((a) => this.data(a, env))
+          if (args.length !== 2) throw new CompileError("NORN-FLOW-EXPRESSION", `${id.slice(id.indexOf("#") + 1)} takes two arguments`, e)
+          return id.endsWith(".timestampBefore") ? B.X.timestampBefore(args[0]!, args[1]!) : B.X.timestampAtOrBefore(args[0]!, args[1]!)
+        }
+        if (
+          id === "@norn/authoring#Norn.sum" ||
+          id === "@norn/authoring#Norn.daysBetween" ||
+          id === "@norn/authoring#Norn.addDays" ||
+          id === "@norn/authoring#Norn.secondsBetween" ||
+          id === "@norn/authoring#Norn.addSeconds"
+        ) {
           const args = e.arguments.map((a) => this.data(a, env))
           if (id.endsWith(".sum")) { if (args.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "Norn.sum takes one list", e); return B.X.sum(args[0]!) }
           if (args.length !== 2) throw new CompileError("NORN-FLOW-EXPRESSION", `${id.slice(id.indexOf("#") + 1)} takes two arguments`, e)
-          return id.endsWith(".daysBetween") ? B.X.daysBetween(args[0]!, args[1]!) : B.X.addDays(args[0]!, args[1]!)
+          if (id.endsWith(".daysBetween")) return B.X.daysBetween(args[0]!, args[1]!)
+          if (id.endsWith(".addDays")) return B.X.addDays(args[0]!, args[1]!)
+          if (id.endsWith(".secondsBetween")) return B.X.secondsBetween(args[0]!, args[1]!)
+          return B.X.addSeconds(args[0]!, args[1]!)
+        }
+        if (
+          id === "@norn/authoring#Norn.intervalsOverlap" ||
+          id === "@norn/authoring#Norn.intervalGapSeconds" ||
+          id === "@norn/authoring#Norn.intervalIntersectionSeconds"
+        ) {
+          const args = e.arguments.map((a) => this.data(a, env))
+          if (args.length !== 4) throw new CompileError("NORN-FLOW-EXPRESSION", `${id.slice(id.indexOf("#") + 1)} takes four arguments`, e)
+          if (id.endsWith(".intervalsOverlap")) return B.X.intervalsOverlap(args[0]!, args[1]!, args[2]!, args[3]!)
+          if (id.endsWith(".intervalGapSeconds")) return B.X.intervalGapSeconds(args[0]!, args[1]!, args[2]!, args[3]!)
+          return B.X.intervalIntersectionSeconds(args[0]!, args[1]!, args[2]!, args[3]!)
+        }
+        if (id === "@norn/authoring#Norn.resolveLocalTimestamp") {
+          const args = e.arguments.map((a) => this.data(a, env))
+          if (args.length !== 3) throw new CompileError("NORN-FLOW-EXPRESSION", "Norn.resolveLocalTimestamp takes three arguments", e)
+          return B.X.resolveLocalTimestamp(args[0]!, args[1]!, args[2]!)
         }
         if (ts.isPropertyAccessExpression(e.expression)) {
           const receiver = this.data(e.expression.expression, env), name = e.expression.name.text

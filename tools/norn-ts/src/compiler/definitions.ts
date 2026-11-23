@@ -198,6 +198,7 @@ function lowerEach<T>(
   overrides: Partial<CompilerLimits>,
   lower: (compiler: DefinitionCompiler, source: ts.SourceFile) => Lowered<T>,
   onModuleWork?: (path: string, work: number) => void,
+  forbidUnsafeZenFor?: (path: string) => boolean,
 ): Lowered<T>[] {
   const { started, limits, profile, program, expansion, accepted, failed } = prepareCompilation(files, overrides)
   const results = new Map<string, Lowered<T>>()
@@ -207,7 +208,10 @@ function lowerEach<T>(
     try {
       checkClosure(program!, source, limits)
       expansion.beginModule()
-      const lowered = lower(new DefinitionCompiler(profile, program!, started, limits, expansion), source)
+      const lowered = lower(
+        new DefinitionCompiler(profile, program!, started, limits, expansion, forbidUnsafeZenFor?.(path) === true),
+        source,
+      )
       if (lowered.ok) expansion.addOutput(lowered.value)
       onModuleWork?.(path, expansion.workUsed)
       results.set(path, lowered)
@@ -243,12 +247,16 @@ export function compileDefinitionFiles(
   /**
    * `allowEmpty`: a module with no ontology definition (a flow-only module) is
    * not an error. `onModuleWork`: the expansion work each root module charged.
+   * `forbidUnsafeZen`: promote `NORN-AUTHORING-UNSAFE-ZEN` to a hard error
+   * (defaults to true when `registryPackagePath` is set).
    */
-  mode: { readonly allowEmpty?: boolean; readonly onModuleWork?: (path: string, work: number) => void } = {},
+  mode: { readonly allowEmpty?: boolean; readonly onModuleWork?: (path: string, work: number) => void; readonly forbidUnsafeZen?: boolean } = {},
 ): DefinitionsResult[] {
+  const envelopeFor = (path: string): EnvelopeOptions => (typeof options === "function" ? options(path) : options)
+  const forbidUnsafeZenFor = (path: string): boolean => mode.forbidUnsafeZen ?? envelopeFor(path).registryPackagePath !== undefined
   return lowerEach<{ readonly definitions: Definition[]; readonly artifacts: Json[]; readonly flows: number; readonly sourceMap: DefinitionSource[]; readonly warnings: Diagnostic[]; readonly examples: CompiledExample[]; readonly retained: RetainedDefinitionDoc[] }>(files, overrides, (compiler, source) => {
     const { definitions, flows, examples, retained } = compiler.compile(source, mode.allowEmpty === true)
-    const envelopeOptions = typeof options === "function" ? options(resolve(source.fileName)) : options
+    const envelopeOptions = envelopeFor(resolve(source.fileName))
     const artifacts: Json[] = []
     const diagnostics: Diagnostic[] = []
     for (const def of definitions) {
@@ -276,10 +284,15 @@ export function compileDefinitionFiles(
       else for (const d of built.diagnostics) diagnostics.push({ ...diagnostic(source, d.code, d.message), ...(d.at ? { start: { line: d.at.line, column: d.at.column ?? 1 } } : {}) })
     }
     return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, value: { definitions, artifacts, flows, sourceMap: compiler.sourceMap, warnings: compiler.warnings, examples, retained } }
-  }, mode.onModuleWork).map((r): DefinitionsResult => (r.ok ? { ok: true, ...r.value } : r))
+  }, mode.onModuleWork, forbidUnsafeZenFor).map((r): DefinitionsResult => (r.ok ? { ok: true, ...r.value } : r))
 }
 
-export function compileDefinitions(file: string, options: EnvelopeOptions, limits: Partial<CompilerLimits> = {}, mode: { readonly allowEmpty?: boolean } = {}): DefinitionsResult {
+export function compileDefinitions(
+  file: string,
+  options: EnvelopeOptions,
+  limits: Partial<CompilerLimits> = {},
+  mode: { readonly allowEmpty?: boolean; readonly forbidUnsafeZen?: boolean } = {},
+): DefinitionsResult {
   return compileDefinitionFiles([file], options, limits, mode)[0]!
 }
 
@@ -328,6 +341,7 @@ class DefinitionCompiler {
     private readonly started: number,
     private readonly limits: CompilerLimits,
     private readonly expansion: ExpansionBudget,
+    private readonly forbidUnsafeZen = false,
   ) {
     this.checker = program.getTypeChecker()
     this.schemas = new SchemaProjection(profile, program, (node) => this.guard(node), limits.maxNodes, (work) => expansion.reserve(work))
@@ -901,9 +915,19 @@ class DefinitionCompiler {
    */
   private tableGraph(rows: ts.ArrayLiteralExpression, hit: "first" | "unique", input: S.ObjectSchema, output: S.ObjectSchema, call: ts.CallExpression): Json {
     const scope = new Map<string, X.Binding>([["input", { zen: "", schema: input }]])
-    const syntax = new SyntaxCompiler(this.profile, this.program, call.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT, (site) => {
-      throw new CompileError("NORN-FLOW-EXPRESSION", "a table row cannot evaluate a sub-decision; use a decision callback", site)
-    })
+    const syntax = new SyntaxCompiler(
+      this.profile,
+      this.program,
+      call.getSourceFile(),
+      this.started,
+      this.limits,
+      this.expansion,
+      TOOL_ROOT,
+      (site) => {
+        throw new CompileError("NORN-FLOW-EXPRESSION", "a table row cannot evaluate a sub-decision; use a decision callback", site)
+      },
+      this.forbidUnsafeZen,
+    )
     const one = (node: ts.Expression, what: string): X.Expr => {
       const fn = this.deref(node)
       if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) throw new CompileError("NORN-FLOW-CAPTURE", `a table row's ${what} is an inline callback`, node)
@@ -1246,6 +1270,7 @@ class DefinitionCompiler {
       return "actor.subjectId"
     }
     if (ts.isCallExpression(e) && this.id(e) === "@norn/authoring#Norn.unsafeZen") {
+      if (this.forbidUnsafeZen) throw new CompileError("NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen is forbidden (--forbid-unsafe-zen); replace it with a typed TypeScript expression callback", e)
       this.warnings.push(diagnostic(e, "NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen bypasses typed authoring; replace it with a TypeScript expression callback"))
       return this.string(e.arguments[0]!)
     }
@@ -1253,7 +1278,7 @@ class DefinitionCompiler {
       const schema = this.schemas.expressionInput(this.schemas.read(e.arguments[0]!))
       const body = e.arguments[1]
       if (!body || (!ts.isArrowFunction(body) && !ts.isFunctionExpression(body))) throw new CompileError("NORN-FLOW-CAPTURE", "use an inline expression callback", e)
-      const syntax = new SyntaxCompiler(this.profile, this.program, e.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT)
+      const syntax = new SyntaxCompiler(this.profile, this.program, e.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT, undefined, this.forbidUnsafeZen)
       const rows = syntax.decisionRows(body)
       this.warnings.push(...syntax.warnings)
       if (rows.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "use a conditional expression for a scalar expression", body)
@@ -1428,7 +1453,7 @@ class DefinitionCompiler {
         calls.push({ id: name, name, type: "decisionNode", content: { key: pin.artifactId, inputField, outputPath: name, passThrough: true, ...(orderedFold ? { orderedFold } : {}) } })
         scope.set(name, { zen: name, schema: output })
         return X.ref(name)
-      })
+      }, this.forbidUnsafeZen)
       const rows = syntax.decisionRows(body)
       this.warnings.push(...syntax.warnings)
       const outputSchema = schema("output")
@@ -1767,7 +1792,7 @@ class DefinitionCompiler {
     const fn = this.deref(input)
     if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) throw new CompileError("NORN-FLOW-CAPTURE", "a law predicate is an inline lambda (self => ...)", input)
     if (fn.parameters.length !== 1) throw new CompileError("NORN-FLOW-UNSUPPORTED-SYNTAX", "a law predicate takes one parameter, the subject", fn)
-    const syntax = new SyntaxCompiler(this.profile, this.program, fn.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT)
+    const syntax = new SyntaxCompiler(this.profile, this.program, fn.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT, undefined, this.forbidUnsafeZen)
     const rows = syntax.decisionRows(fn)
     this.warnings.push(...syntax.warnings)
     if (rows.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "use a conditional expression for a law predicate", fn)
@@ -2315,6 +2340,7 @@ class DefinitionCompiler {
     if (depth > MAX_DATA_DEPTH) throw new CompileError("NORN-FLOW-UNBOUNDED", "literal data nesting exceeds the compiler bound", input)
     const e = this.deref(input)
     if (ts.isCallExpression(e) && this.id(e) === "@norn/authoring#Norn.unsafeZen") {
+      if (this.forbidUnsafeZen) throw new CompileError("NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen is forbidden (--forbid-unsafe-zen); replace it with a typed TypeScript decision callback", e)
       this.warnings.push(diagnostic(e, "NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen imports untyped ZEN/JDM; prefer a plain TypeScript decision callback"))
       return this.json(e.arguments[0]!, depth + 1)
     }

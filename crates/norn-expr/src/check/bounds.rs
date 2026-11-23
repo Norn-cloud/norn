@@ -146,7 +146,11 @@ fn bounded_string_call(
         | InternalFunction::DaysBetween
         | InternalFunction::AddDays
         | InternalFunction::SecondsBetween
-        | InternalFunction::AddSeconds => return None,
+        | InternalFunction::AddSeconds
+        | InternalFunction::IntervalsOverlap
+        | InternalFunction::IntervalGapSeconds
+        | InternalFunction::IntervalIntersectionSeconds
+        | InternalFunction::ResolveLocalTimestamp => return None,
     };
     (!valid).then(|| Diagnostic {
         code: codes::UNSUPPORTED_CONSTRUCT,

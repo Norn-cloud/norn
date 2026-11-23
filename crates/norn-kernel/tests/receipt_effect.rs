@@ -192,6 +192,7 @@ fn decide<'a>(action: &'a ActionRoot, run: &str, receipt: &str, key: &str) -> Ac
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 

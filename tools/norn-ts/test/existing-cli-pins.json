@@ -3,19 +3,19 @@
     "command": "check",
     "input": "tools/norn-ts/fixtures/quickstart",
     "status": 0,
-    "sha256": "c20ef8f0ba655961bcefb5bf5794d5f5bdef7b74eee2652efa46814a5e7a4b66"
+    "sha256": "15978a943c2782cfe795e43743e2545ac9aecf4c7bfee15ca65118ea3289c095"
   },
   {
     "command": "check",
     "input": "tools/norn-ts/fixtures/core",
     "status": 1,
-    "sha256": "cebef4cd59f49697480cbb92907ae6363cff0bb312ac538f15254e5132f3e576"
+    "sha256": "36e6ca2506b0aadd07e4d89b5cd08062c4aab93ceb26a1c7f06c4246e5bdd1d6"
   },
   {
     "command": "check",
     "input": "scripts/demo/jewelry.source.ts",
     "status": 1,
-    "sha256": "4ba8fa9fe2eff28063eef55dd0fe7806c9ed915d195e1895dc464f0f1b60f9c3"
+    "sha256": "038169ecdaecf105753bd6bec33055faf77f6b7b4f11522fb50b7fe89a7ed7b6"
   },
   {
     "command": "compile",

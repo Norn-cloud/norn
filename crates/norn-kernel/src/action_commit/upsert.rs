@@ -160,6 +160,7 @@ where
         from: String::new(),
         to: String::new(),
         row_operations: Vec::new(),
+        trace: call.trace.clone(),
     };
     let recorded = host.load(&record_key).map_err(host_failure)?;
     if !state.exists() && recorded.exists() {
