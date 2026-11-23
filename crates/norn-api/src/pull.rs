@@ -1020,7 +1020,7 @@ mod tests {
                     rows[moved].0 = "999".into();
                 }
                 for row in pull.accept(200, &serve(&rows, &request)).expect("page") {
-                    seen.insert((row.version.clone(), row.source_id.clone()));
+                    seen.insert((row.version.clone(), row.source_id));
                 }
                 page += 1;
             }

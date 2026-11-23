@@ -279,7 +279,7 @@ fn late_link_failure_and_secondary_denial_persist_no_partial_proposal() {
             assert_eq!(error.code(), "action.permission_denied");
         }
         assert_eq!(cell.store().read().dump().unwrap(), dump);
-        assert!(cell.store().read().pending_commands().unwrap().is_empty());
+        assert_eq!(cell.store().read().pending_commands().unwrap(), []);
         drop(cell);
         let cell = open(&path, &definitions);
         assert_eq!(cell.store().read().dump().unwrap(), dump);
@@ -509,7 +509,7 @@ fn two_deliveries_of_four_against_five_commit_exactly_one_stock_and_books() {
                 json!({"id":id,"delivery":winning,"account":account,"amount":amount,"currency":"USD"})
             );
         }
-        assert!(cell.store().read().pending_commands().unwrap().is_empty());
+        assert_eq!(cell.store().read().pending_commands().unwrap(), []);
         drop(cell);
         let mut cell = open(&path, &definitions);
         assert_eq!(cell.store().read().dump().unwrap(), winner_only);
@@ -724,7 +724,7 @@ fn same_company_custody_transfer_preserves_quantity_value_and_books() {
             .collect::<Vec<_>>(),
         book_states
     );
-    assert!(cell.store().read().pending_commands().unwrap().is_empty());
+    assert_eq!(cell.store().read().pending_commands().unwrap(), []);
     let committed = cell.store().read().dump().unwrap();
     drop(cell);
     let mut cell = open(&path, &definitions);

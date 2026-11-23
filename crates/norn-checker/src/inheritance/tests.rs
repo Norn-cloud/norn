@@ -137,8 +137,8 @@ fn executor_cycles(parents: &[Option<usize>]) -> BTreeSet<usize> {
     let mut derived = result.tuples("ancestor").to_vec();
     derived.sort_by_key(|tuple| format!("{tuple:?}"));
     assert_eq!(derived, ancestors, "{parents:?}");
-    assert!(result.tuples("member_collision").is_empty());
-    assert!(result.tuples("cardinality_widening").is_empty());
+    assert_eq!(result.tuples("member_collision").len(), 0);
+    assert_eq!(result.tuples("cardinality_widening").len(), 0);
     let cyclic = result.tuples("inheritance_cycle");
     (0..parents.len())
         .filter(|index| cyclic.contains(&vec![scope.clone(), name(*index)]))
@@ -564,8 +564,9 @@ fn compare_catalog_combinations(
         ),
     ];
     for (label, base, local) in &snapshots {
-        assert!(
-            !registered(base, local).is_empty(),
+        assert_ne!(
+            registered(base, local).len(),
+            0,
             "meaningful snapshot {label}"
         );
         compare_snapshot(label, base, local);

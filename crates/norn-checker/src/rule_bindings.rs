@@ -245,8 +245,7 @@ pub(crate) fn validate_rule_bindings(
     let required: BTreeSet<&str> = slice_record
         .and_then(|slice| slice.get("required"))
         .and_then(JsonValue::as_array)
-        .map(|required| required.iter().filter_map(JsonValue::as_string).collect())
-        .unwrap_or_default();
+        .map_or_default(|required| required.iter().filter_map(JsonValue::as_string).collect());
     for (index, entry) in slice.iter().enumerate() {
         let Some(member) = slice_properties.and_then(|properties| properties.get(&entry.name))
         else {

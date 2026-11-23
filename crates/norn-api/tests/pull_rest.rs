@@ -235,7 +235,7 @@ fn pull(
                     mapping: format!("{system}.rest.mapping"),
                     dataset: row.dataset.clone(),
                     connector_instance: "sandbox".into(),
-                    partition: row.dataset.clone(),
+                    partition: row.dataset,
                     recorded_at: norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
                 },
             ));
@@ -253,13 +253,13 @@ fn rest_rows_land_through_the_mapping_path_once() {
     let host = host();
     for system in SYSTEMS {
         let (rows, watermarks) = pull(system, BTreeMap::new());
-        assert!(!rows.is_empty(), "{system} pulled nothing");
+        assert_ne!(rows, [], "{system} pulled nothing");
         let outcomes = host.ingest(&rows).expect("ingested");
         let quarantined: Vec<_> = outcomes
             .iter()
             .filter(|o| matches!(o.outcome, MappingOutcome::Quarantined(_)))
             .collect();
-        assert!(quarantined.is_empty(), "{system}: {quarantined:#?}");
+        assert_eq!(quarantined.len(), 0, "{system}: {quarantined:#?}");
         assert_eq!(
             count(&outcomes, &MappingOutcome::Landed),
             rows.len(),
@@ -344,7 +344,7 @@ fn rest_mappings_pin_their_source_schemas() {
             wrong.push(format!("PIN {stem}.source {pin} {typed}"));
         }
     }
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    assert_eq!(wrong.len(), 0, "{}", wrong.join("\n"));
 }
 
 const CONFIG: &str = r#"[
@@ -1243,7 +1243,7 @@ fn mapping_edits_racing_loads_never_commit_a_mixed_snapshot() {
         }
         committed
     });
-    assert!(!committed.is_empty(), "the last load commits");
+    assert_ne!(committed, [], "the last load commits");
     let pins = pins.into_inner().expect("pins");
     for manifest in &committed {
         assert_eq!(
@@ -1488,7 +1488,7 @@ fn a_dataset_load_is_decided_as_an_observation_load_and_reported_as_its_run() {
         (refused.status, refused.code.as_str()),
         (422, "bulk.unsupported_marking")
     );
-    assert!(engine.landed.lock().expect("calls").is_empty());
+    assert_eq!(engine.landed.lock().expect("calls").len(), 0);
     let loaded = load_dataset(
         &host,
         &scope(),
@@ -1622,8 +1622,9 @@ fn a_forged_upload_record_is_refused_before_any_signing_or_engine_call() {
         (404, "dataset.not_found")
     );
     assert_eq!(*uploads.0.lock().expect("signed"), 0, "nothing was signed");
-    assert!(
-        engine.landed.lock().expect("calls").is_empty(),
+    assert_eq!(
+        engine.landed.lock().expect("calls").len(),
+        0,
         "no engine call"
     );
 }

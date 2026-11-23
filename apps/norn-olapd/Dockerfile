@@ -4,7 +4,7 @@
 # Run with NORN_OLAP_KEYS_FILE naming a mounted keyring of the cells' public
 # keys and a volume at /data; it listens on 8790 and answers each cell for its
 # own tenant only (OLAP-CRED-1, see crates/norn-cell-do/src/olapd.rs).
-FROM rust:1.98.0-bookworm AS build
+FROM rust:1.100.0-bookworm AS build
 WORKDIR /src
 COPY . .
 RUN cargo build --locked --release -p norn-cell-do --features duckdb --bin norn-olapd \

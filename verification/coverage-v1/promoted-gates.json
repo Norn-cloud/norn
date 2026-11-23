@@ -258,7 +258,7 @@
     {
       "id": "artifact-direct-write-predicate-runtime",
       "profile": "full",
-      "command": "cargo test --locked -p norn-ir --test artifact_governance",
+      "command": "cargo test --locked -p norn-ir --test suites artifact_governance::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -508,7 +508,7 @@
     {
       "id": "quantity-runtime",
       "profile": "full",
-      "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+      "command": "cargo test --locked -p norn-checker --test suites -- quantity_ledger:: quantity_ledger_properties:: quantity_ledger_expression:: quantity_ledger_boundary::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -531,7 +531,7 @@
     {
       "id": "generic-posting-runtime",
       "profile": "full",
-      "command": "cargo test --locked -p norn-kernel --test accounting_commit",
+      "command": "cargo test --locked -p norn-kernel --test suites accounting_commit::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -866,7 +866,7 @@
     {
       "id": "ontology-runtime-rust",
       "profile": "full",
-      "command": "cargo test --locked -p norn-checker --test ontology_pack --test ontology_registry --test quantity_unit_ontology_pack",
+      "command": "cargo test --locked -p norn-checker --test suites -- ontology_pack:: ontology_registry:: quantity_unit_ontology_pack::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -1020,7 +1020,7 @@
     {
       "id": "cala-boundary",
       "profile": "full",
-      "command": "cargo test --locked -p norn-checker --test quantity_ledger_boundary",
+      "command": "cargo test --locked -p norn-checker --test suites quantity_ledger_boundary::",
       "evidenceKind": "rust-tests",
       "role": "claim-evidence",
       "classifications": [
@@ -1289,7 +1289,7 @@
     {
       "id": "hosted-timers-conformance",
       "profile": "full",
-      "command": "cargo test --locked -p norn-cell-do --test hosted_timers_quint --test approval_fencing_quint",
+      "command": "cargo test --locked -p norn-cell-do --test suites -- hosted_timers_quint:: approval_fencing_quint::",
       "evidenceKind": "rust-tests",
       "role": "supporting-check",
       "classifications": [

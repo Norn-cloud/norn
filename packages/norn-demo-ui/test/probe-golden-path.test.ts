@@ -17,7 +17,7 @@ import { join } from "node:path"
 import { DEFINITIONS, ProbeError, TARGETS, dedicatedVersion, definitionDigest, run, target } from "../../../apps/norn-cell-do/probe/golden-path.mjs"
 
 const ROOT = new URL("../../../", import.meta.url).pathname
-const TOKEN = "tok-secret-1234"
+const TOKEN = `tok-${crypto.randomUUID()}`
 const APPROVER = "approver-secret-5678"
 const HOSTED = { NORN_PROBE_URL: "https://probe.cell.test", NORN_PROBE_ORG: "probe-org", NORN_PROBE_ENV: "probe", NORN_PROBE_TOKEN: TOKEN, NORN_PROBE_APPROVER_TOKEN: APPROVER }
 const VERSION = 7

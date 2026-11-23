@@ -23,7 +23,7 @@ const GATE_DIRECTORIES: [&str; 2] = [".cargo/", "crates/norn-skeleton-guard/"];
 /// A gate file absent from the base must stay absent. The toolchain files are gates although
 /// none exists, as defence in depth: rustup reads them from the working directory, but the
 /// gated `validate-runner-policy.py` sets `RUSTUP_TOOLCHAIN`, which takes precedence.
-const GATE_FILES: [&str; 28] = [
+const GATE_FILES: [&str; 32] = [
     // Python isolation (#513): the base-owned check and its canaries, and every file a gated
     // Python file loads by explicit path, so none of them can change what a gate decides.
     "scripts/ci/python_isolation.py",
@@ -38,6 +38,10 @@ const GATE_FILES: [&str; 28] = [
     "rust-toolchain",
     "verification/coverage-v1/fixtures/pull-request-concurrency.json",
     "scripts/ci/core.sh",
+    "scripts/ci/actions-secret-inventory.py",
+    "scripts/ci/infisical-oidc.sh",
+    "scripts/ci/secret-scan.sh",
+    "scripts/ci/test_infisical_oidc.py",
     "scripts/ci/contract_diff.py",
     "scripts/ci/test_contract_diff.py",
     "scripts/ci/contract-breaks.json",
@@ -1352,7 +1356,7 @@ mod tests {
             "trusted-merge-group.yml",
         ] {
             let source = workflow(name);
-            assert!(!source.is_empty(), "{name} is missing");
+            assert_ne!(source.len(), 0, "{name} is missing");
             assert_eq!(concurrency(name, &source), None, "{name}");
         }
     }
@@ -1373,8 +1377,7 @@ mod tests {
         let block = VALIDATOR
             .split_once("\nPULL_REQUEST_CONCURRENCY_CASES = {\n")
             .and_then(|(_, rest)| rest.split_once("\n}\n"))
-            .map(|(block, _)| block)
-            .unwrap_or_default();
+            .map_or_default(|(block, _)| block);
         let entries = block
             .lines()
             .map(|line| line.trim().trim_end_matches(','))
@@ -1603,19 +1606,20 @@ mod tests {
         ] {
             let mutated = source.replacen(before, after, 1);
             assert_ne!(mutated, source, "{label}: no-op mutation");
-            assert!(!pinned_steps(&mutated).is_empty(), "{label} was admitted");
+            assert_ne!(pinned_steps(&mutated).len(), 0, "{label} was admitted");
         }
         let test_only = source.replacen(libclang, "      - name: Renamed\n", 2);
         assert_eq!(pinned_steps(&test_only).len(), 2);
         let stats = "          disable_annotations: true\n";
         assert_eq!(source.matches(stats).count(), 2);
         assert_eq!(pinned_steps(&source.replace(stats, "")).len(), 2);
-        assert!(
+        assert_eq!(
             super::pinned_step_errors(
                 ".github/workflows/codeql.yml",
                 &super::yaml::Value::Map(Vec::new())
             )
-            .is_empty()
+            .len(),
+            0
         );
     }
 
@@ -1703,12 +1707,18 @@ mod tests {
         let contract =
             || vec!["scripts/ci/core.sh: gate contract differs from the trusted base".to_owned()];
         assert_eq!(contract_errors(contract(), None), contract());
-        assert!(contract_errors(contract(), Some(Ok("maintainer".to_owned()))).is_empty());
+        assert_eq!(
+            contract_errors(contract(), Some(Ok("maintainer".to_owned()))).len(),
+            0
+        );
         assert_eq!(
             contract_errors(contract(), Some(Err("fork".to_owned()))).len(),
             2
         );
-        assert!(contract_errors(Vec::new(), Some(Err("fork".to_owned()))).is_empty());
+        assert_eq!(
+            contract_errors(Vec::new(), Some(Err("fork".to_owned()))).len(),
+            0
+        );
     }
 
     const IR: &str = "pub enum ArtifactKind { Entity, SourceSchema, Law }";

@@ -271,7 +271,7 @@ struct LookupSlot(Arc<AtomicUsize>);
 impl LookupSlot {
     fn take(outstanding: &Arc<AtomicUsize>) -> Option<Self> {
         outstanding
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |held| {
                 (held < MAX_LOOKUPS).then(|| held.saturating_add(1))
             })
             .ok()
@@ -657,7 +657,7 @@ impl Egress {
             request = request.header(name, value);
         }
         let request = request
-            .body(body.map(<[u8]>::to_vec).unwrap_or_default())
+            .body(body.map_or_default(<[u8]>::to_vec))
             .map_err(|_error| EgressError::Transport("malformed_request"))?;
         // This attempt may use what is left of the call's deadline.
         let request = self

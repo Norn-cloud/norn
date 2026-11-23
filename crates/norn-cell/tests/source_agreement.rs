@@ -315,11 +315,11 @@ fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
     let mut cell = setup(&directory.path().join("flip.sqlite"));
     load(&mut cell, "erpnext");
     let reader = cell.store().read();
-    assert!(
+    assert_eq!(
         reader
             .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
-            .expect("one source")
-            .is_empty()
+            .expect("one source"),
+        []
     );
     load(&mut cell, "shopify");
     let flipped = cell

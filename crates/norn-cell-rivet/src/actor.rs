@@ -785,7 +785,7 @@ impl CellActor {
     fn release_writer(&self) {
         let _previous = self
             .writing
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 Some(count.saturating_sub(1))
             });
     }
@@ -1186,14 +1186,8 @@ impl CellActor {
                 continue;
             }
             let done = step.get("done").cloned().unwrap_or(Value::Null);
-            let outcome = done
-                .get("outcome")
-                .map(Value::to_string)
-                .unwrap_or_default();
-            let landed = done
-                .get("rowsLanded")
-                .map(Value::to_string)
-                .unwrap_or_default();
+            let outcome = done.get("outcome").map_or_default(Value::to_string);
+            let landed = done.get("rowsLanded").map_or_default(Value::to_string);
             tracing::info!(
                 sync = %id,
                 outcome = %outcome,

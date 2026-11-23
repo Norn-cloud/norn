@@ -611,17 +611,13 @@ impl Actor for ProbeActor {
             .strip_prefix("/__probe/")
             .unwrap_or_default()
             .to_owned();
-        let params: HashMap<String, String> = req
-            .uri()
-            .query()
-            .map(|query| {
-                query
-                    .split('&')
-                    .filter_map(|pair| pair.split_once('='))
-                    .map(|(name, value)| (name.to_owned(), value.to_owned()))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let params: HashMap<String, String> = req.uri().query().map_or_default(|query| {
+            query
+                .split('&')
+                .filter_map(|pair| pair.split_once('='))
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect()
+        });
         // The upgrade probe loads a fixture cell into a fresh actor database,
         // so it runs before the probe's own tables exist.
         if route == "engine-upgrade" {

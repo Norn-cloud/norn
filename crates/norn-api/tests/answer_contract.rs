@@ -47,8 +47,9 @@ fn retained_answer_documents_validate_against_their_projected_schemas() {
             .iter_errors(&document)
             .map(|error| error.to_string())
             .collect();
-        assert!(
-            errors.is_empty(),
+        assert_eq!(
+            errors.len(),
+            0,
             "{file} does not satisfy {root}: {errors:#?}"
         );
     }
@@ -84,6 +85,6 @@ fn every_runtime_engine_validates_against_the_contract() {
             .iter_errors(&document)
             .map(|error| error.to_string())
             .collect();
-        assert!(errors.is_empty(), "{engine:?}: {errors:#?}");
+        assert_eq!(errors.len(), 0, "{engine:?}: {errors:#?}");
     }
 }

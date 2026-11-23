@@ -150,12 +150,13 @@ fn property_and_computed_markings_accumulate_from_shared_types_and_interfaces() 
             "computed dependency propagation should retain every upstream marking"
         );
     }
-    assert!(
+    assert_eq!(
         person
             .property("email")
             .expect("stored property")
             .computed_inputs
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(
         person

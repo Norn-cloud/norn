@@ -917,7 +917,7 @@ fn check_entitlement_map(
                     "dataset {:?} is not declared by the source schema",
                     join.dataset
                 ),
-                join_at.clone(),
+                join_at,
             ));
             continue;
         };
