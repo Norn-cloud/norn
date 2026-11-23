@@ -57,7 +57,7 @@ pub(crate) fn rule(json: &Json) -> RuleRoot {
 
 pub(crate) fn binding() -> DecisionBinding {
     DecisionBinding {
-        profile_id: "norn-zen/6".to_owned(),
+        profile_id: "norn-zen/7".to_owned(),
         environment_hash: "sha256:test".to_owned(),
     }
 }

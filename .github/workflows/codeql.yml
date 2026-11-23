@@ -16,9 +16,52 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - name: Check out merge commit
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Detect Rust-affecting changes
+        id: filter
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Pull-request checkouts are refs/pull/<n>/merge (two parents: base and head).
+          # Fail closed (run Rust analysis) if the merge commit shape is unexpected.
+          if ! git rev-parse --verify --quiet HEAD^2 >/dev/null; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$RUNNER_TEMP/codeql-changed-files.z"
+          git diff --name-only --no-renames -z HEAD^1 HEAD > "$changed"
+          rust=false
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              *.rs|Cargo.toml|*/Cargo.toml|Cargo.lock|*/Cargo.lock|rust-toolchain|rust-toolchain.toml|.cargo/*|crates/*|vendor/*|registry/*|fixtures/*|verification/*|tools/norn-ts/fixtures/*|apps/studio/test/fixtures/*|docs/platform/structured-physics.tsv|.github/workflows/codeql.yml|.github/codeql/*)
+                rust=true
+                break
+                ;;
+            esac
+          done < "$changed"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
   analyze:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
       security-events: write # Upload CodeQL analysis results.
@@ -26,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [rust, javascript-typescript, python, actions]
+        language: [javascript-typescript, python, actions]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,3 +81,25 @@ jobs:
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           category: /language:${{ matrix.language }}
+  analyze-rust:
+    # Rust build-mode:none takes ~25 min; run it on PRs that touch Rust/Cargo,
+    # embedded Rust inputs, or CodeQL config, and always on main/schedule/dispatch.
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write # Upload CodeQL analysis results.
+      actions: read # Read workflow metadata for CodeQL analysis.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          languages: rust
+          build-mode: none
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          category: /language:rust

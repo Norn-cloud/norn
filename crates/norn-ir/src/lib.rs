@@ -104,7 +104,8 @@ pub use action::{
     AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation, ActionCompensation,
     ActionCreateLink, ActionInputDerivation, ActionLinkSource, ActionQuantityEffect,
     ActionQuantityOperation, ActionQuantityParameter, ActionRoot, ActionRuleRef, ActionUiEffect,
-    ActionUiEffects, ActionWrite, McpTool, McpToolAnnotations, WriteChange,
+    ActionUiEffects, ActionWrite, MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, McpTool,
+    McpToolAnnotations, TraceContext, TraceContextError, WriteChange,
 };
 pub use aggregate_input::{ActionAggregateInput, AggregateFunction, AggregateWindow};
 pub use business_pack::{
@@ -191,8 +192,8 @@ pub use layout::{
 };
 pub use limit_profile::{
     DecideBudget, EnvelopeLimits, HelperLimits, LIMIT_PROFILE_HASH_PROFILE, LimitProfileRef,
-    MemoryLimits, NORN_LIMITS_PROFILE_ID, NORN_LIMITS_V1_SHA256, NORN_LIMITS_V1_VERSION,
-    QuestionLimits, ResourceLimitProfile, SliceLimits, TurnBudget,
+    MAX_SQLITE_COLUMNS_PER_TABLE, MemoryLimits, NORN_LIMITS_PROFILE_ID, NORN_LIMITS_V1_SHA256,
+    NORN_LIMITS_V1_VERSION, QuestionLimits, ResourceLimitProfile, SliceLimits, TurnBudget,
 };
 pub use lineage::{
     DecisionRef, LineageCommit, LineageInput, LineageLink, LineageObject, LineageObservation,

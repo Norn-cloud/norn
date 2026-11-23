@@ -206,8 +206,13 @@ function cellOwned(artifacts: ReadonlyArray<Json>): Json[] {
  * the top-level modules, the top-level JSON artifacts and retained
  * definitions, and the cell-owned types a mapping needs.
  */
-export function compileProjectPack(root: string, manifest: Project): PackResult {
-  const pack = compilePack(root, { modules: projectModules(root, manifest), scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId }, root })
+export function compileProjectPack(root: string, manifest: Project, options: { readonly forbidUnsafeZen?: boolean } = {}): PackResult {
+  const pack = compilePack(root, {
+    modules: projectModules(root, manifest),
+    scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId },
+    root,
+    ...(options.forbidUnsafeZen !== undefined ? { forbidUnsafeZen: options.forbidUnsafeZen } : {}),
+  })
   if (!pack.ok) return pack
   const files = projectArtifacts(root, manifest) as Json[]
   const owned = cellOwned([...files, ...pack.artifacts])

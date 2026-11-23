@@ -874,6 +874,10 @@ declare module "@norn/authoring" {
 
     /** Pure calendar-date comparison; lowers to explicit ZEN date constructors. */
     function dateBefore(left: string, right: string): boolean
+    /** Pure UTC timestamp strict ordering (`timestamp(left) < timestamp(right)`). */
+    function timestampBefore(left: string, right: string): boolean
+    /** Pure UTC timestamp non-strict ordering (`timestamp(left) <= timestamp(right)`). */
+    function timestampAtOrBefore(left: string, right: string): boolean
     /** Explicit checked calendar conversion; malformed input fails evaluation. */
     function parseDate(text: string): string
     /** Explicit checked RFC 3339 conversion; requires a known offset, returns canonical UTC. */
@@ -886,6 +890,18 @@ declare module "@norn/authoring" {
     function daysBetween(start: string, end: string): number
     /** The calendar date `days` after `date` (`add_days`); a parsed date, comparable with other parsed dates. */
     function addDays(date: string, days: number): string
+    /** Signed exact decimal seconds from `start` to `end` (`seconds_between`); raw timestamp text is parsed. */
+    function secondsBetween(start: string, end: string): number
+    /** The UTC timestamp `seconds` after `timestamp` (`add_seconds`); a parsed timestamp, comparable with other parsed timestamps. */
+    function addSeconds(timestamp: string, seconds: number): string
+    /** Whether two proper half-open timestamp intervals `[aStart, aEnd)` and `[bStart, bEnd)` overlap; fails on `start >= end`. */
+    function intervalsOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean
+    /** Exact decimal seconds separating two proper half-open timestamp intervals (`0` when touching or overlapping); fails on `start >= end`. */
+    function intervalGapSeconds(aStart: string, aEnd: string, bStart: string, bEnd: string): number
+    /** Exact decimal seconds of overlap between two proper half-open timestamp intervals (`0` when disjoint or touching); fails on `start >= end`. */
+    function intervalIntersectionSeconds(aStart: string, aEnd: string, bStart: string, bEnd: string): number
+    /** Resolve an offset-free local wall timestamp `YYYY-MM-DDTHH:MM:SS[.f{1..9}]` in a pinned IANA timezone under `"reject" | "earlier" | "later"`. */
+    function resolveLocalTimestamp(localWallTime: string, ianaTz: string, dstPolicy: string): string
 
     interface SourceSchemaSpec {
       readonly id: string
@@ -1084,5 +1100,58 @@ declare module "@norn/authoring" {
     interface ConnectorDefinition { readonly _tag: "NornConnector" }
     /** Declarative read-only connector; host configuration supplies endpoints and secret resolution. */
     function connector(meta: ConnectorSpec): ConnectorDefinition
+
+    /** Review state of a governed setting artifact (`SettingReviewState`). */
+    type SettingReviewState = "draft" | "proposed" | "approved" | "active" | "rejected" | "superseded"
+
+    /** Exact setting artifact version superseded by a newer revision. */
+    interface SettingSupersedesSpec {
+      readonly artifactId: string
+      readonly version: string
+    }
+
+    /** Review metadata of a governed setting artifact. */
+    interface SettingReviewSpec {
+      readonly state: SettingReviewState
+      readonly reviewedBy?: string
+      readonly reviewedAt?: string
+      readonly reason?: string
+    }
+
+    interface SettingSpecBase {
+      /** Dotted setting artifact id (`retail.setting.reorder_threshold`). */
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      /** Stable parameter key (`retail.sku.default_reorder_threshold`). */
+      readonly settingKey: string
+      /** Inclusive RFC 3339 effective start timestamp. */
+      readonly effectiveFrom: string
+      /** Optional exclusive RFC 3339 effective end timestamp (must sort after `effectiveFrom`). */
+      readonly effectiveTo?: string
+      /** The exact setting version this revision replaces. */
+      readonly supersedes?: SettingSupersedesSpec
+      readonly review: SettingReviewSpec
+      /** Scope dimensions required when resolving this setting (`orgId`, `environmentId`, ...). */
+      readonly scopeRequired: ReadonlyArray<`${ScopeDimension}Id`>
+    }
+
+    /**
+     * `SettingRoot` specification. Numeric settings (`valueType: "number"`) require
+     * exact `DecimalLiteral` strings; binary JavaScript numbers are refused (VAL-EXACT-1).
+     */
+    type SettingSpec =
+      | (SettingSpecBase & { readonly valueType: "text"; readonly value: string })
+      | (SettingSpecBase & { readonly valueType: "number"; readonly value: string })
+      | (SettingSpecBase & { readonly valueType: "boolean"; readonly value: boolean })
+      | (SettingSpecBase & { readonly valueType: "json"; readonly value: JsonData })
+
+    /** Opaque setting definition; the syntax compiler lowers the call to a `setting` artifact. */
+    interface SettingDefinition {
+      readonly _tag: "NornSetting"
+    }
+
+    /** Governed effective-dated parameter (`SettingRoot`, PARAM-EXACT-1 / PARAM-BOUND-1). */
+    function setting(meta: SettingSpec): SettingDefinition
   }
 }

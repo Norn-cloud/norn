@@ -516,6 +516,7 @@ fn action_call<'a>(
         idempotency_key: idempotency_key.to_owned(),
         object_type: Some(ObjectTypeName(ITEM.to_owned())),
         turn: turn(turn_id),
+        trace: None,
     }
 }
 
@@ -637,6 +638,7 @@ fn numeric_string_action_call<'a>(
         idempotency_key: idempotency_key.to_owned(),
         object_type: Some(ObjectTypeName(NUMERIC_STRING_ITEM.to_owned())),
         turn: turn(turn_id),
+        trace: None,
     }
 }
 
@@ -2712,6 +2714,7 @@ fn quality_invariants_consume_no_command_fuel_across_raw_decision_and_action_wri
         idempotency_key: "quality-action".to_owned(),
         object_type: Some(ObjectTypeName(FUEL_ITEM.to_owned())),
         turn: turn("turn-quality-action-fuel"),
+        trace: None,
     };
     commit_action(&mut cell, &catalog, &invocation, &allow_action())
         .expect("action admits quality data without quality fuel");

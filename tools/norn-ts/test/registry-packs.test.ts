@@ -46,7 +46,7 @@ test.skipIf(!checker)("the Rust checker admits every registry pack and link", ()
   // The core interfaces packs implement (physics, and the scanned-documents fixture pack's norn.SourceEvidence and norn.SourceDocument), the
   // claim type every mapped link is recorded as (norn.ObservedLinkClaim, OBS-LINK-CONVERGE-1), plus the value types and units. Not every core interface: some (core.Order) name registry standard
   // types (iso4217) this checker call does not install.
-  const base = [...physics.map(name => `core.${name}.interface.json`), "norn.SourceEvidence.interface.json", "norn.SourceDocument.interface.json", "norn.ObservedLinkClaim.entity.json", "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json"]
+  const base = [...physics.map(name => `core.${name}.interface.json`), "core.TimeInterval.interface.json", "norn.SourceEvidence.interface.json", "norn.SourceDocument.interface.json", "norn.ObservedLinkClaim.entity.json", "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json", "core.time.json"]
     .map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
   const checked = checker!.checkArtifactSet(artifacts, { base })
   if (!checked.admitted) throw new Error(JSON.stringify(checked.diagnostics))
