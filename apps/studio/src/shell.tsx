@@ -464,14 +464,14 @@ function Crumbs({ section, entries, pathname }: { readonly section: Section; rea
         <BreadcrumbItem className={cn("min-w-0", sectionClass)}>
           {last === "section" || section.index === false
             ? <BreadcrumbPage className={cn("truncate", last !== "section" && "font-normal text-muted-foreground")}>{section.label}</BreadcrumbPage>
-            : <BreadcrumbLink asChild><Link to={section.path} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className={cn("size-3.5 shrink-0", last === "entry" ? "@sm:hidden" : "hidden")} /><span className="truncate">{section.label}</span></Link></BreadcrumbLink>}
+            : <BreadcrumbLink asChild><Link to={section.path} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className={cn("size-3.5 shrink-0 rtl:rotate-180", last === "entry" ? "@sm:hidden" : "hidden")} /><span className="truncate">{section.label}</span></Link></BreadcrumbLink>}
         </BreadcrumbItem>
         {entry && <>
           <BreadcrumbSeparator className={sep1Class} />
           <BreadcrumbItem className={cn("min-w-0", entryClass)}>
             {last === "entry"
               ? <BreadcrumbPage className="truncate">{entry.label}</BreadcrumbPage>
-              : <BreadcrumbLink asChild><Link to={entry.href} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className="size-3.5 shrink-0 @md:hidden" /><span className="truncate">{entry.label}</span></Link></BreadcrumbLink>}
+              : <BreadcrumbLink asChild><Link to={entry.href} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className="size-3.5 shrink-0 rtl:rotate-180 @md:hidden" /><span className="truncate">{entry.label}</span></Link></BreadcrumbLink>}
           </BreadcrumbItem>
         </>}
         {record !== undefined && <>
