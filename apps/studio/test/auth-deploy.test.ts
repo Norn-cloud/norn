@@ -104,10 +104,10 @@ test("cutover: /api/agent must give the assistant's own answer, nothing else", (
   expect(agentAnswerIssue("studio.norn.cloud", 400, "text/html", '{"error":"Missing session."}')).toBeDefined()
   expect(agentAnswerIssue("studio.norn.cloud", 400, "application/json", '{"error":"other"}')).toBeDefined()
   const script = readFileSync(new URL("../scripts/prod-parity.ts", import.meta.url), "utf8")
-  expect(script).toContain('process.argv.includes("--cutover")')
+  expect(script).toContain('argv.includes("--cutover")')
   expect(script).toContain("domainParity(")
   expect(script).toContain("agentTailIssue(probeUrl, events, version)")
-  expect(script.indexOf("deploymentStableIssue(before, await readDeployments())")).toBeGreaterThan(script.lastIndexOf("agentTailIssue(probeUrl"))
+  expect(script.indexOf("deploymentStableIssue(before, await readDeployments(which, client))")).toBeGreaterThan(script.lastIndexOf("agentTailIssue(probeUrl"))
 })
 
 test("cutover: the answer is tied to the production Worker at its active version", () => {
@@ -166,7 +166,7 @@ test("Wrangler runs with a sanitized environment: toolchain, the checked token, 
   const seed = readFileSync(new URL("../scripts/seed-demo-org.ts", import.meta.url), "utf8")
   expect(seed).toContain("env: wranglerEnv(process.env, credentials, dir)")
   expect(seed).not.toContain("env: process.env")
-  expect(seed.indexOf("cloudflareCredentials(process.env)")).toBeLessThan(seed.indexOf("discoverD1(`"))
+  expect(seed.indexOf("cloudflareCredentials(process.env)")).toBeLessThan(seed.indexOf("discoverD1({ credentials }"))
 })
 
 test("only preview binds a cell Worker, by script name; prod has none until promotion", () => {

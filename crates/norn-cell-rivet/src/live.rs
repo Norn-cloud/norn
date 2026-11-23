@@ -68,10 +68,7 @@ impl Sockets {
     }
 
     fn all(&self) -> Vec<Arc<LiveSocket>> {
-        self.open
-            .lock()
-            .map(|open| open.clone())
-            .unwrap_or_default()
+        self.open.lock().map_or_default(|open| open.clone())
     }
 
     fn remove(&self, id: u64) {

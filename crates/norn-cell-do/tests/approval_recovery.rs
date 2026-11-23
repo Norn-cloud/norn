@@ -200,7 +200,7 @@ fn crashes_leaving(
             None => break,
         }
     }
-    assert!(!found.is_empty(), "no crash point leaves {want:?}");
+    assert_ne!(found, [], "no crash point leaves {want:?}");
     found
 }
 
@@ -631,7 +631,7 @@ fn a_committed_step_call_lost_before_its_delivery_moves_its_run_on_the_wake() {
         let count = commit_count(&path);
         let woke = wake(&reopened, due.max(NOW * 1000));
         assert_eq!(woke.steps, 1, "{woke:?}");
-        assert!(woke.failed.is_empty(), "{woke:?}");
+        assert_eq!(woke.failed.len(), 0, "{woke:?}");
         assert_eq!(run_state(&reopened), json!("completed"));
         assert_eq!(melt(&reopened).1, before, "the action never ran again");
         assert_eq!(commit_count(&path), count + 1);

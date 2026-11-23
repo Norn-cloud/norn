@@ -517,10 +517,7 @@ fn dns_rebinding_is_refused_and_never_reaches_the_internal_address() {
         matches!(&second, Err(EgressError::Forbidden(why)) if why.contains("127.0.0.1")),
         "{second:?}"
     );
-    assert!(
-        internal.seen().is_empty(),
-        "the internal address was reached"
-    );
+    assert_eq!(internal.seen().len(), 0, "the internal address was reached");
 }
 
 #[test]
@@ -1246,10 +1243,7 @@ fn oauth_calls_follow_no_redirect() {
             .map(|(_, event, _, detail)| (event.as_str(), detail.as_deref())),
         Some(("credential.provider_revoke", Some("egress_redirect")))
     );
-    assert!(
-        thief.seen().is_empty(),
-        "a redirect target got an OAuth body"
-    );
+    assert_eq!(thief.seen().len(), 0, "a redirect target got an OAuth body");
     assert_eq!(server.seen().len(), 3);
 }
 
@@ -1274,7 +1268,7 @@ fn a_body_is_never_resent_to_another_origin() {
         matches!(refused, Err(EgressError::Redirect(_))),
         "{refused:?}"
     );
-    assert!(thief.seen().is_empty());
+    assert_eq!(thief.seen().len(), 0);
 }
 
 /// Never answers in time.

@@ -557,7 +557,7 @@ mod tests {
         let found = outliers(&rows).unwrap();
         assert_eq!(found.upper_fence, RuntimeValue::Number(half));
         assert_eq!(found.count, 1, "the overflowing crossing is counted");
-        assert!(found.examples.is_empty(), "its distance cannot be ranked");
+        assert_eq!(found.examples, [], "its distance cannot be ranked");
     }
 
     #[test]

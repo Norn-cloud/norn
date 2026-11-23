@@ -27,70 +27,8 @@ name = "constitution"
 test = true
 
 [[test]]
-name = "bench_clauses"
-
-[[test]]
-name = "bench_import"
-
-[[test]]
-name = "bench_mapping"
-
-[[test]]
-name = "bench_rules"
-
-[[test]]
-name = "cell_host"
-
-[[test]]
-name = "commit_path"
-
-[[test]]
-name = "explorer_documents"
-
-[[test]]
-name = "jewelry_pricing"
-
-[[test]]
-name = "label_identity"
-
-[[test]]
-name = "mapping_links"
-
-[[test]]
-name = "model_interfaces"
-
-[[test]]
-name = "ontology_lending"
-
-[[test]]
-name = "parent_rows"
-
-[[test]]
-name = "query_envelope"
-
-[[test]]
-name = "query_lineage_sources"
-
-[[test]]
-name = "rea_inventory"
-
-[[test]]
-name = "read_envelope"
-
-[[test]]
-name = "receipt_consume"
-
-[[test]]
-name = "retained_definitions"
-
-[[test]]
-name = "source_agreement"
-
-[[test]]
-name = "stress_purchase"
-
-[[test]]
-name = "synchronous_action"
+name = "suites"
+path = "tests/suites.rs"
 
 [features]
 default = ["native"]
@@ -115,7 +53,7 @@ norn-projections = { path = "../norn-projections" }
 # cache, no wasm32 backend).
 rusqlite = { version = "0.41.0", default-features = false, features = ["backup", "bundled", "cache", "hooks"], optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+serde_json = { version = "1.0.150", features = ["raw_value"] }
 thiserror = "2.0.20"
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 object_store = { version = "0.14.2", default-features = false, features = ["fs"], optional = true }

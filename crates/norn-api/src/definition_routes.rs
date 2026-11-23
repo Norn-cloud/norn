@@ -725,8 +725,7 @@ fn validate<E: SqlEngine>(
     let title = value
         .get(title_member)
         .and_then(Value::as_str)
-        .map(|title| title.trim().to_owned())
-        .unwrap_or_default();
+        .map_or_default(|title| title.trim().to_owned());
     let title = flow.as_ref().map_or(title, |flow| {
         flow.summary
             .title
@@ -1853,8 +1852,7 @@ fn signed_approval(
             title: value
                 .get("action")
                 .and_then(Value::as_str)
-                .map(|title| title.trim().to_owned())
-                .unwrap_or_default(),
+                .map_or_default(|title| title.trim().to_owned()),
             payload_sha256: payload_sha256(&canonical),
             payload: canonical,
             signoff: Some(RetainedSignoff {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Norn-cloud/norn-platform/main/crates/norn-projections/schemas/openlineage-norn-facets.json",
+  "$id": "https://raw.githubusercontent.com/Norn-cloud/norn/main/crates/norn-projections/schemas/openlineage-norn-facets.json",
   "$defs": {
     "NornCommitRunFacet": {
       "description": "The Norn ledger commit an OpenLineage run is (norn-projections interop export): the cell-scoped stable ids of the commit and of the decision that produced it.",

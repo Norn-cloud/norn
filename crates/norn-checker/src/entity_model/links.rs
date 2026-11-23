@@ -541,8 +541,7 @@ impl<'a> Checker<'a, '_> {
         let pointer = diagnostic
             .span
             .as_ref()
-            .map(|span| span.pointer.clone())
-            .unwrap_or_default();
+            .map_or_default(|span| span.pointer.clone());
         let code = diagnostic.code.as_str().to_owned();
         if self.reported.insert((code, pointer)) {
             self.out.push(diagnostic);

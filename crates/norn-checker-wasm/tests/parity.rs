@@ -85,23 +85,20 @@ fn inline_layout(mut artifact: Value) -> Value {
 
 fn array_text(case: &Value, key: &str) -> String {
     let inline_layout_on = case["inlineLayoutOn"].as_str() == Some(key);
-    let files: Vec<String> = case[key]
-        .as_array()
-        .map(|paths| {
-            paths
-                .iter()
-                .map(|path| {
-                    let source = read(path.as_str().expect("path string"));
-                    if inline_layout_on {
-                        let artifact: Value = serde_json::from_str(&source).expect("fixture JSON");
-                        serde_json::to_string(&inline_layout(artifact)).expect("inline JSON")
-                    } else {
-                        source
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let files: Vec<String> = case[key].as_array().map_or_default(|paths| {
+        paths
+            .iter()
+            .map(|path| {
+                let source = read(path.as_str().expect("path string"));
+                if inline_layout_on {
+                    let artifact: Value = serde_json::from_str(&source).expect("fixture JSON");
+                    serde_json::to_string(&inline_layout(artifact)).expect("inline JSON")
+                } else {
+                    source
+                }
+            })
+            .collect()
+    });
     format!("[{}]", files.join(","))
 }
 
@@ -303,11 +300,12 @@ fn clean_set_emits_v2_and_preserves_the_historical_receipt_pin() {
 fn invalid_sets_report_findings_not_errors() {
     let output = json_of(&output_of("retail-with-unknown-supertype"));
     assert_eq!(output["admitted"], false);
-    assert!(
-        !output["diagnostics"]["diagnostics"]
+    assert_ne!(
+        output["diagnostics"]["diagnostics"]
             .as_array()
             .expect("diagnostics")
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(output["receipt"]["admitted"], false);
 

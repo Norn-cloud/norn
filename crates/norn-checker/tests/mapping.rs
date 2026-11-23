@@ -1207,7 +1207,7 @@ fn model_and_source_check_clean_on_their_own() {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:#?}");
+    assert_eq!(findings, [], "{findings:#?}");
     assert!(MappingModel::from_artifacts(&model_artifacts()).is_ok());
 }
 
@@ -1219,10 +1219,7 @@ fn erpnext_mapping_checks_clean_in_the_artifact_set() {
     );
     assert_eq!(mapping_key(&mapping), "erpnext.norn_core@0.1.0");
     let findings = check(mapping);
-    assert!(
-        findings.is_empty(),
-        "the set should check clean: {findings:#?}"
-    );
+    assert_eq!(findings, [], "the set should check clean: {findings:#?}");
 }
 
 /// The claim type is needed only where links are mapped: a set whose mapping
@@ -1442,7 +1439,7 @@ fn composition_pack_can_contain_mapping_and_source_schema() {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:#?}");
+    assert_eq!(findings, [], "{findings:#?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1559,10 +1556,7 @@ fn compiled_actions_pass_the_artifact_set_check() {
             tenant: None,
         },
     );
-    assert!(
-        findings.is_empty(),
-        "compiled actions pass T2/T3: {findings:#?}"
-    );
+    assert_eq!(findings, [], "compiled actions pass T2/T3: {findings:#?}");
 }
 
 #[test]
@@ -1611,7 +1605,7 @@ fn coverage_records_every_member_and_ignored_field() {
         }
     );
     assert!(order.accounts_for(&MemberRef::Property(PropertyId("status".to_owned()))));
-    assert!(order.unaccounted_source_fields().is_empty(), "{order:#?}");
+    assert_eq!(order.unaccounted_source_fields().len(), 0, "{order:#?}");
 }
 
 #[test]
@@ -1756,8 +1750,9 @@ fn mapped_provenance_inherits_member_and_identity_source_fields() {
         tenant: None,
     };
     let findings = check_artifact_set(&artifacts, &context);
-    assert!(
-        findings.is_empty(),
+    assert_eq!(
+        findings,
+        [],
         "the marked mapping set is valid: {findings:#?}"
     );
 
@@ -2409,20 +2404,20 @@ fn guarded_maps_skip_nullable_subjects_and_guarded_deletes_refuse_partial_record
             "attributes": []
         }),
     );
-    assert!(
+    assert_eq!(
         compiled
             .apply(
                 std::slice::from_ref(&template),
                 &UtcTimestamp("2026-10-01T00:00:00Z".to_owned())
             )
-            .expect("the false guard skips before the nullable subject")
-            .is_empty()
+            .expect("the false guard skips before the nullable subject"),
+        []
     );
-    assert!(
+    assert_eq!(
         compiled
             .apply_delete(&template, &UtcTimestamp("2026-10-01T00:00:00Z".to_owned()))
-            .expect("a complete template delete evaluates its false guard")
-            .is_empty(),
+            .expect("a complete template delete evaluates its false guard"),
+        [],
         "a guarded delete cannot tombstone a record from the opposite branch"
     );
     let variant_delete = document(
@@ -2909,7 +2904,7 @@ fn decimal_text_conforms_and_a_refusal_explains_its_field() {
         assert_eq!(field.value.as_deref(), Some(format!("{bad:?}").as_str()));
         assert!(field.expected.contains("decimal"), "{field:?}");
         assert!(field.reason.contains("JSON decimal"), "{field:?}");
-        assert!(!refusal.map.is_empty());
+        assert_ne!(refusal.map.len(), 0);
         assert_eq!(refusal.document, 0);
         // The diagnostic `apply` reports is the same refusal, in words.
         let diagnostic = refusal.diagnostic();

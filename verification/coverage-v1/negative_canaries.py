@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
@@ -638,7 +639,7 @@ def workflow_verdict_canaries(source: str) -> None:
                                         cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
     full_plan = packed(full_plan)
     affected = packed(affected)
-    passed = dict.fromkeys(("CORE", "TEST"), "success")
+    passed = dict.fromkeys(("PLANNER", "CORE", "TEST"), "success")
     cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
     cases.append(("pull_request", affected, passed, True))
     cases.extend((event, affected, passed, False)
@@ -756,7 +757,7 @@ def studio_browser_pin_canaries() -> None:
                 ("all skipped passes", "        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\\n' >&2; exit 1; }\n", ""),
                 ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
                 ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
-                ("not in the plan", " integration browser formal ", " integration formal "),
+                ("not in the plan", " integration-clients browser formal ", " integration-clients formal "),
                 ("no checker-admission test", "        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\\n' \"$decision\"; exit 1; }\n", ""),
                 ("no named-case check", "        grep -qxE '\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]' <<< \"$decision\" || { printf 'browser: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
                 ("named case matched as a substring", "grep -qxE '\\(pass\\) the checker admits", "grep -qE '\\(pass\\) the checker admits"),
@@ -774,6 +775,75 @@ def studio_browser_pin_canaries() -> None:
             finally:
                 validator.CORE_RUNNER = ROOT / "scripts/ci/core.sh"
             raise AssertionError(f"browser phase mutation passed: {label}")
+
+
+def integration_partition_canaries() -> None:
+    validator = load_module("norn_integration_canaries", VALIDATOR)
+    core = validator.CORE_RUNNER.read_text(encoding="utf-8")
+    command = '      bash sdks/python/run-demo.sh "$upstream/python-client"\n'
+    with tempfile.TemporaryDirectory() as directory:
+        validator.CORE_RUNNER = Path(directory) / "core.sh"
+        for mutated, diagnostic in (
+                (core.replace(" integration-wasm ", " "), "integration phases must each be registered once"),
+                (core.replace(command, ""), "integration check must run exactly once"),
+                (core.replace(command, command * 2), "integration check must run exactly once"),
+                (core.replace("--shard=2/2", "--shard=1/2"),
+                 "authoring shards must execute and check coverage exactly once"),
+                (core.replace('  (( status == 0 )) || exit "$status"\n', ""),
+                 "authoring shards must execute and check coverage exactly once"),
+                (core.replace("if not expected or actual != expected:", "if False:"),
+                 "authoring shards must execute and check coverage exactly once"),
+                (core.replace("if idle:", "if False:"),
+                 "authoring shards must execute and check coverage exactly once")):
+            validator.CORE_RUNNER.write_text(mutated, encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([])
+            except validator.InvalidCoverage as error:
+                if diagnostic in str(error):
+                    continue
+                raise
+            raise AssertionError(f"integration partition mutation passed: {diagnostic}")
+        # A skip-allowed marker on a second file is refused by the validator's pinned set.
+        lines = (ROOT / "scripts/ci/authoring-test-files.txt").read_text(encoding="utf-8").splitlines()
+        other = next(i for i, line in enumerate(lines) if len(line.split()) == 1)
+        marked = lines[:other] + [lines[other] + " skip-allowed"] + lines[other + 1:]
+        validator.AUTHORING_INVENTORY = Path(directory) / "authoring-test-files.txt"
+        validator.AUTHORING_INVENTORY.write_text("\n".join(marked) + "\n", encoding="utf-8")
+        validator.CORE_RUNNER.write_text(core, encoding="utf-8")
+        try:
+            validator.validate_workflow_integrity([])
+        except validator.InvalidCoverage as error:
+            if "only test/engine-alpha.test.ts may be skip-allowed" not in str(error):
+                raise
+        else:
+            raise AssertionError("a second skip-allowed authoring file passed")
+
+        inventory = ROOT / "scripts/ci/authoring-test-files.txt"
+        files = [line.split()[0] for line in inventory.read_text(encoding="utf-8").splitlines()]
+        allowed = {line.split()[0] for line in inventory.read_text(encoding="utf-8").splitlines() if len(line.split()) == 2}
+        # A file outside skip-allowed whose suite has only skipped cases is not coverage.
+        idle = next(file for file in files[2:] if file not in allowed)
+        checker = core.split("<<'PYTHON'\n", 1)[1].split("\nPYTHON\n", 1)[0]
+        reports = [Path(directory) / f"authoring-{shard}.xml" for shard in (1, 2)]
+        for label, first_files, first_case, skipped, diagnostic in (
+                ("complete reports", files[:2], True, allowed, ""),
+                ("silent deletion", files[:1], True, allowed, f"missing={[files[1]]}"),
+                ("empty shard with suite headers", files[:2], False, allowed, "no authoring tests executed"),
+                ("skipped-only file", files[:2], True, allowed | {idle}, f"no executed test: {[idle]}")):
+            for report, shard_files, has_cases in zip(reports, (first_files, files[2:]), (first_case, True)):
+                root = ET.Element("testsuites")
+                for file in shard_files:
+                    suite = ET.SubElement(root, "testsuite", file=file)
+                    if has_cases:
+                        # Like Bun's report: a describe block nests its cases in an inner suite.
+                        case = ET.SubElement(ET.SubElement(suite, "testsuite", name="block"), "testcase", name="example")
+                        if file in skipped:
+                            ET.SubElement(case, "skipped")
+                ET.ElementTree(root).write(report, encoding="utf-8")
+            result = subprocess.run([sys.executable, "-c", checker, str(inventory), *map(str, reports)],
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode != bool(diagnostic) or diagnostic not in result.stderr:
+                raise AssertionError(f"authoring shard coverage drift ({label}): {result.returncode} {result.stderr}")
 
 
 def workflow_cleanup_canaries(source: str) -> None:
@@ -817,7 +887,7 @@ def studio_browser_phase_canaries() -> None:
         tools = {
             "cargo": "exit 0",
             "bun": 'if [ "$1" = test ]; then printf "%s\\n" "$BUN_TEST_OUTPUT"; exit "$BUN_TEST_STATUS"; fi; exit 0',
-            "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.98.0"; fi',
+            "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.100.0"; fi',
             "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
                     'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
                     'exit "$RUN_STATUS"',
@@ -1440,6 +1510,12 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["run-name"] = "${{ github.event.pull_request.title }}"
         rejected("forged READY attribution", document)
+        document = copy.deepcopy(workflow)
+        document["permissions"]["id-token"] = "write"
+        rejected("workflow-wide OIDC grant inherited by the planner", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["plan"]["permissions"] = {"contents": "read", "id-token": "write"}
+        rejected("planner OIDC grant", document)
         for name in ("core", "full", "trusted-policy"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
@@ -1467,7 +1543,7 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"][-1]["shell"] = "/usr/bin/true {0}"
             rejected(f"{name} shell override", document)
-        for key in ("DRAFT", "BASE", "HEAD_SHA", "CORE", "TEST"):
+        for key in ("DRAFT", "BASE", "HEAD_SHA", "PLAN", "PLANNER", "CORE", "TEST"):
             document = copy.deepcopy(workflow)
             document["jobs"]["full"]["steps"][0]["env"][key] = "forged"
             rejected(f"forged verdict input {key}", document)
@@ -1477,16 +1553,23 @@ def workflow_context_canaries(source: str) -> None:
             rejected(f"{name} cancellation/admission mutation", document)
         # A draft head runs core only: bundles admitted for drafts are rejected.
         document = copy.deepcopy(workflow)
-        document["jobs"]["test"]["if"] = "fromJSON(needs.core.outputs.plan).bundle[0] != null"
+        document["jobs"]["test"]["if"] = "fromJSON(needs.plan.outputs.plan).bundle[0] != null"
         rejected("bundles admitted for draft heads", document)
-        # The gate plan is core's step before cheap: it must exist once, unconditional, fail
-        # closed, bound to the event base and head, and published as core's only output.
-        planner = next(i for i, step in enumerate(workflow["jobs"]["core"]["steps"]) if step.get("id") == "plan")
+        # The gate plan is the plan job's step after the candidate checkout: it must exist once,
+        # unconditional, fail closed, bound to the event base and head, and published as the plan
+        # job's only output. The job stays hosted, outside the cache-writer environment, and runs
+        # nothing else.
+        planner = next(i for i, step in enumerate(workflow["jobs"]["plan"]["steps"]) if step.get("id") == "plan")
         for label, mutate in (
                 ("removed", lambda job: job["steps"].pop(planner)),
                 ("conditional", lambda job: job["steps"][planner].__setitem__("if", "false")),
                 ("tolerated", lambda job: job["steps"][planner].__setitem__("continue-on-error", True)),
-                ("after cheap", lambda job: job["steps"].append(job["steps"].pop(planner))),
+                ("before the checkout", lambda job: job["steps"].insert(0, job["steps"].pop(planner))),
+                ("with an extra step", lambda job: job["steps"].append({"run": "cargo build --workspace"})),
+                ("on Boat", lambda job: job.__setitem__("runs-on", workflow["jobs"]["core"]["runs-on"])),
+                ("in the cache-writer environment",
+                 lambda job: job.__setitem__("environment", workflow["jobs"]["core"]["environment"])),
+                ("run for trusted events", lambda job: job.__setitem__("if", "always()")),
                 ("unbound base", lambda job: job["steps"][planner]["env"].__setitem__("BASE", "")),
                 ("forged head", lambda job: job["steps"][planner]["env"].__setitem__("HEAD_SHA", "HEAD")),
                 ("unbound output", lambda job: job["outputs"].__setitem__("plan", "{}")),
@@ -1495,11 +1578,16 @@ def workflow_context_canaries(source: str) -> None:
                 ("renamed", lambda job: job["steps"][planner].__setitem__("id", "planned")),
                 ("duplicated", lambda job: job["steps"].insert(planner, copy.deepcopy(job["steps"][planner])))):
             document = copy.deepcopy(workflow)
-            mutate(document["jobs"]["core"])
-            rejected(f"core gate plan {label}", document)
+            mutate(document["jobs"]["plan"])
+            rejected(f"gate plan {label}", document)
+        # Core and the bundles never publish or recompute a plan of their own.
+        for name in ("core", "test"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["outputs"] = {"plan": "{}"}
+            rejected(f"{name} publishes a gate plan", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["plan"] = copy.deepcopy(document["jobs"]["full"])
-        rejected("a separate plan job (an extra Boat start)", document)
+        document["jobs"]["test"]["needs"] = ["core"]
+        rejected("bundles bound to a plan that is not the plan job's", document)
         document = copy.deepcopy(workflow)
         document["on"]["pull_request"]["types"].remove("ready_for_review")
         rejected("missing READY activity", document)
@@ -1608,12 +1696,35 @@ def workflow_context_canaries(source: str) -> None:
                     ("cache keys outside the start step", lambda job: next(step for step in job["steps"]
                         if step.get("uses", "").startswith("Swatinem/rust-cache@")).__setitem__("env",
                         {"NORN_SCCACHE_SECRET": "${{ secrets.NORN_SCCACHE_SECRET }}"})),
+                    # The keys come from Infisical over OIDC, never from GitHub secrets again.
+                    ("cache keys back in GitHub secrets", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("env",
+                        {"NORN_SCCACHE_%s" % name: "${{ secrets.NORN_SCCACHE_%s }}" % name
+                         for name in ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")})),
+                    ("cache-key step on hosted runners", lambda job: next(step for step in job["steps"]
+                        if step.get("id") == "sccache-keys").pop("if")),
+                    ("cache-key step without its OIDC token", lambda job: job.pop("permissions")),
+                    ("job-wide write permissions for the cache", lambda job: job.__setitem__("permissions", "write-all")),
                     ("fatal start", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):
                 document = copy.deepcopy(workflow)
                 change(document["jobs"][name])
                 rejected(f"{name} sccache {label}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["core"]["permissions"].pop("actions")
+        rejected("core secret inventory without environment read permission", document)
+        document = copy.deepcopy(workflow)
+        step = next(step for step in document["jobs"]["core"]["steps"]
+                    if step.get("name") == "Audit Actions secret inventory")
+        step["continue-on-error"] = True
+        rejected("core secret inventory failure ignored", document)
+        # Outside core and test no job mints an OIDC token, `write-all` included.
+        for name in ("full", "trusted-policy"):
+            for label, permissions in (("write-all", "write-all"), ("id-token", {"id-token": "write"})):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["permissions"] = permissions
+                rejected(f"{name} OIDC token by {label}", document)
         # The bundle may drop only the cargo target dir, between tasks that share no build.
         source_runner = validator.CORE_RUNNER
         core = source_runner.read_text(encoding="utf-8")
@@ -1839,20 +1950,23 @@ def workflow_canaries() -> None:
     mutations = [
         ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
         ("missing bundle executor", 'run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"', "run: echo skipped"),
-        ("missing bundle matrix", "bundle: ${{ fromJSON(needs.core.outputs.plan).bundle }}", "bundle: []"),
-        ("missing full verdict dependency", "needs: [core, test]", "needs: [core]"),
-        ("disabled planned bundles", "if: fromJSON(needs.core.outputs.plan).bundle[0] != null", "if: false"),
+        ("missing bundle matrix", "bundle: ${{ fromJSON(needs.plan.outputs.plan).bundle }}", "bundle: []"),
+        ("missing full verdict dependency", "needs: [plan, core, test]", "needs: [plan, core]"),
+        ("verdict without the core gate", "needs: [plan, core, test]", "needs: [plan, test]"),
+        ("disabled planned bundles", "if: fromJSON(needs.plan.outputs.plan).bundle[0] != null", "if: false"),
         ("wrong affected base", "github.event_name == 'pull_request' && github.event.pull_request.base.sha", "github.event_name == 'pull_request' && github.sha"),
-        ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.core.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
-        ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.core.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
+        ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
+        ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
         ("more bundles than the start budget", "length <= 3 and all(.[];", "length <= 6 and all(.[];"),
         ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
         ("forged core verdict", "CORE: ${{ needs.core.result }}", "CORE: success"),
+        ("forged planner verdict", "PLANNER: ${{ needs.plan.result }}", "PLANNER: success"),
+        ("missing planner verdict", '[ "$PLANNER" = success ]', 'true'),
         ("missing full-plan assertion", '[ "$mode" = full ]', 'true'),
         ("planned skipped job accepted", '[ "$2" -eq 0 ]', 'true'),
         ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)", "!cancelled()"),
         ("floating action", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4"),
-        ("floating Rust toolchain", "toolchain: 1.98.0", "toolchain: stable"),
+        ("floating Rust toolchain", "toolchain: 1.100.0", "toolchain: stable"),
         ("insufficient proof timeout", "timeout-minutes: 110", "timeout-minutes: 20"),
     ]
     mutations.extend((f"missing {trigger} trigger", f"  {trigger}:\n", "") for trigger in ("pull_request", "pull_request_target", "push", "merge_group"))
@@ -1863,8 +1977,8 @@ def workflow_canaries() -> None:
                 raise AssertionError(f"workflow canary target drifted: {label}")
             candidate.write_text(source.replace(original, replacement, 1), encoding="utf-8")
             expect_coverage_validator_rejection(label, formal_workflow_path=candidate)
-        decoy = source.replace("toolchain: 1.98.0", "toolchain: stable", 1).replace(
-            "name: Public core\n", "name: Public core\nenv:\n  toolchain: 1.98.0\n", 1)
+        decoy = source.replace("toolchain: 1.100.0", "toolchain: stable", 1).replace(
+            "name: Public core\n", "name: Public core\nenv:\n  toolchain: 1.100.0\n", 1)
         candidate.write_text(decoy, encoding="utf-8")
         expect_coverage_validator_rejection("decoy toolchain key", formal_workflow_path=candidate)
         command = 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"'
@@ -2527,6 +2641,7 @@ def main() -> int:
         workflow_sccache_canaries(source)
         studio_browser_phase_canaries()
         studio_browser_pin_canaries()
+        integration_partition_canaries()
         rust_parity_evidence_canaries()
         workflow_trusted_policy_canaries(source)
         workflow_expression_cap_canaries()

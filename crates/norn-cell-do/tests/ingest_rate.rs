@@ -1,6 +1,6 @@
 //! INGEST-RATE-1: the rate a normal record import lands at. `#[ignore]`d;
 //! run in release on a quiet machine:
-//! `cargo test --release -p norn-cell-do --test ingest_rate -- --ignored --nocapture`.
+//! `cargo test --release -p norn-cell-do --test suites ingest_rate:: -- --ignored --nocapture`.
 //! `NORN_INGEST_ROWS` sets the order-line count (default 2,000) and
 //! `NORN_INGEST_ROUNDS` the rounds (default 3, the median is reported);
 //! `NORN_INGEST_STORE` is `file`, `memory` or both (default, alternating).

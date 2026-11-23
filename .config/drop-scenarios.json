@@ -16,43 +16,43 @@
       "quantity_ledger::decimal::tests::decimal_multiplier_refuses_exactly_on_overflow",
       "quantity_ledger::decimal::tests::val_exact_scale_boundaries"
     ],
-    "norn-checker::core_units": [
-      "core_units_is_the_exact_generated_admitted_catalog",
-      "val_unit_action_info_cannot_refuse_or_hide_an_error",
-      "val_unit_action_literal_thresholds_keep_the_inferred_unit",
-      "val_unit_admission_preserves_case_and_system",
-      "val_unit_closed_membership_refuses_unknown_units_and_money",
-      "val_unit_descriptor_refuses_another_unit_code",
-      "val_unit_factor_and_dimension_cannot_be_substituted",
-      "val_unit_link_properties_refuse_unknown_units",
-      "val_unit_literal_note_is_retained_without_refusing_a_valid_artifact",
-      "val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins",
-      "val_unit_unrelated_deep_payload_does_not_report_a_unit_mismatch"
+    "norn-checker::suites": [
+      "core_units::core_units_is_the_exact_generated_admitted_catalog",
+      "core_units::val_unit_action_info_cannot_refuse_or_hide_an_error",
+      "core_units::val_unit_action_literal_thresholds_keep_the_inferred_unit",
+      "core_units::val_unit_admission_preserves_case_and_system",
+      "core_units::val_unit_closed_membership_refuses_unknown_units_and_money",
+      "core_units::val_unit_descriptor_refuses_another_unit_code",
+      "core_units::val_unit_factor_and_dimension_cannot_be_substituted",
+      "core_units::val_unit_link_properties_refuse_unknown_units",
+      "core_units::val_unit_literal_note_is_retained_without_refusing_a_valid_artifact",
+      "core_units::val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins",
+      "core_units::val_unit_unrelated_deep_payload_does_not_report_a_unit_mismatch"
     ],
-    "norn-expr::profile_conformance": [
-      "a_guarding_condition_narrows_only_the_reads_it_proves",
-      "ambient_clock_and_timezone_forms_are_refused",
-      "bounded_string_controls_are_checked_at_typed_and_syntax_only_sites",
-      "bounded_string_precharge_exhaustion_is_typed",
-      "bounded_string_zero_caps_return_empty_results",
-      "bounded_strings_follow_nfc_and_unicode_scalar_boundaries",
-      "builtins_admitted_and_refused",
-      "evaluation_source_validation_reuses_exact_literal_and_structural_bounds",
-      "map_iteration_order_is_never_observable",
-      "nullable_division_requires_handling",
-      "numbers_are_exact_or_a_typed_error",
-      "profile_engine_pin_matches_the_qualified_fork",
-      "profile_id_is_published_and_pinned_to_profile_md",
-      "regex_is_refused_and_strings_are_bounded",
-      "runtime_errors_are_typed_never_silent",
-      "scientific_literals_are_refused_before_evaluation",
-      "temporal_arithmetic_is_checked_and_projects_canonical_strings",
-      "temporal_kinds_separate_wire_strings_from_parsed_temporals",
-      "temporal_ordering_handles_season_windows_leap_days_and_offsets",
-      "types_have_no_residual_any_or_dynamic_reads",
-      "unicode_scalar_count_preserves_byte_length_semantics",
-      "val_round_explicit_midpoint_away_and_zero_divisor_admission",
-      "val_roundtrip_runtime_tokens_reach_the_real_evaluator_exactly"
+    "norn-expr::suites": [
+      "profile_conformance::a_guarding_condition_narrows_only_the_reads_it_proves",
+      "profile_conformance::ambient_clock_and_timezone_forms_are_refused",
+      "profile_conformance::bounded_string_controls_are_checked_at_typed_and_syntax_only_sites",
+      "profile_conformance::bounded_string_precharge_exhaustion_is_typed",
+      "profile_conformance::bounded_string_zero_caps_return_empty_results",
+      "profile_conformance::bounded_strings_follow_nfc_and_unicode_scalar_boundaries",
+      "profile_conformance::builtins_admitted_and_refused",
+      "profile_conformance::evaluation_source_validation_reuses_exact_literal_and_structural_bounds",
+      "profile_conformance::map_iteration_order_is_never_observable",
+      "profile_conformance::nullable_division_requires_handling",
+      "profile_conformance::numbers_are_exact_or_a_typed_error",
+      "profile_conformance::profile_engine_pin_matches_the_qualified_fork",
+      "profile_conformance::profile_id_is_published_and_pinned_to_profile_md",
+      "profile_conformance::regex_is_refused_and_strings_are_bounded",
+      "profile_conformance::runtime_errors_are_typed_never_silent",
+      "profile_conformance::scientific_literals_are_refused_before_evaluation",
+      "profile_conformance::temporal_arithmetic_is_checked_and_projects_canonical_strings",
+      "profile_conformance::temporal_kinds_separate_wire_strings_from_parsed_temporals",
+      "profile_conformance::temporal_ordering_handles_season_windows_leap_days_and_offsets",
+      "profile_conformance::types_have_no_residual_any_or_dynamic_reads",
+      "profile_conformance::unicode_scalar_count_preserves_byte_length_semantics",
+      "profile_conformance::val_round_explicit_midpoint_away_and_zero_divisor_admission",
+      "profile_conformance::val_roundtrip_runtime_tokens_reach_the_real_evaluator_exactly"
     ]
   },
   "drop-02": {
@@ -66,14 +66,14 @@
     ]
   },
   "drop-04": {
-    "norn-decisions::evaluate": [
-      "cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations",
-      "declared_average_cp1_and_delivery_to_transfer_identity_collision",
-      "declared_average_matches_every_retained_prefix_with_original_cost_returns",
-      "declared_fifo_matches_all_retained_reference_histories_and_cp1",
-      "fold_boundaries_refuse_without_a_partial_decision",
-      "fold_capacity_complete_allocate_matches_the_core_spec",
-      "fold_order_is_numeric_with_identity_ties_and_independent_of_enumeration"
+    "norn-decisions::suites": [
+      "evaluate::cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations",
+      "evaluate::declared_average_cp1_and_delivery_to_transfer_identity_collision",
+      "evaluate::declared_average_matches_every_retained_prefix_with_original_cost_returns",
+      "evaluate::declared_fifo_matches_all_retained_reference_histories_and_cp1",
+      "evaluate::fold_boundaries_refuse_without_a_partial_decision",
+      "evaluate::fold_capacity_complete_allocate_matches_the_core_spec",
+      "evaluate::fold_order_is_numeric_with_identity_ties_and_independent_of_enumeration"
     ]
   },
   "drop-05": {
@@ -93,9 +93,9 @@
     ]
   },
   "drop-06": {
-    "norn-cell::jewelry_pricing": [
-      "jewel_price_milligram_denominator_refuses_before_execution",
-      "jewel_price_sell_and_scrap_commit_exactly_once_and_reopen"
+    "norn-cell::suites": [
+      "jewelry_pricing::jewel_price_milligram_denominator_refuses_before_execution",
+      "jewelry_pricing::jewel_price_sell_and_scrap_commit_exactly_once_and_reopen"
     ]
   },
   "drop-07": {
@@ -120,31 +120,31 @@
     ]
   },
   "drop-09": {
-    "norn-checker::three_systems": [
-      "mvp_item_holding_catalog_and_owner_location_partitions",
-      "mvp_map_gap_shopify_price_is_never_stock_cost_or_gl",
-      "mvp_map_three_aliases_roles_and_one_economic_identity",
-      "mvp_map_three_ambiguous_identity_refuses_without_sku_guessing",
-      "mvp_map_three_artifact_set_is_admitted",
-      "mvp_map_three_generated_aliases_never_guess_catalog_identity",
-      "mvp_map_three_odoo_snapshot_incremental_and_replay_are_synthetic",
-      "mvp_map_three_unresolved_units_and_draft_postings_refuse"
+    "norn-checker::suites": [
+      "three_systems::mvp_item_holding_catalog_and_owner_location_partitions",
+      "three_systems::mvp_map_gap_shopify_price_is_never_stock_cost_or_gl",
+      "three_systems::mvp_map_three_aliases_roles_and_one_economic_identity",
+      "three_systems::mvp_map_three_ambiguous_identity_refuses_without_sku_guessing",
+      "three_systems::mvp_map_three_artifact_set_is_admitted",
+      "three_systems::mvp_map_three_generated_aliases_never_guess_catalog_identity",
+      "three_systems::mvp_map_three_odoo_snapshot_incremental_and_replay_are_synthetic",
+      "three_systems::mvp_map_three_unresolved_units_and_draft_postings_refuse"
     ]
   },
   "drop-11": {
-    "norn-kernel::invariant_commit": [
-      "law_interface_mixed_scopes_and_misowned_invariants_refuse",
-      "law_interface_runtime_matches_the_shared_evaluator_for_implementors",
-      "law_interface_transitive_and_diamond_implementors_govern_once_with_the_interface_pin",
-      "law_invariant_runtime_decision_and_action_refusals_journal_and_consume",
-      "law_invariant_runtime_exhausted_budget_refuses",
-      "law_invariant_runtime_matches_the_existing_evaluator",
-      "law_invariant_runtime_misbound_missing_and_negated_references_refuse",
-      "law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin",
-      "law_invariant_runtime_other_responses_still_refuse_before_activation",
-      "law_invariant_runtime_resolves_the_retained_subjects_interface_member",
-      "law_invariant_runtime_valid_response_admits",
-      "law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin"
+    "norn-kernel::suites": [
+      "invariant_commit::law_interface_mixed_scopes_and_misowned_invariants_refuse",
+      "invariant_commit::law_interface_runtime_matches_the_shared_evaluator_for_implementors",
+      "invariant_commit::law_interface_transitive_and_diamond_implementors_govern_once_with_the_interface_pin",
+      "invariant_commit::law_invariant_runtime_decision_and_action_refusals_journal_and_consume",
+      "invariant_commit::law_invariant_runtime_exhausted_budget_refuses",
+      "invariant_commit::law_invariant_runtime_matches_the_existing_evaluator",
+      "invariant_commit::law_invariant_runtime_misbound_missing_and_negated_references_refuse",
+      "invariant_commit::law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin",
+      "invariant_commit::law_invariant_runtime_other_responses_still_refuse_before_activation",
+      "invariant_commit::law_invariant_runtime_resolves_the_retained_subjects_interface_member",
+      "invariant_commit::law_invariant_runtime_valid_response_admits",
+      "invariant_commit::law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin"
     ]
   },
   "drop-constitution": {

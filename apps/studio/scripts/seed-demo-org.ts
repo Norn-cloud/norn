@@ -9,9 +9,10 @@
  *
  *   bun scripts/seed-demo-org.ts --stage preview --member viewer@demo.norn.cloud=viewer --member analyst@demo.norn.cloud=member
  *
- * Uses a loopback-only Wrangler Worker and remote D1 binding. Needs CLOUDFLARE_WORKERS_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (the Norn account; Infisical prod /norn/cloudflare); the Global API Key variables refuse it, and Wrangler runs with a sanitized environment and a temporary HOME (deploy-target.ts wranglerEnv). The members must already have signed up and verified their email addresses.
+ * Finds the D1 database through distilled's typed client (cloudflare-api.ts), then seeds it through a loopback-only Wrangler Worker and remote D1 binding: the seed is one atomic `db.batch` in Worker code, which the D1 REST API does not offer, so `wrangler dev` stays. Needs CLOUDFLARE_WORKERS_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (the Norn account; Infisical prod /norn/cloudflare); the Global API Key variables refuse it, and Wrangler runs with a sanitized environment and a temporary HOME (deploy-target.ts wranglerEnv). The members must already have signed up and verified their email addresses.
  */
 import { DEMO_ORG, parseMembers } from "./seed-demo-org-core.ts"
+import { d1Databases, type CloudflareClient } from "../cloudflare-api.ts"
 import { cloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
 export { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements } from "./seed-demo-org-core.ts"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
@@ -86,15 +87,22 @@ export async function seedWhenReady(exited: Promise<number>, base: string, token
   } finally { limit.dispose() }
 }
 
-/** Look up D1 through the control plane under a cancellable deadline. */
-export async function discoverD1(url: string, headers: Record<string, string>, timeoutMs = 15_000): Promise<{ success: boolean; result: unknown; errors: unknown }> {
-  const limit = deadline(timeoutMs)
-  try {
-    const response = await fetch(url, { headers, signal: limit.signal })
-    return await response.json() as { success: boolean; result: unknown; errors: unknown }
-  } catch (error) {
-    throw new SeedFailure(timedOut(error) ? "D1 discovery timed out" : "D1 discovery failed", timedOut(error) ? SEED_EXIT.timeout : SEED_EXIT.refused)
-  } finally { limit.dispose() }
+/**
+ * Find the stage's D1 database through the control plane (GET /d1/database?name=), under a
+ * cancellable deadline. Decided from Cloudflare's own envelope, as before: without `success` it is
+ * a refusal that prints the envelope's `errors`; an unreadable reply is a failed discovery.
+ */
+export async function discoverD1(client: CloudflareClient, name: string, timeoutMs = 15_000): Promise<{ uuid: string; name: string } | undefined> {
+  const fail = (error: unknown) => new SeedFailure(timedOut(error) ? "D1 discovery timed out" : "D1 discovery failed", timedOut(error) ? SEED_EXIT.timeout : SEED_EXIT.refused)
+  let envelope: { success?: unknown; result?: unknown; errors?: unknown }
+  try { envelope = await (await d1Databases(client, name, timeoutMs)).response.json() as typeof envelope }
+  catch (error) { throw fail(error) }
+  if (envelope === null || typeof envelope !== "object" || envelope.success !== true) throw new SeedFailure(`could not list D1 databases: ${JSON.stringify(envelope?.errors)}`, SEED_EXIT.refused)
+  if (!Array.isArray(envelope.result)) throw fail(undefined)
+  // The first entry naming the database, as before; entries before it that are not databases are skipped.
+  const database = (envelope.result as unknown[]).find((db): db is { uuid: string; name: string } =>
+    db !== null && typeof db === "object" && typeof (db as { uuid?: unknown }).uuid === "string" && (db as { name?: unknown }).name === name)
+  return database === undefined ? undefined : { uuid: database.uuid, name: database.name }
 }
 
 /** Reap Wrangler on success, error, SIGINT and SIGTERM before returning. */
@@ -127,12 +135,8 @@ async function main(argv: readonly string[]) {
   const members = parseMembers(argv.flatMap((arg, index) => argv[index - 1] === "--member" ? [arg] : []))
   // The Norn workers token and account only, checked before any request or spawn.
   const credentials = cloudflareCredentials(process.env)
-  const { accountId: account, apiToken } = credentials
-  const api = (path: string) => discoverD1(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database${path}`, { authorization: `Bearer ${apiToken}`, "content-type": "application/json" })
   const name = `norn-studio-auth-${stage}`
-  const found = await api(`?name=${name}`)
-  if (!found.success) throw new SeedFailure(`could not list D1 databases: ${JSON.stringify(found.errors)}`, SEED_EXIT.refused)
-  const database = (found.result as { uuid: string; name: string }[]).find((db) => db.name === name)
+  const database = await discoverD1({ credentials }, name)
   if (database === undefined) throw new SeedFailure(`no D1 database ${name}`, SEED_EXIT.refused)
   const root = join(homedir(), ".cache", "agent-scratch")
   await import("node:fs/promises").then(({ mkdir }) => mkdir(root, { recursive: true }))

@@ -63,7 +63,7 @@ See [the runner image and rehearsal](../../apps/norn-cell-rivet/README.md).
 ## Conformance
 
 ```sh
-NORN_CELL_DO_CONFORMANCE_OUT=$P/reference.json cargo test --locked -p norn-cell-do --test conformance_reference
+NORN_CELL_DO_CONFORMANCE_OUT=$P/reference.json cargo test --locked -p norn-cell-do --test suites conformance_reference::
 NORN_CELL_RIVET=crates/norn-cell-rivet/target/release/norn-cell-rivet \
   python3 apps/norn-cell-do/conformance/conformance.py --reference $P/reference.json --host rivet-native
 ```

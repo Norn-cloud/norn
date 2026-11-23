@@ -69,7 +69,7 @@ fn a_shared_canon_key_establishes_identity_and_the_divergence() {
 fn different_objects_are_never_assumed_to_be_one() {
     // Without the declared key nothing says SO-1 and 1001 are the same order.
     let found = find_divergences(&erp_and_storefront(), &[], ChaseBudget::default()).unwrap();
-    assert!(found.is_empty(), "{found:?}");
+    assert_eq!(found, [], "{found:?}");
 }
 
 #[test]
@@ -106,10 +106,9 @@ fn agreeing_observations_are_clean() {
             &[("orderNumber", "\"SO-1001\""), ("total", "114")],
         ),
     ];
-    assert!(
-        find_divergences(&observations, &[by_number()], ChaseBudget::default())
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        find_divergences(&observations, &[by_number()], ChaseBudget::default()).unwrap(),
+        []
     );
 }
 

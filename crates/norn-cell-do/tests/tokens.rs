@@ -308,12 +308,7 @@ fn the_access_document_tells_each_roles_reads_of_one_collection() {
             ("owner".to_owned(), [permit.clone(), permit.clone(), permit]),
         ]
     );
-    assert!(
-        document["roles"][0]["actions"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
+    assert_eq!(document["roles"][0]["actions"].as_array().unwrap().len(), 0);
     let unknown = access(&demo, &format!("{SCOPE}&objectType=no.Such"), Some(&member));
     assert_eq!(unknown.status, 403, "{}", unknown.body);
 }
