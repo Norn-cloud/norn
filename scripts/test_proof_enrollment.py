@@ -387,12 +387,12 @@ class AffectedPlanTests(unittest.TestCase):
         task_script.parent.mkdir(parents=True)
         task_script.write_text(r"""set -eu
 printf '%s\n' "$*" >> calls
-if [[ $1 == test && $2 == rest-1 ]]; then
+if [[ $(wc -l < calls) -eq 1 ]]; then
     [[ ! -e target/debug ]]
     mkdir -p target/debug/.fingerprint
 else
     case "$*" in
-        "test rest-2") [[ -d target/debug/.fingerprint ]] ;;
+        "test rest-1"|browser) [[ -d target/debug/.fingerprint ]] ;;
         doc) [[ ! -e target/debug ]] ;;
         *) exit 24 ;;
     esac
@@ -400,10 +400,13 @@ fi
 """)
         environment = {**os.environ, "CARGO_TARGET_DIR": str(self.root / "target"),
                        "NORN_CI_PACKAGES": ""}
-        for shared in (False, True):
-            with self.subTest(shared=shared):
-                plan = {"mode": "affected", "shard": ["rest-1", "rest-2"] if shared else ["rest-1"],
-                        "phase": [] if shared else ["doc"]}
+        for label, plan, expected_calls, shared in (
+            ("incompatible", {"mode": "affected", "shard": ["rest-1"], "phase": ["doc"]}, ["test rest-1", "doc"], False),
+            ("shared-test", {"mode": "affected", "shard": ["rest-1", "rest-2"], "phase": []}, ["test rest-2", "test rest-1"], True),
+            ("shared-wasm-pkg", {"mode": "affected", "shard": [], "phase": ["integration-authoring", "browser"]}, ["integration-authoring", "browser"], True),
+        ):
+            with self.subTest(case=label):
+                shutil.rmtree(self.root / "target", ignore_errors=True)
                 packed = subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], cwd=ROOT, text=True)
                 execute = [str(self.built_xtask()), "ci", "bundle"]
                 calls = self.root / "calls"
@@ -416,7 +419,7 @@ fi
                 result = subprocess.run(execute + [packed, "b0"], cwd=self.root,
                                         env=environment, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(calls.read_text().splitlines(), ["test rest-1", "test rest-2" if shared else "doc"])
+                self.assertEqual(calls.read_text().splitlines(), expected_calls)
                 self.assertEqual((self.root / "target/debug").exists(), shared)
                 calls.unlink()
 

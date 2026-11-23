@@ -74,6 +74,33 @@ ensure_nextest() {
   cargo nextest --version 2> /dev/null | grep -qF 'cargo-nextest 0.9.150 ' \
     || CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-nextest --version 0.9.150
 }
+# Build or reuse the canonical checker/engine WASM package for this tree inside
+# $CARGO_TARGET_DIR/norn-checker-wasm/{pkg,engine}. Inside a bundle, WasmPkg tasks
+# run consecutively without pruning target/, so the first builds once and the rest reuse it.
+ensure_checker_wasm_pkg() {
+  local out_dir=${1:-}
+  local canonical="$CARGO_TARGET_DIR/norn-checker-wasm/pkg"
+  if [[ ! -f "$canonical/norn_checker_wasm_bg.wasm" || ! -f "$canonical/package.json" || ! -f "$canonical/SIZE.txt" || ! "$canonical/SIZE.txt" -nt "$tree_stamp" ]]; then
+    ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
+    rm -f "$canonical/SIZE.txt"
+    crates/norn-checker-wasm/scripts/build-pkg.sh "$canonical"
+  fi
+  if [[ -n $out_dir && $out_dir != "$canonical" ]]; then
+    python3 -c 'import pathlib, shutil, sys; src, dst = map(pathlib.Path, sys.argv[1:3]); shutil.rmtree(dst, ignore_errors=True); dst.parent.mkdir(parents=True, exist_ok=True); shutil.copytree(src, dst)' "$canonical" "$out_dir"
+  fi
+}
+ensure_checker_wasm_engine() {
+  local out_dir=${1:-}
+  local canonical="$CARGO_TARGET_DIR/norn-checker-wasm/engine"
+  if [[ ! -f "$canonical/norn_engine_wasm_bg.wasm" || ! -f "$canonical/package.json" || ! -f "$canonical/SIZE.txt" || ! "$canonical/SIZE.txt" -nt "$tree_stamp" ]]; then
+    ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
+    rm -f "$canonical/SIZE.txt"
+    NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh "$canonical"
+  fi
+  if [[ -n $out_dir && $out_dir != "$canonical" ]]; then
+    python3 -c 'import pathlib, shutil, sys; src, dst = map(pathlib.Path, sys.argv[1:3]); shutil.rmtree(dst, ignore_errors=True); dst.parent.mkdir(parents=True, exist_ok=True); shutil.copytree(src, dst)' "$canonical" "$out_dir"
+  fi
+}
 # Fails unless each named test of binary $2 ran and passed in nextest's JUnit report $1:
 # absent (renamed, deleted, ignored, cfg'd out), skipped, failed or an unreadable report fails.
 require_passed() {
@@ -427,10 +454,8 @@ PY
       "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"
       ;;
     integration-authoring)
-      cargo build --locked -p norn-cli
-      cargo build --locked -p norn-cell-do --bin norn-dev-host
-      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
-      crates/norn-checker-wasm/scripts/build-pkg.sh
+      cargo build --locked -p norn-cli --bin norn -p norn-cell-do --bin norn-dev-host
+      ensure_checker_wasm_pkg
       export CI=true
       export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
       export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"
@@ -447,7 +472,7 @@ PY
     integration-wasm)
       export CI=true
       ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
-      crates/norn-checker-wasm/scripts/build-pkg.sh
+      ensure_checker_wasm_pkg
       export NORN_CHECKER_WASM_PKG="$CARGO_TARGET_DIR/norn-checker-wasm/pkg"
       cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
@@ -459,17 +484,16 @@ PY
       # The ZEN-only engine package pages load (#1325): pages and the checker share one
       # evaluator so they cannot disagree, so it answers every evaluation of the shared
       # corpus exactly as the checker package does.
-      NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh
+      ensure_checker_wasm_engine
       node crates/norn-checker-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/engine"
       ;;
     integration-clients)
       export CI=true
-      cargo build --locked -p norn-cell-do --bin norn-dev-host
+      cargo build --locked -p norn-cli --bin norn -p norn-cell-do --bin norn-dev-host
       export NORN_DEV_HOST_BIN="$CARGO_TARGET_DIR/debug/norn-dev-host"
       # The SDK and demo UI typecheck and tests run in `cheap`; the diff below proves
       # the regenerated SDK is the committed one those runs checked.
       (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile)
-      cargo build --locked -p norn-cli
       require_fresh "$CARGO_TARGET_DIR/debug/norn"
       "$CARGO_TARGET_DIR/debug/norn" openapi > sdks/openapi/norn-api.openapi.json
       (cd packages/norn-sdk && bun run generate)
@@ -501,9 +525,8 @@ PY
         printf 'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\n' "$(rustc --version 2> /dev/null || echo 'no rustc')" >&2
         exit 1
       fi
-      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
-      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"
-      NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/engine"
+      ensure_checker_wasm_pkg "$PWD/apps/studio/src/checker"
+      ensure_checker_wasm_engine "$PWD/apps/studio/src/engine"
       (
         cd apps/studio
         bun install --frozen-lockfile --ignore-scripts --backend copyfile
@@ -562,39 +585,38 @@ plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal", "rivet-conformance"}}
-# Task seconds on Boat, where merge groups and allowlisted pull requests run (#1348): p50 of
-# green tasks over 287 Boat bundle jobs of 80 green runs (40 merge groups, 40 pull requests,
-# runs 44493680372..44951869655, 2026-11-19..21). A test task's seconds are net of the test
-# build it carries, read from cargo's own "Finished `test` profile" lines of that task.
-# The weights these replace (2026-11-14..18) mostly undercounted today's tasks: integration
-# was 920 against 1841 observed. Replaying today's p50s through the old weights gives one
-# bundle 52 min while the others get 33-36.
-# Folded test names rehash the rest shards. Use the old rest total divided evenly
-# until the new shards have timing samples. The heavy shards still run the same tests.
+# Task seconds on Boat, refitted from green run 45206607883 (2026-11-23, df92ecf).
+# A test task's seconds are net of the test build it carries (compile_seconds), and
+# a WASM-pkg task's seconds are net of the shared norn-checker-wasm build (wasm_compile_seconds).
 weights = {
-    "test/heavy-1": 13, "test/heavy-2": 244, "test/heavy-3": 90,
-    "test/heavy-4": 35, "test/heavy-5": 26, "test/heavy-6": 57,
-    "test/rest-1": 348, "test/rest-2": 348, "test/rest-3": 348,
-    "phase/doctest": 48, "phase/features": 791, "phase/duckdb": 630, "phase/wasm": 239,
-    "phase/clippy": 119, "phase/doc": 88, "phase/guards": 532,
-    # Not yet recorded in CI: one Boat run on an empty target (default VM), 2026-11-21.
-    "phase/rivet": 496,
-    # Split integration timings from run 45037150223; authoring includes an estimate for two concurrent Bun shards.
-    "phase/integration-authoring": 1030, "phase/integration-wasm": 707,
-    "phase/integration-clients": 170, "phase/provenance": 13, "phase/test-shards": 14,
-    "phase/browser": 596,
+    "test/heavy-1": 33, "test/heavy-2": 146, "test/heavy-3": 90,
+    "test/heavy-4": 37, "test/heavy-5": 43, "test/heavy-6": 56,
+    "test/rest-1": 221, "test/rest-2": 391, "test/rest-3": 312,
+    "phase/doctest": 17, "phase/features": 347, "phase/duckdb": 621, "phase/wasm": 173,
+    "phase/clippy": 51, "phase/doc": 48, "phase/guards": 117,
+    "phase/rivet": 259,
+    "phase/integration-authoring": 695, "phase/integration-wasm": 293,
+    "phase/integration-clients": 35, "phase/provenance": 4, "phase/test-shards": 3,
+    "phase/browser": 239,
 }
-# A bundle's test build on a Boat VM: p50 of cargo's "Finished `test` profile" time in the
-# first test task of a bundle (n=189, p90 470 s). The shared compiler cache has no writer yet
-# (#1369), so every such build is cold.
-# Scale the historical p50 by the cold build ratio from docs/platform/build.md.
+# Shared compile costs amortized once per bundle containing any task in the group:
+# - Test: workspace test binaries (test/* and phase/test-shards).
+# - WasmPkg: norn-checker-wasm wasm-release LTO + wasm-opt -Oz package.
 compile_seconds = 216
+wasm_compile_seconds = 300
+wasm_pkg_tasks = {"phase/integration-authoring", "phase/integration-wasm", "phase/browser"}
 def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
+def compiles_wasm_pkg(task):
+    return task in wasm_pkg_tasks
 def cold_cost(task):
-    return weights[task] + (compile_seconds if compiles_tests(task) else 0)
+    return (weights[task]
+            + (compile_seconds if compiles_tests(task) else 0)
+            + (wasm_compile_seconds if compiles_wasm_pkg(task) else 0))
 def bin_cost(tasks):
-    return sum(weights[task] for task in tasks) + (compile_seconds if any(map(compiles_tests, tasks)) else 0)
+    return (sum(weights[task] for task in tasks)
+            + (compile_seconds if any(map(compiles_tests, tasks)) else 0)
+            + (wasm_compile_seconds if any(map(compiles_wasm_pkg, tasks)) else 0))
 
 if set(weights) != known:
     raise SystemExit("bundle task inventory differs from core.sh")
@@ -618,30 +640,59 @@ target_seconds = 11 * 60
 max_bundles = 3
 # Use the fewest jobs that meet the service target. If an indivisible task
 # exceeds it, minimize the critical path before allocating additional VMs.
-candidates = []
-maximum = min(max_bundles, max(1, len(tasks) // 2)) if tasks else 0
-for count in range(1, maximum + 1):
-    bins, costs, compiled = [[] for _ in range(count)], [0] * count, [False] * count
-    for task in sorted(tasks, key=lambda task: (-cold_cost(task), task)):
-        def added_cost(index):
-            return weights[task] + (compile_seconds if compiles_tests(task) and not compiled[index] else 0)
-        index = min(range(count), key=lambda index: (costs[index] + added_cost(index), index))
-        costs[index] += added_cost(index)
-        bins[index].append(task)
-        compiled[index] |= compiles_tests(task)
-    if len(tasks) >= 2 * count:
+# For each bundle count, try both splitting and coalescing each shared build group
+# (Test, WasmPkg) so the packer keeps shared builds together whenever that lowers
+# makespan or total CPU time.
+def pack_once(ordered, count, coalesce_test, coalesce_wasm):
+    test_group = [task for task in ordered if compiles_tests(task)]
+    wasm_group = [task for task in ordered if compiles_wasm_pkg(task)]
+    other = [task for task in ordered if not compiles_tests(task) and not compiles_wasm_pkg(task)]
+    items = []
+    if coalesce_test and test_group:
+        items.append(test_group)
+    else:
+        items.extend([task] for task in test_group)
+    if coalesce_wasm and wasm_group:
+        items.append(wasm_group)
+    else:
+        items.extend([task] for task in wasm_group)
+    items.extend([task] for task in other)
+    items.sort(key=lambda group: (-bin_cost(group), group[0]))
+    bins = [[] for _ in range(count)]
+    for group in items:
+        index = min(range(count), key=lambda index: (bin_cost(bins[index] + group), index))
+        bins[index].extend(group)
+    if len(ordered) >= 2 * count:
         for index in range(count):
             if len(bins[index]) != 1:
                 continue
+            donors = [(donor, task) for donor in range(count) if len(bins[donor]) > 2 for task in bins[donor]]
+            if not donors:
+                return None
             donor, task = min(
-                ((donor, task) for donor in range(count) if len(bins[donor]) > 2 for task in bins[donor]),
+                donors,
                 key=lambda move: (bin_cost(bins[index] + [move[1]]) - bin_cost(bins[index]),
                                   -bin_cost(bins[move[0]]), move[1], move[0]))
             bins[donor].remove(task)
             bins[index].append(task)
-    costs = [bin_cost(tasks) for tasks in bins]
-    candidates.append((max(max(costs), target_seconds), count, bins))
-bins = min(candidates, default=(0, 0, []))[2]
+    if any(not bucket for bucket in bins):
+        return None
+    return bins
+
+ordered = sorted(tasks, key=lambda task: (-cold_cost(task), task))
+best = None
+maximum = min(max_bundles, max(1, len(tasks) // 2)) if tasks else 0
+for count in range(1, maximum + 1):
+    for coalesce_test in (False, True):
+        for coalesce_wasm in (False, True):
+            bins = pack_once(ordered, count, coalesce_test, coalesce_wasm)
+            if bins is None:
+                continue
+            costs = [bin_cost(bucket) for bucket in bins]
+            key = (max(max(costs), target_seconds), count, sum(costs))
+            if best is None or key < best[0]:
+                best = (key, bins)
+bins = best[1] if best is not None else []
 bundles = [{"id": f"b{index}", "tasks": tasks} for index, tasks in enumerate(bins) if tasks]
 if sorted(task for bundle in bundles for task in bundle["tasks"]) != sorted(tasks):
     raise SystemExit("bundle inventory dropped a planned task")
