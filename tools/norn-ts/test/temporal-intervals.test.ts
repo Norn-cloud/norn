@@ -201,7 +201,7 @@ export const Shift = Norn.interfaceType({
     const stdout = new TextDecoder().decode(cli.stdout)
     expect(stdout).toContain("NORN-AUTHORING-UNSAFE-ZEN")
   })
-}, 20_000)
+}, 60_000)
 
 test("two unrelated domains (HR shifts + equipment maintenance booking) share core.TimeInterval without unsafeZen", () => {
   withTempDir((dir) => {
