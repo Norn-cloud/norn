@@ -285,12 +285,7 @@ export const menuCount = (total: Total | undefined): number | string | undefined
   total === undefined ? undefined : total.approximate ? `${total.count.toLocaleString("en-US")}+` : total.count
 
 /** The admitted catalog, indexed once per read. */
-export function useCatalog() {
-  const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
-  const { locale } = useLocale()
-  const catalog = useMemo(() => read.data && catalogOf(read.data.document, locale), [read.data, locale])
-  return { read, catalog }
-}
+export { useCatalog } from "./lib/use-catalog.ts"
 
 export function SourcesPage() {
   const { read, catalog } = useCatalog()

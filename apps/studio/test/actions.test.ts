@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { instantText, offsetText, pickerDateTime } from "../src/lib/actions.ts"
+import { BOOK_EQUIPMENT } from "../e2e/interval-fixtures.ts"
 import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
 
@@ -274,4 +276,47 @@ test("a refusal's request is the input as sent: every member, lists, objects and
   expect(sentMembers("{}")).toEqual([])
   expect(sentMembers(' { "a" : 1 , "b" : [ 1 , 2 ] } ')).toEqual([{ name: "a", text: "1" }, { name: "b", text: "[ 1 , 2 ]" }])
   for (const text of ["", "null", "[1]", "{"]) expect(sentMembers(text)).toBeNull()
+})
+
+test("a string input's format offers a date, time or instant picker; a nullable one keeps its picker behind No value", () => {
+  const fields = fieldsOf(BOOK_EQUIPMENT.inputSchema)
+  expect(fields.map((f) => `${f.name}:${f.spec.kind}${f.nullable ? "?" : ""}`)).toEqual(["id:text", "label:text", "equipment:text", "starts_at:date-time", "ends_at:date-time", "inspect_on:date?", "daily_check:time?"])
+  // A format the dialect doesn't name stays a text input.
+  expect(fieldsOf({ type: "object", properties: { at: { type: "string", format: "duration" } } })[0]?.spec).toEqual({ kind: "text" })
+})
+
+test("pickers send their formats: a date as typed, a time with seconds, a wall time with the reader's offset at it", () => {
+  const fields = fieldsOf(BOOK_EQUIPMENT.inputSchema)
+  const draft = { ...emptyDraft(fields), id: "booking/9", inspect_on: "2026-11-30", daily_check: "07:45", starts_at: "2026-11-27T09:30:00Z" }
+  expect(JSON.parse(encodeObject(fields, draft))).toEqual({ id: "booking/9", inspect_on: "2026-11-30", daily_check: "07:45:00", starts_at: "2026-11-27T09:30:00Z" })
+  // The offset is the reader's zone's at that wall time (DST included), never the offset of today.
+  expect(instantText("2026-11-27T09:30", () => 120)).toBe("2026-11-27T09:30:00+02:00")
+  expect(instantText("2026-07-01T23:05:07", () => -240)).toBe("2026-07-01T23:05:07-04:00")
+  expect(instantText("2026-11-27T09:30", () => 0)).toBe("2026-11-27T09:30:00Z")
+  expect(instantText("2026-11-27T09:30", () => 330)).toBe("2026-11-27T09:30:00+05:30")
+  // Text that is not a picker's wall time goes as typed, for the cell to refuse at its pointer.
+  expect(instantText("next friday")).toBe("next friday")
+  expect(offsetText(-570)).toBe("-09:30")
+})
+
+test("an instant shows in the picker as the reader's wall time; a wall time shows as it is", () => {
+  expect(pickerDateTime("2026-11-27T09:30")).toBe("2026-11-27T09:30")
+  const at = new Date(Date.UTC(2026, 10, 27, 7, 30))
+  const two = (n: number) => String(n).padStart(2, "0")
+  expect(pickerDateTime("2026-11-27T07:30:00Z")).toBe(`${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}T${two(at.getHours())}:${two(at.getMinutes())}`)
+  expect(pickerDateTime("garbage")).toBe("")
+})
+
+test("a refusal's nested pointer lands on the member's row; one at /input itself stays on the form", () => {
+  const fields = fieldsOf(OPEN_HOLDING.inputSchema)
+  const diagnostics = [
+    { code: "action.input_invalid", message: "Site is unknown.", pointer: "/input/location/site" },
+    { code: "request.invalid", message: "input must be a JSON object", pointer: "/input" },
+    { code: "core.time.improper_interval", message: "Ends must be after it starts.", pointer: "/input/ends_at" },
+  ]
+  expect(problemsAt(diagnostics, "/location/site").map((d) => d.message)).toEqual(["Site is unknown."])
+  expect(problemsAt(diagnostics, "/location").map((d) => d.message)).toEqual(["Site is unknown."])
+  expect(inputPointer(diagnostics[1]!)).toBeNull()
+  // `/ends_at` names no field of this form, so it reads at the top with the unpointed one.
+  expect(unplaced(diagnostics, fields).map((d) => d.message)).toEqual(["input must be a JSON object", "Ends must be after it starts."])
 })

@@ -25,6 +25,9 @@ import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
 import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
+import { RecordsTimeline } from "./records-timeline.tsx"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { stepAnchor, windowOf, windowQuery, type Zoom } from "../lib/timeline.ts"
 
 const ROW = 32
 const DEFAULT_COLUMNS = 8
@@ -64,9 +67,11 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
 /** The query a grid shows, as a saved view keeps it. */
 export interface GridQuery { readonly filter: Predicate | null; readonly sort: readonly SortKey[]; readonly columns: readonly string[] }
 
-export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
+export function RecordsGrid({ concept, read = readRecords, initial, onQuery, timeline = false }: {
   readonly concept: Concept
   readonly read?: Read
+  /** The type is a `core.TimeInterval`: the records can also be read as a timeline (lib/timeline.ts). */
+  readonly timeline?: boolean
   /** The query to open with: a saved view's. */
   readonly initial?: Partial<GridQuery>
   /** Told the query the grid shows, whenever it changes. */
@@ -103,7 +108,14 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
     : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE : catalog.data?.kind === "refused" ? catalog.data.message : undefined
   const [filterOpen, setFilterOpen] = useState(false)
   const client = useQueryClient()
-  const query: RecordsQuery = { sort, filter, limit, ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] } }
+  // The Timeline reads the window's records: the reader's filter and the window's clauses, in start order, a full page at a time.
+  const [layout, setLayout] = useState<"table" | "timeline">("table")
+  const [zoom, setZoom] = useState<Zoom>("week")
+  const [anchor, setAnchor] = useState(() => new Date())
+  const shownTimeline = timeline && layout === "timeline"
+  const span = useMemo(() => windowOf(zoom, anchor), [zoom, anchor])
+  const windowed = shownTimeline ? windowQuery(span, filter) : null
+  const query: RecordsQuery = { sort: windowed?.sort ?? sort, filter: windowed?.filter ?? filter, limit: shownTimeline ? LIMITS.maxPageSize : limit, ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] } }
   const key = ["records", name, recordsQueryParams(query).toString()] as const
   const result = useQuery({ queryKey: key, queryFn: () => read(name, query), placeholderData: keepPreviousData, retry: false })
   const data = result.data
@@ -217,6 +229,14 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
+          {timeline && (
+            <ToggleGroup type="single" variant="outline" size="sm" aria-label="Show as" value={layout} disabled={!canQuery && layout === "table"}
+              title={!canQuery ? off : undefined}
+              onValueChange={(next) => { if (next === "table" || next === "timeline") { setLayout(next); restart(); setNotice(null) } }}>
+              <ToggleGroupItem value="table" className="px-3">Table</ToggleGroupItem>
+              <ToggleGroupItem value="timeline" className="px-3">Timeline</ToggleGroupItem>
+            </ToggleGroup>
+          )}
           <div role="toolbar" aria-label="Records" className="flex w-max flex-nowrap items-center gap-0.5 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
             <Popover open={filterOpen} onOpenChange={(open) => { setFilterOpen(open); if (open && draft.length === 0 && filterCount === 0) { const first = filterable(fields)[0]; if (first) setDraft([blankClause(first)]) } }}>
               <PopoverTrigger asChild>
@@ -246,12 +266,12 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
             <span className="mx-0.5 h-5 w-px bg-node-border" aria-hidden />
             <label className="flex items-center gap-1.5 px-1.5 text-meta text-muted-foreground">
               Per page
-              <select className="h-7 rounded-md border border-node-border bg-background px-1.5 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" value={limit} disabled={!canQuery} title={off}
+              <select className="h-7 rounded-md border border-node-border bg-background px-1.5 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" value={limit} disabled={!canQuery || shownTimeline} title={shownTimeline ? "The timeline reads up to 200 records per window." : off}
                 onChange={(event) => changeQuery({ limit: Number(event.target.value) })}>
                 {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
               </select>
             </label>
-            {sort.length > 0 && <Button variant="ghost" size="sm" className={pill} onClick={() => changeQuery({ sort: [] })}>Clear sort</Button>}
+            {sort.length > 0 && !shownTimeline && <Button variant="ghost" size="sm" className={pill} onClick={() => changeQuery({ sort: [] })}>Clear sort</Button>}
           </div>
           <span className="flex-1" />
           {page?.origin === "recorded" && <Badge variant="outline" className="border-node-border" title={RECORDED}>Recorded</Badge>}
@@ -267,7 +287,13 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
           <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review{page.origin === "live" ? "; the Quarantine tab names them" : ""}.</p>
         )}
 
-        <div className="relative overflow-hidden rounded-xl border border-node-border bg-card">
+        {shownTimeline && (
+          <RecordsTimeline concept={concept} rows={rows} window={span} zoom={zoom} pending={result.isPending} fetching={result.isFetching} filter={filter} read={read}
+            onZoom={(next) => { setZoom(next); restart() }} onStep={(by) => { setAnchor((at) => stepAnchor(zoom, at, by)); restart() }}
+            onToday={() => { setAnchor(new Date()); restart() }} onJump={(at) => { setAnchor(new Date(at)); restart() }}
+            onOpen={(row) => setOpened(row)} />
+        )}
+        <div className={cn("relative overflow-hidden rounded-xl border border-node-border bg-card", shownTimeline && "hidden")}>
           <div ref={scroller} role="grid" tabIndex={0} aria-label={`${concept.title} records`} aria-rowcount={rows.length + 1} aria-colcount={columns.length + 1}
             aria-busy={result.isFetching} aria-activedescendant={rows.length > 0 ? `row-${active}` : undefined} onKeyDown={onKey} onScroll={measureEdges}
             className={cn("max-h-[60vh] overflow-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset", result.isFetching && "opacity-70")}>

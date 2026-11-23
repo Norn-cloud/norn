@@ -76,21 +76,38 @@ function recorded<T>(name: string): Read<T> {
 
 const DEFINITIONS = import.meta.glob<string>("../../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })
 
-const scrapYield = (): QuestionAnswer => ({
-  question: recorded<Question>("answers/scrap-yield.question.json"),
-  answer: recorded<Answer>("answers/scrap-yield.k1.answer.json"),
-  metrics: recorded<readonly Metric[]>("answers/scrap-yield.metrics.json"),
-  objectType: recorded<ObjectType>("answers/scrap-yield.object-type.json"),
+/**
+ * The one recorded question's document of `kind` (`question.json`, `k1.answer.json`, …), whatever
+ * the question is named: Studio names no recorded world in its source, so exactly one document in
+ * `fixtures/demo/answers` must end in `.<kind>`.
+ */
+function recordedAnswer<T>(kind: string): Read<T> {
+  const answers = "../../../../fixtures/demo/answers/"
+  // `<question>.<kind>`, where the question's own name has no dot: `k1.answer.json` never matches `….k1-as-of.answer.json`.
+  const names = Object.keys(recordings).filter((path) => {
+    if (!path.startsWith(answers) || !path.endsWith(`.${kind}`)) return false
+    const question = path.slice(answers.length, -kind.length - 1)
+    return question !== "" && !question.includes(".")
+  })
+  if (names.length !== 1) throw new Error(`Expected one recorded ${kind}, found ${names.length}`)
+  return recorded<T>(`answers/${names[0]!.slice(answers.length)}`)
+}
+
+const recordedQuestion = (): QuestionAnswer => ({
+  question: recordedAnswer<Question>("question.json"),
+  answer: recordedAnswer<Answer>("k1.answer.json"),
+  metrics: recordedAnswer<readonly Metric[]>("metrics.json"),
+  objectType: recordedAnswer<ObjectType>("object-type.json"),
 })
 
-/** Documents the engine produced for the synthetic scrap-yield and three-systems worlds, replayed byte for byte. */
+/** Documents the engine produced for the synthetic recorded question and three-systems worlds, replayed byte for byte. */
 export const recordedTransport: Transport = {
   definitions: async () => Object.values(DEFINITIONS).map((source) => readDocument<Envelope>(source, "recorded")),
-  questionBoard: async () => [scrapYield()],
+  questionBoard: async () => [recordedQuestion()],
   restatement: async () => ({
-    ...scrapYield(),
-    corrected: recorded<Answer>("answers/scrap-yield.k2.answer.json"),
-    asOf: recorded<HistoricalAnswer>("answers/scrap-yield.k1-as-of.answer.json"),
+    ...recordedQuestion(),
+    corrected: recordedAnswer<Answer>("k2.answer.json"),
+    asOf: recordedAnswer<HistoricalAnswer>("k1-as-of.answer.json"),
   }),
   catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
   objectCounts: async () => ({}),

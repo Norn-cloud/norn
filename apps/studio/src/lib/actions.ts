@@ -23,7 +23,8 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  *            envelope carries one today (`/input` not an object, `/idempotencyKey`). Input the
  *            action's schema refuses is one 400 `action.invalid_input` with no field pointers, so
  *            Studio shows it on the form, not on a field; a rule, law or precondition refusal
- *            carries none either.
+ *            carries none either. A diagnostic at `/input/<field>` (nested: `/input/lines/0/sku`)
+ *            reads on that field's row; one at `/input` itself, or at no pointer, reads on the form.
  *        202 { outcome: "pending", decision: { id, expiresAtMs } }: an approval-gated action
  *            (APPROVAL-1); nothing is committed until a decider approves it in the inbox.
  *        409 `action.idempotency_conflict` when the key was used for a different call.
@@ -183,6 +184,14 @@ export async function callAction(actionId: string, input: string, idempotencyKey
 
 export type Spec =
   | { readonly kind: "text" }
+  /**
+   * A string input the schema gives a JSON Schema `format`: a calendar date (`YYYY-MM-DD`), an
+   * instant (RFC 3339 with an offset) or a time of day (`HH:MM:SS`). The form offers a picker and
+   * sends the picker's value as that text; the cell decodes and decides it.
+   */
+  | { readonly kind: "date" }
+  | { readonly kind: "date-time" }
+  | { readonly kind: "time" }
   | { readonly kind: "integer" }
   | { readonly kind: "number" }
   | { readonly kind: "decimal"; readonly scale: number | null; readonly unit: string | null }
@@ -234,6 +243,8 @@ function specOf(schema: unknown, pointer: string): { spec: Spec; nullable: boole
       if (Array.isArray(values) && values.length > 0 && values.every((v) => typeof v === "string")) {
         return values.length === 1 ? { spec: { kind: "fixed", value: values[0] as string }, nullable: false } : { spec: { kind: "choice", values: values as string[] }, nullable: false }
       }
+      const format = node["format"]
+      if (format === "date" || format === "date-time" || format === "time") return { spec: { kind: format }, nullable: false }
       return { spec: { kind: "text" }, nullable: false }
     }
     case "integer": return { spec: { kind: "integer" }, nullable: false }
@@ -302,6 +313,41 @@ export function emptyFor(spec: Spec): Draft {
   }
 }
 
+/** `+02:00` for 120 minutes east of UTC, `-05:30` for 330 west; `Z` for UTC. */
+export function offsetText(minutesEast: number): string {
+  if (minutesEast === 0) return "Z"
+  const sign = minutesEast > 0 ? "+" : "-"
+  const abs = Math.abs(minutesEast)
+  return `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`
+}
+
+const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
+
+/**
+ * The RFC 3339 text for what a date-time picker holds. A picker gives a wall time with no zone
+ * (`2026-11-23T09:30`); it is sent with the offset the reader's own zone has at that wall time
+ * (`2026-11-23T09:30:00+02:00`), so the instant is the one the reader meant. Text that already
+ * carries an offset (a prefilled value) is sent as it is; anything else goes as typed, for the
+ * cell to refuse at its pointer. `offsetAt` is the zone's offset east of UTC, in minutes.
+ */
+export function instantText(value: string, offsetAt: (local: Date) => number = (local) => -local.getTimezoneOffset()): string {
+  const local = LOCAL_DATE_TIME.exec(value.trim())
+  if (local === null) return value
+  const [, y, mo, d, h, mi, sec = "00"] = local
+  const wall = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec))
+  return `${y}-${mo}-${d}T${h}:${mi}:${sec}${offsetText(offsetAt(wall))}`
+}
+
+/** What a date-time picker shows for a draft value: a zoneless wall time as is; an instant in the reader's zone. */
+export function pickerDateTime(value: string): string {
+  if (value === "" || LOCAL_DATE_TIME.test(value)) return value
+  const at = Date.parse(value)
+  if (Number.isNaN(at)) return ""
+  const local = new Date(at)
+  const two = (n: number) => String(n).padStart(2, "0")
+  return `${local.getFullYear()}-${two(local.getMonth() + 1)}-${two(local.getDate())}T${two(local.getHours())}:${two(local.getMinutes())}${local.getSeconds() === 0 ? "" : `:${two(local.getSeconds())}`}`
+}
+
 const NUMBER_TOKEN = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/
 
 function encodeLeaf(spec: Spec, value: string): string {
@@ -315,6 +361,8 @@ function encodeLeaf(spec: Spec, value: string): string {
       return JSON.stringify(value.trim())
     case "boolean": return value === "true" ? "true" : value === "false" ? "false" : JSON.stringify(value)
     case "json": try { JSON.parse(value); return value.trim() } catch { return JSON.stringify(value) }
+    case "date-time": return JSON.stringify(instantText(value))
+    case "time": return JSON.stringify(/^\d{2}:\d{2}$/.test(value) ? `${value}:00` : value)
     default: return JSON.stringify(value)
   }
 }

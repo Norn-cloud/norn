@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, instantText, pickerDateTime, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
 import { parkedOf, type ParkedCall, type Phase } from "../lib/screen/call.ts"
@@ -307,6 +307,12 @@ function Widget({ spec, pointer, label, value, root, diagnostics, onEdit, aria, 
     case "text": return picks !== undefined
       ? <RecordPicker objectKind={picks} value={text} onPick={(id) => onEdit(pointer, id)} aria={aria} />
       : <Input {...aria} className="h-9" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
+    case "date":
+      return <Input {...aria} type="date" className="h-9 w-48 tabular-nums" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
+    case "time":
+      return <Input {...aria} type="time" step={1} className="h-9 w-40 tabular-nums" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
+    case "date-time":
+      return <DateTimePicker aria={aria} value={text} onChange={(next) => onEdit(pointer, next)} />
     case "integer":
     case "number":
     case "decimal":
@@ -355,6 +361,25 @@ function Widget({ spec, pointer, label, value, root, diagnostics, onEdit, aria, 
     }
     case "unsupported": return <p className="text-meta text-muted-foreground">Not offered here: {spec.reason}</p>
   }
+}
+
+/** The reader's zone, named: the offset a picked wall time is sent with. */
+const readerZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "your time zone"
+
+/**
+ * An instant: a wall-time picker in the reader's own zone. What is sent is that wall time with the
+ * zone's offset at it (`instantText`), and the zone is named beside the picker, so the instant is
+ * never ambiguous. A prefilled instant shows in the reader's zone.
+ */
+function DateTimePicker({ aria, value, onChange }: { readonly aria: Aria; readonly value: string; readonly onChange: (value: string) => void }) {
+  const shown = pickerDateTime(value)
+  const sent = shown === "" ? null : instantText(shown)
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <Input {...aria} type="datetime-local" step={60} className="h-9 w-60 tabular-nums" value={shown} onChange={(e) => onChange(e.target.value)} />
+      <span className="text-meta text-muted-foreground">{readerZone()}{sent !== null && <> · sent as <code className="text-xs">{sent}</code></>}</span>
+    </div>
+  )
 }
 
 /** How many of the cell's diagnostics land on each section's fields. */
@@ -416,6 +441,8 @@ function shownValue(field: FormField, value: Draft | undefined): ReactNode {
   if (Array.isArray(value)) return value.length === 0 ? <span className="text-muted-foreground">None</span> : `${value.length} ${value.length === 1 ? "entry" : "entries"}`
   if (typeof value === "object") return <span className="text-muted-foreground">See below</span>
   if (field.spec.kind === "boolean") return value === "true" ? "Yes" : value === "false" ? "No" : String(value)
+  if (field.spec.kind === "date-time") { const at = Date.parse(instantText(String(value))); return Number.isNaN(at) ? String(value) : <time dateTime={instantText(String(value))}>{new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} <span className="text-muted-foreground">({readerZone()})</span></time> }
+  if (field.spec.kind === "date") { const at = /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? new Date(`${String(value)}T00:00:00`) : null; return at === null ? String(value) : <time dateTime={String(value)}>{at.toLocaleDateString(undefined, { dateStyle: "medium" })}</time> }
   if (field.spec.kind === "decimal" && field.spec.unit) return <span className="tabular-nums">{String(value)} {field.spec.unit}</span>
   return String(value)
 }
