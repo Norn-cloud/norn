@@ -514,3 +514,95 @@ fn dual_included_and_src_tests_production_files_are_not_exempted() {
         render(&violations)
     );
 }
+
+#[test]
+fn inline_path_and_cfg_attr_path_mods_cannot_be_exempted_by_test_decoy() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let baseline = loc_baseline_json(&BTreeMap::new()).to_string();
+    let over_body = repeat_lines(MAX_NON_TEST_LOC.saturating_add(5));
+
+    // Inline `#[path = "real"] pub mod a { pub mod huge; }` + `#[cfg(test)] #[path = "real/huge.rs"] mod _decoy;`,
+    // inline `#[cfg_attr(all(), path = "real_cfg")] pub mod b { pub mod huge_cfg; }` + decoy,
+    // and out-of-line `#[cfg_attr(all(), path = "...")]` / `#[cfg_attr(true, path = "...")]` + decoys.
+    write_file(
+        dir.path(),
+        "crates/foo/src/lib.rs",
+        concat!(
+            "#[path = \"real\"]\n",
+            "pub mod a {\n",
+            "    pub mod huge;\n",
+            "}\n",
+            "#[cfg(test)]\n",
+            "#[path = \"real/huge.rs\"]\n",
+            "mod _decoy_inline;\n",
+            "#[cfg_attr(all(), path = \"real_cfg\")]\n",
+            "pub mod b {\n",
+            "    pub mod huge_cfg;\n",
+            "}\n",
+            "#[cfg(test)]\n",
+            "#[path = \"real_cfg/huge_cfg.rs\"]\n",
+            "mod _decoy_inline_cfg;\n",
+            "#[cfg_attr(all(), path = \"huge_all.rs\")]\n",
+            "pub mod prod_alias;\n",
+            "#[cfg(test)]\n",
+            "#[path = \"huge_all.rs\"]\n",
+            "mod _decoy_all;\n",
+            "#[cfg_attr(true, path = \"huge_true.rs\")]\n",
+            "pub mod prod_alias_true;\n",
+            "#[cfg(test)]\n",
+            "#[path = \"huge_true.rs\"]\n",
+            "mod _decoy_true;\n",
+        ),
+    );
+    write_file(dir.path(), "crates/foo/src/real/huge.rs", &over_body);
+    write_file(
+        dir.path(),
+        "crates/foo/src/real_cfg/huge_cfg.rs",
+        &over_body,
+    );
+    write_file(dir.path(), "crates/foo/src/huge_all.rs", &over_body);
+    write_file(dir.path(), "crates/foo/src/huge_true.rs", &over_body);
+
+    let counts = loc_counts(dir.path()).expect("scan");
+    let expected_files = [
+        "crates/foo/src/real/huge.rs",
+        "crates/foo/src/real_cfg/huge_cfg.rs",
+        "crates/foo/src/huge_all.rs",
+        "crates/foo/src/huge_true.rs",
+    ];
+    for rel in expected_files {
+        assert!(
+            counts.get(rel).is_some_and(|loc| *loc > MAX_NON_TEST_LOC),
+            "{rel} was wrongly exempted: {counts:?}"
+        );
+    }
+
+    let violations = check_loc_cap(&counts, &baseline).expect("check");
+    assert_eq!(
+        rules_of(&violations),
+        [
+            "loc-cap-exceeded",
+            "loc-cap-exceeded",
+            "loc-cap-exceeded",
+            "loc-cap-exceeded",
+        ],
+        "{}",
+        render(&violations)
+    );
+    for rel in expected_files {
+        assert!(
+            violations.iter().any(|v| v.message.contains(rel)),
+            "missing violation for {rel}:\n{}",
+            render(&violations)
+        );
+    }
+
+    // Malformed `cfg_attr` on a `mod` item fails closed.
+    let bad_dir = tempfile::tempdir().expect("tempdir");
+    write_file(
+        bad_dir.path(),
+        "crates/foo/src/lib.rs",
+        "#[cfg_attr(true)]\npub mod broken;\n",
+    );
+    assert!(loc_counts(bad_dir.path()).is_err());
+}

@@ -33,7 +33,7 @@ use std::path::{Component, Path, PathBuf};
 use proc_macro2::Span;
 use syn::visit::Visit;
 
-use crate::ratchet::{cfg_is_test, has_cfg_test};
+use crate::ratchet::{cfg_is_test, has_cfg_test, parse_cfg_attr_metas};
 use crate::{BaselineError, ScanError, Violation, violation};
 
 /// Maximum permitted non-test lines for any `.rs` file not grandfathered in
@@ -345,13 +345,122 @@ pub(crate) struct ModDecl {
     pub(crate) test_only: bool,
 }
 
-/// Collects the out-of-line module declarations of one file.
+#[derive(Default)]
+struct PathAttrs {
+    direct: Vec<String>,
+    conditional: Vec<String>,
+}
+
+fn is_ident_unraw(path: &syn::Path, name: &str) -> bool {
+    path.get_ident()
+        .is_some_and(|ident| ident.to_string().trim_start_matches("r#") == name)
+}
+
+fn collect_path_meta(
+    meta: &syn::Meta,
+    in_cfg_attr: bool,
+    out: &mut PathAttrs,
+) -> Result<(), syn::Error> {
+    match meta {
+        syn::Meta::NameValue(pair) if is_ident_unraw(&pair.path, "path") => {
+            if let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(path),
+                ..
+            }) = &pair.value
+            {
+                if in_cfg_attr {
+                    out.conditional.push(path.value());
+                } else {
+                    out.direct.push(path.value());
+                }
+            }
+        }
+        syn::Meta::List(list) if is_ident_unraw(&list.path, "cfg_attr") => {
+            for nested in parse_cfg_attr_metas(list)? {
+                collect_path_meta(&nested, true, out)?;
+            }
+        }
+        syn::Meta::Path(_) | syn::Meta::List(_) | syn::Meta::NameValue(_) => {}
+    }
+    Ok(())
+}
+
+fn extract_path_attrs(attrs: &[syn::Attribute]) -> Result<PathAttrs, syn::Error> {
+    let mut out = PathAttrs::default();
+    for attr in attrs {
+        collect_path_meta(&attr.meta, false, &mut out)?;
+    }
+    Ok(out)
+}
+
+fn push_unique(out: &mut Vec<PathBuf>, path: PathBuf) {
+    if !out.contains(&path) {
+        out.push(path);
+    }
+}
+
+/// Collects the out-of-line module declarations of one file, honoring `#[path]`
+/// (including through `#[cfg_attr(..., path = "...")]`) on both out-of-line and
+/// inline `mod` items.
 struct ModDecls<'a> {
     dir: PathBuf,
     file_dir: &'a Path,
-    inline: Vec<String>,
+    dir_stack: Vec<Vec<PathBuf>>,
     test_depth: usize,
     found: Vec<ModDecl>,
+    parse_error: Option<syn::Error>,
+}
+
+impl ModDecls<'_> {
+    fn resolve_out_of_line(&self, name: &str, paths: &PathAttrs) -> Vec<PathBuf> {
+        let mut candidates = Vec::new();
+        let current = self.dir_stack.last();
+        for explicit in paths.direct.iter().chain(&paths.conditional) {
+            if let Some(dirs) = current {
+                for base in dirs {
+                    push_unique(&mut candidates, base.join(explicit));
+                }
+            } else {
+                push_unique(&mut candidates, self.file_dir.join(explicit));
+            }
+        }
+        if paths.direct.is_empty() {
+            if let Some(dirs) = current {
+                for base in dirs {
+                    push_unique(&mut candidates, base.join(format!("{name}.rs")));
+                    push_unique(&mut candidates, base.join(name).join("mod.rs"));
+                }
+            } else {
+                push_unique(&mut candidates, self.dir.join(format!("{name}.rs")));
+                push_unique(&mut candidates, self.dir.join(name).join("mod.rs"));
+            }
+        }
+        candidates
+    }
+
+    fn resolve_inline_dirs(&self, name: &str, paths: &PathAttrs) -> Vec<PathBuf> {
+        let mut next_dirs = Vec::new();
+        let current = self.dir_stack.last();
+        for explicit in paths.direct.iter().chain(&paths.conditional) {
+            if let Some(dirs) = current {
+                for base in dirs {
+                    push_unique(&mut next_dirs, base.join(explicit));
+                }
+            } else {
+                push_unique(&mut next_dirs, self.file_dir.join(explicit));
+            }
+        }
+        if paths.direct.is_empty() {
+            if let Some(dirs) = current {
+                for base in dirs {
+                    push_unique(&mut next_dirs, base.join(name));
+                }
+            } else {
+                push_unique(&mut next_dirs, self.dir.join(name));
+            }
+        }
+        next_dirs
+    }
 }
 
 impl<'ast> Visit<'ast> for ModDecls<'_> {
@@ -359,46 +468,25 @@ impl<'ast> Visit<'ast> for ModDecls<'_> {
         let test = has_cfg_test(&node.attrs);
         let test_only = test || self.test_depth > 0;
         let name = node.ident.to_string();
-        if node.content.is_none() {
-            let explicit = node.attrs.iter().find_map(|attr| {
-                if let syn::Meta::NameValue(pair) = &attr.meta
-                    && pair.path.is_ident("path")
-                    && let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(path),
-                        ..
-                    }) = &pair.value
-                {
-                    Some(path.value())
-                } else {
-                    None
+        let paths = match extract_path_attrs(&node.attrs) {
+            Ok(paths) => paths,
+            Err(err) => {
+                if self.parse_error.is_none() {
+                    self.parse_error = Some(err);
                 }
-            });
-            let candidates = if let Some(path) = explicit {
-                let base = if self.inline.is_empty() {
-                    self.file_dir.to_path_buf()
-                } else {
-                    self.inline
-                        .iter()
-                        .fold(self.dir.clone(), |dir, m| dir.join(m))
-                };
-                vec![base.join(path)]
-            } else {
-                let dir = self
-                    .inline
-                    .iter()
-                    .fold(self.dir.clone(), |dir, m| dir.join(m));
-                vec![
-                    dir.join(format!("{name}.rs")),
-                    dir.join(&name).join("mod.rs"),
-                ]
-            };
+                return;
+            }
+        };
+        if node.content.is_none() {
+            let candidates = self.resolve_out_of_line(&name, &paths);
             self.found.push(ModDecl {
                 candidates,
                 test_only,
             });
             return;
         }
-        self.inline.push(name);
+        let next_dirs = self.resolve_inline_dirs(&name, &paths);
+        self.dir_stack.push(next_dirs);
         if test {
             self.test_depth = self.test_depth.saturating_add(1);
         }
@@ -406,11 +494,11 @@ impl<'ast> Visit<'ast> for ModDecls<'_> {
         if test {
             self.test_depth = self.test_depth.saturating_sub(1);
         }
-        self.inline.pop();
+        self.dir_stack.pop();
     }
 }
 
-pub(crate) fn module_decls(path: &Path, file: &syn::File) -> Vec<ModDecl> {
+pub(crate) fn module_decls(path: &Path, file: &syn::File) -> Result<Vec<ModDecl>, syn::Error> {
     let file_dir = path.parent().unwrap_or_else(|| Path::new(""));
     let mod_rs = path
         .file_name()
@@ -424,12 +512,16 @@ pub(crate) fn module_decls(path: &Path, file: &syn::File) -> Vec<ModDecl> {
     let mut decls = ModDecls {
         dir,
         file_dir,
-        inline: Vec::new(),
+        dir_stack: Vec::new(),
         test_depth: 0,
         found: Vec::new(),
+        parse_error: None,
     };
     decls.visit_file(file);
-    decls.found
+    if let Some(err) = decls.parse_error {
+        return Err(err);
+    }
+    Ok(decls.found)
 }
 
 /// Normalizes `a/b/../c` to `a/c` without touching the file system.
@@ -490,11 +582,16 @@ fn is_crate_root(rel: &Path) -> bool {
 /// 2. A `#[cfg(test)]`-declared module file (and its transitive submodules) is
 ///    excluded ONLY if it is NOT a crate root AND NOT reachable via any
 ///    non-test `mod` edge.
-fn find_loc_test_files(files: &BTreeMap<PathBuf, syn::File>) -> BTreeSet<PathBuf> {
-    let decls: BTreeMap<&PathBuf, Vec<ModDecl>> = files
-        .iter()
-        .map(|(path, file)| (path, module_decls(path, file)))
-        .collect();
+fn find_loc_test_files(
+    workspace_root: &Path,
+    files: &BTreeMap<PathBuf, syn::File>,
+) -> Result<BTreeSet<PathBuf>, ScanError> {
+    let mut decls: BTreeMap<&PathBuf, Vec<ModDecl>> = BTreeMap::new();
+    for (path, file) in files {
+        let found = module_decls(path, file)
+            .map_err(|err| ScanError::Parse(workspace_root.join(path), err))?;
+        decls.insert(path, found);
+    }
 
     let mut has_incoming: BTreeSet<PathBuf> = BTreeSet::new();
     for found in decls.values() {
@@ -571,7 +668,7 @@ fn find_loc_test_files(files: &BTreeMap<PathBuf, syn::File>) -> BTreeSet<PathBuf
         }
     }
 
-    test_files
+    Ok(test_files)
 }
 
 /// Counts non-test lines for every non-test `.rs` file under
@@ -607,7 +704,7 @@ pub fn loc_counts(workspace_root: &Path) -> Result<BTreeMap<String, usize>, Scan
         sources.insert(rel.clone(), source);
         parsed.insert(rel, file);
     }
-    let test_files: BTreeSet<PathBuf> = find_loc_test_files(&parsed);
+    let test_files: BTreeSet<PathBuf> = find_loc_test_files(workspace_root, &parsed)?;
     let mut out = BTreeMap::new();
     for (rel, source) in &sources {
         if test_files.contains(rel) {

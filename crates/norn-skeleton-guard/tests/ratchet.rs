@@ -269,12 +269,19 @@ fn aliased_clock_modules_and_item_level_blanket_allows_are_caught() {
         fn b() {}
         #[cfg_attr(true, expect(clippy::pedantic, reason = "x"))]
         fn c() {}
+        #[allow(warnings, reason = "x")]
+        fn d() {}
+        #[expect(warnings, reason = "x")]
+        fn e() {}
+        #[cfg_attr(true, allow(warnings, reason = "x"))]
+        fn f() {}
     "#;
-    assert_eq!(count(item_blankets, false, TOO_MANY_LINES_ALLOW), 3);
+    assert_eq!(count(item_blankets, false, TOO_MANY_LINES_ALLOW), 6);
 
-    // Crate/module-level `#![allow(clippy::pedantic)]` is ratcheted under INNER_ALLOW,
-    // not double-counted under TOO_MANY_LINES_ALLOW.
-    let inner_pedantic = "#![allow(clippy::pedantic, reason = \"x\")]\n";
-    assert_eq!(count(inner_pedantic, false, INNER_ALLOW), 1);
+    // Crate/module-level `#![allow(clippy::pedantic)]` and `#![allow(warnings)]`
+    // are ratcheted under INNER_ALLOW, not double-counted under TOO_MANY_LINES_ALLOW.
+    let inner_pedantic =
+        "#![allow(clippy::pedantic, reason = \"x\")]\n#![allow(warnings, reason = \"x\")]\n";
+    assert_eq!(count(inner_pedantic, false, INNER_ALLOW), 2);
     assert_eq!(count(inner_pedantic, false, TOO_MANY_LINES_ALLOW), 0);
 }

@@ -242,6 +242,58 @@ fn crate_root_levels_and_member_lint_tables_are_held() {
 }
 
 #[test]
+fn inner_level_sequential_overrides_and_sticky_forbid() {
+    // Unconditional later weakening overrides an earlier `#![deny(...)]`.
+    for weakened in [
+        "#![deny(clippy::disallowed_types)]\n#![warn(clippy::disallowed_types)]\n",
+        "#![deny(clippy::disallowed_types)]\n#![allow(clippy::disallowed_types)]\n",
+        "#![deny(clippy::disallowed_types)]\n#![expect(clippy::disallowed_types)]\n",
+        // Conditional later weakening conservatively lowers an earlier `#![deny(...)]`.
+        "#![deny(clippy::disallowed_types)]\n#![cfg_attr(true, warn(clippy::disallowed_types))]\n",
+        "#![deny(clippy::disallowed_types)]\n#![cfg_attr(all(), allow(clippy::disallowed_types))]\n",
+        // Conditional `#![cfg_attr(..., deny(...))]` cannot raise an earlier `#![warn(...)]`.
+        "#![warn(clippy::disallowed_types)]\n#![cfg_attr(true, deny(clippy::disallowed_types))]\n",
+    ] {
+        let v = after("crates/a/src/lib.rs", |_| weakened.to_owned());
+        assert_eq!(
+            rules_of(&v),
+            ["inner-level-lowered"],
+            "{weakened}\n{}",
+            render(&v)
+        );
+    }
+
+    // `#![forbid(...)]` is sticky: a subsequent `#![warn(...)]` or conditional
+    // weakening leaves the effective level at `Forbid`.
+    let dir = tempfile::tempdir().expect("tempdir");
+    seed(dir.path());
+    write(
+        dir.path(),
+        "crates/a/src/lib.rs",
+        "#![forbid(unsafe_code)]\n",
+    );
+    let pin = current_pin(dir.path()).expect("pin").to_string();
+    write(
+        dir.path(),
+        "crates/a/src/lib.rs",
+        "#![forbid(unsafe_code)]\n#![warn(unsafe_code)]\n#![cfg_attr(true, allow(unsafe_code))]\n",
+    );
+    let sticky = check_lint_pin(dir.path(), &pin).expect("ok");
+    assert!(sticky.is_empty(), "{}", render(&sticky));
+
+    // Malformed `#![cfg_attr(...)]` fails closed.
+    let bad_dir = tempfile::tempdir().expect("tempdir");
+    seed(bad_dir.path());
+    let bad_pin = current_pin(bad_dir.path()).expect("pin").to_string();
+    write(
+        bad_dir.path(),
+        "crates/a/src/lib.rs",
+        "#![deny(clippy::disallowed_types)]\n#![cfg_attr(true)]\n",
+    );
+    assert!(check_lint_pin(bad_dir.path(), &bad_pin).is_err());
+}
+
+#[test]
 fn shadow_clippy_toml_files_are_rejected() {
     for shadow in [
         ".clippy.toml",

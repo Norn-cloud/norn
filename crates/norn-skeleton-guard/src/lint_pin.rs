@@ -24,6 +24,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::ratchet::parse_cfg_attr_metas;
 use crate::{BaselineError, ScanError, Violation, violation};
 
 /// Lint levels, weakest first. `expect` reads as `allow`.
@@ -119,38 +120,69 @@ fn lint_path_name(path: &syn::Path) -> String {
         .join("::")
 }
 
-/// Extracts ONLY unconditional `#![warn|deny|forbid(...)]` lint levels from an
-/// inner attribute meta. Never traverses `cfg_attr`, so conditional attributes
-/// like `#![cfg_attr(any(), deny(...))]` can never satisfy a pinned floor.
-fn unconditional_inner_levels(meta: &syn::Meta) -> Vec<(Level, String)> {
+/// Applies one inner attribute meta to a file's lint-level map in declaration
+/// order using Rust's sequential override semantics:
+///
+/// - Unconditional `#![allow|expect|warn|deny|forbid(...)]`: last wins unless
+///   the lint is already [`Level::Forbid`] (`forbid` is sticky).
+/// - Conditional `#![cfg_attr(..., ...)]`: never raises or introduces a level
+///   (so conditional `#![cfg_attr(..., deny(...))]` can never satisfy a pinned
+///   floor), and conservatively lowers any existing non-`Forbid` level.
+///
+/// Fails closed if `cfg_attr` or lint-attribute arguments fail to parse.
+fn apply_inner_level_meta(
+    meta: &syn::Meta,
+    conditional: bool,
+    levels: &mut BTreeMap<String, Level>,
+) -> Result<(), syn::Error> {
     let syn::Meta::List(list) = meta else {
-        return Vec::new();
+        return Ok(());
     };
-    let Some(level) = list
-        .path
-        .get_ident()
-        .and_then(|ident| Level::parse(&ident.to_string()))
-        .filter(|level| *level > Level::Allow)
-    else {
-        return Vec::new();
+    let Some(raw_ident) = list.path.get_ident() else {
+        return Ok(());
     };
-    let Ok(nested) = list.parse_args_with(
+    let ident_str = raw_ident.to_string();
+    let ident = ident_str.trim_start_matches("r#");
+    if ident == "cfg_attr" {
+        for nested in parse_cfg_attr_metas(list)? {
+            apply_inner_level_meta(&nested, true, levels)?;
+        }
+        return Ok(());
+    }
+    let Some(level) = Level::parse(ident) else {
+        return Ok(());
+    };
+    let nested = list.parse_args_with(
         syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-    ) else {
-        return Vec::new();
-    };
-    nested
-        .into_iter()
-        .filter_map(|item| match item {
-            syn::Meta::Path(path) => Some((level, lint_path_name(&path))),
-            syn::Meta::List(_) | syn::Meta::NameValue(_) => None,
-        })
-        .collect()
+    )?;
+    for item in nested {
+        let syn::Meta::Path(path) = item else {
+            continue;
+        };
+        let lint_name = lint_path_name(&path);
+        if conditional {
+            if let Some(slot) = levels.get_mut(&lint_name)
+                && *slot != Level::Forbid
+            {
+                *slot = (*slot).min(level);
+            }
+        } else {
+            match levels.get_mut(&lint_name) {
+                Some(slot) if *slot == Level::Forbid => {}
+                Some(slot) => *slot = level,
+                None => {
+                    levels.insert(lint_name, level);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The top-level lint levels of each file under `crates/`: per path, per lint,
-/// the highest unconditional `warn`/`deny`/`forbid` among the file's inner
-/// attributes.
+/// the effective `warn`/`deny`/`forbid` level after evaluating the file's inner
+/// attributes in declaration order (with sticky `forbid` and conservative
+/// `cfg_attr` lowering).
 ///
 /// # Errors
 ///
@@ -175,18 +207,17 @@ pub fn inner_levels(root: &Path) -> Result<BTreeMap<String, BTreeMap<String, Lev
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
+        let mut file_levels: BTreeMap<String, Level> = BTreeMap::new();
         for attr in &file.attrs {
             if !matches!(attr.style, syn::AttrStyle::Inner(_)) {
                 continue;
             }
-            for (level, lint) in unconditional_inner_levels(&attr.meta) {
-                let slot = out
-                    .entry(rel.clone())
-                    .or_default()
-                    .entry(lint)
-                    .or_insert(level);
-                *slot = (*slot).max(level);
-            }
+            apply_inner_level_meta(&attr.meta, false, &mut file_levels)
+                .map_err(|e| ScanError::Parse(path.to_path_buf(), e))?;
+        }
+        file_levels.retain(|_, level| *level > Level::Allow);
+        if !file_levels.is_empty() {
+            out.insert(rel, file_levels);
         }
     }
     Ok(out)

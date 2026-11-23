@@ -71,8 +71,8 @@ pub const RULES: &[(&str, &str)] = &[
     (
         TOO_MANY_LINES_ALLOW,
         "an `allow` or `expect` of `clippy::too_many_lines` (outer, inner or in `cfg_attr`), or \
-         an item-level `#[allow|expect(clippy::pedantic|clippy::all, ...)]`. Fix: split the \
-         function into named steps instead of allowing the lint.",
+         an item-level `#[allow|expect(clippy::pedantic|clippy::all|warnings, ...)]`. Fix: split \
+         the function into named steps instead of allowing the lint.",
     ),
     (
         INNER_ALLOW,
@@ -181,7 +181,7 @@ fn parse_nested_metas(list: &syn::MetaList) -> Result<Vec<syn::Meta>, syn::Error
 /// Rust 1.88+ boolean predicates (`true`, `false`, `all(true, ...)`) never
 /// prevent parsing the gated attributes. Fails closed if the comma is missing
 /// or any gated attribute cannot be parsed as a [`syn::Meta`].
-fn parse_cfg_attr_metas(list: &syn::MetaList) -> Result<Vec<syn::Meta>, syn::Error> {
+pub(crate) fn parse_cfg_attr_metas(list: &syn::MetaList) -> Result<Vec<syn::Meta>, syn::Error> {
     list.parse_args_with(|input: syn::parse::ParseStream<'_>| {
         let mut saw_comma = false;
         while !input.is_empty() {
@@ -249,7 +249,7 @@ pub(crate) fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
 }
 
 /// Counts `#[ignore]`s without an issue link and `too_many_lines` allows
-/// (including item-level `#[allow|expect(clippy::pedantic|clippy::all, ...)]`)
+/// (including item-level `#[allow|expect(clippy::pedantic|clippy::all|warnings, ...)]`)
 /// in one attribute meta, looking through `cfg_attr`. Fails closed if
 /// `cfg_attr` or `allow`/`expect` arguments fail to parse.
 fn count_meta(
@@ -290,8 +290,10 @@ fn count_meta(
                 .map(|segment| segment.ident.to_string())
                 .collect();
             let is_too_many_lines = segments == ["clippy", "too_many_lines"];
-            let is_outer_blanket =
-                is_outer && (segments == ["clippy", "pedantic"] || segments == ["clippy", "all"]);
+            let is_outer_blanket = is_outer
+                && (segments == ["clippy", "pedantic"]
+                    || segments == ["clippy", "all"]
+                    || segments == ["warnings"]);
             if is_too_many_lines || is_outer_blanket {
                 bump(counts, TOO_MANY_LINES_ALLOW);
             }
@@ -691,11 +693,16 @@ fn count_file(file: &syn::File, test_file: bool) -> Result<FileCounts, syn::Erro
 
 /// Discovers all test-only files among `files`: files under a `tests/` path
 /// component, plus files reachable via `#[cfg(test)] mod ...;` (transitively).
-pub(crate) fn find_test_files(files: &BTreeMap<PathBuf, syn::File>) -> BTreeSet<PathBuf> {
-    let decls: BTreeMap<&PathBuf, Vec<ModDecl>> = files
-        .iter()
-        .map(|(path, file)| (path, module_decls(path, file)))
-        .collect();
+pub(crate) fn find_test_files(
+    workspace_root: &Path,
+    files: &BTreeMap<PathBuf, syn::File>,
+) -> Result<BTreeSet<PathBuf>, ScanError> {
+    let mut decls: BTreeMap<&PathBuf, Vec<ModDecl>> = BTreeMap::new();
+    for (path, file) in files {
+        let found = module_decls(path, file)
+            .map_err(|err| ScanError::Parse(workspace_root.join(path), err))?;
+        decls.insert(path, found);
+    }
     let mut test_files: BTreeSet<PathBuf> = files
         .keys()
         .filter(|path| path.components().any(|part| part.as_os_str() == "tests"))
@@ -721,7 +728,7 @@ pub(crate) fn find_test_files(files: &BTreeMap<PathBuf, syn::File>) -> BTreeSet<
             break;
         }
     }
-    test_files
+    Ok(test_files)
 }
 
 /// Counts every rule over every `.rs` file under `<workspace_root>/crates`
@@ -753,7 +760,7 @@ pub fn ratchet_counts(workspace_root: &Path) -> Result<RatchetCounts, ScanError>
             syn::parse_file(&source).map_err(|err| ScanError::Parse(path.to_path_buf(), err))?;
         files.insert(rel, file);
     }
-    let test_files = find_test_files(&files);
+    let test_files = find_test_files(workspace_root, &files)?;
     let mut out: RatchetCounts = RULES
         .iter()
         .map(|(rule, _)| ((*rule).to_owned(), BTreeMap::new()))
