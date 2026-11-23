@@ -120,7 +120,13 @@ const fn rule(name: &'static str, ring: Ring, allowed_norn: &'static [&'static s
 /// The SKELETON.md crate table (rings 0/1 plus unscoped and tooling crates).
 pub const CRATES: &[CrateRule] = &[
     r0("norn-graph", &[], &["rust_decimal"]),
-    r0("norn-canonical", &[], &[]),
+    // Canonical JSON (Norn1 + Legacy0 compatibility), SHA-256 digests, and
+    // Unicode NFC normalization; sole owner of raw `serde_json` byte encoding.
+    r0(
+        "norn-canonical",
+        &[],
+        &["serde", "serde_json", "sha2", "unicode-normalization"],
+    ),
     // Shared data/validator only; no executor.
     r0(
         "norn-datalog",
@@ -267,30 +273,9 @@ pub const KNOWN_EDGE_VIOLATIONS: &[(&str, &str, &str)] = &[];
 
 /// Known ring-0 third-party dependencies SKELETON.md does not list:
 /// `(crate, dependency, reason)`. Shrink-only; must equal `baseline.json`
-/// `third_party`. Each leaves by the code dropping it or by a dated ruling
-/// amending SKELETON.md (after which the crate's `third_party` list gains it).
-pub const KNOWN_THIRD_PARTY_VIOLATIONS: &[(&str, &str, &str)] = &[
-    (
-        "norn-canonical",
-        "serde",
-        "pre-skeleton; SKELETON.md row names no third-party crates",
-    ),
-    (
-        "norn-canonical",
-        "serde_json",
-        "pre-skeleton; SKELETON.md row names no third-party crates",
-    ),
-    (
-        "norn-canonical",
-        "sha2",
-        "pre-skeleton; SKELETON.md row names no third-party crates",
-    ),
-    (
-        "norn-canonical",
-        "unicode-normalization",
-        "pre-skeleton; SKELETON.md row names no third-party crates",
-    ),
-];
+/// `third_party`. Every pre-skeleton entry has been retired, so the allowlist
+/// is empty (#1582).
+pub const KNOWN_THIRD_PARTY_VIOLATIONS: &[(&str, &str, &str)] = &[];
 
 /// Crates no ring-0 crate may depend on directly (any kind): async runtimes,
 /// JS engines, network clients, storage engines, and other host APIs.
@@ -1782,20 +1767,38 @@ fn baseline_set(root: &serde_json::Value, key: &str) -> Result<BTreeSet<String>,
 ///
 /// Returns [`BaselineError`] if the baseline is not the expected JSON shape.
 pub fn check_baseline(baseline_json: &str) -> Result<Vec<Violation>, BaselineError> {
+    check_baseline_against(
+        baseline_json,
+        KNOWN_EDGE_VIOLATIONS,
+        KNOWN_THIRD_PARTY_VIOLATIONS,
+        NORN_IR_VALIDATE_ALLOWLIST,
+    )
+}
+
+/// [`check_baseline`] against explicit allowlists (so the `allowlist-grew`
+/// and `stale-baseline` rules stay testable once every real allowlist is
+/// empty).
+///
+/// # Errors
+///
+/// Returns [`BaselineError`] if the baseline is not the expected JSON shape.
+pub fn check_baseline_against(
+    baseline_json: &str,
+    known_edges: &[(&str, &str, &str)],
+    known_third_party: &[(&str, &str, &str)],
+    norn_ir_validators: &[&str],
+) -> Result<Vec<Violation>, BaselineError> {
     let root: serde_json::Value =
         serde_json::from_str(baseline_json).map_err(|err| BaselineError(err.to_string()))?;
     let pairs = |list: &[(&str, &str, &str)]| -> BTreeSet<String> {
         list.iter().map(|(a, b, _)| format!("{a} -> {b}")).collect()
     };
     let lists: [(&str, BTreeSet<String>); 3] = [
-        ("norn_edges", pairs(KNOWN_EDGE_VIOLATIONS)),
-        ("third_party", pairs(KNOWN_THIRD_PARTY_VIOLATIONS)),
+        ("norn_edges", pairs(known_edges)),
+        ("third_party", pairs(known_third_party)),
         (
             "norn_ir_validators",
-            NORN_IR_VALIDATE_ALLOWLIST
-                .iter()
-                .map(|s| (*s).to_owned())
-                .collect(),
+            norn_ir_validators.iter().map(|s| (*s).to_owned()).collect(),
         ),
     ];
     let mut out = Vec::new();
