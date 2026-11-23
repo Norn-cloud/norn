@@ -1,21 +1,26 @@
 import { expect, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router"
-import { ChartLine, Database } from "lucide-react"
+import { ChartLine, Database, House, Rows3 } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { Account } from "../src/lib/session.ts"
-import { Shell, decoded, initials, sectionOf, target, type Section } from "../src/shell.tsx"
+import { Shell, decoded, diffExpanded, initials, perspectiveOf, sectionOf, target, type MenuEntry, type Section } from "../src/shell.tsx"
 import { ViewProvider } from "../src/lib/view.tsx"
 import { WORKSPACES } from "../src/lib/workspaces.ts"
 
 const account: Account = { user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" }, organization: { id: "o1", name: "Analytical", role: "viewer" } }
 
 const sources: Section = {
-  path: "/sources", label: "Sources", icon: Database, summary: "", kind: "source", group: "Model",
+  path: "/sources", label: "Sources", icon: Database, perspective: "builder", kind: "source", group: "Model",
   useMenu: () => [{ href: "/sources/canon.Holding", label: "Holding", group: "Object types", kind: "objectType" }],
 }
-const questions: Section = { path: "/questions", label: "Questions", icon: ChartLine, summary: "", group: "Model" }
+const questions: Section = { path: "/questions", label: "Questions", icon: ChartLine, perspective: "builder", group: "Model" }
+const home: Section = { path: "/", label: "Home", icon: House, perspective: "global" }
+const records: Section = {
+  path: "/objects", label: "Records", icon: Rows3, perspective: "workspace", group: "Data", index: false,
+  useMenu: () => [{ href: "/objects/canon.Holding", also: "/sources/canon.Holding", label: "Holding", kind: "objectType" }],
+}
 
 /** Renders a node at a route, the way the app's router would. */
 async function at(pathname: string, node: () => ReactNode) {
@@ -80,20 +85,45 @@ test("only the recorded demo world opens; the NC benchmark points to its offline
   expect(WORKSPACES.find(({ group }) => group === "Class demos")?.detail).toBe("Coming soon")
 })
 
-test("the applet sidebar names the applet, offers its action, and counts each group; the rail lists every applet", async () => {
-  const acting: Section = { ...sources, action: { label: "Connect a source", to: "/connections" } }
-  const many: Section = { ...acting, useMenu: () => Array.from({ length: 9 }, (_, index) => ({ href: `/sources/t${index}`, label: `Type ${index}`, group: "Object types" })) }
-  const html = await at("/sources/t8", () => <Shell sections={[many, questions]} account={account} onSignOut={() => {}} />)
-  expect(html).toMatch(/<h2[^>]*>Sources<\/h2>/)
-  expect(html).toMatch(/href="\/connections"[^>]*>[\s\S]*?Connect a source/)
+test("the sidebar lists the perspective's destinations under their spaces, counts each group of items; the rail holds the shared destinations", async () => {
+  const many: Section = { ...sources, useMenu: () => Array.from({ length: 9 }, (_, index) => ({ href: `/sources/t${index}`, label: `Type ${index}`, group: "Object types" })) }
+  const html = await at("/sources/t8", () => <Shell sections={[home, many, questions, records]} account={account} onSignOut={() => {}} />)
+  expect(html).toMatch(/<nav[^>]*aria-label="Builder"/)
+  expect(html).toMatch(/>Model<\/span>/)
+  expect(html).toMatch(/href="\/questions"[^>]*>[\s\S]*?Questions/)
   expect(html).toMatch(/>Object types<\/span><span[^>]*>9<\/span>/)
   expect(html).toContain("Type 8")
-  expect(html).toMatch(/role="toolbar"[^>]*aria-label="Applets"|aria-label="Applets"[^>]*role="toolbar"/)
-  expect(html).toContain('aria-label="Questions"')
+  // The other perspective's destinations are not listed; the switch says which one is shown.
+  expect(html).not.toContain(">Records<")
+  expect(html).toMatch(/<button[^>]*aria-pressed="true"[^>]*>[\s\S]*?Builder/)
+  expect(html).toMatch(/role="toolbar"[^>]*aria-label="Studio"|aria-label="Studio"[^>]*role="toolbar"/)
+  expect(html).toMatch(/<a[^>]*aria-label="Home"/)
   // The Norn knot is the one coloured mark (Nov 8 design): the rail never desaturates it.
   const logo = /<a[^>]*aria-label="Norn Studio home"[^>]*>\s*<img[^>]*class="([^"]*)"/.exec(html)?.[1]
   expect(logo).toBeDefined()
   expect(logo).not.toMatch(/grayscale|saturate|brightness|contrast/)
+})
+
+test("the perspective is the reader's while the page belongs to it, else the one that lists the page", () => {
+  const menus = new Map<string, readonly MenuEntry[]>([["/objects", records.useMenu?.() ?? []]])
+  const all = [home, sources, questions, records]
+  expect(perspectiveOf(all, "/", "workspace", menus)).toBe("workspace")
+  expect(perspectiveOf(all, "/", "builder", menus)).toBe("builder")
+  expect(perspectiveOf(all, "/sources", "workspace", menus)).toBe("builder")
+  expect(perspectiveOf(all, "/objects/canon.Holding", "workspace", menus)).toBe("workspace")
+  // A record page is the operator's when one of their items claims it, and the builder's otherwise.
+  expect(perspectiveOf(all, "/sources/canon.Holding/demo%2Fitem", "workspace", menus)).toBe("workspace")
+  expect(perspectiveOf(all, "/sources/canon.Holding/demo%2Fitem", "builder", menus)).toBe("builder")
+  expect(perspectiveOf(all, "/sources/canon.Holding/demo%2Fitem", "workspace", new Map())).toBe("builder")
+})
+
+test("in the workspace a record page reads Records, its type, then its id", async () => {
+  const html = await at("/sources/canon.Holding/demo%2Fitem%2Fgold", () => <Shell sections={[home, sources, records]} account={account} onSignOut={() => {}} />)
+  const crumbs = html.match(/<nav aria-label="breadcrumb"[\s\S]*?<\/nav>/)?.[0] ?? ""
+  expect(crumbs).toContain("Records")
+  expect(crumbs).not.toContain('href="/objects"')
+  expect(crumbs).toContain('href="/objects/canon.Holding"')
+  expect(crumbs).toContain("demo/item/gold")
 })
 
 test("a section's count sits in the theme's destructive pair", async () => {
@@ -144,4 +174,17 @@ test("an assistant mounts in the shell's panel, opened from the rail; a page can
   const none = await at("/sources", () => <Shell sections={[sources]} account={account} onSignOut={() => {}} />)
   expect(none).not.toContain('data-slot="assistant-panel"')
   expect(none).not.toContain('aria-label="Assistant"')
+})
+
+test("collapsing one space records only that branch, leaving untouched destinations free to auto-expand when active", () => {
+  // Initial expanded branches on Home: spaces are open, Records is open, Metrics (inactive) is closed by default.
+  const before = ["space:Data", "space:Analysis", "space:Operations", "dest:/objects"]
+  const after = ["space:Data", "space:Analysis", "dest:/objects"]
+  const chosen = diffExpanded(before, after, {})
+  expect(chosen).toEqual({ "space:Operations": false })
+  // Untouched destination dest:/metrics stays absent from chosen, so navigating to /metrics lets its default (true) apply.
+  expect(chosen["dest:/metrics"]).toBeUndefined()
+  // Expanding an untouched destination later records only that destination as true while preserving the earlier space collapse.
+  const next = diffExpanded(after, [...after, "dest:/metrics"], chosen)
+  expect(next).toEqual({ "space:Operations": false, "dest:/metrics": true })
 })

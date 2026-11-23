@@ -60,21 +60,22 @@ export interface Transport {
   readonly object: (objectType: string, id: string) => Promise<ObjectReads | null>
 }
 
-const recordings = import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/**/*.json", "../../../../fixtures/demo/guarantees/*.json"], { query: "?raw", import: "default", eager: true })
+// Called, not evaluated at import: only Vite provides import.meta.glob, and tests import this module through the pages.
+const recordings = () => import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/**/*.json", "../../../../fixtures/demo/guarantees/*.json"], { query: "?raw", import: "default", eager: true })
 
 const optional = <T,>(name: string): Read<T> | null =>
-  recordings[`../../../../fixtures/demo/${name}`] === undefined ? null : recorded<T>(name)
+  recordings()[`../../../../fixtures/demo/${name}`] === undefined ? null : recorded<T>(name)
 
 /** Recorded object documents are named by the object's id with `/` written as `~`. */
 const objectFile = (objectType: string, id: string, read: string) => `explorer/objects/${objectType}/${id.replaceAll("/", "~")}.${read}.json`
 
 function recorded<T>(name: string): Read<T> {
-  const source = recordings[`../../../../fixtures/demo/${name}`]
+  const source = recordings()[`../../../../fixtures/demo/${name}`]
   if (source === undefined) throw new Error(`No recorded document ${name}`)
   return readDocument<T>(source, "recorded")
 }
 
-const DEFINITIONS = import.meta.glob<string>("../../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })
+const DEFINITIONS = () => import.meta.glob<string>("../../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })
 
 /**
  * The one recorded question's document of `kind` (`question.json`, `k1.answer.json`, …), whatever
@@ -84,7 +85,7 @@ const DEFINITIONS = import.meta.glob<string>("../../../../registry/core/artifact
 function recordedAnswer<T>(kind: string): Read<T> {
   const answers = "../../../../fixtures/demo/answers/"
   // `<question>.<kind>`, where the question's own name has no dot: `k1.answer.json` never matches `….k1-as-of.answer.json`.
-  const names = Object.keys(recordings).filter((path) => {
+  const names = Object.keys(recordings()).filter((path) => {
     if (!path.startsWith(answers) || !path.endsWith(`.${kind}`)) return false
     const question = path.slice(answers.length, -kind.length - 1)
     return question !== "" && !question.includes(".")
@@ -102,7 +103,7 @@ const recordedQuestion = (): QuestionAnswer => ({
 
 /** Documents the engine produced for the synthetic recorded question and three-systems worlds, replayed byte for byte. */
 export const recordedTransport: Transport = {
-  definitions: async () => Object.values(DEFINITIONS).map((source) => readDocument<Envelope>(source, "recorded")),
+  definitions: async () => Object.values(DEFINITIONS()).map((source) => readDocument<Envelope>(source, "recorded")),
   questionBoard: async () => [recordedQuestion()],
   restatement: async () => ({
     ...recordedQuestion(),

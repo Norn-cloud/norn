@@ -1,6 +1,7 @@
 import { Link, useParams } from "@tanstack/react-router"
 import { Shapes } from "lucide-react"
-import { EmptyState } from "@/components/panel"
+import { EmptyState, PageHeader } from "@/components/panel"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useMode } from "@/lib/live-transport"
 import { useCatalog } from "../sources.tsx"
@@ -31,11 +32,8 @@ export function RecordsPage() {
       {catalog && concept === undefined && <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>}
       {catalog && concept !== undefined && concept.definition !== "object type" && <EmptyState icon={Shapes}>{concept.title} is a shared interface; it has no records of its own.</EmptyState>}
       {concept?.definition === "object type" && <>
-        <header className="flex flex-wrap items-baseline gap-3">
-          <h1 className="text-title font-semibold tracking-tight">{concept.title}</h1>
-          <span className="font-mono text-meta text-muted-foreground">{concept.name}</span>
-          <Link to="/sources/$concept" params={{ concept: concept.name }} className="text-meta underline-offset-4 hover:underline">Definition</Link>
-        </header>
+        <PageHeader title={concept.title} lang={concept.titleLang} meta={<span className="font-mono">{concept.name}</span>}
+          actions={<Button asChild variant="ghost" size="sm"><Link to="/sources/$concept" params={{ concept: concept.name }}>Definition</Link></Button>} />
         {live
           ? <Tabs defaultValue="records">
             <TabsList><TabsTrigger value="records">Records</TabsTrigger><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="quarantine">Quarantine</TabsTrigger></TabsList>

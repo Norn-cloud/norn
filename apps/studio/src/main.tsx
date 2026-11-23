@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
+import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { endSession, useAccount } from "@/lib/session"
@@ -13,22 +13,29 @@ import { useQuestionsMenu } from "./questions.tsx"
 import { routeTree } from "./routes.tsx"
 import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
 import { Shell, type Section } from "./shell.tsx"
-import { useSourcesMenu } from "./sources.tsx"
+import { useRecordsMenu, useSourcesMenu } from "./sources.tsx"
 import { useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
 
+/**
+ * Every destination, in the perspective that lists it and the space (sidebar section) it sits under.
+ * Home and Inbox are global: one shared home and one inbox across everything installed.
+ */
 const SECTIONS: readonly Section[] = [
-  { path: "/", label: "Home", icon: House, summary: "What needs you, and the numbers that matter.", group: "Work" },
-  { path: "/decisions", label: "Decisions", icon: Inbox, summary: "Choices your flows wait on you to make, soonest deadline first.", useBadge: useDecisionBadge, group: "Work", paths: ["/episodes"] },
-  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", kind: "source", useMenu: useSourcesMenu, group: "Model", paths: ["/objects"], action: { label: "Connect a source", to: "/connections" } },
-  { path: "/transforms", label: "Transforms", icon: Blend, summary: "Derived datasets the cell checks: typed columns, declared joins, every row traced to its records.", kind: "transform", group: "Model" },
-  { path: "/metrics", label: "Metrics", icon: ChartLine, summary: "The numbers your records add up to, answered exactly, down to the records behind every number.", kind: "question", useMenu: useQuestionsMenu, group: "Model", action: { label: "Explore a metric", to: "/metrics/new" } },
-  { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, summary: "Saved sets of questions, each a definition the cell checks before it is kept.", group: "Model", action: { label: "New dashboard", to: "/dashboards/new" } },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", kind: "workflow", useMenu: useWorkflowsMenu, group: "Rules", paths: ["/runs"], action: { label: "Open the canvas", to: "/canvas" } },
-  { path: "/canvas", label: "Canvas", icon: Network, summary: "Draw and change a process, with every edit checked as you make it.", group: "Rules" },
-  { path: "/markings", label: "Markings", icon: Fingerprint, summary: "Personal data: how each marking is shown, the facts that carry it, and who may reveal it.", group: "Rules" },
-  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", kind: "guarantee", useMenu: useGuaranteesMenu, group: "Rules" },
-  { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "System" },
+  { path: "/", label: "Home", icon: House, perspective: "global" },
+  { path: "/decisions", label: "Inbox", icon: Inbox, perspective: "global", useBadge: useDecisionBadge, paths: ["/episodes"] },
+  // Workspace: what an operator works with.
+  { path: "/objects", label: "Records", icon: Rows3, perspective: "workspace", group: "Data", kind: "source", useMenu: useRecordsMenu, index: false },
+  { path: "/metrics", label: "Metrics", icon: ChartLine, perspective: "workspace", group: "Analysis", kind: "question", useMenu: useQuestionsMenu },
+  { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, perspective: "workspace", group: "Analysis" },
+  { path: "/workflows", label: "Workflows", icon: Workflow, perspective: "workspace", group: "Operations", kind: "workflow", useMenu: useWorkflowsMenu, paths: ["/runs"] },
+  // Builder: how the model is made.
+  { path: "/sources", label: "Sources", icon: Database, perspective: "builder", group: "Model", kind: "source", useMenu: useSourcesMenu, paths: ["/objects"] },
+  { path: "/transforms", label: "Transforms", icon: Blend, perspective: "builder", group: "Model", kind: "transform" },
+  { path: "/canvas", label: "Canvas", icon: Network, perspective: "builder", group: "Logic" },
+  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, perspective: "builder", group: "Logic", kind: "guarantee", useMenu: useGuaranteesMenu },
+  { path: "/markings", label: "Markings", icon: Fingerprint, perspective: "builder", group: "Logic" },
+  { path: "/connections", label: "Connections", icon: Plug, perspective: "builder", group: "Settings" },
 ]
 
 /**
