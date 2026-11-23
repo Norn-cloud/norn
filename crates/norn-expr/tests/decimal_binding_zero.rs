@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use norn_expr::env::TypeEnvVersion;
 use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv};
 use norn_ir::{
-    InterfaceDef, InterfaceName, PropertyId, UnitRef, UnitSystem, metric::DimensionPath,
+    InterfaceDef, InterfaceName, ObjectTypeDef, ObjectTypeName, PropertyId, UnitRef, UnitSystem,
+    metric::DimensionPath,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -432,6 +434,175 @@ fn interface_decimal_binding_refuses_cross_instance_sum_rounding_and_destination
         &Type::DecimalBinding {
             group: "conversion".into(),
         },
+        "core.values.unit_mismatch",
+    )
+}
+
+#[test]
+fn nested_alias_shadowing_isolates_and_restores_bound_scopes() -> TestResult {
+    let all = test_interfaces()?;
+    let conv_env = interface_env(&all, "core.Conversion")?;
+
+    // `all(...)` is outside the exact scaled VM function set (emitting only
+    // `core.values.inexact`), so unit-sound nested shadowing must never emit
+    // `core.values.unit_mismatch`: inner `x` resolves to the inner scope
+    // (matching inner `#`) and outer `x` is restored after the inner closure pops.
+    for source in [
+        "all(self.others as x, all(self.others as x, x.input == x.output + x.loss))",
+        "all(self.others as x, all(self.others as x, x.input == #.output))",
+        "all(self.others as x, (x.input == x.output) and all(self.others as x, x.input == x.loss) and (x.output == x.loss))",
+    ] {
+        let Err(err) = compile(source)?.check_typed(&conv_env, &Type::Bool) else {
+            return Err(format!("{source} is outside exact scaled VM function set").into());
+        };
+        assert!(
+            !err.iter().any(|d| d.code == "core.values.unit_mismatch"),
+            "{source} must not fail unit algebra, got {err:?}"
+        );
+        assert!(
+            err.iter().all(|d| d.code == "core.values.inexact"),
+            "{source} expected only exact-function gate core.values.inexact, got {err:?}"
+        );
+    }
+
+    for source in [
+        "all(self.others as x, all(self.others as x, x.input == self.input))",
+        "all(self.others as x, all(self.others as y, x.input == #.output))",
+        "all(self.others as x, all(self.others as y, all(self.others as x, x.input == y.input)))",
+    ] {
+        assert_refused(&conv_env, source, &Type::Bool, "core.values.unit_mismatch")?;
+    }
+    Ok(())
+}
+
+#[test]
+fn child_redeclaring_inherited_decimal_binding_refuses_and_changes_env_hash() -> TestResult {
+    let parent = interface_def(
+        r#"{
+            "name": "toy.Parent",
+            "properties": [
+                {"id": "x", "type": {"kind": "decimal-binding", "group": "g"}},
+                {"id": "y", "type": {"kind": "decimal-binding", "group": "g"}}
+            ]
+        }"#,
+    )?;
+    let child_inherited = interface_def(
+        r#"{
+            "name": "toy.Child",
+            "extends": ["toy.Parent"],
+            "properties": []
+        }"#,
+    )?;
+    let child_redeclared = interface_def(
+        r#"{
+            "name": "toy.Child",
+            "extends": ["toy.Parent"],
+            "properties": [
+                {"id": "x", "type": {"kind": "decimal-binding", "group": "g"}}
+            ]
+        }"#,
+    )?;
+
+    let inherited_interfaces = [parent.clone(), child_inherited];
+    let redeclared_interfaces = [parent, child_redeclared];
+    let inherited_env = interface_env(&inherited_interfaces, "toy.Child")?;
+    let redeclared_env = interface_env(&redeclared_interfaces, "toy.Child")?;
+
+    assert!(
+        compile("self.x == self.y")?
+            .check_typed(&inherited_env, &Type::Bool)
+            .is_ok(),
+        "inheriting both x and y from toy.Parent must admit self.x == self.y"
+    );
+    assert_refused(
+        &redeclared_env,
+        "self.x == self.y",
+        &Type::Bool,
+        "core.values.unit_mismatch",
+    )?;
+
+    assert_ne!(
+        inherited_env.to_canonical_value(),
+        redeclared_env.to_canonical_value(),
+        "canonical env value must include decimal_binding_owners"
+    );
+    assert_ne!(
+        inherited_env.content_sha256()?,
+        redeclared_env.content_sha256()?,
+        "inheriting vs redeclaring an identical DecimalBinding must produce distinct env hashes"
+    );
+    assert_ne!(
+        inherited_env.reference()?,
+        redeclared_env.reference()?,
+        "inheriting vs redeclaring an identical DecimalBinding must produce distinct receipt refs"
+    );
+    assert!(
+        inherited_env
+            .reference_at_version(TypeEnvVersion::V1)
+            .is_err(),
+        "DecimalBinding environments must refuse historical V1 serialization"
+    );
+    assert!(
+        redeclared_env
+            .reference_at_version(TypeEnvVersion::V1)
+            .is_err(),
+        "DecimalBinding environments must refuse historical V1 serialization"
+    );
+    Ok(())
+}
+
+#[test]
+fn concrete_type_implementing_two_interfaces_with_different_units_refuses_cross_field_ops()
+-> TestResult {
+    let all = test_interfaces()?;
+    let concrete: ObjectTypeDef = serde_json::from_str(
+        r#"{
+            "name": "toy.DualUnit",
+            "implements": ["toy.I1", "toy.I2"],
+            "properties": [
+                {"id": "a", "type": {"kind": "decimal", "scale": 3, "unit": {"system": "ucum", "code": "g"}}},
+                {"id": "b", "type": {"kind": "decimal", "scale": 3, "unit": {"system": "ucum", "code": "mL"}}},
+                {"id": "flag", "type": {"kind": "boolean"}}
+            ],
+            "links": [
+                {"id": "peer", "target": "toy.I2", "cardinality": {"from": "many", "to": "one", "required": true}}
+            ]
+        }"#,
+    )?;
+    let defs = EntityDefinitions {
+        property_types: &[],
+        interfaces: &all,
+        object_types: &[concrete],
+        extensions: &[],
+    };
+    let concrete_env =
+        ZenTypeEnv::from_artifact_set_for_checking(&defs, &BTreeSet::new(), EnvOptions::default())
+            .map_err(|err| format!("concrete env: {err:?}"))?
+            .bind_self(&ObjectTypeName("toy.DualUnit".to_owned()))
+            .map_err(|err| format!("bind self: {err:?}"))?;
+
+    for source in ["self.a > 0", "self.b > 0", "self.a + self.a > 0"] {
+        let checked = compile(source)?.check_typed(&concrete_env, &Type::Bool);
+        assert!(checked.is_ok(), "{source} should be admitted: {checked:?}");
+    }
+    for source in [
+        "self.a == self.b",
+        "self.a + self.b > 0",
+        "self.a - self.b == 0",
+    ] {
+        assert_refused(
+            &concrete_env,
+            source,
+            &Type::Bool,
+            "core.values.unit_mismatch",
+        )?;
+    }
+
+    let i3_env = interface_env(&all, "toy.I3")?;
+    assert_refused(
+        &i3_env,
+        "self.a == self.b",
+        &Type::Bool,
         "core.values.unit_mismatch",
     )
 }

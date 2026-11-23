@@ -338,7 +338,7 @@ pub(super) fn std_pack() -> Result<ArtifactEnvelope, serde_json::Error> {
         "std.value_types.entity",
         "std",
         "Standard identifier value types",
-        "0.1.0",
+        "0.2.0",
         property_types,
     )
 }

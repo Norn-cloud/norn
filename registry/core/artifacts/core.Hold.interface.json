@@ -11,7 +11,7 @@
       "artifactId": "std.value_types.entity",
       "kind": "entity",
       "required": true,
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   ],
   "irVersion": "0.1",
@@ -134,5 +134,5 @@
     "sourcePath": "registry/core/artifacts/core.Hold.interface.json"
   },
   "scope": {},
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

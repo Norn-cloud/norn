@@ -925,7 +925,7 @@ impl ZenTypeEnv {
             .iter()
             .map(|(name, ty)| (name.clone(), ty.to_canonical_value(version)))
             .collect();
-        object([
+        let value = object([
             ("id", string(TYPE_ENV_ID)),
             ("version", number(u64::from(version.number()))),
             (
@@ -934,7 +934,12 @@ impl ZenTypeEnv {
             ),
             ("records", JsonValue::Object(records)),
             ("variables", JsonValue::Object(variables)),
-        ])
+        ]);
+        crate::check::units::with_decimal_binding_owners(
+            value,
+            version,
+            &self.0.decimal_binding_owners,
+        )
     }
 
     /// Norn1 canonical JSON bytes of the environment.
@@ -955,30 +960,12 @@ impl ZenTypeEnv {
         &self,
         version: TypeEnvVersion,
     ) -> Result<Vec<u8>, CanonicalJsonError> {
-        let is_rate = |mut ty: &Type| {
-            while let Type::List(inner) | Type::Optional(inner) = ty {
-                ty = inner;
-            }
-            matches!(
-                ty,
-                Type::Decimal {
-                    per_unit: Some(_),
-                    ..
-                }
-            )
-        };
-        if version == TypeEnvVersion::V1
-            && (self.0.variables.values().any(is_rate)
-                || self
-                    .0
-                    .records
-                    .values()
-                    .flat_map(|record| record.fields.values())
-                    .any(|field| is_rate(&field.ty)))
-        {
-            return Err(CanonicalJsonError::Serialize {
-                message: "Rate requires norn.expr.env/2".to_owned(),
-            });
+        if version == TypeEnvVersion::V1 {
+            crate::check::units::check_v1_canonical_compatibility(
+                &self.0.records,
+                &self.0.variables,
+                &self.0.decimal_binding_owners,
+            )?;
         }
         norn_ir::canonical::serialize(&self.canonical_value_at_version(version))
     }

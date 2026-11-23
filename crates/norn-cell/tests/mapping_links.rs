@@ -2105,14 +2105,24 @@ fn retain_as_before_decimal_text(
     .expect("legacy row");
 }
 
+/// The retained main-era definition set that
+/// `fixtures/mapping-bundle-main-decimal-text.json` identifies by
+/// `definitionsDigest` (`9f89a042c3858669edc4a065634afe2bb11f300273bd300c954789f436f0de63`).
+fn main_decimal_text_definitions() -> Vec<ArtifactEnvelope> {
+    serde_json::from_str(include_str!(
+        "fixtures/mapping-bundle-main-definitions.json"
+    ))
+    .expect("retained main-era definitions")
+}
+
 /// The cell, holding row and inbox id of one `ERPNext` holding whose quantity
-/// is exact decimal text, retained but not processed. The unversioned fixture
-/// (`fixtures/mapping-bundle-main-decimal-text.json`) preserves the main-era
-/// wire shape (no `derivation` field) and exact mapped records, with
-/// `definitionsDigest` and `digest` pinned to the current installed definition
-/// set.
+/// is exact decimal text, retained against the historical main-era definition
+/// set so the verbatim `fixtures/mapping-bundle-main-decimal-text.json` bundle
+/// replays against the exact definitions it originally pinned.
 fn decimal_text_holding(path: &Path) -> (Cell, Value, String) {
-    let mut cell = setup(path);
+    let mut cell = setup_with(path, |artifacts| {
+        *artifacts = main_decimal_text_definitions();
+    });
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");
     for row in rows

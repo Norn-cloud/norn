@@ -147,23 +147,23 @@
         "base": [
           {
             "artifactId": "core.Agent.interface",
-            "sha256": "9bde53c5c24ac6b14449b9dd2a340d63918f680b068d601c95c7a52fd61b079c",
-            "version": "0.1.0"
+            "sha256": "f7ca4c743eceef44f7c67748551a03dff40b04e049e4f02a4544fec14fa5aebe",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.AgentRole.interface",
-            "sha256": "aec1281997a797d10dfacc080f16abba817649ebcbe41b23e7a6e01cafcdfd8f",
-            "version": "0.1.0"
+            "sha256": "1fdf993857a4b3b05bca78cf360d56a87140162b0a844f27dab707b86437b697",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.Claim.interface",
-            "sha256": "db5c6e6d5da166ce2bb90f9f38b95e5008b4ee95e09c78f3c43592bee72a4ab4",
-            "version": "0.1.0"
+            "sha256": "8cc6c743d623460a70afa1d2b30e0c81ceb2342e4c13263b12df44b6c046b2f5",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.Commitment.interface",
-            "sha256": "40c35c4115dfb2f7e6717e54a8d793b85e3ef2b056807685c40dbf2d5fc1ed8b",
-            "version": "0.1.0"
+            "sha256": "549799c81d777f0f22dc1a6877fc157600896ecfdd40cc283c0d74cbac94c0b2",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.Conversion.interface",
@@ -172,8 +172,8 @@
           },
           {
             "artifactId": "core.EconomicEvent.interface",
-            "sha256": "7a849b35c75b55aff3be5e636504d5f942465a07d2d5a1be14a66fef701a7692",
-            "version": "0.1.0"
+            "sha256": "797c46f2829d68d67af6965264ea2ebe60de2a735705cfca9001d4ea7ccfbffc",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.Exchange.interface",
@@ -182,13 +182,13 @@
           },
           {
             "artifactId": "core.Hold.interface",
-            "sha256": "4ee06cb57beee79e76494a71ec5b83cd1d2180bf16e4e28ffbf567275598920b",
-            "version": "0.1.0"
+            "sha256": "e837ddc970305273a0f21ba7e123b19b36362d571ce5f51c88b8afd19110688b",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.LedgerEffect.interface",
-            "sha256": "8d08f997983152ed0043b89a2b30f111ba51d709bb494c9a21cee9b84e67d17b",
-            "version": "0.1.0"
+            "sha256": "9b986ec7503f76cb823df1467f7a9ea8cbfe100b492d15a109858fc0a3886419",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.Process.interface",
@@ -197,8 +197,8 @@
           },
           {
             "artifactId": "core.Resource.interface",
-            "sha256": "2c4c686fbe64372e20a32cb51683e5984f479eb0520296e09ff99091328d7b29",
-            "version": "0.1.0"
+            "sha256": "fdc74e434e61a0b09cc29de4e6ede5069dbe3fe9515f639ed654775989caec6d",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.TimeInterval.interface",
@@ -252,11 +252,11 @@
           },
           {
             "artifactId": "std.value_types.entity",
-            "sha256": "3151ebb104186659a150961ceffd3f7e75563110522c7a7ebf97c2837d060b4c",
-            "version": "0.1.0"
+            "sha256": "33bb45a5c9230c48526ff12079602b304e851dae141ccbccbe4adc4dd3d55eb5",
+            "version": "0.2.0"
           }
         ],
-        "sha256": "903c6fae06489124fad57e88920b906a5ec68968b5c21f86c0ebc202461c53ca"
+        "sha256": "29a0b52887f445173e20ca987dc9645d1f6101efd7c66756c2691ce90614cb8b"
       },
       "checker": {
         "name": "norn-checker",
@@ -281,7 +281,7 @@
         "version": 2
       }
     },
-    "receiptSha256": "b24fadb1b93e1215f418125796ed2d953e0bcce4e86ae1704cc8efca3d6205f9",
+    "receiptSha256": "06760977a7b0411b123b10f7e45414c1c4bf77caefd8d2e0e317ec4bb7bba1d3",
     "diagnostics": null,
     "registry": [],
     "baseArtifactIds": [
@@ -363,7 +363,7 @@
           "sourcePath": "registry/core/artifacts/core.Agent.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.AgentRole.interface",
@@ -378,7 +378,7 @@
             "artifactId": "std.value_types.entity",
             "kind": "entity",
             "required": true,
-            "version": "0.1.0"
+            "version": "0.2.0"
           }
         ],
         "irVersion": "0.1",
@@ -448,7 +448,7 @@
           "sourcePath": "registry/core/artifacts/core.AgentRole.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.Claim.interface",
@@ -463,7 +463,7 @@
             "artifactId": "std.value_types.entity",
             "kind": "entity",
             "required": true,
-            "version": "0.1.0"
+            "version": "0.2.0"
           }
         ],
         "irVersion": "0.1",
@@ -545,7 +545,7 @@
           "sourcePath": "registry/core/artifacts/core.Claim.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.Commitment.interface",
@@ -560,7 +560,7 @@
             "artifactId": "std.value_types.entity",
             "kind": "entity",
             "required": true,
-            "version": "0.1.0"
+            "version": "0.2.0"
           }
         ],
         "irVersion": "0.1",
@@ -683,7 +683,7 @@
           "sourcePath": "registry/core/artifacts/core.Commitment.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.Conversion.interface",
@@ -723,7 +723,7 @@
             "artifactId": "std.value_types.entity",
             "kind": "entity",
             "required": true,
-            "version": "0.1.0"
+            "version": "0.2.0"
           }
         ],
         "irVersion": "0.1",
@@ -862,7 +862,7 @@
           "sourcePath": "registry/core/artifacts/core.EconomicEvent.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.Exchange.interface",
@@ -902,7 +902,7 @@
             "artifactId": "std.value_types.entity",
             "kind": "entity",
             "required": true,
-            "version": "0.1.0"
+            "version": "0.2.0"
           }
         ],
         "irVersion": "0.1",
@@ -1025,7 +1025,7 @@
           "sourcePath": "registry/core/artifacts/core.Hold.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.LedgerEffect.interface",
@@ -1097,7 +1097,7 @@
           "sourcePath": "registry/core/artifacts/core.LedgerEffect.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.Process.interface",
@@ -1134,7 +1134,7 @@
             "artifactId": "std.value_types.entity",
             "kind": "entity",
             "required": true,
-            "version": "0.1.0"
+            "version": "0.2.0"
           }
         ],
         "irVersion": "0.1",
@@ -1240,7 +1240,7 @@
           "sourcePath": "registry/core/artifacts/core.Resource.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.TimeInterval.interface",
@@ -3362,7 +3362,7 @@
           "sourcePath": "registry/core/src/value_types.rs"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "norn.SourceEvidence.interface",

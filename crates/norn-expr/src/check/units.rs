@@ -1,7 +1,8 @@
 //! VAL-UNIT / VAL-RATE: bounded numeric dimensions, without implicit conversion.
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{RecordType, Type, ZenTypeEnv};
+use crate::{RecordType, Type, ZenTypeEnv, env::TypeEnvVersion};
+use norn_ir::canonical::{CanonicalJsonError, JsonValue};
 use norn_ir::{InterfaceDef, PropertyType, UnitRef, metric::DimensionPath};
 use zen_expression::parser::Node;
 
@@ -161,6 +162,76 @@ pub(crate) fn collect_decimal_binding_owners(
         }
     }
     out
+}
+
+pub(crate) fn check_v1_canonical_compatibility(
+    records: &BTreeMap<String, RecordType>,
+    variables: &BTreeMap<String, Type>,
+    owners: &BTreeMap<(String, String), String>,
+) -> Result<(), CanonicalJsonError> {
+    let is_rate = |mut ty: &Type| {
+        while let Type::List(inner) | Type::Optional(inner) = ty {
+            ty = inner;
+        }
+        matches!(
+            ty,
+            Type::Decimal {
+                per_unit: Some(_),
+                ..
+            }
+        )
+    };
+    let has_rate = variables.values().any(is_rate)
+        || records
+            .values()
+            .flat_map(|record| record.fields.values())
+            .any(|field| is_rate(&field.ty));
+    if has_rate {
+        return Err(CanonicalJsonError::Serialize {
+            message: "Rate requires norn.expr.env/2".to_owned(),
+        });
+    }
+    let has_binding = !owners.is_empty()
+        || variables
+            .values()
+            .any(|ty| decimal_binding_group(ty).is_some())
+        || records
+            .values()
+            .flat_map(|record| record.fields.values())
+            .any(|field| decimal_binding_group(&field.ty).is_some());
+    if has_binding {
+        return Err(CanonicalJsonError::Serialize {
+            message: "DecimalBinding requires norn.expr.env/2".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn with_decimal_binding_owners(
+    mut value: JsonValue,
+    version: TypeEnvVersion,
+    owners: &BTreeMap<(String, String), String>,
+) -> JsonValue {
+    if version != TypeEnvVersion::V2 || owners.is_empty() {
+        return value;
+    }
+    let mut by_record: BTreeMap<String, BTreeMap<String, JsonValue>> = BTreeMap::new();
+    for ((record, field), owner) in owners {
+        by_record
+            .entry(record.clone())
+            .or_default()
+            .insert(field.clone(), JsonValue::String(owner.clone()));
+    }
+    let serialized = JsonValue::Object(
+        by_record
+            .into_iter()
+            .map(|(record, fields)| (record, JsonValue::Object(fields)))
+            .collect(),
+    );
+    if let JsonValue::Object(map) = &mut value {
+        map.insert("decimalBindingOwners".to_owned(), serialized);
+    }
+    value
 }
 
 pub(super) fn exact_type(mut ty: &Type) -> bool {
