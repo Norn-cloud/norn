@@ -1,11 +1,3 @@
-#![allow(
-    clippy::expect_used,
-    clippy::panic,
-    clippy::too_many_lines,
-    missing_docs,
-    reason = "integration-test fixture and assertion helpers"
-)]
-
 //! End-to-end acceptance tests for issue #1586:
 //! - Generic bounded `SliceKey::Predicate` fenced reads (`TXN-PHANTOM`)
 //! - Checked `DecisionOutput.links: Vec<LinkChange>` for atomic multi-object
@@ -19,20 +11,25 @@ use norn_ir::{ActionRoot, ActionRuleRef, ObjectTypeDef, RuleRoot};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
-    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellCommit, CellHost, Command, CommitError,
-    CommitReceipt, DecisionBinding, DecisionTurn, DueTimer, FactEvent, FactKey, FactMutation,
-    FactState, FactWrite, LinkKey, LinkState, LogicalTime, Observed, Performed, PredicateObject,
-    PredicateQuery, SynchronousRule, TypeCatalog, World, commit_action,
+    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionRefusal, CellCommit, CellHost,
+    Command, CommitError, CommitReceipt, DecisionBinding, DecisionRefusal, DecisionTurn, DueTimer,
+    EnvelopeKind, EnvelopeLimits, FactEvent, FactKey, FactMutation, FactSlice, FactState,
+    FactWrite, LinkKey, LinkMutation, LinkState, LinkWrite, LogicalTime, Observed, Performed,
+    PredicateObject, PredicateQuery, SynchronousRule, TurnEnvelopeLimits, TurnEnvelopeMeter,
+    TypeCatalog, World, commit_action, commit_action_with_meter, commit_decision,
+    commit_decision_with_meter, decision_cell_commit, decision_cell_commit_with_host,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
 
 type Cell = MemoryCell<FactEvent, JsonObject, JsonObject>;
 
+#[allow(clippy::expect_used, reason = "test fixture helper")]
 fn object(value: Value) -> JsonObject {
     serde_json::from_value(value).expect("exact fixture object")
 }
 
+#[allow(clippy::expect_used, reason = "test fixture helper")]
 fn schedule_types() -> Vec<ObjectTypeDef> {
     serde_json::from_value(json!([
         {
@@ -81,133 +78,170 @@ fn schedule_types() -> Vec<ObjectTypeDef> {
     .expect("typed schedule entities")
 }
 
-fn batch_writer_rule(facts_expr: &str, links_expr: &str, link_enum: &[&str]) -> SynchronousRule {
+fn writer_input_schema(include_all_agents: bool) -> Value {
+    let mut slice_props = serde_json::Map::from_iter([
+        (
+            "agent".to_owned(),
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {"agent_id": {"type": "string"}},
+                "required": ["agent_id"]
+            }),
+        ),
+        (
+            "existing".to_owned(),
+            json!({
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "commitment_id": {"type": "string"},
+                        "agent_id": {"type": "string"},
+                        "starts_at": {"type": "string"},
+                        "ends_at": {"type": "string"},
+                        "start_min": {"type": "integer"},
+                        "end_min": {"type": "integer"},
+                        "hours": {"type": "number"}
+                    },
+                    "required": ["commitment_id", "agent_id", "starts_at", "ends_at", "start_min", "end_min", "hours"]
+                }
+            }),
+        ),
+    ]);
+    let mut slice_req = vec!["agent", "existing"];
+    if include_all_agents {
+        slice_props.insert(
+            "all_agents".to_owned(),
+            json!({
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {"agent_id": {"type": "string"}},
+                    "required": ["agent_id"]
+                }
+            }),
+        );
+        slice_req.push("all_agents");
+    }
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "slice": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": slice_props,
+                "required": slice_req
+            },
+            "event": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "input": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "plan_id": {"type": "string"},
+                            "agent_id": {"type": "string"},
+                            "window_start": {"type": "string"},
+                            "window_end": {"type": "string"},
+                            "slot_start": {"type": "string"},
+                            "slot_end": {"type": "string"},
+                            "slot_start_min": {"type": "integer"},
+                            "slot_end_min": {"type": "integer"}
+                        },
+                        "required": ["plan_id", "agent_id", "window_start", "window_end", "slot_start", "slot_end", "slot_start_min", "slot_end_min"]
+                    },
+                    "actor": {"type": "string"},
+                    "operationId": {"type": "string"}
+                },
+                "required": ["input", "actor", "operationId"]
+            }
+        },
+        "required": ["slice", "event"]
+    })
+}
+
+fn writer_output_schema(op_enum: &[&str], link_enum: &[&str], target_enum: &[&str]) -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "facts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "op": {"type": "string", "enum": ["create"]},
+                        "objectType": {"type": "string", "enum": ["schedule.Commitment"]},
+                        "key": {"type": "string"},
+                        "values": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "commitment_id": {"type": "string"},
+                                "agent_id": {"type": "string"},
+                                "starts_at": {"type": "string"},
+                                "ends_at": {"type": "string"},
+                                "start_min": {"type": "integer"},
+                                "end_min": {"type": "integer"},
+                                "hours": {"type": "number"}
+                            },
+                            "required": ["commitment_id", "agent_id", "starts_at", "ends_at", "start_min", "end_min", "hours"]
+                        }
+                    },
+                    "required": ["op", "objectType", "key", "values"]
+                }
+            },
+            "links": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "op": {"type": "string", "enum": op_enum},
+                        "sourceType": {"type": "string", "enum": ["schedule.Commitment"]},
+                        "sourceKey": {"type": "string"},
+                        "link": {"type": "string", "enum": link_enum},
+                        "targetType": {"type": "string", "enum": target_enum},
+                        "targetKey": {"type": "string"}
+                    },
+                    "required": ["op", "sourceType", "sourceKey", "link", "targetType", "targetKey"]
+                }
+            },
+            "commands": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": false, "properties": {}}
+            },
+            "timers": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": false, "properties": {}}
+            }
+        },
+        "required": ["facts", "links", "commands", "timers"]
+    })
+}
+
+#[allow(clippy::expect_used, reason = "test fixture helper")]
+fn admit_writer_rule(
+    facts_expr: &str,
+    links_expr: &str,
+    op_enum: &[&str],
+    link_enum: &[&str],
+    target_enum: &[&str],
+    include_all_agents: bool,
+) -> SynchronousRule {
     let root: RuleRoot = serde_json::from_value(json!({
         "ruleId": "schedule.batch_commitments",
         "ruleVersion": "2.0",
         "contract": "decide",
         "scopeRequired": ["orgId", "environmentId"],
-        "inputSchema": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "slice": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "agent": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                                "agent_id": {"type": "string"}
-                            },
-                            "required": ["agent_id"]
-                        },
-                        "existing": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                    "commitment_id": {"type": "string"},
-                                    "agent_id": {"type": "string"},
-                                    "starts_at": {"type": "string"},
-                                    "ends_at": {"type": "string"},
-                                    "start_min": {"type": "integer"},
-                                    "end_min": {"type": "integer"},
-                                    "hours": {"type": "number"}
-                                },
-                                "required": ["commitment_id", "agent_id", "starts_at", "ends_at", "start_min", "end_min", "hours"]
-                            }
-                        }
-                    },
-                    "required": ["agent", "existing"]
-                },
-                "event": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "input": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                                "plan_id": {"type": "string"},
-                                "agent_id": {"type": "string"},
-                                "window_start": {"type": "string"},
-                                "window_end": {"type": "string"},
-                                "slot_start": {"type": "string"},
-                                "slot_end": {"type": "string"},
-                                "slot_start_min": {"type": "integer"},
-                                "slot_end_min": {"type": "integer"}
-                            },
-                            "required": ["plan_id", "agent_id", "window_start", "window_end", "slot_start", "slot_end", "slot_start_min", "slot_end_min"]
-                        },
-                        "actor": {"type": "string"},
-                        "operationId": {"type": "string"}
-                    },
-                    "required": ["input", "actor", "operationId"]
-                }
-            },
-            "required": ["slice", "event"]
-        },
-        "outputSchema": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "facts": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                            "op": {"type": "string", "enum": ["create"]},
-                            "objectType": {"type": "string", "enum": ["schedule.Commitment"]},
-                            "key": {"type": "string"},
-                            "values": {
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                    "commitment_id": {"type": "string"},
-                                    "agent_id": {"type": "string"},
-                                    "starts_at": {"type": "string"},
-                                    "ends_at": {"type": "string"},
-                                    "start_min": {"type": "integer"},
-                                    "end_min": {"type": "integer"},
-                                    "hours": {"type": "number"}
-                                },
-                                "required": ["commitment_id", "agent_id", "starts_at", "ends_at", "start_min", "end_min", "hours"]
-                            }
-                        },
-                        "required": ["op", "objectType", "key", "values"]
-                    }
-                },
-                "links": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                            "op": {"type": "string", "enum": ["add"]},
-                            "sourceType": {"type": "string", "enum": ["schedule.Commitment"]},
-                            "sourceKey": {"type": "string"},
-                            "link": {"type": "string", "enum": link_enum},
-                            "targetType": {"type": "string", "enum": ["schedule.Agent", "schedule.Plan"]},
-                            "targetKey": {"type": "string"}
-                        },
-                        "required": ["op", "sourceType", "sourceKey", "link", "targetType", "targetKey"]
-                    }
-                },
-                "commands": {
-                    "type": "array",
-                    "items": {"type": "object", "additionalProperties": false, "properties": {}}
-                },
-                "timers": {
-                    "type": "array",
-                    "items": {"type": "object", "additionalProperties": false, "properties": {}}
-                }
-            },
-            "required": ["facts", "links", "commands", "timers"]
-        },
+        "inputSchema": writer_input_schema(include_all_agents),
+        "outputSchema": writer_output_schema(op_enum, link_enum, target_enum),
         "graph": {
             "contentType": "application/vnd.gorules.decision",
             "nodes": [
@@ -260,6 +294,18 @@ fn batch_writer_rule(facts_expr: &str, links_expr: &str, link_enum: &[&str]) -> 
     .expect("admitted synchronous rule")
 }
 
+fn batch_writer_rule(facts_expr: &str, links_expr: &str, link_enum: &[&str]) -> SynchronousRule {
+    admit_writer_rule(
+        facts_expr,
+        links_expr,
+        &["add"],
+        link_enum,
+        &["schedule.Agent", "schedule.Plan"],
+        false,
+    )
+}
+
+#[allow(clippy::expect_used, reason = "test fixture helper")]
 fn schedule_action(max_items: u32, with_duplicate_aggregate: bool) -> ActionRoot {
     let aggregates = if with_duplicate_aggregate {
         json!([{
@@ -354,6 +400,7 @@ fn schedule_action(max_items: u32, with_duplicate_aggregate: bool) -> ActionRoot
     .expect("typed schedule action")
 }
 
+#[allow(clippy::expect_used, reason = "test fixture helper")]
 fn hhmm_minutes(iso_utc: &str) -> i64 {
     let time = iso_utc.split('T').nth(1).expect("iso time");
     let mut parts = time.split(':');
@@ -420,6 +467,7 @@ impl ActionAuthorizer for Authorizer {
 
 const ALLOW: Authorizer = Authorizer { hidden_key: None };
 
+#[allow(clippy::expect_used, reason = "test fixture helper")]
 fn put_fact(cell: &mut Cell, object_type: &str, id: &str, values: Value) {
     let key = FactKey::new(object_type, id);
     let expected = cell.load(&key).expect("load").version;
@@ -476,11 +524,23 @@ fn batch_expressions(count: usize) -> (String, String) {
 }
 
 #[test]
-fn atomic_multi_object_rule_commits_18_commitments_and_18_links_under_fenced_predicate_slice() {
+fn atomic_multi_object_rule_commits_above_16_links_under_v1_and_enforces_combined_budget() {
     let types = schedule_types();
-    let (facts_expr, links_expr) = batch_expressions(18);
-    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"]);
-    let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
+
+    // 1. Under default `EnvelopeLimits::V1` (`max_events = 32`), 10 commitments x 2 links
+    //    (20 links > old 16-link cap, total 1 + 10 + 20 = 31 <= 32) commits atomically.
+    let tags = (1..=10)
+        .map(|idx| format!("'{idx:02}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let facts_10 = format!(
+        "map([{tags}], {{op: 'create', objectType: 'schedule.Commitment', key: 'C-batch-' + #, values: {{commitment_id: 'C-batch-' + #, agent_id: event.input.agent_id, starts_at: '2026-11-23T11:' + # + ':00Z', ends_at: '2026-11-23T11:' + # + ':30Z', start_min: 660, end_min: 690, hours: 0.50}}}})"
+    );
+    let links_20 = format!(
+        "flatten([map([{tags}], {{op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C-batch-' + #, link: 'for_agent', targetType: 'schedule.Agent', targetKey: event.input.agent_id}}), map([{tags}], {{op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C-batch-' + #, link: 'for_plan', targetType: 'schedule.Plan', targetKey: event.input.plan_id}})])"
+    );
+    let rule_20 = batch_writer_rule(&facts_10, &links_20, &["for_agent", "for_plan"]);
+    let catalog_20 = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule_20));
     let mut cell = seeded_cell();
 
     // Also verifies deduplication when both a predicate slice and an aggregate
@@ -493,7 +553,7 @@ fn atomic_multi_object_rule_commits_18_commitments_and_18_links_under_fenced_pre
         "2026-11-23T12:00:00Z",
     );
     let outcome =
-        commit_action(&mut cell, &catalog, &request, &ALLOW).expect("atomic batch commit");
+        commit_action(&mut cell, &catalog_20, &request, &ALLOW).expect("atomic batch commit");
     assert!(matches!(outcome, ActionOutcome::Committed { .. }));
 
     // Primary transition committed.
@@ -507,8 +567,8 @@ fn atomic_multi_object_rule_commits_18_commitments_and_18_links_under_fenced_pre
             .and_then(norn_ir::RuntimeValue::as_str),
         Some("committed")
     );
-    // All 18 commitments and all 18 typed links persisted atomically (above old 16-link cap).
-    for idx in 1..=18 {
+    // All 10 commitments and all 20 typed links persisted atomically (above old 16-link cap).
+    for idx in 1..=10 {
         let key = format!("C-batch-{idx:02}");
         assert!(
             cell.load(&FactKey::new("schedule.Commitment", &key))
@@ -516,16 +576,63 @@ fn atomic_multi_object_rule_commits_18_commitments_and_18_links_under_fenced_pre
                 .exists(),
             "commitment {key} should exist"
         );
-        let link = LinkKey::new(
-            FactKey::new("schedule.Commitment", &key),
-            "for_agent",
-            FactKey::new("schedule.Agent", "A1"),
-        );
-        assert!(
-            cell.load_link(&link).expect("link").exists(),
-            "link for {key} should exist"
-        );
+        for (link_name, target_type, target_key) in [
+            ("for_agent", "schedule.Agent", "A1"),
+            ("for_plan", "schedule.Plan", "P1"),
+        ] {
+            let link = LinkKey::new(
+                FactKey::new("schedule.Commitment", &key),
+                link_name,
+                FactKey::new(target_type, target_key),
+            );
+            assert!(
+                cell.load_link(&link).expect("link").exists(),
+                "link {link_name} for {key} should exist"
+            );
+        }
     }
+
+    // 2. Combined `events + links` budget: 1 plan + 18 commitments + 18 links = 37 > 32
+    //    refuses under default `EnvelopeLimits::V1` and commits + charges 37 under a
+    //    wider per-decision limit with `TurnEnvelopeMeter`.
+    verify_combined_events_and_links_budget(&types, &request);
+}
+
+#[allow(clippy::expect_used, reason = "test fixture helper")]
+fn verify_combined_events_and_links_budget(types: &[ObjectTypeDef], request: &ActionCall<'_>) {
+    let (facts_18, links_18) = batch_expressions(18);
+    let rule_18 = batch_writer_rule(&facts_18, &links_18, &["for_agent"]);
+    let catalog_18 = TypeCatalog::new(types).with_action_rules(std::slice::from_ref(&rule_18));
+    let mut cell_v1 = seeded_cell();
+    let refusal = commit_action(&mut cell_v1, &catalog_18, request, &ALLOW)
+        .expect_err("20 events + 18 links exceeds V1 max_events 32");
+    assert!(
+        matches!(
+            refusal,
+            ActionRefusal::Decision(DecisionRefusal::EnvelopeExceeded {
+                kind: EnvelopeKind::Events,
+                limit: 32,
+                actual: 38,
+            })
+        ),
+        "expected combined events+links EnvelopeExceeded, got {refusal:?}"
+    );
+
+    let mut cell_wide = seeded_cell();
+    let mut meter = TurnEnvelopeMeter::with_limits(
+        EnvelopeLimits {
+            max_events: 64,
+            ..EnvelopeLimits::V1
+        },
+        TurnEnvelopeLimits {
+            max_events: 64,
+            max_commands: 32,
+            max_timers: 32,
+        },
+    );
+    commit_action_with_meter(&mut cell_wide, &catalog_18, request, &ALLOW, &mut meter)
+        .expect("18 commitments + 18 links commits under explicit 64-event envelope");
+    assert_eq!(meter.used().events, 38);
 }
 
 #[test]
@@ -849,8 +956,6 @@ fn unauthorized_predicate_member_and_invalid_decision_links_refuse_with_zero_wri
 
     // 3. Cardinality violation: `for_agent` is to-one, emitting two targets for the same commitment refuses with zero writes.
     put_fact(&mut cell, "schedule.Agent", "A2", json!({"agent_id": "A2"}));
-    // Capture A2 by putting it in the slice via an extra slice entry? Even simpler: use `for_plan` with two plans?
-    // Or emit two links from C-batch-1 to A1 and A2 via `commit_decision` directly, AND test in action via two captured agents!
     let mut two_agent_action = schedule_action(50, false);
     two_agent_action.slice.push(
         serde_json::from_value(json!({
@@ -861,81 +966,14 @@ fn unauthorized_predicate_member_and_invalid_decision_links_refuse_with_zero_wri
         .expect("predicate slice for all agents"),
     );
     let card_links = "[{op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C-batch-01', link: 'for_agent', targetType: 'schedule.Agent', targetKey: 'A1'}, {op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C-batch-01', link: 'for_agent', targetType: 'schedule.Agent', targetKey: 'A2'}]";
-    // Build a rule whose inputSchema includes `all_agents` in slice.
-    let mut card_rule_json: Value = serde_json::to_value(
-        serde_json::from_value::<RuleRoot>(json!({
-            "ruleId": "schedule.batch_commitments",
-            "ruleVersion": "2.0",
-            "contract": "decide",
-            "scopeRequired": ["orgId", "environmentId"],
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "slice": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                            "agent": {"type": "object", "additionalProperties": false, "properties": {"agent_id": {"type": "string"}}, "required": ["agent_id"]},
-                            "existing": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {"commitment_id": {"type": "string"}, "agent_id": {"type": "string"}, "starts_at": {"type": "string"}, "ends_at": {"type": "string"}, "start_min": {"type": "integer"}, "end_min": {"type": "integer"}, "hours": {"type": "number"}}, "required": ["commitment_id", "agent_id", "starts_at", "ends_at", "start_min", "end_min", "hours"]}},
-                            "all_agents": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {"agent_id": {"type": "string"}}, "required": ["agent_id"]}}
-                        },
-                        "required": ["agent", "existing", "all_agents"]
-                    },
-                    "event": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                            "input": {"type": "object", "additionalProperties": false, "properties": {"plan_id": {"type": "string"}, "agent_id": {"type": "string"}, "window_start": {"type": "string"}, "window_end": {"type": "string"}, "slot_start": {"type": "string"}, "slot_end": {"type": "string"}, "slot_start_min": {"type": "integer"}, "slot_end_min": {"type": "integer"}}, "required": ["plan_id", "agent_id", "window_start", "window_end", "slot_start", "slot_end", "slot_start_min", "slot_end_min"]},
-                            "actor": {"type": "string"},
-                            "operationId": {"type": "string"}
-                        },
-                        "required": ["input", "actor", "operationId"]
-                    }
-                },
-                "required": ["slice", "event"]
-            },
-            "outputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "facts": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {"op": {"type": "string", "enum": ["create"]}, "objectType": {"type": "string", "enum": ["schedule.Commitment"]}, "key": {"type": "string"}, "values": {"type": "object", "additionalProperties": false, "properties": {"commitment_id": {"type": "string"}, "agent_id": {"type": "string"}, "starts_at": {"type": "string"}, "ends_at": {"type": "string"}, "start_min": {"type": "integer"}, "end_min": {"type": "integer"}, "hours": {"type": "number"}}, "required": ["commitment_id", "agent_id", "starts_at", "ends_at", "start_min", "end_min", "hours"]}}, "required": ["op", "objectType", "key", "values"]}},
-                    "links": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {"op": {"type": "string", "enum": ["add"]}, "sourceType": {"type": "string", "enum": ["schedule.Commitment"]}, "sourceKey": {"type": "string"}, "link": {"type": "string", "enum": ["for_agent"]}, "targetType": {"type": "string", "enum": ["schedule.Agent"]}, "targetKey": {"type": "string"}}, "required": ["op", "sourceType", "sourceKey", "link", "targetType", "targetKey"]}},
-                    "commands": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {}}},
-                    "timers": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {}}}
-                },
-                "required": ["facts", "links", "commands", "timers"]
-            },
-            "graph": {
-                "contentType": "application/vnd.gorules.decision",
-                "nodes": [
-                    {"id": "in", "name": "input", "type": "inputNode"},
-                    {"id": "decision", "name": "decision", "type": "decisionTableNode", "content": {"hitPolicy": "first", "inputs": [{"id": "condition", "name": "condition", "type": "expression"}], "outputs": [{"id": "out_facts", "name": "facts", "field": "facts"}, {"id": "out_links", "name": "links", "field": "links"}, {"id": "out_commands", "name": "commands", "field": "commands"}, {"id": "out_timers", "name": "timers", "field": "timers"}], "rules": [{"_id": "row_0", "condition": "", "out_facts": facts_expr, "out_links": card_links, "out_commands": "[]", "out_timers": "[]"}]}},
-                    {"id": "out", "name": "output", "type": "outputNode"}
-                ],
-                "edges": [
-                    {"id": "edge_0", "sourceId": "in", "targetId": "decision", "type": "edge"},
-                    {"id": "edge_1", "sourceId": "decision", "targetId": "out", "type": "edge"}
-                ]
-            }
-        }))
-        .expect("card rule root"),
-    )
-    .expect("json");
-    let card_root: RuleRoot = serde_json::from_value(card_rule_json.take()).expect("card rule");
-    let card_rule = SynchronousRule::admit(
-        ActionRuleRef {
-            artifact_id: "schedule.batch_commitments.rule".to_owned(),
-            version: "1.0.0".to_owned(),
-        },
-        &card_root,
-        &BTreeMap::new(),
-        DecisionBinding {
-            profile_id: "norn.limits/1".to_owned(),
-            environment_hash: "env-test".to_owned(),
-        },
-    )
-    .expect("admitted card rule");
+    let card_rule = admit_writer_rule(
+        &facts_expr,
+        card_links,
+        &["add"],
+        &["for_agent"],
+        &["schedule.Agent"],
+        true,
+    );
     let card_catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&card_rule));
     let card_call = schedule_call(
         &two_agent_action,
@@ -950,7 +988,6 @@ fn unauthorized_predicate_member_and_invalid_decision_links_refuse_with_zero_wri
         refusal.to_string().contains("cardinality"),
         "expected link cardinality refusal, got: {refusal}"
     );
-    // Zero partial writes.
     assert!(
         !cell
             .load(&FactKey::new("schedule.Commitment", "C-batch-01"))
@@ -966,4 +1003,712 @@ fn unauthorized_predicate_member_and_invalid_decision_links_refuse_with_zero_wri
             .and_then(norn_ir::RuntimeValue::as_str),
         Some("draft")
     );
+}
+
+// =========================================================================
+// Round-1 adversarial regression tests (Blockers 1, 2, 3, 4, 6, 7)
+// =========================================================================
+
+#[allow(clippy::expect_used, reason = "test fixture helper")]
+fn put_link(
+    cell: &mut Cell,
+    source_type: &str,
+    source_id: &str,
+    link: &str,
+    target_type: &str,
+    target_id: &str,
+) {
+    let key = LinkKey::new(
+        FactKey::new(source_type, source_id),
+        link,
+        FactKey::new(target_type, target_id),
+    );
+    let expected = cell.load_link(&key).expect("load_link").version;
+    let mut commit = CellCommit::empty();
+    commit.links.push(LinkWrite {
+        key,
+        expected,
+        mutation: LinkMutation::Add {
+            values: JsonObject::new(),
+        },
+    });
+    cell.commit(commit).expect("seed link");
+}
+
+struct ReadOnlySourceAuthorizer {
+    forbidden_write_key: &'static str,
+}
+
+impl ActionAuthorizer for ReadOnlySourceAuthorizer {
+    fn authorize(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        if request.target.key == self.forbidden_write_key {
+            return Err(ActionDenial::Forbidden {
+                reason: "read-only actor on link source".to_owned(),
+            });
+        }
+        Ok(())
+    }
+    fn authorize_read(&self, _: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read_type(&self, _: &ActionReadTypeAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        Ok(())
+    }
+}
+
+#[test]
+fn blocker1_read_only_actor_on_link_source_is_refused_for_add_and_remove() {
+    let types = schedule_types();
+    let action = schedule_action(50, false);
+    let request = schedule_call(
+        &action,
+        "P1",
+        "2026-11-23T11:00:00Z",
+        "2026-11-23T12:00:00Z",
+    );
+    let authz = ReadOnlySourceAuthorizer {
+        forbidden_write_key: "C0",
+    };
+
+    // 1. LinkChange::Add with source C0 (in slice, not in prepared_writes): actor has
+    //    execute on P1 and read on C0, but Forbidden on write to C0.
+    let add_rule = batch_writer_rule(
+        "[]",
+        "[{op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C0', link: 'for_agent', targetType: 'schedule.Agent', targetKey: 'A1'}]",
+        &["for_agent"],
+    );
+    let add_catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&add_rule));
+    let mut cell = seeded_cell();
+    let refusal = commit_action(&mut cell, &add_catalog, &request, &authz)
+        .expect_err("read-only actor on link source must be refused for Add");
+    assert!(
+        matches!(refusal, ActionRefusal::PermissionDenied { .. }),
+        "expected PermissionDenied on Add, got {refusal:?}"
+    );
+    assert!(
+        !cell
+            .load_link(&LinkKey::new(
+                FactKey::new("schedule.Commitment", "C0"),
+                "for_agent",
+                FactKey::new("schedule.Agent", "A1"),
+            ))
+            .expect("link")
+            .exists()
+    );
+
+    // 2. LinkChange::Remove with source C0 (existing link seeded): same read-only actor
+    //    must be refused with PermissionDenied and zero writes.
+    let remove_rule = admit_writer_rule(
+        "[]",
+        "[{op: 'remove', sourceType: 'schedule.Commitment', sourceKey: 'C0', link: 'for_agent', targetType: 'schedule.Agent', targetKey: 'A1'}]",
+        &["remove"],
+        &["for_agent"],
+        &["schedule.Agent"],
+        false,
+    );
+    let remove_catalog =
+        TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&remove_rule));
+    let mut cell2 = seeded_cell();
+    put_link(
+        &mut cell2,
+        "schedule.Commitment",
+        "C0",
+        "for_agent",
+        "schedule.Agent",
+        "A1",
+    );
+    let refusal = commit_action(&mut cell2, &remove_catalog, &request, &authz)
+        .expect_err("read-only actor on link source must be refused for Remove");
+    assert!(
+        matches!(refusal, ActionRefusal::PermissionDenied { .. }),
+        "expected PermissionDenied on Remove, got {refusal:?}"
+    );
+    assert!(
+        cell2
+            .load_link(&LinkKey::new(
+                FactKey::new("schedule.Commitment", "C0"),
+                "for_agent",
+                FactKey::new("schedule.Agent", "A1"),
+            ))
+            .expect("link")
+            .exists(),
+        "seed link must remain intact after PermissionDenied"
+    );
+}
+
+struct NonePredicateCell {
+    cell: RefCell<Cell>,
+}
+
+impl CellHost for NonePredicateCell {
+    type Event = FactEvent;
+    type Command = JsonObject;
+    type Input = JsonObject;
+    type Error = Infallible;
+    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
+        self.cell.borrow().load(key)
+    }
+    fn load_bounded(
+        &self,
+        key: &FactKey,
+        max_bytes: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> {
+        self.cell.borrow().load_bounded(key, max_bytes)
+    }
+    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
+        self.cell.borrow().load_link(key)
+    }
+    fn read_predicate(
+        &self,
+        _: &PredicateQuery,
+        _: usize,
+        _: u64,
+    ) -> Result<Option<Vec<PredicateObject>>, Self::Error> {
+        // Simulate host byte-overflow or unenumerable scan before per-record authz.
+        Ok(None)
+    }
+    fn commit(
+        &mut self,
+        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
+        self.cell.get_mut().commit(commit)
+    }
+    fn perform(&mut self) -> Result<Option<Performed<Self::Input>>, Self::Error> {
+        self.cell.get_mut().perform()
+    }
+    fn observe(&mut self) -> Result<Option<Observed<Self::Input>>, Self::Error> {
+        self.cell.get_mut().observe()
+    }
+    fn clock(&mut self) -> Result<Option<DueTimer<Self::Input>>, Self::Error> {
+        self.cell.get_mut().clock()
+    }
+    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
+        self.cell.get_mut().publish(receipt)
+    }
+}
+
+#[test]
+fn blocker2_hidden_row_over_max_items_and_unenumerable_scan_refuse_as_target_not_found() {
+    let types = schedule_types();
+    let (facts_expr, links_expr) = batch_expressions(1);
+    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"]);
+    let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
+    let mut cell = seeded_cell();
+    // Add a 2nd matching commitment C1 that is hidden from the actor.
+    put_fact(
+        &mut cell,
+        "schedule.Commitment",
+        "C1",
+        json!({
+            "commitment_id": "C1",
+            "agent_id": "A1",
+            "starts_at": "2026-11-23T08:00:00Z",
+            "ends_at": "2026-11-23T08:30:00Z",
+            "start_min": 480,
+            "end_min": 510,
+            "hours": 0.50
+        }),
+    );
+
+    // 1 readable row (C0) + 1 hidden row (C1) with maxItems = 1:
+    // Must conceal as TargetNotFound, NEVER leak existence via SliceUnavailable.
+    let action = schedule_action(1, false);
+    let request = schedule_call(
+        &action,
+        "P1",
+        "2026-11-23T11:00:00Z",
+        "2026-11-23T12:00:00Z",
+    );
+    let hide_c1 = Authorizer {
+        hidden_key: Some("C1"),
+    };
+    let refusal = commit_action(&mut cell, &catalog, &request, &hide_c1)
+        .expect_err("hidden overflow row must refuse as TargetNotFound");
+    assert!(
+        matches!(refusal, ActionRefusal::TargetNotFound),
+        "expected TargetNotFound (no hidden-row existence oracle), got {refusal:?}"
+    );
+
+    // 2. Host returning Ok(None) (byte overflow during scan before per-record authz)
+    //    must also conceal as TargetNotFound.
+    let mut none_host = NonePredicateCell {
+        cell: RefCell::new(seeded_cell()),
+    };
+    let refusal = commit_action(&mut none_host, &catalog, &request, &ALLOW)
+        .expect_err("Ok(None) scan must conceal as TargetNotFound");
+    assert!(
+        matches!(refusal, ActionRefusal::TargetNotFound),
+        "expected TargetNotFound on Ok(None) scan, got {refusal:?}"
+    );
+}
+
+#[allow(clippy::expect_used, reason = "test fixture helper")]
+fn doc_node_fixture() -> (Vec<ObjectTypeDef>, Cell, FactSlice) {
+    let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "doc.Node",
+            "properties": [{"id": "node_id", "type": {"kind": "text"}}],
+            "links": [{
+                "id": "rel",
+                "target": "doc.Node",
+                "cardinality": {"to": "many", "from": "many"},
+                "properties": [{"id": "note", "type": {"kind": "text"}}]
+            }]
+        }
+    ]))
+    .expect("node types");
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(types.clone());
+    for id in ["N1", "N2", "N3", "N4"] {
+        put_fact(&mut cell, "doc.Node", id, json!({"node_id": id}));
+    }
+    let slice: FactSlice = ["N1", "N2", "N3", "N4"]
+        .into_iter()
+        .map(|id| {
+            let key = FactKey::new("doc.Node", id);
+            let state = cell.load(&key).expect("load");
+            (key, state)
+        })
+        .collect();
+    (types, cell, slice)
+}
+
+#[test]
+fn blocker3_decision_links_enforce_max_output_bytes_and_charge_turn_envelope_meter() {
+    let (types, mut cell, slice) = doc_node_fixture();
+    let catalog = TypeCatalog::new(&types);
+
+    // 1. Oversized LinkChange::Add.values (> 32 KiB EnvelopeLimits::V1.max_output_bytes) refuses.
+    let huge_note = "x".repeat(40_000);
+    let oversized: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "add",
+            "sourceType": "doc.Node",
+            "sourceKey": "N1",
+            "link": "rel",
+            "targetType": "doc.Node",
+            "targetKey": "N2",
+            "values": {"note": huge_note}
+        }],
+        "commands": [],
+        "timers": []
+    }))
+    .expect("oversized output");
+    let turn = DecisionTurn {
+        id: "turn-oversized".to_owned(),
+        now: LogicalTime::from_millis(1_000),
+        world: World::Main,
+        consumes: None,
+    };
+    let refusal = commit_decision(&mut cell, &catalog, &slice, &turn, &oversized)
+        .expect_err("oversized link values must refuse");
+    assert_eq!(refusal.code(), "decision.invalid_output");
+    assert!(
+        refusal.to_string().contains("envelope bytes"),
+        "expected envelope bytes refusal, got: {refusal}"
+    );
+
+    // 2. Link-only decisions charge TurnEnvelopeMeter and refuse once exhausted.
+    let mut meter = TurnEnvelopeMeter::new(TurnEnvelopeLimits {
+        max_events: 2,
+        max_commands: 4,
+        max_timers: 4,
+    });
+    let two_links: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [
+            {"op": "add", "sourceType": "doc.Node", "sourceKey": "N1", "link": "rel", "targetType": "doc.Node", "targetKey": "N2", "values": {"note": "a"}},
+            {"op": "add", "sourceType": "doc.Node", "sourceKey": "N1", "link": "rel", "targetType": "doc.Node", "targetKey": "N3", "values": {"note": "b"}}
+        ],
+        "commands": [],
+        "timers": []
+    }))
+    .expect("two links");
+    commit_decision_with_meter(&mut cell, &catalog, &slice, &turn, &two_links, &mut meter)
+        .expect("first link-only commit within turn budget");
+    assert_eq!(meter.used().events, 2);
+
+    let third_link: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [
+            {"op": "add", "sourceType": "doc.Node", "sourceKey": "N1", "link": "rel", "targetType": "doc.Node", "targetKey": "N4", "values": {"note": "c"}}
+        ],
+        "commands": [],
+        "timers": []
+    }))
+    .expect("third link");
+    let turn2 = DecisionTurn {
+        id: "turn-link-exhausted".to_owned(),
+        now: LogicalTime::from_millis(2_000),
+        world: World::Main,
+        consumes: None,
+    };
+    let refusal =
+        commit_decision_with_meter(&mut cell, &catalog, &slice, &turn2, &third_link, &mut meter)
+            .expect_err("link-only commit past turn meter must refuse");
+    assert!(
+        matches!(
+            refusal,
+            DecisionRefusal::TurnEnvelopeExceeded {
+                kind: EnvelopeKind::Events,
+                limit: 2,
+                actual: 3,
+            }
+        ),
+        "expected TurnEnvelopeExceeded, got {refusal:?}"
+    );
+    assert_eq!(meter.used().events, 2);
+}
+
+#[test]
+fn blocker4_rejects_unknown_and_forged_computed_keys_in_link_values() {
+    let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "doc.Node",
+            "properties": [{"id": "node_id", "type": {"kind": "text"}}],
+            "links": [
+                {
+                    "id": "annotated",
+                    "target": "doc.Node",
+                    "cardinality": {"to": "many", "from": "many"},
+                    "properties": [
+                        {"id": "role", "type": {"kind": "text"}},
+                        {"id": "computed_tag", "type": {"kind": "text"}, "computed": "self.role"}
+                    ]
+                },
+                {
+                    "id": "bare",
+                    "target": "doc.Node",
+                    "cardinality": {"to": "many", "from": "many"}
+                }
+            ]
+        }
+    ]))
+    .expect("types");
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(types.clone());
+    put_fact(&mut cell, "doc.Node", "N1", json!({"node_id": "N1"}));
+    put_fact(&mut cell, "doc.Node", "N2", json!({"node_id": "N2"}));
+    let slice: FactSlice = ["N1", "N2"]
+        .into_iter()
+        .map(|id| {
+            let key = FactKey::new("doc.Node", id);
+            let state = cell.load(&key).expect("load");
+            (key, state)
+        })
+        .collect();
+    let turn = DecisionTurn {
+        id: "turn-bad-values".to_owned(),
+        now: LogicalTime::from_millis(1_000),
+        world: World::Main,
+        consumes: None,
+    };
+
+    // 1. Unknown key on link with properties.
+    let unknown_on_annotated: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "add", "sourceType": "doc.Node", "sourceKey": "N1",
+            "link": "annotated", "targetType": "doc.Node", "targetKey": "N2",
+            "values": {"role": "owner", "sneaky": "injected"}
+        }],
+        "commands": [], "timers": []
+    }))
+    .expect("output");
+    let refusal = commit_decision(&mut cell, &catalog, &slice, &turn, &unknown_on_annotated)
+        .expect_err("unknown key must refuse");
+    assert_eq!(refusal.code(), "decision.invalid_output");
+
+    // 2. Forged computed key on link with properties.
+    let computed_forged: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "add", "sourceType": "doc.Node", "sourceKey": "N1",
+            "link": "annotated", "targetType": "doc.Node", "targetKey": "N2",
+            "values": {"role": "owner", "computed_tag": "forged"}
+        }],
+        "commands": [], "timers": []
+    }))
+    .expect("output");
+    let refusal = commit_decision(&mut cell, &catalog, &slice, &turn, &computed_forged)
+        .expect_err("forged computed key must refuse");
+    assert_eq!(refusal.code(), "decision.invalid_output");
+
+    // 3. Unknown key on link with zero properties.
+    let unknown_on_bare: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "add", "sourceType": "doc.Node", "sourceKey": "N1",
+            "link": "bare", "targetType": "doc.Node", "targetKey": "N2",
+            "values": {"unexpected": 1}
+        }],
+        "commands": [], "timers": []
+    }))
+    .expect("output");
+    let refusal = commit_decision(&mut cell, &catalog, &slice, &turn, &unknown_on_bare)
+        .expect_err("unknown key on bare link must refuse");
+    assert_eq!(refusal.code(), "decision.invalid_output");
+}
+
+#[test]
+fn blocker6_decision_cell_commit_never_silently_drops_links() {
+    let types = schedule_types();
+    let catalog = TypeCatalog::new(&types);
+    let cell = seeded_cell();
+    let slice: FactSlice = [
+        FactKey::new("schedule.Commitment", "C0"),
+        FactKey::new("schedule.Agent", "A1"),
+    ]
+    .into_iter()
+    .map(|key| {
+        let state = cell.load(&key).expect("load");
+        (key, state)
+    })
+    .collect();
+    let output: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "add",
+            "sourceType": "schedule.Commitment",
+            "sourceKey": "C0",
+            "link": "for_agent",
+            "targetType": "schedule.Agent",
+            "targetKey": "A1"
+        }],
+        "commands": [],
+        "timers": []
+    }))
+    .expect("output");
+    let turn = DecisionTurn {
+        id: "turn-cell-commit".to_owned(),
+        now: LogicalTime::from_millis(1_000),
+        world: World::Main,
+        consumes: None,
+    };
+
+    // Hostless `decision_cell_commit` must fail closed instead of silently returning empty links.
+    let refusal = decision_cell_commit::<FactEvent, JsonObject, JsonObject, Infallible>(
+        &catalog,
+        &slice,
+        &turn,
+        &output,
+        &EnvelopeLimits::V1,
+    )
+    .expect_err("decision_cell_commit must fail closed on non-empty links");
+    assert_eq!(refusal.code(), "decision.invalid_output");
+
+    // Host-backed `decision_cell_commit_with_host` materializes the link writes with CAS versions.
+    let commit = decision_cell_commit_with_host(
+        &cell,
+        &catalog,
+        &slice,
+        &turn,
+        &output,
+        &EnvelopeLimits::V1,
+    )
+    .expect("decision_cell_commit_with_host materializes links");
+    assert_eq!(commit.links.len(), 1);
+    assert_eq!(commit.links[0].key.link, "for_agent");
+}
+
+struct SpyLoadLinkCell {
+    cell: RefCell<Cell>,
+    load_link_calls: RefCell<usize>,
+}
+
+impl CellHost for SpyLoadLinkCell {
+    type Event = FactEvent;
+    type Command = JsonObject;
+    type Input = JsonObject;
+    type Error = Infallible;
+    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
+        self.cell.borrow().load(key)
+    }
+    fn load_bounded(
+        &self,
+        key: &FactKey,
+        max_bytes: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> {
+        self.cell.borrow().load_bounded(key, max_bytes)
+    }
+    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
+        let mut count = self.load_link_calls.borrow_mut();
+        *count = count.saturating_add(1);
+        self.cell.borrow().load_link(key)
+    }
+    fn read_predicate(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        max_bytes: u64,
+    ) -> Result<Option<Vec<PredicateObject>>, Self::Error> {
+        self.cell
+            .borrow()
+            .read_predicate(predicate, max_members, max_bytes)
+    }
+    fn commit(
+        &mut self,
+        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
+        self.cell.get_mut().commit(commit)
+    }
+    fn perform(&mut self) -> Result<Option<Performed<Self::Input>>, Self::Error> {
+        self.cell.get_mut().perform()
+    }
+    fn observe(&mut self) -> Result<Option<Observed<Self::Input>>, Self::Error> {
+        self.cell.get_mut().observe()
+    }
+    fn clock(&mut self) -> Result<Option<DueTimer<Self::Input>>, Self::Error> {
+        self.cell.get_mut().clock()
+    }
+    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
+        self.cell.get_mut().publish(receipt)
+    }
+}
+
+#[allow(clippy::expect_used, reason = "test fixture helper")]
+fn hierarchy_fixture() -> (Vec<ObjectTypeDef>, Cell, FactSlice) {
+    let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "hier.Base",
+            "properties": [{"id": "id", "type": {"kind": "text"}}],
+            "links": [
+                {"id": "peer", "target": "hier.Base", "cardinality": {"to": "many", "from": "many"}}
+            ]
+        },
+        {
+            "name": "hier.Sub",
+            "extends": "hier.Base",
+            "properties": [{"id": "sub_note", "type": {"kind": "text"}}]
+        },
+        {
+            "name": "hier.OwnedSub",
+            "extends": "hier.Base",
+            "properties": [{"id": "seq", "type": {"kind": "integer"}}]
+        },
+        {
+            "name": "hier.Parent",
+            "properties": [{"id": "id", "type": {"kind": "text"}}],
+            "links": [
+                {"id": "children", "target": "hier.OwnedSub", "cardinality": {"to": "many", "from": "one"}},
+                {"id": "related", "target": "hier.Base", "cardinality": {"to": "many", "from": "many"}}
+            ],
+            "ownedCollections": [{
+                "id": "children",
+                "childType": "hier.OwnedSub",
+                "rowIdProperty": "id",
+                "orderingKey": "seq",
+                "cascadeOnParentDelete": true,
+                "maxRows": 10
+            }]
+        }
+    ]))
+    .expect("hierarchy types");
+    let mut base_cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(types.clone());
+    put_fact(&mut base_cell, "hier.Base", "B1", json!({"id": "B1"}));
+    put_fact(&mut base_cell, "hier.Base", "B2", json!({"id": "B2"}));
+    put_fact(&mut base_cell, "hier.Parent", "P1", json!({"id": "P1"}));
+    let mut slice = FactSlice::new();
+    for (ty, id) in [("hier.Base", "B1"), ("hier.Parent", "P1")] {
+        let key = FactKey::new(ty, id);
+        let state = base_cell.load(&key).expect("load");
+        slice.insert(key, state);
+    }
+    slice.insert(
+        FactKey::new("hier.OwnedSub", "O1"),
+        FactState {
+            version: norn_kernel::FactVersion(1),
+            values: Some(object(json!({"id": "O1", "seq": 1}))),
+        },
+    );
+    (types, base_cell, slice)
+}
+
+#[test]
+fn blocker7_remove_validates_capture_subtypes_and_concrete_protected_and_owned_links() {
+    let (types, base_cell, slice) = hierarchy_fixture();
+    let catalog = TypeCatalog::new(&types);
+
+    let turn = DecisionTurn {
+        id: "turn-b7".to_owned(),
+        now: LogicalTime::from_millis(1_000),
+        world: World::Main,
+        consumes: None,
+    };
+
+    // 1. Uncaptured `LinkChange::Remove` (B2 is NOT in slice) must refuse BEFORE host.load_link.
+    let mut spy = SpyLoadLinkCell {
+        cell: RefCell::new(base_cell),
+        load_link_calls: RefCell::new(0),
+    };
+    let uncaptured_remove: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "remove", "sourceType": "hier.Base", "sourceKey": "B1",
+            "link": "peer", "targetType": "hier.Base", "targetKey": "B2"
+        }],
+        "commands": [], "timers": []
+    }))
+    .expect("output");
+    let refusal = commit_decision(&mut spy, &catalog, &slice, &turn, &uncaptured_remove)
+        .expect_err("uncaptured Remove must refuse");
+    assert_eq!(refusal.code(), "decision.invalid_output");
+    assert_eq!(
+        *spy.load_link_calls.borrow(),
+        0,
+        "host.load_link must not be called for uncaptured Remove"
+    );
+
+    // 2. Subtype mismatch on `LinkChange::Remove`: slice has `hier.Base/B1`, Remove claims `hier.Sub/B1`.
+    let subtype_mismatch_remove: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "remove", "sourceType": "hier.Sub", "sourceKey": "B1",
+            "link": "peer", "targetType": "hier.Base", "targetKey": "B1"
+        }],
+        "commands": [], "timers": []
+    }))
+    .expect("output");
+    let refusal = commit_decision(&mut spy, &catalog, &slice, &turn, &subtype_mismatch_remove)
+        .expect_err("subtype mismatch on Remove must refuse");
+    assert_eq!(refusal.code(), "decision.invalid_output");
+    assert_eq!(*spy.load_link_calls.borrow(), 0);
+
+    // 3. Protected concrete subtype: link declares `hier.Base` target, but concrete slice
+    //    object `O1` is `hier.OwnedSub` (an owned child type) -> refused for both Add and Remove.
+    for op in ["add", "remove"] {
+        let protected_concrete: norn_ir::DecisionOutput = serde_json::from_value(json!({
+            "facts": [],
+            "links": [{
+                "op": op, "sourceType": "hier.Parent", "sourceKey": "P1",
+                "link": "related", "targetType": "hier.Base", "targetKey": "O1"
+            }],
+            "commands": [], "timers": []
+        }))
+        .expect("output");
+        let refusal = commit_decision(&mut spy, &catalog, &slice, &turn, &protected_concrete)
+            .expect_err("protected concrete owned-child subtype must refuse");
+        assert_eq!(refusal.code(), "decision.invalid_output");
+        assert_eq!(*spy.load_link_calls.borrow(), 0);
+    }
+
+    // 4. Owned-collection owning link (`children` on `hier.Parent`) refused for both Add and Remove.
+    for op in ["add", "remove"] {
+        let owned_link: norn_ir::DecisionOutput = serde_json::from_value(json!({
+            "facts": [],
+            "links": [{
+                "op": op, "sourceType": "hier.Parent", "sourceKey": "P1",
+                "link": "children", "targetType": "hier.OwnedSub", "targetKey": "O1"
+            }],
+            "commands": [], "timers": []
+        }))
+        .expect("output");
+        let refusal = commit_decision(&mut spy, &catalog, &slice, &turn, &owned_link)
+            .expect_err("owned-collection owning link must refuse");
+        assert_eq!(refusal.code(), "decision.invalid_output");
+        assert_eq!(*spy.load_link_calls.borrow(), 0);
+    }
 }

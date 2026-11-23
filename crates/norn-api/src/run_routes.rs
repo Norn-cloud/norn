@@ -574,7 +574,8 @@ fn commit_start<E: SqlEngine>(
         world: World::Main,
         consumes: None,
     };
-    let commit = norn_kernel::decision_cell_commit::<_, _, _, norn_cell::CellError>(
+    let commit = norn_kernel::decision_cell_commit_with_host(
+        &*cell,
         &catalog,
         &slice,
         &turn,

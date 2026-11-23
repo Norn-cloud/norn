@@ -127,6 +127,7 @@ pub use decision_commit::{
     commit_decision_with_limits, commit_decision_with_meter, decision_cell_commit, load_slice,
     prepare_decision, prepare_decision_with_limits, prepare_decision_with_source_owned_targets,
 };
+pub use decision_links::{HostCellCommit, decision_cell_commit_with_host};
 pub use effect::{
     Command, CommandId, DependencyToken, Effect, FreshnessPolicy, Generation, IdempotencyKey,
     InputIdentity, OwnerVersion, Timer, TimerId,

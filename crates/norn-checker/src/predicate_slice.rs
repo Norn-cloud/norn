@@ -138,11 +138,17 @@ pub(crate) fn action_predicate_slice_findings(
                 return;
             }
         };
-        let input_class = action_input_field_type(Some(&input_schema), input)
-            .as_ref()
-            .and_then(scalar_class);
-        if input_class.is_some_and(|input_class| !input_comparable(input_class, class)) {
-            findings.push(slice_finding(
+        let field_declared = root
+            .input_schema
+            .get("properties")
+            .and_then(JsonValue::as_object)
+            .is_some_and(|properties| properties.contains_key(input));
+        if field_declared {
+            let input_class = action_input_field_type(Some(&input_schema), input)
+                .as_ref()
+                .and_then(scalar_class);
+            if !input_class.is_some_and(|input_class| input_comparable(input_class, class)) {
+                findings.push(slice_finding(
                     artifact,
                     &format!("{path}{suffix}"),
                     format!(
@@ -151,6 +157,7 @@ pub(crate) fn action_predicate_slice_findings(
                         property.as_str()
                     ),
                 ));
+            }
         }
     };
     for (property, input) in filter {

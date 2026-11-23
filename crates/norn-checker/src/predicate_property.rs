@@ -92,17 +92,17 @@ pub(crate) fn indexed_scalar_property(
     property: &str,
     allowed: &[ScalarClass],
 ) -> Result<(ScalarClass, Type), PredicatePropertyError> {
-    let field = record
-        .fields
-        .get(property)
-        .filter(|field| matches!(field.source, FieldSource::Property { .. }))
-        .ok_or(PredicatePropertyError::NotStored)?;
     let stored = effective
         .property(property)
         .ok_or(PredicatePropertyError::NotStored)?;
     if stored.computed {
         return Err(PredicatePropertyError::Computed);
     }
+    let field = record
+        .fields
+        .get(property)
+        .filter(|field| matches!(field.source, FieldSource::Property { read_only: false }))
+        .ok_or(PredicatePropertyError::NotStored)?;
     let class = scalar_class(&field.ty)
         .filter(|class| allowed.contains(class))
         .ok_or(PredicatePropertyError::NotComparable)?;

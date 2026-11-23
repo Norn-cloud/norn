@@ -378,5 +378,116 @@ export const Parent = Norn.type({
 })
 `)
     expect(badZero.ok).toBe(false)
+
+    const badOverMaxRows = compileSnippet(`
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const Child = Norn.type({
+  name: "inv.Child",
+  title: "Child",
+  version: "1.0.0",
+  properties: Schema.Struct({ id: Schema.String, seq: Schema.Int }),
+})
+export const Parent = Norn.type({
+  name: "inv.Parent",
+  title: "Parent",
+  version: "1.0.0",
+  properties: Schema.Struct({ id: Schema.String }),
+  ownedCollections: [{ id: "children", childType: Child, rowIdProperty: "id", orderingKey: "seq", cascadeOnParentDelete: true, maxRows: 101 }],
+})
+`)
+    expect(badOverMaxRows.ok).toBe(false)
+  }, 30_000)
+
+  test("auto-pins inherited ownedCollections child entities on mutate_parent_with_rows", () => {
+    const compiled = compileSnippet(`
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+const LineProps = Schema.Struct({
+  line_id: Schema.String,
+  seq: Schema.Int,
+})
+
+export const BaseLine = Norn.type({
+  name: "commerce.BaseLine",
+  title: "Base Line",
+  version: "1.0.0",
+  properties: LineProps,
+  identity: [{ name: "primary", properties: ["line_id"] }],
+})
+
+export const BaseOrder = Norn.type({
+  name: "commerce.BaseOrder",
+  title: "Base Order",
+  version: "1.0.0",
+  properties: Schema.Struct({ order_id: Schema.String }),
+  links: [{ id: "lines", target: BaseLine, cardinality: { to: "many", from: "one" } }],
+  ownedCollections: [
+    {
+      id: "lines",
+      childType: BaseLine,
+      rowIdProperty: "line_id",
+      orderingKey: "seq",
+      cascadeOnParentDelete: true,
+      maxRows: 50,
+    },
+  ],
+  identity: [{ name: "primary", properties: ["order_id"] }],
+})
+
+export const SubOrder = Norn.type({
+  name: "commerce.SubOrder",
+  title: "Sub Order",
+  version: "1.0.0",
+  extends: BaseOrder,
+  properties: Schema.Struct({ note: Schema.String }),
+})
+
+const MutateInput = Schema.Struct({
+  order_id: Schema.String,
+  parent_version: Schema.String,
+  parent_values: Schema.Struct({ note: Schema.optionalKey(Schema.String) }),
+  row_ops: Schema.Array(Schema.Struct({})),
+})
+
+export const SaveSubOrder = Norn.action({
+  id: "commerce.sub_order.save_lines",
+  title: "Save Sub Order",
+  version: "1.0.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: MutateInput,
+  output: Schema.Struct({}),
+  writes: [
+    { type: SubOrder, change: "created" },
+    { type: SubOrder, change: "modified" },
+    { type: BaseLine, change: "created" },
+    { type: BaseLine, change: "modified" },
+    { type: BaseLine, change: "deleted" },
+  ],
+  effect: {
+    kind: "mutate_parent_with_rows",
+    type: SubOrder,
+    objectIdField: "order_id",
+    parentValuesField: "parent_values",
+    rowOpsField: "row_ops",
+    parentVersionField: "parent_version",
+    collections: [{ id: "lines" }],
+  },
+})
+`)
+    if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
+    const actionArtifact = compiled.artifacts.find((a) => (a as { kind: string }).kind === "action") as {
+      dependencies: ReadonlyArray<{ artifactId: string; version: string; kind: string; required: boolean }>
+    }
+    expect(actionArtifact.dependencies).toContainEqual({
+      artifactId: "commerce.BaseLine.entity",
+      version: "1.0.0",
+      kind: "entity",
+      required: true,
+    })
   }, 30_000)
 })

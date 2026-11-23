@@ -480,7 +480,8 @@ impl<'a> TypeCatalog<'a> {
             return Ok(submitted.clone());
         };
 
-        let mut values = submitted.clone();
+        crate::decision_links::check_submitted_link_keys(&effective_link.properties, submitted)?;
+        let mut values = JsonObject::new();
         for property in &effective_link.properties {
             if property.computed {
                 continue;
@@ -2668,6 +2669,29 @@ fn prepare_decision_with_limits_for<X>(
         effects.push(Effect::Schedule(timer(turn, index, record)?));
     }
 
+    let (reads, writes) = partition_reads_and_writes(slice, working);
+    crate::decision_links::validate_decision_links(
+        catalog,
+        slice,
+        &writes,
+        output,
+        events.len(),
+        limits,
+    )?;
+    Ok(CellCommit {
+        consumes: turn.consumes.clone(),
+        reads,
+        writes,
+        events,
+        effects,
+        ..CellCommit::empty()
+    })
+}
+
+fn partition_reads_and_writes(
+    slice: &FactSlice,
+    working: BTreeMap<FactKey, Working>,
+) -> (Vec<FactExpectation>, Vec<FactWrite>) {
     let reads = slice
         .iter()
         .filter(|(key, _)| working.get(*key).is_none_or(|entry| !entry.written))
@@ -2676,7 +2700,7 @@ fn prepare_decision_with_limits_for<X>(
             expected: state.version,
         })
         .collect();
-    let writes: Vec<FactWrite> = working
+    let writes = working
         .into_iter()
         .filter(|(_, entry)| entry.written)
         .map(|(key, entry)| FactWrite {
@@ -2687,15 +2711,7 @@ fn prepare_decision_with_limits_for<X>(
                 .map_or(FactMutation::Delete, |values| FactMutation::Put { values }),
         })
         .collect();
-    crate::decision_links::validate_decision_links(catalog, slice, &writes, &output.links, limits)?;
-    Ok(CellCommit {
-        consumes: turn.consumes.clone(),
-        reads,
-        writes,
-        events,
-        effects,
-        ..CellCommit::empty()
-    })
+    (reads, writes)
 }
 
 fn output_envelope_counts(output: &DecisionOutput) -> EnvelopeCounts {
@@ -2792,8 +2808,9 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    let mut commit =
-        decision_cell_commit::<_, _, _, H::Error>(catalog, slice, turn, output, limits)?;
+    let mut commit = crate::decision_links::build_decision_cell_commit::<_, _, _, H::Error>(
+        catalog, slice, turn, output, limits,
+    )?;
     let counts = crate::decision_links::finalize_decision_commit(
         host,
         catalog,
@@ -2844,39 +2861,15 @@ where
     C: From<JsonObject>,
     T: From<JsonObject>,
 {
-    let prepared = prepare_decision_with_limits(catalog, slice, turn, output, limits)?;
-    Ok(CellCommit {
-        consumes: prepared.consumes,
-        reads: prepared.reads,
-        writes: prepared.writes,
-        events: prepared.events.into_iter().map(Into::into).collect(),
-        effects: prepared.effects.into_iter().map(widen_effect).collect(),
-        links: Vec::new(),
-        link_reads: Vec::new(),
-        predicate_reads: Vec::new(),
-    })
+    if !output.links.is_empty() {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: "decision_cell_commit requires a host to materialize decision links; use decision_cell_commit_with_host".to_owned(),
+        });
+    }
+    crate::decision_links::build_decision_cell_commit(catalog, slice, turn, output, limits)
 }
 
-pub(crate) fn widen_effect<C: From<JsonObject>, T: From<JsonObject>>(
-    effect: Effect<JsonObject, JsonObject>,
-) -> Effect<C, T> {
-    match effect {
-        Effect::Perform(command) => Effect::Perform(Command {
-            id: command.id,
-            generation: command.generation,
-            idempotency_key: command.idempotency_key,
-            freshness: command.freshness,
-            deadline: command.deadline,
-            payload: command.payload.into(),
-        }),
-        Effect::Schedule(timer) => Effect::Schedule(Timer {
-            id: timer.id,
-            due: timer.due,
-            payload: timer.payload.into(),
-        }),
-        Effect::CancelTimer(id) => Effect::CancelTimer(id),
-    }
-}
+pub(crate) use crate::decision_links::widen_effect;
 
 pub(crate) fn fact_key(change: &FactChange) -> FactKey {
     let (object_type, key) = match change {

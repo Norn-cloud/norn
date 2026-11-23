@@ -10,16 +10,52 @@ use std::collections::BTreeSet;
 
 use norn_ir::{DecisionOutput, LinkChange, ObjectTypeName};
 
-use crate::action_commit::{ActionAuthorizer, ActionCall, ActionReadAuthzRequest, ActionRefusal};
+use crate::action_commit::{
+    ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionReadAuthzRequest,
+    ActionRefusal,
+};
 use crate::cell_host::{
     CellCommit, CellHost, FactKey, FactMutation, FactState, FactWrite, JsonObject, JsonValue,
     LinkKey, LinkMutation, LinkWrite,
 };
 use crate::commit_check::CommitModel;
 use crate::decider::EnvelopeKind;
-use crate::decision_commit::{DecisionRefusal, FactSlice, TypeCatalog};
+use crate::decision_commit::{
+    DecisionRefusal, DecisionTurn, EffectiveValuesError, FactEvent, FactSlice, TypeCatalog,
+    prepare_decision_with_limits,
+};
+use crate::effect::{Command, Effect, Timer};
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter};
-use crate::limits::EnvelopeLimits;
+use crate::limits::{EnvelopeLimits, check_envelope_bytes};
+
+/// Reject unknown or computed keys in submitted link property values before
+/// effective-value materialization.
+pub(crate) fn check_submitted_link_keys(
+    properties: &[norn_checker::EffectiveProperty],
+    submitted: &JsonObject,
+) -> Result<(), EffectiveValuesError> {
+    for key in submitted.keys() {
+        match properties
+            .iter()
+            .find(|property| property.id.as_str() == key)
+        {
+            Some(property) if !property.computed => {}
+            Some(_) => {
+                return Err(EffectiveValuesError::ValueType {
+                    property: key.clone(),
+                    expected: "non-computed link property",
+                });
+            }
+            None => {
+                return Err(EffectiveValuesError::ValueType {
+                    property: key.clone(),
+                    expected: "declared link property",
+                });
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Pure validation of [`norn_ir::DecisionOutput::links`] during decision
 /// preparation (before any host write).
@@ -27,22 +63,30 @@ pub(crate) fn validate_decision_links<X>(
     catalog: &TypeCatalog<'_>,
     slice: &FactSlice,
     writes: &[FactWrite],
-    links: &[LinkChange],
+    output: &DecisionOutput,
+    event_count: usize,
     limits: &EnvelopeLimits,
 ) -> Result<(), DecisionRefusal<X>> {
+    let links = &output.links;
     if links.is_empty() {
         return Ok(());
     }
-    let max_links = usize::try_from(limits.max_events).unwrap_or(usize::MAX);
-    if links.len() > max_links {
+    let max_events = usize::try_from(limits.max_events).unwrap_or(usize::MAX);
+    let total_events = event_count.saturating_add(links.len());
+    if total_events > max_events {
         return Err(DecisionRefusal::EnvelopeExceeded {
             kind: EnvelopeKind::Events,
             limit: limits.max_events,
-            actual: links.len(),
+            actual: total_events,
         });
     }
+    let output_bytes = canonical_len(output)?;
+    check_envelope_bytes(limits, output_bytes)
+        .map_err(|exceeded| invalid_link(exceeded.to_string()))?;
+
     let model = CommitModel::new(catalog);
     let mut seen = BTreeSet::new();
+    let mut materialized_bytes = output_bytes;
     for change in links {
         let (source, link_name, target, add_values) = unpack_link_change(change);
         if source.key.trim().is_empty() || target.key.trim().is_empty() {
@@ -50,9 +94,10 @@ pub(crate) fn validate_decision_links<X>(
         }
         if is_protected_endpoint(catalog, &source.object_type)
             || is_protected_endpoint(catalog, &target.object_type)
+            || is_owned_collection_link(catalog, &source.object_type, link_name)
         {
             return Err(invalid_link(
-                "decision links cannot target system or owned-child object types",
+                "decision links cannot target system, owned-child, or owned-collection links",
             ));
         }
         let declared = model.link(&source.object_type, link_name).ok_or_else(|| {
@@ -75,40 +120,53 @@ pub(crate) fn validate_decision_links<X>(
                 "duplicate link change for {source} --{link_name}--> {target}"
             )));
         }
-        if let Some(values) = add_values {
-            let link_key = LinkKey::new(source, link_name, target);
-            validate_add_link_endpoints(catalog, model, slice, writes, &link_key, values)?;
-        }
+        let link_key = LinkKey::new(source, link_name, target);
+        let extra_bytes =
+            validate_link_endpoints(catalog, model, slice, writes, &link_key, add_values)?;
+        materialized_bytes = materialized_bytes.saturating_add(extra_bytes);
+        check_envelope_bytes(limits, materialized_bytes)
+            .map_err(|exceeded| invalid_link(exceeded.to_string()))?;
     }
     Ok(())
 }
 
-fn validate_add_link_endpoints<X>(
+fn validate_link_endpoints<X>(
     catalog: &TypeCatalog<'_>,
     model: CommitModel<'_, '_>,
     slice: &FactSlice,
     writes: &[FactWrite],
     link: &LinkKey,
-    values: &JsonObject,
-) -> Result<(), DecisionRefusal<X>> {
+    add_values: Option<&JsonObject>,
+) -> Result<u64, DecisionRefusal<X>> {
     let source = &link.source;
     let target = &link.target;
     let link_name = link.link.as_str();
-    let source_concrete = live_concrete_after(model, slice, writes, source).ok_or_else(|| {
-        invalid_link(format!(
-            "link source {source} does not exist in the slice or proposed writes"
-        ))
-    })?;
-    let target_concrete = live_concrete_after(model, slice, writes, target).ok_or_else(|| {
-        invalid_link(format!(
-            "link target {target} does not exist in the slice or proposed writes"
-        ))
-    })?;
+    let allow_deleted = add_values.is_none();
+    let source_concrete = captured_concrete(model, slice, writes, source, allow_deleted)
+        .ok_or_else(|| {
+            invalid_link(format!(
+                "link source {source} does not exist in the slice or proposed writes"
+            ))
+        })?;
+    let target_concrete = captured_concrete(model, slice, writes, target, allow_deleted)
+        .ok_or_else(|| {
+            invalid_link(format!(
+                "link target {target} does not exist in the slice or proposed writes"
+            ))
+        })?;
     if !model.is_a(&source_concrete, &source.object_type)
         || !model.is_a(&target_concrete, &target.object_type)
     {
         return Err(invalid_link(
             "link endpoint concrete type does not match the declared link change type",
+        ));
+    }
+    if is_protected_endpoint(catalog, &source_concrete)
+        || is_protected_endpoint(catalog, &target_concrete)
+        || is_owned_collection_link(catalog, &source_concrete, link_name)
+    {
+        return Err(invalid_link(
+            "decision links cannot target system, owned-child, or owned-collection links",
         ));
     }
     let effective_link = model.link(&source_concrete, link_name).ok_or_else(|| {
@@ -124,10 +182,15 @@ fn validate_add_link_endpoints<X>(
             effective_link.target.as_str()
         )));
     }
-    catalog
-        .effective_link_values(&source_concrete, link_name, values)
-        .map_err(|error| invalid_link(format!("link {link_name:?}: {error}")))?;
-    Ok(())
+    if let Some(values) = add_values {
+        let effective = catalog
+            .effective_link_values(&source_concrete, link_name, values)
+            .map_err(|error| invalid_link(format!("link {link_name:?}: {error}")))?;
+        let submitted_bytes = canonical_len(values)?;
+        let effective_bytes = canonical_len(&effective)?;
+        return Ok(effective_bytes.saturating_sub(submitted_bytes));
+    }
+    Ok(0)
 }
 
 /// Resolve [`LinkChange`]s against the host's current link versions to produce
@@ -151,9 +214,12 @@ pub(crate) fn prepare_decision_link_writes<H: CellHost + ?Sized>(
         let key = LinkKey::new(source_key, link_name, target_key);
         let expected = host.load_link(&key).map_err(DecisionRefusal::Host)?.version;
         let mutation = match add_values {
-            Some(values) => LinkMutation::Add {
-                values: values.clone(),
-            },
+            Some(values) => {
+                let effective = catalog
+                    .effective_link_values(&key.source.object_type, link_name, values)
+                    .map_err(|error| invalid_link(format!("link {link_name:?}: {error}")))?;
+                LinkMutation::Add { values: effective }
+            }
             None => LinkMutation::Remove,
         };
         prepared.push(LinkWrite {
@@ -181,41 +247,124 @@ pub(crate) fn authorize_action_decision_links<X>(
     }
     let model = CommitModel::new(catalog);
     for change in links {
-        let (source, _, target, _) = unpack_link_change(change);
-        for endpoint in [&source, &target] {
-            if is_protected_endpoint(catalog, &endpoint.object_type) {
-                return Err(crate::synchronous_rule::refused(
-                    "a synchronous rule link cannot target system or owned-child types",
-                ));
+        let (source, link_name, target, _) = unpack_link_change(change);
+        for (is_source, endpoint) in [(true, &source), (false, &target)] {
+            authorize_action_link_endpoint(
+                LinkEndpointAuthz {
+                    catalog,
+                    model,
+                    call,
+                    effective_input,
+                    authorizer,
+                    slice,
+                    prepared_writes,
+                },
+                endpoint,
+                link_name,
+                is_source,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct LinkEndpointAuthz<'a> {
+    catalog: &'a TypeCatalog<'a>,
+    model: CommitModel<'a, 'a>,
+    call: &'a ActionCall<'a>,
+    effective_input: &'a JsonObject,
+    authorizer: &'a dyn ActionAuthorizer,
+    slice: &'a FactSlice,
+    prepared_writes: &'a [FactWrite],
+}
+
+fn authorize_action_link_endpoint<X>(
+    ctx: LinkEndpointAuthz<'_>,
+    endpoint: &FactKey,
+    link_name: &str,
+    is_source: bool,
+) -> Result<(), ActionRefusal<X>> {
+    let LinkEndpointAuthz {
+        catalog,
+        model,
+        call,
+        effective_input,
+        authorizer,
+        slice,
+        prepared_writes,
+    } = ctx;
+    let is_forbidden_type = |ty: &ObjectTypeName| {
+        is_protected_endpoint(catalog, ty)
+            || (is_source && is_owned_collection_link(catalog, ty, link_name))
+    };
+    if is_forbidden_type(&endpoint.object_type) {
+        return Err(crate::synchronous_rule::refused(
+            "a synchronous rule link cannot target system, owned-child, or owned-collection links",
+        ));
+    }
+    let canonical = model.canonical(endpoint);
+    if let Some(write) = prepared_writes.iter().find(|write| {
+        model.canonical(&write.key) == canonical
+            && matches!(write.mutation, FactMutation::Put { .. })
+    }) {
+        if !model.is_a(&write.key.object_type, &endpoint.object_type) {
+            return Err(crate::synchronous_rule::refused(
+                "a decision link endpoint concrete type does not match the declared type",
+            ));
+        }
+        if is_forbidden_type(&write.key.object_type) {
+            return Err(crate::synchronous_rule::refused(
+                "a synchronous rule link cannot target system, owned-child, or owned-collection links",
+            ));
+        }
+        // Written endpoints are authorized via `authorize_proposed_target`.
+        return Ok(());
+    }
+    let (slice_key, slice_state) = slice
+        .iter()
+        .find(|(key, state)| model.canonical(key) == canonical && state.exists())
+        .ok_or_else(|| {
+            crate::synchronous_rule::refused(
+                "a decision link endpoint is outside the captured slice or proposed writes",
+            )
+        })?;
+    if !model.is_a(&slice_key.object_type, &endpoint.object_type) {
+        return Err(crate::synchronous_rule::refused(
+            "a decision link endpoint concrete type does not match the declared type",
+        ));
+    }
+    if is_forbidden_type(&slice_key.object_type) {
+        return Err(crate::synchronous_rule::refused(
+            "a synchronous rule link cannot target system, owned-child, or owned-collection links",
+        ));
+    }
+    authorizer
+        .authorize_read(&ActionReadAuthzRequest {
+            action: call.action,
+            scope: &call.scope,
+            actor: &call.actor,
+            input: effective_input,
+            declared_type: &endpoint.object_type,
+            target: slice_key,
+            target_values: slice_state.values.as_ref(),
+        })
+        .map_err(|_denied| ActionRefusal::TargetNotFound)?;
+    if is_source {
+        // Outgoing links share the source's write authority, not read-only access.
+        match authorizer.authorize(&ActionAuthzRequest {
+            action: call.action,
+            scope: &call.scope,
+            actor: &call.actor,
+            input: effective_input,
+            target: slice_key,
+            target_values: slice_state.values.as_ref(),
+        }) {
+            Ok(()) => {}
+            Err(ActionDenial::Invisible) => return Err(ActionRefusal::TargetNotFound),
+            Err(ActionDenial::Forbidden { reason }) => {
+                return Err(ActionRefusal::PermissionDenied { reason });
             }
-            let canonical = model.canonical(endpoint);
-            let is_written_put = prepared_writes.iter().any(|write| {
-                model.canonical(&write.key) == canonical
-                    && matches!(write.mutation, FactMutation::Put { .. })
-            });
-            if is_written_put {
-                // Written endpoints are authorized via `authorize_proposed_target`.
-                continue;
-            }
-            let (slice_key, slice_state) = slice
-                .iter()
-                .find(|(key, state)| model.canonical(key) == canonical && state.exists())
-                .ok_or_else(|| {
-                    crate::synchronous_rule::refused(
-                        "a decision link endpoint is outside the captured slice or proposed writes",
-                    )
-                })?;
-            authorizer
-                .authorize_read(&ActionReadAuthzRequest {
-                    action: call.action,
-                    scope: &call.scope,
-                    actor: &call.actor,
-                    input: effective_input,
-                    declared_type: &endpoint.object_type,
-                    target: slice_key,
-                    target_values: slice_state.values.as_ref(),
-                })
-                .map_err(|_denied| ActionRefusal::TargetNotFound)?;
         }
     }
     Ok(())
@@ -291,11 +440,30 @@ fn is_protected_endpoint(catalog: &TypeCatalog<'_>, object_type: &ObjectTypeName
     object_type.as_str().starts_with("norn.") || catalog.is_owned_child_type(object_type)
 }
 
-fn live_concrete_after(
+fn is_owned_collection_link(
+    catalog: &TypeCatalog<'_>,
+    source_type: &ObjectTypeName,
+    link_name: &str,
+) -> bool {
+    catalog
+        .owned_collections(source_type)
+        .iter()
+        .any(|collection| collection.id.as_str() == link_name)
+}
+
+fn canonical_len<T: serde::Serialize, X>(value: &T) -> Result<u64, DecisionRefusal<X>> {
+    let bytes = norn_ir::canonical::canonical_json_of(value)
+        .map_err(|error| invalid_link(format!("cannot encode decision link payload: {error}")))?
+        .len();
+    Ok(u64::try_from(bytes).unwrap_or(u64::MAX))
+}
+
+fn captured_concrete(
     model: CommitModel<'_, '_>,
     slice: &FactSlice,
     writes: &[FactWrite],
     key: &FactKey,
+    allow_deleted: bool,
 ) -> Option<ObjectTypeName> {
     let canonical = model.canonical(key);
     if let Some(write) = writes
@@ -304,6 +472,12 @@ fn live_concrete_after(
     {
         return match write.mutation {
             FactMutation::Put { .. } => Some(write.key.object_type.clone()),
+            FactMutation::Delete if allow_deleted => slice
+                .iter()
+                .find(|(slice_key, state)| {
+                    model.canonical(slice_key) == canonical && state.exists()
+                })
+                .map(|(slice_key, _)| slice_key.object_type.clone()),
             FactMutation::Delete => None,
         };
     }
@@ -341,6 +515,86 @@ fn invalid_link<X>(reason: impl Into<String>) -> DecisionRefusal<X> {
     }
 }
 
+pub(crate) fn widen_effect<C: From<JsonObject>, T: From<JsonObject>>(
+    effect: Effect<JsonObject, JsonObject>,
+) -> Effect<C, T> {
+    match effect {
+        Effect::Perform(command) => Effect::Perform(Command {
+            id: command.id,
+            generation: command.generation,
+            idempotency_key: command.idempotency_key,
+            freshness: command.freshness,
+            deadline: command.deadline,
+            payload: command.payload.into(),
+        }),
+        Effect::Schedule(timer) => Effect::Schedule(Timer {
+            id: timer.id,
+            due: timer.due,
+            payload: timer.payload.into(),
+        }),
+        Effect::CancelTimer(id) => Effect::CancelTimer(id),
+    }
+}
+
+/// Assemble a `CellCommit` from a validated `DecisionOutput` without loading
+/// link versions (callers that admit links must materialize them via
+/// [`decision_cell_commit_with_host`] or `finalize_decision_commit`).
+pub(crate) fn build_decision_cell_commit<E, C, T, X>(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    output: &DecisionOutput,
+    limits: &EnvelopeLimits,
+) -> Result<CellCommit<E, C, T>, DecisionRefusal<X>>
+where
+    E: From<FactEvent>,
+    C: From<JsonObject>,
+    T: From<JsonObject>,
+{
+    let prepared = prepare_decision_with_limits(catalog, slice, turn, output, limits)?;
+    Ok(CellCommit {
+        consumes: prepared.consumes,
+        reads: prepared.reads,
+        writes: prepared.writes,
+        events: prepared.events.into_iter().map(Into::into).collect(),
+        effects: prepared.effects.into_iter().map(widen_effect).collect(),
+        links: Vec::new(),
+        link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
+    })
+}
+
+/// A [`CellCommit`] specialized to the event, command, and input types of host `H`.
+pub type HostCellCommit<H> =
+    CellCommit<<H as CellHost>::Event, <H as CellHost>::Command, <H as CellHost>::Input>;
+
+/// Build the complete [`CellCommit`] for a decision, including CAS-checked
+/// [`LinkWrite`] entries resolved against `host` for any [`DecisionOutput::links`].
+///
+/// # Errors
+///
+/// A [`DecisionRefusal`] if preparation, link validation, or host link loading fails.
+pub fn decision_cell_commit_with_host<H>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    output: &DecisionOutput,
+    limits: &EnvelopeLimits,
+) -> Result<HostCellCommit<H>, DecisionRefusal<H::Error>>
+where
+    H: CellHost + ?Sized,
+    H::Event: From<FactEvent>,
+    H::Command: From<JsonObject>,
+    H::Input: From<JsonObject>,
+{
+    let mut commit =
+        build_decision_cell_commit::<_, _, _, H::Error>(catalog, slice, turn, output, limits)?;
+    commit.links =
+        prepare_decision_link_writes(host, catalog, slice, &commit.writes, &output.links)?;
+    Ok(commit)
+}
+
 /// Attach resolved `DecisionOutput.links` to a prepared commit and verify the
 /// shared turn envelope meter before submitting to the host.
 pub(crate) fn finalize_decision_commit<H>(
@@ -357,7 +611,7 @@ where
     commit.links =
         prepare_decision_link_writes(host, catalog, slice, &commit.writes, &output.links)?;
     let counts = EnvelopeCounts::new(
-        commit.events.len(),
+        commit.events.len().saturating_add(commit.links.len()),
         output.commands.len(),
         output.timers.len(),
     );

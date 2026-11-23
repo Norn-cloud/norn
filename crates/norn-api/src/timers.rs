@@ -398,7 +398,8 @@ fn fire_timer<E: SqlEngine>(
                         world: World::Main,
                         consumes: consumed,
                     };
-                    norn_kernel::decision_cell_commit::<_, _, _, norn_cell::CellError>(
+                    norn_kernel::decision_cell_commit_with_host(
+                        &*cell,
                         &catalog,
                         &slice,
                         &turn,

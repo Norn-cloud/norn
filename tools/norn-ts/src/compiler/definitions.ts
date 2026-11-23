@@ -1182,13 +1182,18 @@ class DefinitionCompiler {
       ["id", "childType", "rowIdProperty", "orderingKey", "cascadeOnParentDelete", "maxRows"],
       ["id", "childType", "rowIdProperty", "orderingKey", "cascadeOnParentDelete", "maxRows"],
     )
+    const maxRowsNode = m.get("maxRows")!
+    const maxRows = this.wholePositiveInt(maxRowsNode, "maxRows")
+    if (maxRows > 100) {
+      throw new CompileError("NORN-FLOW-LITERAL", "maxRows must be between 1 and 100", maxRowsNode)
+    }
     return {
       id: this.string(m.get("id")!),
       childType: this.typeName(m.get("childType")!, OBJECT_TYPES),
       rowIdProperty: this.string(m.get("rowIdProperty")!),
       orderingKey: this.string(m.get("orderingKey")!),
       cascadeOnParentDelete: this.boolean(m.get("cascadeOnParentDelete")!),
-      maxRows: this.wholePositiveInt(m.get("maxRows")!, "maxRows"),
+      maxRows,
     }
   }
 
@@ -1219,22 +1224,36 @@ class DefinitionCompiler {
           [compiledEffect.rowOpsField]: S.array(S.jsonValue),
         },
       }
-      // Auto-pin local owned child entity artifacts so exact dependency checks pass.
+      // Auto-pin local owned child entity artifacts (including inherited
+      // `ownedCollections` along `extends`) so exact dependency checks pass.
       const effectMembers = this.record(effectNode!)
       const parentRef = this.referenced(effectMembers.get("type")!, OBJECT_TYPES, "a Norn.type definition")
-      const ownedNode = parentRef.members.get("ownedCollections")
-      if (ownedNode) {
-        for (const item of this.list(ownedNode)) {
-          const cm = this.record(item)
-          const childExpr = cm.get("childType")
-          if (!childExpr) continue
-          const deref = this.deref(childExpr)
-          if (ts.isCallExpression(deref)) {
-            const child = this.typeRef(childExpr, OBJECT_TYPES, "a Norn.type definition")
-            extraDependencies.push({ kind: "entity", artifactId: `${child.name}.entity`, version: child.version })
+      const collectOwnedChildDeps = (ref: { call: ts.CallExpression; members: Members }, seen: Set<ts.CallExpression>): void => {
+        if (seen.has(ref.call)) return
+        seen.add(ref.call)
+        const ownedNode = ref.members.get("ownedCollections")
+        if (ownedNode) {
+          for (const item of this.list(ownedNode)) {
+            const cm = this.record(item)
+            const childExpr = cm.get("childType")
+            if (!childExpr) continue
+            const deref = this.deref(childExpr)
+            if (ts.isCallExpression(deref)) {
+              const child = this.typeRef(childExpr, OBJECT_TYPES, "a Norn.type definition")
+              extraDependencies.push({ kind: "entity", artifactId: `${child.name}.entity`, version: child.version })
+            }
+          }
+        }
+        const extendsExpr = ref.members.get("extends")
+        if (extendsExpr) {
+          const extDeref = this.deref(extendsExpr)
+          if (!ts.isStringLiteral(extDeref) && !ts.isNoSubstitutionTemplateLiteral(extDeref)) {
+            const baseRef = this.referenced(extendsExpr, OBJECT_TYPES, "a Norn.type definition")
+            collectOwnedChildDeps(baseRef, seen)
           }
         }
       }
+      collectOwnedChildDeps(parentRef, new Set())
     }
     const explicitDependencies = members.has("dependencies")
       ? this.list(members.get("dependencies")!).map((pin) => this.decisionDependency(pin))

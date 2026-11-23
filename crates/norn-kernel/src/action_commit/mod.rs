@@ -472,6 +472,17 @@ where
         timers: Vec::new(),
     };
     let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
+    for write in &mut prepared.writes {
+        let key = write.key.clone();
+        authorize_proposed_target(
+            catalog,
+            call,
+            &effective_input,
+            authorizer,
+            &key,
+            std::slice::from_mut(write),
+        )?;
+    }
     let created_links = crate::decision_links::prepare_action_commit_links(
         host,
         &crate::decision_links::ActionCommitLinks {
@@ -486,18 +497,6 @@ where
             limits,
         },
     )?;
-
-    for write in &mut prepared.writes {
-        let key = write.key.clone();
-        authorize_proposed_target(
-            catalog,
-            call,
-            &effective_input,
-            authorizer,
-            &key,
-            std::slice::from_mut(write),
-        )?;
-    }
     let record = action_record_with_transition(record, &prepared.events);
     // Transition metadata is added after the earlier precondition/evidence
     // checks, so include the finalized receipt in the aggregate output bound.
@@ -508,7 +507,7 @@ where
     }
     let action_call = format!("{}/{}", call.action.action_id, call.idempotency_key);
     append_command_events(&mut events, &prepared.effects, &action_call);
-    counts.events = events.len();
+    counts.events = events.len().saturating_add(created_links.len());
     check_decision_envelope(limits, counts).map_err(|exceeded| {
         ActionRefusal::Decision(DecisionRefusal::EnvelopeExceeded {
             kind: exceeded.kind,
