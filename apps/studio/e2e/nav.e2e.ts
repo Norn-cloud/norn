@@ -59,22 +59,32 @@ test("nav: every rail destination and every sidebar entry, in both perspectives,
   expect(errors).toEqual([])
 })
 
-test("header controls do not overlap Search at tablet width with the sidebar open", async ({ page }) => {
+test("header controls do not overlap Search at tablet width with the sidebar and Sidekick open", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 900 })
   await recorded(page, [])
+  await page.route("**/sidekick/config.json", (route) => route.fulfill({ json: { sidekick: 1, socket: "/sidekick/ws" } }))
   await page.goto("/")
   await settled(page)
-  const trigger = await page.getByRole("button", { name: "Toggle Sidebar" }).boundingBox()
-  const search = await page.getByRole("button", { name: "Search" }).boundingBox()
-  const perspective = await page.getByRole("group", { name: "Perspective" }).boundingBox()
-  const notifications = await page.getByRole("button", { name: "Notifications" }).boundingBox()
-  expect(trigger && search && perspective && notifications).toBeTruthy()
-  expect(trigger!.x + trigger!.width).toBeLessThanOrEqual(search!.x + 1)
-  expect(search!.x + search!.width).toBeLessThanOrEqual(perspective!.x + 1)
-  expect(perspective!.x + perspective!.width).toBeLessThanOrEqual(notifications!.x + 1)
+  const checkHeader = async () => {
+    const header = await page.locator("header").first().boundingBox()
+    const trigger = await page.getByRole("button", { name: "Toggle Sidebar" }).boundingBox()
+    const search = await page.getByRole("button", { name: "Search" }).boundingBox()
+    const perspective = await page.getByRole("group", { name: "Perspective" }).boundingBox()
+    const notifications = await page.getByRole("button", { name: "Notifications" }).boundingBox()
+    expect(header && trigger && search && perspective && notifications).toBeTruthy()
+    expect(trigger!.x + trigger!.width).toBeLessThanOrEqual(search!.x + 1)
+    expect(search!.x + search!.width).toBeLessThanOrEqual(perspective!.x + 1)
+    expect(perspective!.x + perspective!.width).toBeLessThanOrEqual(notifications!.x + 1)
+    expect(notifications!.x + notifications!.width).toBeLessThanOrEqual(header!.x + header!.width + 1)
+  }
+  await checkHeader()
+  // Open Sidekick alongside the open sidebar: the header stays ~204px wide and controls still do not overlap.
+  await page.getByRole("toolbar", { name: "Studio" }).getByRole("button", { name: "Sidekick" }).click()
+  await expect(page.locator('[data-slot="assistant-panel"]')).toBeVisible()
+  await checkHeader()
 })
 
-test("collapsing with Ctrl+B and activating collapsed Records without entries both preserve keyboard focus", async ({ page }) => {
+test("collapsing with Ctrl+B and activating collapsed Records (even with Data collapsed) preserve keyboard focus", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await session(page)
   // Live cell with empty definitions so Records has no menu entries yet.
@@ -85,12 +95,17 @@ test("collapsing with Ctrl+B and activating collapsed Records without entries bo
   })
   await page.goto("/")
   await settled(page)
-  const metricsItem = page.getByRole("navigation", { name: "Workspace" }).getByRole("treeitem", { name: "Metrics" })
+  const workspaceNav = page.getByRole("navigation", { name: "Workspace" })
+  // Collapse the Data space first so activating Records from the collapsed rail must reopen it before focusing.
+  const dataSpace = workspaceNav.locator('[role="treeitem"]', { hasText: "Data" }).first()
+  await dataSpace.locator('> [data-slot="tree-label"]').click()
+  await expect(dataSpace).toHaveAttribute("aria-expanded", "false")
+  const metricsItem = workspaceNav.getByRole("treeitem", { name: "Metrics" })
   await metricsItem.focus()
   await expect(metricsItem).toBeFocused()
   // Collapsing the sidebar while focus is inside the tree moves focus onto the rail/trigger rather than dropping it to body.
   await page.keyboard.press("Control+b")
-  await expect(page.getByRole("navigation", { name: "Workspace" })).toBeHidden()
+  await expect(workspaceNav).toBeHidden()
   const afterCollapse = await page.evaluate(() => ({
     tag: document.activeElement?.tagName ?? "",
     inRailOrTrigger: Boolean(
@@ -100,11 +115,12 @@ test("collapsing with Ctrl+B and activating collapsed Records without entries bo
   }))
   expect(afterCollapse.tag).not.toBe("BODY")
   expect(afterCollapse.inRailOrTrigger).toBe(true)
-  // Activating the collapsed Records fallback button (when no entries are loaded) expands the sidebar and moves focus into Records.
+  // Activating the collapsed Records fallback button reopens the Data space and moves focus onto Records (never the workspace switcher).
   const collapsedRecords = page.getByRole("toolbar", { name: "Studio" }).getByRole("button", { name: "Records" })
   await collapsedRecords.focus()
   await page.keyboard.press("Enter")
-  await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible()
+  await expect(workspaceNav).toBeVisible()
+  await expect(dataSpace).toHaveAttribute("aria-expanded", "true")
   const afterExpand = await page.evaluate(() => ({
     tag: document.activeElement?.tagName ?? "",
     sectionPath: document.activeElement?.getAttribute("data-section-path"),

@@ -347,8 +347,10 @@ export function diffExpanded(
  * The perspective's sidebar: the workspace switcher, then its spaces (collapsible headings, never
  * walls), each listing its destinations; the open destination lists its items under it.
  */
-function SectionSidebar({ sections, perspective, navigation, pathname }: {
+function SectionSidebar({ sections, perspective, navigation, pathname, chosen, onChosenChange }: {
   readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation; readonly pathname: string
+  readonly chosen: Readonly<Record<string, boolean>>
+  readonly onChosenChange: (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) => void
 }) {
   const { setOpenMobile } = useSidebar()
   const own = sections.filter((section) => section.perspective === perspective)
@@ -357,7 +359,6 @@ function SectionSidebar({ sections, perspective, navigation, pathname }: {
   const spaces = [...new Set(own.map(({ group }) => group ?? ""))]
   // Spaces start open, the open destination's items show, and a destination's first group of items starts open;
   // the reader's own choices win, except that the current page's row is never hidden.
-  const [chosen, setChosen] = useState<Readonly<Record<string, boolean>>>({})
   const defaults = new Map<string, boolean>()
   const holding = new Set<string>()
   for (const space of spaces) defaults.set(`space:${space}`, true)
@@ -383,7 +384,7 @@ function SectionSidebar({ sections, perspective, navigation, pathname }: {
       <div className="px-2 pt-2 pb-1"><ScopeSwitcher /></div>
       <nav aria-label={label} className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
         <Tree aria-label={`${label} pages`} mode="none" expandOnPress current={current} expanded={expanded}
-          onExpandedChange={(next) => setChosen((previous) => diffExpanded(expanded, next, previous))}>
+          onExpandedChange={(next) => onChosenChange((previous) => diffExpanded(expanded, next, previous))}>
           {spaces.map((space) => {
             const members = own.filter((section) => (section.group ?? "") === space)
             const items = members.map((section) => <Destination key={section.path} section={section} entries={navigation.menus.get(section.path) ?? []} badge={navigation.badges.get(section.path)} close={close} />)
@@ -484,7 +485,7 @@ function PerspectiveSwitch({ perspective, onChange }: { readonly perspective: Pe
     <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-md bg-muted p-0.5">
       {PERSPECTIVES.map(({ id, label }) => (
         <button key={id} type="button" aria-pressed={perspective === id} onClick={() => onChange(id)}
-          className="flex h-7 items-center gap-1.5 rounded-[0.3125rem] px-2 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent @lg:px-2.5 [&_svg]:size-3.5">
+          className="flex h-7 items-center gap-1.5 rounded-[0.3125rem] px-1.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent @sm:px-2 @lg:px-2.5 [&_svg]:size-3.5">
           {id === "workspace" ? <LayoutGrid aria-hidden /> : <Wrench aria-hidden />}<span className="sr-only @lg:not-sr-only">{label}</span>
         </button>
       ))}
@@ -658,6 +659,14 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
   const wasOpenRef = useRef(open)
   const focusWasInPanelRef = useRef(false)
   const pendingFocusSectionRef = useRef<string | null>(null)
+  const [chosenByPerspective, setChosenByPerspective] = useState<Readonly<Record<Perspective, Readonly<Record<string, boolean>>>>>({ workspace: {}, builder: {} })
+  const updateChosen = (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) =>
+    setChosenByPerspective((all) => ({ ...all, [perspective]: update(all[perspective]) }))
+  const expandSection = (path: string) => {
+    pendingFocusSectionRef.current = path
+    const section = sections.find((candidate) => candidate.path === path && candidate.perspective === perspective)
+    if (section?.group) updateChosen((previous) => ({ ...previous, [`space:${section.group}`]: true }))
+  }
 
   useEffect(() => {
     const onFocusIn = (event: FocusEvent) => {
@@ -701,21 +710,22 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
         <div className="flex size-full min-w-0 flex-row bg-sidebar">
           <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account}
             onSignOut={onSignOut} assistant={assistant} railRef={railRef}
-            onExpandSection={(path) => { pendingFocusSectionRef.current = path }} />
+            onExpandSection={expandSection} />
           <div ref={sidebarPanelRef} className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-            <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname} />
+            <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname}
+              chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} />
           </div>
         </div>
       </Sidebar>
       <SidebarInset className="min-w-0 flex-row overflow-hidden">
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="@container flex h-12 shrink-0 items-center justify-between gap-2 border-b px-3 md:gap-3 md:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <header className="@container flex h-12 shrink-0 items-center justify-between gap-1 border-b px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
               <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-md text-muted-foreground" />
-              <div className="min-w-0">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
+              <div className="hidden min-w-0 @xs:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
             </div>
             <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
-            <div className="flex shrink-0 items-center justify-end gap-1.5 @xl:gap-2">
+            <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
               <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
               <BarButtons tools={tools} />
             </div>
