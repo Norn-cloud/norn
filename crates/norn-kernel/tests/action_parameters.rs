@@ -401,6 +401,26 @@ impl ActionAuthorizer for DenySettingKey {
     }
 }
 
+struct DenySettingType;
+impl ActionAuthorizer for DenySettingType {
+    fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read(&self, _: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read_type(
+        &self,
+        request: &ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), ActionDenial> {
+        if request.object_type.as_str() == "billing.NumericSetting" {
+            Err(ActionDenial::Invisible)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 fn put(store: &mut Cell, key: FactKey, values: JsonObject) {
     let expected = store.load(&key).expect("load").version;
     store
@@ -1116,4 +1136,53 @@ fn action_call_record_parameter_pins_roundtrip_and_reject_corrupt_values() {
         .expect("corrupt pins"),
     );
     assert!(ActionCallRecord::from_values(&corrupt).is_none());
+
+    // Corrupt pin (invalid RFC 3339 effectiveAt) must fail closed in from_values.
+    let mut bad_effective_at = object(serde_json::to_value(&record).expect("value"));
+    bad_effective_at.insert(
+        "parameterPins".to_owned(),
+        serde_json::from_value(json!([{
+            "entry": "tax",
+            "settingKey": "billing.vat_rate",
+            "effectiveAt": "not-a-timestamp",
+            "setting": {"objectType": "billing.NumericSetting", "key": "vat-june"},
+            "version": 1,
+            "digest": format!("sha256:{}", "a".repeat(64))
+        }]))
+        .expect("bad effectiveAt pins"),
+    );
+    assert!(ActionCallRecord::from_values(&bad_effective_at).is_none());
+}
+
+#[test]
+fn parameter_slice_enforces_type_read_authz_when_optional_parent_is_omitted() {
+    let types = types();
+    let rule = tax_rule();
+    let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
+    let mut action_json = serde_json::to_value(post_tax_action(
+        None,
+        &json!([{"orgId": "org_demo", "environmentId": "dev"}]),
+    ))
+    .expect("action json");
+    action_json["slice"][0]["optional"] = json!(true);
+    action_json["inputSchema"]["properties"]["registry_id"] = json!({"type": ["string", "null"]});
+    action_json["inputSchema"]["required"] = json!(["id", "effective_at"]);
+    let action: ActionRoot = serde_json::from_value(action_json).expect("optional-parent action");
+
+    let mut store = new_cell();
+    seed_invoice(&mut store, "inv-omitted-parent", "100.00");
+
+    let mut request = invocation_for(
+        &action,
+        "inv-omitted-parent",
+        "2026-06-15T00:00:00Z",
+        "post-omitted-parent-denied",
+        None,
+    );
+    request.input.remove("registry_id");
+
+    // Denied caller must receive TargetNotFound even though the optional registry parent is omitted.
+    let denied = commit_action(&mut store, &catalog, &request, &DenySettingType)
+        .expect_err("denied setting type must fail closed");
+    assert!(matches!(denied, ActionRefusal::TargetNotFound));
 }

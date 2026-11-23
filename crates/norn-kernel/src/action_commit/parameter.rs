@@ -379,7 +379,7 @@ pub(super) fn parameter_pin_digest(values: &JsonObject) -> Result<String, String
 pub(super) fn validate_parameter_pin(pin: &ActionParameterPin) -> bool {
     !pin.entry.trim().is_empty()
         && !pin.setting_key.trim().is_empty()
-        && !pin.effective_at.trim().is_empty()
+        && norn_expr::temporal::timestamp_ordering_key(&pin.effective_at).is_ok()
         && !pin.setting.object_type.as_str().trim().is_empty()
         && !pin.setting.key.trim().is_empty()
         && pin.version > 0

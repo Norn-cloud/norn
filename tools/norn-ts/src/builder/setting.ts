@@ -107,7 +107,10 @@ export function parseRfc3339Instant(text: string): bigint | undefined {
     const sign = tz.startsWith("-") ? -1n : 1n
     offsetNanos = sign * BigInt((offHour * 60 + offMin) * 60) * 1_000_000_000n
   }
-  const utcMillis = BigInt(Date.UTC(year, month - 1, day, hour, minute, second))
+  const d = new Date(0)
+  d.setUTCFullYear(year, month - 1, day)
+  d.setUTCHours(hour, minute, second, 0)
+  const utcMillis = BigInt(d.getTime())
   return utcMillis * 1_000_000n - offsetNanos + fracNanos
 }
 

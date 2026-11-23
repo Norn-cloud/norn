@@ -737,7 +737,7 @@ proptest::proptest! {
 }
 
 #[test]
-fn parameter_slice_contract_refuses_unqualified_execution() {
+fn parameter_slice_contract_refuses_undeclared_source_and_effective_at() {
     let mut case = read_json(&fixtures().join("ir/artifact-set/valid-retail-set.case.json"));
     let mut action = read_json(&fixtures().join("ir/retail-reorder.action.json"));
     action["payload"]["slice"] = json!([{"name":"tax", "objectType":"retail.Sku", "key":{"parameter":{"from":"rates","settingKey":"tax","effectiveAt":"effectiveAt","precedence":[{}]}}}]);
@@ -955,5 +955,46 @@ fn parameter_slice_admits_valid_setting_profile_and_refuses_invalid_contracts() 
     assert!(
         profile_diags.iter().any(|diag| !diag.message.is_empty()),
         "{profile_diags:?}"
+    );
+}
+
+#[test]
+fn parameter_slice_refuses_computed_setting_profile_property() {
+    let (mut computed_setting, registry_entity, invoice_entity) = parameter_slice_entities();
+    let computed_props = computed_setting["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .expect("props");
+    computed_props.push(json!({"id": "raw_value", "type": {"kind": "decimal", "scale": 4}}));
+    computed_props
+        .iter_mut()
+        .find(|prop| prop["id"] == "value")
+        .expect("value property")
+        .as_object_mut()
+        .expect("value object")
+        .insert("computed".to_owned(), json!("self.raw_value"));
+    assert_eq!(
+        check_parameter_docs(vec![computed_setting.clone()]),
+        [],
+        "computed setting entity itself must be valid before parameter-slice admission"
+    );
+    let valid_slice_no_default = json!([
+        {"name": "registry", "objectType": "billing.SettingRegistry", "key": {"property": {"from": "input", "property": "registry_id"}}},
+        {"name": "settings", "objectType": "billing.NumericSetting", "key": {"link": {"from": "registry", "link": "settings"}}},
+        {"name": "tax", "objectType": "billing.NumericSetting", "key": {"parameter": {
+            "from": "settings", "settingKey": "billing.vat_rate", "effectiveAt": "effective_at", "precedence": [{}]
+        }}}
+    ]);
+    let computed_diags = check_parameter_docs(vec![
+        computed_setting,
+        registry_entity,
+        invoice_entity,
+        parameter_slice_action(&valid_slice_no_default),
+    ]);
+    assert!(
+        computed_diags.iter().any(|diag| {
+            diag.code == "artifact_set.action.invalid_slice"
+                && diag.message.contains("stored property \"value\"")
+        }),
+        "{computed_diags:?}"
     );
 }

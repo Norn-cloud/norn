@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { parseRfc3339Instant } from "../src/builder/setting.ts"
 import { compileDefinitions } from "../src/compiler/definitions.ts"
 import { checker, CHECKER_PKG_ENV } from "./checker.ts"
 if (!checker && process.env.CI) throw new Error(`${CHECKER_PKG_ENV} is required in CI`)
@@ -342,6 +343,10 @@ export const Bad = Norn.setting({
         `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", scopeRequired: ["orgId"]`,
       ],
       [
+        "empty scopeRequired",
+        `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: []`,
+      ],
+      [
         "duplicate scopeRequired",
         `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId", "orgId"]`,
       ],
@@ -359,5 +364,35 @@ export const Bad = Norn.setting({
 `)
       expect({ label, ok: refused.ok }).toEqual({ label, ok: false })
     }
+
+    for (const badId of [" .foo", "tax. ", " tax.vat", "tax.vat ", "tax..vat", "tax. .vat", "tax. vat", "tax", ".vat", "tax."]) {
+      const refused = compileSnippet(`
+import { Norn } from "@norn/authoring"
+export const Bad = Norn.setting({
+  id: ${JSON.stringify(badId)},
+  title: "Bad",
+  version: "0.1.0",
+  settingKey: "tax.rate",
+  valueType: "number",
+  value: "0.10",
+  effectiveFrom: "2026-06-01T00:00:00Z",
+  review: { state: "approved" },
+  scopeRequired: ["orgId"],
+})
+`)
+      expect({ badId, ok: refused.ok }).toEqual({ badId, ok: false })
+    }
   }, 30_000)
+
+  test("parseRfc3339Instant preserves literal 2-digit years (0000..0099) without JS 1900 offset", () => {
+    const year50 = parseRfc3339Instant("0050-01-01T00:00:00Z")
+    const year100 = parseRfc3339Instant("0100-01-01T00:00:00Z")
+    const year1950 = parseRfc3339Instant("1950-01-01T00:00:00Z")
+    expect(year50).toBeDefined()
+    expect(year100).toBeDefined()
+    expect(year1950).toBeDefined()
+    expect(year50! < year100!).toBe(true)
+    expect(year50! < year1950!).toBe(true)
+    expect(year100! < year1950!).toBe(true)
+  })
 })

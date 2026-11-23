@@ -1673,9 +1673,17 @@ class DefinitionCompiler {
     }
     const idNode = need("id")
     const id = nonBlank(idNode, "setting id")
-    const dot = id.indexOf(".")
-    if (dot <= 0 || dot === id.length - 1) {
-      throw new CompileError("NORN-FLOW-LITERAL", `setting id ${JSON.stringify(id)} must be a dotted identifier with a non-empty namespace`, idNode)
+    const idSegments = id.split(".")
+    if (
+      id !== id.trim() ||
+      idSegments.length < 2 ||
+      idSegments.some((segment) => segment.trim().length === 0 || segment !== segment.trim())
+    ) {
+      throw new CompileError(
+        "NORN-FLOW-LITERAL",
+        `setting id ${JSON.stringify(id)} must be a dotted identifier with non-empty segments and no leading or trailing whitespace`,
+        idNode,
+      )
     }
     const title = nonBlank(need("title"), "setting title")
     const version = nonBlank(need("version"), "setting version")
@@ -1785,6 +1793,9 @@ class DefinitionCompiler {
       }
       return dim
     })
+    if (scopeRequired.length === 0) {
+      throw new CompileError("NORN-FLOW-LITERAL", "scopeRequired must contain at least one scope dimension", scopeNode)
+    }
     if (new Set(scopeRequired).size !== scopeRequired.length) {
       throw new CompileError("NORN-FLOW-LITERAL", "scopeRequired must not contain duplicate scope dimensions", scopeNode)
     }

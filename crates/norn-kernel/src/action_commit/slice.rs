@@ -416,6 +416,14 @@ fn load_action_slice_parameter<H: CellHost + ?Sized>(
             ),
         });
     }
+    if state.read_types.insert(entry.object_type.clone()) {
+        authorize_slice_type(
+            context.call,
+            context.effective_input,
+            context.authorizer,
+            &entry.object_type,
+        )?;
+    }
     let resolved = super::parameter::resolve_parameter_slice(
         &super::parameter::ParameterSliceInput {
             call: context.call,

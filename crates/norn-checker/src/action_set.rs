@@ -1143,7 +1143,7 @@ fn validate_parameter_fact_profile(
         record
             .fields
             .get(name)
-            .filter(|field| matches!(field.source, FieldSource::Property { .. }))
+            .filter(|field| matches!(field.source, FieldSource::Property { read_only: false }))
             .map(|field| &field.ty)
     };
     let require = |findings: &mut Vec<Diagnostic>, name: &str, ok: bool, expected: &str| {
