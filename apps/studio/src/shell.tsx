@@ -6,7 +6,7 @@ import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronRight, ChevronsUpDown, CloudOff, Keyboard, LayoutGrid, LogOut, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
+import { Bell, ChevronLeft, ChevronRight, ChevronsUpDown, CloudOff, Keyboard, LayoutGrid, LogOut, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -449,27 +449,34 @@ function Destination({ section, entries, badge, close }: { readonly section: Sec
   )
 }
 
-/** Destination, item, then the record under it. */
+/** Destination, item, then the record under it. Collapses to the immediate parent link at narrow container widths so no link is crushed to 0px. */
 function Crumbs({ section, entries, pathname }: { readonly section: Section; readonly entries: readonly MenuEntry[]; readonly pathname: string }) {
   const found = entries.map((entry) => ({ entry, at: claim(entry, pathname) })).filter(({ at }) => at !== undefined).sort((a, b) => (b.at?.length ?? 0) - (a.at?.length ?? 0))[0]
   const entry = found?.entry
   const record = found?.at !== undefined && pathname !== found.at ? decoded(pathname.slice(found.at.length + 1)) : undefined
   const last = entry === undefined ? "section" : record === undefined ? "entry" : "record"
+  const sectionClass = last === "record" ? "hidden @md:inline-flex" : last === "entry" && section.index === false ? "hidden @sm:inline-flex" : ""
+  const entryClass = last === "entry" && section.index !== false ? "hidden @sm:inline-flex" : ""
+  const sep1Class = last === "record" ? "hidden @md:block" : "hidden @sm:block"
   return (
     <Breadcrumb className="min-w-0">
       <BreadcrumbList className="min-w-0 flex-nowrap overflow-hidden">
-        <BreadcrumbItem className={cn("min-w-0", last !== "section" && "hidden md:inline-flex")}>
-          {last === "section" || section.index === false ? <BreadcrumbPage className={cn("truncate", last !== "section" && "font-normal text-muted-foreground")}>{section.label}</BreadcrumbPage> : <BreadcrumbLink asChild><Link to={section.path} className="truncate">{section.label}</Link></BreadcrumbLink>}
+        <BreadcrumbItem className={cn("min-w-0", sectionClass)}>
+          {last === "section" || section.index === false
+            ? <BreadcrumbPage className={cn("truncate", last !== "section" && "font-normal text-muted-foreground")}>{section.label}</BreadcrumbPage>
+            : <BreadcrumbLink asChild><Link to={section.path} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className={cn("size-3.5 shrink-0", last === "entry" ? "@sm:hidden" : "hidden")} /><span className="truncate">{section.label}</span></Link></BreadcrumbLink>}
         </BreadcrumbItem>
         {entry && <>
-          <BreadcrumbSeparator className="hidden md:block" />
-          <BreadcrumbItem className={cn("min-w-0", last === "record" && "hidden md:inline-flex")}>
-            {last === "entry" ? <BreadcrumbPage className="truncate">{entry.label}</BreadcrumbPage> : <BreadcrumbLink asChild><Link to={entry.href} className="truncate">{entry.label}</Link></BreadcrumbLink>}
+          <BreadcrumbSeparator className={sep1Class} />
+          <BreadcrumbItem className={cn("min-w-0", entryClass)}>
+            {last === "entry"
+              ? <BreadcrumbPage className="truncate">{entry.label}</BreadcrumbPage>
+              : <BreadcrumbLink asChild><Link to={entry.href} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className="size-3.5 shrink-0 @md:hidden" /><span className="truncate">{entry.label}</span></Link></BreadcrumbLink>}
           </BreadcrumbItem>
         </>}
         {record !== undefined && <>
-          <BreadcrumbSeparator className="hidden md:block" />
-          <BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate font-mono text-xs">{record}</BreadcrumbPage></BreadcrumbItem>
+          <BreadcrumbSeparator className="hidden @md:block" />
+          <BreadcrumbItem className="hidden min-w-0 @md:inline-flex"><BreadcrumbPage className="truncate font-mono text-xs">{record}</BreadcrumbPage></BreadcrumbItem>
         </>}
       </BreadcrumbList>
     </Breadcrumb>
@@ -722,7 +729,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
           <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
               <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-md text-muted-foreground" />
-              <div className="hidden min-w-0 overflow-hidden @[15rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
+              <div className="hidden min-w-0 overflow-hidden @[17rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
             </div>
             <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
             <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">

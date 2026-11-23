@@ -104,15 +104,38 @@ test("header applies wide spacing on desktop, keeps breadcrumbs visible at 850px
   await expect(sourcesCrumb).toBeVisible()
   const crumbBox = await sourcesCrumb.boundingBox()
   expect(crumbBox).toBeTruthy()
-  expect(crumbBox!.width).toBeGreaterThan(0)
+  expect(crumbBox!.width).toBeGreaterThanOrEqual(48)
   expect(crumbBox!.x + crumbBox!.width).toBeLessThanOrEqual(searchAt850.x + 1)
 
-  // At 768px with both panels docked, <header> drops back to compact flex spacing and controls still never overlap.
+  // On a 3-crumb record detail page at 830px with both panels docked, only the immediate parent link is rendered
+  // (no zero-width focusable ancestor links) and it fits cleanly without overlapping Search.
+  await page.goto("/sources/canon.Holding/demo/holding/0001")
+  await settled(page)
+  await expect(page.locator('[data-slot="assistant-panel"]')).toBeVisible()
+  await page.setViewportSize({ width: 830, height: 900 })
+  const { search: searchAt830 } = await checkHeader()
+  const renderedCrumbLinks = await page.getByRole("navigation", { name: "breadcrumb" }).locator("a").evaluateAll((links) =>
+    links.filter((link) => getComputedStyle(link).display !== "none" && link.getClientRects().length > 0).map((link) => {
+      const rect = link.getBoundingClientRect()
+      return { text: link.textContent?.trim() ?? "", width: rect.width, right: rect.right }
+    }),
+  )
+  expect(renderedCrumbLinks).toHaveLength(1)
+  expect(renderedCrumbLinks[0]!.text).toBe("Holding")
+  expect(renderedCrumbLinks[0]!.width).toBeGreaterThanOrEqual(48)
+  expect(renderedCrumbLinks[0]!.right).toBeLessThanOrEqual(searchAt830.x + 1)
+
+  // At 768px with both panels docked, <header> drops back to compact flex spacing, hides breadcrumbs so no link
+  // is crushed to 0px, and controls still never overlap.
   await page.setViewportSize({ width: 768, height: 900 })
   const compactStyle = await headerStyle()
   expect(compactStyle.display).toBe("flex")
   expect(desktopStyle.paddingLeft).toBeGreaterThan(compactStyle.paddingLeft)
   expect(desktopStyle.columnGap).toBeGreaterThan(compactStyle.columnGap)
+  const visibleAt768 = await page.getByRole("navigation", { name: "breadcrumb" }).locator("a").evaluateAll((links) =>
+    links.filter((link) => link.getClientRects().length > 0).length,
+  )
+  expect(visibleAt768).toBe(0)
   await checkHeader()
 })
 
