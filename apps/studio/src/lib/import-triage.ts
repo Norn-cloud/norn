@@ -362,8 +362,55 @@ export function resolvePayloadIdempotencyKey(
 
 // ---- Batch queue execution with live-basis, batch-switch & unmount guards ---------------------
 
+/**
+ * Deterministic fingerprint of a candidate row's authoritative cell basis:
+ * `artifactId`, artifact `blobDigest` & `functionReceiptDigest`, temporal coordinates
+ * (`effectiveAt`, `observedAt`), and canonical baseline field values (excluding withheld fields).
+ *
+ * Binding local edits and queued promotion items to `rowBasisKey` ensures an edit made against an
+ * earlier capture never survives supersession into a newer capture, and a same-batch refresh that
+ * changes baseline field values marks a queued promotion stale rather than submitting old values.
+ */
+export function rowBasisKey(row: CandidateRow, artifact: StagedArtifact | undefined): string {
+  const baselineFields: Record<string, string> = {}
+  for (const field of row.fields) {
+    if (isFieldWithheld(field)) continue
+    baselineFields[field.name] = field.value
+  }
+  return canonicalizeJsonValue({
+    artifactId: row.artifactId,
+    blobDigest: artifact?.blobDigest ?? null,
+    functionReceiptDigest: artifact?.functionReceiptDigest ?? null,
+    effectiveAt: row.effectiveAt,
+    observedAt: row.observedAt,
+    baselineFields,
+  })
+}
+
+/** Scoped storage key for a local field edit, bound strictly to `(rowId, rowBasisKey, fieldName)`. */
+export function fieldEditKey(rowId: string, basisKey: string, fieldName: string): string {
+  return `${rowId}\u0000${basisKey}\u0000${fieldName}`
+}
+
+/** Rows that must stay excluded from batch promotion (in-flight, queued, committed awaiting read, or pending approval). */
+export function batchLockedRowIds(
+  busyRowIds: ReadonlySet<string>,
+  queuedRowIds: ReadonlySet<string>,
+  rowOutcomes: Readonly<Record<string, RowActionOutcome>>,
+): ReadonlySet<string> {
+  const locked = new Set<string>(busyRowIds)
+  for (const id of queuedRowIds) locked.add(id)
+  for (const [rowId, outcome] of Object.entries(rowOutcomes)) {
+    if (outcome.kind === "committed" || outcome.kind === "pending") {
+      locked.add(rowId)
+    }
+  }
+  return locked
+}
+
 export interface QueuedPromotionItem {
   readonly rowId: string
+  readonly basisKey: string
   readonly artifactId: string
   readonly blobDigest: string
   readonly functionReceiptDigest: string
@@ -380,8 +427,8 @@ export type LiveBasisCheck =
 /**
  * Re-validate a queued promotion item against the latest live batch read before dispatching it.
  * Rejects the item as `stale` if the batch changed, the row disappeared, is no longer unverified
- * and unquarantined/unwithheld, its resolved entity changed, or its artifact/evidence digests or
- * temporal coordinates drifted after queuing.
+ * and unquarantined/unwithheld, its resolved entity changed, or its `rowBasisKey` (artifact,
+ * evidence digests, temporal coordinates, or canonical baseline field values) drifted after queuing.
  */
 export function verifyQueuedPromotionBasis(
   workspace: ImportTriageWorkspace | undefined,
@@ -420,8 +467,9 @@ export function verifyQueuedPromotionBasis(
     || liveArtifact.functionReceiptDigest !== item.functionReceiptDigest
     || liveRow.effectiveAt !== item.effectiveAt
     || liveRow.observedAt !== item.observedAt
+    || rowBasisKey(liveRow, liveArtifact) !== item.basisKey
   ) {
-    return { kind: "stale", reason: "Row evidence or capture digests changed after queuing — review and promote again." }
+    return { kind: "stale", reason: "Row evidence, capture digests, or baseline field values changed after queuing — review and promote again." }
   }
   return { kind: "ready", row: liveRow, artifact: liveArtifact, targetRecordId: resolved.targetId }
 }
@@ -601,15 +649,20 @@ export function hasResolvedEntity(
 /**
  * Build the editable field map submitted on governed promotion. Withheld/redacted fields are
  * strictly excluded so masked placeholders are never written back as literal values.
+ * When `basisKey` is provided, only local edits bound to that exact `(rowId, basisKey)` are applied.
  */
 export function extractEditableValues(
   row: CandidateRow,
   edits: Readonly<Record<string, string>>,
+  basisKey?: string,
 ): Readonly<Record<string, string>> {
   const values: Record<string, string> = {}
   for (const field of row.fields) {
     if (isFieldWithheld(field)) continue
-    values[field.name] = edits[`${row.id}:${field.name}`] ?? field.value
+    const editValue = basisKey !== undefined
+      ? edits[fieldEditKey(row.id, basisKey, field.name)]
+      : edits[`${row.id}:${field.name}`]
+    values[field.name] = editValue ?? field.value
   }
   return values
 }

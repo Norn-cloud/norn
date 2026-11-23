@@ -170,18 +170,22 @@ test("step 2 (split-pane review): locks persist across step navigation, disputed
   await expect(card.locator('[data-fact-status="imported_unverified"]')).toHaveText("Imported (unverified)")
   await expect(card.locator('[data-fact-status="verified_fact"]')).toHaveCount(0)
 
-  // Return to Step 2 and switch to Capture B (art-w47-b) -> disputed row is now released with Capture B's values and evidence!
+  // Return to Step 2 and switch to Capture B (art-w47-b) -> disputed row is now released with Capture B's values, boxes, and evidence!
   await page.locator('[data-triage-step="review"]').click()
   await page.getByLabel("Source artifact", { exact: true }).selectOption("art-w47-b")
   await expect(disputedRow.locator('[data-fact-status="imported_unverified"]')).toHaveText("Imported (unverified)")
   await expect(disputedRow.locator('[data-field-name="duration_hours"] input')).toHaveValue("8.50")
+  // Capture B bounding box aligns with Capture B's drawn row coordinates (y = 0.30, not Capture A's 0.82).
+  await expect(page.locator('[data-bbox-field="f-5-hours"]')).toHaveAttribute("style", /top:\s*30%/)
 
-  // Hold the authoritative refetch so we verify the receipt NEVER optimistically paints "Verified fact".
+  // Hold the authoritative refetch so we verify the receipt NEVER optimistically paints "Verified fact",
+  // and that batch promotion excludes the committed-awaiting-read row!
   const releaseRead = cell.holdNextTriageRead()
   await disputedRow.getByRole("button", { name: "Promote row" }).click()
   await expect(disputedRow.locator('[data-row-outcome="committed"]')).toBeVisible()
   await expect(disputedRow.locator('[data-fact-status="imported_unverified"]')).toHaveText("Imported (unverified)")
   await expect(disputedRow.locator('[data-fact-status="verified_fact"]')).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Promote 0 clean rows" })).toBeDisabled()
 
   // Once the authoritative cell read arrives, the row transitions to Verified fact.
   releaseRead()

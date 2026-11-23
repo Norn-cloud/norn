@@ -87,27 +87,16 @@ export function ObjectPage() {
   const access = typeAccess.data?.kind === "read" ? typeAccess.data.read.document : undefined
   const sources = access?.capabilities.sources.decision
   const actionTitles = new Map(access?.roles.flatMap(({ actions }) => actions.map(({ actionId, title }) => [actionId, title] as const)) ?? [])
-  const recordMeta = data?.object.document as ({
-    readonly withheld?: boolean
-    readonly withheldProperties?: readonly string[]
-    readonly masked?: Readonly<Record<string, unknown>>
-    readonly verificationStatus?: string
-  } | undefined)
-  const recordWithheld = recordMeta?.withheld === true
-    || (Array.isArray(recordMeta?.withheldProperties) && recordMeta.withheldProperties.length > 0)
-    || (recordMeta?.masked !== undefined && Object.keys(recordMeta.masked).length > 0)
-  // Never infer "Verified fact" from an empty/filtered findings response or an unreadable record.
-  const recordStatus = live && reads.isSuccess && data !== null
+  const maskedRecord = data?.object.document.masked
+  const recordWithheld = maskedRecord !== undefined && Object.keys(maskedRecord).length > 0
+  // Derive header status strictly from real typed cell fields (quarantined/open findings and masked properties).
+  const recordStatus = live
     ? deriveFactStatus({
       quarantined: heldBack,
       openFindings: broken.length,
-      withheld: recordWithheld,
-      unverifiedImport: recordMeta?.verificationStatus === "imported_unverified",
-      verified: review.isSuccess && recordMeta?.verificationStatus === "verified_fact",
+      withheld: reads.isSuccess && data !== null && recordWithheld,
     })
-    : live && review.isSuccess && (heldBack || broken.length > 0)
-      ? "quarantined"
-      : null
+    : null
   return (
     <section className="space-y-6">
       <header className="flex flex-wrap items-start gap-4">

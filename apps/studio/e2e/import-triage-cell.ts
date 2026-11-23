@@ -736,10 +736,20 @@ export async function importTriageCell(
           const nextFields = r.fields.map((f) => {
             if (f.kind === "withheld") return f
             if (choice === "accept_newer" && f.name === "duration_hours") {
-              return { ...f, extractedValue: "8.50", value: "8.50" }
+              return {
+                ...f,
+                extractedValue: "8.50",
+                value: "8.50",
+                box: { x: "0.59", y: "0.30", w: "0.16", h: "0.10" },
+              }
             }
             if (choice === "accept_newer" && f.name === "slot_code") {
-              return { ...f, extractedValue: "SLOT-10", value: "SLOT-10" }
+              return {
+                ...f,
+                extractedValue: "SLOT-10",
+                value: "SLOT-10",
+                box: { x: "0.32", y: "0.30", w: "0.24", h: "0.10" },
+              }
             }
             return f
           })

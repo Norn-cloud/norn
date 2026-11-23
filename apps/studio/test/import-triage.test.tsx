@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import { renderToStaticMarkup } from "react-dom/server"
 import { deriveFactStatus, FactStatusBadge } from "../src/components/fact-status-badge.tsx"
 import {
+  batchLockedRowIds,
   canonicalPayloadKey,
   classifyTriageActionResult,
   commitAliasBinding,
@@ -11,6 +12,7 @@ import {
   effectiveRowStatus,
   extractEditableValues,
   fetchImportTriage,
+  fieldEditKey,
   formatConfidence,
   formatTemporal,
   hasOpenLawViolation,
@@ -22,6 +24,7 @@ import {
   resolveArtifactMediaSource,
   resolvePayloadIdempotencyKey,
   resolveRowEntity,
+  rowBasisKey,
   runBatchPromotionQueue,
   supersessionFactStatus,
   timeDeltaLabel,
@@ -316,8 +319,10 @@ test("verifyQueuedPromotionBasis skips queued rows whose live status, entity, or
     rows: [cleanRow],
     supersessions: [],
   }
+  const basisKeyA = rowBasisKey(cleanRow, artifactA)
   const queuedItem: QueuedPromotionItem = {
     rowId: cleanRow.id,
+    basisKey: basisKeyA,
     artifactId: artifactA.id,
     blobDigest: artifactA.blobDigest,
     functionReceiptDigest: artifactA.functionReceiptDigest,
@@ -336,6 +341,16 @@ test("verifyQueuedPromotionBasis skips queued rows whose live status, entity, or
   }
   expect(verifyQueuedPromotionBasis(digestChanged, "batch-1", queuedItem).kind).toBe("stale")
 
+  // Same-batch refresh changing a row's baseline field value -> stale (never submits old values).
+  const baselineFieldChanged: ImportTriageWorkspace = {
+    ...baseWorkspace,
+    rows: [{
+      ...cleanRow,
+      fields: cleanRow.fields.map((f) => f.kind !== "withheld" && f.name === "duration_hours" ? { ...f, value: "8.25" } : f),
+    }],
+  }
+  expect(verifyQueuedPromotionBasis(baselineFieldChanged, "batch-1", queuedItem).kind).toBe("stale")
+
   // Row became quarantined or verified before dispatch -> stale.
   const quarantinedNow: ImportTriageWorkspace = {
     ...baseWorkspace,
@@ -352,6 +367,43 @@ test("verifyQueuedPromotionBasis skips queued rows whose live status, entity, or
   // Row removed or batch switched -> stale.
   expect(verifyQueuedPromotionBasis({ ...baseWorkspace, rows: [] }, "batch-1", queuedItem).kind).toBe("stale")
   expect(verifyQueuedPromotionBasis({ ...baseWorkspace, batchId: "batch-2" }, "batch-1", queuedItem).kind).toBe("stale")
+
+  // Local edits bound to Capture A's rowBasisKey NEVER survive supersession into Capture B.
+  const artifactB: StagedArtifact = {
+    ...artifactA,
+    id: "art-2",
+    blobDigest: "sha256:" + "3".repeat(64),
+    functionReceiptDigest: "sha256:" + "4".repeat(64),
+    observedAt: "2026-11-16T11:19:00Z",
+  }
+  const supersededRow: CandidateRow = {
+    ...cleanRow,
+    artifactId: "art-2",
+    observedAt: "2026-11-16T11:19:00Z",
+    fields: cleanRow.fields.map((f) => f.kind !== "withheld" && f.name === "duration_hours" ? { ...f, value: "8.50" } : f),
+  }
+  const basisKeyB = rowBasisKey(supersededRow, artifactB)
+  expect(basisKeyB).not.toBe(basisKeyA)
+  const editsUnderA = { [fieldEditKey(cleanRow.id, basisKeyA, "duration_hours")]: "9.99" }
+  expect(extractEditableValues(cleanRow, editsUnderA, basisKeyA).duration_hours).toBe("9.99")
+  expect(extractEditableValues(supersededRow, editsUnderA, basisKeyB).duration_hours).toBe("8.50")
+})
+
+test("batchLockedRowIds excludes committed-awaiting-read and pending-approval rows from batch promotion", () => {
+  const locked = batchLockedRowIds(
+    new Set(),
+    new Set(),
+    {
+      "row-clean": { kind: "committed", receipt: sampleReceipt },
+      "row-alias": { kind: "pending", decisionId: "dec_1", expiresAtMs: Date.UTC(2026, 10, 24) },
+    },
+  )
+  const bound = new Map<string, AliasResolution>([
+    ["alias-1", { kind: "bound", targetId: "ent-002", targetLabel: "Unit Beta", receipt: sampleReceipt }],
+  ])
+  const partition = partitionPromotionBatch([cleanRow, aliasBlockedRow], bound, locked)
+  expect(partition.eligible).toHaveLength(0)
+  expect(partition.inFlight.map((r) => r.id)).toEqual(["row-clean", "row-alias"])
 })
 
 test("resolvePayloadIdempotencyKey reuses exact key for identical payloads (and no-op resets) and mints fresh key when payload or cell basis changes", () => {

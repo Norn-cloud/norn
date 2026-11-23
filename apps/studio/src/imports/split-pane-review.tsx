@@ -25,8 +25,10 @@ import { FactStatusBadge } from "@/components/fact-status-badge"
 import { Button } from "@/components/ui/button"
 import { readScan } from "@/evidence/review"
 import {
+  batchLockedRowIds,
   effectiveRowStatus,
   fetchScopedArtifactBlob,
+  fieldEditKey,
   formatConfidence,
   formatTemporal,
   hasOpenLawViolation,
@@ -37,6 +39,7 @@ import {
   partitionPromotionBatch,
   resolveArtifactMediaSource,
   resolveRowEntity,
+  rowBasisKey,
   type AliasResolution,
   type BatchRunReport,
   type CandidateRow,
@@ -150,8 +153,8 @@ export function SplitPaneReview({
   readonly queuedRowIds: ReadonlySet<string>
   readonly batchRunning: boolean
   readonly batchReport: BatchRunReport | null
-  readonly onSetFieldValue: (batchId: string, rowId: string, fieldName: string, baselineValue: string, currentValue: string, next: string) => void
-  readonly onResetFieldValue: (batchId: string, rowId: string, fieldName: string, baselineValue: string) => void
+  readonly onSetFieldValue: (batchId: string, rowId: string, basisKey: string, fieldName: string, baselineValue: string, currentValue: string, next: string) => void
+  readonly onResetFieldValue: (batchId: string, rowId: string, basisKey: string, fieldName: string, baselineValue: string) => void
   readonly onPromoteRow: (batchId: string, row: CandidateRow, artifact: StagedArtifact) => Promise<void>
   readonly onPromoteCleanBatch: (batchId: string, eligibleRows: readonly CandidateRow[], keptQuarantined: number) => Promise<void>
   readonly onJumpToAliases: () => void
@@ -200,11 +203,10 @@ export function SplitPaneReview({
     return list
   }, [artifactRows, lowConfidenceThresholdBps])
 
-  const lockedRowIds = useMemo(() => {
-    const combined = new Set<string>(busyRowIds)
-    for (const id of queuedRowIds) combined.add(id)
-    return combined
-  }, [busyRowIds, queuedRowIds])
+  const lockedRowIds = useMemo(
+    () => batchLockedRowIds(busyRowIds, queuedRowIds, rowOutcomes),
+    [busyRowIds, queuedRowIds, rowOutcomes],
+  )
 
   const partition = useMemo(
     () => partitionPromotionBatch(artifactRows, resolvedAliases, lockedRowIds),
@@ -584,6 +586,7 @@ export function SplitPaneReview({
               const outcome = rowOutcomes[row.id] ?? null
               const committedAwaitingRead = outcome?.kind === "committed"
               const rowArtifact = artifacts.find((item) => item.id === row.artifactId)
+              const basisKey = rowBasisKey(row, rowArtifact)
               const canPromote = rowStatus === "imported_unverified"
                 && entity.kind === "resolved"
                 && !locked
@@ -667,7 +670,9 @@ export function SplitPaneReview({
                       }
 
                       // Verified rows ALWAYS show the authoritative cell value, never stale local drafts.
-                      const localEdit = edits[`${row.id}:${field.name}`]
+                      // Local edits are scoped strictly to `(row.id, basisKey, field.name)` so edits from an
+                      // earlier capture never leak across supersession or baseline refreshes.
+                      const localEdit = edits[fieldEditKey(row.id, basisKey, field.name)]
                       const current = verified ? field.value : (localEdit ?? field.value)
                       const hasLocalEdit = !verified && localEdit !== undefined && localEdit !== field.value
                       const differsFromExtracted = !verified && current !== field.extractedValue
@@ -728,7 +733,7 @@ export function SplitPaneReview({
                               readOnly={verified}
                               disabled={locked || committedAwaitingRead}
                               onFocus={() => { setFocusedRowId(row.id); setFocusedFieldId(field.id) }}
-                              onChange={(event) => onSetFieldValue(batchId, row.id, field.name, field.value, current, event.target.value)}
+                              onChange={(event) => onSetFieldValue(batchId, row.id, basisKey, field.name, field.value, current, event.target.value)}
                               aria-invalid={hasRed || undefined}
                               className={cn(
                                 "h-7 min-w-0 flex-1 rounded border bg-background px-2 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -742,7 +747,7 @@ export function SplitPaneReview({
                                 disabled={locked || committedAwaitingRead}
                                 aria-label={`Reset ${field.label} edit`}
                                 title={`Row baseline is "${field.value}" — click to undo local edit`}
-                                onClick={(event) => { event.stopPropagation(); onResetFieldValue(batchId, row.id, field.name, field.value) }}
+                                onClick={(event) => { event.stopPropagation(); onResetFieldValue(batchId, row.id, basisKey, field.name, field.value) }}
                                 className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
                               >
                                 <RotateCcw className="size-3" />

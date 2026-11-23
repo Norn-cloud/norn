@@ -11,6 +11,7 @@ import { type ActionReceipt } from "@/lib/actions"
 import type { CellResult } from "@/lib/cell-read"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import {
+  batchLockedRowIds,
   classifyTriageActionResult,
   commitAliasBinding,
   commitAliasIgnore,
@@ -20,6 +21,7 @@ import {
   effectiveRowStatus,
   extractEditableValues,
   fetchImportTriage,
+  fieldEditKey,
   IMPORT_TRIAGE_UNAVAILABLE,
   initialAliasDraft,
   initialSupersessionDraft,
@@ -28,6 +30,7 @@ import {
   patchSupersessionDraftState,
   resolvePayloadIdempotencyKey,
   resolveRowEntity,
+  rowBasisKey,
   runBatchPromotionQueue,
   triageSummary,
   verifyQueuedPromotionBasis,
@@ -146,15 +149,29 @@ export function ImportTriagePage() {
 
   const batchDraft = workspace ? (draftsByBatch[workspace.batchId] ?? EMPTY_BATCH_DRAFT) : EMPTY_BATCH_DRAFT
 
-  // Clear stale local field edits and transient commit banners whenever the authoritative cell read marks a row verified.
+  // Prune local edits whenever a row becomes verified or its authoritative basis (capture/digests/baseline) changes,
+  // and clear transient commit banners once the authoritative cell read confirms Verified fact.
   useEffect(() => {
     if (!workspace) return
-    const verifiedIds = new Set(workspace.rows.filter((r) => effectiveRowStatus(r) === "verified_fact").map((r) => r.id))
-    if (verifiedIds.size === 0) return
+    const verifiedIds = new Set<string>()
+    const activeEditPrefixes = new Set<string>()
+    for (const row of workspace.rows) {
+      if (effectiveRowStatus(row) === "verified_fact") {
+        verifiedIds.add(row.id)
+      } else {
+        const artifact = workspace.artifacts.find((item) => item.id === row.artifactId)
+        activeEditPrefixes.add(`${row.id}\u0000${rowBasisKey(row, artifact)}\u0000`)
+      }
+    }
     setDraftsByBatch((all) => {
       const current = all[workspace.batchId]
       if (!current) return all
-      const staleEditKeys = Object.keys(current.reviewEdits).filter((k) => verifiedIds.has(k.split(":", 1)[0] ?? ""))
+      const staleEditKeys = Object.keys(current.reviewEdits).filter((k) => {
+        for (const prefix of activeEditPrefixes) {
+          if (k.startsWith(prefix)) return false
+        }
+        return true
+      })
       const staleOutcomeIds = Object.keys(current.rowOutcomes).filter((id) => verifiedIds.has(id))
       if (staleEditKeys.length === 0 && staleOutcomeIds.length === 0) return all
       const nextEdits = staleEditKeys.length > 0 ? { ...current.reviewEdits } : current.reviewEdits
@@ -408,6 +425,7 @@ export function ImportTriagePage() {
   const handleSetFieldValue = (
     expectedBatchId: string,
     rowId: string,
+    basisKey: string,
     fieldName: string,
     baselineValue: string,
     currentValue: string,
@@ -415,7 +433,7 @@ export function ImportTriagePage() {
   ) => {
     if (!mountedRef.current || activeBatchIdRef.current !== expectedBatchId) return
     if (currentValue === nextValue) return
-    const editKey = `${rowId}:${fieldName}`
+    const editKey = fieldEditKey(rowId, basisKey, fieldName)
     patchBatchDraft(expectedBatchId, (current) => {
       const nextEdits = { ...current.reviewEdits }
       if (nextValue === baselineValue) {
@@ -436,11 +454,12 @@ export function ImportTriagePage() {
   const handleResetFieldValue = (
     expectedBatchId: string,
     rowId: string,
+    basisKey: string,
     fieldName: string,
     baselineValue: string,
   ) => {
     if (!mountedRef.current || activeBatchIdRef.current !== expectedBatchId) return
-    const editKey = `${rowId}:${fieldName}`
+    const editKey = fieldEditKey(rowId, basisKey, fieldName)
     patchBatchDraft(expectedBatchId, (current) => {
       if (!(editKey in current.reviewEdits)) return current
       const previousEdit = current.reviewEdits[editKey]
@@ -470,24 +489,25 @@ export function ImportTriagePage() {
     if (locks.has(row.id)) return "skipped"
     const currentWorkspace = workspaceRef.current
     if (!currentWorkspace || currentWorkspace.batchId !== requestBatchId) return "skipped"
+    const currentDraft = draftsRef.current[requestBatchId] ?? EMPTY_BATCH_DRAFT
+    if (currentDraft.rowOutcomes[row.id]?.kind === "committed") return "skipped"
 
-    // Re-read the live row and artifact before dispatch so stale evidence or newly quarantined rows never submit.
+    // Re-read the live row, artifact, and canonical baseline values before dispatch so stale evidence,
+    // drifted baselines, or newly quarantined rows never submit.
     const liveRow = currentWorkspace.rows.find((candidate) => candidate.id === row.id)
     const liveArtifact = liveRow ? currentWorkspace.artifacts.find((item) => item.id === liveRow.artifactId) : undefined
+    const expectedBasisKey = rowBasisKey(row, artifact)
+    const liveBasisKey = liveRow ? rowBasisKey(liveRow, liveArtifact) : null
     if (
       !liveRow
       || !liveArtifact
-      || liveArtifact.id !== artifact.id
-      || liveArtifact.blobDigest !== artifact.blobDigest
-      || liveArtifact.functionReceiptDigest !== artifact.functionReceiptDigest
-      || liveRow.effectiveAt !== row.effectiveAt
-      || liveRow.observedAt !== row.observedAt
+      || liveBasisKey !== expectedBasisKey
     ) {
       patchBatchDraft(requestBatchId, (curr) => ({
         ...curr,
         rowOutcomes: {
           ...curr.rowOutcomes,
-          [row.id]: { kind: "stale", message: "Row evidence or capture basis changed before dispatch — review and promote again." },
+          [row.id]: { kind: "stale", message: "Row evidence, capture digests, or baseline values changed before dispatch — review and promote again." },
         },
       }))
       return "stale"
@@ -502,8 +522,7 @@ export function ImportTriagePage() {
       return "skipped"
     }
 
-    const currentDraft = draftsRef.current[requestBatchId] ?? EMPTY_BATCH_DRAFT
-    const values = snapshotValues ?? extractEditableValues(liveRow, currentDraft.reviewEdits)
+    const values = snapshotValues ?? extractEditableValues(liveRow, currentDraft.reviewEdits, liveBasisKey)
     const payload = {
       batchId: requestBatchId,
       rowId: liveRow.id,
@@ -628,19 +647,23 @@ export function ImportTriagePage() {
     }
 
     const currentDraft = draftsRef.current[requestBatchId] ?? EMPTY_BATCH_DRAFT
+    const lockedIds = batchLockedRowIds(locks, currentDraft.queuedRowIds, currentDraft.rowOutcomes)
     const queue: QueuedPromotionItem[] = eligibleRows.flatMap((row) => {
+      if (lockedIds.has(row.id)) return []
       const artifact = currentWorkspace.artifacts.find((item) => item.id === row.artifactId)
       const resolved = resolveRowEntity(row, currentAliases)
       if (!artifact || resolved.kind !== "resolved") return []
+      const basisKey = rowBasisKey(row, artifact)
       return [{
         rowId: row.id,
+        basisKey,
         artifactId: artifact.id,
         blobDigest: artifact.blobDigest,
         functionReceiptDigest: artifact.functionReceiptDigest,
         targetRecordId: resolved.targetId,
         effectiveAt: row.effectiveAt,
         observedAt: row.observedAt,
-        values: extractEditableValues(row, currentDraft.reviewEdits),
+        values: extractEditableValues(row, currentDraft.reviewEdits, basisKey),
       }]
     })
     if (queue.length === 0) return
@@ -660,6 +683,15 @@ export function ImportTriagePage() {
         () => activeBatchIdRef.current,
         keptQuarantined,
         async (item) => {
+          const liveOutcome = draftsRef.current[requestBatchId]?.rowOutcomes[item.rowId]
+          if (liveOutcome?.kind === "committed" || liveOutcome?.kind === "pending") {
+            patchBatchDraft(requestBatchId, (curr) => {
+              const nextQueued = new Set(curr.queuedRowIds)
+              nextQueued.delete(item.rowId)
+              return { ...curr, queuedRowIds: nextQueued }
+            })
+            return "skipped"
+          }
           const basis = verifyQueuedPromotionBasis(workspaceRef.current, requestBatchId, item)
           if (basis.kind === "stale") {
             patchBatchDraft(requestBatchId, (curr) => {
