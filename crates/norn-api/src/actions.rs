@@ -44,7 +44,7 @@ where
 
 /// Optional provenance trace context attached to an action call and retained
 /// on its committed receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TraceContext {
     /// Opaque correlation identifier tying multi-step causes and effects
@@ -54,23 +54,21 @@ pub struct TraceContext {
     /// Optional reference to the goal, prompt, commitment, or decision that
     /// initiated the action (1 to 512 UTF-8 bytes, no control characters or
     /// outer whitespace).
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present_non_null"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false, min_length = 1, max_length = 512)]
     pub intent_ref: Option<String>,
     /// Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)
     /// of an off-ledger agent or user session transcript. Raw transcript text
     /// is never stored in the ledger.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present_non_null"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false, pattern = "^sha256:[0-9a-f]{64}$")]
     pub session_digest: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for TraceContext {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        norn_ir::TraceContext::deserialize(deserializer).map(Self::from)
+    }
 }
 
 impl TraceContext {

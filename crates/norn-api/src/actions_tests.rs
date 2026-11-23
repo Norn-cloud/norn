@@ -1284,8 +1284,12 @@ fn action_request_and_receipt_thread_optional_trace_and_refuse_invalid_trace() {
     let before = dump(&host);
     for bad_trace in [
         json!(null),
+        json!(["tr-1"]),
+        json!(["tr-1", "goal:1"]),
         json!({}),
         json!({ "traceId": "" }),
+        json!({ "traceId": "tr\u{202e}1" }),
+        json!({ "traceId": "t1", "intentRef": "goal\u{2028}1" }),
         json!({ "traceId": "t1", "sessionDigest": "raw transcript text" }),
         json!({ "traceId": "t1", "unknown": "x" }),
         json!({ "traceId": "t".repeat(257) }),

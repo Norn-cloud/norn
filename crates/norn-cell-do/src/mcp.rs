@@ -975,6 +975,14 @@ impl<E: SqlEngine> Loopback<'_, E> {
                 ]))?,
             },
             "norn_call_action" => {
+                if let Some(unknown) = arguments
+                    .keys()
+                    .find(|key| !matches!(key.as_str(), "action" | "input" | "trace"))
+                {
+                    return Err(Refusal::invalid(format!(
+                        "norn_call_action does not accept unexpected argument `{unknown}`; allowed arguments are action, input, and optional trace"
+                    )));
+                }
                 let action = required(arguments, "action")?;
                 if !self.actions.values().any(|callable| *callable == action) {
                     let mut callable: Vec<&str> =

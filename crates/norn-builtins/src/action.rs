@@ -108,25 +108,25 @@ pub fn parse_step(input: &RuntimeValue) -> Result<ActionStep, StepRefusal> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "fixture assertions")]
 mod tests {
     use super::*;
 
     #[test]
-    fn parse_step_accepts_optional_trace_and_refuses_malformed_trace() {
+    fn parse_step_accepts_optional_trace_and_refuses_malformed_trace() -> Result<(), String> {
+        let parse_json = |text: &str| {
+            RuntimeValue::from_json_text(text).map_err(|error| format!("{text}: {error}"))
+        };
         let digest = format!("sha256:{}", "c".repeat(64));
-        let plain =
-            RuntimeValue::from_json_text(r#"{"action":"ops.melt.convert","input":{"id":"m1"}}"#)
-                .unwrap();
-        let step = parse_step(&plain).unwrap();
+        let plain = parse_json(r#"{"action":"ops.melt.convert","input":{"id":"m1"}}"#)?;
+        let step = parse_step(&plain).map_err(|error| format!("plain step refused: {error:?}"))?;
         assert_eq!(step.action, "ops.melt.convert");
         assert_eq!(step.trace, None);
 
-        let traced = RuntimeValue::from_json_text(format!(
+        let traced = parse_json(&format!(
             r#"{{"action":"ops.melt.convert","input":{{"id":"m1"}},"trace":{{"traceId":"tr-1","intentRef":"run:r1","sessionDigest":"{digest}"}}}}"#
-        ))
-        .unwrap();
-        let step = parse_step(&traced).unwrap();
+        ))?;
+        let step =
+            parse_step(&traced).map_err(|error| format!("traced step refused: {error:?}"))?;
         assert_eq!(
             step.trace,
             Some(TraceContext {
@@ -138,12 +138,14 @@ mod tests {
 
         for bad in [
             r#"{"action":"ops.melt.convert","input":{"id":"m1"},"trace":null}"#,
+            r#"{"action":"ops.melt.convert","input":{"id":"m1"},"trace":["tr-1"]}"#,
             r#"{"action":"ops.melt.convert","input":{"id":"m1"},"trace":{"traceId":""}}"#,
             r#"{"action":"ops.melt.convert","input":{"id":"m1"},"trace":{"traceId":"t1","sessionDigest":"raw transcript"}}"#,
             r#"{"action":"ops.melt.convert","input":{"id":"m1"},"trace":{"traceId":"t1","extra":"bad"}}"#,
         ] {
-            let value = RuntimeValue::from_json_text(bad).unwrap();
+            let value = parse_json(bad)?;
             assert_eq!(parse_step(&value), Err(StepRefusal::Shape), "{bad}");
         }
+        Ok(())
     }
 }

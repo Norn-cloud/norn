@@ -6880,7 +6880,9 @@
         "properties": {
           "intentRef": {
             "type": "string",
-            "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace)."
+            "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
+            "maxLength": 512,
+            "minLength": 1
           },
           "sessionDigest": {
             "type": "string",

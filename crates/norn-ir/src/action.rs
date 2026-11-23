@@ -650,7 +650,7 @@ pub struct TraceContext {
     /// initiated the action (1 to 512 UTF-8 bytes, no control characters or
     /// outer whitespace).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "String")]
+    #[schemars(with = "String", length(min = 1, max = 512))]
     pub intent_ref: Option<String>,
     /// Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)
     /// of an off-ledger agent or user session transcript. Raw transcript text
@@ -658,6 +658,14 @@ pub struct TraceContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "crate::function::Digest")]
     pub session_digest: Option<crate::function::Digest>,
+}
+
+fn is_forbidden_trace_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        )
 }
 
 impl TraceContext {
@@ -677,7 +685,9 @@ impl TraceContext {
                 max_bytes: MAX_TRACE_ID_BYTES,
             });
         }
-        if self.trace_id.trim() != self.trace_id || self.trace_id.chars().any(char::is_control) {
+        if self.trace_id.trim() != self.trace_id
+            || self.trace_id.chars().any(is_forbidden_trace_char)
+        {
             return Err(TraceContextError::InvalidTraceId);
         }
         if let Some(intent_ref) = &self.intent_ref {
@@ -690,7 +700,7 @@ impl TraceContext {
                     max_bytes: MAX_INTENT_REF_BYTES,
                 });
             }
-            if intent_ref.trim() != intent_ref || intent_ref.chars().any(char::is_control) {
+            if intent_ref.trim() != intent_ref || intent_ref.chars().any(is_forbidden_trace_char) {
                 return Err(TraceContextError::InvalidIntentRef);
             }
         }

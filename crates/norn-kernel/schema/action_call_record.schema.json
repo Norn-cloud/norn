@@ -195,7 +195,9 @@
         },
         "intentRef": {
           "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
         },
         "sessionDigest": {
           "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",

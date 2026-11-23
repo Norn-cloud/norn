@@ -863,4 +863,31 @@ fn mcp_action_tools_refuse_malformed_or_conflicting_trace() {
     );
     assert_eq!(malformed["result"]["isError"], true, "{malformed}");
     assert_eq!(cell.host.verified_head().unwrap().commits, commits_before);
+
+    // Unexpected top-level argument (such as `traceId` instead of `trace`) refuses fail-closed.
+    let unexpected_key = mcp_rpc(
+        &cell,
+        OPERATOR,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+                "name": "norn_call_action",
+                "arguments": {
+                    "action": "constitution.melt.convert",
+                    "input": {"id": "melt-mcp-5", "input_fine_g": "12", "output_fine_g": "10"},
+                    "traceId": "mcp-trace-misplaced",
+                },
+                "_meta": {
+                    "norn/idempotencyKey": "k-mcp-trace-5",
+                }
+            }
+        }),
+    );
+    assert_eq!(
+        unexpected_key["result"]["isError"], true,
+        "{unexpected_key}"
+    );
+    assert_eq!(cell.host.verified_head().unwrap().commits, commits_before);
 }
