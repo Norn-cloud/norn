@@ -97,7 +97,7 @@ None.
 - `norn.frappe-hr.attendance` subsumed_by `norn.hr.attendance.event`
 - `norn.frappe-hr.department` subsumed_by `norn.org.unit`
 - `norn.frappe-hr.designation` subsumed_by `norn.org.post`
-- `norn.frappe-hr.employee` derived `norn.core.agent`, `norn.hr.employment`
+- `norn.frappe-hr.employee` subsumed_by `norn.core.agent`
 - `norn.frappe-hr.guard.leave.insufficient.balance` subsumed_by `norn.hr.guard.leave.insufficient.balance`
 - `norn.frappe-hr.guard.leave.overlap` equivalent `norn.hr.guard.leave.overlap`
 - `norn.frappe-hr.guard.shift.overlap` equivalent `norn.hr.guard.shift.overlap`

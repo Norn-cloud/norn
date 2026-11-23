@@ -19,9 +19,9 @@ export const Pack = Norn.packLink({
     {
       correspondenceId: "corr.frappe-hr.employee",
       fromTermId: "norn.frappe-hr.employee",
-      relation: "derived",
-      toTermIds: ["norn.core.agent", "norn.hr.employment"],
-      justification: "Frappe HR collapses natural person and active employment into Employee; Norn separates core.Agent from effective-dated hr.Employment.",
+      relation: "subsumed_by",
+      toTermIds: ["norn.core.agent"],
+      justification: "A Frappe HR Employee is a natural-person Agent; Norn keeps active employment terms on separate hr.Employment records linked to core.Agent.",
       evidenceRefs: ["source.frappe-hr"],
       confidenceBasisPoints: 8500,
       reviewedBy: "hr-vertical (agent, proposed)",

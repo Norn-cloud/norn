@@ -15,13 +15,12 @@
           "source.frappe-hr"
         ],
         "fromTermId": "norn.frappe-hr.employee",
-        "justification": "Frappe HR collapses natural person and active employment into Employee; Norn separates core.Agent from effective-dated hr.Employment.",
-        "relation": "derived",
+        "justification": "A Frappe HR Employee is a natural-person Agent; Norn keeps active employment terms on separate hr.Employment records linked to core.Agent.",
+        "relation": "subsumed_by",
         "reviewedAt": "2026-11-23T00:00:00Z",
         "reviewedBy": "hr-vertical (agent, proposed)",
         "toTermIds": [
-          "norn.core.agent",
-          "norn.hr.employment"
+          "norn.core.agent"
         ]
       },
       {
