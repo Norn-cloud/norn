@@ -34,7 +34,9 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
                 "effectiveInput",
                 "derivedValues",
                 "preconditionOutcomes",
+                "parameterPins",
                 "rowOperations",
+                "trace",
             ][..],
         ),
         (
@@ -101,6 +103,8 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
 pub(crate) struct RetainedActions {
     pub(crate) actions: Vec<(ArtifactEnvelope, ActionRoot)>,
     pub(crate) rules: Vec<SynchronousRule>,
+    /// APPROVAL-REVISION-1: each action's definition digest, by action id.
+    digests: BTreeMap<String, String>,
 }
 impl RetainedActions {
     pub(crate) fn load(set: &InstalledDefinitionSet, scope: &CellScope) -> Result<Self, Refusal> {
@@ -116,6 +120,7 @@ impl RetainedActions {
             .collect::<Result<Vec<ArtifactEnvelope>, _>>()
             .map_err(Refusal::host)?;
         let mut actions = Vec::new();
+        let mut action_sources = BTreeMap::new();
         let mut roots = BTreeMap::new();
         let mut identities = BTreeSet::new();
         for (artifact, source) in artifacts.iter().zip(&sources) {
@@ -129,6 +134,7 @@ impl RetainedActions {
                     if !identities.insert(action.action_id.clone()) {
                         return Err(Refusal::host("ambiguous retained action identity"));
                     }
+                    action_sources.insert(action.action_id.clone(), source);
                     actions.push((artifact.clone(), action));
                 }
                 ArtifactKind::Rule => {
@@ -173,6 +179,7 @@ impl RetainedActions {
                 .into(),
         };
         let mut rules = Vec::new();
+        let digests = action_digests(&actions, &action_sources, &artifacts, &sources, &roots)?;
         let mut loaded = BTreeSet::new();
         for (_, action) in &actions {
             let Some(pin) = &action.synchronous_rule else {
@@ -196,8 +203,58 @@ impl RetainedActions {
                     .map_err(Refusal::host)?,
             );
         }
-        Ok(Self { actions, rules })
+        Ok(Self {
+            actions,
+            rules,
+            digests,
+        })
     }
+
+    /// APPROVAL-REVISION-1: the digest of `action_id`'s definition as this
+    /// revision retains it: the action's payload, and its pinned writer's
+    /// with the writer's helper closure. An approval binds to it, so an
+    /// approval of a call never executes under a changed action.
+    pub(crate) fn digest(&self, action_id: &str) -> Option<&str> {
+        self.digests.get(action_id).map(String::as_str)
+    }
+}
+/// APPROVAL-REVISION-1: each retained action's definition digest, by action
+/// id: its payload, and its pinned writer's payload with the writer's helper
+/// closure.
+fn action_digests(
+    actions: &[(ArtifactEnvelope, ActionRoot)],
+    action_sources: &BTreeMap<String, &RuntimeValue>,
+    artifacts: &[ArtifactEnvelope],
+    sources: &[RuntimeValue],
+    roots: &BTreeMap<String, RuleRoot>,
+) -> Result<BTreeMap<String, String>, Refusal> {
+    let mut digests = BTreeMap::new();
+    for (_, action) in actions {
+        let writer = match &action.synchronous_rule {
+            Some(pin) => {
+                let (index, writer) = artifacts
+                    .iter()
+                    .enumerate()
+                    .find(|(_, artifact)| {
+                        artifact.artifact_id == pin.artifact_id && artifact.version == pin.version
+                    })
+                    .ok_or_else(|| Refusal::host("missing pinned writer"))?;
+                let source = sources
+                    .get(index)
+                    .and_then(|source| source.get("payload"))
+                    .ok_or_else(|| Refusal::host("missing payload"))?;
+                Some((source, helper_closure(writer, artifacts, roots)?))
+            }
+            None => None,
+        };
+        let digest = norn_ir::canonical::domain_hash_hex(
+            b"norn.approval.action/1\0",
+            &(action_sources.get(&action.action_id), &writer),
+        )
+        .map_err(Refusal::host)?;
+        digests.insert(action.action_id.clone(), digest);
+    }
+    Ok(digests)
 }
 fn helper_closure(
     writer: &ArtifactEnvelope,

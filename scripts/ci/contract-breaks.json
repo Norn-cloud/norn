@@ -1,4 +1,9 @@
 {
   "format": "norn-contract-breaks/1",
-  "approved": []
+  "approved": [
+    {
+      "ruling": "D113",
+      "break": "refusal code expr.output.invalid: removed"
+    }
+  ]
 }

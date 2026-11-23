@@ -121,7 +121,7 @@
       "type": "object"
     },
     "preconditions": [
-      "slice.training.status == \"FINISHED\" and slice.evaluation.status == \"FINISHED\""
+      "(slice.training.status == 'FINISHED') and (slice.evaluation.status == 'FINISHED')"
     ],
     "scopeRequired": [
       "orgId",

@@ -1043,7 +1043,173 @@ fn action_slice_key_findings(
             Some(_) => {}
         }
     }
+
+    if let SliceKey::Parameter { .. } = &entry.key {
+        findings.extend(action_parameter_slice_findings(
+            artifact,
+            root,
+            index,
+            entry,
+            &path,
+            environment,
+        ));
+    }
     findings
+}
+
+fn action_parameter_slice_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    index: usize,
+    entry: &norn_ir::SliceDeclaration,
+    path: &str,
+    environment: &ZenTypeEnv,
+) -> Vec<Diagnostic> {
+    let SliceKey::Parameter {
+        from, default_from, ..
+    } = &entry.key
+    else {
+        return Vec::new();
+    };
+    let kind = entry.object_type.as_str();
+    let mut findings = Vec::new();
+    if let Some(source) = root
+        .slice
+        .iter()
+        .take(index)
+        .find(|prior| prior.name == *from)
+        && source.object_type.as_str() != kind
+    {
+        findings.push(finding(
+            codes::INVALID_SLICE,
+            format!(
+                "slice entry {:?} names {kind:?}, but parameter source {from:?} loads {:?}",
+                entry.name,
+                source.object_type.as_str()
+            ),
+            artifact,
+            &format!("{path}/objectType"),
+        ));
+    }
+    if let Some(default_name) = default_from
+        && let Some(default_source) = root
+            .slice
+            .iter()
+            .take(index)
+            .find(|prior| prior.name == *default_name)
+        && default_source.object_type.as_str() != kind
+    {
+        findings.push(finding(
+            codes::INVALID_SLICE,
+            format!(
+                "slice entry {:?} names {kind:?}, but parameter defaultFrom {default_name:?} loads {:?}",
+                entry.name,
+                default_source.object_type.as_str()
+            ),
+            artifact,
+            &format!("{path}/key/defaultFrom"),
+        ));
+    }
+    if let Some(record) = environment.record(kind) {
+        validate_parameter_fact_profile(
+            artifact,
+            entry.name.as_str(),
+            kind,
+            record,
+            &format!("{path}/objectType"),
+            &mut findings,
+        );
+    }
+    findings
+}
+
+fn unwrap_optional_type(ty: &Type) -> &Type {
+    if let Type::Optional(inner) = ty {
+        inner.as_ref()
+    } else {
+        ty
+    }
+}
+
+fn validate_parameter_fact_profile(
+    artifact: &ArtifactEnvelope,
+    entry_name: &str,
+    kind: &str,
+    record: &RecordType,
+    pointer: &str,
+    findings: &mut Vec<Diagnostic>,
+) {
+    let stored = |name: &str| {
+        record
+            .fields
+            .get(name)
+            .filter(|field| matches!(field.source, FieldSource::Property { read_only: false }))
+            .map(|field| &field.ty)
+    };
+    let require = |findings: &mut Vec<Diagnostic>, name: &str, ok: bool, expected: &str| {
+        if !ok {
+            findings.push(finding(
+                codes::INVALID_SLICE,
+                format!(
+                    "parameter slice entry {entry_name:?} type {kind:?} must declare stored property {name:?} as {expected}"
+                ),
+                artifact,
+                pointer,
+            ));
+        }
+    };
+    require(
+        findings,
+        "setting_key",
+        stored("setting_key").is_some_and(|ty| matches!(ty, Type::Text { .. })),
+        "a non-nullable string",
+    );
+    require(
+        findings,
+        "value",
+        stored("value").is_some_and(|ty| matches!(ty, Type::Decimal { .. })),
+        "a non-nullable exact decimal",
+    );
+    require(
+        findings,
+        "effective_from",
+        stored("effective_from")
+            .is_some_and(|ty| matches!(ty, Type::Timestamp { .. } | Type::Text { .. })),
+        "a non-nullable timestamp or string",
+    );
+    require(
+        findings,
+        "effective_to",
+        stored("effective_to").is_some_and(|ty| {
+            matches!(
+                unwrap_optional_type(ty),
+                Type::Timestamp { .. } | Type::Text { .. }
+            )
+        }),
+        "a nullable or non-nullable timestamp or string",
+    );
+    require(
+        findings,
+        "review_state",
+        stored("review_state")
+            .is_some_and(|ty| matches!(ty, Type::Text { .. } | Type::Enum { .. })),
+        "a non-nullable string or enum",
+    );
+    for dimension in [
+        "org_id",
+        "tenant_id",
+        "workspace_id",
+        "environment_id",
+        "business_unit_id",
+    ] {
+        require(
+            findings,
+            dimension,
+            stored(dimension)
+                .is_some_and(|ty| matches!(unwrap_optional_type(ty), Type::Text { .. })),
+            "a nullable or non-nullable string",
+        );
+    }
 }
 
 #[expect(
@@ -2475,30 +2641,26 @@ impl<'m, 'a> AdmittedType<'m, 'a> {
 
     /// The effective supertype names, nearest first.
     pub(crate) fn supertypes(self) -> Vec<&'m str> {
-        self.effective()
-            .map(|effective| {
-                effective
-                    .lineage
-                    .iter()
-                    .skip(1)
-                    .map(ObjectTypeName::as_str)
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.effective().map_or_default(|effective| {
+            effective
+                .lineage
+                .iter()
+                .skip(1)
+                .map(ObjectTypeName::as_str)
+                .collect()
+        })
     }
 
     /// The child type names of every effective owned collection, inherited
     /// ones included.
     pub(crate) fn owned_child_types(self) -> Vec<&'m str> {
-        self.effective()
-            .map(|effective| {
-                effective
-                    .owned_collections
-                    .iter()
-                    .map(|collection| collection.child_type.as_str())
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.effective().map_or_default(|effective| {
+            effective
+                .owned_collections
+                .iter()
+                .map(|collection| collection.child_type.as_str())
+                .collect()
+        })
     }
 }
 
@@ -2782,18 +2944,18 @@ mod synchronous_rule_tests {
     #[test]
     fn missing_ambiguous_or_uncovered_rule_pins_refuse() {
         let (action, mut root, rule) = fixture("1.0.0");
-        assert!(!synchronous_rule_findings(&action, &root, &[], &[]).is_empty());
-        assert!(
-            !synchronous_rule_findings(
+        assert_ne!(synchronous_rule_findings(&action, &root, &[], &[]), []);
+        assert_ne!(
+            synchronous_rule_findings(
                 &action,
                 &root,
                 std::slice::from_ref(&rule),
                 std::slice::from_ref(&rule)
-            )
-            .is_empty()
+            ),
+            []
         );
         root.scope_required.clear();
-        assert!(!synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty());
+        assert_ne!(synchronous_rule_findings(&action, &root, &[rule], &[]), []);
     }
 }
 
@@ -2836,7 +2998,7 @@ mod writer_footprint_tests {
             tenant: None,
         };
         let findings = crate::check_artifact_set(&artifacts, &context);
-        assert!(findings.is_empty(), "{findings:?}");
+        assert_eq!(findings, [], "{findings:?}");
         let action = artifacts
             .iter_mut()
             .find(|artifact| artifact.kind() == ArtifactKind::Action)
@@ -2873,20 +3035,20 @@ mod writer_footprint_tests {
             object_type: "commerce.SalesOrder".into(),
             id_field: "so_number".into(),
         });
-        assert!(create_link_findings(action, &root, &model).is_empty());
+        assert_eq!(create_link_findings(action, &root, &model), []);
         root.writes.clear();
-        assert!(!create_link_findings(action, &root, &model).is_empty());
+        assert_ne!(create_link_findings(action, &root, &model), []);
         root.writes.push(norn_ir::ActionWrite {
             entity_kind: "commerce.SalesOrder".into(),
             change: WriteChange::Modified,
         });
-        assert!(!create_link_findings(action, &root, &model).is_empty());
+        assert_ne!(create_link_findings(action, &root, &model), []);
         root.create_links[0]
             .source
             .as_mut()
             .expect("source")
             .id_field = "undeclared".into();
-        assert!(!create_link_findings(action, &root, &model).is_empty());
+        assert_ne!(create_link_findings(action, &root, &model), []);
     }
 
     #[test]

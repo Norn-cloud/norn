@@ -388,7 +388,7 @@ mod subset_tests {
             let mut oracle = SatCountingOracle { calls: 0 };
             let result = diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 4096)
                 .expect("SAT needs no subset enumeration");
-            assert!(result.cores.is_empty());
+            assert_eq!(result.cores.len(), 0);
             assert_eq!(result.corrections, BTreeSet::from([BTreeSet::new()]));
             assert_eq!(result.calls, 2);
             assert_eq!(oracle.calls, 2);

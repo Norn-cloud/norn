@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { Conversion } from "../../registry/core/src/physics"
+import { Conversion } from "../../registry/core/src/rea"
 
 const StoredMeasurements = Schema.Struct({
   id: Schema.String,

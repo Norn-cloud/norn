@@ -1,9 +1,10 @@
 //! The hosted load, end to end and natively: a cell provisioned the way the
 //! hosted stage provisions a tenant (the host's trusted base, plus the
-//! registry packs as the tenant's submission), then the demo dataset
-//! `demo/data/generate.py` writes, loaded through `POST /v1/observations:load`
-//! in the slices `demo/data/load.py` sends. Every row must land: a quarantined
-//! row here is a row the alpha would quarantine.
+//! registry packs as the tenant's submission), then the committed
+//! `registry/packs/{erpnext,shopify,odoo}/synthetic.json` snapshots, loaded
+//! through `POST /v1/observations:load` in bounded slices (a slice the load
+//! refuses as too large is halved). Every row must land: a quarantined row here is a
+//! row a hosted tenant would quarantine.
 //!
 //! The tenant submits the cell-owned evidence types (`norn.ObservedLinkClaim`,
 //! `norn.SourceEvidence`) only while the trusted base does not carry them, so
@@ -38,28 +39,8 @@ use serde_json::{Value, json};
 const ISSUER: &str = "https://studio-preview.example";
 const LINEAGE_KEY: [u8; 32] = [7; 32];
 const NOW: u64 = 1_800_000_000;
-/// The packs the hosted tenant submits.
-const PACKS: [&str; 9] = [
-    "canon",
-    "documents",
-    "erpnext",
-    "erpnext-sandbox",
-    "locale-ar",
-    "odoo",
-    "odoo-sandbox",
-    "shopify",
-    "sources",
-];
-/// Core evidence types the base lacks: the link claims and source evidence the
-/// cell writes for every mapped link and source row, and the source-document
-/// interface the documents pack implements. Submitted only while the base
-/// lacks them.
-const CELL_OWNED: [&str; 3] = [
-    "norn.ObservedLinkClaim.entity.json",
-    "norn.SourceDocument.interface.json",
-    "norn.SourceEvidence.interface.json",
-];
-
+/// The per-load row bound `POST /v1/observations:load` enforces.
+const MAX_LOAD_ROWS: usize = 100;
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -92,7 +73,7 @@ fn owner(org: &str) -> String {
 fn tenant_set() -> Vec<Value> {
     let base = base::trusted_base().unwrap();
     let mut files: Vec<PathBuf> = Vec::new();
-    for pack in PACKS {
+    for pack in base::TENANT_PACKS {
         let dir = repo().join("registry/packs").join(pack).join("artifacts");
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
@@ -101,8 +82,8 @@ fn tenant_set() -> Vec<Value> {
             }
         }
     }
-    for name in CELL_OWNED {
-        files.push(repo().join("registry/core/artifacts").join(name));
+    for name in base::CELL_OWNED {
+        files.push(repo().join(format!("registry/core/artifacts/{name}.json")));
     }
     let mut set = BTreeMap::new();
     for path in files {
@@ -117,31 +98,20 @@ fn tenant_set() -> Vec<Value> {
     set.into_values().collect()
 }
 
-/// The demo dataset, as `generate.py` writes it (its default seed and size).
-fn dataset(out: &Path) -> Vec<(String, Value)> {
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the gate loads the dataset the demo's own generator writes"
-    )]
-    let status = std::process::Command::new("python3")
-        .arg("-I")
-        .arg(repo().join("demo/data/generate.py"))
-        .arg(out)
-        .stdout(std::process::Stdio::null())
-        .status()
-        .expect("python3 runs demo/data/generate.py (a setup error, not a skip)");
-    assert!(status.success(), "demo/data/generate.py failed");
+/// The committed synthetic snapshots of the three systems.
+fn dataset() -> Vec<(String, Value)> {
     ["erpnext", "shopify", "odoo"]
         .into_iter()
         .map(|system| {
-            let text = std::fs::read_to_string(out.join(format!("{system}.json"))).unwrap();
+            let path = repo().join(format!("registry/packs/{system}/synthetic.json"));
+            let text = std::fs::read_to_string(path).unwrap();
             (system.to_owned(), serde_json::from_str(&text).unwrap())
         })
         .collect()
 }
 
 #[test]
-fn the_demo_dataset_lands_whole_on_a_hosted_style_tenant() {
+fn the_synthetic_snapshots_land_whole_on_a_hosted_style_tenant() {
     let scope = CellScope {
         org_id: "org_hosted".into(),
         environment_id: "alpha".into(),
@@ -186,22 +156,57 @@ fn the_demo_dataset_lands_whole_on_a_hosted_style_tenant() {
     let vars = json!({
         "NORN_S3_ENDPOINT": "https://storage.example.test",
         "NORN_S3_BUCKET": "uploads-bucket",
-        "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
-        "NORN_SECRET_S3_SECRET_ACCESS_KEY": "secret",
+        "NORN_S3_ACCESS_KEY_ID": "key-id",
+        "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
     let mut connect = Connect::new("[]", &vars.to_string()).unwrap();
     let mut quarantined = BTreeMap::<String, u64>::new();
     let (mut landed, mut total) = (0_u64, 0_u64);
-    for (system, document) in dataset(directory.path()) {
+    let load = |connect: &mut Connect, tenant: &Tenant<NativeEngine>, body: &str| {
+        let host = tenant.serving_host().expect("a provisioned cell serves");
+        let routed = connect
+            .route(
+                Some(host),
+                &tokens,
+                &Request {
+                    method: "POST",
+                    path: "/v1/observations:load",
+                    query: &query,
+                    authorization: Some(&owner),
+                    now: NOW,
+                    body,
+                },
+                0,
+            )
+            .expect("a connect route");
+        let answer: Value = serde_json::from_str(&routed.response.body).unwrap();
+        (routed.response.status, answer)
+    };
+    for (system, document) in dataset() {
         let header: serde_json::Map<String, Value> = document
             .as_object()
             .unwrap()
             .iter()
-            .filter(|(key, _)| *key != "snapshot")
+            .filter(|(key, _)| !matches!(key.as_str(), "snapshot" | "incremental"))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
         let rows = document["snapshot"].as_array().unwrap();
-        let (mut start, mut limit) = (0, 100);
+        // A slice past the per-load row bound is refused 413 before anything
+        // is captured: every row still lands exactly once below.
+        let mut oversized = header.clone();
+        oversized.insert(
+            "snapshot".into(),
+            Value::Array(
+                rows.iter()
+                    .cycle()
+                    .take(MAX_LOAD_ROWS + 1)
+                    .cloned()
+                    .collect(),
+            ),
+        );
+        let (status, answer) = load(&mut connect, &tenant, &Value::Object(oversized).to_string());
+        assert_eq!(status, 413, "{system}: {answer}");
+        let (mut start, mut limit) = (0, MAX_LOAD_ROWS);
         while start < rows.len() {
             let count = limit.min(rows.len() - start);
             let mut body = header.clone();
@@ -209,30 +214,13 @@ fn the_demo_dataset_lands_whole_on_a_hosted_style_tenant() {
                 "snapshot".into(),
                 Value::Array(rows[start..start + count].to_vec()),
             );
-            let body = Value::Object(body).to_string();
-            let host = tenant.serving_host().expect("a provisioned cell serves");
-            let routed = connect
-                .route(
-                    Some(host),
-                    &tokens,
-                    &Request {
-                        method: "POST",
-                        path: "/v1/observations:load",
-                        query: &query,
-                        authorization: Some(&owner),
-                        now: NOW,
-                        body: &body,
-                    },
-                    0,
-                )
-                .expect("a connect route");
-            let answer: Value = serde_json::from_str(&routed.response.body).unwrap();
-            if routed.response.status == 413 && count > 1 {
-                // As load.py: a slice past the per-load bounds is halved.
+            let (status, answer) = load(&mut connect, &tenant, &Value::Object(body).to_string());
+            if status == 413 && count > 1 {
+                // A slice past the per-load bounds is halved.
                 limit = count / 2;
                 continue;
             }
-            assert_eq!(routed.response.status, 200, "{system}: {answer}");
+            assert_eq!(status, 200, "{system}: {answer}");
             landed += answer["landed"].as_u64().unwrap();
             total += u64::try_from(count).unwrap();
             for (reason, n) in answer["quarantineReasons"].as_object().unwrap() {
@@ -243,11 +231,15 @@ fn the_demo_dataset_lands_whole_on_a_hosted_style_tenant() {
             start += count;
         }
     }
-    assert!(
-        quarantined.is_empty(),
+    assert_eq!(
+        quarantined.len(),
+        0,
         "{landed} of {total} rows landed; quarantined: {quarantined:#?}"
     );
-    // Every generated row is a distinct source event: each lands, once.
+    // Every snapshot row is a distinct source event: each lands, once.
     assert_eq!(landed, total, "every row lands");
-    assert!(total > 2000, "the whole demo dataset loads ({total} rows)");
+    assert!(
+        total >= 21,
+        "every committed snapshot row loads ({total} rows)"
+    );
 }

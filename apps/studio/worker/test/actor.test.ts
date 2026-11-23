@@ -19,9 +19,10 @@ function stage(host?: (request: Request) => Response) {
     AUTH_DB: db as unknown as D1Database,
     BETTER_AUTH_SECRET: "t".repeat(40),
     BETTER_AUTH_URL: ORIGIN,
+    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     ...host === undefined ? {} : { NORN_HOST: { fetch: async (request: Request) => { seen.push(request); return host(request) } } as unknown as Fetcher },
   }
-  return { env, db, seen, auth: createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN }) }
+  return { env, db, seen, auth: createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN }) }
 }
 
 let address = 0
@@ -118,7 +119,7 @@ test("a cookie-authenticated write from anywhere but the Studio origin never rea
 test("a live socket (UI-LIVE-1) opens only from the Studio origin and reaches the host with the host token and its handshake", async () => {
   const { env, seen } = stage(() => new Response(null, { status: 204 }))
   const cookie = await signUp(env, "live@example.com")
-  const handshake = { cookie, upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13", "sec-websocket-protocol": "norn.live.v1" }
+  const handshake = { cookie, upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": btoa("the sample nonce"), "sec-websocket-version": "13", "sec-websocket-protocol": "norn.live.v1" }
   // Cross-site socket hijacking: the browser sends the cookie on an upgrade from any page.
   for (const origin of ["https://evil.norn.cloud", "null", undefined]) {
     const headers: Record<string, string> = { ...handshake }

@@ -669,6 +669,11 @@ impl<X> ActionRefusal<X> {
             Self::PreconditionFailed { .. } | Self::WriteModeFailed { .. } => {
                 RefusalCategory::Precondition
             }
+            Self::ParameterRefused { error, .. } => match error {
+                norn_checker::parameter::ParameterError::Ambiguous => RefusalCategory::Conflict,
+                norn_checker::parameter::ParameterError::Missing => RefusalCategory::Precondition,
+                norn_checker::parameter::ParameterError::Invalid => RefusalCategory::Invalid,
+            },
             Self::IdempotencyConflict { .. }
             | Self::StalePreconditionRead { .. }
             | Self::StaleAggregateRead { .. } => RefusalCategory::Conflict,

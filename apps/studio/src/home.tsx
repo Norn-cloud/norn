@@ -4,9 +4,7 @@ import { ArrowRight, ArrowUp, Sigma, Sparkles } from "lucide-react"
 import { useState } from "react"
 import { useAssistant } from "@/assistant-slot"
 import { EmptyState, PageHeader } from "@/components/panel"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { StatStrip } from "@/components/kpi-tile"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { conceptTitle } from "./lib/catalog.ts"
@@ -23,8 +21,8 @@ const KEY_NUMBERS = 4
 /** "What do I do now": ask, what needs you, and the numbers that matter, each one click from where to act. */
 export function HomePage() {
   return (
-    <section className="space-y-8">
-      <PageHeader title="Home" description="Ask, act on what needs you, and read the numbers that matter. Every item opens where you act on it." />
+    <section className="max-w-5xl space-y-8">
+      <PageHeader title="Home" description="What needs you, and the numbers that matter. Every item opens where you act on it." />
       <AskBar />
       <InboxPanel />
       <KeyNumbers />
@@ -46,11 +44,11 @@ function AskBar() {
   }
   return (
     <form onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <InputGroup className="h-12 rounded-2xl bg-card shadow-elevation">
+      <InputGroup className="h-11 rounded-lg border-border bg-card dark:bg-card">
         <InputGroupAddon><Sparkles aria-hidden /></InputGroupAddon>
         <InputGroupInput aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)} />
         <InputGroupAddon align="inline-end">
-          <InputGroupButton type="submit" size="sm" variant="default" className="rounded-full" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
+          <InputGroupButton type="submit" size="sm" variant="default" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
     </form>
@@ -63,7 +61,7 @@ function refusalReason(result: Exclude<Evaluation, { kind: "answer" }>): string 
     case "not-a-question": return result.findings.map(({ message }) => message).filter(Boolean).join(" ") || "The server's checker refused it."
     case "refused": return result.refusal.message
     case "too-large": case "bad-request": return result.message || "The server refused it."
-    default: return "The cell did not answer."
+    case "unavailable": return "The cell did not answer."
   }
 }
 
@@ -88,40 +86,38 @@ function KeyNumbers() {
     })),
   })
   if (!live) return null
-  // A key number the server refused (or did not answer) leaves Home; its reason, in the server's words, is listed below.
-  const refused = picked.flatMap((metric, index) => { const data = answers[index]?.data; return data !== undefined && data.kind !== "answer" ? [{ metric, reason: refusalReason(data) }] : [] })
-  const shown = picked.filter((metric) => !refused.some((entry) => entry.metric === metric))
+  const entries = picked.map((metric, index) => ({ metric, answer: answers[index] }))
+  const shown = entries.filter(({ answer }) => answer?.data === undefined || answer.data.kind === "answer")
+  const refused = entries.flatMap(({ metric, answer }) => {
+    const data = answer?.data
+    return data && data.kind !== "answer" ? [{ metric, reason: refusalReason(data) }] : []
+  })
   return (
     <section aria-labelledby="key-numbers" className="space-y-3">
       <h2 id="key-numbers" className="text-section font-medium">Key numbers</h2>
-      {metrics.isPending && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: KEY_NUMBERS }, (_, index) => <Skeleton key={index} className="h-32 rounded-xl" />)}</div>}
+      {metrics.isPending && <Skeleton className="h-28 rounded-lg" />}
       {metrics.isError && <p className="text-sm text-muted-foreground">{metrics.error.message}</p>}
-      {metrics.data && picked.length === 0 && <EmptyState icon={Sigma}>No admitted measure adds up on its own yet.</EmptyState>}
+      {metrics.data && picked.length === 0 && <div className="rounded-lg border"><EmptyState icon={Sigma}>No admitted measure adds up on its own yet.</EmptyState></div>}
       {shown.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {shown.map((metric) => {
-            const answer = answers[picked.indexOf(metric)]
+        <StatStrip>
+          {shown.map(({ metric, answer }) => {
             const result = answer?.data?.kind === "answer" ? answer.data.read : undefined
             const [key] = Object.keys(result?.document.rows ?? {})
             const value = key === undefined ? undefined : result?.numbers.get(`/rows/${member(key)}/value`)
             return (
-              <Card key={metric.name} size="sm">
-                <CardHeader>
-                  <CardDescription>{conceptTitle(metric.objectType)}</CardDescription>
-                  <CardTitle className="text-sm font-medium">{metricHeading(metric)}</CardTitle>
-                  {result && <CardAction><Badge variant="outline" title={FRESHNESS[result.document.freshness].meaning}>{FRESHNESS[result.document.freshness].label}</Badge></CardAction>}
-                </CardHeader>
-                <CardContent>
-                  {answer?.isPending && <Skeleton className="h-8 w-24" />}
-                  {result && <p className="text-2xl font-semibold tracking-tight tabular-nums">{value === undefined ? "—" : groupDigits(value)}</p>}
-                </CardContent>
-                <CardFooter>
-                  <Button asChild variant="link" size="sm" className="h-auto px-0"><Link to="/metrics">Why this number<ArrowRight aria-hidden /></Link></Button>
-                </CardFooter>
-              </Card>
+              <section key={metric.name} data-slot="kpi" className="flex min-w-0 flex-col gap-1.5 px-4 py-3">
+                <h3 className="truncate text-meta text-muted-foreground" title={metricHeading(metric)}>{metricHeading(metric)}</h3>
+                {answer?.isPending && <Skeleton className="h-7 w-24" />}
+                {result && <p className="text-figure leading-none font-medium tracking-tight tabular-nums [overflow-wrap:anywhere]">{value === undefined ? "—" : groupDigits(value)}</p>}
+                <p className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
+                  <span className="truncate">{conceptTitle(metric.objectType)}</span>
+                  {result && <><span aria-hidden>·</span><span title={FRESHNESS[result.document.freshness].meaning}>{FRESHNESS[result.document.freshness].label}</span></>}
+                  <Link to="/metrics" className="ms-auto inline-flex shrink-0 items-center gap-0.5 text-foreground underline-offset-4 hover:underline">Why<ArrowRight aria-hidden className="size-3.5" /></Link>
+                </p>
+              </section>
             )
           })}
-        </div>
+        </StatStrip>
       )}
       {refused.length > 0 && (
         <ul className="space-y-0.5 text-meta text-muted-foreground" aria-label="Key numbers not shown">
@@ -131,4 +127,3 @@ function KeyNumbers() {
     </section>
   )
 }
-

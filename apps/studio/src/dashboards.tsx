@@ -87,7 +87,7 @@ export function DashboardsPage() {
   return (
     <section className="space-y-6">
       <PageHeader title="Dashboards" description="Saved sets of questions. Each is a definition the cell checks before it is kept."
-        actions={<Button size="sm" disabled={!cellAvailable} onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>} />
+        primary={<Button disabled={!cellAvailable} onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>} />
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
       {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
       {catalog.data && <DashboardAssistant catalog={catalog.data} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} />} />}

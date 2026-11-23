@@ -21,7 +21,10 @@
 //!   (HOST-PROVISION-1) creates it, then served and reopened on restart.
 //! - [`actions`]: governed action calls decided by the scope's own policy
 //!   (#1252).
-//! - `dev` (native only): `norn-dev-host`, the developer loop over a
+//! - `connections` (native only): connector credentials in a per-cell
+//!   vault, OAuth + PKCE, single-flight refresh and the pinned egress client
+//!   (D126).
+//! - `dev` (native, `native` feature): `norn-dev-host`, the developer loop over a
 //!   project's own SQLite cell, serving the same dispatch on loopback (#207).
 //! - [`olap`]: the cell's link to its tenant analytics engine (D102).
 //! - `olapd` (native, `duckdb`): `norn-olapd`, the tenant analytics engine
@@ -32,6 +35,8 @@ pub mod analytics;
 pub mod base;
 pub mod connect;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod connections;
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub mod dev;
 pub mod incident;
 pub mod mcp;
@@ -49,3 +54,20 @@ pub mod server;
 pub mod tenant;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
+
+/// Whether this build accepts fixture principals (the `fixtures` feature,
+/// local smoke builds only). The Worker and the deploy script read it from the
+/// built Wasm (`NornCell.fixturesEnabled`) and refuse such a build outside a smoke or
+/// test stage.
+#[must_use]
+pub const fn fixtures_enabled() -> bool {
+    cfg!(feature = "fixtures")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fixtures_enabled_reports_the_feature() {
+        assert_eq!(super::fixtures_enabled(), cfg!(feature = "fixtures"));
+    }
+}

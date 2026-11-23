@@ -18,8 +18,8 @@ profile, source, and evaluation failures. Invalid artifacts are findings.
 |---|---|---|
 | `checkArtifactSet(artifactsJson, contextJson)` | `check_artifact_set_json` | `{format: "norn-checker-abi/check@1", admitted, diagnostics, receipt, receiptSha256}` — `diagnostics` is the `norn-checker/diagnostics@1` document, `receipt` the Norn1 `norn-checker/receipt@2` document (both `null`-receipt when an envelope does not decode) |
 | `lifecycleDiagrams(artifactsJson)` | `lifecycle_diagrams_json` | `[{type, artifactId, property, mermaid}]` — Mermaid `stateDiagram-v2` per declared lifecycle |
-| `checkExpression(expr, envArtifactsJson, expectedType, selfType?)` | `check_expression_json` | `{format: "norn-checker-abi/expression@1", profile: "norn-zen/6", ok, inferred, diagnostics: [{code, message, span}], environment}` |
-| `evaluateExpression(expr, inputJson, profile?)` | `evaluate_expression_json` | `{format: "norn-checker-abi/evaluation@1", ok, profile: "norn-zen/6", unitsUsed, value | error}` — bounded `norn-expr` evaluation over explicit WidgetIR inputs |
+| `checkExpression(expr, envArtifactsJson, expectedType, selfType?)` | `check_expression_json` | `{format: "norn-checker-abi/expression@1", profile: "norn-zen/7", ok, inferred, diagnostics: [{code, message, span}], environment}` |
+| `evaluateExpression(expr, inputJson, profile?)` | `evaluate_expression_json` | `{format: "norn-checker-abi/evaluation@1", ok, profile: "norn-zen/7", unitsUsed, value | error}` — bounded `norn-expr` evaluation over explicit WidgetIR inputs |
 | `functionContract(manifestJson, invocationJson?, receiptJson?)` | `function_contract_json` | `{format: "norn-checker-abi/function@1", admitted, manifest: {digest, executionProfile}, invocation: {digest, inputIdentity, dependencyToken, actionKey}, receipt: {digest, resultIdentity}, diagnostics}` — the Function contract (T1-FN-1) admitted, with its Norn1 identities; finding pointers are prefixed `/manifest`, `/invocation`, `/receipt` |
 | `checkAgent(agentJson, contextJson)` | `check_agent_json` | `{format: "norn-checker-abi/agent@1", admitted, diagnostics}` — an agent definition payload (D58) admitted against `contextJson`; `diagnostics` is the `norn-checker/diagnostics@1` document with `agent.validation.*` codes and pointers into the payload |
 | `toolPort(schemaJson)` | `tool_port_json` | `{format: "norn-checker-abi/tool-port@1", ok, port \| refusal: {code, path, message}}` — a gateway tool's JSON Schema as a Norn port type (`{kind: string\|enum\|integer\|number\|boolean\|date\|datetime\|list\|map\|nullable\|record, …}`), or the first unsupported subschema by JSON Pointer |
@@ -52,7 +52,7 @@ profile, source, and evaluation failures. Invalid artifacts are findings.
   null slot values are refused. The input text is limited to 256 KiB. Pass raw
   text, not a JavaScript
   object, to preserve decimal tokens exactly.
-- `profile` for `evaluateExpression`: omitted or `"norn-zen/6"`. The runtime
+- `profile` for `evaluateExpression`: omitted or `"norn-zen/7"`. The runtime
   budget is fixed to the `norn.limits/1` decide fuel of 1,000,000 units;
   `unitsUsed` reports charged evaluator operations, including on failure.
   The source and input contract must already have passed WidgetIR admission
@@ -73,7 +73,9 @@ units; runtime failures retain the charged units.
 | `expr.budget.exhausted` | `limit`, `used`, `message` — the attempted charge exceeds the fixed budget; top-level `unitsUsed` remains capped at the limit |
 | `expr.number.invalid` | `input`, `reason` |
 | `expr.result.unsupported` | `typeName` |
-| `expr.output.invalid`, `expr.error.unknown` | `message` (and `argument` for output failures) — reserved for an output conversion failure or a future unclassified evaluator error |
+| `expr.error.unknown` | `message` — reserved for a future unclassified evaluator error |
+
+`expr.output.invalid` is retired (D113): evaluation no longer issues a receipt, so no output conversion step can fail.
 
 ## Build the npm package
 

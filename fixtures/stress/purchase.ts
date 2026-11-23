@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { Process } from "../../registry/core/src/physics"
+import { Process } from "../../registry/core/src/rea"
 
 const Order = Schema.Struct({
   id: Schema.String,

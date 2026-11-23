@@ -104,6 +104,7 @@ fn call<'a>(action: &'a ActionRoot, code: &str) -> ActionCall<'a> {
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 

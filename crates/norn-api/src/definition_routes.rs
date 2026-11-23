@@ -638,6 +638,7 @@ fn canonical(payload: &RawValue) -> Result<String, Refusal> {
 }
 
 /// Run `kind`'s validator: the canonical payload and every finding.
+/// `replaces` is the id's revision this payload would replace, if any.
 #[allow(
     clippy::too_many_arguments,
     reason = "a definition's identity, payload and the host context its validator reads"
@@ -651,6 +652,7 @@ fn validate<E: SqlEngine>(
     id: &str,
     kind: &str,
     payload: &RawValue,
+    replaces: Option<u64>,
 ) -> Result<(Admitted, Vec<RefusalDiagnostic>), Refusal> {
     let canonical = canonical(payload)?;
     let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
@@ -697,7 +699,12 @@ fn validate<E: SqlEngine>(
         }
         "binding" => {
             let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
-            findings.extend(crate::binding_definitions::check(payload.get(), &roles));
+            let anchor = retained_binding_anchor(host, id, replaces)?;
+            findings.extend(crate::binding_definitions::check(
+                payload.get(),
+                &roles,
+                anchor.as_ref(),
+            ));
         }
         "approval" => {
             let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
@@ -718,8 +725,7 @@ fn validate<E: SqlEngine>(
     let title = value
         .get(title_member)
         .and_then(Value::as_str)
-        .map(|title| title.trim().to_owned())
-        .unwrap_or_default();
+        .map_or_default(|title| title.trim().to_owned());
     let title = flow.as_ref().map_or(title, |flow| {
         flow.summary
             .title
@@ -770,41 +776,65 @@ fn approval_context<E: SqlEngine>(
     host: &DevHost<E>,
     id: &str,
 ) -> Result<(BTreeSet<String>, BTreeSet<String>), Refusal> {
+    let actions = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        reader
+            .installed_definitions(None)
+            .map_err(Refusal::host)?
+            .map(|active| serde_json::from_str::<Vec<Value>>(&active.canonical_set))
+            .transpose()
+            .map_err(Refusal::host)?
+            .unwrap_or_default()
+            .iter()
+            .filter(|artifact| artifact.get("kind").and_then(Value::as_str) == Some("action"))
+            .filter_map(|artifact| {
+                artifact
+                    .pointer("/payload/actionId")?
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .collect()
+    };
+    Ok((actions, gated_except(host, &|other| other == id)?))
+}
+
+/// The actions an active approval gates, skipping the approvals `skip` names.
+fn gated_except<E: SqlEngine>(
+    host: &DevHost<E>,
+    skip: &dyn Fn(&str) -> bool,
+) -> Result<BTreeSet<String>, Refusal> {
+    let mut gated = BTreeSet::new();
+    for record in active_approvals(host)? {
+        if skip(&record.id) {
+            continue;
+        }
+        let payload: Value = serde_json::from_str(&record.payload).map_err(Refusal::host)?;
+        if let Some(action) = payload.get("action").and_then(Value::as_str) {
+            gated.insert(action.to_owned());
+        }
+    }
+    Ok(gated)
+}
+
+/// Every active approval revision, ordered by id.
+pub(crate) fn active_approvals<E: SqlEngine>(
+    host: &DevHost<E>,
+) -> Result<Vec<RetainedDefinition>, Refusal> {
     let cell = host.cell()?;
     let reader = cell.store().read();
-    let actions = reader
-        .installed_definitions(None)
-        .map_err(Refusal::host)?
-        .map(|active| serde_json::from_str::<Vec<Value>>(&active.canonical_set))
-        .transpose()
-        .map_err(Refusal::host)?
-        .unwrap_or_default()
-        .iter()
-        .filter(|artifact| artifact.get("kind").and_then(Value::as_str) == Some("action"))
-        .filter_map(|artifact| {
-            artifact
-                .pointer("/payload/actionId")?
-                .as_str()
-                .map(str::to_owned)
-        })
-        .collect();
-    let mut gated = BTreeSet::new();
+    let mut approvals = Vec::new();
     let mut after: Option<String> = None;
     loop {
         let page = reader
             .retained_definitions("approval", false, after.as_deref(), MAX_LIST_LIMIT)
             .map_err(Refusal::host)?;
-        for record in page.iter().filter(|record| record.definition.id != id) {
-            let payload: Value =
-                serde_json::from_str(&record.definition.payload).map_err(Refusal::host)?;
-            if let Some(action) = payload.get("action").and_then(Value::as_str) {
-                gated.insert(action.to_owned());
-            }
-        }
-        if page.len() < usize::try_from(MAX_LIST_LIMIT).unwrap_or(usize::MAX) {
-            return Ok((actions, gated));
-        }
+        let full = page.len() >= usize::try_from(MAX_LIST_LIMIT).unwrap_or(usize::MAX);
         after = page.last().map(|record| record.definition.id.clone());
+        approvals.extend(page.into_iter().map(|record| record.definition));
+        if !full {
+            return Ok(approvals);
+        }
     }
 }
 
@@ -826,6 +856,36 @@ fn binding_versions<E: SqlEngine>(
         }
         after = page.last().map(|record| record.definition.id.clone());
     }
+}
+
+/// The anchor of binding `id`'s retained revision `replaces`: its stored
+/// digest and the exact digest of its stored manifest. `None` when nothing
+/// is replaced or that revision is not a binding.
+fn retained_binding_anchor<E: SqlEngine>(
+    host: &DevHost<E>,
+    id: &str,
+    replaces: Option<u64>,
+) -> Result<Option<crate::binding_definitions::RetainedAnchor>, Refusal> {
+    let Some(replaces) = replaces else {
+        return Ok(None);
+    };
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .retained_definition(id, Some(replaces))
+        .map_err(Refusal::host)?
+        .filter(|record| record.definition.kind == "binding")
+        .and_then(|record| crate::binding_definitions::retained_anchor(&record.definition.payload)))
+}
+
+/// The id's current retained revision, if any: what an install would replace.
+fn current_revision<E: SqlEngine>(host: &DevHost<E>, id: &str) -> Result<Option<u64>, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .retained_definition(id, None)
+        .map_err(Refusal::host)?
+        .map(|record| record.definition.revision))
 }
 
 /// The cell's installed, non-retired binding definitions as agent tool
@@ -1295,6 +1355,7 @@ pub fn admit_definition<E: SqlEngine>(
         &request.id,
         &request.kind,
         &request.payload,
+        current_revision(host, &request.id)?,
     )?;
     let admitted = admitted(&diagnostics);
     let (restatement, restatement_sha256) = if admitted {
@@ -1502,7 +1563,11 @@ fn append<E: SqlEngine>(
                     CellError::RetainedDefinitionConflict { .. }
                     | CellError::DefinitionVersionConflict { .. },
                 ) => return Err(version_conflict()),
-                Err(error) => return Err(Refusal::host(error)),
+                // HOST-INSTALL-LIVE-1: the install's live-law check refused.
+                Err(error) => {
+                    return Err(crate::cell_definitions::live_law_refusal(&error)
+                        .unwrap_or_else(|| Refusal::host(error)));
+                }
             };
         if flow.is_some() {
             // A flow added or replaced its Run type in the model.
@@ -1559,6 +1624,7 @@ pub fn install_definition<E: SqlEngine>(
         &request.id,
         &request.kind,
         &request.payload,
+        request.expected_version,
     )?;
     if !admitted(&diagnostics) {
         return Err(refused(diagnostics));
@@ -1619,6 +1685,184 @@ pub fn install_definition<E: SqlEngine>(
         payload.flow.as_ref(),
         now_ms,
     )
+}
+
+/// One approval riding a kernel definitions apply (#1469): admitted against
+/// the candidate set's actions, restated, and (on apply) signed.
+#[derive(Debug)]
+pub(crate) struct RidingApproval {
+    /// The approval id.
+    pub(crate) id: String,
+    /// The id's current revision, if any.
+    pub(crate) from_revision: Option<u64>,
+    /// Whether the active revision is already this approval, signed or not.
+    pub(crate) unchanged: bool,
+    /// The revision to append: on an apply, `None` only when `unchanged`.
+    pub(crate) change: Option<RetainedDefinitionChange>,
+    /// The server's restatement and its digest: what the signer signs.
+    pub(crate) restatement: String,
+    pub(crate) restatement_sha256: String,
+}
+
+/// Admit `request`, an approval of an action in `actions` (the candidate
+/// set's actions), the way `:admit` admits one over the active set. With
+/// `signed_at`, it is an apply: the request's sign-off must match the
+/// restatement and its `expectedVersion` the id's current revision, and the
+/// revision to append is signed by `actor` at that time. `pointer` places the
+/// findings in the change request. An approval in `superseded` is revised or
+/// retired by the same commit, so its current action does not count against
+/// this one (a rename, or a gate moved to another action); the caller checks
+/// the change's own approvals against each other.
+///
+/// # Errors
+/// A non-approval kind, a refused approval, a missing or mismatched sign-off,
+/// a stale revision, or a host failure.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the approval, the candidate's actions, the apply's time and the retiring approvals decide one admission"
+)]
+pub(crate) fn riding_approval<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
+    kinds: &DefinitionKinds,
+    request: &InstallDefinitionRequest,
+    actions: &BTreeSet<String>,
+    signed_at: Option<u64>,
+    pointer: &str,
+    superseded: &BTreeSet<String>,
+) -> Result<RidingApproval, Refusal> {
+    let place = |mut findings: Vec<RefusalDiagnostic>| {
+        for finding in &mut findings {
+            let at = finding
+                .span
+                .as_ref()
+                .map_or("", |span| span.pointer.as_str());
+            finding.span = Some(crate::refusal::RefusalSpan {
+                pointer: format!("{pointer}/payload{at}"),
+            });
+        }
+        refused(findings)
+    };
+    if request.kind != "approval" {
+        return Err(place(vec![RefusalDiagnostic::error(
+            codes::INVALID_PAYLOAD,
+            "only approvals ride a definitions apply",
+            "",
+        )]));
+    }
+    check_new_id(host, &request.id)?;
+    let canonical = canonical(&request.payload)?;
+    let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
+    let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
+    let gated = gated_except(host, &|other| {
+        other == request.id || superseded.contains(other)
+    })?;
+    let findings = crate::approval_definitions::check(&value, actions, &roles, &gated);
+    if !admitted(&findings) {
+        return Err(place(findings));
+    }
+    let restatement = approval_restatement(kinds, &canonical)?;
+    let restatement_sha256 = payload_sha256(&restatement);
+    let current = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        reader
+            .retained_definition(&request.id, None)
+            .map_err(Refusal::host)?
+    };
+    let from_revision = current.as_ref().map(|current| current.definition.revision);
+    let unchanged = current.as_ref().is_some_and(|current| {
+        current.definition.lifecycle == RetainedLifecycle::Active
+            && current.definition.payload == canonical
+    });
+    let change = match signed_at {
+        Some(signed_at) if !unchanged => Some(signed_approval(
+            kinds,
+            actor,
+            request,
+            canonical,
+            &value,
+            from_revision,
+            signed_at,
+        )?),
+        _ => None,
+    };
+    Ok(RidingApproval {
+        id: request.id.clone(),
+        from_revision,
+        unchanged,
+        change,
+        restatement,
+        restatement_sha256,
+    })
+}
+
+/// The server's words for an approval: what its signer signs.
+fn approval_restatement(kinds: &DefinitionKinds, canonical: &str) -> Result<String, Refusal> {
+    let unavailable = |detail: String| {
+        Refusal::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            codes::SIGNOFF_UNAVAILABLE,
+            "the sign-off cannot be verified",
+            detail,
+        )
+    };
+    let restate = kinds.restater.ok_or_else(|| {
+        unavailable(
+            "this cell has no restatement generator, so it cannot install an approval".to_owned(),
+        )
+    })?;
+    restate("approval", canonical, &[]).map_err(unavailable)
+}
+
+/// The next revision of an approval, signed by `actor` at `signed_at`: the
+/// request's sign-off must match its words, and its `expectedVersion` the
+/// id's current revision.
+fn signed_approval(
+    kinds: &DefinitionKinds,
+    actor: &str,
+    request: &InstallDefinitionRequest,
+    canonical: String,
+    value: &Value,
+    from_revision: Option<u64>,
+    signed_at: u64,
+) -> Result<RetainedDefinitionChange, Refusal> {
+    let claimed = request.signoff.as_ref().ok_or_else(|| {
+        Refusal::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            codes::SIGNOFF_REQUIRED,
+            "an approval is installed by signing the server's words for it",
+            "plan the change, read each approval's restatement, and apply it with signoff.restatementSha256",
+        )
+    })?;
+    let verified = verify_signoff(kinds, "approval", &canonical, &[], claimed)?;
+    if request.expected_version != from_revision {
+        return Err(version_conflict());
+    }
+    let revision = from_revision
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(version_conflict)?;
+    Ok(RetainedDefinitionChange {
+        definition: RetainedDefinition {
+            kind: "approval".to_owned(),
+            id: request.id.clone(),
+            revision,
+            lifecycle: RetainedLifecycle::Active,
+            title: value
+                .get("action")
+                .and_then(Value::as_str)
+                .map_or_default(|title| title.trim().to_owned()),
+            payload_sha256: payload_sha256(&canonical),
+            payload: canonical,
+            signoff: Some(RetainedSignoff {
+                signer: actor.to_owned(),
+                signed_at,
+                restatement_sha256: verified,
+            }),
+        },
+        expected_revision: from_revision,
+    })
 }
 
 /// Recompute the restatement of an admitted payload and check the signer's

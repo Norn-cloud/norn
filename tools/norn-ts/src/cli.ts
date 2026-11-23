@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /** Compile typed definitions and run the authoritative Rust checker ABI. */
-import { statSync, writeFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { existsSync, statSync, writeFileSync } from "node:fs"
+import { join, resolve } from "node:path"
 import { ProfileChecker } from "./check.ts"
 import { compileDashboards, compileQuestions } from "./compiler/definitions.ts"
 import { loadChecker, sourceMappedDiagnostics } from "./checker-abi.ts"
@@ -57,8 +57,9 @@ function option(name: string): string | undefined {
   const index = flags.indexOf(name)
   return index < 0 ? undefined : flags[index + 1]
 }
+const hasFlag = (name: string): boolean => flags.includes(name)
 if (!input || (command !== "check" && command !== "compile" && command !== "profile" && command !== "question" && command !== "dashboard")) {
-  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn dashboard <file.ts> [--out FILE]\n       norn init <dir> | norn dev [--port N] [--json] | norn fmt\n       norn plan|apply <pack-dir|file.ts> --url URL --org ID --env ID (--email EMAIL --password-env VAR | --token-env VAR)\n")
+  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--forbid-unsafe-zen] [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn dashboard <file.ts> [--out FILE]\n       norn init <dir> | norn dev [--port N] [--json] | norn fmt\n       norn plan|apply <pack-dir|file.ts> --url URL --org ID --env ID (--email EMAIL --password-env VAR | --token-env VAR)\n")
   process.exit(2)
 }
 if (command === "profile") {
@@ -86,9 +87,13 @@ if (command === "dashboard") {
   else process.stdout.write(document)
   process.exit(0)
 }
+// A project directory (one holding norn.json) is read exactly as `norn dev`
+// and `norn explain` read it: its manifest's sources and scope, its JSON
+// artifacts and definitions (one loader, `compileProjectPack`).
+const project = statSync(input).isDirectory() && existsSync(join(input, "norn.json"))
 const orgId = option("--org")
 const environmentId = option("--env")
-if (!orgId || !environmentId) {
+if (!project && (!orgId || !environmentId)) {
   process.stderr.write("--org and --env are required\n")
   process.exit(2)
 }
@@ -97,7 +102,20 @@ if (command === "check") {
   const { warnAuthoringVersion } = await import("./authoring-version.ts")
   warnAuthoringVersion(resolve(input))
 }
-const pack = compilePack(resolve(input), { scope: { orgId, environmentId }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
+const forbidUnsafeZen = hasFlag("--forbid-unsafe-zen") ? true : undefined
+const pack = project
+  ? await (async () => {
+      const { readProject } = await import("./project.ts")
+      const { compileProjectPack } = await import("./worker.ts")
+      const { root, manifest } = readProject(resolve(input))
+      return compileProjectPack(root, manifest, { ...(forbidUnsafeZen !== undefined ? { forbidUnsafeZen } : {}) })
+    })()
+  : compilePack(resolve(input), {
+      scope: { orgId: orgId!, environmentId: environmentId! },
+      root: process.cwd(),
+      ...(forbidUnsafeZen !== undefined ? { forbidUnsafeZen } : {}),
+      ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}),
+    })
 if (!pack.ok) {
   process.stdout.write(`${JSON.stringify(pack)}\n`)
   process.exit(1)

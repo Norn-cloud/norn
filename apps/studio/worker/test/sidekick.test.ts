@@ -27,7 +27,7 @@ function stage(mcp = true): Env & { forwarded: { url: string; authorization: str
     },
   } as unknown as Fetcher
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
-  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "s".repeat(40), BETTER_AUTH_URL: ORIGIN, NORN_HOST: host, ...mcp ? { STUDIO_MCP: "on" } : {}, forwarded }
+  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "s".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", NORN_HOST: host, ...mcp ? { STUDIO_MCP: "on" } : {}, forwarded }
 }
 
 let address = 0

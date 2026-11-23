@@ -36,6 +36,7 @@ use norn_ir::identifier_limits::{MAX_LINK_NAME_BYTES, MAX_OBJECT_TYPE_NAME_BYTES
 use norn_ir::{
     ExtensionNamespace, InterfaceDef, InterfaceLink, InterfaceName, Invariant, Link,
     LinkCardinality, Multiplicity, ObjectTypeDef, ObjectTypeExtension, ObjectTypeName, Property,
+    PropertyType, PropertyTypeDef, PropertyTypeName,
 };
 
 use super::Checker;
@@ -541,8 +542,7 @@ impl<'a> Checker<'a, '_> {
         let pointer = diagnostic
             .span
             .as_ref()
-            .map(|span| span.pointer.clone())
-            .unwrap_or_default();
+            .map_or_default(|span| span.pointer.clone());
         let code = diagnostic.code.as_str().to_owned();
         if self.reported.insert((code, pointer)) {
             self.out.push(diagnostic);
@@ -1311,7 +1311,8 @@ impl<'a> Checker<'a, '_> {
         };
         // A per-artifact object check has no installed base layer. Its
         // missing supertype is already a model-level refusal, so defer this
-        // invariant's member typing until the complete model is available.
+        // invariant's member typing until the complete model is available,
+        // while still enforcing profile source bounds and construct allowlist.
         if let InvariantSubject::Object(name) = subject
             && self.types.get(name).is_some_and(|entry| {
                 entry
@@ -1321,6 +1322,7 @@ impl<'a> Checker<'a, '_> {
                     .is_some_and(|parent| !self.types.contains_key(parent))
             })
         {
+            self.check_invariant_profile_constructs(at, invariant);
             return;
         }
         if let InvariantSubject::Interface(name) = subject
@@ -1332,6 +1334,19 @@ impl<'a> Checker<'a, '_> {
                     .any(|parent| !self.interfaces.contains_key(parent))
             })
         {
+            self.check_invariant_profile_constructs(at, invariant);
+            return;
+        }
+        // Only local, catalog-absent per-artifact (T2) checking defers member
+        // typing on unresolved `PropertyType::Ref` properties, because no
+        // property-type catalog is loaded yet. Even then, source bounds and
+        // the profile construct/builtin allowlist still fail closed locally.
+        // Whole-model (T3) checking never skips `check_invariant_type`.
+        if self.local_only
+            && self.context.catalog.is_empty()
+            && self.subject_has_unresolved_property_ref(subject)
+        {
+            self.check_invariant_profile_constructs(at, invariant);
             return;
         }
         let (detail, cross_object_link) = self.invariant_expression_detail(&expression, subject);
@@ -1354,6 +1369,54 @@ impl<'a> Checker<'a, '_> {
             message,
             span_at(at, &["expression"]),
         ));
+    }
+
+    fn check_invariant_profile_constructs(&mut self, at: &[&str], invariant: &Invariant) {
+        let limits = norn_ir::ResourceLimitProfile::norn_limits_v1();
+        if let Err(diagnostics) =
+            norn_expr::validate_profile_constructs(invariant.expression.as_str(), &limits)
+        {
+            let detail = diagnostics.first().map_or_else(
+                || "expression uses a construct outside the admitted profile".to_owned(),
+                |diagnostic| diagnostic.message.clone(),
+            );
+            self.out.push(error(
+                codes::INVALID_INVARIANT_EXPRESSION,
+                format!(
+                    "the expression of invariant {:?} is not an admitted ZEN Expression: {detail}",
+                    invariant.id.as_str()
+                ),
+                span_at(at, &["expression"]),
+            ));
+        }
+    }
+
+    fn subject_has_unresolved_property_ref(&self, subject: InvariantSubject<'_>) -> bool {
+        let unresolved = |property_type: &PropertyType| {
+            let mut seen = BTreeSet::new();
+            property_type_has_unresolved_ref(
+                property_type,
+                self.context.catalog,
+                self.context.registry,
+                &mut seen,
+            )
+        };
+        match subject {
+            InvariantSubject::Object(name) => self.types.get(name).is_some_and(|entry| {
+                entry
+                    .def
+                    .properties
+                    .iter()
+                    .any(|property| unresolved(&property.property_type))
+            }),
+            InvariantSubject::Interface(name) => self.interfaces.get(name).is_some_and(|entry| {
+                entry
+                    .def
+                    .properties
+                    .iter()
+                    .any(|property| unresolved(&property.property_type))
+            }),
+        }
     }
 
     fn invariant_expression_detail(
@@ -1497,6 +1560,39 @@ impl<'a> Checker<'a, '_> {
             self.context.registry,
             norn_expr::EnvOptions::default(),
         )
+    }
+}
+
+fn property_type_has_unresolved_ref(
+    property_type: &PropertyType,
+    catalog: &[PropertyTypeDef],
+    registry: &BTreeSet<PropertyTypeName>,
+    seen: &mut BTreeSet<String>,
+) -> bool {
+    match property_type {
+        PropertyType::Ref { name, .. } => {
+            if !seen.insert(name.as_str().to_owned()) {
+                return false;
+            }
+            if let Some(def) = catalog.iter().find(|def| &def.name == name) {
+                property_type_has_unresolved_ref(&def.property_type, catalog, registry, seen)
+            } else {
+                !registry.contains(name)
+            }
+        }
+        PropertyType::Record { members } => members.iter().any(|member| {
+            property_type_has_unresolved_ref(&member.property_type, catalog, registry, seen)
+        }),
+        PropertyType::Text { .. }
+        | PropertyType::Integer { .. }
+        | PropertyType::Decimal { .. }
+        | PropertyType::DecimalBinding { .. }
+        | PropertyType::Boolean { .. }
+        | PropertyType::Timestamp { .. }
+        | PropertyType::Date { .. }
+        | PropertyType::Duration { .. }
+        | PropertyType::Enum { .. }
+        | PropertyType::JsonExt { .. } => false,
     }
 }
 

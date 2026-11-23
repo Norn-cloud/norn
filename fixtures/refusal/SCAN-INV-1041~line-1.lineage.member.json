@@ -1,0 +1,12 @@
+{
+  "status": 404,
+  "body": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "object.not_found",
+    "category": "visibility",
+    "message": "no such readable object",
+    "explanation": "the object does not exist or is not readable by this principal"
+  }
+}

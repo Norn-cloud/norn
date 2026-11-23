@@ -14,7 +14,7 @@ const objectType = fixture("scrap-yield.object-type.json")
 const metrics = fixture("scrap-yield.metrics.json")
 const SHOTS = process.env.SHOTS ?? "test-results/shots"
 /** The cell's own guard documents for one assistant prompt (crates/norn-api/tests/privacy.rs writes them). */
-const privacy = (name: string) => JSON.parse(readFileSync(new URL(`../../../fixtures/demo/privacy/${name}`, import.meta.url), "utf8"))
+const privacy = (name: string) => JSON.parse(readFileSync(new URL(`../../../fixtures/privacy/${name}`, import.meta.url), "utf8"))
 
 const catalog = {
   objectSet: "demo.Conversion",
@@ -56,6 +56,8 @@ const proposed = {
 const words = "Refinery overview\nProposed by the assistant (claude-sonnet-5-5) for the request: \"%\"\n1. Yield in total: Yield (recovered ÷ input) of demo Conversion records, in total, from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old\n2. Recovered by metal: Recovered (sum of recovered) of demo Conversion records, by metal, ...\n3. Yield, weekly: Yield (recovered ÷ input) of demo Conversion records, by week of occurred at, ..."
 
 async function stage(page: Page) {
+  // The cell's question catalog, which a live answer's drill menu reads for what it can break a bucket out by.
+  await page.route("**/api/host/v1/questions:catalog**", (route) => route.fulfill({ json: { objectTypes: [{ name: "demo.Conversion", properties: objectType.properties }] } }))
   await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "Analyst", email: "analyst@example.com" }, organization: { id: "org_demo", name: "Demo", role: "member" }, environmentId: "analytics" } }))
   await page.route("**/api/questions/catalog", (route) => route.fulfill({ json: catalog }))
   await page.route("**/api/host/v1/questions:evaluate**", (route) => route.fulfill({ json: answerFor((route.request().postDataJSON() as { question: Parameters<typeof answerFor>[0] }).question) }))
@@ -78,7 +80,7 @@ async function stage(page: Page) {
         state: refused ? "refused" : "pending",
         verdict: refused
           ? { admitted: false, findings: [{ code: "definition.view_invalid", message: "a pie shows the parts of one whole, so its question sums one additive, non-ratio measure over one category without a time grain", pointer: "/tiles/0/view" }], restatement: null, restatementSha256: null, note: "Yield is a ratio, so it cannot be shown as parts of a whole." }
-          : { admitted: true, findings: [], restatement: words.replace("%", request), restatementSha256: "c".repeat(64), note: "A headline yield, how recovered metal splits by metal, and the weekly yield trend.", ...guarded },
+          : { admitted: true, findings: [], restatement: words.replaceAll("%", request), restatementSha256: "c".repeat(64), note: "A headline yield, how recovered metal splits by metal, and the weekly yield trend.", ...guarded },
       }
       proposals.push(proposal)
       return route.fulfill({ json: proposal })
@@ -168,6 +170,113 @@ test("dashboard row: ask, read the checker's verdict, accept, open the board, ed
   await expect(refused.getByText(/a pie shows the parts of one whole/)).toBeVisible()
   await expect(refused.getByRole("button", { name: "Accept and save" })).toHaveCount(0)
   await page.screenshot({ path: `${SHOTS}/3-refused.png`, fullPage: true })
+})
+
+/** Propose the weekly dashboard, accept it, and open the saved board. */
+async function board(page: Page) {
+  await stage(page)
+  await page.goto("/dashboards")
+  await page.getByRole("button", { name: /^Weekly / }).click()
+  await page.getByRole("button", { name: "Propose" }).click()
+  await page.locator("[data-proposal=prop_1]").getByRole("button", { name: "Accept and save" }).click()
+  await expect(page.getByRole("heading", { name: "Refinery overview" })).toBeVisible()
+  await expect(page.locator("[data-view=line]")).toBeVisible()
+}
+
+test("a tile's details sheet: its menu and popover open above it, take the pointer, and Escape closes them before the sheet", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
+  await board(page)
+  const details = page.getByRole("button", { name: "Details" }).nth(2)
+  const sheet = page.getByRole("dialog", { name: "Yield, weekly" })
+  await details.click()
+  await expect(sheet).toBeVisible()
+
+  // The popover renders in the sheet's top layer: a click on it lands on it, not on the sheet's backdrop.
+  await sheet.getByRole("button", { name: "How this number was read" }).click()
+  const popover = sheet.locator("[data-slot=popover-content]")
+  await expect(popover).toBeVisible()
+  await popover.getByText("Known after").click()
+  await page.screenshot({ path: `${SHOTS}/tile-sheet-popover.png` })
+  await page.keyboard.press("Escape")
+  await expect(popover).toBeHidden()
+  await expect(sheet).toBeVisible()
+
+  // The drill menu too; Escape closes the menu first, then the sheet.
+  const drill = sheet.getByRole("button", { name: /^Drill into / }).first()
+  await drill.click()
+  const menu = sheet.getByRole("menu")
+  await expect(menu).toBeVisible()
+  // Settled once nothing runs: Popper moves the menu as it opens, which retargets its transform-origin
+  // transition, and a retargeted transition's `finished` rejects, so waiting on each one would fail.
+  await expect.poll(() => menu.evaluate((el) => el.getAnimations().filter((animation) => animation.playState === "running").length)).toBe(0)
+  await page.screenshot({ path: `${SHOTS}/tile-sheet-menu.png` })
+  await page.keyboard.press("Escape")
+  await expect(menu).toBeHidden()
+  await expect(sheet).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(sheet).toBeHidden()
+
+  // A menu item takes the pointer: it opens the bucket's records over the sheet.
+  await details.click()
+  await expect(sheet).toBeVisible()
+  await drill.click()
+  await sheet.getByRole("menuitem", { name: /^See the \d+ records?$/ }).click()
+  await expect(menu).toBeHidden()
+  await expect(page.getByText(/records the server added up, exactly as it counted them/)).toBeVisible()
+})
+
+test.describe("on a touch screen too", () => {
+  test.use({ hasTouch: true })
+
+  test("a press on blank space in a tile's sheet closes only its open menu; a press outside then closes the sheet", async ({ page }) => {
+    test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
+    await board(page)
+    const sheet = page.getByRole("dialog", { name: "Yield, weekly" })
+    const drill = sheet.getByRole("button", { name: /^Drill into / }).first()
+    const menu = sheet.getByRole("menu")
+    await page.getByRole("button", { name: "Details" }).nth(2).click()
+    await expect(sheet).toBeVisible()
+    // Measured once the sheet has slid into place: its entrance moves it up to 40px.
+    await expect.poll(() => sheet.evaluate((el) => el.getAnimations().filter((animation) => animation.playState === "running").length)).toBe(0)
+    const box = await sheet.boundingBox()
+    if (box === null) throw new Error("the sheet has no box")
+    // Presses at coordinates, as a person makes them: the sheet's blank bottom-left corner.
+    const blank = { x: box.x + 12, y: box.y + box.height - 12 }
+
+    // A mouse press, then a tap: each closes the menu and leaves the sheet open. (A tap reaches the
+    // UI SDK as a click whose press began on whatever was under it; while a modal Radix menu had the
+    // body's pointer events off, that was <html>, so the sheet closed too.)
+    await drill.click()
+    await expect(menu).toBeVisible()
+    await page.mouse.click(blank.x, blank.y)
+    await expect(menu).toBeHidden()
+    await expect(sheet).toBeVisible()
+    await drill.click()
+    await expect(menu).toBeVisible()
+    await page.touchscreen.tap(blank.x, blank.y)
+    await expect(menu).toBeHidden()
+    await expect(sheet).toBeVisible()
+
+    // The page's left edge is outside the sheet, which sits on the right.
+    await page.mouse.click(20, box.y + box.height / 2)
+    await expect(sheet).toBeHidden()
+  })
+})
+
+test("a sheet closed by Escape while it is still opening lets the next click through at once", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
+  await board(page)
+  // A slow entrance, so Escape lands mid-transition; the close must not wait for it.
+  await page.addStyleTag({ content: "[role=dialog][data-side] { transition-duration: 10s !important }" })
+  const details = page.getByRole("button", { name: "Details" }).nth(2)
+  const sheet = page.getByRole("dialog", { name: "Yield, weekly" })
+  await details.click()
+  await expect(sheet).toBeAttached()
+  await page.keyboard.press("Escape")
+  await expect(sheet).toBeHidden({ timeout: 2_000 })
+  // The page behind is live again: the same button opens the sheet once more.
+  await details.click({ timeout: 2_000 })
+  await expect(sheet).toBeAttached()
 })
 
 test("the assistant's model reads a safe prompt: typed placeholder chips, the guard's path, a restored reply, and Show original as a logged reveal", async ({ page }) => {

@@ -59,12 +59,13 @@ test("a subscriber who loses access gets the cell's refusal on the next commit, 
 
   // Access is revoked; the next commit re-asks, and the cell refuses.
   host.set({ status: 403, body: DENIED })
-  await live.publish({ getWebSockets: () => [ws] }, host.ask)
+  // publish resolves to the changed snapshots it sent (counted as norn_cell_live_snapshots_total).
+  expect(await live.publish({ getWebSockets: () => [ws] }, host.ask)).toBe(1)
   expect(ws.sent.at(-1)).toEqual({ type: "snapshot", id: "inbox", status: 403, digest: expect.any(String), body: JSON.parse(DENIED) })
 
   // Data changes behind the refusal: nothing is sent while the cell keeps refusing.
   const before = ws.sent.length
-  await live.publish({ getWebSockets: () => [ws] }, host.ask)
+  expect(await live.publish({ getWebSockets: () => [ws] }, host.ask)).toBe(0)
   expect(ws.sent).toHaveLength(before)
   expect(ws.sent.filter((m) => m.status === 200)).toHaveLength(1)
 })
@@ -85,4 +86,25 @@ test("only GET routes of the cell can be subscribed, at most a few per socket", 
   const host = cell({ status: 200, body: "{}" })
   for (let n = 0; n <= live.MAX_SUBSCRIPTIONS; n += 1) await live.message(ws, JSON.stringify({ type: "subscribe", id: `s${n}`, path: `/v1/objects/t${n}` }), host.ask)
   expect(ws.sent.at(-1)).toMatchObject({ type: "refused", code: "live.too_many_subscriptions" })
+})
+
+test("TENANT-ISOLATION-1: a subscription naming another tenant carries only the cell's answer, so it reads as a scope with no cell", async () => {
+  // The Rust suite (crates/norn-cell-do/tests/tenant_isolation.rs) pins that tenant B's cell answers an
+  // outsider's GET with the bytes a vacant scope answers. The live layer adds nothing of its own: the
+  // same answer yields the same frames, on subscribe and on every commit, and the socket stays open.
+  const path = "/v1/objects/canon.Item/item-b-1?orgId=org_demo&environmentId=dev"
+  const frames = async (answer: Reply) => {
+    const ws = new FakeSocket({ scope: ["org_demo", "dev"], authorization: "Bearer member-of-org_a", subs: {} })
+    const host = cell(answer)
+    await live.message(ws, JSON.stringify({ type: "subscribe", id: "b", path }), host.ask)
+    await live.publish({ getWebSockets: () => [ws] }, host.ask)
+    return { sent: ws.sent, closed: ws.closed, asked: host.asked }
+  }
+  const atB = await frames({ status: 403, body: DENIED })
+  const atNowhere = await frames({ status: 403, body: DENIED })
+  expect(atB).toEqual(atNowhere)
+  expect(atB.sent).toEqual([{ type: "snapshot", id: "b", status: 403, digest: expect.any(String), body: JSON.parse(DENIED) }])
+  expect(atB.closed).toBeNull()
+  // The cell is asked for exactly the GET named, as the subscriber: the scope is the cell's to admit.
+  expect(atB.asked.at(-1)).toEqual({ path: "/v1/objects/canon.Item/item-b-1", query: "orgId=org_demo&environmentId=dev", authorization: "Bearer member-of-org_a" })
 })

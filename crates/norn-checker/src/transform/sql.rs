@@ -34,6 +34,33 @@ use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverit
 /// The refusal of anything this dialect does not lower to a typed operator.
 pub const SQL_UNSUPPORTED: &str = "derived.validation.sql_unsupported";
 
+/// The longest SQL source the dialect reads, in bytes: the expression
+/// profile's source bound, checked before tokenizing.
+const MAX_SOURCE_BYTES: usize = 16_384;
+
+/// The most levels an expression nests: a parenthesis, `NOT`, unary minus,
+/// a call argument, a `CASE` branch or a window key opens one, and the parser
+/// recurses through every precedence level for each, so this bounds the
+/// parser's stack.
+///
+/// With [`MAX_HEIGHT`], measured over parse, lowering and admission of the
+/// worst shapes at the bounds (nested calls, `CASE` branches, window keys,
+/// chains under parentheses), the wasm32 release build peaks under 100 KiB of
+/// its 1 MiB stack and a native release build at about 175 KiB; the bound
+/// tests (`tests/transform_sql.rs`) hold every shape on a 1 MiB thread in the
+/// dev profile, whose frames are about five times larger.
+const MAX_NESTING: usize = 24;
+
+/// The tallest expression tree the parser builds: a node is one taller than
+/// its tallest operand, and a `COALESCE` as many taller as it has values
+/// (ZEN nests them pairwise). Parentheses add nesting but no height; a
+/// chained operator adds height but no nesting. This bounds the stack of
+/// every walk over the tree after the parse (the lowering, printing,
+/// dropping), however the source mixes nesting and chains. Every node emits
+/// at least two levels of ZEN (an operator in parentheses), whose own bound
+/// is 128, so a taller tree could not be admitted anyway.
+const MAX_HEIGHT: usize = 64;
+
 /// A lowered SQL transform: its inputs and the relational plan.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SqlPlan {
@@ -241,9 +268,51 @@ struct Parser {
     tokens: Vec<(Token, usize)>,
     position: usize,
     end: usize,
+    /// The nesting at the current position; see [`MAX_NESTING`].
+    nesting: usize,
+}
+
+/// A parsed expression and the height of its tree; see [`MAX_HEIGHT`].
+type Tall = (Ex, usize);
+
+/// The height of a node `by` taller than its tallest operand (of
+/// `heights`), refused past [`MAX_HEIGHT`].
+fn taller(
+    heights: impl IntoIterator<Item = usize>,
+    by: usize,
+    at: usize,
+) -> Result<usize, Refusal> {
+    let height = heights.into_iter().max().unwrap_or(0).saturating_add(by);
+    if height > MAX_HEIGHT {
+        return Err(refusal(
+            format!(
+                "the expression is built too deeply: at most {MAX_HEIGHT} operators stack along one path"
+            ),
+            at,
+        ));
+    }
+    Ok(height)
 }
 
 impl Parser {
+    /// Parse one nested level with `inner`, refused past [`MAX_NESTING`].
+    fn nested<T>(
+        &mut self,
+        inner: impl FnOnce(&mut Self) -> Result<T, Refusal>,
+    ) -> Result<T, Refusal> {
+        if self.nesting >= MAX_NESTING {
+            return Err(refusal(
+                format!("the expression is nested too deeply: at most {MAX_NESTING} levels nest"),
+                self.at(),
+            ));
+        }
+        let outer = self.nesting;
+        self.nesting = outer.saturating_add(1);
+        let parsed = inner(self);
+        self.nesting = outer;
+        parsed
+    }
+
     fn at(&self) -> usize {
         self.tokens
             .get(self.position)
@@ -484,35 +553,51 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Result<Ex, Refusal> {
-        let mut left = self.conjunction()?;
-        while self.eat_keyword("or") {
-            left = Ex::Binary("or", Box::new(left), Box::new(self.conjunction()?));
-        }
-        Ok(left)
+        Ok(self.tall_expression()?.0)
     }
 
-    fn conjunction(&mut self) -> Result<Ex, Refusal> {
-        let mut left = self.negation()?;
+    /// One nested level: an expression and its height.
+    fn tall_expression(&mut self) -> Result<Tall, Refusal> {
+        self.nested(|parser| {
+            let (mut left, mut height) = parser.conjunction()?;
+            while parser.eat_keyword("or") {
+                let at = parser.at();
+                let (right, right_height) = parser.conjunction()?;
+                height = taller([height, right_height], 1, at)?;
+                left = Ex::Binary("or", Box::new(left), Box::new(right));
+            }
+            Ok((left, height))
+        })
+    }
+
+    fn conjunction(&mut self) -> Result<Tall, Refusal> {
+        let (mut left, mut height) = self.negation()?;
         while self.eat_keyword("and") {
-            left = Ex::Binary("and", Box::new(left), Box::new(self.negation()?));
+            let at = self.at();
+            let (right, right_height) = self.negation()?;
+            height = taller([height, right_height], 1, at)?;
+            left = Ex::Binary("and", Box::new(left), Box::new(right));
         }
-        Ok(left)
+        Ok((left, height))
     }
 
-    fn negation(&mut self) -> Result<Ex, Refusal> {
+    fn negation(&mut self) -> Result<Tall, Refusal> {
         if self.eat_keyword("not") {
-            return Ok(Ex::Not(Box::new(self.negation()?)));
+            let at = self.at();
+            let (inner, height) = self.nested(Self::negation)?;
+            return Ok((Ex::Not(Box::new(inner)), taller([height], 1, at)?));
         }
         self.comparison()
     }
 
-    fn comparison(&mut self) -> Result<Ex, Refusal> {
+    fn comparison(&mut self) -> Result<Tall, Refusal> {
         let at = self.at();
-        let left = self.sum()?;
+        let (left, left_height) = self.sum()?;
         if self.eat_keyword("is") {
             let negated = self.eat_keyword("not");
             self.expect_keyword("null")?;
-            return Ok(Ex::IsNull(Box::new(left), negated));
+            let height = taller([left_height], 1, at)?;
+            return Ok((Ex::IsNull(Box::new(left), negated), height));
         }
         for (symbol, zen) in [
             ("=", "=="),
@@ -524,14 +609,15 @@ impl Parser {
             (">", ">"),
         ] {
             if self.eat_symbol(symbol) {
-                let right = self.sum()?;
+                let (right, right_height) = self.sum()?;
                 if matches!(left, Ex::Null) || matches!(right, Ex::Null) {
                     return Err(refusal(
                         "a comparison with NULL is never true in SQL; write IS [NOT] NULL",
                         at,
                     ));
                 }
-                return Ok(Ex::Binary(zen, Box::new(left), Box::new(right)));
+                let height = taller([left_height, right_height], 1, at)?;
+                return Ok((Ex::Binary(zen, Box::new(left), Box::new(right)), height));
             }
         }
         if self.keyword("in") || self.keyword("like") || self.keyword("between") {
@@ -540,97 +626,70 @@ impl Parser {
                 self.at(),
             ));
         }
-        Ok(left)
+        Ok((left, left_height))
     }
 
-    fn sum(&mut self) -> Result<Ex, Refusal> {
-        let mut left = self.product()?;
+    fn sum(&mut self) -> Result<Tall, Refusal> {
+        let (mut left, mut height) = self.product()?;
         loop {
-            if self.eat_symbol("+") {
-                left = Ex::Binary("+", Box::new(left), Box::new(self.product()?));
+            let op = if self.eat_symbol("+") {
+                "+"
             } else if self.eat_symbol("-") {
-                left = Ex::Binary("-", Box::new(left), Box::new(self.product()?));
+                "-"
             } else {
-                return Ok(left);
-            }
+                return Ok((left, height));
+            };
+            let at = self.at();
+            let (right, right_height) = self.product()?;
+            height = taller([height, right_height], 1, at)?;
+            left = Ex::Binary(op, Box::new(left), Box::new(right));
         }
     }
 
-    fn product(&mut self) -> Result<Ex, Refusal> {
-        let mut left = self.unary()?;
+    fn product(&mut self) -> Result<Tall, Refusal> {
+        let (mut left, mut height) = self.unary()?;
         loop {
             if self.eat_symbol("*") {
-                left = Ex::Binary("*", Box::new(left), Box::new(self.unary()?));
+                let at = self.at();
+                let (right, right_height) = self.unary()?;
+                height = taller([height, right_height], 1, at)?;
+                left = Ex::Binary("*", Box::new(left), Box::new(right));
             } else if self.symbol("/") {
                 return Err(refusal(
                     "division has no typed operator in the dialect: SQL truncates integer division and its scale is the engine's",
                     self.at(),
                 ));
             } else {
-                return Ok(left);
+                return Ok((left, height));
             }
         }
     }
 
-    fn unary(&mut self) -> Result<Ex, Refusal> {
+    fn unary(&mut self) -> Result<Tall, Refusal> {
         if self.eat_symbol("-") {
-            return Ok(Ex::Negate(Box::new(self.unary()?)));
+            let at = self.at();
+            let (inner, height) = self.nested(Self::unary)?;
+            return Ok((Ex::Negate(Box::new(inner)), taller([height], 1, at)?));
         }
         self.primary()
     }
 
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one primary-expression grammar, read top to bottom"
-    )]
-    fn primary(&mut self) -> Result<Ex, Refusal> {
+    fn primary(&mut self) -> Result<Tall, Refusal> {
         let at = self.at();
         if self.eat_symbol("(") {
-            let inner = self.expression()?;
+            let inner = self.tall_expression()?;
             self.expect_symbol(")")?;
             return Ok(inner);
         }
-        match self.peek().cloned() {
-            Some(Token::Number(number)) => {
-                self.next();
-                Ok(Ex::Number(number))
-            }
-            Some(Token::Text(text)) => {
-                self.next();
-                Ok(Ex::Text(text))
-            }
-            Some(Token::Word(word)) if word.eq_ignore_ascii_case("true") => {
-                self.next();
-                Ok(Ex::Bool(true))
-            }
-            Some(Token::Word(word)) if word.eq_ignore_ascii_case("false") => {
-                self.next();
-                Ok(Ex::Bool(false))
-            }
-            Some(Token::Word(word)) if word.eq_ignore_ascii_case("null") => {
-                self.next();
-                Ok(Ex::Null)
-            }
+        let leaf = match self.peek().cloned() {
+            Some(Token::Number(number)) => Ex::Number(number),
+            Some(Token::Text(text)) => Ex::Text(text),
+            Some(Token::Word(word)) if word.eq_ignore_ascii_case("true") => Ex::Bool(true),
+            Some(Token::Word(word)) if word.eq_ignore_ascii_case("false") => Ex::Bool(false),
+            Some(Token::Word(word)) if word.eq_ignore_ascii_case("null") => Ex::Null,
             Some(Token::Word(word)) if word.eq_ignore_ascii_case("case") => {
                 self.next();
-                self.expect_keyword("when")?;
-                let condition = self.expression()?;
-                self.expect_keyword("then")?;
-                let then = self.expression()?;
-                if self.keyword("when") {
-                    return Err(refusal(
-                        "one WHEN per CASE; nest a CASE in the ELSE",
-                        self.at(),
-                    ));
-                }
-                self.expect_keyword("else")?;
-                let otherwise = self.expression()?;
-                self.expect_keyword("end")?;
-                Ok(Ex::Case(
-                    Box::new(condition),
-                    Box::new(then),
-                    Box::new(otherwise),
-                ))
+                return self.case(at);
             }
             Some(Token::Word(_) | Token::Quoted(_)) => {
                 let first = self.name()?;
@@ -639,15 +698,39 @@ impl Parser {
                 }
                 if self.eat_symbol(".") {
                     let column = self.name()?;
-                    return Ok(Ex::Column(Some(first), column));
+                    return Ok((Ex::Column(Some(first), column), 1));
                 }
-                Ok(Ex::Column(None, first))
+                return Ok((Ex::Column(None, first), 1));
             }
-            Some(Token::Symbol(_)) | None => Err(refusal("expected an expression", at)),
-        }
+            Some(Token::Symbol(_)) | None => return Err(refusal("expected an expression", at)),
+        };
+        self.next();
+        Ok((leaf, 1))
     }
 
-    fn call(&mut self, name: &str, at: usize) -> Result<Ex, Refusal> {
+    /// `CASE WHEN … THEN … ELSE … END`, after `CASE`.
+    fn case(&mut self, at: usize) -> Result<Tall, Refusal> {
+        self.expect_keyword("when")?;
+        let (condition, condition_height) = self.tall_expression()?;
+        self.expect_keyword("then")?;
+        let (then, then_height) = self.tall_expression()?;
+        if self.keyword("when") {
+            return Err(refusal(
+                "one WHEN per CASE; nest a CASE in the ELSE",
+                self.at(),
+            ));
+        }
+        self.expect_keyword("else")?;
+        let (otherwise, otherwise_height) = self.tall_expression()?;
+        self.expect_keyword("end")?;
+        let height = taller([condition_height, then_height, otherwise_height], 1, at)?;
+        Ok((
+            Ex::Case(Box::new(condition), Box::new(then), Box::new(otherwise)),
+            height,
+        ))
+    }
+
+    fn call(&mut self, name: &str, at: usize) -> Result<Tall, Refusal> {
         let lower = name.to_ascii_lowercase();
         let mut call = Call {
             name: lower.clone(),
@@ -657,12 +740,16 @@ impl Parser {
             over: None,
             at,
         };
+        // The tallest argument or window key.
+        let mut tallest = 0;
         if self.eat_symbol("*") {
             call.star = true;
         } else if !self.symbol(")") {
             call.distinct = self.eat_keyword("distinct");
             loop {
-                call.args.push(self.expression()?);
+                let (arg, height) = self.tall_expression()?;
+                tallest = tallest.max(height);
+                call.args.push(arg);
                 if !self.eat_symbol(",") {
                     break;
                 }
@@ -670,7 +757,9 @@ impl Parser {
         }
         self.expect_symbol(")")?;
         if lower == "coalesce" {
-            return Ok(Ex::Coalesce(call.args));
+            // ZEN nests the values pairwise, one level per value.
+            let height = taller([tallest], call.args.len().max(1), at)?;
+            return Ok((Ex::Coalesce(call.args), height));
         }
         if self.eat_keyword("over") {
             self.expect_symbol("(")?;
@@ -682,10 +771,11 @@ impl Parser {
                 self.expect_keyword("by")?;
                 loop {
                     let at = self.at();
-                    let key = self.expression()?;
+                    let (key, height) = self.tall_expression()?;
                     if constant(&key) {
                         return Err(refusal("a window key names a column, not a constant", at));
                     }
+                    tallest = tallest.max(height);
                     over.partition.push(key);
                     if !self.eat_symbol(",") {
                         break;
@@ -696,10 +786,11 @@ impl Parser {
                 self.expect_keyword("by")?;
                 loop {
                     let at = self.at();
-                    let key = self.expression()?;
+                    let (key, height) = self.tall_expression()?;
                     if constant(&key) {
                         return Err(refusal("a window key names a column, not a constant", at));
                     }
+                    tallest = tallest.max(height);
                     let descending = if self.eat_keyword("desc") {
                         true
                     } else {
@@ -721,7 +812,8 @@ impl Parser {
             self.expect_symbol(")")?;
             call.over = Some(over);
         }
-        Ok(Ex::Call(call))
+        let height = taller([tallest], 1, at)?;
+        Ok((Ex::Call(call), height))
     }
 }
 
@@ -847,10 +939,20 @@ fn constant(ex: &Ex) -> bool {
 
 /// The dialect's syntax tree of one query: its `UNION ALL` branches.
 fn parse(source: &str) -> Result<Vec<Select>, Refusal> {
+    if source.len() > MAX_SOURCE_BYTES {
+        return Err(refusal(
+            format!(
+                "the SQL is {} bytes, more than {MAX_SOURCE_BYTES}",
+                source.len()
+            ),
+            0,
+        ));
+    }
     Parser {
         tokens: tokenize(source)?,
         position: 0,
         end: source.len(),
+        nesting: 0,
     }
     .query()
 }

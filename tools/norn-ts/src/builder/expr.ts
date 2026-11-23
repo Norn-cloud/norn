@@ -26,7 +26,29 @@ import {
   record as recordSchema,
 } from "./schema.ts"
 
-export type CallFn = "concat" | "lower" | "upper" | "trim" | "len" | "contains" | "startsWith" | "endsWith" | "dateBefore" | "date" | "timestamp" | "sum" | "days_between" | "add_days"
+export type CallFn =
+  | "concat"
+  | "lower"
+  | "upper"
+  | "trim"
+  | "len"
+  | "contains"
+  | "startsWith"
+  | "endsWith"
+  | "dateBefore"
+  | "timestampBefore"
+  | "timestampAtOrBefore"
+  | "date"
+  | "timestamp"
+  | "sum"
+  | "days_between"
+  | "add_days"
+  | "seconds_between"
+  | "add_seconds"
+  | "intervals_overlap"
+  | "interval_gap_seconds"
+  | "interval_intersection_seconds"
+  | "resolve_local_timestamp"
 /** norn-zen/6 closures (`crates/norn-expr/README.md`): the body sees the element under `alias`. */
 export type ClosureFn = "some" | "all" | "none" | "one" | "filter" | "count" | "map"
 export type CompareOp = "==" | "!=" | "<" | "<=" | ">" | ">="
@@ -55,12 +77,34 @@ export const unsafeZen = (text: string, schema: ValueSchema): Expr => ({ _tag: "
 
 /** `sum(list of numbers)`; zen sums an empty list to 0. */
 export const sum = (list: Expr): Expr => call("sum", list)
-/** A calendar date operand: raw date text is parsed through `date(...)`, as norn-zen/6 requires. */
+/** A calendar date operand: raw date text is parsed through `date(...)`, as norn-zen/7 requires. */
 const asDate = (value: Expr): Expr => (temporalKind(value) === "date" ? value : call("date", value))
+/** A UTC timestamp operand: raw timestamp text is parsed through `timestamp(...)`, as norn-zen/7 requires. */
+const asTimestamp = (value: Expr): Expr => (temporalKind(value) === "timestamp" ? value : call("timestamp", value))
 /** `days_between(start, end)` = signed calendar days `end - start`; operands are parsed as dates. */
 export const daysBetween = (start: Expr, end: Expr): Expr => call("days_between", asDate(start), asDate(end))
 /** `add_days(date, days)`: a parsed date, comparable with other parsed dates. */
 export const addDays = (date: Expr, days: Expr): Expr => call("add_days", asDate(date), days)
+/** `timestamp(left) < timestamp(right)`: strict UTC instant ordering. */
+export const timestampBefore = (left: Expr, right: Expr): Expr => call("timestampBefore", asTimestamp(left), asTimestamp(right))
+/** `timestamp(left) <= timestamp(right)`: non-strict UTC instant ordering. */
+export const timestampAtOrBefore = (left: Expr, right: Expr): Expr => call("timestampAtOrBefore", asTimestamp(left), asTimestamp(right))
+/** `seconds_between(start, end)` = signed exact decimal seconds `end - start`; operands are parsed as timestamps. */
+export const secondsBetween = (start: Expr, end: Expr): Expr => call("seconds_between", asTimestamp(start), asTimestamp(end))
+/** `add_seconds(timestamp, seconds)`: a parsed timestamp, comparable with other parsed timestamps. */
+export const addSeconds = (ts: Expr, seconds: Expr): Expr => call("add_seconds", asTimestamp(ts), seconds)
+/** `intervals_overlap(aStart, aEnd, bStart, bEnd)`: half-open `[start, end)` overlap; refuses improper intervals. */
+export const intervalsOverlap = (aStart: Expr, aEnd: Expr, bStart: Expr, bEnd: Expr): Expr =>
+  call("intervals_overlap", asTimestamp(aStart), asTimestamp(aEnd), asTimestamp(bStart), asTimestamp(bEnd))
+/** `interval_gap_seconds(aStart, aEnd, bStart, bEnd)`: exact decimal seconds separating two proper intervals. */
+export const intervalGapSeconds = (aStart: Expr, aEnd: Expr, bStart: Expr, bEnd: Expr): Expr =>
+  call("interval_gap_seconds", asTimestamp(aStart), asTimestamp(aEnd), asTimestamp(bStart), asTimestamp(bEnd))
+/** `interval_intersection_seconds(aStart, aEnd, bStart, bEnd)`: exact decimal seconds of overlap between two proper intervals. */
+export const intervalIntersectionSeconds = (aStart: Expr, aEnd: Expr, bStart: Expr, bEnd: Expr): Expr =>
+  call("interval_intersection_seconds", asTimestamp(aStart), asTimestamp(aEnd), asTimestamp(bStart), asTimestamp(bEnd))
+/** `resolve_local_timestamp(localWallTime, ianaTz, dstPolicy)`: pinned IANA tzdb resolution returning a parsed timestamp. */
+export const resolveLocalTimestamp = (localWallTime: Expr, ianaTz: Expr, dstPolicy: Expr): Expr =>
+  call("resolve_local_timestamp", localWallTime, ianaTz, dstPolicy)
 
 const RESERVED_ALIASES: ReadonlySet<string> = new Set(["self", "actor", "input", "slice", "event", "and", "or", "not", "in", "true", "false", "null", "as"])
 /**
@@ -86,7 +130,7 @@ export const map = closureOf("map")
 export function temporalKind(expr: Expr): "date" | "timestamp" | undefined {
   if (expr._tag !== "Call") return undefined
   if (expr.fn === "date" || expr.fn === "add_days") return "date"
-  if (expr.fn === "timestamp") return "timestamp"
+  if (expr.fn === "timestamp" || expr.fn === "add_seconds" || expr.fn === "resolve_local_timestamp") return "timestamp"
   return undefined
 }
 
@@ -241,6 +285,25 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
         if (expr.fn === "add_days" && args[1]!.type !== "integer") throw new ExprError("NORN-FLOW-EXPRESSION", `add_days adds a whole number of days, not ${String(args[1]!.type)}`)
         return expr.fn === "days_between" ? integer : text()
       }
+      if (expr.fn === "timestampBefore" || expr.fn === "timestampAtOrBefore") {
+        if (args.length !== 2 || expr.args.some((arg) => temporalKind(arg) !== "timestamp")) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects 2 parsed timestamps`)
+        return boolean
+      }
+      if (expr.fn === "seconds_between" || expr.fn === "add_seconds") {
+        if (args.length !== 2) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects 2 arguments`)
+        const timestamps = expr.fn === "seconds_between" ? expr.args : expr.args.slice(0, 1)
+        if (timestamps.some((arg) => temporalKind(arg) !== "timestamp")) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects parsed timestamps; build it with ${expr.fn === "seconds_between" ? "secondsBetween" : "addSeconds"}`)
+        if (expr.fn === "add_seconds" && args[1]!.type !== "integer") throw new ExprError("NORN-FLOW-EXPRESSION", `add_seconds adds a whole number of seconds, not ${String(args[1]!.type)}`)
+        return expr.fn === "seconds_between" ? numberSchema : text()
+      }
+      if (expr.fn === "intervals_overlap" || expr.fn === "interval_gap_seconds" || expr.fn === "interval_intersection_seconds") {
+        if (args.length !== 4 || expr.args.some((arg) => temporalKind(arg) !== "timestamp")) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects 4 parsed timestamps`)
+        return expr.fn === "intervals_overlap" ? boolean : numberSchema
+      }
+      if (expr.fn === "resolve_local_timestamp") {
+        if (args.length !== 3 || args.some((a) => a.type !== "string")) throw new ExprError("NORN-FLOW-EXPRESSION", "resolve_local_timestamp expects 3 string arguments (localWallTime, ianaTz, dstPolicy)")
+        return text()
+      }
       if (expr.fn === "len") {
         if (args.length !== 1 || (args[0]?.type !== "string" && args[0]?.type !== "array")) throw new ExprError("NORN-FLOW-EXPRESSION", "length expects a string or array")
         return integer
@@ -341,6 +404,10 @@ export function render(expr: Expr, scope: Scope): string {
       ? `flatten([${expr.args.map((arg) => render(arg, scope)).join(", ")}])`
       : expr.fn === "dateBefore"
       ? `date(${render(expr.args[0]!, scope)}) < date(${render(expr.args[1]!, scope)})`
+      : expr.fn === "timestampBefore"
+      ? `${render(expr.args[0]!, scope)} < ${render(expr.args[1]!, scope)}`
+      : expr.fn === "timestampAtOrBefore"
+      ? `${render(expr.args[0]!, scope)} <= ${render(expr.args[1]!, scope)}`
       : `${expr.fn}(${expr.args.map((arg) => render(arg, scope)).join(", ")})`
     case "Closure": {
       const inner: Scope = new Map([...scope, [expr.alias, { zen: expr.alias, schema: closureElement(expr, scope) }]])
@@ -372,10 +439,10 @@ function closureElement(expr: Extract<Expr, { _tag: "Closure" }>, scope: Scope):
 
 function operand(expr: Expr, scope: Scope): string {
   const text = render(expr, scope)
-  // `dateBefore` is a call in the AST but renders as a comparison, so it is
-  // a compound operand like any other (#1109).
+  // `dateBefore` / `timestampBefore` / `timestampAtOrBefore` are calls in the
+  // AST but render as comparisons, so they are compound operands like any other (#1109).
   const atomic = ["Literal", "Ref", "List", "Record", "Call", "Closure"].includes(expr._tag)
-    && !(expr._tag === "Call" && expr.fn === "dateBefore")
+    && !(expr._tag === "Call" && (expr.fn === "dateBefore" || expr.fn === "timestampBefore" || expr.fn === "timestampAtOrBefore"))
   return atomic ? text : `(${text})`
 }
 

@@ -52,7 +52,7 @@ impl From<ObjectRecord> for NornObjectRecord {
 }
 
 impl NornObjectRecord {
-    /// A record whose values were projected by [`crate::privacy::project`].
+    /// A record whose values were projected by `privacy::project`.
     #[must_use]
     pub fn projected(record: ObjectRecord, projected: crate::privacy::Projected) -> Self {
         Self {

@@ -36,7 +36,7 @@ function stage(mcp = true): Env & { forwarded: Forwarded[] } {
       return Response.json({ jsonrpc: "2.0", id: message.id, result: { served: true } })
     },
   } as unknown as Fetcher
-  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, NORN_HOST: host, ...mcp ? { STUDIO_MCP: "on" } : {}, forwarded }
+  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", NORN_HOST: host, ...mcp ? { STUDIO_MCP: "on" } : {}, forwarded }
 }
 
 let address = 0
@@ -207,7 +207,7 @@ test("a code is never sent to a callback outside the known assistants", async ()
 test("tokens for another audience, foreign origins and other methods are refused", async () => {
   const env = stage()
   const { cookie, user, org } = await person(env, "di@example.com")
-  const auth = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, mcp: true })
+  const auth = createAuth({ clientIpHeader: "cf-connecting-ip", database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, mcp: true })
   // A host token is signed by the same keys but for the cell, not for /mcp.
   const forCell = await hostToken(auth, { actorKind: "user", subjectId: user, orgId: org, role: "owner", authMethod: "password" })
   expect((await mcp(env, forCell, INIT)).status).toBe(401)

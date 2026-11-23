@@ -18,12 +18,12 @@ test("production refuses without its confirmation", () => {
 })
 
 test("production keeps the live Worker and both demo domains", () => {
-  expect(deployTarget(PROD)).toEqual({ stage: "prod", worker: "norn-studio-recorded", domains: ["studio.norn.cloud", "studio-demo.norn.cloud"] })
+  expect(deployTarget(PROD)).toEqual({ stage: "prod", worker: "norn-studio-recorded", domains: ["studio.norn.cloud", "studio-demo.norn.cloud"], recipe: "recorded-demo" })
 })
 
 test("any other stage gets its own Worker and only the domains it names", () => {
   expect(deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-preview.norn.cloud" }))
-    .toEqual({ stage: "preview", worker: "norn-studio-recorded-preview", domains: ["studio-preview.norn.cloud"] })
+    .toEqual({ stage: "preview", worker: "norn-studio-recorded-preview", domains: ["studio-preview.norn.cloud"], recipe: "sign-in" })
 })
 
 test("a non-production stage never falls back to the production domains", () => {
@@ -76,7 +76,7 @@ test("the state scan reads only the app's own subtree: the password beside it is
 })
 
 test("registry, credential and private-key variables are scanned too, plain auth settings are not", () => {
-  const env = { DOCKER_AUTH_CONFIG: "eyJhdXRocyI6eyJyZWdpc3RyeSI6e319fQ==", GOOGLE_CREDENTIALS: "service-account-json", SSH_PRIVATE: "-----BEGIN KEY-----", AUTH_URL: "https://auth.example.test" }
+  const env = { DOCKER_AUTH_CONFIG: btoa('{"auths":{"registry":{}}}'), GOOGLE_CREDENTIALS: "service-account-json", SSH_PRIVATE: "-----BEGIN KEY-----", AUTH_URL: "https://auth.example.test" }
   const state = JSON.stringify({ props: { env } })
   expect(leakedSecrets(state, env)).toEqual({ DOCKER_AUTH_CONFIG: 1, GOOGLE_CREDENTIALS: 1, SSH_PRIVATE: 1 })
 })

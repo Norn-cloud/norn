@@ -79,7 +79,8 @@ use norn_ir::{
 
 use compile::compile_mapping;
 pub use compile::{
-    CompiledMapping, EntitlementCoverageReport, MappedSnapshot, OBJECT_ID_FIELD, SourceDocument,
+    CompiledMapping, Derivation, EntitlementCoverageReport, FieldRefusal, MappedSnapshot,
+    OBJECT_ID_FIELD, RowRefusal, SourceDocument,
 };
 pub use set::{check_mapping_artifacts, compile_mapping_artifact, mapping_key};
 pub use snapshot_lint::lint_observed_deviations;
@@ -916,7 +917,7 @@ fn check_entitlement_map(
                     "dataset {:?} is not declared by the source schema",
                     join.dataset
                 ),
-                join_at.clone(),
+                join_at,
             ));
             continue;
         };

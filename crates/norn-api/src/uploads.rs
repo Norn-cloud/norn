@@ -93,10 +93,10 @@ impl Store {
 impl S3Config {
     /// The storage of `store` named by `vars`: `NORN_S3_ENDPOINT` and
     /// `NORN_S3_REGION` (shared), then `NORN_S3_BUCKET` with
-    /// `NORN_SECRET_S3_ACCESS_KEY_ID` / `NORN_SECRET_S3_SECRET_ACCESS_KEY`,
+    /// `NORN_S3_ACCESS_KEY_ID` / `NORN_S3_SECRET_ACCESS_KEY`,
     /// or `NORN_S3_DOCUMENTS_BUCKET` with
-    /// `NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID` /
-    /// `NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY`. `None` when not configured.
+    /// `NORN_S3_DOCUMENTS_ACCESS_KEY_ID` /
+    /// `NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY`. `None` when not configured.
     #[must_use]
     pub fn from_vars(vars: &BTreeMap<String, String>, store: Store) -> Option<Self> {
         let get = |name: &str| vars.get(name).filter(|v| !v.is_empty()).cloned();
@@ -108,13 +108,13 @@ impl S3Config {
         let (bucket, id, secret) = match store {
             Store::Uploads => (
                 "NORN_S3_BUCKET",
-                "NORN_SECRET_S3_ACCESS_KEY_ID",
-                "NORN_SECRET_S3_SECRET_ACCESS_KEY",
+                "NORN_S3_ACCESS_KEY_ID",
+                "NORN_S3_SECRET_ACCESS_KEY",
             ),
             Store::Documents => (
                 "NORN_S3_DOCUMENTS_BUCKET",
-                "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID",
-                "NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY",
+                "NORN_S3_DOCUMENTS_ACCESS_KEY_ID",
+                "NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY",
             ),
         };
         Some(Self {
@@ -188,9 +188,9 @@ struct Presign<'a> {
 
 /// The signed query string (`SigV4`, `UNSIGNED-PAYLOAD`, only `host` signed).
 fn presign(p: &Presign<'_>) -> Option<String> {
-    let at = chrono::DateTime::from_timestamp_millis(i64::try_from(p.now_ms).ok()?)?;
-    let stamp = at.format("%Y%m%dT%H%M%SZ").to_string();
-    let date = at.format("%Y%m%d").to_string();
+    let at = jiff::Timestamp::from_millisecond(i64::try_from(p.now_ms).ok()?).ok()?;
+    let stamp = at.strftime("%Y%m%dT%H%M%SZ").to_string();
+    let date = at.strftime("%Y%m%d").to_string();
     let scope = format!("{date}/{}/s3/aws4_request", p.region);
     let mut query = BTreeMap::from([
         ("X-Amz-Algorithm".to_owned(), "AWS4-HMAC-SHA256".to_owned()),
@@ -501,7 +501,9 @@ fn classify(value: &str) -> ColumnKind {
         }
     } else if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
         ColumnKind::Boolean
-    } else if chrono::DateTime::parse_from_rfc3339(value).is_ok() {
+    } else if norn_checker::is_canonical_timestamp(value) {
+        // The engine's own grammar: a column is Datetime only when every
+        // value survives the mapping's `timestamp(...)`.
         ColumnKind::Datetime
     } else {
         ColumnKind::Text
@@ -948,13 +950,13 @@ pub fn load_rows<E: SqlEngine>(
             .rows_read
             .saturating_add(u64::try_from(batch.len()).unwrap_or(u64::MAX));
         for ingested in host.ingest(&batch).map_err(|r| r.message)? {
-            match ingested.outcome {
+            match &ingested.outcome {
                 MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
                     loaded.rows_landed = loaded.rows_landed.saturating_add(1);
                 }
-                MappingOutcome::Quarantined(codes) => {
+                quarantined @ MappingOutcome::Quarantined(_) => {
                     loaded.rows_quarantined = loaded.rows_quarantined.saturating_add(1);
-                    for code in codes {
+                    for code in quarantined.codes() {
                         let n = loaded.quarantine_reasons.entry(code).or_insert(0);
                         *n = n.saturating_add(1);
                     }
@@ -995,6 +997,24 @@ fn typed(cell: Option<&str>, kind: ColumnKind) -> RuntimeValue {
 )]
 mod tests {
     use super::*;
+
+    /// Datetime means the engine's RFC 3339 subset, not any `jiff` spelling.
+    #[test]
+    fn datetime_detection_follows_the_engine_timestamp_grammar() {
+        assert_eq!(classify("2026-01-01T10:00:00Z"), ColumnKind::Datetime);
+        assert_eq!(
+            classify("2026-01-01T12:00:00.5+02:00"),
+            ColumnKind::Datetime
+        );
+        for loose in [
+            "2026-01-01T10:00Z",
+            "2026-01-01T10:00:00+0200",
+            "2026-01-01T10:00:00Z[UTC]",
+            "20260101T100000Z",
+        ] {
+            assert_eq!(classify(loose), ColumnKind::Text, "{loose}");
+        }
+    }
 
     /// The AWS `SigV4` query-auth example (`GET /test.txt`, 2013-05-24, us-east-1).
     #[test]

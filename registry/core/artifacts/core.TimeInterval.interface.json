@@ -1,0 +1,56 @@
+{
+  "artifactId": "core.TimeInterval.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Time interval",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "A proper half-open temporal interval [starts_at, ends_at) in UTC with an optional canonical IANA timezone label.",
+      "invariants": [
+        {
+          "expression": "timestamp(self.starts_at) < timestamp(self.ends_at)",
+          "id": "proper_interval",
+          "message": "starts_at must be strictly before ends_at"
+        }
+      ],
+      "name": "core.TimeInterval",
+      "properties": [
+        {
+          "id": "starts_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "ends_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "timezone",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.TimeInterval.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

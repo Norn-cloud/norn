@@ -1,0 +1,11 @@
+# Durability and cost runs only (durability.py): every S3 request the engines
+# make goes through `s3-meter`, an HAProxy that logs its method, path and
+# status, so the run counts operations the way an S3 provider bills them,
+# whatever the S3 server. The engines' S3_ENDPOINT is http://s3-meter:9000.
+services:
+  s3-meter:
+    image: haproxy:3.0.31-alpine3.24@sha256:7430e63d3052198b18a40665b59a5826bc428e8bceb0c561d82258149ef855ee
+    restart: unless-stopped
+    # Relative to the project directory (compose.yaml's), not to this file.
+    volumes: [./durability/s3-meter.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro]
+    depends_on: [s3]

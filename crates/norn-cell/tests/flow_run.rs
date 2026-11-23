@@ -2,6 +2,7 @@
 //! cell's own commits, and survive reopen.
 #![allow(clippy::expect_used, missing_docs, reason = "integration assertions")]
 
+use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
 
 use norn_cell::engine::{NativeEngine, SqlEngine};
@@ -268,7 +269,7 @@ fn runs_page_by_id_and_filter_by_flow_and_state() {
         }),
         ["run-2"]
     );
-    assert!(
+    assert_eq!(
         store
             .read()
             .flow_runs(
@@ -278,8 +279,8 @@ fn runs_page_by_id_and_filter_by_flow_and_state() {
                     ..RunFilter::default()
                 }
             )
-            .expect("page")
-            .is_empty(),
+            .expect("page"),
+        [],
         "runs are per world"
     );
 }

@@ -1056,7 +1056,7 @@ class FileWalk {
       case ts.SyntaxKind.GreaterThanToken:
       case ts.SyntaxKind.GreaterThanEqualsToken:
         if (operands() && !(this.isNumber(b.left) && this.isNumber(b.right)) && !this.sameParsedTemporal(b.left, b.right) && !(ctx.lawSubject && this.isString(b.left) && this.isString(b.right))) {
-          this.report(b, "NORN-FLOW-EXPRESSION", "ordering comparisons are qualified for numbers and for two parsed dates or timestamps (Norn.parseDate, Norn.addDays, Norn.parseTimestamp)")
+          this.report(b, "NORN-FLOW-EXPRESSION", "ordering comparisons are qualified for numbers and for two parsed dates or timestamps (Norn.parseDate, Norn.addDays, Norn.parseTimestamp, Norn.addSeconds, Norn.resolveLocalTimestamp)")
         }
         return
       case ts.SyntaxKind.EqualsEqualsToken:
@@ -1207,7 +1207,7 @@ class FileWalk {
     try { this.expr(fn.body, ctx) } finally { this.closureParams.pop() }
   }
 
-  /** Both operands are parsed temporal values of one kind, which norn-zen/6 orders semantically. */
+  /** Both operands are parsed temporal values of one kind, which norn-zen/7 orders semantically. */
   private sameParsedTemporal(left: ts.Expression, right: ts.Expression): boolean {
     const kind = (node: ts.Expression): string | undefined => {
       while (ts.isParenthesizedExpression(node)) node = node.expression
@@ -1215,7 +1215,11 @@ class FileWalk {
       const callee = node.expression
       const name = ts.isPropertyAccessExpression(callee) ? callee.name : ts.isIdentifier(callee) ? callee : undefined
       const id = name && this.resolve(name).id
-      return id === "@norn/authoring#Norn.parseDate" || id === "@norn/authoring#Norn.addDays" ? "date" : id === "@norn/authoring#Norn.parseTimestamp" ? "timestamp" : undefined
+      return id === "@norn/authoring#Norn.parseDate" || id === "@norn/authoring#Norn.addDays"
+        ? "date"
+        : id === "@norn/authoring#Norn.parseTimestamp" || id === "@norn/authoring#Norn.addSeconds" || id === "@norn/authoring#Norn.resolveLocalTimestamp"
+          ? "timestamp"
+          : undefined
     }
     const l = kind(left)
     return l !== undefined && l === kind(right)

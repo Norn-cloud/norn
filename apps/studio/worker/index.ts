@@ -6,7 +6,11 @@ import { connectors } from "./connectors.ts"
 import { MCP_PATH, serveMcp } from "./mcp.ts"
 import { cellFor } from "./cell.ts"
 import { questions } from "./questions.ts"
+import { billingDocument, entitlementOf, limitRaised, subscribed, billingOf, type BillingDb, type BillingSettings } from "./billing.ts"
+import { polarConfig, settingsOf } from "./polar-config.ts"
+import { acceptWorkspaceInvitation, createWorkspace } from "./workspaces.ts"
 import { cellScope } from "./scope.ts"
+import { instrumented } from "./telemetry.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -28,7 +32,7 @@ export interface Env {
   readonly NORN_HOST?: Fetcher
   /** The organization members' sessions start in (preview: the seeded `org_demo`). */
   readonly STUDIO_DEFAULT_ORG?: string
-  /** The header the edge sets to the client's address (client-ip.ts); unset on Cloudflare. */
+  /** The header the edge sets to the client's address (client-ip.ts); required, the Worker refuses auth without it. */
   readonly STUDIO_CLIENT_IP_HEADER?: string
   /** The tool gateway and Studio's OAuth client there (#772); all three or none. */
   readonly TOOL_GATEWAY_URL?: string
@@ -46,6 +50,20 @@ export interface Env {
   readonly AGENT_FALLBACK_MODEL?: string
   /** What the assistant may spend in all, in dollars (default 20). */
   readonly AGENT_SPEND_CAP_USD?: string
+  /** OpenTelemetry export (telemetry.ts); off unless the endpoint is set. Headers carry the collector's credentials. */
+  readonly OTEL_EXPORTER_OTLP_ENDPOINT?: string
+  readonly OTEL_EXPORTER_OTLP_HEADERS?: string
+  readonly OTEL_RESOURCE_ATTRIBUTES?: string
+  readonly OTEL_TRACES_SAMPLER_ARG?: string
+  /**
+   * Hosted billing through Polar (worker/polar-config.ts); all four or none. None: billing is off and
+   * every limit is unlimited (self-hosting). POLAR_SERVER is "sandbox" or "production"; POLAR_PLANS
+   * is the checkout plans as JSON (polar-config.ts PLACEHOLDER_PLANS shows its shape); limits come from Polar.
+   */
+  readonly POLAR_ACCESS_TOKEN?: string
+  readonly POLAR_WEBHOOK_SECRET?: string
+  readonly POLAR_SERVER?: string
+  readonly POLAR_PLANS?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
@@ -80,9 +98,68 @@ function auth(env: Env): Auth {
   }
   const { TOOL_GATEWAY_URL: url, TOOL_GATEWAY_CLIENT_ID: clientId, TOOL_GATEWAY_CLIENT_SECRET: clientSecret } = env
   const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
-  const instance = createAuth({ mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
+  const billing = polarConfig(env)
+  const instance = createAuth({ ...billing === undefined ? {} : { billing: { config: billing, db: env.AUTH_DB as unknown as BillingDb } }, mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
+  const handle = instance.handler
+  instance.handler = (request: Request) => guarded(handle, request)
   instances.set(env.AUTH_DB, instance)
   return instance
+}
+
+const INVITATION_ANSWERED = "This invitation was already answered: accepted, rejected or withdrawn."
+/** Migration 0012's refusal to change an invitation that is no longer pending. */
+export const invitationAnswered = (error: unknown) => (error instanceof Error ? error.message : String(error)).includes("invitation.not_pending")
+
+/**
+ * Better Auth's handler, with the errors it throws (auth.ts onAPIError) answered: a plan-limit
+ * trigger's refusal (migration 0011) as PLAN_LIMIT, a write to an invitation already answered
+ * (migration 0012) as INVITATION_NOT_FOUND, anything else as a bare 500. Nothing in the request
+ * is read to explain it; the routes that can meet a limit with billing on are Studio's own
+ * (workspaces.ts), which explain it from what the server authorized.
+ */
+async function guarded(handle: (request: Request) => Promise<Response>, request: Request): Promise<Response> {
+  try {
+    return await handle(request)
+  } catch (error) {
+    // Another answer to the invitation committed first (migration 0012): it stays as that answer.
+    if (invitationAnswered(error)) return Response.json({ code: "INVITATION_NOT_FOUND", message: INVITATION_ANSWERED }, { status: 400, headers: { "cache-control": "no-store" } })
+    const limit = limitRaised(error)
+    if (limit === null) {
+      console.error(error)
+      return new Response(null, { status: 500, statusText: "Internal Server Error" })
+    }
+    const message = limit === "cells" ? "Your plan's workspace limit is reached." : "This workspace's member limit is reached."
+    return Response.json({ code: "PLAN_LIMIT", message }, { status: 403, headers: { "cache-control": "no-store" } })
+  }
+}
+
+/**
+ * Better Auth's routes that write a workspace and its owner, or an accepted invitation and its member,
+ * in separate statements. With billing on they are refused: Studio's own (workspaces.ts) do each in one
+ * transaction, so a plan-limit refusal or an interruption never leaves half of one.
+ */
+export const SPLIT_WRITE_PATHS: ReadonlyMap<string, string> = new Map([
+  ["/api/auth/organization/create", "/api/workspaces"],
+  ["/api/auth/organization/accept-invitation", "/api/workspaces/invitations/accept"],
+])
+/** Matched as Better Auth's router could: any case, with or without a trailing slash. */
+const routePath = (pathname: string) => pathname.toLowerCase().replace(/\/+$/, "")
+
+/** Studio's workspace writes: POST from a trusted origin, as Better Auth's own origin check requires. */
+async function workspaceRoute(request: Request, env: Env, pathname: string): Promise<Response> {
+  if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+  const origin = request.headers.get("origin")
+  if (origin === null || !trustedOrigins(env).includes(origin)) return refuse(403, "Cross-origin request refused.")
+  const context = { auth: auth(env), db: env.AUTH_DB, billing: await billingSettings(env), baseURL: env.BETTER_AUTH_URL }
+  const handle = pathname === "/api/workspaces" ? createWorkspace : pathname === "/api/workspaces/invitations/accept" ? acceptWorkspaceInvitation : undefined
+  if (handle === undefined) return refuse(404, "No such endpoint.")
+  try {
+    return await handle(request, context)
+  } catch (error) {
+    // Rolled back whole (workspaces.ts); a bare 500, as Better Auth answers a database failure.
+    console.error(error)
+    return new Response(null, { status: 500, statusText: "Internal Server Error" })
+  }
 }
 
 /**
@@ -95,6 +172,20 @@ export async function publicSignUp(response: Response): Promise<Response> {
   const { user } = (await response.json()) as { user: { email: string; name: string } }
   const body = { token: null, user: { id: crypto.randomUUID(), email: user.email, name: user.name, emailVerified: false } }
   return Response.json(body, { status: 200, headers: { "cache-control": "no-store" } })
+}
+
+/**
+ * Accepting an invitation that is no longer pending: it expired or an admin withdrew it; Better Auth
+ * says only "Invitation not found", so say what the person can do about it.
+ */
+export async function acceptInvitation(response: Response): Promise<Response> {
+  if (response.status !== 400) return response
+  const body = (await response.clone().json().catch(() => null)) as { code?: unknown } | null
+  if (body?.code !== "INVITATION_NOT_FOUND") return response
+  return Response.json(
+    { code: "INVITATION_NOT_FOUND", message: "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one." },
+    { status: 400, headers: { "cache-control": "no-store" } },
+  )
 }
 
 /** The signed-in user and active organization, for the shell. Display only; Norn decides permissions. */
@@ -111,6 +202,76 @@ async function me(request: Request, env: Env): Promise<Response> {
 }
 
 const mcpOn = (env: Env) => env.STUDIO_MCP === "on"
+
+/**
+ * Billing as entitlement and admission see it (provider-neutral), or undefined when off: on or off as
+ * the database's stored mode says (billing.ts billingOf), the same mode its limit triggers read, never
+ * this isolate's own settings. The Polar settings themselves stay with the adapter (auth.ts, polar.ts).
+ */
+const billingSettings = (env: Env): Promise<BillingSettings | undefined> => billingOf(env.AUTH_DB as unknown as BillingDb, settingsOf(polarConfig(env)))
+
+/**
+ * The Polar plugin's checkout and portal endpoints. The plugin forwards whatever the caller sends
+ * (trial length, products, discounts, metadata, success and return URLs) to Polar, so a caller could
+ * shape their own checkout, e.g. a years-long free trial that reads as an active plan. They are refused
+ * from outside; /api/billing/* is the only way in and calls them with a fixed body.
+ */
+/**
+ * The plugin's endpoints refused from outside: checkout and portal (Studio calls them itself, from
+ * /api/billing, with a fixed body) and the customer reads, which Studio never calls. The reads go too:
+ * with a `reference_id`, `/customer/subscriptions/list` lists a whole workspace's subscriptions by
+ * metadata under the organization's token. Studio's billing document (/api/billing) is the only read.
+ */
+export const PLUGIN_BILLING_PATHS = new Set([
+  "/api/auth/checkout",
+  "/api/auth/customer/portal",
+  "/api/auth/customer/state",
+  "/api/auth/customer/orders/list",
+  "/api/auth/customer/benefits/list",
+  "/api/auth/customer/subscriptions/list",
+])
+/** Matched as Better Auth's router could: any case, with or without a trailing slash. */
+const pluginBillingPath = (pathname: string) => PLUGIN_BILLING_PATHS.has(pathname.toLowerCase().replace(/\/+$/, ""))
+
+/** A Polar page (checkout, portal) the plugin minted for this person; refused unless it is https. */
+async function toPolar(response: Response): Promise<Response> {
+  if (!response.ok) return refuse(response.status === 401 ? 401 : 502, response.status === 401 ? "Sign in first." : "Billing is unavailable right now; try again shortly.")
+  const { url } = (await response.json()) as { url?: unknown }
+  if (typeof url !== "string" || !URL.canParse(url) || new URL(url).protocol !== "https:") return refuse(502, "Billing is unavailable right now; try again shortly.")
+  return new Response(null, { status: 303, headers: { location: url, "cache-control": "no-store" } })
+}
+
+/**
+ * The billing routes: the server's billing document for the shell, and links that send the signed-in
+ * person to Polar. Checkout and portal go through the plugin's own endpoints (session, origin and rate
+ * checks included); a person who already pays is sent to the portal, never a second checkout.
+ */
+async function billingRoute(request: Request, env: Env, billing: BillingSettings | undefined, pathname: string): Promise<Response> {
+  if (request.method !== "GET") return refuse(405, "GET only.", { allow: "GET" })
+  // Checkout and portal are plain links in Studio's own pages; another site must not start one with the person's cookie.
+  const site = request.headers.get("sec-fetch-site")
+  if (pathname !== "/api/billing" && site !== null && site !== "same-origin" && site !== "none") return refuse(403, "Cross-site billing request refused.")
+  const session = await auth(env).api.getSession({ headers: request.headers })
+  if (session === null) return refuse(401, "Sign in first.")
+  const db = env.AUTH_DB as unknown as BillingDb
+  if (pathname === "/api/billing") return Response.json(await billingDocument(db, billing, env.BETTER_AUTH_URL, session.user.id), { headers: { "cache-control": "no-store" } })
+  if (billing === undefined) return refuse(404, "Billing is not enabled on this deployment.")
+  const internal = (path: string, body: unknown) => auth(env).handler(new Request(new URL(`/api/auth${path}`, env.BETTER_AUTH_URL), {
+    method: "POST",
+    // Only the cookie: getSession above resolves a person from the session cookie alone (no bearer plugin;
+    // API keys belong to workspaces, not people), so the plugin acts for exactly the person this route resolved.
+    headers: { "content-type": "application/json", cookie: request.headers.get("cookie") ?? "", origin: new URL(env.BETTER_AUTH_URL).origin, [clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)]: request.headers.get(clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)) ?? "" },
+    body: JSON.stringify(body),
+  }))
+  if (pathname === "/api/billing/portal") return toPolar(await internal("/customer/portal", { redirect: false }))
+  if (pathname === "/api/billing/checkout") {
+    const plan = new URL(request.url).searchParams.get("plan")
+    if (plan === null || !billing.plans.some((candidate) => candidate.id === plan)) return refuse(404, "No such plan.")
+    if (subscribed(await entitlementOf(db, billing, session.user.id))) return toPolar(await internal("/customer/portal", { redirect: false }))
+    return toPolar(await internal("/checkout", { slug: plan, redirect: false }))
+  }
+  return refuse(404, "No such endpoint.")
+}
 /** The invited addresses, lower-case; undefined (open sign-up) when the setting is absent. */
 export const signUpEmails = (env: Pick<Env, "STUDIO_SIGNUP_EMAILS">): readonly string[] | undefined =>
   env.STUDIO_SIGNUP_EMAILS === undefined ? undefined : env.STUDIO_SIGNUP_EMAILS.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean)
@@ -123,7 +284,7 @@ const OAUTH_DISCOVERY = new Set([
   `/.well-known/oauth-protected-resource${MCP_PATH}`,
 ])
 
-export default {
+const handler = {
   async fetch(request, env) {
     const { pathname } = new URL(request.url)
     if (mcpOn(env) && pathname === MCP_PATH) {
@@ -142,8 +303,14 @@ export default {
     // The gateway provider is link-only: refuse every sign-in that could start from it (social and
     // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
+    if (pluginBillingPath(pathname)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
+    const moved = SPLIT_WRITE_PATHS.get(routePath(pathname))
+    if (moved !== undefined && await billingSettings(env) !== undefined) return Response.json({ code: "USE_STUDIO_ROUTE", message: `With billing on, this goes through ${moved}.`, route: moved }, { status: 404, headers: { "cache-control": "no-store" } })
+    if (pathname === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
+    if (pathname === "/api/workspaces" || pathname.startsWith("/api/workspaces/")) return workspaceRoute(request, env, pathname)
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
+    if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, await billingSettings(env), pathname)
     // Every Norn call goes to the host as the resolved actor; the host and its PDP decide.
     if (pathname.startsWith("/api/host/")) {
       const actor = await resolveActor(request, auth(env))
@@ -201,3 +368,5 @@ export default {
     return refuse(404, "No such endpoint.")
   },
 } satisfies ExportedHandler<Env>
+
+export default instrumented(handler) satisfies ExportedHandler<Env>

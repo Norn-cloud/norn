@@ -164,14 +164,8 @@ impl fmt::Display for Number {
 }
 
 fn is_json_decimal(input: &str) -> bool {
-    let unsigned = input.strip_prefix('-').unwrap_or(input);
-    let (int, frac) = match unsigned.split_once('.') {
-        Some((int, frac)) => (int, Some(frac)),
-        None => (unsigned, None),
-    };
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    let int_ok = digits(int) && (int == "0" || !int.starts_with('0'));
-    int_ok && frac.is_none_or(digits)
+    // VAL-EXACT-1: one wire grammar for every decimal text decoder.
+    norn_ir::Decimal::is_wire_decimal(input)
 }
 
 /// Canonical text of a grammar-valid decimal: trailing fractional zeros and

@@ -18,6 +18,7 @@ pub mod authz;
 pub mod clock;
 pub mod contracts;
 pub mod decisions;
+pub mod olap_credential;
 pub mod openapi;
 /// Stable host refusal wire contract.
 pub mod refusal;
@@ -45,6 +46,8 @@ pub mod jcs;
 pub mod kernel_set;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
+/// NET-ADDR-1: the shared internal-address rules for every outbound call.
+pub mod net;
 /// HOST-READ-7: exact value counts of a concept's categorical properties.
 pub mod object_facets;
 /// HOST-READ-4: an object's link neighbourhood and its source lineage.
@@ -72,6 +75,8 @@ pub mod routes;
 pub mod run_routes;
 /// In-cell source sync over the pull engine: claims, steps and run reports.
 pub mod sources;
+/// TIMER-ALARM-1: the cell's due work (expiries, flow timers, decision deadlines), run from the host's clock.
+pub mod timers;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
 /// Typed transform reads (`ViewIR` v1): rows, row lineage and the admitted plan.

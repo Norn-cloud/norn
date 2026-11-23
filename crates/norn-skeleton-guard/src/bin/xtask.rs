@@ -16,6 +16,18 @@ enum Top {
 }
 #[derive(Subcommand)]
 enum Gate {
+    /// Run one bundle from a checked plan.
+    #[command(disable_help_flag = true)]
+    Bundle {
+        #[arg(allow_hyphen_values = true)]
+        plan: String,
+        #[arg(allow_hyphen_values = true)]
+        id: String,
+    },
+    /// Pack a planner document.
+    BundlePlan { plan: String },
+    /// Check the exact deterministic bundle inventory.
+    BundleCheck { plan: String },
     /// Exact candidate or expanded-distribution provenance.
     Provenance {
         #[arg(long, default_value = ".")]
@@ -37,10 +49,20 @@ enum Gate {
         #[arg(long)]
         maintainer_evidence: Option<PathBuf>,
     },
+    /// Every workflow-lint ignore still covers a finding in zizmor's `--no-ignores` report.
+    WorkflowLint {
+        #[arg(long)]
+        findings: PathBuf,
+    },
 }
 fn main() -> ExitCode {
     let Top::Ci(command) = Cli::parse().command;
     let (document, passed) = match command {
+        Gate::Bundle { plan, id } => return bundle_exit(ci::bundle::run(&plan, Some(&id))),
+        Gate::BundlePlan { plan } => {
+            return bundle_exit(ci::bundle::print_plan(&plan).map_err(Into::into));
+        }
+        Gate::BundleCheck { plan } => return bundle_exit(ci::bundle::run(&plan, None)),
         Gate::Provenance {
             root,
             distribution,
@@ -70,11 +92,28 @@ fn main() -> ExitCode {
             let errors = ci::run_with_evidence(&root, &base_root, maintainer_evidence.as_deref());
             (serde_json::to_string_pretty(&errors), errors.is_empty())
         }
+        Gate::WorkflowLint { findings } => {
+            let errors = match std::fs::read_to_string(&findings) {
+                Ok(report) => ci::workflow_lint::check(&PathBuf::from("."), &report),
+                Err(error) => vec![format!("read {}: {error}", findings.display())],
+            };
+            (serde_json::to_string_pretty(&errors), errors.is_empty())
+        }
     };
     match document {
         Ok(document) if writeln!(std::io::stdout().lock(), "{document}").is_ok() && passed => {
             ExitCode::SUCCESS
         }
         _ => ExitCode::FAILURE,
+    }
+}
+
+fn bundle_exit(result: Result<(), ci::bundle::Failure>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            let _diagnostic = writeln!(std::io::stderr().lock(), "{}", error.message);
+            ExitCode::from(error.code)
+        }
     }
 }

@@ -482,6 +482,18 @@
       "message": "دلالات الاستعلام غير مدعومة في ملف الحوسبة المختار.",
       "review": "needs_review"
     },
+    "core.engine.downgrade": {
+      "message": "الخلية مكتوبة بإصدار تخزين أحدث مما يقرؤه هذا المحرك",
+      "review": "needs_review"
+    },
+    "core.engine.unknown_version": {
+      "message": "ختم المحرك في الخلية ليس إصدارًا يستطيع هذا المحرك قراءته",
+      "review": "needs_review"
+    },
+    "core.engine.upgrade_unsupported": {
+      "message": "لا يستطيع هذا المحرك ترقية إصدار تخزين الخلية في مكانها",
+      "review": "needs_review"
+    },
     "core.graph.catalog_write": {
       "message": "إسقاطات الكتالوج لا يمكنها تفعيل التعريفات",
       "review": "needs_review"
@@ -916,6 +928,18 @@
     },
     "labels.validation.unlabelled_locale": {
       "message": "وصف أو حالة مراجعة تسمّي لغة ليس لها تسمية",
+      "review": "needs_review"
+    },
+    "law.conservation.alias_bound": {
+      "message": "مُعدِّل حفظ الكمية له حالات تطابق مفاتيح أكثر مما يفحصه المدقق: {$detail}",
+      "review": "needs_review"
+    },
+    "law.conservation.alias_unlowerable": {
+      "message": "مُعدِّل حفظ الكمية قد يكتب صفاً واحداً عبر إحداثيات لا يستطيع المدقق التوفيق بينها: {$detail}",
+      "review": "needs_review"
+    },
+    "law.conservation.key_alias": {
+      "message": "مُعدِّل حفظ الكمية لا يتوازن عندما تشير مفاتيحه إلى الخلية نفسها: {$detail}",
       "review": "needs_review"
     },
     "law.example.mismatch": {

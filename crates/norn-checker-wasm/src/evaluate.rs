@@ -1,5 +1,5 @@
 //! `evaluate_expression_json`: the ZEN evaluation of an admitted expression, the one evaluator
-//! every build of this crate exports (D105).
+//! every build of this crate exports (#1325).
 
 use norn_expr::{
     EvaluationBudget, ExprError, Expression, Value as ExprValue, validate_evaluation_source,
@@ -31,7 +31,7 @@ fn invalid(argument: &'static str, detail: impl Into<String>) -> Invalid {
 /// must be a bounded list of records. Omitted slots remain omitted. Numbers are parsed
 /// from raw JSON token text into exact runtime decimals, and the result embeds
 /// exact JSON number tokens. The optional `profile` names the expression
-/// profile; it defaults to and currently accepts only `norn-zen/6`. Evaluation
+/// profile; it defaults to and currently accepts only `norn-zen/7`. Evaluation
 /// always uses the shipped `norn.limits/1` decide fuel.
 ///
 /// The source and input contract must already have passed `WidgetIR` admission

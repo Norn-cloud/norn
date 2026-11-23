@@ -5,9 +5,18 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "shared cell store with native SQLite adapters (ring 1; see AGENTS.md)"
+# #1485 S6: the suites that commit raw are compiled inside the crate
+# (src/suites.rs); the integration tests are listed below.
+autotests = false
 
 [lib]
 path = "src/lib.rs"
+
+# The operator path for a cell its open refuses (#1423).
+[[bin]]
+name = "norn-cell-restore"
+path = "src/bin/norn-cell-restore.rs"
+required-features = ["native"]
 
 [[example]]
 name = "catalog_demo"
@@ -18,12 +27,8 @@ name = "constitution"
 test = true
 
 [[test]]
-name = "analytics_engine"
-required-features = ["duckdb", "native"]
-
-[[test]]
-name = "duckdb_transform"
-required-features = ["duckdb", "native"]
+name = "suites"
+path = "tests/suites.rs"
 
 [features]
 default = ["native"]
@@ -32,6 +37,8 @@ duckdb = ["dep:duckdb"]
 # Test-only: `engine::FaultEngine` for deterministic fault injection. Enabled
 # only through dev-dependencies, never by a production build.
 fault-injection = []
+# Deterministic commit-path work counters (#1421): harnesses only.
+counters = ["norn-ir/counters"]
 
 [dependencies]
 ct-merkle = "=0.3.0"
@@ -46,11 +53,11 @@ norn-projections = { path = "../norn-projections" }
 # cache, no wasm32 backend).
 rusqlite = { version = "0.41.0", default-features = false, features = ["backup", "bundled", "cache", "hooks"], optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+serde_json = { version = "1.0.150", features = ["raw_value"] }
 thiserror = "2.0.20"
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 object_store = { version = "0.14.2", default-features = false, features = ["fs"], optional = true }
-tokio = { version = "1.53.1", features = ["sync"], optional = true }
+tokio = { version = "1.53.1", features = ["rt", "sync"], optional = true }
 
 tempfile = { version = "3.27.0", optional = true }
 duckdb = { version = "=1.20000.1", default-features = false, features = ["bundled", "json", "parquet"], optional = true }
@@ -66,11 +73,11 @@ crate-type = ["cdylib"]
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = "1.11.0"
 sha2 = "0.10.9"
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+jiff = { version = "0.2.37", default-features = false, features = ["std"] }
 # Test support only (T6-PSM-1 / T4-CELL-1): the host-agnostic CellHost laws.
 norn-testkit = { path = "../norn-testkit" }
 # This crate's own tests use the fault-injecting engine.
-norn-cell = { path = ".", features = ["fault-injection"] }
+norn-cell = { path = ".", features = ["fault-injection", "counters"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
 
 [lints]

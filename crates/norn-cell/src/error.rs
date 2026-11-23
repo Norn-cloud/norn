@@ -89,6 +89,14 @@ pub enum CellError {
     /// DECISION-LEDGER-1: a decision resolution was refused (`decision.*`).
     #[error("{0}")]
     DecisionRefused(&'static str),
+    /// MANIFEST-1: a dataset manifest was refused (`dataset.*`, `bulk.*`).
+    #[error("{code}: {detail}")]
+    DatasetRefused {
+        /// The stable refusal code.
+        code: &'static str,
+        /// What was refused, for the caller.
+        detail: String,
+    },
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,
@@ -163,6 +171,44 @@ pub enum CellError {
         found: String,
         /// The format this build reads and writes.
         expected: String,
+    },
+    /// ENGINE-UPGRADE-1: the cell's storage version is newer than this
+    /// engine's; a newer release upgraded it (#1494).
+    #[error(
+        "{code}: cell storage version {cell} (written by {writer}) is newer than this engine's {engine}; open it with a release that reads storage version {cell}",
+        code = norn_checker::ENGINE_DOWNGRADE
+    )]
+    EngineDowngrade {
+        /// The cell's storage version.
+        cell: u32,
+        /// The release label that wrote it.
+        writer: String,
+        /// The storage version this engine writes.
+        engine: u32,
+    },
+    /// ENGINE-UPGRADE-1: the cell's engine stamp is not one this engine can
+    /// read, so it cannot order the cell against itself (#1494).
+    #[error(
+        "{code}: cell engine stamp {found:?} is not a version this engine reads",
+        code = norn_checker::ENGINE_UNKNOWN_VERSION
+    )]
+    EngineUnknownVersion {
+        /// The stored stamp, truncated.
+        found: String,
+    },
+    /// ENGINE-UPGRADE-1: the cell's storage version has no in-place upgrade
+    /// path in this engine, or a migration refused its data (#1494).
+    #[error(
+        "{code}: cell storage version {cell} cannot be upgraded to {engine} in place: {reason}",
+        code = norn_checker::ENGINE_UPGRADE_UNSUPPORTED
+    )]
+    EngineUpgradeUnsupported {
+        /// The cell's storage version.
+        cell: u32,
+        /// The storage version this engine writes.
+        engine: u32,
+        /// Why, naming the bridge release when there is one.
+        reason: String,
     },
     /// The active definitions version changed since the installer planned.
     #[error("definitions version conflict: expected {expected:?}, found {actual:?}")]
@@ -240,6 +286,28 @@ pub enum CellError {
         object: DefinitionInvariantObject,
         /// The fail-closed reason.
         reason: String,
+    },
+    /// HOST-INSTALL-LIVE-1: live objects break the candidate's governing
+    /// laws, or a candidate law could not be evaluated on them (unchecked is
+    /// never admitted). Evaluated on the migration candidate's view of each
+    /// object and of the links its laws read. Nothing is installed.
+    #[error("candidate governing laws refuse {} live object finding(s) of {checked} checked", findings.len())]
+    DefinitionLawRefused {
+        /// Every finding, violations and unchecked objects alike.
+        findings: Vec<DefinitionLawFinding>,
+        /// How many live objects were evaluated.
+        checked: u64,
+    },
+    /// HOST-INSTALL-LIVE-1: the candidate's governing laws would need more
+    /// live objects evaluated than one install checks. Nothing is installed.
+    #[error(
+        "candidate governing laws would need more than {limit} live objects checked (at {object_type})"
+    )]
+    DefinitionLawUnbounded {
+        /// The object type being checked when the bound was reached.
+        object_type: String,
+        /// The bound.
+        limit: u64,
     },
     /// Candidate identity facts exceed the bounded trusted projection.
     #[error("identity projection budget exceeded: {0}")]
@@ -424,6 +492,15 @@ pub enum CellError {
     /// A number does not fit the store's integer range.
     #[error("{0} is out of range")]
     OutOfRange(&'static str),
+    /// OBS-LINK-DISPUTE-1: a page would capture a dispute row (a conflict or
+    /// identity finding) after a record it commits, so that record's commit
+    /// would see a dispute one-by-one delivery commits it before. Nothing
+    /// was captured; the host delivers the page's records one at a time
+    /// (capture, then commit, each in order).
+    #[error(
+        "a mapping page captures a dispute after a record it commits; deliver its records one at a time"
+    )]
+    MappingPageSpansDispute,
     /// A fault probe stopped the commit (deterministic simulation only).
     #[error("injected crash at {0:?}")]
     InjectedCrash(CommitPoint),
@@ -444,6 +521,22 @@ impl std::fmt::Display for DefinitionInvariantObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}/{}", self.world, self.object_type, self.id)
     }
+}
+
+/// HOST-INSTALL-LIVE-1: one live object the candidate's governing laws
+/// refuse, or could not be evaluated on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefinitionLawFinding {
+    /// The object's type.
+    pub object_type: String,
+    /// The object's id.
+    pub id: String,
+    /// The law it breaks; `None` for an object no law could be evaluated on.
+    pub law: Option<String>,
+    /// What broke, or why it could not be evaluated.
+    pub message: String,
+    /// The object could not be evaluated (fuel, an unreadable link).
+    pub unchecked: bool,
 }
 
 /// One bounded invariant finding for an existing object.

@@ -1,7 +1,7 @@
 # Three systems, one ontology
 
 `MVP-MAP-THREE`, `MVP-MAP-GAP` and `MVP-ITEM-HOLDING` are exercised by
-`cargo test --locked -p norn-checker --test three_systems`. The existing
+`cargo test --locked -p norn-checker --test suites three_systems::`. The existing
 ontology-pack/link artifacts describe term correspondence; the adjacent
 `records.ts` declarations compile to executable MappingIR and SourceSchemaIR.
 They are separate evidence levels, not interchangeable claims of law transport.

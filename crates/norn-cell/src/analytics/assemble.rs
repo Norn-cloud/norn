@@ -23,6 +23,9 @@ use crate::read::LedgerHead;
 use crate::system::LEDGER;
 use crate::{CellError, CellStore};
 
+/// MANIFEST-MARK-1: a question over a dataset's marked column refuses.
+const MARKED_COLUMN: &str = "privacy.marked_column";
+
 /// The bucket value a group key stands for, as the shared projection gives it.
 ///
 /// # Errors
@@ -149,39 +152,51 @@ impl<E: SqlEngine> CellStore<E> {
             link.link.clone_from(&table.table);
             link.target = root;
         }
-        // BULK-LINEAGE-1: a loaded dataset is read at its current load; its
-        // rows are not cell facts, so no finding excludes them.
-        let (source, exclusions) = if let Some(dataset) = self.analytics_dataset(grain)? {
-            if cutoff.is_some() {
-                return Err(refused(UNSUPPORTED_ENGINE));
-            }
-            (
-                Source::Dataset {
-                    table: grain.to_owned(),
-                    load: dataset.load,
-                },
-                BTreeMap::new(),
-            )
-        } else {
-            let candidates = self.analytics_exclusion_candidates(&context.world, grain)?;
-            let exclusions = match cutoff {
-                Some(cutoff) => {
-                    self.exclusions_known_at(&context.world, grain, candidates, cutoff)?
+        // BULK-LINEAGE-1 / MANIFEST-CURRENT-1: a loaded dataset is read at its
+        // current manifest's landing; its rows are not cell facts, so no
+        // finding excludes them.
+        let (source, exclusions) =
+            if let Some(dataset) = self.dataset_manifest(crate::MAIN_WORLD, grain)? {
+                if cutoff.is_some() {
+                    return Err(refused(UNSUPPORTED_ENGINE));
                 }
-                None => self.analytics_exclusions_of(&context.world, grain, candidates)?,
+                // MANIFEST-MARK-1: an answer over a marked column would carry
+                // its stored values outside any projection.
+                let markings = self.effective_dataset_markings(&dataset.manifest)?;
+                if plan
+                    .properties()
+                    .iter()
+                    .any(|property| markings.contains_key(property.id.as_str()))
+                {
+                    return Err(refused(MARKED_COLUMN));
+                }
+                (
+                    Source::Dataset {
+                        table: grain.to_owned(),
+                        load: dataset.manifest.load,
+                    },
+                    BTreeMap::new(),
+                )
+            } else {
+                let candidates = self.analytics_exclusion_candidates(&context.world, grain)?;
+                let exclusions = match cutoff {
+                    Some(cutoff) => {
+                        self.exclusions_known_at(&context.world, grain, candidates, cutoff)?
+                    }
+                    None => self.analytics_exclusions_of(&context.world, grain, candidates)?,
+                };
+                (
+                    Source::Mirror {
+                        world: context.world.clone(),
+                        table: grain.to_owned(),
+                        frontier: cutoff.map_or(revision.commits, |cutoff| cutoff.frontier),
+                        scope: context.scope.clone(),
+                        excluded: exclusions.keys().cloned().collect(),
+                        model: cutoff.map(|_| self.model().model_hash().to_owned()),
+                    },
+                    exclusions,
+                )
             };
-            (
-                Source::Mirror {
-                    world: context.world.clone(),
-                    table: grain.to_owned(),
-                    frontier: cutoff.map_or(revision.commits, |cutoff| cutoff.frontier),
-                    scope: context.scope.clone(),
-                    excluded: exclusions.keys().cloned().collect(),
-                    model: cutoff.map(|_| self.model().model_hash().to_owned()),
-                },
-                exclusions,
-            )
-        };
         let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
         let request = EvaluateRequest {
             tenant: tenant.clone(),
@@ -213,12 +228,12 @@ impl<E: SqlEngine> CellStore<E> {
         scope: &str,
         object_type: &str,
     ) -> Result<(Source, String), CellError> {
-        if let Some(dataset) = self.analytics_dataset(object_type)? {
-            let snapshot = format!("l{}", dataset.load);
+        if let Some(dataset) = self.dataset_manifest(crate::MAIN_WORLD, object_type)? {
+            let snapshot = format!("l{}", dataset.manifest.load);
             return Ok((
                 Source::Dataset {
                     table: object_type.to_owned(),
-                    load: dataset.load,
+                    load: dataset.manifest.load,
                 },
                 snapshot,
             ));

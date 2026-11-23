@@ -1467,8 +1467,17 @@ impl VMInner<'_, '_> {
                         .saturating_mul(args.get(1).map(size).unwrap_or(0)),
                     FunctionKind::Internal(F::MergeDeep) => sum(args, &deep),
                     FunctionKind::Internal(
-                        F::DaysBetween | F::AddDays | F::SecondsBetween | F::AddSeconds,
+                        F::DaysBetween
+                        | F::AddDays
+                        | F::SecondsBetween
+                        | F::AddSeconds
+                        | F::IntervalsOverlap
+                        | F::IntervalGapSeconds
+                        | F::IntervalIntersectionSeconds,
                     ) => crate::meter::cost::TEMPORAL_ARITHMETIC.saturating_add(sum(args, &size)),
+                    FunctionKind::Internal(F::ResolveLocalTimestamp) => {
+                        crate::meter::cost::TEMPORAL_TZ_RESOLVE.saturating_add(sum(args, &size))
+                    }
                     _ => sum(args, &size),
                 }
             }

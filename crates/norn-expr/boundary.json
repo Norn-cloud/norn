@@ -7,7 +7,7 @@
   "dev_only_norn": [],
   "third_party": [
     "zen-expression",
-    "chrono",
-    "chrono-tz"
+    "jiff",
+    "jiff-tzdb"
   ]
 }

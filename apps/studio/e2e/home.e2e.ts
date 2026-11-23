@@ -23,8 +23,8 @@ const sections = [{ kind: "held_back", count: 1, shown: 1, approximate: false },
 
 test("home: the inbox groups held-back records by law, each with its finding in words and the fix the server offers", async ({ page }) => {
   await cell(page, { scanLimit: 10000, sections, items: [group([{
-    objectType: "docs.ScannedDocument", id: "SCAN-INV-0042", target: "/sources/docs.ScannedDocument/SCAN-INV-0042",
-    finding: { id: "f1", words: "total 720.00 ≠ lines 72.00", message: "m", compared: {} }, values: { doc_number: "INV-0042" },
+    objectType: "docs.ScannedDocument", id: "SCAN-INV-1042", target: "/sources/docs.ScannedDocument/SCAN-INV-1042",
+    finding: { id: "f1", words: "total 720.00 ≠ lines 72.00", message: "m", compared: {} }, values: { doc_number: "INV-1042" },
     suggestedFix: { actionId: "docs.scanned_document.correct", title: "Correct an extracted total", label: "Use 72.00", property: "total", value: "72.00", arguments: {}, needs: ["correction_reason"] },
   }])] })
   await page.goto("/")
@@ -33,20 +33,20 @@ test("home: the inbox groups held-back records by law, each with its finding in 
   await expect(page.getByText("total 720.00 ≠ lines 72.00")).toBeVisible()
   await expect(page.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/objects/docs.ScannedDocument?population=held_back")
   await page.getByRole("link", { name: "Use 72.00" }).click()
-  await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-0042$/)
+  await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-1042$/)
 })
 
 test("home: a member's inbox names the held record with no finding words and no fix (the server sends none)", async ({ page }) => {
-  await cell(page, { scanLimit: 10000, sections, items: [group([{ objectType: "docs.ScannedDocument", id: "SCAN-INV-0042", target: "/sources/docs.ScannedDocument/SCAN-INV-0042" }])] })
+  await cell(page, { scanLimit: 10000, sections, items: [group([{ objectType: "docs.ScannedDocument", id: "SCAN-INV-1042", target: "/sources/docs.ScannedDocument/SCAN-INV-1042" }])] })
   await page.goto("/")
-  await expect(page.getByRole("link", { name: "SCAN-INV-0042" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "SCAN-INV-1042" })).toBeVisible()
   await expect(page.getByText("total 720.00")).toHaveCount(0)
   await expect(page.getByRole("link", { name: /Use / })).toHaveCount(0)
 })
 
 test("home: a record two laws disagree on offers no fix and names both laws", async ({ page }) => {
   await cell(page, { scanLimit: 10000, sections, items: [group([{
-    objectType: "docs.ScannedDocument", id: "SCAN-INV-0043", target: "/sources/docs.ScannedDocument/SCAN-INV-0043", values: { doc_number: "INV-0043" },
+    objectType: "docs.ScannedDocument", id: "SCAN-INV-1043", target: "/sources/docs.ScannedDocument/SCAN-INV-1043", values: { doc_number: "INV-1043" },
     finding: { id: "f2", words: "total 720.00 ≠ ledger entry 72.00", message: "m", compared: {} },
     otherFindings: [{ id: "lines", words: "total 72.00 ≠ lines 720.00", message: "m", compared: {} }],
   }])] })
@@ -74,16 +74,18 @@ test("home: a key number the server refuses leaves Home, and the server's reason
       : route.fulfill({ json: answered })
   })
   await page.goto("/")
-  await expect(page.getByRole("heading", { name: "Key numbers" })).toBeVisible()
-  await expect(page.getByText("Total amount")).toBeVisible()
-  // No card for the refused number: its title would read exactly this (the line below it is longer).
-  await expect(page.getByText("Total total", { exact: true })).toHaveCount(0)
-  await expect(page.locator('[data-refused-number="m.scanned"]')).toContainText("Some scanned documents have no issued date")
+  const keyNumbers = page.getByRole("region", { name: "Key numbers" })
+  const strip = keyNumbers.locator('[data-slot="stat-strip"]')
+  const refused = keyNumbers.getByRole("list", { name: "Key numbers not shown" })
+  await expect(refused.getByRole("listitem")).toContainText("Some scanned documents have no issued date, so they cannot be totalled by it.")
+  await expect(strip.getByRole("heading", { name: "Total amount" })).toBeVisible()
+  await expect(strip.getByText("70,356", { exact: true })).toBeVisible()
+  await expect(strip.locator('[data-slot="kpi"]')).toHaveCount(1)
   await page.setViewportSize({ width: 1440, height: 900 })
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme })
-    await page.waitForTimeout(300)
-    await page.getByRole("heading", { name: "Key numbers" }).scrollIntoViewIfNeeded()
-    await page.screenshot({ path: info.outputPath(`home-refused-number-${scheme}.png`) })
+    await expect(page.locator("html")).toHaveClass(scheme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b).*$/)
+    await keyNumbers.scrollIntoViewIfNeeded()
+    await page.screenshot({ path: info.outputPath(`home-refused-number-${scheme}.png`), animations: "disabled" })
   }
 })

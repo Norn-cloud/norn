@@ -4,7 +4,7 @@
 //! Objects and links live in the tables the DDL projection derives from the
 //! object model ([`Model`]); events, receipts, the command outbox, timers,
 //! the observation inbox, `perform` runs, and version high-water marks live in the
-//! system tables ([`crate::system`]). One [`CellStore::commit`] is one engine
+//! system tables ([`crate::system`]). One `CellStore::commit_unchecked` is one engine
 //! transaction: the consumed delivery, object
 //! writes and fact changes, link changes, ledger events, outbox and timer
 //! effects, and the receipt either all land or none do. A crash anywhere
@@ -467,11 +467,17 @@ pub enum JournalMode {
 pub struct StoreOptions {
     /// The journal mode.
     pub journal_mode: JournalMode,
-    /// The native page cache size in pages. A small cache makes
-    /// SQLite spill uncommitted pages to the file mid-transaction, which the
-    /// crash simulations use to exercise hot-journal and WAL recovery.
+    /// The native page cache size in pages; `None` is
+    /// [`DEFAULT_CACHE_KIB`]. A small cache makes SQLite spill uncommitted
+    /// pages to the file mid-transaction, which the crash simulations use to
+    /// exercise hot-journal and WAL recovery.
     pub cache_pages: Option<u32>,
 }
+
+/// The native page cache a file-backed store keeps when
+/// [`StoreOptions::cache_pages`] is `None`: 16 MiB, so one import page's
+/// transaction fits without spilling (INGEST-CACHE-1).
+pub const DEFAULT_CACHE_KIB: u32 = 16 * 1024;
 
 /// One retained, checker-admitted definition set installed in the cell.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -581,6 +587,11 @@ pub struct DefinitionInstallRecord {
     /// The retained (non-kernel) definition revision this commit appended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained: Option<crate::retained::RetainedDefinitionChange>,
+    /// Retained revisions committed with this install's kernel set, in the
+    /// same transaction (#1469: a pack's approvals publish with its actions,
+    /// or not at all).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub riding: Vec<crate::retained::RetainedDefinitionChange>,
 }
 
 /// Construct the exact ledger event emitted for a typed definition install.
@@ -1766,7 +1777,7 @@ impl CommitOutcome {
     }
 }
 
-/// Where a commit is when a fault probe runs ([`CellStore::commit_probed`]).
+/// Where a commit is when a fault probe runs (`CellStore::commit_probed_unchecked`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CommitPoint {
     /// The transaction began; nothing written.
@@ -1837,13 +1848,16 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// then [`Self::verified_head`] extends it over later commits only.
     verified: RefCell<LedgerHead>,
     source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
-    mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
+    pub(crate) mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
     verified_receipts: RefCell<crate::history::VerifiedReceipts>,
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
     /// FORK-PIN-1: the durable pin of a forked store, loaded at open.
     pub(crate) fork: Option<crate::fork::ForkPin>,
+    /// HOST-INSTALL-LIVE-1: how many live objects the last definitions
+    /// check or install evaluated under the candidate's governing laws.
+    law_checked: Cell<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -1852,6 +1866,10 @@ struct DefinitionInstallContext<'a> {
     input: &'a InstalledDefinitionInput,
     expected_version: Option<u64>,
     retained: Option<&'a crate::retained::RetainedDefinitionChange>,
+    riding: &'a [crate::retained::RetainedDefinitionChange],
+    /// #1469 S1: the version row the transaction wrote, as written, so the
+    /// install answers what it committed without a separate readback.
+    committed: Option<&'a RefCell<Option<InstalledDefinitionSet>>>,
 }
 
 struct DefinitionPreflight {
@@ -1907,6 +1925,33 @@ fn preflight_retained(
     Ok(())
 }
 
+/// Revisions riding a kernel set install (#1469): never a flow (a flow
+/// installs its own set), never alongside a single retained revision, each
+/// id once, and each the next revision of its id.
+fn preflight_riding<E: SqlEngine>(
+    engine: &E,
+    install: &DefinitionInstallContext<'_>,
+) -> Result<(), CellError> {
+    if install.riding.is_empty() {
+        return Ok(());
+    }
+    if install.retained.is_some() {
+        return Err(CellError::DefinitionReceiptInvalid(
+            "a retained revision and riding revisions never share one install".to_owned(),
+        ));
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for change in install.riding {
+        if change.definition.kind == "flow" || !ids.insert(change.definition.id.as_str()) {
+            return Err(CellError::DefinitionReceiptInvalid(
+                "a riding revision is one non-flow revision per id".to_owned(),
+            ));
+        }
+        crate::retained::preflight(engine, change)?;
+    }
+    Ok(())
+}
+
 fn preflight_definition_install<E: SqlEngine>(
     engine: &E,
     previous_model: &Model,
@@ -1935,6 +1980,7 @@ fn preflight_definition_install<E: SqlEngine>(
         preflight_retained(previous.as_ref(), previous_model, install, change)?;
         crate::retained::preflight(engine, change)?;
     }
+    preflight_riding(engine, install)?;
     let (layout, layout_revision) =
         resolve_layout_snapshot(previous.as_ref(), install.input.layout.as_deref())?;
     if install.input.readmission.is_some() {
@@ -2067,7 +2113,10 @@ impl CellStore<NativeEngine> {
 }
 
 // Check before DDL, definition decoding, or host model selection touches old data.
+// ENGINE-UPGRADE-1: a cell newer than this engine, or one it cannot order,
+// refuses here, before the format check names it a pre-alpha store.
 fn validate_store_format<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    crate::engine_release::admission(engine)?;
     let exists = engine
         .query_optional(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -2117,6 +2166,9 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// [`CellError::StoreFormat`] or [`CellError::SchemaMismatch`] when the
     /// engine already contains a store for another format or model;
+    /// [`CellError::EngineDowngrade`], [`CellError::EngineUnknownVersion`] or
+    /// [`CellError::EngineUpgradeUnsupported`] when its storage version is one
+    /// this engine cannot serve ([`crate::engine_release`]);
     /// [`CellError::LedgerCorrupt`] when its ledger does not verify; engine
     /// errors otherwise.
     /// Fresh stores use SQLite's `lower`, `hex`, and `randomblob` functions.
@@ -2139,6 +2191,7 @@ impl<E: SqlEngine> CellStore<E> {
             ));
         }
         conn.transaction(|| Self::init_schema(&conn, &model, &mut |_| Ok(cell_id.clone())))?;
+        conn.admitted()?;
         Ok(Self::unverified(conn, model))
     }
 
@@ -2189,10 +2242,48 @@ impl<E: SqlEngine> CellStore<E> {
         model: Model,
         input: &InstalledDefinitionInput,
         scope: &str,
+        source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<Self, CellError> {
+        Self::provision_inner(conn, model, input, scope, source, &[])
+    }
+
+    /// [`Self::provision_definitions`], with every `riding` retained revision
+    /// (a pack's approvals) appended in the provisioning transaction: the
+    /// first set is never live without them (#1469 S2).
+    ///
+    /// # Errors
+    /// As [`Self::provision_definitions`], plus a riding revision that is not
+    /// the first of its id; any of them provisions nothing.
+    pub fn provision_definitions_riding(
+        conn: E,
+        model: Model,
+        input: &InstalledDefinitionInput,
+        scope: &str,
+        riding: &[crate::retained::RetainedDefinitionChange],
+    ) -> Result<Self, CellError> {
+        Self::provision_inner(
+            conn,
+            model,
+            input,
+            scope,
+            crate::cell_identity::generate,
+            riding,
+        )
+    }
+
+    fn provision_inner(
+        conn: E,
+        model: Model,
+        input: &InstalledDefinitionInput,
+        scope: &str,
         mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+        riding: &[crate::retained::RetainedDefinitionChange],
     ) -> Result<Self, CellError> {
         let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
         let mut store = Self::unverified(conn, model);
+        // ENGINE-UPGRADE-1: nothing of a cell this engine cannot serve is
+        // read. The provisioning transaction checks again before it writes.
+        validate_store_format(&store.conn)?;
         // FORK-PIN-1: a fork reopened through provisioning stays a fork.
         if !Self::engine_is_fresh(&store.conn)? {
             store.fork = crate::fork::load_pin(&store.conn)?;
@@ -2218,6 +2309,8 @@ impl<E: SqlEngine> CellStore<E> {
             input,
             expected_version: Some(0),
             retained: None,
+            riding,
+            committed: None,
         };
         let fresh_identity = RefCell::new(|| source(&store.conn));
         store
@@ -2232,10 +2325,7 @@ impl<E: SqlEngine> CellStore<E> {
             .map_err(|error| match error {
                 GuardedError::Guard(error) | GuardedError::Store(error) => error,
             })?;
-        if store.fork.is_some() {
-            let head = store.verified_head()?.commits;
-            store.refuse_pin_past(head)?;
-        }
+        store.conn.admitted()?;
         Ok(store)
     }
 
@@ -2333,6 +2423,7 @@ impl<E: SqlEngine> CellStore<E> {
             verified_receipts: RefCell::default(),
             quantity_boundary: Cell::new(None),
             fork: None,
+            law_checked: Cell::new(0),
         }
     }
 
@@ -2359,13 +2450,18 @@ impl<E: SqlEngine> CellStore<E> {
         source: &mut impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
     ) -> Result<(), CellError> {
         validate_store_format(conn)?;
+        // Ordered migrations see the layout they were written for: before
+        // this engine's schema statements, inside the open transaction.
+        crate::engine_release::upgrade(conn)?;
         for statement in SYSTEM_DDL
             .iter()
             .chain(&crate::flow_run::DDL)
             .chain(&crate::decision_ledger::DDL)
+            .chain(&crate::due_retry::DDL)
         {
             conn.execute_batch(statement)?;
         }
+        conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
         // Claim endpoints of bundles consumed before the table existed; a
         // no-op for every bundle already indexed.
         conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
@@ -2397,6 +2493,7 @@ impl<E: SqlEngine> CellStore<E> {
                 )?;
                 conn.execute(&insert, params!["format", STORE_FORMAT])?;
                 conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
+                crate::engine_release::stamp_fresh(conn)?;
             }
             (Some(format), Some(found)) if format == STORE_FORMAT && found == model.ddl_hash() => {}
             // Older formats lack exact encoding or durable marking coverage.
@@ -2439,48 +2536,74 @@ impl<E: SqlEngine> CellStore<E> {
         model: Model,
         mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
     ) -> Result<Self, CellError> {
+        Self::open_admitted(conn, model, &mut source, None)
+    }
+
+    /// Open, and commit the schema step and any storage upgrade only once
+    /// every check that can refuse the file has passed: the format and
+    /// storage version, the ledger, receipts and definition history, the
+    /// fork pin and, when `expected` is given, the cell identity. A refused
+    /// open rolls everything back (ENGINE-UPGRADE-1, #1494).
+    pub(crate) fn open_admitted(
+        conn: E,
+        model: Model,
+        source: &mut impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+        expected: Option<&norn_ir::cell_id::CellId>,
+    ) -> Result<Self, CellError> {
         model.validate_identity_profile()?;
-        conn.transaction(|| Self::init_schema(&conn, &model, &mut source))?;
+        // Refuse a cell this engine cannot serve before taking its write lock;
+        // the transaction checks again before its first statement.
+        validate_store_format(&conn)?;
         let mut store = Self::unverified(conn, model);
         // An existing file is admitted only if its ledger and receipts verify.
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
         // caches; ordinary admission does not repeat the startup fold.
-        let (head, boundary) = store.conn.transaction(|| {
+        // One proof cache for this read-only pass (#1423): receipts and the
+        // retained writer models are proven once per pass, not once per event.
+        let pass = RefCell::default();
+        let (head, boundary, transparency, fork) = store.conn.transaction(|| {
+            Self::init_schema(&store.conn, &store.model, source)?;
+            if let Some(expected) = expected {
+                store.require_cell_id(expected)?;
+            }
             crate::cell_identity::verify_history(&store.conn)?;
-            let verified = store
+            let (head, boundary) = store
                 .read()
+                .with_transaction_verified_receipts(&pass)
                 .verify_ledger_with_boundary(&LedgerHead::genesis())?;
             store.verify_definition_history()?;
             store.read().verify_value_history()?;
             crate::identity::validate(&store.read())?;
-            Ok::<_, CellError>(verified)
+            let transparency = crate::transparency::load(&store.conn)?;
+            let fork = crate::fork::load_pin(&store.conn)?;
+            refuse_pin_past(fork.as_ref(), head.commits)?;
+            Ok::<_, CellError>((head, boundary, transparency, fork))
         })?;
         store.verified.replace(head);
         store.quantity_boundary.set(boundary);
-        store
-            .transparency
-            .replace(crate::transparency::load(&store.conn)?);
-        store.fork = crate::fork::load_pin(&store.conn)?;
-        let head = store.verified.borrow().commits;
-        store.refuse_pin_past(head)?;
+        store.transparency.replace(transparency);
+        store.fork = fork;
+        // Only an accepted file takes the requested journal mode (#1504).
+        store.conn.admitted()?;
         Ok(store)
     }
+}
 
-    /// FORK-PIN-1: a fork's base is never past its store's head.
-    fn refuse_pin_past(&self, head_commits: u64) -> Result<(), CellError> {
-        if self
-            .fork
-            .as_ref()
-            .is_some_and(|pin| pin.base.commits > head_commits)
-        {
-            return Err(CellError::Encoding(
-                "fork pin: the base is past the store's head".to_owned(),
-            ));
-        }
-        Ok(())
+/// FORK-PIN-1: a fork's base is never past its store's head.
+fn refuse_pin_past(
+    fork: Option<&crate::fork::ForkPin>,
+    head_commits: u64,
+) -> Result<(), CellError> {
+    if fork.is_some_and(|pin| pin.base.commits > head_commits) {
+        return Err(CellError::Encoding(
+            "fork pin: the base is past the store's head".to_owned(),
+        ));
     }
+    Ok(())
+}
 
+impl<E: SqlEngine> CellStore<E> {
     #[allow(
         clippy::too_many_lines,
         reason = "startup validates every retained install before serving the cell"
@@ -2725,14 +2848,50 @@ impl<E: SqlEngine> CellStore<E> {
     /// Authored adapters use the checked kernel boundary; raw Put carries no
     /// authored/observed authority. Canonical `FactChange::Create` still refuses reuse.
     ///
+    /// Crate-private (#1375 S4, #1444 fix 5): no law check runs here, so a
+    /// crate outside the kernel path cannot reach it. A host's own actorless
+    /// writes are the fixed-input [`crate::provision`] operations.
+    ///
+    /// ```compile_fail,E0624
+    /// // A raw, unchecked write from outside the kernel does not compile:
+    /// // the raw commit is private to `norn-cell`.
+    /// use norn_cell::{CellStore, CommitBatch};
+    /// fn bypass(store: &mut CellStore) {
+    ///     let _ = store.commit_unchecked(&CommitBatch::default());
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0624
+    /// // Nor does the probed variant.
+    /// use norn_cell::{CellStore, CommitBatch};
+    /// fn bypass(store: &mut CellStore) {
+    ///     let _ = store.commit_probed_unchecked(&CommitBatch::default(), &mut |_| Ok(()));
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0624
+    /// // Nor a guarded commit whose guard admits anything.
+    /// use norn_cell::{CellStore, CommitBatch};
+    /// fn bypass(store: &mut CellStore) {
+    ///     let _ = store.commit_guarded_unchecked(
+    ///         &CommitBatch::default(),
+    ///         |_reader| Ok::<(), ()>(()),
+    ///         &mut |_| Ok(()),
+    ///     );
+    /// }
+    /// ```
+    ///
     /// # Errors
     ///
     /// Any [`CellError`]; on error nothing was written.
-    pub fn commit(&mut self, batch: &CommitBatch) -> Result<CommitOutcome, CellError> {
-        self.commit_probed(batch, &mut |_point| Ok(()))
+    pub(crate) fn commit_unchecked(
+        &mut self,
+        batch: &CommitBatch,
+    ) -> Result<CommitOutcome, CellError> {
+        self.commit_probed_unchecked(batch, &mut |_point| Ok(()))
     }
 
-    /// [`Self::commit`] with a fault probe called at every [`CommitPoint`]
+    /// [`Self::commit_unchecked`] with a fault probe called at every [`CommitPoint`]
     /// (deterministic crash simulation). A probe error before
     /// [`CommitPoint::Committed`] rolls the transaction back; at
     /// [`CommitPoint::Committed`] the commit is already durable and the error
@@ -2741,12 +2900,12 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     ///
     /// Any [`CellError`], including the probe's.
-    pub fn commit_probed(
+    pub(crate) fn commit_probed_unchecked(
         &mut self,
         batch: &CommitBatch,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<CommitOutcome, CellError> {
-        match self.commit_guarded(batch, |_reader| Ok::<(), CellError>(()), probe) {
+        match self.commit_guarded_unchecked(batch, |_reader| Ok::<(), CellError>(()), probe) {
             Ok(((), outcome)) => Ok(outcome),
             Err(GuardedError::Guard(error) | GuardedError::Store(error)) => Err(error),
         }
@@ -2761,8 +2920,8 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     ///
     /// [`GuardedError::Guard`] when the guard refuses; otherwise as
-    /// [`Self::commit_probed`].
-    pub fn commit_guarded<T: Default, X>(
+    /// [`Self::commit_probed_unchecked`].
+    pub(crate) fn commit_guarded_unchecked<T: Default, X>(
         &mut self,
         batch: &CommitBatch,
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
@@ -2818,12 +2977,12 @@ impl<E: SqlEngine> CellStore<E> {
             diff: install.diff.clone(),
             layout: install.installed.layout.clone(),
         };
-        self.install_definitions_from_origin(
+        self.install_definitions_inner(
             Model::from_retained_snapshot(&install.model)?,
             &input,
             Some(install.installed.version.saturating_sub(1)),
             &record.batch.scope,
-            install.retained.as_ref(),
+            (install.retained.as_ref(), &install.riding),
             CommitOrigin::Retained(record),
         )
     }
@@ -2886,6 +3045,33 @@ impl<E: SqlEngine> CellStore<E> {
         )
     }
 
+    /// Install `input`'s kernel set with `candidate_model`, and append every
+    /// `riding` retained revision, in one transaction: the set and its
+    /// retained revisions (a pack's approvals) are published together or not
+    /// at all. Each revision is compare-and-set on its id's current revision.
+    ///
+    /// # Errors
+    ///
+    /// A definitions-version or retained-revision conflict, unsafe live-data
+    /// migration, or a store error; any of them installs nothing.
+    pub fn install_definitions_riding(
+        &mut self,
+        candidate_model: Model,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        scope: &str,
+        riding: &[crate::retained::RetainedDefinitionChange],
+    ) -> Result<InstalledDefinitionSet, CellError> {
+        self.install_definitions_inner(
+            candidate_model,
+            input,
+            expected_version,
+            scope,
+            (None, riding),
+            CommitOrigin::Current,
+        )
+    }
+
     fn install_definitions_from_origin(
         &mut self,
         candidate_model: Model,
@@ -2895,17 +3081,42 @@ impl<E: SqlEngine> CellStore<E> {
         retained: Option<&crate::retained::RetainedDefinitionChange>,
         origin: CommitOrigin<'_>,
     ) -> Result<InstalledDefinitionSet, CellError> {
+        self.install_definitions_inner(
+            candidate_model,
+            input,
+            expected_version,
+            scope,
+            (retained, &[]),
+            origin,
+        )
+    }
+
+    fn install_definitions_inner(
+        &mut self,
+        candidate_model: Model,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        scope: &str,
+        (retained, riding): (
+            Option<&crate::retained::RetainedDefinitionChange>,
+            &[crate::retained::RetainedDefinitionChange],
+        ),
+        origin: CommitOrigin<'_>,
+    ) -> Result<InstalledDefinitionSet, CellError> {
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: scope.to_owned(),
             logical_time: input.installed_at,
             ..CommitBatch::default()
         };
+        let committed = RefCell::new(None);
         let install = DefinitionInstallContext {
             candidate_model: &candidate_model,
             input,
             expected_version,
             retained,
+            riding,
+            committed: Some(&committed),
         };
         let result = self.commit_guarded_inner(
             &batch,
@@ -2918,8 +3129,11 @@ impl<E: SqlEngine> CellStore<E> {
         match result {
             Ok(((), CommitOutcome::Committed(receipt))) => {
                 self.model = candidate_model;
-                self.read()
-                    .installed_definitions(Some(receipt.body.definitions_version))?
+                // #1469 S1: the revision the transaction wrote, never a
+                // readback that could fail after the commit and report a
+                // committed install as refused.
+                committed
+                    .into_inner()
                     .ok_or_else(|| CellError::LedgerCorrupt {
                         seq: receipt.body.definitions_version,
                         reason: "committed definitions version has no retained set".to_owned(),
@@ -2949,12 +3163,22 @@ impl<E: SqlEngine> CellStore<E> {
             input,
             expected_version,
             retained: None,
+            riding: &[],
+            committed: None,
         };
         let actual_version = active_definition_version(&self.conn)?;
-        Ok(
-            preflight_definition_install(&self.conn, &self.model, &install, actual_version, None)?
-                .installed,
-        )
+        let preflight =
+            preflight_definition_install(&self.conn, &self.model, &install, actual_version, None)?;
+        self.law_checked.set(preflight.migration.law_checked);
+        Ok(preflight.installed)
+    }
+
+    /// HOST-INSTALL-LIVE-1: how many live objects the last definitions check
+    /// or install on this store evaluated under the candidate's governing
+    /// laws (every install checks them; a violation refuses it).
+    #[must_use]
+    pub fn live_law_checked(&self) -> u64 {
+        self.law_checked.get()
     }
 
     #[allow(
@@ -2995,14 +3219,22 @@ impl<E: SqlEngine> CellStore<E> {
                         )?;
                     }
                 } else {
+                    // ENGINE-UPGRADE-1: another opener may have changed the
+                    // cell since the reads before this transaction; admit it
+                    // and bring it to this engine's storage version before
+                    // any statement below touches it.
+                    validate_store_format(&self.conn)?;
+                    crate::engine_release::upgrade(&self.conn)?;
                     // A file provisioned before a system table existed gains it here,
                     // so the next run start or write finds it (idempotent DDL).
                     for statement in SYSTEM_DDL
             .iter()
             .chain(&crate::flow_run::DDL)
-            .chain(&crate::decision_ledger::DDL) {
+            .chain(&crate::decision_ledger::DDL)
+            .chain(&crate::due_retry::DDL) {
                         self.conn.execute_batch(statement)?;
                     }
+                    self.conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
                     crate::retained::init(&self.conn)?;
                     crate::compute::materialize::init(&self.conn)?;
                     let binding = |key: &str| self.conn.query_optional(
@@ -3016,10 +3248,13 @@ impl<E: SqlEngine> CellStore<E> {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     }
                     crate::cell_identity::verify_history(&self.conn)?;
-                    let (head, boundary) = self.read().verify_ledger_with_boundary(&LedgerHead::genesis())?;
+                    let pass = RefCell::default();
+                    let (head, boundary) = self.read().with_transaction_verified_receipts(&pass).verify_ledger_with_boundary(&LedgerHead::genesis())?;
                     self.verify_definition_history()?;
                     self.read().verify_value_history()?;
                     crate::identity::validate(&self.read())?;
+                    // FORK-PIN-1: refused before the transaction commits.
+                    refuse_pin_past(self.fork.as_ref(), head.commits)?;
                     self.verified.replace(head);
                     admitted_boundary.set(boundary);
                     let receipt = self.read().receipt_at(1)?.ok_or_else(|| CellError::Engine("missing provisioning receipt".to_owned()))?;
@@ -3035,6 +3270,7 @@ impl<E: SqlEngine> CellStore<E> {
                     actual_version,
                     match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
                 )?;
+                self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
                     &self.conn,
                     &self.model,
@@ -3062,6 +3298,7 @@ impl<E: SqlEngine> CellStore<E> {
                     diff: install.input.diff.clone(),
                     readmission: install.input.readmission.clone(),
                     retained: install.retained.cloned(),
+                    riding: install.riding.to_vec(),
                 };
                 (version, Some(record), Some(event_batch))
             } else {
@@ -3135,7 +3372,12 @@ impl<E: SqlEngine> CellStore<E> {
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
-            let admitted = guard(&reader).map_err(GuardedError::Guard)?;
+            let admitted = {
+                // The guard only reads: a plan it proves holds for every
+                // bundle it checks (INGEST-DERIVE-ONCE-1).
+                let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
+                guard(&reader).map_err(GuardedError::Guard)?
+            };
             let consumed_input = export_journal::consumed_input(&reader, effective_batch.consumes.as_ref())?;
             let commit_seq = reader.next_commit_seq()?;
             let commit_model = installation
@@ -3156,71 +3398,79 @@ impl<E: SqlEngine> CellStore<E> {
                 (installation.as_ref(), install_record)
             {
                 record.installed.commit_seq = commit_seq;
-                self.conn.execute(
-                    &format!(
-                        "INSERT INTO \"{DEFINITION_VERSION}\" (\"version\", \"receipt_sha256\", \"canonical_set\", \"model_hash\", \"ddl_hash\", \"installed_at\", \"commit_seq\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
-                    ),
-                    params![
-                        to_i64(version, "definitions version")?,
-                        record.installed.receipt_sha256,
-                        record.installed.canonical_set,
-                        record.installed.model_hash,
-                        record.installed.ddl_hash,
-                        to_i64(record.installed.installed_at, "definitions installed_at")?,
-                        to_i64(commit_seq, "commit_seq")?,
-                    ],
-                )?;
-                let registry_json = serde_json::to_string(&record.installed.registry)
-                    .map_err(CellError::Json)?;
-                self.conn.execute(
-                    &format!(
-                        "INSERT INTO \"{DEFINITION_REGISTRY}\" (\"version\", \"registry\") VALUES (?1, ?2)"
-                    ),
-                    params![to_i64(version, "definitions version")?, registry_json],
-                )?;
-                if let Some(receipt) = &record.installed.admission_receipt {
+                // S1 (#1547): the one place the retained definitions are
+                // written; the engine refuses every other write to them.
+                self.conn.definition_writes(|| {
                     self.conn.execute(
                         &format!(
-                            "INSERT INTO \"{DEFINITION_ADMISSION_RECEIPT}\" (\"version\", \"receipt\") VALUES (?1, ?2)"
-                        ),
-                        params![to_i64(version, "definitions version")?, receipt],
-                    )?;
-                }
-                if let Some(layout) = &record.installed.layout {
-                    self.conn.execute(
-                        &format!(
-                            "INSERT INTO \"{DEFINITION_LAYOUT}\" (\"version\", \"layout_revision\", \"sidecar\") VALUES (?1, ?2, ?3)"
+                            "INSERT INTO \"{DEFINITION_VERSION}\" (\"version\", \"receipt_sha256\", \"canonical_set\", \"model_hash\", \"ddl_hash\", \"installed_at\", \"commit_seq\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
                         ),
                         params![
                             to_i64(version, "definitions version")?,
-                            to_i64(record.installed.layout_revision, "layout revision")?,
-                            layout,
+                            record.installed.receipt_sha256,
+                            record.installed.canonical_set,
+                            record.installed.model_hash,
+                            record.installed.ddl_hash,
+                            to_i64(record.installed.installed_at, "definitions installed_at")?,
+                            to_i64(commit_seq, "commit_seq")?,
                         ],
                     )?;
-                }
-                if let Some(change) = &record.retained {
-                    crate::retained::insert(
-                        &self.conn,
-                        &change.definition,
-                        version,
-                        commit_seq,
-                        record.installed.installed_at,
+                    let registry_json = serde_json::to_string(&record.installed.registry)
+                        .map_err(CellError::Json)?;
+                    self.conn.execute(
+                        &format!(
+                            "INSERT INTO \"{DEFINITION_REGISTRY}\" (\"version\", \"registry\") VALUES (?1, ?2)"
+                        ),
+                        params![to_i64(version, "definitions version")?, registry_json],
                     )?;
-                }
-                self.conn.execute(
-                    &format!("DELETE FROM \"{DEFINITION_ACTIVE}\" WHERE \"id\" = 1"),
-                    params![],
-                )?;
-                self.conn.execute(
-                    &format!(
-                        "INSERT INTO \"{DEFINITION_ACTIVE}\" (\"id\", \"version\") VALUES (1, ?1)"
-                    ),
-                    params![to_i64(version, "definitions version")?],
-                )?;
+                    if let Some(receipt) = &record.installed.admission_receipt {
+                        self.conn.execute(
+                            &format!(
+                                "INSERT INTO \"{DEFINITION_ADMISSION_RECEIPT}\" (\"version\", \"receipt\") VALUES (?1, ?2)"
+                            ),
+                            params![to_i64(version, "definitions version")?, receipt],
+                        )?;
+                    }
+                    if let Some(layout) = &record.installed.layout {
+                        self.conn.execute(
+                            &format!(
+                                "INSERT INTO \"{DEFINITION_LAYOUT}\" (\"version\", \"layout_revision\", \"sidecar\") VALUES (?1, ?2, ?3)"
+                            ),
+                            params![
+                                to_i64(version, "definitions version")?,
+                                to_i64(record.installed.layout_revision, "layout revision")?,
+                                layout,
+                            ],
+                        )?;
+                    }
+                    for change in record.retained.iter().chain(&record.riding) {
+                        crate::retained::insert(
+                            &self.conn,
+                            &change.definition,
+                            version,
+                            commit_seq,
+                            record.installed.installed_at,
+                        )?;
+                    }
+                    self.conn.execute(
+                        &format!("DELETE FROM \"{DEFINITION_ACTIVE}\" WHERE \"id\" = 1"),
+                        params![],
+                    )?;
+                    self.conn.execute(
+                        &format!(
+                            "INSERT INTO \"{DEFINITION_ACTIVE}\" (\"id\", \"version\") VALUES (1, ?1)"
+                        ),
+                        params![to_i64(version, "definitions version")?],
+                    )?;
+                    Ok(())
+                })?;
                 self.conn.execute(
                     &format!("UPDATE \"{META}\" SET \"value\" = ?1 WHERE \"key\" = 'ddl_hash'"),
                     params![install.candidate_model.ddl_hash()],
                 )?;
+                if let Some(committed) = install.committed {
+                    committed.replace(Some(record.installed.clone()));
+                }
                 Some(record)
             } else {
                 None
@@ -3253,7 +3503,7 @@ impl<E: SqlEngine> CellStore<E> {
             if !matches!(origin, CommitOrigin::Retained(_)) {
                 crate::identity::validate(&writer.reader())?;
             }
-            let (first_event_seq, ledger_head) = writer.append_events()?;
+            let (first_event_seq, ledger_head, entries) = writer.append_events()?;
             if let Some(boundary) = new_boundary {
                 crate::quantity::establish_boundary(&self.conn, boundary)?;
             }
@@ -3318,6 +3568,14 @@ impl<E: SqlEngine> CellStore<E> {
                 &receipt,
                 consumed_input,
                 install_record,
+                // A replayed record keeps the version that first wrote it.
+                match origin {
+                    CommitOrigin::Retained(record) => record.storage_version,
+                    CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
+                        Some(crate::engine_release::STORAGE_VERSION)
+                    }
+                },
+                entries,
             )?;
             probe(CommitPoint::ReceiptWritten)?;
             Ok((admitted, CommitOutcome::Committed(receipt)))
@@ -3659,7 +3917,9 @@ mod identity_history_tests {
     fn legacy_fixture(path: &Path, steps: usize) -> (CellStore, Model) {
         let current = Model::from_snapshot(&snapshot(1)).expect("current model");
         let mut template = CellStore::open_in_memory(current.clone()).expect("template");
-        template.commit(&batch(vec![])).expect("template receipt");
+        template
+            .commit_unchecked(&batch(vec![]))
+            .expect("template receipt");
         let cell_id = template.cell_id().expect("cell id").expect("bound cell id");
         let template = template.export_record(1).expect("export").expect("record");
         let retained =
@@ -3760,7 +4020,7 @@ mod identity_history_tests {
         )
         .expect("public provisioning");
         store
-            .commit(&batch(vec![put("first", "abc")]))
+            .commit_unchecked(&batch(vec![put("first", "abc")]))
             .expect("live fact");
         let legacy = Model::from_retained_snapshot(&snapshot(17)).expect("legacy projection");
         let legacy_input = definition_input(&legacy);
@@ -3800,12 +4060,12 @@ mod identity_history_tests {
             .expect("inactive metadata lookup");
         assert_eq!(lookup.definitions_snapshot(), snapshot(17));
         assert_eq!(lookup.model_hash(), legacy.model_hash());
-        assert!(
+        assert_eq!(
             store
                 .read()
                 .governing_laws_at(2, "identity.Legacy")
-                .expect("public retained lookup")
-                .is_empty()
+                .expect("public retained lookup"),
+            []
         );
         let expected = store.read().dump().expect("before retry");
         drop(store);
@@ -3848,7 +4108,7 @@ mod identity_history_tests {
             assert_eq!(rebuilt.read().dump().expect("rebuilt state"), expected);
             let before = rebuilt.read().dump().expect("before refusal");
             assert!(matches!(
-                rebuilt.commit(&batch(vec![put("third", "Abc")])),
+                rebuilt.commit_unchecked(&batch(vec![put("third", "Abc")])),
                 Err(CellError::IdentityCollision { .. })
             ));
             assert_eq!(rebuilt.read().dump().expect("atomic refusal"), before);
@@ -3898,5 +4158,171 @@ mod identity_history_tests {
                 ));
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "native"))]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "journal proof fixture"
+)]
+mod journal_proof_tests {
+    use super::{
+        CellError, CellStore, CommitBatch, CommitOrigin, CommitPoint, FactWriteRow, MAIN_WORLD,
+        Model, Value,
+    };
+    use crate::engine::{SqlEngine as _, SqlRow, params};
+    use crate::history::FactSnapshot;
+    use std::collections::BTreeMap;
+
+    fn store() -> CellStore {
+        let item = serde_json::from_value(serde_json::json!({
+            "name": "proof.Item",
+            "properties": [{"id": "value", "type": {"kind": "text"}}]
+        }))
+        .expect("definition");
+        CellStore::open_in_memory(Model::from_definitions(&[item], &[]).expect("model"))
+            .expect("store")
+    }
+
+    fn created() -> CommitBatch {
+        CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: "org/dev".to_owned(),
+            writes: vec![FactWriteRow::Put {
+                object_type: "proof.Item".to_owned(),
+                key: "item".to_owned(),
+                values: BTreeMap::from([("value".to_owned(), Value::from("one"))]),
+            }],
+            events: vec![
+                Value::from_json(serde_json::json!({
+                    "op": "created",
+                    "key": {"objectType": "proof.Item", "key": "item"},
+                    "values": {"value": "one"}
+                }))
+                .expect("event"),
+            ],
+            ..CommitBatch::default()
+        }
+    }
+
+    /// #1527 S1: a stored `created` event is bound to the receipt its commit
+    /// persists, in every build. Here the event's snapshot changes after the
+    /// writer proved the event (against its pending digests) and before the
+    /// receipt is written: same values, rehashed, so the snapshot is
+    /// self-consistent but not the one the receipt commits to. The commit
+    /// must refuse and write nothing; the exporter's own check would only
+    /// find it once the commit can no longer roll back.
+    #[test]
+    fn a_created_event_is_proven_against_the_persisted_receipt() {
+        let store = store();
+        let conn = &store.conn;
+        let mut rebind = |point: CommitPoint| -> Result<(), CellError> {
+            if point == CommitPoint::EffectsEnqueued {
+                let rows = conn.query(
+                    "SELECT \"snapshot\" FROM \"_norn_fact_values\" WHERE \"id\" = 'item' AND \"version\" = 1",
+                    &[],
+                )?;
+                let text: String = SqlRow(rows[0].clone()).get(0)?;
+                let mut snapshot: FactSnapshot = serde_json::from_str(&text)?;
+                snapshot.scope = "org/other".to_owned();
+                conn.execute(
+                    "UPDATE \"_norn_fact_values\" SET \"snapshot\" = ?1, \"hash\" = ?2 WHERE \"id\" = 'item' AND \"version\" = 1",
+                    params![
+                        crate::codec::canonical_json(&snapshot)?,
+                        crate::codec::hash_json(&snapshot)?
+                    ],
+                )?;
+            }
+            Ok(())
+        };
+        let outcome = store.commit_guarded_inner(
+            &created(),
+            None,
+            None,
+            CommitOrigin::Current,
+            |_reader| Ok::<(), CellError>(()),
+            &mut rebind,
+        );
+        assert!(
+            matches!(
+                outcome,
+                Err(super::GuardedError::Store(
+                    CellError::HistoricalValueUnproven(_)
+                ))
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(store.export_commit_count().expect("journal head"), 0);
+        assert_eq!(store.read().ledger(0).expect("ledger"), []);
+
+        // Untouched, the same commit lands and its record exports.
+        let store = self::store();
+        store
+            .commit_guarded_inner(
+                &created(),
+                None,
+                None,
+                CommitOrigin::Current,
+                |_reader| Ok::<(), CellError>(()),
+                &mut |_point| Ok(()),
+            )
+            .expect("authentic commit");
+        let record = store
+            .export_record(1)
+            .expect("record reads")
+            .expect("record");
+        assert_eq!(record.entries.len(), 1);
+    }
+    /// #1527 S1: an event both classifiers claim, an `observed_fact` whose
+    /// nested event is a proven `created` and whose outer `type` is
+    /// `command.result` with a result of at least 1 KiB, is stored with its
+    /// result apart. The journal must record the full event a ledger reader
+    /// decodes, not the placeholder the ledger row holds, in every build.
+    #[test]
+    fn an_observed_created_command_result_journals_its_full_result() {
+        let store = store();
+        let mut batch = created();
+        let event = Value::from_json(serde_json::json!({
+            "op": "observed_fact",
+            "type": "command.result",
+            "result": {"blob": "x".repeat(2048)},
+            "event": {
+                "op": "created",
+                "key": {"objectType": "proof.Item", "key": "item"},
+                "values": {"value": "one"}
+            }
+        }))
+        .expect("event");
+        batch.events = vec![event.clone()];
+        store
+            .commit_guarded_inner(
+                &batch,
+                None,
+                None,
+                CommitOrigin::Current,
+                |_reader| Ok::<(), CellError>(()),
+                &mut |_point| Ok(()),
+            )
+            .expect("the overlapping event commits");
+        let stored: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM \"_norn_ledger_payload\"",
+                &[],
+                |row| row.get(0),
+            )
+            .expect("payload rows");
+        assert_eq!(stored, 1, "the result is stored apart");
+        let ledger = store.read().ledger(0).expect("ledger");
+        assert_eq!(ledger.len(), 1);
+        assert_eq!(ledger[0].event, event);
+        let record = store
+            .export_record(1)
+            .expect("record reads")
+            .expect("record");
+        assert_eq!(record.entries.len(), 1);
+        assert_eq!(record.entries[0].event, event);
     }
 }

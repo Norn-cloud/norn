@@ -24,6 +24,7 @@ import * as OP from "../builder/ontology-pack.ts"
 import * as PL from "../builder/pack-link.ts"
 import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
+import * as ST from "../builder/setting.ts"
 import * as T from "../builder/transform.ts"
 import type { DeonticRule } from "../builder/deontic.ts"
 import type { CompiledExample, ExampleExpectation } from "../examples.ts"
@@ -85,7 +86,7 @@ function parsedTemporal(expr: X.Expr, temporal: ReadonlyMap<string, "date" | "ti
 }
 
 /** One lowered definition: an object type or interface, an action, or an access policy. */
-export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef | LB.LabelsDef | MD.ModelDef | T.TransformDef
+export type Definition = E.EntityDef | E.MarkingsDef | SS.SourceSchemaDef | A.ActionDef | P.AccessDef | R.DecisionDef | M.MappingDef | L.LawDef | C.ConnectorDef | OP.OntologyPackDef | PL.PackLinkDef | LB.LabelsDef | MD.ModelDef | T.TransformDef | ST.SettingDef
 
 export interface DefinitionSource {
   readonly artifactId: string
@@ -104,8 +105,28 @@ export type DefinitionsResult =
       readonly warnings: ReadonlyArray<Diagnostic>
       /** LAW-EXAMPLE-1 cases the module declares; `norn check` runs them. */
       readonly examples: ReadonlyArray<CompiledExample>
+      /**
+       * Retained definitions (`Norn.approval`): `{ kind, id, payload }` the
+       * cell admits beside the artifact set, never artifacts of it.
+       */
+      readonly retained: ReadonlyArray<RetainedDefinitionDoc>
     }
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> }
+
+/** A retained definition as `POST /v1/definitions:admit` takes it. */
+export interface RetainedDefinitionDoc {
+  readonly kind: "approval"
+  readonly id: string
+  readonly payload: Json
+}
+
+/**
+ * MAPPING-SOURCE-REF-1: the `sha256` a mapping bound to a source schema of
+ * the same project carries until the Rust checker's hash replaces it. It is
+ * never a hash, so a set that was not bound refuses with the checker's
+ * `mapping.model.source_hash_mismatch`, which names the right hash.
+ */
+export const PENDING_SOURCE_SHA256 = "pending:same-project-source-schema"
 
 const SOURCE_SCHEMA = "@norn/authoring#Norn.sourceSchema"
 const ONTOLOGY_PACK = "@norn/authoring#Norn.ontologyPack"
@@ -123,6 +144,7 @@ const DECISION = "@norn/authoring#Norn.decision"
 const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
+const SETTING = "@norn/authoring#Norn.setting"
 const TRANSFORM = "@norn/authoring#Norn.transform"
 const EXAMPLE = "@norn/authoring#Norn.example"
 const OBLIGATION = "@norn/authoring#Norn.obligation"
@@ -135,7 +157,9 @@ const MODEL = "@norn/authoring#Norn.model"
 const FLOW = "@norn/authoring#Norn.flow"
 const QUESTION = "@norn/authoring#Norn.question"
 const DASHBOARD = "@norn/authoring#Norn.dashboard"
-const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS, MODEL, TRANSFORM])
+const APPROVAL = "@norn/authoring#Norn.approval"
+const CALLER_ID = "@norn/authoring#Norn.callerId"
+const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS, MODEL, TRANSFORM, SETTING])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
 const ANY_TYPE: ReadonlySet<string> = new Set([TYPE, INTERFACE])
@@ -176,6 +200,7 @@ function lowerEach<T>(
   overrides: Partial<CompilerLimits>,
   lower: (compiler: DefinitionCompiler, source: ts.SourceFile) => Lowered<T>,
   onModuleWork?: (path: string, work: number) => void,
+  forbidUnsafeZenFor?: (path: string) => boolean,
 ): Lowered<T>[] {
   const { started, limits, profile, program, expansion, accepted, failed } = prepareCompilation(files, overrides)
   const results = new Map<string, Lowered<T>>()
@@ -185,7 +210,10 @@ function lowerEach<T>(
     try {
       checkClosure(program!, source, limits)
       expansion.beginModule()
-      const lowered = lower(new DefinitionCompiler(profile, program!, started, limits, expansion), source)
+      const lowered = lower(
+        new DefinitionCompiler(profile, program!, started, limits, expansion, forbidUnsafeZenFor?.(path) === true),
+        source,
+      )
       if (lowered.ok) expansion.addOutput(lowered.value)
       onModuleWork?.(path, expansion.workUsed)
       results.set(path, lowered)
@@ -221,12 +249,16 @@ export function compileDefinitionFiles(
   /**
    * `allowEmpty`: a module with no ontology definition (a flow-only module) is
    * not an error. `onModuleWork`: the expansion work each root module charged.
+   * `forbidUnsafeZen`: promote `NORN-AUTHORING-UNSAFE-ZEN` to a hard error
+   * (defaults to true when `registryPackagePath` is set).
    */
-  mode: { readonly allowEmpty?: boolean; readonly onModuleWork?: (path: string, work: number) => void } = {},
+  mode: { readonly allowEmpty?: boolean; readonly onModuleWork?: (path: string, work: number) => void; readonly forbidUnsafeZen?: boolean } = {},
 ): DefinitionsResult[] {
-  return lowerEach<{ readonly definitions: Definition[]; readonly artifacts: Json[]; readonly flows: number; readonly sourceMap: DefinitionSource[]; readonly warnings: Diagnostic[]; readonly examples: CompiledExample[] }>(files, overrides, (compiler, source) => {
-    const { definitions, flows, examples } = compiler.compile(source, mode.allowEmpty === true)
-    const envelopeOptions = typeof options === "function" ? options(resolve(source.fileName)) : options
+  const envelopeFor = (path: string): EnvelopeOptions => (typeof options === "function" ? options(path) : options)
+  const forbidUnsafeZenFor = (path: string): boolean => mode.forbidUnsafeZen ?? envelopeFor(path).registryPackagePath !== undefined
+  return lowerEach<{ readonly definitions: Definition[]; readonly artifacts: Json[]; readonly flows: number; readonly sourceMap: DefinitionSource[]; readonly warnings: Diagnostic[]; readonly examples: CompiledExample[]; readonly retained: RetainedDefinitionDoc[] }>(files, overrides, (compiler, source) => {
+    const { definitions, flows, examples, retained } = compiler.compile(source, mode.allowEmpty === true)
+    const envelopeOptions = envelopeFor(resolve(source.fileName))
     const artifacts: Json[] = []
     const diagnostics: Diagnostic[] = []
     for (const def of definitions) {
@@ -238,6 +270,7 @@ export function compileDefinitionFiles(
         : def._tag === "Mapping" ? M.lowerMapping(def, envelopeOptions)
         : def._tag === "Law" ? L.lowerLaw(def, envelopeOptions)
         : def._tag === "Transform" ? T.lowerTransform(def, envelopeOptions)
+        : def._tag === "Setting" ? ST.lowerSetting(def, envelopeOptions)
         : def._tag === "SourceSchema" ? SS.lowerSourceSchema(def, envelopeOptions)
         : def._tag === "OntologyPack" ? OP.lowerOntologyPack(def, envelopeOptions)
         : def._tag === "PackLink" ? PL.lowerPackLink(def, envelopeOptions)
@@ -253,11 +286,16 @@ export function compileDefinitionFiles(
       }
       else for (const d of built.diagnostics) diagnostics.push({ ...diagnostic(source, d.code, d.message), ...(d.at ? { start: { line: d.at.line, column: d.at.column ?? 1 } } : {}) })
     }
-    return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, value: { definitions, artifacts, flows, sourceMap: compiler.sourceMap, warnings: compiler.warnings, examples } }
-  }, mode.onModuleWork).map((r): DefinitionsResult => (r.ok ? { ok: true, ...r.value } : r))
+    return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, value: { definitions, artifacts, flows, sourceMap: compiler.sourceMap, warnings: compiler.warnings, examples, retained } }
+  }, mode.onModuleWork, forbidUnsafeZenFor).map((r): DefinitionsResult => (r.ok ? { ok: true, ...r.value } : r))
 }
 
-export function compileDefinitions(file: string, options: EnvelopeOptions, limits: Partial<CompilerLimits> = {}, mode: { readonly allowEmpty?: boolean } = {}): DefinitionsResult {
+export function compileDefinitions(
+  file: string,
+  options: EnvelopeOptions,
+  limits: Partial<CompilerLimits> = {},
+  mode: { readonly allowEmpty?: boolean; readonly forbidUnsafeZen?: boolean } = {},
+): DefinitionsResult {
   return compileDefinitionFiles([file], options, limits, mode)[0]!
 }
 
@@ -306,6 +344,7 @@ class DefinitionCompiler {
     private readonly started: number,
     private readonly limits: CompilerLimits,
     private readonly expansion: ExpansionBudget,
+    private readonly forbidUnsafeZen = false,
   ) {
     this.checker = program.getTypeChecker()
     this.schemas = new SchemaProjection(profile, program, (node) => this.guard(node), limits.maxNodes, (work) => expansion.reserve(work))
@@ -348,14 +387,16 @@ class DefinitionCompiler {
     return e
   }
 
-  compile(source: ts.SourceFile, allowEmpty = false): { readonly definitions: Definition[]; readonly flows: number; readonly examples: CompiledExample[] } {
+  compile(source: ts.SourceFile, allowEmpty = false): { readonly definitions: Definition[]; readonly flows: number; readonly examples: CompiledExample[]; readonly retained: RetainedDefinitionDoc[] } {
     const out: Definition[] = []
+    const retained: RetainedDefinitionDoc[] = []
     let flows = 0
     for (const statement of source.statements) {
       if (ts.isExportAssignment(statement)) {
         const e = this.unwrap(statement.expression)
         if (ts.isCallExpression(e) && this.id(e) === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "questions require named const bindings and the question compiler", e)
         if (ts.isCallExpression(e) && this.id(e) === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards require named const bindings and the dashboard compiler", e)
+        if (ts.isCallExpression(e) && this.id(e) === APPROVAL) throw new CompileError("NORN-FLOW-RESULT", "approvals require named const bindings", e)
         if (ts.isCallExpression(e) && this.id(e) === FLOW) flows++
         continue
       }
@@ -369,6 +410,13 @@ class DefinitionCompiler {
         const id = init && ts.isCallExpression(init) ? this.id(init) : undefined
         if (init && id === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "standalone questions use the question compiler; they are not installable artifacts", init)
         if (init && id === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards use the dashboard compiler; the cell admits them as definitions, not artifacts", init)
+        if (init && ts.isCallExpression(init) && id === APPROVAL) {
+          const approval = this.approval(init)
+          if (retained.some((other) => other.id === approval.id)) throw new CompileError("NORN-FLOW-LITERAL", `duplicate approval ${approval.id}`, init)
+          this.expansion.assert(approval.payload)
+          retained.push(approval)
+          continue
+        }
         if (init && ts.isCallExpression(init) && id !== undefined && NORMS.has(id)) {
           const on = init.arguments[1] && this.closedRecord(init.arguments[1], NORM_MEMBERS, ["on"]).get("on")
           const subject = on && this.referenced(on, OBJECT_TYPES, "a Norn.type definition").call
@@ -389,6 +437,7 @@ class DefinitionCompiler {
           : id === MAPPING ? this.mapping(init)
           : id === LAW ? this.law(init)
           : id === TRANSFORM ? this.transform(init)
+          : id === SETTING ? this.setting(init)
           : id === LABELS ? this.labels(init)
           : id === MODEL ? this.model(init)
           : this.decision(init)
@@ -396,8 +445,70 @@ class DefinitionCompiler {
         out.push(def)
       }
     }
-    if (out.length === 0 && !allowEmpty) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.type, Norn.interfaceType, Norn.action, Norn.access, Norn.decision, Norn.mapping, or Norn.connector definition", source)
-    return { definitions: out, flows, examples: this.examples(source) }
+    if (out.length === 0 && retained.length === 0 && !allowEmpty) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.type, Norn.interfaceType, Norn.action, Norn.access, Norn.decision, Norn.mapping, Norn.connector or Norn.approval definition", source)
+    return { definitions: out, flows, examples: this.examples(source), retained }
+  }
+
+  /**
+   * APPROVAL-1: `Norn.approval` lowers to the cell's `approval` definition.
+   * The action is a Norn.action reference; `when` compares one property of
+   * the record the call writes (APPROVAL-WHEN-1). The cell admits it and
+   * restates it in words; installing it is signing those words.
+   */
+  private approval(call: ts.CallExpression): RetainedDefinitionDoc {
+    const m = this.meta(call, ["id", "action", "decider", "question", "risk", "expiresInMs", "on", "when"])
+    const need = (key: string): ts.Expression => this.member(m, key, call)
+    if (m.has("on")) this.referenced(m.get("on")!, OBJECT_TYPES, "a Norn.type definition")
+    const decider = this.closedRecord(need("decider"), ["roles", "law"], ["roles"])
+    const roles = this.strings(decider.get("roles")!)
+    if (roles.length === 0) throw new CompileError("NORN-FLOW-LITERAL", "an approval names at least one decider role", need("decider"))
+    const risk = this.string(need("risk"))
+    if (risk !== "low" && risk !== "medium" && risk !== "high") throw new CompileError("NORN-FLOW-LITERAL", "risk is low, medium or high", need("risk"))
+    const expires = m.get("expiresInMs")
+    const whenNode = m.get("when")
+    const when = whenNode === undefined ? undefined : ((): Json => {
+      const w = this.closedRecord(whenNode, ["property", "op", "value"], ["property", "op", "value"])
+      const op = this.string(w.get("op")!)
+      if (!["eq", "ne", "lt", "le", "gt", "ge"].includes(op)) throw new CompileError("NORN-FLOW-LITERAL", "when.op is eq, ne, lt, le, gt or ge", w.get("op")!)
+      const value = this.whenValue(w.get("value")!)
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") throw new CompileError("NORN-FLOW-LITERAL", "when.value is text, a number or a boolean", w.get("value")!)
+      return { property: this.string(w.get("property")!), op, value }
+    })()
+    const law = decider.get("law")
+    return {
+      kind: "approval",
+      id: this.string(need("id")),
+      payload: {
+        action: this.actionId(need("action")),
+        decider: { roles, ...(law ? { law: this.string(law) } : {}) },
+        question: this.string(need("question")),
+        risk,
+        ...(expires ? { expiresInMs: this.json(expires) } : {}),
+        ...(when === undefined ? {} : { when }),
+      } as Json,
+    }
+  }
+
+  /**
+   * #1469 S10: a `when.value`, with a numeric literal (through `const`
+   * references) lowered from its source text before any Number conversion:
+   * a fractional one is its exact decimal text (`1000.10`,
+   * `1000.00000000000001`), an integer stays a number, and anything that
+   * would need a binary round trip (an exponent, a radix prefix, an integer
+   * past 2^53) is refused.
+   */
+  private whenValue(input: ts.Expression): Json {
+    const e = this.deref(input)
+    const negative = ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken
+    const literal = negative ? this.deref(e.operand) : e
+    if (!ts.isNumericLiteral(literal)) return this.json(input)
+    const text = literal.getText().replace(/_/g, "")
+    if (!DECIMAL_TEXT.test(text)) throw new CompileError("NORN-FLOW-LITERAL", "a numeric when.value is a plain decimal literal, such as 1000 or 1000.10 (no exponent or radix prefix)", literal)
+    const signed = negative ? `-${text}` : text
+    if (text.includes(".")) return signed
+    const value = Number(signed)
+    if (!Number.isSafeInteger(value)) throw new CompileError("NORN-FLOW-LITERAL", "an integer when.value past 2^53 has no exact number; write it as decimal text", literal)
+    return value
   }
 
   questions(source: ts.SourceFile): Json[] {
@@ -808,9 +919,19 @@ class DefinitionCompiler {
    */
   private tableGraph(rows: ts.ArrayLiteralExpression, hit: "first" | "unique", input: S.ObjectSchema, output: S.ObjectSchema, call: ts.CallExpression): Json {
     const scope = new Map<string, X.Binding>([["input", { zen: "", schema: input }]])
-    const syntax = new SyntaxCompiler(this.profile, this.program, call.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT, (site) => {
-      throw new CompileError("NORN-FLOW-EXPRESSION", "a table row cannot evaluate a sub-decision; use a decision callback", site)
-    })
+    const syntax = new SyntaxCompiler(
+      this.profile,
+      this.program,
+      call.getSourceFile(),
+      this.started,
+      this.limits,
+      this.expansion,
+      TOOL_ROOT,
+      (site) => {
+        throw new CompileError("NORN-FLOW-EXPRESSION", "a table row cannot evaluate a sub-decision; use a decision callback", site)
+      },
+      this.forbidUnsafeZen,
+    )
     const one = (node: ts.Expression, what: string): X.Expr => {
       const fn = this.deref(node)
       if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) throw new CompileError("NORN-FLOW-CAPTURE", `a table row's ${what} is an inline callback`, node)
@@ -1054,7 +1175,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", "fromCaller", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -1088,15 +1209,20 @@ class DefinitionCompiler {
           }
         : {}),
       slice: members.has("slice") ? this.list(need("slice")).map((entry) => this.sliceEntry(entry)) : [],
-      derive: members.has("derive") ? this.list(need("derive")).map((entry, index) => {
-        const m = this.closedRecord(entry, ["field", "expression", "inputRequired"], ["field", "expression"])
-        const inputRequired = m.get("inputRequired")
-        return {
-          field: this.string(m.get("field")!),
-          expression: this.zenAt(m.get("expression")!, this.string(need("id")) + ".action", `/payload/derive/${index}/expression`),
-          ...(inputRequired && !this.boolean(inputRequired) ? { inputRequired: false } : {}),
-        }
-      }) : [],
+      derive: [
+        // CALLER-FIELD-1: each `fromCaller` field is the verified caller's
+        // subject id; the server binds it and a caller never supplies it.
+        ...(members.has("fromCaller") ? this.strings(need("fromCaller")).map((field) => ({ field, expression: "actor.subjectId", inputRequired: false as const })) : []),
+        ...(members.has("derive") ? this.list(need("derive")).map((entry, index) => {
+          const m = this.closedRecord(entry, ["field", "expression", "inputRequired"], ["field", "expression"])
+          const inputRequired = m.get("inputRequired")
+          return {
+            field: this.string(m.get("field")!),
+            expression: this.zenAt(m.get("expression")!, this.string(need("id")) + ".action", `/payload/derive/${index + (members.has("fromCaller") ? this.strings(need("fromCaller")).length : 0)}/expression`),
+            ...(inputRequired && !this.boolean(inputRequired) ? { inputRequired: false } : {}),
+          }
+        }) : []),
+      ],
       preconditions: members.has("preconditions") ? this.list(need("preconditions")).map((e, index) => this.zenAt(e, this.string(need("id")) + ".action", `/payload/preconditions/${index}`, "")) : [],
       commands: members.has("commands") ? this.list(need("commands")).map((c) => this.command(c)) : [],
       createLinks: members.has("createLinks") ? this.list(need("createLinks")).map((entry) => {
@@ -1142,7 +1268,13 @@ class DefinitionCompiler {
   /** Read syntax-only expression wrappers in action/lifecycle expression slots. */
   private zen(input: ts.Expression, root = "input"): string {
     const e = this.deref(input)
+    // ACTION-ACTOR-1: the verified caller's subject id, bound by the server.
+    if (ts.isCallExpression(e) && this.id(e) === CALLER_ID) {
+      if (e.arguments.length !== 0) throw new CompileError("NORN-FLOW-EXPRESSION", "Norn.callerId() takes no argument", e)
+      return "actor.subjectId"
+    }
     if (ts.isCallExpression(e) && this.id(e) === "@norn/authoring#Norn.unsafeZen") {
+      if (this.forbidUnsafeZen) throw new CompileError("NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen is forbidden (--forbid-unsafe-zen); replace it with a typed TypeScript expression callback", e)
       this.warnings.push(diagnostic(e, "NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen bypasses typed authoring; replace it with a TypeScript expression callback"))
       return this.string(e.arguments[0]!)
     }
@@ -1150,7 +1282,7 @@ class DefinitionCompiler {
       const schema = this.schemas.expressionInput(this.schemas.read(e.arguments[0]!))
       const body = e.arguments[1]
       if (!body || (!ts.isArrowFunction(body) && !ts.isFunctionExpression(body))) throw new CompileError("NORN-FLOW-CAPTURE", "use an inline expression callback", e)
-      const syntax = new SyntaxCompiler(this.profile, this.program, e.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT)
+      const syntax = new SyntaxCompiler(this.profile, this.program, e.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT, undefined, this.forbidUnsafeZen)
       const rows = syntax.decisionRows(body)
       this.warnings.push(...syntax.warnings)
       if (rows.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "use a conditional expression for a scalar expression", body)
@@ -1325,7 +1457,7 @@ class DefinitionCompiler {
         calls.push({ id: name, name, type: "decisionNode", content: { key: pin.artifactId, inputField, outputPath: name, passThrough: true, ...(orderedFold ? { orderedFold } : {}) } })
         scope.set(name, { zen: name, schema: output })
         return X.ref(name)
-      })
+      }, this.forbidUnsafeZen)
       const rows = syntax.decisionRows(body)
       this.warnings.push(...syntax.warnings)
       const outputSchema = schema("output")
@@ -1515,6 +1647,175 @@ class DefinitionCompiler {
   }
 
   /**
+   * `Norn.setting({ id, title, version, settingKey, valueType, value, effectiveFrom, effectiveTo?, supersedes?, review, scopeRequired })`
+   * (SettingRoot, PARAM-EXACT-1 / PARAM-BOUND-1 / VAL-EXACT-1): numeric settings
+   * require exact `DecimalLiteral` strings and refuse binary JS numbers.
+   */
+  private setting(call: ts.CallExpression): ST.SettingDef {
+    const members = this.meta(call, [
+      "id",
+      "title",
+      "version",
+      "settingKey",
+      "valueType",
+      "value",
+      "effectiveFrom",
+      "effectiveTo",
+      "supersedes",
+      "review",
+      "scopeRequired",
+    ])
+    const need = (key: string): ts.Expression => this.member(members, key, call)
+    const nonBlank = (node: ts.Expression, label: string): string => {
+      const value = this.string(node)
+      if (value.trim().length === 0) throw new CompileError("NORN-FLOW-LITERAL", `${label} must be a non-empty string`, node)
+      return value
+    }
+    const idNode = need("id")
+    const id = nonBlank(idNode, "setting id")
+    const idSegments = id.split(".")
+    if (
+      id !== id.trim() ||
+      idSegments.length < 2 ||
+      idSegments.some((segment) => segment.trim().length === 0 || segment !== segment.trim())
+    ) {
+      throw new CompileError(
+        "NORN-FLOW-LITERAL",
+        `setting id ${JSON.stringify(id)} must be a dotted identifier with non-empty segments and no leading or trailing whitespace`,
+        idNode,
+      )
+    }
+    const title = nonBlank(need("title"), "setting title")
+    const version = nonBlank(need("version"), "setting version")
+    const settingKey = nonBlank(need("settingKey"), "settingKey")
+    const valueTypeNode = need("valueType")
+    const valueType = this.string(valueTypeNode)
+    if (!ST.SETTING_VALUE_TYPES.has(valueType)) {
+      throw new CompileError("NORN-FLOW-LITERAL", `valueType must be "text", "number", "boolean", or "json"`, valueTypeNode)
+    }
+    const valueNode = need("value")
+    const valueExpr = this.deref(valueNode)
+    let value: Json
+    if (valueType === "text") {
+      value = this.string(valueNode)
+    } else if (valueType === "number") {
+      const isJsNumber =
+        ts.isNumericLiteral(valueExpr) ||
+        (ts.isPrefixUnaryExpression(valueExpr) &&
+          (valueExpr.operator === ts.SyntaxKind.MinusToken || valueExpr.operator === ts.SyntaxKind.PlusToken) &&
+          ts.isNumericLiteral(this.unwrap(valueExpr.operand)))
+      if (isJsNumber) {
+        throw new CompileError(
+          "NORN-FLOW-LITERAL",
+          `numeric settings require an exact DecimalLiteral string (e.g. "0.12"), not a binary JavaScript number (VAL-EXACT-1)`,
+          valueNode,
+        )
+      }
+      if (!ts.isStringLiteral(valueExpr) && !ts.isNoSubstitutionTemplateLiteral(valueExpr)) {
+        throw new CompileError("NORN-FLOW-LITERAL", "numeric settings require an exact DecimalLiteral string literal", valueNode)
+      }
+      if (!ST.isValidDecimalLiteral(valueExpr.text)) {
+        throw new CompileError(
+          "NORN-FLOW-LITERAL",
+          `numeric setting value ${JSON.stringify(valueExpr.text)} is not a valid exact DecimalLiteral`,
+          valueNode,
+        )
+      }
+      value = valueExpr.text
+    } else if (valueType === "boolean") {
+      value = this.boolean(valueNode)
+    } else {
+      value = this.json(valueNode)
+    }
+
+    const effectiveFromNode = need("effectiveFrom")
+    const effectiveFrom = nonBlank(effectiveFromNode, "effectiveFrom")
+    const fromInstant = ST.parseRfc3339Instant(effectiveFrom)
+    if (fromInstant === undefined) {
+      throw new CompileError("NORN-FLOW-LITERAL", `effectiveFrom ${JSON.stringify(effectiveFrom)} must be a valid RFC 3339 timestamp`, effectiveFromNode)
+    }
+    const effectiveToNode = members.get("effectiveTo")
+    let effectiveTo: string | undefined
+    if (effectiveToNode !== undefined) {
+      effectiveTo = nonBlank(effectiveToNode, "effectiveTo")
+      const toInstant = ST.parseRfc3339Instant(effectiveTo)
+      if (toInstant === undefined) {
+        throw new CompileError("NORN-FLOW-LITERAL", `effectiveTo ${JSON.stringify(effectiveTo)} must be a valid RFC 3339 timestamp`, effectiveToNode)
+      }
+      if (toInstant <= fromInstant) {
+        throw new CompileError("NORN-FLOW-LITERAL", "effectiveTo must be strictly after effectiveFrom", effectiveToNode)
+      }
+    }
+
+    const supersedesNode = members.get("supersedes")
+    let supersedes: ST.SettingSupersedes | undefined
+    if (supersedesNode !== undefined) {
+      const s = this.closedRecord(supersedesNode, ["artifactId", "version"], ["artifactId", "version"])
+      supersedes = {
+        artifactId: nonBlank(s.get("artifactId")!, "supersedes.artifactId"),
+        version: nonBlank(s.get("version")!, "supersedes.version"),
+      }
+    }
+
+    const reviewNode = need("review")
+    const r = this.closedRecord(reviewNode, ["state", "reviewedBy", "reviewedAt", "reason"], ["state"])
+    const reviewStateNode = r.get("state")!
+    const reviewState = this.string(reviewStateNode)
+    if (!ST.SETTING_REVIEW_STATES.has(reviewState)) {
+      throw new CompileError(
+        "NORN-FLOW-LITERAL",
+        `review.state must be "draft", "proposed", "approved", "active", "rejected", or "superseded"`,
+        reviewStateNode,
+      )
+    }
+    const reviewedBy = r.get("reviewedBy")
+    const reviewedAt = r.get("reviewedAt")
+    const reason = r.get("reason")
+    if (reviewedAt !== undefined && ST.parseRfc3339Instant(nonBlank(reviewedAt, "review.reviewedAt")) === undefined) {
+      throw new CompileError("NORN-FLOW-LITERAL", "review.reviewedAt must be a valid RFC 3339 timestamp", reviewedAt)
+    }
+    const review: ST.SettingReview = {
+      state: reviewState as ST.SettingReviewState,
+      ...(reviewedBy !== undefined ? { reviewedBy: nonBlank(reviewedBy, "review.reviewedBy") } : {}),
+      ...(reviewedAt !== undefined ? { reviewedAt: nonBlank(reviewedAt, "review.reviewedAt") } : {}),
+      ...(reason !== undefined ? { reason: nonBlank(reason, "review.reason") } : {}),
+    }
+
+    const scopeNode = need("scopeRequired")
+    const scopeRequired = this.list(scopeNode).map((item) => {
+      const dim = nonBlank(item, "scopeRequired entry")
+      if (!ST.SETTING_SCOPE_DIMENSIONS.has(dim)) {
+        throw new CompileError(
+          "NORN-FLOW-LITERAL",
+          `scopeRequired entry ${JSON.stringify(dim)} must be one of orgId, tenantId, workspaceId, environmentId, businessUnitId`,
+          item,
+        )
+      }
+      return dim
+    })
+    if (scopeRequired.length === 0) {
+      throw new CompileError("NORN-FLOW-LITERAL", "scopeRequired must contain at least one scope dimension", scopeNode)
+    }
+    if (new Set(scopeRequired).size !== scopeRequired.length) {
+      throw new CompileError("NORN-FLOW-LITERAL", "scopeRequired must not contain duplicate scope dimensions", scopeNode)
+    }
+
+    return ST.setting({
+      id,
+      title,
+      version,
+      settingKey,
+      valueType: valueType as ST.SettingValueType,
+      value,
+      effectiveFrom,
+      ...(effectiveTo !== undefined ? { effectiveTo } : {}),
+      ...(supersedes !== undefined ? { supersedes } : {}),
+      review,
+      scopeRequired,
+    })
+  }
+
+  /**
    * `Norn.transform({ id, title, version, inputs: { alias: Type }, nodes, output })`
    * (ViewIR v1): inputs resolve to their pinned entity artifacts; `nodes` is
    * literal data whose ZEN strings the Rust checker types against the plan.
@@ -1664,7 +1965,7 @@ class DefinitionCompiler {
     const fn = this.deref(input)
     if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) throw new CompileError("NORN-FLOW-CAPTURE", "a law predicate is an inline lambda (self => ...)", input)
     if (fn.parameters.length !== 1) throw new CompileError("NORN-FLOW-UNSUPPORTED-SYNTAX", "a law predicate takes one parameter, the subject", fn)
-    const syntax = new SyntaxCompiler(this.profile, this.program, fn.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT)
+    const syntax = new SyntaxCompiler(this.profile, this.program, fn.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT, undefined, this.forbidUnsafeZen)
     const rows = syntax.decisionRows(fn)
     this.warnings.push(...syntax.warnings)
     if (rows.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "use a conditional expression for a law predicate", fn)
@@ -1839,7 +2140,18 @@ class DefinitionCompiler {
   private mapping(call: ts.CallExpression): M.MappingDef {
     const members = this.meta(call, ["id", "title", "version", "source", "sourceContract", "interfaces", "maps"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
-    const source = this.closedRecord(need("source"), ["schemaId", "version", "sha256"], ["schemaId", "version", "sha256"])
+    const sourceNode = need("source"), sourceCall = this.deref(sourceNode)
+    // MAPPING-SOURCE-REF-1: a Norn.sourceSchema of the project binds by
+    // reference; the checker's hash of it replaces the pending pin.
+    const sourceBinding = ts.isCallExpression(sourceCall) && this.id(sourceCall) === SOURCE_SCHEMA
+      ? ((): M.SourceBinding => {
+          const schema = this.meta(sourceCall, ["id", "title", "version", "source", "observedAt", "adapter", "rawMetadata", "datasets", "fields", "constraints", "codeSets"])
+          return { schemaId: this.string(this.member(schema, "id", sourceCall)), version: this.string(this.member(schema, "version", sourceCall)), sha256: PENDING_SOURCE_SHA256 }
+        })()
+      : ((): M.SourceBinding => {
+          const source = this.closedRecord(sourceNode, ["schemaId", "version", "sha256"], ["schemaId", "version", "sha256"])
+          return { schemaId: this.string(source.get("schemaId")!), version: this.string(source.get("version")!), sha256: this.string(source.get("sha256")!) }
+        })()
     const pin = (input: ts.Expression, kinds: ReadonlySet<string>, suffix: "entity" | "interface"): M.ArtifactPin => {
       const ref = this.typeRef(input, kinds, suffix === "entity" ? "a Norn.type definition" : "a Norn.interfaceType definition")
       return { artifactId: `${ref.name}.${suffix}`, version: ref.version }
@@ -1871,7 +2183,7 @@ class DefinitionCompiler {
       id: this.string(need("id")),
       title: this.string(need("title")),
       version: this.string(need("version")),
-      source: { schemaId: this.string(source.get("schemaId")!), version: this.string(source.get("version")!), sha256: this.string(source.get("sha256")!) },
+      source: sourceBinding,
       interfaces: this.list(need("interfaces")).map((x) => pin(x, INTERFACES, "interface")),
       maps: this.list(need("maps")).map((x) => {
         const m = this.closedRecord(x, ["id", "source", "target", "subject", "sourceRecord", "properties", "links", "lifecycles", "gaps", "ignoredFields", "when"], ["id", "source", "target", "subject", "sourceRecord"])
@@ -2201,6 +2513,7 @@ class DefinitionCompiler {
     if (depth > MAX_DATA_DEPTH) throw new CompileError("NORN-FLOW-UNBOUNDED", "literal data nesting exceeds the compiler bound", input)
     const e = this.deref(input)
     if (ts.isCallExpression(e) && this.id(e) === "@norn/authoring#Norn.unsafeZen") {
+      if (this.forbidUnsafeZen) throw new CompileError("NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen is forbidden (--forbid-unsafe-zen); replace it with a typed TypeScript decision callback", e)
       this.warnings.push(diagnostic(e, "NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen imports untyped ZEN/JDM; prefer a plain TypeScript decision callback"))
       return this.json(e.arguments[0]!, depth + 1)
     }

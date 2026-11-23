@@ -5,6 +5,41 @@ The default `native` feature selects rusqlite and native export/restore support;
 the Rust Durable Object host supplies its own SQL adapter. Hosts own durability.
 Its dependency boundary is in `boundary.json` and enforced by `norn-skeleton-guard`.
 
+## Modules beyond the store
+
+- `compute`: exact question and transform evaluation over the cell's own rows,
+  with lineage, materialized transform results (VIEW-MAT-1) and receipt-driven
+  incremental maintenance of question answers (`compute::ivm`,
+  QUERY-ENGINE-1). With the `duckdb` feature an admitted transform can also run
+  on embedded DuckDB over the same authorized snapshot (VIEW-ENGINE-1); a plan
+  outside its subset refuses `core.compute.unsupported_engine`.
+- `analytics`: the typed contract of the tenant analytics engine. The
+  cell authorizes, lowers an admitted plan and verifies every answer; the
+  engine only runs typed operations (no SQL, table or column expression) over
+  one tenant's database. `analytics::engine`, the DuckDB implementation, needs
+  the `duckdb` and `native` features; the daemon that serves it is
+  `norn-olapd` in `norn-cell-do`.
+- `reactive`: subscriptions over declared, profile-bounded read slices.
+- `export` exports the committed journal; `restore` (`native`) rebuilds a
+  prefix of it through the typed commit path.
+
+## Restoring a cell that will not open
+
+`norn-cell-restore` (bin, `native` feature) is the operator path for a cell
+whose open refuses (`cell.unopenable`):
+
+```sh
+cargo run -p norn-cell --bin norn-cell-restore -- diagnose <cell.sqlite>
+cargo run -p norn-cell --bin norn-cell-restore -- restore <cell.sqlite> <target.sqlite> <staging-dir> [--through N]
+```
+
+`diagnose` prints how far the history is proven and the first ledger entry the
+store's value proofs refuse. `restore` rebuilds the proven prefix of the cell's
+export journal into an absent target; a prefix shorter than the journal needs
+`--through N` with N equal to the diagnosed `provenThrough`. The source opens
+read-only. Run it on a copy taken while the cell is not serving, with its
+`-wal` and `-shm` files when present.
+
 ## Tenant provisioning invariant
 
 HOST-PROVISION-ATOMIC: initialization, scope binding, initial definitions, model

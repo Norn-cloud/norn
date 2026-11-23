@@ -11,6 +11,9 @@ import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
 import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
 import type { ClientIpHeader } from "./client-ip.ts"
+import { admitMember, billingModeOn, billingOf, refusalMessage, type Admission, type BillingDb } from "./billing.ts"
+import { forgetPolarCustomer, polarPlugin, type PolarBilling } from "./polar.ts"
+import { settingsOf } from "./polar-config.ts"
 
 /**
  * Better Auth for the hosted Studio: email + password, email magic link,
@@ -70,8 +73,16 @@ export interface AuthConfig {
    * their OAuth 2.1 authorization server. Needs migration 0007_oauth_provider.
    */
   readonly mcp?: boolean
-  /** The header the edge sets to the client's address (rate limits); `cf-connecting-ip` when absent. */
-  readonly clientIpHeader?: ClientIpHeader
+  /** The header the edge sets to the client's address (rate limits); never defaulted. */
+  readonly clientIpHeader: ClientIpHeader
+  /** Hosted billing through Polar (polar.ts); absent, nothing is billed or limited. */
+  readonly billing?: PolarBilling
+}
+
+/** A plan limit refuses as a typed 403 the client renders as given: `code` PLAN_LIMIT and the `refusal`. */
+function enforce(admission: Admission): void {
+  if (admission.kind === "admitted") return
+  throw new APIError("FORBIDDEN", { code: "PLAN_LIMIT", message: refusalMessage(admission), refusal: admission })
 }
 
 /** Where assistants reach Norn, and the resource their access tokens are bound to (RFC 8707). */
@@ -246,9 +257,10 @@ export async function verifyMagicLinkOrigin(request: Request, secret: string, tr
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
 
-type SqlStatement = { readonly sql: string; readonly params: readonly string[] }
-type ProvisionDb = {
-  prepare(sql: string): { bind?: (...params: string[]) => { first<T>(): Promise<T | null> }; get?: (...params: string[]) => unknown; run?: (...params: string[]) => unknown }
+type SqlParam = string | null
+export type SqlStatement = { readonly sql: string; readonly params: readonly SqlParam[] }
+export type ProvisionDb = {
+  prepare(sql: string): { bind?: (...params: SqlParam[]) => { first<T>(): Promise<T | null> }; get?: (...params: SqlParam[]) => unknown; run?: (...params: SqlParam[]) => unknown }
   batch?: (statements: unknown[]) => Promise<unknown>
   transaction?: (fn: () => void) => () => void
 }
@@ -259,8 +271,8 @@ async function stateOf(db: ProvisionDb, userId: string): Promise<string | undefi
   return row?.status
 }
 
-/** Execute all workspace writes and completion in one database transaction. */
-async function provisionBatch(db: ProvisionDb, statements: readonly SqlStatement[]): Promise<void> {
+/** Execute the statements in one database transaction (a D1 batch): all of them commit, or none. */
+export async function atomically(db: ProvisionDb, statements: readonly SqlStatement[]): Promise<void> {
   if (db.batch) {
     const prepared = statements.map(({ sql, params }) => {
       const statement = db.prepare(sql)
@@ -273,13 +285,14 @@ async function provisionBatch(db: ProvisionDb, statements: readonly SqlStatement
   } else throw new Error("Atomic provisioning is unavailable")
 }
 
-async function provisionWorkspace(db: ProvisionDb, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string) {
+async function provisionWorkspace(db: ProvisionDb, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string, billed = false) {
   if (await stateOf(db, user.id) !== "pending") return
   const identity = await workspaceIdentity(secret, user.id)
-  const metadata = JSON.stringify({ ...JSON.parse(identity.metadata), ...defaultEnvironmentId ? { environmentId: defaultEnvironmentId } : {} })
+  // With billing on, the workspace is billed to its owner (migration 0011 reads the mark).
+  const metadata = JSON.stringify({ ...JSON.parse(identity.metadata), ...defaultEnvironmentId ? { environmentId: defaultEnvironmentId } : {}, ...billed ? { [BILLED]: true } : {} })
   const at = new Date().toISOString()
   const pending = `exists (select 1 from "workspace_provisioning" where "userId" = ? and "status" = 'pending')`
-  await provisionBatch(db, [
+  await atomically(db, [
     { sql: `insert into "organization" ("id", "name", "slug", "metadata", "createdAt") select ?, ?, ?, ?, ? where ${pending} on conflict ("id") do nothing`, params: [identity.id, `${user.name || user.email}'s workspace`, `u-${identity.id.slice(10)}`, metadata, at, user.id] },
     { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, 'owner', ? where ${pending} and exists (select 1 from "organization" where "id" = ? and json_extract("metadata", '$."norn.provisioningProof"') = ?) on conflict ("organizationId", "userId") do nothing`, params: [crypto.randomUUID(), identity.id, user.id, at, user.id, identity.id, JSON.parse(identity.metadata)["norn.provisioningProof"]] },
     { sql: `update "workspace_provisioning" set "status" = 'complete' where "userId" = ? and "status" = 'pending' and exists (select 1 from "member" where "organizationId" = ? and "userId" = ? and "role" = 'owner')`, params: [user.id, identity.id, user.id] },
@@ -295,13 +308,17 @@ async function workspaceIdentity(secret: string, userId: string) {
   return { id, metadata: JSON.stringify({ "norn.provisioningProof": await sign(`owner:${userId}:${id}`) }) }
 }
 
+/** The workspace's payer, set at creation while billing is on (workspaces.ts) and read by migration 0011's triggers. */
+export const BILLING_PAYER = "norn.billingPayer"
+/** Set on workspaces created while billing is on: only those are limited (migration 0011). */
+export const BILLED = "norn.billed"
 /** Reserved metadata is assigned only by server-side provisioning. */
 const reservedMetadata = (key: string) => key === "environmentId" || key.startsWith("norn.")
 function metadataObject(value: unknown): Record<string, unknown> {
   if (typeof value === "string") { try { return metadataObject(JSON.parse(value)) } catch { return {} } }
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
-const publicMetadata = (value: unknown) => Object.fromEntries(Object.entries(metadataObject(value)).filter(([key]) => !reservedMetadata(key)))
+export const publicMetadata = (value: unknown) => Object.fromEntries(Object.entries(metadataObject(value)).filter(([key]) => !reservedMetadata(key)))
 
 export function authOptions(config: AuthConfig, self: Self = {}) {
   return {
@@ -310,6 +327,10 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     secret: config.secret,
     baseURL: config.baseURL,
     basePath: "/api/auth",
+    // An error that is not Better Auth's own (a database refusal) is thrown to the Worker, which turns a
+    // plan-limit trigger's refusal into the typed PLAN_LIMIT answer (index.ts guarded) and anything
+    // else into a bare 500, as Better Auth would.
+    onAPIError: { throw: true },
     // Better Auth refuses state-changing requests whose Origin is not listed (its CSRF check).
     trustedOrigins: [...(config.trustedOrigins ?? [config.baseURL])],
     // No sign-in on sign-up: Better Auth then answers a registered address exactly as a new one
@@ -321,14 +342,20 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       maxPasswordLength: 128,
       // Better Auth's own hash, computed in pure JS: byte-identical, so accounts move between runtimes.
       ...config.scrypt === "js" ? { password: { hash: hashPassword, verify: verifyPassword } } : {},
-      // A registered address skips the four writes a new account makes (user, credential,
-      // organization, member); make the same number of database writes so latency does not tell them apart.
+      // Timing mitigation (live measurement pending, #817): a registered address skips the four
+      // writes a new account makes (user, credential, organization, member), so it makes four too.
+      // Best-effort: a failed write never changes the answer. A failed delete leaves one already
+      // expired `signup-pad:` verification row behind; nothing reads it, and it holds no user data.
       onExistingUserSignUp: async () => {
-        const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
-        for (let pair = 0; pair < 2; pair++) {
-          const now = new Date()
-          const row = await adapter.create<{ id: string }>({ model: "verification", data: { identifier: `signup-pad:${crypto.randomUUID()}`, value: "", expiresAt: now, createdAt: now, updatedAt: now } })
-          await adapter.delete({ model: "verification", where: [{ field: "id", value: row.id }] })
+        try {
+          const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
+          for (let pair = 0; pair < 2; pair++) {
+            const now = new Date()
+            const row = await adapter.create<{ id: string }>({ model: "verification", data: { identifier: `signup-pad:${crypto.randomUUID()}`, value: "", expiresAt: now, createdAt: now, updatedAt: now } })
+            await adapter.delete({ model: "verification", where: [{ field: "id", value: row.id }] }).catch(() => undefined)
+          }
+        } catch {
+          // The padding is a mitigation, not part of sign-up.
         }
       },
     },
@@ -354,6 +381,9 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         "/api-key/verify": { window: MINUTE, max: 60 },
         "/oauth2/register": { window: 60 * MINUTE, max: 20 },
         "/oauth2/token": { window: MINUTE, max: 60 },
+        // Polar delivers from a few addresses; a burst of subscription events must not be throttled.
+        "/polar/webhooks": { window: MINUTE, max: 600 },
+        "/checkout": { window: MINUTE, max: 10 },
       },
     },
     advanced: {
@@ -364,14 +394,20 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       cookiePrefix: "norn",
       defaultCookieAttributes: { httpOnly: true, secure: true, sameSite: "lax" },
       // Only the header this deployment's edge sets itself (client-ip.ts); X-Forwarded-For is client-controlled.
-      ipAddress: { ipAddressHeaders: [config.clientIpHeader ?? "cf-connecting-ip"] },
+      ipAddress: { ipAddressHeaders: [config.clientIpHeader] },
     },
     plugins: [
       // Only a verified address may accept an invitation (GHSA-fmh4-wcc4-5jm3): until a mail
       // sender verifies addresses, nobody can join an organization by claiming an invited email.
       organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true,
         organizationHooks: {
-          beforeCreateOrganization: async ({ organization }) => ({ data: { ...organization, ...organization.metadata === undefined ? {} : { metadata: publicMetadata(organization.metadata) } } }),
+          // Clients cannot set "norn." keys. With billing on, the HTTP route is refused (index.ts) and
+          // workspaces.ts creates workspaces; a server-side creation is billed to its creator the same way.
+          beforeCreateOrganization: async ({ organization, user }) =>
+            ({ data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...await billingModeOn(config.database as unknown as BillingDb) ? { [BILLING_PAYER]: user.id, [BILLED]: true } : {} } } }),
+          // Advisory: an admin is told before inviting someone the workspace could not take (members and
+          // pending invitations). Invitations hold nothing; the member limit is enforced when one joins.
+          beforeCreateInvitation: async ({ organization, inviter }) => enforce(await admitMember(config.database as unknown as BillingDb, await billingOf(config.database as unknown as BillingDb, settingsOf(config.billing?.config)), config.baseURL, organization.id, inviter.id, true)),
           beforeUpdateOrganization: async ({ organization, member }) => {
             if (organization.metadata === undefined) return
             const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
@@ -408,6 +444,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       jwt({ jwt: { issuer: config.baseURL, audience: "norn-host", expirationTime: "5m" } }),
       ...config.gateway === undefined ? [] : [gatewayLink(config.gateway)],
       ...config.mcp === true ? assistantAuthorization(config.baseURL) : [],
+      ...config.billing === undefined ? [] : [polarPlugin(config.billing, config.baseURL)],
     ],
     databaseHooks: {
       user: {
@@ -420,9 +457,11 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           },
           // The user-insert trigger commits the pending marker with the user; session creation retries incomplete provisioning.
           after: async (user, ctx) => {
-            if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
+            if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, await billingModeOn(config.database as unknown as BillingDb))
           },
         },
+        // A deleted account's Polar customer (if they ever checked out) goes too; best effort, never blocks the deletion.
+        ...config.billing === undefined ? {} : { delete: { after: forgetPolarCustomer(config.billing) } },
       },
       session: {
         create: {
@@ -432,7 +471,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             if (adapter !== undefined && await stateOf(config.database as unknown as ProvisionDb, session.userId) === "pending") {
               const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
               if (user === null) throw new Error("Cannot provision a workspace for a missing user")
-              await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
+              await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, await billingModeOn(config.database as unknown as BillingDb))
             }
             const first = (where: { field: string; value: string }[]) => adapter === undefined ? Promise.resolve([]) : adapter.findMany<{ organizationId: string }>({
               model: "member",

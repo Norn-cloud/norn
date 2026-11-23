@@ -480,6 +480,18 @@
     "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
   },
   {
+    "code": "core.engine.downgrade",
+    "fix": "Open the cell with a release whose storage version is at least the cell's, or restore a backup taken before the upgrade."
+  },
+  {
+    "code": "core.engine.unknown_version",
+    "fix": "Open the cell with the release that wrote it or a newer one; if no release wrote this stamp, restore the cell from its export."
+  },
+  {
+    "code": "core.engine.upgrade_unsupported",
+    "fix": "Open the cell first with a release whose upgrade floor admits the cell's storage version, then with this one; if a migration refused the data, restore the cell from its export."
+  },
+  {
     "code": "core.graph.catalog_write",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
@@ -914,6 +926,18 @@
   {
     "code": "labels.validation.unlabelled_locale",
     "fix": "Add a label for the locale the description or review state names, or remove that locale."
+  },
+  {
+    "code": "law.conservation.alias_bound",
+    "fix": "Split the writer so it assigns at most 6 coordinates of one stored member, or add preconditions such as input.from != input.to that keep its keys distinct, then check it again."
+  },
+  {
+    "code": "law.conservation.alias_unlowerable",
+    "fix": "Give every coordinate its stored row (root type, member and key), and give coordinates that may name one row the same weight, scope and unit."
+  },
+  {
+    "code": "law.conservation.key_alias",
+    "fix": "Add a precondition that keeps the reported keys distinct (for example input.from != input.to), or make the aliased case balance on its own."
   },
   {
     "code": "law.example.mismatch",

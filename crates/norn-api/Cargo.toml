@@ -5,13 +5,21 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "Generated core IR and checker API contracts"
+# Every integration test is a module of tests/suites.rs, one binary
+# (scripts/codemods/fold_integration_tests.py).
+autotests = false
+
+[[test]]
+name = "suites"
+path = "tests/suites.rs"
 
 [dependencies]
 # Host token verification (HOST-PRINCIPAL, #817): Ed25519 JWTs, pure Rust, wasm32-clean.
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
-# RFC 3339 times of source sync reports, from the host clock.
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
+# RFC 3339 times of source sync reports and SigV4 stamps, from the host-supplied
+# millisecond clock (never jiff's own clock: clippy.toml bans it).
+jiff = { version = "0.2.37", default-features = false, features = ["std"] }
 schemars = { version = "1.2.1", features = ["derive"] }
 norn-cell = { path = "../norn-cell", default-features = false }
 norn-checker = { path = "../norn-checker" }
@@ -22,9 +30,13 @@ serde = "1.0.228"
 serde_json = "1.0.150"
 # Upload digests and SigV4 request signing.
 sha2 = "0.10.9"
+# SYNC-URL-1: base URLs parsed as the host's `fetch` parses them (WHATWG).
+url = { version = "2.5.8", default-features = false, features = ["std"] }
 utoipa = "6.0.0"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Native SQLite for this crate's own tests only: a host links the cell engine
+# it brings (NativeEngine, the Durable Object's, or Rivet's).
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
 
 [dev-dependencies]

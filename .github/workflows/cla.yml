@@ -1,8 +1,9 @@
 name: CLA Assistant
 on:
-  issue_comment:
+  # The CLA action reads comments and PR metadata only; it never checks out PR code.
+  issue_comment: # zizmor: ignore[dangerous-triggers]
     types: [created]
-  pull_request_target:
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     types: [opened, reopened, synchronize, closed]
 permissions: {}
 jobs:
@@ -17,13 +18,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      actions: write
-      contents: write
-      pull-requests: write
-      statuses: write
+      actions: write # Run the pinned CLA action with its documented Actions grant.
+      contents: write # Write signatures to the dedicated CLA branch.
+      pull-requests: write # Post and maintain signature comments on pull requests.
+      statuses: write # Publish the CLA status.
     steps:
       - name: Record contributor agreement
-        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
+        # Archived upstream; pinned to a reviewed commit until a maintained replacement is chosen.
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # zizmor: ignore[archived-uses]
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:

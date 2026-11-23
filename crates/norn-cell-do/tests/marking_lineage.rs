@@ -202,8 +202,8 @@ fn loaded(path: &Path) -> Cell {
     let vars = json!({
         "NORN_S3_ENDPOINT": "https://storage.example.test",
         "NORN_S3_BUCKET": "uploads-bucket",
-        "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
-        "NORN_SECRET_S3_SECRET_ACCESS_KEY": "secret",
+        "NORN_S3_ACCESS_KEY_ID": "key-id",
+        "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
     let connect = Connect::new("[]", &vars.to_string()).expect("configuration");
     let mut cell = Cell {
@@ -284,7 +284,7 @@ fn a_property_carries_only_the_markings_of_the_values_it_was_computed_from() {
 
     // A Holding declares no marking: nothing of it is masked.
     let holdings = cell.masked("canon.Holding");
-    assert!(!holdings.is_empty());
+    assert_ne!(holdings, []);
     for (id, masked) in &holdings {
         assert!(
             masked.as_object().is_none_or(serde_json::Map::is_empty),
@@ -357,5 +357,68 @@ fn an_unlabeled_type_profiles_on_the_engine_and_a_marked_one_natively() {
         let answered: Value = serde_json::from_str(&answered.body).unwrap();
         assert_eq!(answered["engine"], engine, "{object_type}: {answered}");
         assert_eq!(without(&answered), without(&native), "{object_type}");
+    }
+}
+
+/// #1438 review: a definitions version whose reveal policy does not compile
+/// reveals nothing. The previous version's reveal grants never outlive it:
+/// before the fix, an admin could still reveal under v1's rule after v2 (which
+/// drops that rule) was applied, because v2's reveal policy failed to compile
+/// and the old one kept serving.
+#[test]
+fn a_reveal_policy_that_does_not_compile_revokes_the_previous_grants() {
+    use norn_api::cell_definitions::APPLY_PATH;
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = loaded(&directory.path().join("a.sqlite"));
+    let admin = user("admin");
+    let reveal = |cell: &mut Cell, key: &str| {
+        cell.call(
+            "POST",
+            "/v1/objects/canon.Party/demo%2Fparty%2Fcustomer/reveal",
+            &admin,
+            &json!({ "property": "display_name", "purpose": "support case",
+                     "idempotencyKey": key })
+            .to_string(),
+        )
+    };
+
+    // v1: the admin may reveal `pii.contact`.
+    let revealed = reveal(&mut cell, "v1");
+    assert_eq!(revealed.status, 200, "{}", revealed.body);
+    let denied = cell.call(
+        "POST",
+        "/v1/objects/canon.Party/demo%2Fparty%2Fcustomer/reveal",
+        &user("member"),
+        &json!({ "property": "display_name", "idempotencyKey": "member" }).to_string(),
+    );
+    assert_eq!(denied.status, 403, "{}", denied.body);
+    let code = |response: &Response| {
+        serde_json::from_str::<Value>(&response.body).unwrap()["code"].clone()
+    };
+
+    // v2 drops that rule for one whose marking condition names no marking:
+    // it widens nothing, so the install is admitted, but it does not compile.
+    let read = cell.call("GET", "/v1/definitions", &admin, "");
+    assert_eq!(read.status, 200, "{}", read.body);
+    let version = serde_json::from_str::<Value>(&read.body).unwrap()["version"]
+        .as_u64()
+        .unwrap();
+    let mut artifacts = privacy_set();
+    let policy = artifacts
+        .iter_mut()
+        .find(|artifact| artifact["artifactId"] == "privacy.reveal.policy")
+        .unwrap();
+    policy["payload"]["rules"][0]["allOf"][1] = json!({ "marking": { "anyOf": [] } });
+    policy["version"] = json!("0.2.0");
+    let body = json!({ "artifacts": artifacts, "expectedVersion": version }).to_string();
+    let applied = cell.call("POST", APPLY_PATH, &user("owner"), &body);
+    assert_eq!(applied.status, 200, "{}", applied.body);
+
+    // The same reveal is now refused as a member's is, and stays refused on
+    // every retry.
+    for key in ["v2", "v2-retry"] {
+        let refused = reveal(&mut cell, key);
+        assert_eq!(refused.status, 403, "{key}: {}", refused.body);
+        assert_eq!(code(&refused), code(&denied), "{key}: {}", refused.body);
     }
 }

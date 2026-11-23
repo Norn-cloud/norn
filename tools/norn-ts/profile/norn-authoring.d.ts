@@ -239,6 +239,45 @@ declare module "@norn/authoring" {
     /** Syntax only: lowers to the cell's `dashboard` definition, admitted like one built in Studio. */
     function dashboard(meta: DashboardMeta): DashboardDefinition
 
+    /** Opaque approval definition; the syntax compiler lowers the call. */
+    interface ApprovalDefinition { readonly _tag: "NornApproval" }
+    /** One comparison on the record a gated call writes (APPROVAL-WHEN-1). */
+    interface ApprovalCondition<P extends string = string> {
+      /** A property of the record the action writes. */
+      readonly property: P
+      readonly op: "eq" | "ne" | "lt" | "le" | "gt" | "ge"
+      /** Numbers compare as exact decimals (write `"1000"` for an exact amount); text and booleans with eq/ne. */
+      readonly value: string | number | boolean
+    }
+    /**
+     * APPROVAL-1: a call of `action` waits for a person's decision before it
+     * commits; with `when`, only a call whose written record satisfies it.
+     * A holder of one of `decider.roles` who is not the caller decides, and an
+     * approved call commits under the caller's own authority. Lowers to the
+     * cell's `approval` definition; `norn dev` installs it by signing the
+     * server's restatement, as a hosted installer signs it.
+     */
+    function approval<const D extends TypeDefinition<any, any> = TypeDefinition<any, any>>(meta: {
+      /** The definition id (`purchasing.large_requests`). */
+      readonly id: string
+      readonly action: ActionDefinition<any>
+      readonly decider: { readonly roles: ReadonlyArray<string>; readonly law?: string }
+      /** What the decider is asked, 1 to 500 characters. */
+      readonly question: string
+      readonly risk: "low" | "medium" | "high"
+      /** How long the decision waits, 1 ms to seven days. */
+      readonly expiresInMs?: number
+      /** The type the action writes, so `when.property` is checked against it. */
+      readonly on?: D
+      readonly when?: ApprovalCondition<[D] extends [TypeDefinition<infer T, any>] ? keyof T & string : string>
+    }): ApprovalDefinition
+
+    /**
+     * ACTION-ACTOR-1: the verified caller's subject id, in an action's
+     * `derive`. A caller never supplies the derived field; the server binds it.
+     */
+    function callerId(): Expression<string>
+
     /** Package declarations can augment these maps with registry property types. */
     interface RegistryObjectTypes {}
     interface RegistryInterfaceTypes {}
@@ -456,6 +495,12 @@ declare module "@norn/authoring" {
        * circular): give its artifact id, `<policy id>.policy`.
        */
       readonly access?: AccessDefinition | { readonly artifactId: string; readonly version?: string }
+      /**
+       * CALLER-FIELD-1: input fields the server sets to the verified caller's
+       * subject id (`requester = caller`). A caller never supplies them; a
+       * supplied value is refused.
+       */
+      readonly fromCaller?: ReadonlyArray<keyof I["Type"] & string>
     }
 
     /** An ActionIR action. */
@@ -829,6 +874,10 @@ declare module "@norn/authoring" {
 
     /** Pure calendar-date comparison; lowers to explicit ZEN date constructors. */
     function dateBefore(left: string, right: string): boolean
+    /** Pure UTC timestamp strict ordering (`timestamp(left) < timestamp(right)`). */
+    function timestampBefore(left: string, right: string): boolean
+    /** Pure UTC timestamp non-strict ordering (`timestamp(left) <= timestamp(right)`). */
+    function timestampAtOrBefore(left: string, right: string): boolean
     /** Explicit checked calendar conversion; malformed input fails evaluation. */
     function parseDate(text: string): string
     /** Explicit checked RFC 3339 conversion; requires a known offset, returns canonical UTC. */
@@ -841,6 +890,18 @@ declare module "@norn/authoring" {
     function daysBetween(start: string, end: string): number
     /** The calendar date `days` after `date` (`add_days`); a parsed date, comparable with other parsed dates. */
     function addDays(date: string, days: number): string
+    /** Signed exact decimal seconds from `start` to `end` (`seconds_between`); raw timestamp text is parsed. */
+    function secondsBetween(start: string, end: string): number
+    /** The UTC timestamp `seconds` after `timestamp` (`add_seconds`); a parsed timestamp, comparable with other parsed timestamps. */
+    function addSeconds(timestamp: string, seconds: number): string
+    /** Whether two proper half-open timestamp intervals `[aStart, aEnd)` and `[bStart, bEnd)` overlap; fails on `start >= end`. */
+    function intervalsOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean
+    /** Exact decimal seconds separating two proper half-open timestamp intervals (`0` when touching or overlapping); fails on `start >= end`. */
+    function intervalGapSeconds(aStart: string, aEnd: string, bStart: string, bEnd: string): number
+    /** Exact decimal seconds of overlap between two proper half-open timestamp intervals (`0` when disjoint or touching); fails on `start >= end`. */
+    function intervalIntersectionSeconds(aStart: string, aEnd: string, bStart: string, bEnd: string): number
+    /** Resolve an offset-free local wall timestamp `YYYY-MM-DDTHH:MM:SS[.f{1..9}]` in a pinned IANA timezone under `"reject" | "earlier" | "later"`. */
+    function resolveLocalTimestamp(localWallTime: string, ianaTz: string, dstPolicy: string): string
 
     interface SourceSchemaSpec {
       readonly id: string
@@ -870,7 +931,8 @@ declare module "@norn/authoring" {
         readonly collection?: string; readonly origin: "declared" | "inferred"
       }>
     }
-    function sourceSchema(meta: SourceSchemaSpec): { readonly _tag: "NornSourceSchema" }
+    interface SourceSchemaDefinition { readonly _tag: "NornSourceSchema" }
+    function sourceSchema(meta: SourceSchemaSpec): SourceSchemaDefinition
 
     /** One source-manifest entry (norn#56): pinned release, licence, redistribution, import mode, importer and checksums. */
     interface OntologySourceSpec {
@@ -964,8 +1026,12 @@ declare module "@norn/authoring" {
       readonly id: string
       readonly title: string
       readonly version: string
-      /** The pinned source schema: its artifact id, version, and envelope hash (verified by the checker). */
-      readonly source: { readonly schemaId: string; readonly version: string; readonly sha256: string }
+      /**
+       * The pinned source schema: a `Norn.sourceSchema` of this project (bound
+       * by reference; the checker's hash of it is the pin), or its artifact id,
+       * version and envelope hash (verified by the checker).
+       */
+      readonly source: SourceSchemaDefinition | { readonly schemaId: string; readonly version: string; readonly sha256: string }
       /** Exact vendor releases/revisions and separate API-access terms evidence. */
       readonly sourceContract?: { readonly kind: "generic" } | {
         readonly kind: "vendor"
@@ -1034,5 +1100,58 @@ declare module "@norn/authoring" {
     interface ConnectorDefinition { readonly _tag: "NornConnector" }
     /** Declarative read-only connector; host configuration supplies endpoints and secret resolution. */
     function connector(meta: ConnectorSpec): ConnectorDefinition
+
+    /** Review state of a governed setting artifact (`SettingReviewState`). */
+    type SettingReviewState = "draft" | "proposed" | "approved" | "active" | "rejected" | "superseded"
+
+    /** Exact setting artifact version superseded by a newer revision. */
+    interface SettingSupersedesSpec {
+      readonly artifactId: string
+      readonly version: string
+    }
+
+    /** Review metadata of a governed setting artifact. */
+    interface SettingReviewSpec {
+      readonly state: SettingReviewState
+      readonly reviewedBy?: string
+      readonly reviewedAt?: string
+      readonly reason?: string
+    }
+
+    interface SettingSpecBase {
+      /** Dotted setting artifact id (`retail.setting.reorder_threshold`). */
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      /** Stable parameter key (`retail.sku.default_reorder_threshold`). */
+      readonly settingKey: string
+      /** Inclusive RFC 3339 effective start timestamp. */
+      readonly effectiveFrom: string
+      /** Optional exclusive RFC 3339 effective end timestamp (must sort after `effectiveFrom`). */
+      readonly effectiveTo?: string
+      /** The exact setting version this revision replaces. */
+      readonly supersedes?: SettingSupersedesSpec
+      readonly review: SettingReviewSpec
+      /** Scope dimensions required when resolving this setting (`orgId`, `environmentId`, ...). */
+      readonly scopeRequired: ReadonlyArray<`${ScopeDimension}Id`>
+    }
+
+    /**
+     * `SettingRoot` specification. Numeric settings (`valueType: "number"`) require
+     * exact `DecimalLiteral` strings; binary JavaScript numbers are refused (VAL-EXACT-1).
+     */
+    type SettingSpec =
+      | (SettingSpecBase & { readonly valueType: "text"; readonly value: string })
+      | (SettingSpecBase & { readonly valueType: "number"; readonly value: string })
+      | (SettingSpecBase & { readonly valueType: "boolean"; readonly value: boolean })
+      | (SettingSpecBase & { readonly valueType: "json"; readonly value: JsonData })
+
+    /** Opaque setting definition; the syntax compiler lowers the call to a `setting` artifact. */
+    interface SettingDefinition {
+      readonly _tag: "NornSetting"
+    }
+
+    /** Governed effective-dated parameter (`SettingRoot`, PARAM-EXACT-1 / PARAM-BOUND-1). */
+    function setting(meta: SettingSpec): SettingDefinition
   }
 }

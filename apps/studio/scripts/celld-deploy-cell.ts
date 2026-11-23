@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, rmSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import { writeSecretConfig } from "../celld-config.ts"
+import { otelSettings } from "../deploy-target.ts"
 
 // Deploy the Norn cell Worker (a built norn-cell-do bundle) to one celld stage, and
 // prove the stage serves it. A cell-only deploy has three traps, each handled here:
@@ -18,7 +20,9 @@ import { writeSecretConfig } from "../celld-config.ts"
 // Environment: CELLD_BUCKET, S3_ENDPOINT, AWS_REGION, AWS_ACCESS_KEY_ID,
 // AWS_SECRET_ACCESS_KEY (the stage's own bucket credentials), NORN_LINEAGE_KEY,
 // NORN_PROBE_EMAIL + NORN_PROBE_PASSWORD (a stage account), NORN_CELLD_SSH (the
-// ssh host of the stage node; required). Secrets travel in the 0600 config file, stdin or the
+// ssh host of the stage node; required). Optional: OTEL_EXPORTER_OTLP_ENDPOINT,
+// OTEL_EXPORTER_OTLP_HEADERS and OTEL_RESOURCE_ATTRIBUTES turn on the cell's
+// telemetry export (apps/norn-cell-do/telemetry.mjs). Secrets travel in the 0600 config file, stdin or the
 // environment, never argv or logs.
 
 /** What one stage's cell deploy touches, derived from its name alone. */
@@ -36,6 +40,24 @@ export function cellStage(stage: string | undefined, bucket: string | undefined)
   // Each stage owns its bucket: a deploy with another stage's credentials refuses.
   if (bucket === undefined || !bucket.startsWith(`s3://norn-${stage}-celld`)) throw new Error(`CELLD_BUCKET must be stage ${stage}'s own bucket (s3://norn-${stage}-celld…)`)
   return { stage, origin: `https://${stage}.norn.cloud`, unit: `norn-${stage}-celld`, studio: `norn-studio-${stage}`, bucket }
+}
+
+/** A build that accepts fixture principals is never deployed: fixtures builds serve only the local smoke (apps/norn-cell-do/smoke.py), and no deployed stage is one. */
+export function assertDeployableBuild(stage: string, fixturesEnabled: boolean): void {
+  if (fixturesEnabled) {
+    throw new Error(`the bundle is a fixtures build (it accepts fixture principals); stage ${stage} takes only a build without the fixtures feature`)
+  }
+}
+
+/** Whether the bundle's Wasm was built with the `fixtures` feature, as the build itself reports it. */
+export async function bundleFixturesEnabled(bundle: string): Promise<boolean> {
+  const pkg = (await import(pathToFileURL(resolve(bundle, "pkg", "norn_cell_do.js")).href)) as {
+    initSync: (options: { module: Uint8Array }) => unknown
+    NornCell: { fixturesEnabled?: () => boolean }
+  }
+  if (typeof pkg.NornCell.fixturesEnabled !== "function") throw new Error("the bundle does not report whether it is a fixtures build (NornCell.fixturesEnabled); rebuild it")
+  pkg.initSync({ module: readFileSync(join(bundle, "pkg", "norn_cell_do_bg.wasm")) })
+  return pkg.NornCell.fixturesEnabled()
 }
 
 /** The Studio pointer to restore as the fleet application, checked to be the stage's own. */
@@ -59,6 +81,9 @@ export function probeServesNewBuild(status: number, body: string): boolean {
     return false
   }
 }
+
+/** What a cell bundle must hold: the host's modules and the built cell. */
+export const BUNDLE_FILES = ["worker.mjs", "subscribe.mjs", "wake.mjs", "connect_vars.mjs", "telemetry.mjs", "otlp.mjs", join("pkg", "norn_cell_do_bg.wasm")]
 
 const env = (name: string): string => {
   const value = process.env[name]
@@ -118,9 +143,11 @@ async function main(argv: readonly string[]) {
   }
   const stage = cellStage(value("--stage"), process.env.CELLD_BUCKET)
   const bundle = value("--bundle")
-  if (bundle === undefined || !existsSync(join(bundle, "worker.mjs")) || !existsSync(join(bundle, "subscribe.mjs")) || !existsSync(join(bundle, "pkg", "norn_cell_do_bg.wasm"))) {
-    throw new Error("--bundle must hold worker.mjs, subscribe.mjs and pkg/norn_cell_do_bg.wasm (apps/norn-cell-do/README.md)")
+  if (bundle === undefined || !BUNDLE_FILES.every((file) => existsSync(join(bundle, file)))) {
+    throw new Error(`--bundle must hold ${BUNDLE_FILES.join(", ")} (apps/norn-cell-do/README.md)`)
   }
+  assertDeployableBuild(stage.stage, await bundleFixturesEnabled(bundle))
+  const otel = otelSettings(process.env)
   const config = join(bundle, "wrangler.json")
   writeSecretConfig(config, {
     name: "norn-cell",
@@ -128,7 +155,10 @@ async function main(argv: readonly string[]) {
     compatibility_date: "2026-11-01",
     durable_objects: { bindings: [{ name: "CELLS", class_name: "Cell" }] },
     migrations: [{ tag: "v1", new_sqlite_classes: ["Cell"] }],
-    vars: { NORN_HOST_ISSUER: stage.origin, NORN_HOST_JWKS_URL: `${stage.origin}/api/auth/jwks`, NORN_LINEAGE_KEY: env("NORN_LINEAGE_KEY") },
+    vars: {
+      NORN_HOST_ISSUER: stage.origin, NORN_HOST_JWKS_URL: `${stage.origin}/api/auth/jwks`, NORN_LINEAGE_KEY: env("NORN_LINEAGE_KEY"),
+      ...otel === undefined ? {} : { OTEL_EXPORTER_OTLP_ENDPOINT: otel.endpoint, OTEL_RESOURCE_ATTRIBUTES: otel.resourceAttributes ?? `deployment.environment=${stage.stage}`, ...otel.headers === undefined ? {} : { OTEL_EXPORTER_OTLP_HEADERS: otel.headers } },
+    },
   })
   try {
     execFileSync("celld", ["deploy", ".", "--json"], { cwd: bundle, stdio: ["ignore", "inherit", "inherit"] })

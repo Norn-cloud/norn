@@ -134,6 +134,47 @@ fn all_rows(f: &Fixture) -> Vec<Row> {
         .collect()
 }
 
+/// Every registry pack's repo-local `rawMetadata` evidence must hash to its
+/// pin; a scheme URI (`evidence://…`) names evidence outside the repo.
+#[test]
+fn registry_pack_raw_metadata_pins_match_repo_files() {
+    let mut checked = 0;
+    for pack in fs::read_dir(root().join("registry/packs")).expect("packs") {
+        let dir = pack.expect("pack").path().join("artifacts");
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.expect("entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let artifact: Value =
+                serde_json::from_str(&fs::read_to_string(&path).expect("artifact")).expect("json");
+            let raw = &artifact["payload"]["rawMetadata"];
+            let Some(uri) = raw["uri"].as_str() else {
+                continue;
+            };
+            if uri.contains("://") {
+                continue;
+            }
+            let bytes = fs::read(root().join(uri))
+                .unwrap_or_else(|e| panic!("{}: rawMetadata {uri}: {e}", path.display()));
+            assert_eq!(
+                raw["sha256"].as_str(),
+                Some(format!("{:x}", Sha256::digest(bytes)).as_str()),
+                "{}: rawMetadata {uri} drifted from its pin",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 5,
+        "only {checked} repo-local rawMetadata pins found"
+    );
+}
+
 #[test]
 fn mvp_map_three_artifact_set_is_admitted() {
     let set = artifacts();
@@ -189,7 +230,7 @@ fn mvp_map_three_aliases_roles_and_one_economic_identity() {
             assert_eq!(link.target_key, key);
             assert_eq!(link.key, delivery.key);
         }
-        assert!(!delivery.property_provenance.is_empty());
+        assert_ne!(delivery.property_provenance.len(), 0);
         let holding = mapped.iter().find(|r| r.map == "holding").expect("holding");
         for (role, key) in [
             ("owner", "demo/party/owner"),
@@ -245,7 +286,7 @@ fn mvp_item_holding_catalog_and_owner_location_partitions() {
         assert_eq!(items[0].object_type.as_str(), "canon.Item");
         assert_eq!(holdings[0].object_type.as_str(), "canon.Holding");
         assert_ne!(holdings[0].key, holdings[1].key);
-        assert!(items[0].links.is_empty());
+        assert_eq!(items[0].links, []);
     }
 }
 #[test]
@@ -645,13 +686,13 @@ fn every_currency_enum_and_code_set_is_the_one_iso_4217_list() {
         lists.push((artifact.to_owned(), codes(&found["type"]["values"])));
     }
     for source in [
-        "erpnext/artifacts/erpnext.three",
-        "odoo/artifacts/odoo.three",
-        "shopify/artifacts/shopify.three",
-        "erpnext-sandbox/artifacts/erpnext.sandbox",
-        "odoo-sandbox/artifacts/odoo.sandbox",
+        "registry/packs/erpnext/artifacts/erpnext.three",
+        "registry/packs/odoo/artifacts/odoo.three",
+        "registry/packs/shopify/artifacts/shopify.three",
+        "fixtures/packs/erpnext-rest/artifacts/erpnext.rest",
+        "fixtures/packs/odoo-rest/artifacts/odoo.rest",
     ] {
-        let document = read(&format!("registry/packs/{source}.source.json"));
+        let document = read(&format!("{source}.source.json"));
         for set in document["payload"]["codeSets"]
             .as_array()
             .expect("code sets")

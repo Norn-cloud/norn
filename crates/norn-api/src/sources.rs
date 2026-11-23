@@ -18,8 +18,15 @@
 //! `sync_run` at its end), mapped by `norn.connect.mapping` into
 //! `source.Connection` and `source.SyncRun`. The connection's watermark is
 //! read back from that object, so freshness is what the cell recorded.
-//! SYNC-URL-1: a base URL is https, or http only to loopback or a
-//! single-label (private network) host.
+//! SYNC-URL-1: a base URL is https to a public host, read as the host's
+//! `fetch` reads it (WHATWG): no credentials, query or fragment, and no
+//! internal destination, that is an IP literal in a loopback, private,
+//! link-local, unique-local, shared, multicast, IPv4-mapped or unspecified
+//! range (in any of its spellings: `0x7f.1`, `2130706433`, `[::ffff:…]`),
+//! `localhost`, or a single-label name. Plain http, and any internal host,
+//! only to a host the operator lists in [`ALLOWED_HOSTS_VAR`](crate::sources::ALLOWED_HOSTS_VAR)
+//! (comma-separated, empty by default). The check is of the URL, not of what
+//! a name resolves to.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -32,6 +39,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::host::DevHost;
 use crate::pull::{Limits, Pull, PullError, PullProfile, Request, Watermark, observation};
+
+/// The server variable listing the hosts a base URL may name although they
+/// are internal or plain http (SYNC-URL-1): comma-separated host names or IP
+/// literals (IPv6 in brackets), for self-hosters whose sources run on their
+/// own network. Empty by default.
+pub const ALLOWED_HOSTS_VAR: &str = "NORN_SOURCE_ALLOWED_HOSTS";
 
 /// The source system the cell reports its own syncs as.
 pub const REPORT_SOURCE: &str = "norn-connect";
@@ -47,7 +60,7 @@ pub const DEFAULT_EVERY_MINUTES: u32 = 15;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionConfig {
-    /// The connection id, e.g. `erpnext.sandbox`.
+    /// The connection id, e.g. `erpnext.rest`.
     pub id: String,
     /// The source system (`erpnext`, `odoo`, `shopify`).
     pub system: String,
@@ -217,6 +230,9 @@ struct ConnectionState {
     mapped: usize,
     last_end_ms: Option<u64>,
     watermarks: Option<BTreeMap<String, Watermark>>,
+    /// The schedule was read back from the cell's durable sync record
+    /// (TIMER-ALARM-1), so an evicted host never resyncs early.
+    restored: bool,
 }
 
 /// Every configured connection of one cell and its running syncs.
@@ -242,6 +258,21 @@ impl Sources {
     /// # Errors
     /// Malformed configuration, a duplicate id, or a base URL SYNC-URL-1 refuses.
     pub fn new(config: &str, secrets: BTreeMap<String, String>) -> Result<Self, String> {
+        Self::with_allowed_hosts(config, secrets, "")
+    }
+
+    /// [`Sources::new`], with `allowed_hosts` (the [`ALLOWED_HOSTS_VAR`]
+    /// value) naming the internal or plain-http hosts a base URL may use.
+    ///
+    /// # Errors
+    /// Malformed configuration, a duplicate id, a base URL SYNC-URL-1
+    /// refuses, or an `allowed_hosts` entry that is not a bare host.
+    pub fn with_allowed_hosts(
+        config: &str,
+        secrets: BTreeMap<String, String>,
+        allowed_hosts: &str,
+    ) -> Result<Self, String> {
+        let allowed_hosts = allowed_host_list(allowed_hosts)?;
         let connections: Vec<ConnectionConfig> =
             serde_json::from_str(config).map_err(|e| format!("source configuration: {e}"))?;
         let mut ids = std::collections::BTreeSet::new();
@@ -267,9 +298,9 @@ impl Sources {
                     connection.id
                 ));
             }
-            if !allowed_base(&connection.base_url) {
+            if !allowed_base(&connection.base_url, &allowed_hosts) {
                 return Err(format!(
-                    "source configuration: {} base URL must be https, or http to loopback or a private single-label host",
+                    "source configuration: {} base URL must be https to a public host; plain http or an internal host only when {ALLOWED_HOSTS_VAR} lists it",
                     connection.id
                 ));
             }
@@ -385,6 +416,95 @@ impl Sources {
         self.claim(&id, Trigger::Schedule, &format!("connection:{id}"), now_ms)
             .ok()
             .map(|_| id)
+    }
+
+    /// TIMER-ALARM-1: read each scheduled connection's last sync end back
+    /// from the cell's durable connection record (SYNC-REPORT-1), once per
+    /// host instance, so a host that was evicted keeps the schedule the
+    /// cell recorded instead of syncing every connection at once. A
+    /// connection the cell holds no ended sync for stays never synced.
+    ///
+    /// # Errors
+    /// The cell could not be read: nothing is restored, and the host claims
+    /// nothing on the schedule until it can be.
+    pub fn restore_schedule<E: SqlEngine>(&mut self, host: &DevHost<E>) -> Result<(), String> {
+        let pending = |state: Option<&ConnectionState>| !state.is_some_and(|s| s.restored);
+        if !self
+            .connections
+            .iter()
+            .any(|c| c.every_minutes > 0 && pending(self.state.get(&c.id)))
+        {
+            return Ok(());
+        }
+        // A cell from before connection records has no such type: no
+        // recorded schedule, not a restore error.
+        let recorded = host
+            .object_type_names()
+            .map_err(|refusal| format!("{}: {}", refusal.code, refusal.message))?
+            .iter()
+            .any(|name| name == CONNECTION_TYPE);
+        for connection in &self.connections {
+            let state = self.state.entry(connection.id.clone()).or_default();
+            // Only a scheduled connection has a schedule to restore.
+            if state.restored || connection.every_minutes == 0 || !recorded {
+                state.restored = true;
+                continue;
+            }
+            let ended = host
+                .host_object(CONNECTION_TYPE, &connection.id)
+                .map_err(|refusal| format!("{}: {}", refusal.code, refusal.message))?
+                .and_then(|record| {
+                    record
+                        .get("last_sync_ended_at")
+                        .and_then(RuntimeValue::as_str)
+                        .and_then(|text| text.parse::<jiff::Timestamp>().ok())
+                        .and_then(|at| u64::try_from(at.as_millisecond()).ok())
+                });
+            if let Some(ended) = ended {
+                state.last_end_ms = Some(state.last_end_ms.map_or(ended, |known| known.max(ended)));
+            }
+            state.restored = true;
+        }
+        Ok(())
+    }
+
+    /// TIMER-ALARM-1: when the next scheduled sync falls due, at or after
+    /// `now_ms` (the host wakes then and claims it with [`Self::due`]): a
+    /// connection never synced is due now, and any other one `every_minutes`
+    /// after its last run ended. While any connection's sync holds the cell
+    /// (SYNC-SERIAL-1), no other can be claimed, so the next is when that
+    /// run's lease lapses (SYNC-LEASE-1); its end re-arms the host. `None`
+    /// when no connection is scheduled.
+    #[must_use]
+    pub fn next_due(&self, now_ms: u64) -> Option<u64> {
+        let lease = self
+            .state
+            .values()
+            .filter_map(|s| s.run.as_ref())
+            .filter(|run| held(run, now_ms))
+            .map(|run| run.stepped_ms.saturating_add(RUN_LEASE_MS))
+            .min();
+        if lease.is_some() && self.connections.iter().any(|c| c.every_minutes > 0) {
+            return lease;
+        }
+        self.connections
+            .iter()
+            .filter(|c| c.every_minutes > 0)
+            .map(|c| {
+                let state = self.state.get(&c.id);
+                if let Some(run) = state
+                    .and_then(|s| s.run.as_ref())
+                    .filter(|run| held(run, now_ms))
+                {
+                    return run.stepped_ms.saturating_add(RUN_LEASE_MS);
+                }
+                let every = u64::from(c.every_minutes).saturating_mul(60_000);
+                state
+                    .and_then(|s| s.last_end_ms)
+                    .map_or(now_ms, |last| last.saturating_add(every))
+                    .max(now_ms)
+            })
+            .min()
     }
 
     /// Advance the claimed sync of `id`: `None` begins it; otherwise
@@ -675,13 +795,13 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure
             .ingest(&chunk)
             .map_err(|refusal| fail("source.ingest", refusal.message))?;
         for ingested in outcomes {
-            match ingested.outcome {
+            match &ingested.outcome {
                 MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
                     run.landed = run.landed.saturating_add(1);
                 }
-                MappingOutcome::Quarantined(codes) => {
+                quarantined @ MappingOutcome::Quarantined(_) => {
                     run.quarantined = run.quarantined.saturating_add(1);
-                    for code in codes {
+                    for code in quarantined.codes() {
                         let n = run.reasons.entry(code).or_insert(0);
                         *n = n.saturating_add(1);
                     }
@@ -785,8 +905,8 @@ fn auth_headers(
     }
 }
 
-/// The environment name of a secret reference: `erpnext_sandbox_token` is
-/// `NORN_SECRET_ERPNEXT_SANDBOX_TOKEN`.
+/// The environment name of a secret reference: `erpnext_rest_token` is
+/// `NORN_SECRET_ERPNEXT_REST_TOKEN`.
 #[must_use]
 pub fn secret_env(reference: &str) -> String {
     let mut name = String::from("NORN_SECRET_");
@@ -812,33 +932,99 @@ fn http(config: &ConnectionConfig, auth: &[(String, String)], request: Request) 
     }
 }
 
-fn allowed_base(url: &str) -> bool {
-    let (scheme, rest) = url.split_once("://").unwrap_or(("", ""));
-    let authority = rest.split('/').next().unwrap_or_default();
-    if authority.is_empty() || authority.contains('@') || rest.contains('?') {
+/// The hosts of an [`ALLOWED_HOSTS_VAR`] value, normalized as a URL's host
+/// is (lowercase, IP literals canonical). An entry that is not a bare host
+/// (a port, a scheme, a path, userinfo) refuses the configuration, naming the
+/// entry, rather than leaving the operator's host silently unlisted. The raw
+/// entry is checked before URL parsing, because parsing drops a default port
+/// (`127.0.0.1:443`) and empty userinfo (`@127.0.0.1`) and would list the bare
+/// host on every port and scheme. Connection egress reads the same list.
+///
+/// # Errors
+/// An entry that is not a bare host, named.
+pub fn allowed_host_list(value: &str) -> Result<Vec<String>, String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            Some(entry)
+                .filter(|entry| bare_host(entry))
+                .and_then(|entry| url::Url::parse(&format!("https://{entry}/")).ok())
+                .filter(|parsed| {
+                    parsed.port().is_none()
+                        && parsed.path() == "/"
+                        && parsed.username().is_empty()
+                        && parsed.password().is_none()
+                        && parsed.query().is_none()
+                        && parsed.fragment().is_none()
+                })
+                .and_then(|parsed| parsed.host_str().map(str::to_owned))
+                .ok_or_else(|| {
+                    format!(
+                        "source configuration: {ALLOWED_HOSTS_VAR} entry {entry:?} is not a host; list host names or IP literals (IPv6 in brackets), without a scheme, port or path"
+                    )
+                })
+        })
+        .collect()
+}
+
+/// Whether a raw allowlist entry is exactly a host: a DNS name or IPv4
+/// dotted quad (letters, digits, hyphens, non-empty dot-separated labels, an
+/// optional trailing dot), or a bracketed IPv6 literal. Anything else (`@`,
+/// `:` outside brackets, `/`, `?`, `#`, whitespace) is not.
+fn bare_host(entry: &str) -> bool {
+    if let Some(inner) = entry
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
+        return !inner.is_empty()
+            && inner
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.');
+    }
+    let name = entry.strip_suffix('.').unwrap_or(entry);
+    !name.is_empty()
+        && name.split('.').all(|label| {
+            !label.is_empty() && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+}
+
+/// SYNC-URL-1, on the URL as the host's `fetch` parses it.
+fn allowed_base(base: &str, allowed_hosts: &[String]) -> bool {
+    let Ok(parsed) = url::Url::parse(base) else {
+        return false;
+    };
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
         return false;
     }
-    let host = authority.rsplit_once(':').map_or(authority, |(h, _)| h);
-    match scheme {
-        "https" => true,
-        "http" => host == "127.0.0.1" || host == "localhost" || !host.contains('.'),
-        _ => false,
+    let (Some(host), Some(name)) = (parsed.host(), parsed.host_str()) else {
+        return false;
+    };
+    if allowed_hosts.iter().any(|allowed| allowed == name) {
+        return matches!(parsed.scheme(), "https" | "http");
     }
+    parsed.scheme() == "https" && !crate::net::internal_host(&host)
 }
 
 fn watermark_text(watermarks: &BTreeMap<String, Watermark>) -> String {
     serde_json::to_string(watermarks).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// RFC 3339 UTC with milliseconds.
+/// RFC 3339 UTC with milliseconds; millis outside jiff's range render as
+/// the epoch, `1970-01-01T00:00:00.000Z`.
 #[must_use]
 pub fn rfc3339(ms: u64) -> String {
     i64::try_from(ms)
         .ok()
-        .and_then(chrono::DateTime::from_timestamp_millis)
+        .and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
         .map_or_else(
             || "1970-01-01T00:00:00.000Z".to_owned(),
-            |t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            |t| t.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
         )
 }
 
@@ -1117,7 +1303,11 @@ pub fn keep_upload<E: SqlEngine>(
         Some(MappingOutcome::Landed | MappingOutcome::AlreadyLanded) => Ok(()),
         Some(MappingOutcome::Quarantined(reasons)) => Err(format!(
             "the cell refused the upload record: {}",
-            reasons.join(", ")
+            reasons
+                .iter()
+                .map(|r| format!("{}: {}", r.code, r.reason))
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
         None => Err("the cell captured no upload record".to_owned()),
     }
@@ -1219,6 +1409,14 @@ pub fn kept_upload<E: SqlEngine>(
 mod tests {
     use super::*;
 
+    #[test]
+    fn rfc3339_is_utc_with_milliseconds_and_out_of_range_reads_as_the_epoch() {
+        assert_eq!(rfc3339(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(rfc3339(1_700_000_000_123), "2023-11-14T22:13:20.123Z");
+        assert_eq!(rfc3339(1_700_000_000_000), "2023-11-14T22:13:20.000Z");
+        assert_eq!(rfc3339(u64::MAX), "1970-01-01T00:00:00.000Z");
+    }
+
     fn config() -> ConnectionConfig {
         serde_json::from_value(serde_json::json!({
             "id": "shop.dev", "system": "shopify", "label": "Dev store", "connector": "shopify.dev.connector",
@@ -1260,12 +1458,195 @@ mod tests {
     }
 
     #[test]
-    fn base_urls_are_https_or_private_http() {
-        assert!(allowed_base("https://erp.example"));
-        assert!(allowed_base("http://erp-sandbox:8000"));
-        assert!(allowed_base("http://127.0.0.1:8069"));
-        assert!(!allowed_base("http://erp.example"));
-        assert!(!allowed_base("https://user@erp.example"));
-        assert!(!allowed_base("ftp://erp"));
+    fn base_urls_are_https_to_public_hosts() {
+        for base in [
+            "https://erp.example",
+            "https://erp.example.com:8443/api",
+            "https://ERP.Example.com/",
+            "https://93.184.215.14",
+            "https://[2606:2800:21f:cb07:6820:80da:af6b:8b2c]/",
+        ] {
+            assert!(allowed_base(base, &[]), "{base}");
+        }
+    }
+
+    #[test]
+    fn base_urls_refuse_other_schemes_and_parts() {
+        for base in [
+            "http://erp.example",
+            "ftp://erp.example",
+            "file:///etc/hosts",
+            "https://user@erp.example",
+            "https://user:pass@erp.example",
+            "https://erp.example/?x=1",
+            "https://erp.example/#x",
+            "erp.example",
+            "",
+        ] {
+            assert!(!allowed_base(base, &[]), "{base}");
+        }
+    }
+
+    #[test]
+    fn base_urls_refuse_internal_hosts_in_every_spelling() {
+        for base in [
+            // Loopback and the local name.
+            "https://127.0.0.1",
+            "https://127.8.9.10:8443",
+            "https://localhost",
+            "https://LOCALHOST.",
+            "https://api.localhost",
+            "https://[::1]",
+            // Integer, octal, hex and short IPv4 forms of loopback.
+            "https://2130706433",
+            "https://017700000001",
+            "https://0x7f000001",
+            "https://0x7f.0.0.1",
+            "https://0177.0.0.01",
+            "https://127.1",
+            // Private, shared, link-local and this-network IPv4.
+            "https://10.0.0.1",
+            "https://172.16.0.1",
+            "https://172.31.255.255",
+            "https://192.168.1.1",
+            "https://100.64.0.1",
+            "https://169.254.169.254",
+            "https://0.0.0.0",
+            "https://0",
+            "https://255.255.255.255",
+            "https://224.0.0.1",
+            // Protocol-assignment, benchmarking and reserved IPv4.
+            "https://192.0.0.1",
+            "https://192.0.0.255",
+            "https://198.18.0.1",
+            "https://198.19.255.255",
+            "https://240.0.0.1",
+            "https://254.1.2.3",
+            // Unspecified, link-local, unique-local and multicast IPv6.
+            "https://[::]",
+            "https://[fe80::1]",
+            "https://[febf::1]",
+            "https://[fc00::1]",
+            "https://[fd12:3456::1]",
+            "https://[ff02::1]",
+            // IPv4-mapped and IPv4-compatible IPv6.
+            "https://[::ffff:127.0.0.1]",
+            "https://[::ffff:a9fe:a9fe]",
+            "https://[::ffff:8.8.8.8]",
+            "https://[::127.0.0.1]",
+            // NAT64, local-use NAT64, 6to4 and Teredo carry an IPv4 destination.
+            "https://[64:ff9b::7f00:1]",
+            "https://[64:ff9b::8.8.8.8]",
+            "https://[64:ff9b:1::a00:1]",
+            "https://[64:ff9b:1:ffff::1]",
+            "https://[2002:7f00:1::1]",
+            "https://[2002:808:808::1]",
+            "https://[2001:0:4136:e378::1]",
+            // Site-local IPv6.
+            "https://[fec0::1]",
+            "https://[feff::1]",
+            // Single-label (private network) names.
+            "https://erp-sandbox:8000",
+            "http://erp-sandbox:8000",
+            "http://127.0.0.1:8069",
+        ] {
+            assert!(!allowed_base(base, &[]), "{base}");
+        }
+    }
+
+    #[test]
+    fn the_operator_allowlist_admits_named_internal_hosts_only() {
+        let allowed =
+            allowed_host_list(" erp-sandbox , 127.0.0.1,[::1], , LocalHost").expect("hosts");
+        assert_eq!(
+            allowed,
+            ["erp-sandbox", "127.0.0.1", "[::1]", "localhost"].map(String::from)
+        );
+        for base in [
+            "http://erp-sandbox:8000",
+            "https://erp-sandbox",
+            "http://127.0.0.1:8069",
+            "http://[::1]:8000",
+            "http://localhost:8000",
+        ] {
+            assert!(allowed_base(base, &allowed), "{base}");
+        }
+        for base in [
+            "http://127.0.0.2",
+            "http://erp-other:8000",
+            "http://10.0.0.5",
+            "ftp://erp-sandbox",
+            "http://user@erp-sandbox",
+        ] {
+            assert!(!allowed_base(base, &allowed), "{base}");
+        }
+    }
+
+    #[test]
+    fn bare_hosts_are_admitted_normalized() {
+        assert_eq!(
+            allowed_host_list("erp-sandbox,10.0.0.5,[fd00::1],ERP-Sandbox,erp-sandbox.")
+                .expect("hosts"),
+            [
+                "erp-sandbox",
+                "10.0.0.5",
+                "[fd00::1]",
+                "erp-sandbox",
+                "erp-sandbox."
+            ]
+            .map(String::from)
+        );
+    }
+
+    #[test]
+    fn neighbouring_public_addresses_stay_admitted() {
+        for base in [
+            "https://192.0.1.1",
+            "https://198.17.255.255",
+            "https://198.20.0.1",
+            "https://[64:ff9b:2::1]",
+            "https://[2001:db9::1]",
+            "https://[2001:4860::8888]",
+            "https://[2003::1]",
+            "https://[2606:4700::1111]",
+        ] {
+            assert!(allowed_base(base, &[]), "{base}");
+        }
+    }
+
+    #[test]
+    fn a_malformed_allowlist_entry_refuses_the_configuration_naming_it() {
+        for entry in [
+            "10.0.0.5:80",
+            "https://erp-sandbox",
+            "erp-sandbox/api",
+            "not a host",
+            "user@erp-sandbox",
+            "127.0.0.1:443",
+            "@127.0.0.1",
+            "erp-sandbox?x",
+            "erp-sandbox#f",
+            "user:pw@host",
+            "[::1]:443",
+            "host/",
+            "[]",
+            "[::1",
+            ".",
+            "erp..sandbox",
+            ".erp-sandbox",
+        ] {
+            let found = allowed_host_list(&format!("erp-sandbox,{entry}")).expect_err("refused");
+            assert!(
+                found.contains(ALLOWED_HOSTS_VAR) && found.contains(&format!("{entry:?}")),
+                "{entry}: {found}"
+            );
+            let refused = Sources::with_allowed_hosts("[]", BTreeMap::new(), entry)
+                .expect_err("configuration refused");
+            assert!(
+                refused.contains(&format!("{entry:?}")),
+                "{entry}: {refused}"
+            );
+        }
+        assert_eq!(allowed_host_list(" , ,"), Ok(Vec::new()));
     }
 }

@@ -1,24 +1,171 @@
-//! The dev host's server policy: one local developer, named by the project
-//! manifest, holding every grant on a loopback-only cell (DEV-LOOPBACK-1).
+//! The dev host's server policy: the local developer named by the project
+//! manifest, and a second local reviewer, each holding every grant on a
+//! loopback-only cell (DEV-LOOPBACK-1).
 //!
-//! The principal comes only from the session bearer token in
-//! `.norn/dev.token`; any other caller is denied by default. This is server
+//! A principal comes only from a session bearer token: `.norn/dev.token`
+//! names the manifest's actor, `.norn/dev.reviewer.token` the reviewer
+//! (`<actor>+reviewer`); any other caller is denied by default. The reviewer
+//! exists so an approval can be demonstrated locally: the requester of a
+//! parked call never decides it (#618), so a second local principal decides
+//! (DEV-REVIEWER-1). Both hold every role of the hosted grant table, so an
+//! approval's declared decider roles are the hosted ones. This is server
 //! policy, stated on every `ready` event, never client logic.
+//!
+//! DEV-ACCESS-1: holding every role is not holding every action. An action
+//! whose `access` names a policy is decided by that policy for each local
+//! principal, by the hosted cell's own [`ActionPolicy`] compiled from the
+//! active revision (its roles, scope and resource conditions, the caller's
+//! verified `id` included), so a rule such as "the requester never approves
+//! their own request" refuses on `norn dev` exactly as it does hosted. A
+//! governed action whose policy does not compile is refused, never allowed.
+//! An action that names no policy stays callable by the local principals
+//! only (a hosted cell would not serve it at all); the `ready` event lists
+//! them.
+use std::sync::{Arc, RwLock};
+
+use crate::actions::ActionPolicy;
+use crate::policy::{Caller, CallerSlot, DEMO_GRANTS};
 use crate::principal::PrincipalResolver;
 use norn_api::authz::{AccessRequest, Authorizer, DenyAll, ReadRequest, RefusalDetailRequest};
+use norn_api::definition_routes::DefinitionKinds;
 use norn_api::refusal::Refusal;
+use norn_cell::flow_run::RunStarter;
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
 };
 
-/// Every grant to exactly one actor; default deny for everyone else.
+/// The reviewer's actor: the manifest's actor with this suffix.
+pub(crate) const REVIEWER_SUFFIX: &str = "+reviewer";
+
+/// The local reviewer of the manifest's `actor`.
+pub(crate) fn reviewer(actor: &str) -> String {
+    format!("{actor}{REVIEWER_SUFFIX}")
+}
+
+/// The retained-definition kinds the dev host admits: the hosted host's
+/// (`crate::tenant::host_kinds` over [`DEMO_GRANTS`]), so an approval,
+/// flow or binding that admits on a hosted cell admits here.
+pub(crate) fn dev_kinds() -> DefinitionKinds {
+    crate::tenant::host_kinds(&DEMO_GRANTS)
+}
+
+/// The action policy of the active revision (DEV-ACCESS-1): the compiled
+/// policy, or why the revision's policies did not compile.
+pub(crate) type DevActions = Arc<RwLock<Result<Option<Arc<ActionPolicy>>, String>>>;
+
+/// A new, empty action slot: no governed action is callable until the first
+/// revision's policy is compiled into it.
+pub(crate) fn dev_actions() -> DevActions {
+    Arc::new(RwLock::new(Ok(None)))
+}
+
+/// The active revision's action policy and the actions no policy governs.
+type Compiled = (Option<ActionPolicy>, Vec<String>);
+
+fn compile_actions<E: norn_cell::engine::SqlEngine>(
+    host: &norn_api::host::DevHost<E>,
+) -> Result<Compiled, String> {
+    let Some(active) = host
+        .active_definitions()
+        .map_err(|refusal| refusal.explanation)?
+    else {
+        return Ok((None, Vec::new()));
+    };
+    compile_set(&active.canonical_set, host.scope())
+}
+
+fn compile_set(
+    canonical_set: &str,
+    scope: &norn_api::scope::CellScope,
+) -> Result<Compiled, String> {
+    let artifacts = norn_api::kernel_set::retained_artifacts(canonical_set)?;
+    let model =
+        norn_api::kernel_set::kernel_model(&artifacts).map_err(|error| format!("{error:?}"))?;
+    let ungoverned = artifacts
+        .iter()
+        .filter(|artifact| artifact.kind() == norn_ir::ArtifactKind::Action)
+        .filter_map(|artifact| {
+            let action: norn_ir::ActionRoot =
+                serde_json::to_value(artifact.payload.to_json_value())
+                    .and_then(serde_json::from_value)
+                    .ok()?;
+            action.access.is_none().then_some(action.action_id)
+        })
+        .collect();
+    let policy = ActionPolicy::compile(&model, &artifacts, scope).map_err(|error| error.0)?;
+    Ok((policy, ungoverned))
+}
+
+/// Compile the action policy of `host`'s active revision into `slot`, as a
+/// hosted cell does after each install. Returns the actions no policy
+/// governs (which the local principals alone may call), or why the
+/// revision's policies did not compile (then no governed action is served).
+pub(crate) fn refresh_actions<E: norn_cell::engine::SqlEngine>(
+    slot: &DevActions,
+    host: &norn_api::host::DevHost<E>,
+) -> Result<Vec<String>, String> {
+    store(slot, compile_actions(host))
+}
+
+/// #1469 S1: compile the policy of the revision an install just committed
+/// (`canonical_set`, as its transaction wrote it) into `slot`, before the
+/// definitions lock is released: no readback stands between the commit and
+/// the policy that governs it.
+pub(crate) fn install_actions(
+    slot: &DevActions,
+    canonical_set: &str,
+    scope: &norn_api::scope::CellScope,
+) -> Result<Vec<String>, String> {
+    store(slot, compile_set(canonical_set, scope))
+}
+
+fn store(slot: &DevActions, compiled: Result<Compiled, String>) -> Result<Vec<String>, String> {
+    let (stored, answer) = match compiled {
+        Ok((policy, ungoverned)) => (Ok(policy.map(Arc::new)), Ok(ungoverned)),
+        Err(reason) => (Err(reason.clone()), Err(reason)),
+    };
+    match slot.write() {
+        Ok(mut guard) => *guard = stored,
+        // A poisoned slot still takes the new policy: never the old one.
+        Err(poisoned) => *poisoned.into_inner() = stored,
+    }
+    answer
+}
+
+/// Every grant to exactly the local actors; default deny for everyone else.
+/// Governed actions are decided by the active revision's policy
+/// (DEV-ACCESS-1).
 pub(crate) struct LocalDeveloper {
-    pub(crate) actor: String,
+    pub(crate) actors: Vec<String>,
+    actions: DevActions,
 }
 
 impl LocalDeveloper {
+    /// The manifest's `actor` and its reviewer, deciding governed actions by
+    /// the policy in `actions`.
+    pub(crate) fn for_actor(actor: &str, actions: DevActions) -> Self {
+        Self {
+            actors: vec![actor.to_owned(), reviewer(actor)],
+            actions,
+        }
+    }
+
     fn is(&self, actor: &str) -> bool {
-        actor == self.actor
+        self.actors.iter().any(|local| local == actor)
+    }
+}
+
+/// A local principal as the PDP sees it: every role of the hosted table.
+fn local_caller(actor: &str) -> Caller {
+    Caller {
+        subject_id: actor.to_owned(),
+        roles: DEMO_GRANTS
+            .entries
+            .iter()
+            .map(|(role, _)| (*role).to_owned())
+            .collect(),
+        actor_kind: "user",
+        role_table: DEMO_GRANTS.version,
     }
 }
 
@@ -31,13 +178,23 @@ impl Authorizer for LocalDeveloper {
         }
     }
     fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        if self.is(request.actor) {
-            Ok(())
-        } else {
-            Err(ActionDenial::Forbidden {
-                reason: norn_api::refusal::codes::AUTHZ_DENIED.into(),
-            })
+        let denied = || ActionDenial::Forbidden {
+            reason: norn_api::refusal::codes::AUTHZ_DENIED.into(),
+        };
+        if !self.is(request.actor) {
+            return Err(denied());
         }
+        if request.action.access.is_none() {
+            return Ok(());
+        }
+        // DEV-ACCESS-1: a governed action is the policy's to decide.
+        let policy = self
+            .actions
+            .read()
+            .ok()
+            .and_then(|slot| slot.as_ref().ok().cloned().flatten())
+            .ok_or_else(denied)?;
+        policy.decide(&local_caller(request.actor), request)
     }
     fn action_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
         if self.is(request.actor) {
@@ -56,6 +213,20 @@ impl Authorizer for LocalDeveloper {
             Err(ActionDenial::Invisible)
         }
     }
+    fn verified_principal(&self, actor: &str) -> Option<RunStarter> {
+        // A local actor holds every role of the hosted table (APPROVAL-1:
+        // the requester a gated call parks for and commits as).
+        self.is(actor).then(|| RunStarter {
+            subject: actor.to_owned(),
+            actor_kind: "user".to_owned(),
+            roles: DEMO_GRANTS
+                .entries
+                .iter()
+                .map(|(role, _)| (*role).to_owned())
+                .collect(),
+            role_table: DEMO_GRANTS.version.to_owned(),
+        })
+    }
     fn disclose_refusal_detail(&self, request: &RefusalDetailRequest<'_>) -> bool {
         self.is(request.actor)
     }
@@ -68,25 +239,55 @@ impl Authorizer for LocalDeveloper {
     }
 }
 
-/// The session token is the only credential; it names the manifest's actor.
+/// The session tokens are the only credentials; each names one local actor.
+/// The verified actor is recorded in the slot for the request, as a hosted
+/// resolver records its caller, so an approved call commits as its requester
+/// and a run's steps act as its starter (ACTION-STEP-1).
 pub(crate) struct DevPrincipals {
-    pub(crate) bearer: String,
-    pub(crate) actor: String,
+    /// `(bearer, actor)` pairs.
+    sessions: Vec<(String, String)>,
+    slot: CallerSlot,
+}
+
+impl DevPrincipals {
+    /// The resolver of these `(bearer, actor)` sessions.
+    pub(crate) fn new(sessions: Vec<(String, String)>) -> Self {
+        Self {
+            sessions,
+            slot: CallerSlot::default(),
+        }
+    }
 }
 
 impl PrincipalResolver for DevPrincipals {
     fn resolve(&self, authorization: Option<&str>, _now: u64) -> Option<String> {
-        let presented = authorization?.strip_prefix("Bearer ")?;
-        // Equal length first, then every byte: no early exit on a prefix.
-        (presented.len() == self.bearer.len()
-            && presented
-                .bytes()
-                .zip(self.bearer.bytes())
-                .fold(0_u8, |seen, (a, b)| seen | (a ^ b))
-                == 0)
-            .then(|| self.actor.clone())
+        let presented = authorization.and_then(|value| value.strip_prefix("Bearer "));
+        // Every token is compared in full: equal length first, then every
+        // byte, with no early exit on a prefix or on an earlier match.
+        let mut found = None;
+        for (bearer, actor) in &self.sessions {
+            let same = presented.is_some_and(|presented| {
+                presented.len() == bearer.len()
+                    && presented
+                        .bytes()
+                        .zip(bearer.bytes())
+                        .fold(0_u8, |seen, (a, b)| seen | (a ^ b))
+                        == 0
+            });
+            if same {
+                found = Some(actor.clone());
+            }
+        }
+        // Every request records first, possibly nobody.
+        self.slot.record(found.as_deref().map(local_caller));
+        found
     }
-    fn end_request(&self) {}
+    fn end_request(&self) {
+        self.slot.record(None);
+    }
+    fn caller(&self) -> Option<&CallerSlot> {
+        Some(&self.slot)
+    }
 }
 
 pub(crate) use crate::questions::DerivedQuestions as DevMetrics;
@@ -98,11 +299,13 @@ pub(crate) use crate::questions::DerivedQuestions as DevMetrics;
     clippy::indexing_slicing,
     reason = "dev-host question fixtures"
 )]
-mod tests {
+pub(super) mod tests {
     //! The dev host answers ad-hoc questions over the metrics its active
     //! revision derives, through the same dispatch the HTTP transport uses,
     //! and re-derives them when a new revision is installed.
+    // #1485 S6: fixtures write through the kernel path, never a raw door.
     use super::*;
+    use crate::seed::governed::GovernedCommit as _;
     use crate::server::{Request, handle_with};
     use norn_api::host::DevHost;
     use norn_api::question_routes::AdHocQuestions;
@@ -118,7 +321,7 @@ mod tests {
     const BEARER: &str = "test-bearer-0123456789";
     const TYPE: &str = "shop.Sale";
 
-    fn scope() -> CellScope {
+    pub(in crate::dev) fn scope() -> CellScope {
         CellScope {
             org_id: "org_dev".into(),
             environment_id: "local".into(),
@@ -164,7 +367,7 @@ mod tests {
         }
     }
 
-    fn host(dir: &std::path::Path) -> DevHost<NativeEngine> {
+    pub(in crate::dev) fn host(dir: &std::path::Path) -> DevHost<NativeEngine> {
         host_with(dir, 0)
     }
 
@@ -223,9 +426,7 @@ mod tests {
         }
         DevHost::from_store(store, scope(), |command| command.payload.clone())
             .expect("host")
-            .with_authorizer(LocalDeveloper {
-                actor: ACTOR.into(),
-            })
+            .with_authorizer(LocalDeveloper::for_actor(ACTOR, dev_actions()))
     }
 
     fn call(
@@ -235,10 +436,7 @@ mod tests {
         body: &Value,
     ) -> (u16, Value) {
         let questions = metrics.questions(host).expect("runtime");
-        let principals = DevPrincipals {
-            bearer: BEARER.into(),
-            actor: ACTOR.into(),
-        };
+        let principals = DevPrincipals::new(vec![(BEARER.into(), ACTOR.into())]);
         let body = body.to_string();
         let authorization = format!("Bearer {BEARER}");
         let response = handle_with(
@@ -262,10 +460,7 @@ mod tests {
 
     fn get(host: &DevHost<NativeEngine>, metrics: &DevMetrics, path: &str) -> (u16, Value) {
         let questions = metrics.questions(host).expect("runtime");
-        let principals = DevPrincipals {
-            bearer: BEARER.into(),
-            actor: ACTOR.into(),
-        };
+        let principals = DevPrincipals::new(vec![(BEARER.into(), ACTOR.into())]);
         let authorization = format!("Bearer {BEARER}");
         let response = handle_with(
             host,
@@ -443,8 +638,10 @@ mod tests {
     }
 
     /// The measurement behind the question scan bound (ruling 2026-11-12):
-    /// `NORN_SCAN_ROWS=<n> cargo test --release -p norn-cell-do --lib
-    /// measure_question_scan -- --ignored --nocapture`, one process per `n`.
+    /// `NORN_SCAN_ROWS=<n> cargo test --release --config
+    /// 'profile.release.debug-assertions=true' -p norn-cell-do --lib
+    /// measure_question_scan -- --ignored --nocapture`, one process per `n`
+    /// (the fixtures commit through the kernel path).
     /// Prints the exact engine's time for one ad-hoc evaluation over `n` rows
     /// and the process's peak resident memory during it (Linux only).
     #[test]
@@ -552,7 +749,7 @@ mod tests {
         let host = host(dir.path());
         let metrics = DevMetrics::new([7_u8; 32], scope());
         let questions = metrics.questions(&host).expect("runtime");
-        assert!(!AdHocQuestions::<NativeEngine>::definitions(&questions).is_empty());
+        assert_ne!(AdHocQuestions::<NativeEngine>::definitions(&questions), []);
         // Every derived sum answers, on whichever engine lowered it.
         for definition in AdHocQuestions::<NativeEngine>::definitions(&questions)
             .iter()

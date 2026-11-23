@@ -15,8 +15,8 @@ export interface Routed {
   readonly points: readonly Point[]
 }
 
-/** Row pitch of the lifecycle layout, the horizontal stub before a turn, and the corner radius. */
-export const LANE = { pitch: 150, stub: 18, radius: 10 } as const
+/** Row spacing of the lifecycle layout, the horizontal stub before a turn, and the corner radius. */
+export const LANE = { spacing: 150, stub: 18, radius: 10 } as const
 
 /** A polyline through the points with each corner rounded (radius clamped to half of its shorter leg). */
 export function rounded(points: readonly Point[], radius: number = LANE.radius): string {
@@ -83,15 +83,15 @@ export function railsOf(steps: readonly { readonly id: string; readonly source: 
 }
 
 /** The lane a non-straight step runs in: between the two rows it joins, or above the row for a step back along it. */
-export const laneYOf = (source: Point, target: Point, lane: { readonly pitch: number } = LANE, side = -1) =>
-  Math.abs(source.y - target.y) < 2 ? source.y + side * lane.pitch / 2 : Math.max(source.y, target.y) - lane.pitch / 2
+export const laneYOf = (source: Point, target: Point, lane: { readonly spacing: number } = LANE, side = -1) =>
+  Math.abs(source.y - target.y) < 2 ? source.y + side * lane.spacing / 2 : Math.max(source.y, target.y) - lane.spacing / 2
 
 /**
  * Several steps of one lifecycle step into one target, drawn as one: each source turns into the shared rail (a small
  * tick where it joins), the rail runs to the target's turn and drops into it. Only the drawing bundles; each step
  * stays its own in the model. The label sits on the rail beside the turn, in the gap to the nearest join.
  */
-export function bundleRoute(sources: readonly Point[], target: Point, labelWidth: number, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE, offset = 0, side = -1) {
+export function bundleRoute(sources: readonly Point[], target: Point, labelWidth: number, lane: { readonly spacing: number; readonly stub: number; readonly radius: number } = LANE, offset = 0, side = -1) {
   // On its own rail in the lane: two bundles through one lane never share a line.
   const y = laneYOf(sources[0]!, target, lane, side) + offset
   const into = target.x - lane.stub
@@ -109,7 +109,7 @@ export function bundleRoute(sources: readonly Point[], target: Point, labelWidth
   return { path: [...branches, rail, drop].join(" "), ticks: joins, label: { x, y }, y, lines }
 }
 
-export function laneRoute(source: Point, target: Point, lane: { readonly pitch: number; readonly stub: number; readonly radius: number } = LANE, rail: Rail = NO_RAIL): Routed {
+export function laneRoute(source: Point, target: Point, lane: { readonly spacing: number; readonly stub: number; readonly radius: number } = LANE, rail: Rail = NO_RAIL): Routed {
   const sameRow = Math.abs(source.y - target.y) < 2
   if (sameRow && target.x > source.x) {
     return { path: `M ${source.x} ${source.y} L ${target.x} ${target.y}`, label: { x: (source.x + target.x) / 2, y: source.y, anchor: "middle" }, straight: true, points: [source, target] }

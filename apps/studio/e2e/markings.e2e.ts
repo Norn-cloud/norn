@@ -4,7 +4,7 @@ import { session } from "./object-cell.ts"
 
 // MARKINGS VISIBLE: what a marking is, where it applies and who may reveal it, from the server's
 // declarations (the registry's privacy pack over the three-systems world) and the server's own Party
-// pages for a reader without reveal rights and one with them (fixtures/demo/privacy).
+// pages for a reader without reveal rights and one with them (fixtures/privacy).
 const json = (path: string) => JSON.parse(readFileSync(new URL(`../../../${path}`, import.meta.url), "utf8")) as { artifactId?: string }
 const overlay = json("registry/privacy/overlays/canon.Party.entity.json")
 const artifacts = [
@@ -12,7 +12,7 @@ const artifacts = [
   json("registry/privacy/artifacts/privacy.markings.entity.json"),
   json("registry/privacy/artifacts/privacy.reveal.policy.json"),
 ]
-const recorded = (name: string): string => readFileSync(new URL(`../../../fixtures/demo/privacy/${name}`, import.meta.url), "utf8")
+const recorded = (name: string): string => readFileSync(new URL(`../../../fixtures/privacy/${name}`, import.meta.url), "utf8")
 
 async function privacyCell(page: Page, reader: "viewer" | "auditor") {
   await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { error: "not found" } }))
@@ -67,7 +67,7 @@ test("markings: the Markings page lists each marking, its projection, its facts 
   await expect(contact).toContainText("admin")
   await expect(contact).toContainText("owner")
   await expect(page.locator('[data-marking-row="pii.identity"]')).toContainText("Never shown")
-  await expect(page.getByRole("toolbar", { name: "Applets" }).getByRole("link", { name: "Markings" })).toBeVisible()
+  await expect(page.getByRole("navigation", { name: "Builder" }).getByRole("link", { name: "Markings" })).toBeVisible()
   await shoot(page, info, "page")
 })
 

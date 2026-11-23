@@ -109,7 +109,7 @@ const ORDER: &str = "commerce.SalesOrder";
 
 #[test]
 fn profile_and_codes_are_registered() {
-    assert_eq!(CHECKER_PROFILE, "norn-zen/6");
+    assert_eq!(CHECKER_PROFILE, "norn-zen/7");
     let mut unique = codes::ALL.to_vec();
     unique.sort_unstable();
     unique.dedup();
@@ -537,7 +537,7 @@ fn f2_dynamic_key_counterexample_is_rejected() {
         .with_strict(true)
         .analyze("o[k] - 1", &upstream_env);
     assert_eq!(analysis.return_type, VariableType::Number);
-    assert!(analysis.diagnostics.is_empty());
+    assert_eq!(analysis.diagnostics.len(), 0);
 
     let model = Model::retail();
     let mut object_types: Vec<ObjectTypeDef> = model.object_types.clone();
@@ -1218,7 +1218,7 @@ fn generated_accepted_expressions_are_total_and_typed() {
     .into_iter()
     .filter(|sample| !admitted.contains(*sample))
     .collect::<Vec<_>>();
-    assert!(missing.is_empty(), "not admitted: {missing:?}");
+    assert_eq!(missing.len(), 0, "not admitted: {missing:?}");
     assert!(accepted > 1_000, "only {accepted} accepted");
     assert!(rejected > 1_000, "only {rejected} rejected");
 }
@@ -1615,7 +1615,7 @@ fn generated_accepted_unary_tests_are_total() {
     .into_iter()
     .filter(|sample| !admitted.contains(*sample))
     .collect::<Vec<_>>();
-    assert!(missing.is_empty(), "not admitted: {missing:?}");
+    assert_eq!(missing.len(), 0, "not admitted: {missing:?}");
     assert!(accepted > 200, "only {accepted} accepted");
     assert!(rejected > 1_000, "only {rejected} rejected");
 }
@@ -2030,4 +2030,34 @@ fn val_rate_dynamic_currency_is_outside_the_bounded_exact_profile() {
     assert!(expression.check_typed(&env, &Type::Bool).is_err());
     check_expression_with(&expression, &env, &Type::Bool, &roomy_limits())
         .expect("legacy profile remains available");
+}
+
+#[test]
+fn a_prepared_admission_runs_only_the_expression_that_prepared_it() {
+    let env = ZenTypeEnv::input_only(fields([("n", Type::Number)]), EnvOptions::default()).unwrap();
+    let context = Value::object([("input", Value::object([("n", Value::from(3_i64))]))]);
+    let positive = Expression::compile("input.n > 0").unwrap();
+    let prepared = positive.prepare_admitted(&env, &Type::Bool);
+    let attempt = positive.evaluate_prepared(
+        &prepared,
+        &context,
+        EvaluationBudget::default(),
+        &env,
+        &Type::Bool,
+    );
+    assert_eq!(attempt.result.unwrap().into_value(), Value::Bool(true));
+    let negative = Expression::compile("input.n < 0").unwrap();
+    let refused = negative.evaluate_prepared(
+        &prepared,
+        &context,
+        EvaluationBudget::default(),
+        &env,
+        &Type::Bool,
+    );
+    assert!(
+        matches!(&refused.result, Err(norn_expr::ExprError::Compile { message }) if message.contains("input.n > 0")),
+        "{:?}",
+        refused.result
+    );
+    assert_eq!(refused.units_used, 0);
 }

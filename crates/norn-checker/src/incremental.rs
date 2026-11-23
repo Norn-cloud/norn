@@ -122,7 +122,7 @@ impl AdmissionCache {
             let old = key.as_ref().ok().and_then(|key| self.local.get(key));
             let reused = old.is_some();
             let findings = if reused {
-                old.map(|entry| entry.findings.clone()).unwrap_or_default()
+                old.map_or_default(|entry| entry.findings.clone())
             } else {
                 crate::check_artifact(artifact)
             };

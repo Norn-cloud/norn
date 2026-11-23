@@ -961,6 +961,30 @@
       "no_fix": null
     },
     {
+      "code": "core.engine.downgrade",
+      "tier": "T6",
+      "severity": "error",
+      "message": "the cell was written by a newer storage version than this engine reads",
+      "fix": "Open the cell with a release whose storage version is at least the cell's, or restore a backup taken before the upgrade.",
+      "no_fix": null
+    },
+    {
+      "code": "core.engine.unknown_version",
+      "tier": "T6",
+      "severity": "error",
+      "message": "the cell's engine stamp is not a version this engine can read",
+      "fix": "Open the cell with the release that wrote it or a newer one; if no release wrote this stamp, restore the cell from its export.",
+      "no_fix": null
+    },
+    {
+      "code": "core.engine.upgrade_unsupported",
+      "tier": "T6",
+      "severity": "error",
+      "message": "the cell's storage version cannot be upgraded in place by this engine",
+      "fix": "Open the cell first with a release whose upgrade floor admits the cell's storage version, then with this one; if a migration refused the data, restore the cell from its export.",
+      "no_fix": null
+    },
+    {
       "code": "core.graph.catalog_write",
       "tier": "T2",
       "severity": "error",
@@ -1830,6 +1854,30 @@
       "severity": "error",
       "message": "a description or review state names a locale that has no label",
       "fix": "Add a label for the locale the description or review state names, or remove that locale.",
+      "no_fix": null
+    },
+    {
+      "code": "law.conservation.alias_bound",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer has more key-aliasing cases than the checker enumerates: {detail}",
+      "fix": "Split the writer so it assigns at most 6 coordinates of one stored member, or add preconditions such as input.from != input.to that keep its keys distinct, then check it again.",
+      "no_fix": null
+    },
+    {
+      "code": "law.conservation.alias_unlowerable",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer may write one row through coordinates the checker cannot reconcile: {detail}",
+      "fix": "Give every coordinate its stored row (root type, member and key), and give coordinates that may name one row the same weight, scope and unit.",
+      "no_fix": null
+    },
+    {
+      "code": "law.conservation.key_alias",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer does not balance when its keys name one cell: {detail}",
+      "fix": "Add a precondition that keeps the reported keys distinct (for example input.from != input.to), or make the aliased case balance on its own.",
       "no_fix": null
     },
     {

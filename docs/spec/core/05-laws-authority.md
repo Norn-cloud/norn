@@ -124,7 +124,7 @@ These scenarios do not simulate a solver or claim a completed constitution drop.
 
 ## Main and gaps
 
-Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-checker/src/{deontic,verification,law_enrollment}.rs`, `obligations/`, `crates/norn-authz/src/grants.rs`, `crates/norn-kernel/src/decision_commit.rs`. #316 merged; #322 open. Narrow induction generation exists; general aggregate laws, retained interface/containment closure, generated solver dispatch and full delegation chains are not established. Core physics declarations in `registry/core/src/physics.ts` are not complete runtime law enforcement.
+Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-checker/src/{deontic,verification,law_enrollment}.rs`, `obligations/`, `crates/norn-authz/src/grants.rs`, `crates/norn-kernel/src/decision_commit.rs`. #316 merged; #322 open. Narrow induction generation exists; general aggregate laws, retained interface/containment closure, generated solver dispatch and full delegation chains are not established. Core physics declarations in `registry/core/src/rea.ts` are not complete runtime law enforcement.
 
 ## Work breakdown (one coherent unit per PR)
 
@@ -164,6 +164,41 @@ scope and unit. Altered weights, malformed matrices and duplicate coordinates or
 writers refuse. Nonzero residuals identify writer, partition and symbolic column;
 unsupported writers and arithmetic/resource limits remain unknown. A residual is
 an algebraic witness, not a reachable runtime counterexample.
+Stored coordinates name a row member by canonical storage identity: the root
+type of the object's hierarchy, the member and the key (`Fixed`, an input field
+used verbatim, or `Computed`), as the kernel identifies rows. Labels, scope and
+unit never separate storage, so a parent and a child type with one key are one
+row, and two coordinates may name one cell at run time (`from == to`). Each
+writer lists its write footprint, every coordinate it assigns, including
+zero-delta writes such as `Bal[k] := pre.Bal[k]`, and must also balance in every
+key-equality case of its footprint that its executable preconditions do not
+exclude, with the writes to one cell either accumulating or one pre-state write
+surviving. Only the preconditions of the action definition a writer is bound to
+can exclude a case, and only when that `ActionRoot` is the installed revision:
+its Norn1 content digest must equal the pin read from the installed definition
+set's canonical artifact list, decoded the way the runtime loads the actions the
+kernel evaluates over the effective input before any effect. A root that is not
+the installed revision (a clone with an added guard under the same id, say), and
+a writer bound to no action (a mined observation), keep every case. Of those,
+only a top-level
+conjunct `input.a != input.b` excludes a case, and computed keys stay possibly
+equal. A write changes every coordinate of the functional that may name its
+row, assigned or not, and the row counts once. An unbalanced case refuses as
+`law.conservation.key_alias`, naming the merged coordinates. More than 6
+assigned coordinates of one stored member or 256 cases per writer is unknown
+(`law.conservation.alias_bound`). A coordinate that may name an assigned row but
+carries a different weight, scope or unit, or stored coordinates beside unstored
+ones, are unknown (`law.conservation.alias_unlowerable`). None is ever
+admitted.
+
+This alias coverage is reviewed, not proved: the case enumeration, the footprint
+and storage lowering, the precondition lowering and the merged-row
+reconstruction feed the proved per-writer decision and are named in
+`TRUST-CHECKER-CERTIFICATE-GLUE`. The runtime does not close the gap. The kernel
+refuses duplicate canonical keys in a submitted `CellCommit`, but decision
+preparation folds a decision's ordered changes into one write per row, and the
+last `Set` wins, so two writes to one row through aliased keys reach the commit
+as one write and are never refused there.
 
 This kernel alone establishes no application evidence. Declaration lowering must
 bind the complete writer closure and functional to a generated Challenge before
@@ -277,13 +312,25 @@ so they are never premises.
 
 Admission requires an untimed `always` law, a resolved target, a map over exactly
 the target's stored properties, and compiling expressions. The challenge adds one
-`translation_preserves` goal per law, Unknown until a backend lowers it.
+`translation_preserves` goal per law. `ApprovedContract::translation` lowers each
+goal from the reconstructed challenge to two `QF_UFLIA` SMT-LIB queries: a
+counterexample query and a non-vacuity query over `Valid_S and Admit`.
+
+The first fragment is linear arithmetic over fixed decimals sharing one scale and
+unit, as integer coefficients, plus text as an uninterpreted identity that can
+only be copied whole and compared for equality. Predicates are conjunctions of
+comparisons. Enums, nullable values, mixed scales, rounding, unit conversion,
+multiplication, property constraints, computed properties, target links, target
+lifecycles and interface invariants stay Unknown with a reason.
 
 Status is `proved_under_assumptions` only with `unsat` plus a non-vacuity
 witness. It is `refuted` with a counterexample model, `bounded` for a finite
 profile, and otherwise `unsupported`, which stays Unknown. A proof carries its
 modelling assumptions: values are exact and unbounded, and text has no structure.
-The law isn't enforced at commit: the kernel refuses it as unsupported.
+Lowering runs no solver. The law isn't enforced at commit: the kernel refuses it
+as unsupported.
+
+Named scenarios: `generated_translation_smt_*`.
 
 ### Declared-only normative resolution (D1, #767)
 

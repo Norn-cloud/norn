@@ -48,7 +48,7 @@ fn admitted_catalog(
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     catalog(artifacts, base)
 }
 
@@ -316,7 +316,7 @@ fn a_mapping_observes_members_and_declares_gaps() {
         ]
     );
     // Observation is not authorship: a mapping adds no write.
-    assert!(catalog.writes.is_empty());
+    assert_eq!(catalog.writes, []);
 }
 
 #[test]
@@ -508,7 +508,7 @@ fn a_parent_row_mutation_writes_its_child_types() {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     let catalog = catalog(&artifacts, &base);
     assert!(catalog.artifact("shop.OrderLine.entity", "1.0.0").is_some());
     let targets: Vec<String> = catalog
@@ -598,7 +598,7 @@ fn a_law_on_an_inherited_transition_binds_the_declaring_supertype() {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     let catalog = catalog(&artifacts, &[]);
     let Some(LawBinding::Transition { target }) = &catalog.laws[0].binds else {
         panic!("the law binds a transition");
@@ -680,7 +680,7 @@ fn writes_and_mappings_of_inherited_members_bind_the_declaring_supertype() {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     let catalog = catalog(&artifacts, &[]);
     assert_eq!(
         catalog.writes[0].target,
@@ -857,7 +857,7 @@ fn two_installed_versions_of_one_type_bind_only_what_admission_binds() {
     let catalog = catalog(&[action], &base);
     // `approve` is inherited from `shop.Request`; with no admitted lineage
     // it binds nothing.
-    assert!(catalog.writes.is_empty());
+    assert_eq!(catalog.writes, []);
 }
 
 #[test]
@@ -932,15 +932,12 @@ fn case_artifact(entry: &Value) -> ArtifactEnvelope {
 fn admitted_write_types(writer: &ArtifactEnvelope) -> BTreeSet<String> {
     let payload = serde_json::to_value(writer.payload.to_json_value()).expect("payload encodes");
     let strings = |value: &Value| -> Vec<String> {
-        value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default()
+        value.as_array().map_or_default(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
     };
     if payload.get("effectProgram").is_some() {
         payload["writes"]
@@ -1001,8 +998,9 @@ fn over_every_admitted_fixture_set_the_catalog_writes_what_admission_admits() {
                 tenant: None,
             },
         );
-        assert!(
-            findings.is_empty(),
+        assert_eq!(
+            findings,
+            [],
             "{} is admitted: {:?}",
             path.display(),
             findings
@@ -1070,7 +1068,10 @@ fn entity_projection_preserves_identity_declarations_and_order() {
         base: &[],
         tenant: None,
     };
-    assert!(norn_checker::check_artifact_set(std::slice::from_ref(&artifact), &context).is_empty());
+    assert_eq!(
+        norn_checker::check_artifact_set(std::slice::from_ref(&artifact), &context),
+        []
+    );
     let catalog =
         project(std::slice::from_ref(&artifact), &[], &BTreeSet::new()).expect("projection");
     let at = |member| MemberRef {
@@ -1109,7 +1110,7 @@ fn ambiguous_installed_mapping_targets_never_select_a_version() {
         &BTreeSet::new(),
     )
     .expect("read-only projection");
-    assert!(projection.mappings.is_empty());
+    assert_eq!(projection.mappings, []);
     let old = sales_order();
     let mut new = serde_json::to_value(&old).expect("envelope");
     new["version"] = json!("2.0.0");
@@ -1121,7 +1122,7 @@ fn ambiguous_installed_mapping_targets_never_select_a_version() {
         &BTreeSet::new(),
     )
     .expect("pinned projection");
-    assert!(!pinned.mappings.is_empty());
+    assert_ne!(pinned.mappings, []);
     assert!(
         pinned
             .mappings
@@ -1157,7 +1158,7 @@ fn local_lifecycle_states_keep_inherited_property_ownership() {
         tenant: None,
     };
     let findings = norn_checker::check_artifact_set(&artifacts, &context);
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     let catalog = project(&artifacts, &[], &BTreeSet::new()).expect("projection");
     let state = MemberRef {
         artifact_id: "commerce.Child.entity".into(),
@@ -1199,7 +1200,7 @@ fn graph_catalog_retains_semantics_and_refuses_projection_writes() {
         tenant: None,
     };
     let findings = check_artifact_set(&artifacts, &context);
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     let retained = project(&[], &artifacts, &registry).expect("retained catalog");
     for artifact in &artifacts {
         let row = retained
@@ -1227,7 +1228,7 @@ fn graph_catalog_retains_semantics_and_refuses_projection_writes() {
         source["from"]
     );
     assert_eq!(transition.to, source["to"].as_str().expect("state"));
-    assert!(transition.guards.is_empty());
+    assert_eq!(transition.guards, []);
     assert!(
         retained
             .facets
@@ -1299,7 +1300,7 @@ fn graph_catalog_roles_follow_declarations_not_lifecycle_shape() {
         base: &[],
         tenant: None,
     };
-    assert!(check_artifact_set(&artifacts, &context).is_empty());
+    assert_eq!(check_artifact_set(&artifacts, &context), []);
     assert!(
         catalog(&artifacts, &[])
             .types
@@ -1321,7 +1322,7 @@ fn defined_concept_wire_distinguishes_malformed_and_unsupported_semantics() {
             "bounds": norn_ir::ResourceLimitProfile::norn_limits_v1()
         }
     }));
-    assert!(norn_checker::check_artifact(&declaration).is_empty());
+    assert_eq!(norn_checker::check_artifact(&declaration), []);
     let wire = serde_json::to_value(&declaration).expect("wire");
     let positional = json!(["test.Item.entity", "1.0.0", {"kind":"type", "typeName":"test.Item"}]);
     let mut budget = wire["payload"]["bounds"].clone();
@@ -1381,7 +1382,7 @@ fn check_ref_lifecycle(hops: usize) {
         tenant: None,
     };
     let findings = check_artifact_set(&artifacts, &context);
-    assert!(findings.is_empty(), "hops {hops}: {findings:?}");
+    assert_eq!(findings, [], "hops {hops}: {findings:?}");
     let catalog = project(&artifacts, &[], &registry).expect("projection");
     assert_eq!(
         json!(catalog.properties),

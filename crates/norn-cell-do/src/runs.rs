@@ -15,16 +15,22 @@
 //! resolver without a caller slot records no starter, and its runs' action
 //! steps are denied.
 //!
-//! APPROVAL-1: approving a parked action call commits it through the same
-//! dispatch with its requester made the slot's caller for that one call, the
-//! same way.
+//! APPROVAL-1, APPROVAL-RECOVERY-1: an approved call (a fresh decide, its
+//! replay, or the drive of a step waiting on it) runs only under the
+//! requester's current authority, which is established only by the
+//! requester's own verified credential on the request: never by the roles
+//! recorded when the call parked. On another principal's request the call
+//! stays approved and not executed for the requester's authenticated retry.
 
 use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_api::actions::ActionAnswer;
 use norn_api::authz::ReadCapability;
-use norn_api::decisions::{DecideCall, DecideRequest, DecisionsQuery, decide, list_decisions};
+use norn_api::decisions::{
+    DecideCall, DecideRequest, DecisionsQuery, RequestedQuery, decide, list_decisions,
+    requested_decisions,
+};
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
 use norn_api::refusal::Refusal;
@@ -115,7 +121,11 @@ fn runs<E: SqlEngine>(
             let starter = steps.starter(subject);
             let (status, run) =
                 start_run(host, &scope, actor, &body, &reads(subject), now, starter)?;
-            let run = if status == StatusCode::CREATED && steps.drive(&run.id, now) {
+            // A start, or its exact retry (APPROVAL-RECOVERY-1: the starter's
+            // authenticated retry runs a step's approved call), drives the run.
+            let run = if (status == StatusCode::CREATED || status == StatusCode::OK)
+                && steps.drive(&run.id, now)
+            {
                 get_run(host, &scope, subject, &run.id, &reads(subject)).unwrap_or(run)
             } else {
                 run
@@ -141,10 +151,12 @@ fn runs<E: SqlEngine>(
     }
 }
 
-/// A decision route: `/v1/decisions` or `/v1/decisions/{id}:decide`.
+/// A decision route: `/v1/decisions`, `/v1/decisions:requested` or
+/// `/v1/decisions/{id}:decide`.
 #[derive(Debug, Clone, Copy)]
 enum DecisionsRoute<'p> {
     Collection,
+    Requested,
     Decide(&'p str),
 }
 
@@ -152,10 +164,33 @@ fn decisions_route(path: &str) -> Option<DecisionsRoute<'_>> {
     if path == "/v1/decisions" {
         return Some(DecisionsRoute::Collection);
     }
+    if path == "/v1/decisions:requested" {
+        return Some(DecisionsRoute::Requested);
+    }
     path.strip_prefix("/v1/decisions/")
         .and_then(|rest| rest.strip_suffix(":decide"))
         .filter(|id| !id.is_empty() && !id.contains('/'))
         .map(DecisionsRoute::Decide)
+}
+
+/// `GET /v1/decisions:requested` (APPROVAL-REQUESTED-1): the caller's own
+/// approval-gated calls.
+fn requested<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    query: &str,
+    now: norn_kernel::LogicalTime,
+) -> Result<(StatusCode, String), Refusal> {
+    let mut fields = parse(query, &["orgId", "environmentId", "id"])?;
+    let query = RequestedQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+        id: fields.remove("id"),
+    };
+    Ok((
+        StatusCode::OK,
+        document_json(&requested_decisions(host, &query, actor, now)?)?,
+    ))
 }
 
 fn decisions<E: SqlEngine>(
@@ -198,6 +233,7 @@ fn decisions<E: SqlEngine>(
                 document_json(&list_decisions(host, &query, actor, now)?)?,
             ))
         }
+        (DecisionsRoute::Requested, "GET") => requested(host, actor, request.query, now),
         (DecisionsRoute::Decide(id), "POST") => {
             let fields = parse(request.query, &["orgId", "environmentId"])?;
             let scope = ScopeQuery {
@@ -233,12 +269,20 @@ fn decisions<E: SqlEngine>(
             let as_requester =
                 |principal: &RunStarter,
                  call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-                    steps.as_principal(principal, call)
+                    steps.as_present(principal, call)
                 };
             match decide(host, &call, &reads, runtime, &as_requester) {
                 Ok(mut decided) => {
+                    // APPROVAL-REVISION-1: an approved call refused because its
+                    // action or gate changed drives nothing: the step waiting on
+                    // it never runs under the changed definition.
+                    let stale = decided.call.as_ref().is_some_and(|call| {
+                        call.code.as_deref()
+                            == Some(norn_api::approvals::approval_codes::DEFINITION_CHANGED)
+                    });
                     // The decision may have moved the run onto action steps.
-                    if steps.drive(&decided.run.id, now)
+                    if !stale
+                        && steps.drive(&decided.run.id, now)
                         && let Ok(run) = get_run(host, &scope, subject, &decided.run.id, &reads)
                     {
                         decided.run.state = run.state;
@@ -255,6 +299,9 @@ fn decisions<E: SqlEngine>(
             }
         }
         (DecisionsRoute::Collection, _) => Err(not_allowed("decisions are listed with GET")),
+        (DecisionsRoute::Requested, _) => Err(not_allowed(
+            "the caller's requested calls are listed with GET",
+        )),
         (DecisionsRoute::Decide(_), _) => Err(not_allowed("a decision is decided with POST")),
     }
 }
@@ -307,6 +354,24 @@ impl<E: SqlEngine> Steps<'_, E> {
         Some(call())
     }
 
+    /// Run one approved call as its requester (APPROVAL-RECOVERY-1): only
+    /// when the request's own verified caller is that requester (the same
+    /// subject, actor kind and role table), as that caller is verified now,
+    /// so a role revoked since the call parked is revoked for it. `None`
+    /// otherwise: the requester's current authority cannot be established,
+    /// and the call is not run.
+    fn as_present(
+        &self,
+        requester: &RunStarter,
+        call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
+    ) -> Option<Result<ActionAnswer, Refusal>> {
+        let current = self.caller?.current()?;
+        (current.subject_id == requester.subject
+            && current.actor_kind == requester.actor_kind
+            && current.role_table == requester.role_table)
+            .then(call)
+    }
+
     /// Run `run_id`'s pending action steps under its recorded starter;
     /// `true` when it could try. A failure leaves the step pending for the
     /// next drive.
@@ -318,8 +383,18 @@ impl<E: SqlEngine> Steps<'_, E> {
             |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
                 self.as_principal(principal, call)
             };
-        let driven: Result<(), Refusal> =
-            norn_api::flow_driver::drive_run(self.host, run_id, &as_starter, runtime, now);
+        let as_requester =
+            |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+                self.as_present(principal, call)
+            };
+        let driven: Result<(), Refusal> = norn_api::flow_driver::drive_run(
+            self.host,
+            run_id,
+            &as_starter,
+            &as_requester,
+            runtime,
+            now,
+        );
         driven.is_ok()
     }
 }

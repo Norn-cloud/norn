@@ -26,16 +26,52 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
+  # The gate plan needs only git and Python, so it runs on a hosted runner of its own (no Boat
+  # start) and the bundles start alongside core instead of after it (#1348).
+  plan:
+    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # The full gate is `core.sh all` split into parallel bundle jobs. The plan comes from
+      # core.sh itself, so CI runs exactly its shards and phases (all but formal).
+      # Pull requests use affected plans; merge groups and main run the full set.
+      - id: plan
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
+        run: |
+          if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
+          plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
+          echo "plan=$plan" >> "$GITHUB_OUTPUT"
+          echo "$plan"
   core:
     # Boat: merge groups, and same-repository pull requests whose author, actor and
     # re-runner are all Boat CI's public-repository user (`boat ci public`). Every
     # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
+    # Only `ci-cache-writer-boat` (deployment branch: main only) names the writer identity, whose
+    # OIDC binding is that environment's immutable subject on a push to main of this workflow.
+    # Merge groups and pull requests log in as the reader, which can reach only the read-only key.
+    # A main push enters the environment exactly when the runner's main-push arm sends it to Boat
+    # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
+    # push runs hosted, uses the Actions cache and never receives the key.
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
+    permissions:
+      contents: read
+      actions: read # Enumerate deployment environments for the secret inventory.
+      id-token: write # Read the shared cache keys from Infisical over OIDC.
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     steps:
       - name: Reclaim runner disk space
@@ -90,7 +126,7 @@ jobs:
           ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
-          toolchain: 1.98.0
+          toolchain: 1.100.0
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -106,15 +142,52 @@ jobs:
         with:
           version: v0.19.0
           disable_annotations: true
+      # The shared cache's R2 keys live in Infisical. This step reads them over OIDC using the
+      # helper pinned by the workflow contract. A push to main (Boat only, inside
+      # `ci-cache-writer-boat`) logs in as the writer its environment variables name, in the writer's
+      # own Infisical project; every other run as the reader, in the reader's project, which holds only
+      # the read-only key. An unset variable yields '' (never the other role). With `--optional`, unset
+      # variables, a fork or any failure keep Boat on its local cache: a cache outage never fails a build.
+      - name: Read the shared cache keys from Infisical over OIDC
+        id: sccache-keys
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          INFISICAL_IDENTITY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_IDENTITY_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || '' }}
+          INFISICAL_PROJECT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_PROJECT_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || '' }}
+        run: bash scripts/ci/infisical-oidc.sh --optional prod /sccache NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET
       - name: Start sccache or compile without it
-        run: |
+        env:
+          NORN_SCCACHE_BUCKET: ${{ steps.sccache-keys.outputs.norn_sccache_bucket }}
+          NORN_SCCACHE_ENDPOINT: ${{ steps.sccache-keys.outputs.norn_sccache_endpoint }}
+          NORN_SCCACHE_KEY_ID: ${{ steps.sccache-keys.outputs.norn_sccache_key_id }}
+          NORN_SCCACHE_SECRET: ${{ steps.sccache-keys.outputs.norn_sccache_secret }}
+        # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
+        run: | # zizmor: ignore[github-env]
           set -uo pipefail
-          # Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
-          # cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+          # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
+          # egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,
+          # when the project bucket's secrets are present, reads a shared R2 cache behind it. Only a
+          # push to main (code that has landed) writes there. Merge groups and pull requests run code
+          # that has not landed, so they get the read-only key and READ_ONLY mode. The keys are in
+          # this step's environment and in the server it starts, which later steps share a user
+          # with: what stops a write is the token's scope, not this step.
           gha=false
           [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
           export SCCACHE_GHA_ENABLED=$gha
           echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+          if [ "$gha" = false ] && [ -n "${NORN_SCCACHE_BUCKET:-}" ] && [ -n "${NORN_SCCACHE_ENDPOINT:-}" ]; then
+            mode=READ_ONLY
+            case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+              push:refs/heads/main) mode=READ_WRITE ;;
+            esac
+            export SCCACHE_MULTILEVEL_CHAIN=disk,s3 SCCACHE_BUCKET="$NORN_SCCACHE_BUCKET" \
+              SCCACHE_ENDPOINT="$NORN_SCCACHE_ENDPOINT" SCCACHE_REGION=auto SCCACHE_S3_KEY_PREFIX=norn/ \
+              SCCACHE_S3_RW_MODE=$mode AWS_ACCESS_KEY_ID="${NORN_SCCACHE_KEY_ID:-}" \
+              AWS_SECRET_ACCESS_KEY="${NORN_SCCACHE_SECRET:-}" SCCACHE_IDLE_TIMEOUT=0
+            # The server must outlive idle stretches (tests, Bun): an idle exit would restart it
+            # without this configuration, on the local cache only.
+            echo "::notice::sccache: local disk, then the shared R2 cache ($mode)"
+          fi
           # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
           # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
           # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
@@ -154,34 +227,29 @@ jobs:
         with:
           path: ~/.cache/norn-interop
           key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
-      - run: bash scripts/ci/core.sh cheap
-  # The full gate: `core.sh all` split into parallel jobs. The plan comes from
-  # core.sh itself, so CI runs exactly its shards and phases (all but formal).
-  # Pull requests and merge groups use affected plans; main runs the full set.
-  plan:
-    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
-    timeout-minutes: 5
-    outputs:
-      plan: ${{ steps.plan.outputs.plan }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          persist-credentials: false
-          fetch-depth: 0
-      - id: plan
+          tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
+      - name: Audit Actions secret inventory
         env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
-          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
-        run: |
-          if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
-          plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
-          echo "plan=$plan" >> "$GITHUB_OUTPUT"
-          echo "$plan"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/ci/actions-secret-inventory.py
+      - run: bash scripts/ci/core.sh cheap
+  # A draft head runs only core: no bundle until it is ready for review.
   test:
     name: bundle (${{ matrix.bundle.id }})
-    needs: [core, plan]
-    if: fromJSON(needs.plan.outputs.plan).bundle[0] != null
+    needs: [plan]
+    if: fromJSON(needs.plan.outputs.plan).bundle[0] != null && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
+    # Only `ci-cache-writer-boat` (deployment branch: main only) names the writer identity, whose
+    # OIDC binding is that environment's immutable subject on a push to main of this workflow.
+    # Merge groups and pull requests log in as the reader, which can reach only the read-only key.
+    # A main push enters the environment exactly when the runner's main-push arm sends it to Boat
+    # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
+    # push runs hosted, uses the Actions cache and never receives the key.
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
+    permissions:
+      contents: read
+      id-token: write # Read the shared cache keys from Infisical over OIDC.
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -191,7 +259,7 @@ jobs:
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
       PLAN: ${{ needs.plan.outputs.plan }}
       BUNDLE_ID: ${{ matrix.bundle.id }}
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     strategy:
       fail-fast: false
@@ -241,7 +309,7 @@ jobs:
           ls -l "$library" && [ -e "$library" ] || { echo "::error::$library is missing: clang-sys cannot load libclang"; exit 1; }
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
-          toolchain: 1.98.0
+          toolchain: 1.100.0
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -257,15 +325,52 @@ jobs:
         with:
           version: v0.19.0
           disable_annotations: true
+      # The shared cache's R2 keys live in Infisical. This step reads them over OIDC using the
+      # helper pinned by the workflow contract. A push to main (Boat only, inside
+      # `ci-cache-writer-boat`) logs in as the writer its environment variables name, in the writer's
+      # own Infisical project; every other run as the reader, in the reader's project, which holds only
+      # the read-only key. An unset variable yields '' (never the other role). With `--optional`, unset
+      # variables, a fork or any failure keep Boat on its local cache: a cache outage never fails a build.
+      - name: Read the shared cache keys from Infisical over OIDC
+        id: sccache-keys
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          INFISICAL_IDENTITY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_IDENTITY_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || '' }}
+          INFISICAL_PROJECT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_PROJECT_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || '' }}
+        run: bash scripts/ci/infisical-oidc.sh --optional prod /sccache NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET
       - name: Start sccache or compile without it
-        run: |
+        env:
+          NORN_SCCACHE_BUCKET: ${{ steps.sccache-keys.outputs.norn_sccache_bucket }}
+          NORN_SCCACHE_ENDPOINT: ${{ steps.sccache-keys.outputs.norn_sccache_endpoint }}
+          NORN_SCCACHE_KEY_ID: ${{ steps.sccache-keys.outputs.norn_sccache_key_id }}
+          NORN_SCCACHE_SECRET: ${{ steps.sccache-keys.outputs.norn_sccache_secret }}
+        # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
+        run: | # zizmor: ignore[github-env]
           set -uo pipefail
-          # Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
-          # cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+          # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
+          # egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,
+          # when the project bucket's secrets are present, reads a shared R2 cache behind it. Only a
+          # push to main (code that has landed) writes there. Merge groups and pull requests run code
+          # that has not landed, so they get the read-only key and READ_ONLY mode. The keys are in
+          # this step's environment and in the server it starts, which later steps share a user
+          # with: what stops a write is the token's scope, not this step.
           gha=false
           [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
           export SCCACHE_GHA_ENABLED=$gha
           echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+          if [ "$gha" = false ] && [ -n "${NORN_SCCACHE_BUCKET:-}" ] && [ -n "${NORN_SCCACHE_ENDPOINT:-}" ]; then
+            mode=READ_ONLY
+            case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+              push:refs/heads/main) mode=READ_WRITE ;;
+            esac
+            export SCCACHE_MULTILEVEL_CHAIN=disk,s3 SCCACHE_BUCKET="$NORN_SCCACHE_BUCKET" \
+              SCCACHE_ENDPOINT="$NORN_SCCACHE_ENDPOINT" SCCACHE_REGION=auto SCCACHE_S3_KEY_PREFIX=norn/ \
+              SCCACHE_S3_RW_MODE=$mode AWS_ACCESS_KEY_ID="${NORN_SCCACHE_KEY_ID:-}" \
+              AWS_SECRET_ACCESS_KEY="${NORN_SCCACHE_SECRET:-}" SCCACHE_IDLE_TIMEOUT=0
+            # The server must outlive idle stretches (tests, Bun): an idle exit would restart it
+            # without this configuration, on the local cache only.
+            echo "::notice::sccache: local disk, then the shared R2 cache ($mode)"
+          fi
           # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
           # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
           # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
@@ -305,12 +410,12 @@ jobs:
         with:
           path: ~/.cache/norn-interop
           key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
-      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: nextest@0.9.150
+          tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
       - run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"
   full:
-    needs: [core, plan, test]
+    needs: [plan, core, test]
     if: >-
       always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' &&
       !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)
@@ -321,21 +426,22 @@ jobs:
       - env:
           EVENT: ${{ github.event_name }}
           DRAFT: ${{ github.event.pull_request.draft || false }}
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
           PLAN: ${{ needs.plan.outputs.plan }}
+          PLANNER: ${{ needs.plan.result }}
           CORE: ${{ needs.core.result }}
-          PLANNED: ${{ needs.plan.result }}
           TEST: ${{ needs.test.result }}
         run: |
           set -euo pipefail
           [ "$EVENT" != pull_request ] || [ "$DRAFT" = false ] || { echo "Draft head is not admitted for full qualification"; exit 1; }
+          [ "$PLANNER" = success ] || { echo "plan $PLANNER"; exit 1; }
           jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
             type == "object" and (.mode == "full" or .mode == "affected") and
             .base_sha == $base and .head_sha == $head and
             (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
             (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
-            (.bundle | type == "array" and length <= 6 and all(.[];
+            (.bundle | type == "array" and length <= 3 and all(.[];
               type == "object" and (.id | type == "string" and length > 0) and
               (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
               (map(.id) | length) == (map(.id) | unique | length)) and
@@ -343,11 +449,11 @@ jobs:
           ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
           # A job may be skipped only when the plan gave it nothing to run.
           ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
-          [ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
+          [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
           mode=$(jq -er .mode <<<"$PLAN")
-          [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
-          # An affected merge-group plan must keep the always-run phases (core.sh plan).
-          [ "$EVENT" != merge_group ] || [ "$mode" = full ] || jq -e '(["guards", "provenance", "clippy"] - .phase) == []' <<<"$PLAN" >/dev/null || { echo "merge_group affected plan dropped an always-run phase"; exit 1; }
+          # Only pull-request feedback is narrowed; the merge queue, main and manual runs run every shard
+          # and phase, so nothing reaches main without the full suite (#1348).
+          [ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
           ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
   trusted-policy:
@@ -358,10 +464,10 @@ jobs:
     # Write access serves only the last step, which removes a failing pull
     # request from the merge queue. No step runs candidate code.
     permissions:
-      contents: write
-      issues: read
-      pull-requests: write
-      statuses: write
+      contents: write # Remove a rejected pull request from the merge queue.
+      issues: read # Read maintainer approval comments.
+      pull-requests: write # Remove a rejected pull request from the merge queue.
+      statuses: write # Publish the head-bound policy status.
     # An edit re-runs when either the new or the previous body mentions the
     # command, so removing an approval re-evaluates and fails closed. `contains`
     # also covers bodies the gate accepts after trimming.

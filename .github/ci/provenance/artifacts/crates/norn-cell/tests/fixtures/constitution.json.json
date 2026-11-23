@@ -7,7 +7,7 @@
   "analyzed_sources": [],
   "parents": [
     "scripts/demo/constitution.source.ts",
-    "registry/core/src/physics.ts",
+    "registry/core/src/rea.ts",
     "tools/norn-ts/src/compiler/definitions.ts",
     "tools/norn-ts/src/compiler/index.ts",
     "tools/norn-ts/src/builder/entity.ts",

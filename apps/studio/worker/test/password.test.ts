@@ -43,7 +43,7 @@ test("AUTH_SCRYPT selects the implementation; Cloudflare's default stays native"
   expect(passwordScrypt("native")).toBe("native")
   expect(passwordScrypt("js")).toBe("js")
   expect(() => passwordScrypt("JS")).toThrow("AUTH_SCRYPT")
-  const config = { database: new Database(":memory:") as never, secret: "t".repeat(40), baseURL: "https://studio-preview.norn.cloud" }
+  const config = { clientIpHeader: "cf-connecting-ip" as const, database: new Database(":memory:") as never, secret: "t".repeat(40), baseURL: "https://studio-preview.norn.cloud" }
   expect(authOptions(config).emailAndPassword).not.toHaveProperty("password")
   expect(authOptions({ ...config, scrypt: "native" }).emailAndPassword).not.toHaveProperty("password")
   expect(authOptions({ ...config, scrypt: "js" }).emailAndPassword).toMatchObject({ password: { hash: hashPassword, verify: verifyPassword } })
@@ -57,7 +57,7 @@ test("an account stored on Cloudflare signs in on a pure-JS deployment", async (
   db.exec(readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8"))
   db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
   const assets = { fetch: async () => new Response("studio") } as unknown as Fetcher
-  const env = (database: Database, scrypt?: string): Env => ({ ASSETS: assets, AUTH_DB: database as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, ...scrypt === undefined ? {} : { AUTH_SCRYPT: scrypt } })
+  const env = (database: Database, scrypt?: string): Env => ({ ASSETS: assets, AUTH_DB: database as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", ...scrypt === undefined ? {} : { AUTH_SCRYPT: scrypt } })
   const post = (target: Env, path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, {
     method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": "198.51.100.7" },
   }) as Parameters<typeof worker.fetch>[0], target)

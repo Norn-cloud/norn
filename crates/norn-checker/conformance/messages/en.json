@@ -362,6 +362,15 @@
     "core.compute.unsupported_engine": {
       "message": "Query semantics are unsupported by the selected compute profile."
     },
+    "core.engine.downgrade": {
+      "message": "the cell was written by a newer storage version than this engine reads"
+    },
+    "core.engine.unknown_version": {
+      "message": "the cell's engine stamp is not a version this engine can read"
+    },
+    "core.engine.upgrade_unsupported": {
+      "message": "the cell's storage version cannot be upgraded in place by this engine"
+    },
     "core.graph.catalog_write": {
       "message": "catalog projections cannot activate definitions"
     },
@@ -688,6 +697,15 @@
     },
     "labels.validation.unlabelled_locale": {
       "message": "a description or review state names a locale that has no label"
+    },
+    "law.conservation.alias_bound": {
+      "message": "conservation writer has more key-aliasing cases than the checker enumerates: {$detail}"
+    },
+    "law.conservation.alias_unlowerable": {
+      "message": "conservation writer may write one row through coordinates the checker cannot reconcile: {$detail}"
+    },
+    "law.conservation.key_alias": {
+      "message": "conservation writer does not balance when its keys name one cell: {$detail}"
     },
     "law.example.mismatch": {
       "message": "a law example's verdict differs from its expectation: {$detail}"
