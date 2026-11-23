@@ -121,7 +121,7 @@ function KeyNumbers() {
       )}
       {refused.length > 0 && (
         <ul className="space-y-0.5 text-meta text-muted-foreground" aria-label="Key numbers not shown">
-          {refused.map(({ metric, reason }) => <li key={metric.name} data-refused-number={metric.name}>{conceptTitle(metric.objectType)}, {metricHeading(metric).toLowerCase()}: not shown. {reason}</li>)}
+          {refused.map(({ metric, reason }) => <li key={metric.name} data-refused-number={metric.name}>{conceptTitle(metric.objectType)} · {metricHeading(metric)} (not shown). {reason}</li>)}
         </ul>
       )}
     </section>

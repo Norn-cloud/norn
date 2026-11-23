@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
+import { metrics } from "../test/fixtures/metrics-builder/metrics.json"
+import scannedTotalRefusal from "../test/fixtures/metrics-builder/scanned-total-refusal.json"
 import { session } from "./object-cell.ts"
 
 /** A live cell: its definitions, and the work queue it serves this caller (`GET /v1/inbox`, as the server projects it). */
@@ -64,20 +66,22 @@ test("home: nothing to do says so", async ({ page }) => {
 
 test("home: a key number the server refuses leaves Home, and the server's reason says why", async ({ page }, info) => {
   await cell(page, { scanLimit: 10000, sections: sections.map((entry) => ({ ...entry, count: 0, shown: 0 })), items: [] })
-  const metric = (name: string, objectType: string, expression: string, timeProperty: string) => ({ name, label: `sum(${expression}); conservation []`, kind: "simple", objectType, expression, timeProperty, timeLinks: [], numerator: null, denominator: null, unitPartition: [], additivity: { kind: "additive" } })
+  const keyMetrics = metrics.filter(({ objectType }) => objectType === "docs.LedgerEntry" || objectType === "docs.ScannedDocument")
+  const scannedMetric = keyMetrics.find(({ objectType }) => objectType === "docs.ScannedDocument")?.name
   const answered = JSON.parse(readFileSync(new URL("../test/fixtures/metrics-builder/unit-groups.json", import.meta.url), "utf8")) as unknown
-  await page.route("**/api/host/v1/questions:metrics**", (route) => route.fulfill({ json: { metrics: [metric("m.posted", "docs.LedgerEntry", "amount", "posted_on"), metric("m.scanned", "docs.ScannedDocument", "total", "issued_on")] } }))
+  await page.route("**/api/host/v1/questions:metrics**", (route) => route.fulfill({ json: { metrics: keyMetrics } }))
   await page.route("**/api/host/v1/questions:evaluate**", (route) => {
     const { question } = route.request().postDataJSON() as { question: { aggregate: { metric: string }[] } }
-    return question.aggregate[0]?.metric === "m.scanned"
-      ? route.fulfill({ status: 422, json: { code: "question.refused", message: "refused", diagnostics: [{ code: "metric.validation.invalid_time", severity: "error", message: "Some scanned documents have no issued date, so they cannot be totalled by it.", span: null }] } })
+    // Captured from this route with the scans pack installed and no records loaded.
+    return question.aggregate[0]?.metric === scannedMetric
+      ? route.fulfill({ status: 422, json: scannedTotalRefusal })
       : route.fulfill({ json: answered })
   })
   await page.goto("/")
   const keyNumbers = page.getByRole("region", { name: "Key numbers" })
   const strip = keyNumbers.locator('[data-slot="stat-strip"]')
   const refused = keyNumbers.getByRole("list", { name: "Key numbers not shown" })
-  await expect(refused.getByRole("listitem")).toContainText("Some scanned documents have no issued date, so they cannot be totalled by it.")
+  await expect(refused.getByRole("listitem")).toHaveText("Scanned document · Total (not shown). The time axis must be a single-valued date or timestamp.")
   await expect(strip.getByRole("heading", { name: "Total amount" })).toBeVisible()
   await expect(strip.getByText("70,356", { exact: true })).toBeVisible()
   await expect(strip.locator('[data-slot="kpi"]')).toHaveCount(1)
