@@ -249,8 +249,9 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertIn("heavy-3", combined["shard"])
         self.assertEqual(combined["rest_shards"], 3)
         # norn-cell and norn-expr reach norn-checker-wasm, so the Studio browser rows run (#1113).
-        # norn-cell is reached, so the DuckDB backend is built and tested too (#1206).
-        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser", "duckdb"])
+        # norn-cell is reached, so the DuckDB backend is built and tested too (#1206), and so is
+        # the Rivet host's own workspace, which builds norn-cell by path (D131).
+        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser", "duckdb", "rivet"])
         self.assertNotIn("heavy-1", self.plan("--affected", self.base, first)["shard"])
         self.assertEqual(self.plan("--affected", self.base)["mode"], "full")
 
@@ -278,6 +279,21 @@ class AffectedPlanTests(unittest.TestCase):
                 self.assertEqual(plan["mode"], "affected")
                 self.assertNotIn("norn-cell", plan["reason"])
                 self.assertEqual("duckdb" in plan["phase"], planned, plan["phase"])
+
+    def test_rivet_runs_when_a_crate_it_builds_is_reached(self):
+        # crates/norn-cell-rivet is its own workspace and builds norn-api, norn-cell and
+        # norn-cell-do by path: a change that reaches one of them plans its phase (norn-kernel
+        # reaches norn-cell), and a Markdown-only change does not.
+        for path, planned in (("crates/norn-api/src/lib.rs", True), ("crates/norn-kernel/src/lib.rs", True), ("docs/synthetic.md", False)):
+            with self.subTest(path=path):
+                base = self.git("rev-parse", "HEAD")
+                self.commit(path)
+                plan = self.plan("--affected", base)
+                self.assertEqual(plan["mode"], "affected")
+                self.assertEqual("rivet" in plan["phase"], planned, plan["phase"])
+        self.assertIn("rivet", self.full["phase"])
+        # Like formal, the Rivet conformance suite is a Boat gate that no CI plan selects.
+        self.assertNotIn("rivet-conformance", self.full["phase"])
 
     def test_an_affected_rust_change_plans_rest_shards(self):
         # Only a plan that reaches no package drops its rest shards; a Rust change keeps them.

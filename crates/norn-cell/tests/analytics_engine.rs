@@ -602,6 +602,74 @@ fn a_load_types_rows_and_quarantines_refused_ones_with_reasons() {
     );
 }
 
+/// BULK-LOAD-1 (Sol r3 S9): a direct load writes its lineage in its load
+/// transaction. With the lineage write refused by the tenant database, the
+/// load refuses and commits nothing: the dataset is still the first load's,
+/// and the refused load has no lineage record.
+#[test]
+fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
+    use ::duckdb::OptionalExt as _;
+    let (dir, engine) = engine();
+    let (_store, plan, _context) = by_metal(true, 100);
+    let (first, first_sha) = csv(
+        &engine,
+        &[
+            "metal,occurred_at,input,recovered,loss",
+            "gold,2026-10-23T12:00:00Z,1.5,1.25,0",
+        ],
+    );
+    let (second, second_sha) = csv(
+        &engine,
+        &[
+            "metal,occurred_at,input,recovered,loss",
+            "gold,2026-10-23T12:00:00Z,1.5,1.25,0",
+            "silver,2026-10-23T12:00:00Z,2,1,0",
+        ],
+    );
+    let request = load_request(&plan, "load-1", first_sha);
+    let table = request.table.name.clone();
+    engine.load(&request, first.path()).expect("first load");
+    // Inject the failure: the tenant's metadata table refuses one key.
+    drop(engine);
+    let database = dir.path().join(format!("{}.duckdb", tenant().as_str()));
+    let open = || ::duckdb::Connection::open(&database).expect("tenant database");
+    open()
+        .execute_batch(
+            "CREATE TABLE \":kept\" AS SELECT * FROM \":meta\"; DROP TABLE \":meta\"; \
+             CREATE TABLE \":meta\" (key VARCHAR PRIMARY KEY, value VARCHAR NOT NULL, \
+             CHECK (key <> 'lineage:load-2')); \
+             INSERT INTO \":meta\" SELECT * FROM \":kept\"; DROP TABLE \":kept\";",
+        )
+        .expect("refusing metadata table");
+    let engine = Engine::new(Settings {
+        root: dir.path().to_path_buf(),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    })
+    .expect("engine");
+    engine
+        .load(&load_request(&plan, "load-2", second_sha), second.path())
+        .expect_err("the lineage write is refused");
+    drop(engine);
+    let conn = open();
+    let meta = |key: &str| -> Option<String> {
+        conn.query_row("SELECT value FROM \":meta\" WHERE key = ?", [key], |row| {
+            row.get(0)
+        })
+        .optional()
+        .expect("meta")
+    };
+    assert_eq!(meta(&format!("load:{table}")).as_deref(), Some("load-1"));
+    assert!(meta("lineage:load-1").is_some());
+    assert_eq!(meta("lineage:load-2"), None);
+    let rows: u64 = conn
+        .query_row(&format!("SELECT count(*) FROM \"d:{table}\""), [], |row| {
+            row.get(0)
+        })
+        .expect("dataset rows");
+    assert_eq!(rows, 1, "the replacement dataset did not commit");
+}
+
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(12))]
     /// QUERY-ENGINE-1 over a loaded dataset: the same rows committed to a cell
@@ -2195,6 +2263,8 @@ fn landing_request(plan: &QuestionPlan) -> LandRequest {
         },
         landing: "landing-1".into(),
         attempt: String::new(),
+        checks: Vec::new(),
+        residue_page: 100,
     }
 }
 
@@ -2248,8 +2318,8 @@ fn store_request(
             ..request.clone()
         },
         landed: landed.clone(),
-        data: object(&landed.data.sha256),
-        held: object(&landed.held.sha256),
+        data: object(&landed.data.as_ref().expect("data").sha256),
+        held: object(&landed.held.as_ref().expect("held").sha256),
     }
 }
 
@@ -2286,8 +2356,12 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
     let response = land(&engine, &request);
     assert_eq!(response.landing, "landing-1");
     assert_eq!(attempts(dir.path()), vec![response.attempt.clone()]);
+    let (data_file, held_file) = (
+        response.data.clone().expect("data"),
+        response.held.clone().expect("held"),
+    );
     assert_eq!((response.load.rows, response.load.rejected), (2, 2));
-    assert_eq!((response.data.rows, response.held.rows), (2, 2));
+    assert_eq!((data_file.rows, held_file.rows), (2, 2));
     let attempt_dir = dir
         .path()
         .join("t")
@@ -2298,7 +2372,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
         attempt_dir.join("data.parquet"),
         attempt_dir.join("held.parquet"),
     );
-    for (path, file) in [(&data, &response.data), (&held, &response.held)] {
+    for (path, file) in [(&data, &data_file), (&held, &held_file)] {
         let bytes = std::fs::read(path).expect("landed file");
         assert_eq!(norn_cell::analytics::hex_digest(&bytes), file.sha256);
         assert_eq!(u64::try_from(bytes.len()).expect("size"), file.bytes);
@@ -2322,8 +2396,8 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
     );
     let cache = norn_cell::analytics::dataset_cache_id(
         &request.load.table,
-        &response.data.sha256,
-        &response.held.sha256,
+        &data_file.sha256,
+        &held_file.sha256,
     );
     let source = |load: &str| Source::Dataset {
         table: TYPE.into(),
@@ -2362,7 +2436,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
         .join("t")
         .join(tenant().as_str())
         .join("objects")
-        .join(format!("{}.parquet", response.data.sha256));
+        .join(format!("{}.parquet", data_file.sha256));
     let original = std::fs::read(&kept).expect("kept");
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -2400,8 +2474,8 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
         "each landing is its own attempt"
     );
     assert_eq!(
-        (second.data.sha256.as_str(), second.held.sha256.as_str()),
-        (response.data.sha256.as_str(), response.held.sha256.as_str()),
+        (second.data, second.held),
+        (Some(data_file), Some(held_file)),
         "the same rows land as the same bytes"
     );
     assert_eq!(
@@ -2443,9 +2517,13 @@ fn a_store_never_removes_an_attempt_it_does_not_hold() {
                     bytes: 1,
                     millis: 0,
                 },
-                data: file("ab"),
-                held: file("cd"),
+                data: Some(file("ab")),
+                held: Some(file("cd")),
                 valid_time: Vec::new(),
+                findings: BTreeMap::new(),
+                held_by_rules: 0,
+                residue_total: 0,
+                residue: Vec::new(),
                 stored: None,
             },
         )
@@ -2524,7 +2602,7 @@ fn a_store_answers_its_own_receipt_and_refuses_any_other_body() {
     // The first store takes only the answer the landing gave.
     let mut inflated = honest.clone();
     inflated.landed.load.rows += 1;
-    inflated.landed.data.rows += 1;
+    inflated.landed.data.as_mut().expect("data").rows += 1;
     assert_eq!(
         engine
             .store(&inflated, |_data, _held| panic!(
@@ -2544,8 +2622,8 @@ fn a_store_answers_its_own_receipt_and_refuses_any_other_body() {
     let mut counts = honest.clone();
     counts.landed.load.rows = 1_000;
     counts.landed.load.rejected = 0;
-    counts.landed.data.rows = 1_000;
-    counts.landed.held.rows = 0;
+    counts.landed.data.as_mut().expect("data").rows = 1_000;
+    counts.landed.held.as_mut().expect("held").rows = 0;
     assert_eq!(replay(&counts).expect_err("changed counts").code, stale);
     // A changed landing identity, consistent across the body.
     let mut other_landing = honest.clone();
@@ -2606,14 +2684,14 @@ fn a_manifest_commits_once_per_request_and_is_the_current_dataset() {
         bytes: landed.bytes,
     };
     let table = store.analytics_table(TYPE).expect("table");
+    let (data_file, held_file) = (
+        response.data.clone().expect("data"),
+        response.held.clone().expect("held"),
+    );
     let manifest = DatasetManifest {
         version: MANIFEST_VERSION.into(),
         object_type: TYPE.into(),
-        load: norn_cell::analytics::dataset_cache_id(
-            &table,
-            &response.data.sha256,
-            &response.held.sha256,
-        ),
+        load: norn_cell::analytics::dataset_cache_id(&table, &data_file.sha256, &held_file.sha256),
         source: ManifestSource {
             uri: request.load.file.uri.clone(),
             sha256: request.load.file.sha256,
@@ -2625,12 +2703,14 @@ fn a_manifest_commits_once_per_request_and_is_the_current_dataset() {
         pins: store
             .dataset_pins(TYPE, &binding, "test.mapping@x")
             .expect("pins"),
-        data: file_of(&response.data),
-        held: file_of(&response.held),
+        data: file_of(&data_file),
+        held: file_of(&held_file),
         counts: ManifestCounts {
             source: 4,
             admitted: response.load.rows,
             held: response.load.reasons.clone(),
+            findings: BTreeMap::new(),
+            held_by_rules: 0,
         },
         valid_time: response.valid_time,
     };

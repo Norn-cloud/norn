@@ -154,6 +154,15 @@ impl NornCell {
         crate::fixtures_enabled()
     }
 
+    /// D102 / MANIFEST-LAWS-1 (S1): engine calls one request may make, the
+    /// bound every host shares: the Worker stops re-entering past it, and
+    /// the engine refuses a landing whose residue would need more.
+    #[must_use]
+    #[wasm_bindgen(js_name = engineSteps)]
+    pub fn engine_steps() -> u32 {
+        norn_cell::analytics::MAX_ENGINE_STEPS
+    }
+
     /// Open the cell for the DO's own scope: a demo scope is seeded on first
     /// use; any other scope is served if it was provisioned, else vacant.
     /// `issuer` and `jwks` are the pinned token issuer and its key document

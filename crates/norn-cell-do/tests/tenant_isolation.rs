@@ -1061,6 +1061,8 @@ fn analytics_b() -> Host {
             source: 3,
             admitted: 3,
             held: BTreeMap::new(),
+            findings: BTreeMap::new(),
+            held_by_rules: 0,
         },
         valid_time: Vec::new(),
     };

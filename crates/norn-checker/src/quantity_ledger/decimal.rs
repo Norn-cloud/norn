@@ -64,13 +64,11 @@ pub(super) fn rescale(
     value: ScaledInteger,
     target_scale: u8,
 ) -> Result<i128, ScaledIntegerRefusal> {
-    let gap = match target_scale.checked_sub(value.scale) {
-        Some(gap) => gap,
-        None => return Err(ScaledIntegerRefusal::ScaleLoss),
+    let Some(gap) = target_scale.checked_sub(value.scale) else {
+        return Err(ScaledIntegerRefusal::ScaleLoss);
     };
-    let multiplier = match checked_pow10(gap) {
-        Some(multiplier) => multiplier,
-        None => return Err(ScaledIntegerRefusal::AlignmentMultiplierOverflow),
+    let Some(multiplier) = checked_pow10(gap) else {
+        return Err(ScaledIntegerRefusal::AlignmentMultiplierOverflow);
     };
     match value.unscaled.checked_mul(multiplier) {
         Some(aligned) => Ok(aligned),
@@ -120,9 +118,8 @@ pub(super) fn checked_mul(
     rhs: ScaledInteger,
     max_scale: u8,
 ) -> Result<ScaledInteger, ScaledIntegerRefusal> {
-    let scale = match lhs.scale.checked_add(rhs.scale) {
-        Some(scale) => scale,
-        None => return Err(ScaledIntegerRefusal::MultiplicationScaleOverflow),
+    let Some(scale) = lhs.scale.checked_add(rhs.scale) else {
+        return Err(ScaledIntegerRefusal::MultiplicationScaleOverflow);
     };
     if scale > max_scale {
         return Err(ScaledIntegerRefusal::MultiplicationScaleAboveMaximum(scale));

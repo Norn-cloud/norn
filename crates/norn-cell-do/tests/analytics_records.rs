@@ -22,7 +22,7 @@ use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, UploadReco
 use norn_api::host::DevHost;
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
-    Column, ColumnKind, LandRequest, PointLaw, StoreRequest, TableSchema, hex_digest,
+    Column, ColumnKind, LandRequest, PointLaw, SettleRequest, StoreRequest, TableSchema, hex_digest,
 };
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::olap::InProcess;
@@ -54,6 +54,10 @@ impl Transport for Loading {
                     file.write_all(&bytes).expect("source file");
                     Ok(())
                 })
+            }
+            "settle" => {
+                let request: SettleRequest = serde_json::from_str(&call.body).expect("a settle");
+                engine.settle(&request)
             }
             "store" => {
                 // MANIFEST-LAND-1: the landed files go to their PUT URLs.

@@ -11,6 +11,13 @@ use std::collections::{BTreeMap, BTreeSet};
 /// authority as the quantity checker; account existence and unit
 /// permissions still require the full account graph and are checked by the
 /// accounting-pack API.
+///
+/// # Errors
+///
+/// Returns an [`AccountingError`] when an identifier is invalid, fewer than two
+/// legs are supplied, legs disagree on account authority or unit precision, a
+/// leg amount cannot be parsed or reversed, arithmetic overflows, or the legs
+/// do not balance per `(unit, layer)` partition.
 pub fn validate_balanced_accounting_legs(
     journal_id: &str,
     legs: &[AccountingLegIr],

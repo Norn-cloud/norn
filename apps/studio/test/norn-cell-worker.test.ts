@@ -29,6 +29,7 @@ beforeAll(async () => {
 export function initSync() {}
 export class NornCell {
   static fixturesEnabled() { return stub.fixtures; }
+  static engineSteps() { return 64; }
   constructor(_storage, org, env) { stub.opened.push({ org, env }); }
   configureConnect() {}
   enableAnalytics() {}
