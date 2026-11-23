@@ -81,6 +81,8 @@ class InstallTest(unittest.TestCase):
 
     def test_installs_the_binary_for_this_platform(self):
         self.platform("Linux", "aarch64")
+        self.publish("norn-checker-wasm.tar.gz", archive("#!/bin/sh\n"))
+        self.publish("norn-dev-host-linux-arm64.tar.gz", archive("#!/bin/sh\n"))
         self.publish("norn-linux-arm64.tar.gz", archive("#!/bin/sh\necho norn-arm64 1.2.3\n"))
         self.publish("norn-linux-x64.tar.gz", archive("#!/bin/sh\necho norn-x64\n"))
         result = self.run_install()

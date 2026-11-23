@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { TOOL_ROOT } from "./profile.ts"
+import { cachedCheckerWasmDir } from "./runtime-cache.ts"
 
 export interface CheckerDiagnostic {
   readonly code: string
@@ -86,16 +87,26 @@ export const CHECKER_PKG_ENV = "NORN_CHECKER_WASM_PKG"
 /** Where a released package carries its checker: built with it, next to `src`. */
 export const BUNDLED_CHECKER = join(TOOL_ROOT, "checker")
 
+function hasCheckerPackage(dir: string): boolean {
+  return existsSync(join(dir, "norn_checker_wasm.js")) && existsSync(join(dir, "norn_checker_wasm_bg.wasm"))
+}
+
 /**
- * The checker package directory. `$NORN_CHECKER_WASM_PKG` is an override and
- * wins whenever it is set, even when it names a directory without a package
- * (that is an error to report, not a reason to use another checker silently).
- * Otherwise the package's bundled checker, when there is one. Otherwise none.
+ * The checker package directory, in priority order:
+ * 1. `$NORN_CHECKER_WASM_PKG` override — wins whenever set, even when it names
+ *    a directory without a package (that is an error to report, not a reason
+ *    to use another checker silently);
+ * 2. the cached prebuilt runtime (`~/.cache/norn/runtime/checker-wasm` or
+ *    `$XDG_CACHE_HOME/norn/runtime/checker-wasm`, installed by `norn setup`);
+ * 3. the package's bundled checker, when there is one.
+ * Otherwise none.
  */
 export function checkerPackageDir(env: Readonly<Record<string, string | undefined>> = process.env, bundled: string = BUNDLED_CHECKER): string | undefined {
   const override = env[CHECKER_PKG_ENV]
   if (override) return override
-  return existsSync(join(bundled, "norn_checker_wasm.js")) && existsSync(join(bundled, "norn_checker_wasm_bg.wasm")) ? bundled : undefined
+  const cached = cachedCheckerWasmDir(env)
+  if (cached && hasCheckerPackage(cached)) return cached
+  return hasCheckerPackage(bundled) ? bundled : undefined
 }
 
 /** Load the checker package from `dir` (default: `checkerPackageDir()`); undefined when there is none. */

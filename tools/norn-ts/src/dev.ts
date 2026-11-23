@@ -7,11 +7,14 @@
  * is found in this order:
  * 1. `NORN_DEV_HOST_BIN`, an override that wins whenever it is set;
  * 2. the platform package `@norn/dev-host-<platform>-<arch>`, when installed;
- * 3. the prebuilt host this release records for the platform
+ * 3. the local runtime cache (`~/.cache/norn/runtime/bin/norn-dev-host`, or
+ *    `$XDG_CACHE_HOME/norn/runtime/bin/norn-dev-host`), populated by `norn setup`,
+ *    when running from a checkout or when the release omits this platform;
+ * 4. the prebuilt host this release records for the platform
  *    (`generated/build.json`), downloaded once into the cache and kept only
  *    if its sha256 is the recorded one.
- * Otherwise `norn dev` refuses with `cli.setup.host_unavailable` and says how
- * to build the host from source.
+ * Otherwise `norn dev` refuses with `cli.setup.host_unavailable` and tells the
+ * user to run `norn setup` or build the host from source.
  *
  * `norn dev --json` events and `.norn/dev.json` (`norn-dev/1`) are
  * experimental: they carry `"stability": "experimental"` and are not a
@@ -20,12 +23,12 @@
 import { createHash } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
-import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { warnAuthoringVersion } from "./authoring-version.ts"
 import { buildInfo, type BuildInfo } from "./build-info.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, readProject } from "./project.ts"
+import { cachedDevHostPath, defaultCacheRoot } from "./runtime-cache.ts"
 
 /** What finding the host depends on; a test replaces parts of it. */
 export interface HostLookup {
@@ -85,7 +88,7 @@ export function hostLookup(env: Readonly<Record<string, string | undefined>> = p
     env,
     platform: `${process.platform}-${process.arch}`,
     build: buildInfo(),
-    cacheDir: env.NORN_CACHE_DIR || join(homedir(), ".cache", "norn"),
+    cacheDir: defaultCacheRoot(env),
     packageDir: installedPackage,
     download,
   }
@@ -101,10 +104,11 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
  */
 function unavailable(detail: string, build: BuildInfo | undefined): ProjectError {
   const command = "`cargo build --release -p norn-cell-do --bin norn-dev-host`"
+  const setup = "Run `norn setup` (or `scripts/dev/fetch-local-runtime.sh`) to install the prebuilt local runtime."
   // A checkout knows where its own build lands; a release names the commit to build from.
   const how = build
-    ? `Build it from a clone of the Norn repository at commit ${build.commit} (\`git checkout ${build.commit}\`; Rust ${build.toolchain}) with ${command}, then set NORN_DEV_HOST_BIN to the binary's absolute path, for example \`export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"\` from the repository root.`
-    : `Build it in this checkout with ${command}, then \`export NORN_DEV_HOST_BIN=${join(TOOL_ROOT, "..", "..", "target", "release", "norn-dev-host")}\`.`
+    ? `${setup} Build it from a clone of the Norn repository at commit ${build.commit} (\`git checkout ${build.commit}\`; Rust ${build.toolchain}) with ${command}, then set NORN_DEV_HOST_BIN to the binary's absolute path, for example \`export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"\` from the repository root.`
+    : `${setup} Build it in this checkout with ${command}, then \`export NORN_DEV_HOST_BIN=${join(TOOL_ROOT, "..", "..", "target", "release", "norn-dev-host")}\`.`
   return new ProjectError("cli.setup.host_unavailable", `No native Norn host: ${detail} ${how}`, 3)
 }
 
@@ -135,8 +139,13 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
     }
     return binary
   }
-  if (!build) throw unavailable("this is a checkout, which carries no prebuilt host.", build)
+  const runtimeCached = cachedDevHostPath(lookup.cacheDir)
+  if (!build) {
+    if (existsSync(runtimeCached)) return runtimeCached
+    throw unavailable("this is a checkout, which carries no prebuilt host.", build)
+  }
   if (!asset) {
+    if (existsSync(runtimeCached)) return runtimeCached
     throw unavailable(`this release has no prebuilt host for ${lookup.platform} (it has ${Object.keys(build.hosts).sort().join(", ") || "none"}).`, build)
   }
   const cached = join(lookup.cacheDir, "dev-host", build.version, lookup.platform, "norn-dev-host")
