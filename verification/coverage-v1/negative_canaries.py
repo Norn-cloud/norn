@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
@@ -756,7 +757,7 @@ def studio_browser_pin_canaries() -> None:
                 ("all skipped passes", "        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\\n' >&2; exit 1; }\n", ""),
                 ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
                 ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
-                ("not in the plan", " integration browser formal ", " integration formal "),
+                ("not in the plan", " integration-clients browser formal ", " integration-clients formal "),
                 ("no checker-admission test", "        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\\n' \"$decision\"; exit 1; }\n", ""),
                 ("no named-case check", "        grep -qxE '\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]' <<< \"$decision\" || { printf 'browser: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
                 ("named case matched as a substring", "grep -qxE '\\(pass\\) the checker admits", "grep -qE '\\(pass\\) the checker admits"),
@@ -774,6 +775,75 @@ def studio_browser_pin_canaries() -> None:
             finally:
                 validator.CORE_RUNNER = ROOT / "scripts/ci/core.sh"
             raise AssertionError(f"browser phase mutation passed: {label}")
+
+
+def integration_partition_canaries() -> None:
+    validator = load_module("norn_integration_canaries", VALIDATOR)
+    core = validator.CORE_RUNNER.read_text(encoding="utf-8")
+    command = '      bash sdks/python/run-demo.sh "$upstream/python-client"\n'
+    with tempfile.TemporaryDirectory() as directory:
+        validator.CORE_RUNNER = Path(directory) / "core.sh"
+        for mutated, diagnostic in (
+                (core.replace(" integration-wasm ", " "), "integration phases must each be registered once"),
+                (core.replace(command, ""), "integration check must run exactly once"),
+                (core.replace(command, command * 2), "integration check must run exactly once"),
+                (core.replace("--shard=2/2", "--shard=1/2"),
+                 "authoring shards must execute and check coverage exactly once"),
+                (core.replace('  (( status == 0 )) || exit "$status"\n', ""),
+                 "authoring shards must execute and check coverage exactly once"),
+                (core.replace("if not expected or actual != expected:", "if False:"),
+                 "authoring shards must execute and check coverage exactly once"),
+                (core.replace("if idle:", "if False:"),
+                 "authoring shards must execute and check coverage exactly once")):
+            validator.CORE_RUNNER.write_text(mutated, encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([])
+            except validator.InvalidCoverage as error:
+                if diagnostic in str(error):
+                    continue
+                raise
+            raise AssertionError(f"integration partition mutation passed: {diagnostic}")
+        # A skip-allowed marker on a second file is refused by the validator's pinned set.
+        lines = (ROOT / "scripts/ci/authoring-test-files.txt").read_text(encoding="utf-8").splitlines()
+        other = next(i for i, line in enumerate(lines) if len(line.split()) == 1)
+        marked = lines[:other] + [lines[other] + " skip-allowed"] + lines[other + 1:]
+        validator.AUTHORING_INVENTORY = Path(directory) / "authoring-test-files.txt"
+        validator.AUTHORING_INVENTORY.write_text("\n".join(marked) + "\n", encoding="utf-8")
+        validator.CORE_RUNNER.write_text(core, encoding="utf-8")
+        try:
+            validator.validate_workflow_integrity([])
+        except validator.InvalidCoverage as error:
+            if "only test/engine-alpha.test.ts may be skip-allowed" not in str(error):
+                raise
+        else:
+            raise AssertionError("a second skip-allowed authoring file passed")
+
+        inventory = ROOT / "scripts/ci/authoring-test-files.txt"
+        files = [line.split()[0] for line in inventory.read_text(encoding="utf-8").splitlines()]
+        allowed = {line.split()[0] for line in inventory.read_text(encoding="utf-8").splitlines() if len(line.split()) == 2}
+        # A file outside skip-allowed whose suite has only skipped cases is not coverage.
+        idle = next(file for file in files[2:] if file not in allowed)
+        checker = core.split("<<'PYTHON'\n", 1)[1].split("\nPYTHON\n", 1)[0]
+        reports = [Path(directory) / f"authoring-{shard}.xml" for shard in (1, 2)]
+        for label, first_files, first_case, skipped, diagnostic in (
+                ("complete reports", files[:2], True, allowed, ""),
+                ("silent deletion", files[:1], True, allowed, f"missing={[files[1]]}"),
+                ("empty shard with suite headers", files[:2], False, allowed, "no authoring tests executed"),
+                ("skipped-only file", files[:2], True, allowed | {idle}, f"no executed test: {[idle]}")):
+            for report, shard_files, has_cases in zip(reports, (first_files, files[2:]), (first_case, True)):
+                root = ET.Element("testsuites")
+                for file in shard_files:
+                    suite = ET.SubElement(root, "testsuite", file=file)
+                    if has_cases:
+                        # Like Bun's report: a describe block nests its cases in an inner suite.
+                        case = ET.SubElement(ET.SubElement(suite, "testsuite", name="block"), "testcase", name="example")
+                        if file in skipped:
+                            ET.SubElement(case, "skipped")
+                ET.ElementTree(root).write(report, encoding="utf-8")
+            result = subprocess.run([sys.executable, "-c", checker, str(inventory), *map(str, reports)],
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode != bool(diagnostic) or diagnostic not in result.stderr:
+                raise AssertionError(f"authoring shard coverage drift ({label}): {result.returncode} {result.stderr}")
 
 
 def workflow_cleanup_canaries(source: str) -> None:
@@ -1440,6 +1510,12 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["run-name"] = "${{ github.event.pull_request.title }}"
         rejected("forged READY attribution", document)
+        document = copy.deepcopy(workflow)
+        document["permissions"]["id-token"] = "write"
+        rejected("workflow-wide OIDC grant inherited by the planner", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["plan"]["permissions"] = {"contents": "read", "id-token": "write"}
+        rejected("planner OIDC grant", document)
         for name in ("core", "full", "trusted-policy"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
@@ -1620,12 +1696,35 @@ def workflow_context_canaries(source: str) -> None:
                     ("cache keys outside the start step", lambda job: next(step for step in job["steps"]
                         if step.get("uses", "").startswith("Swatinem/rust-cache@")).__setitem__("env",
                         {"NORN_SCCACHE_SECRET": "${{ secrets.NORN_SCCACHE_SECRET }}"})),
+                    # The keys come from Infisical over OIDC, never from GitHub secrets again.
+                    ("cache keys back in GitHub secrets", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("env",
+                        {"NORN_SCCACHE_%s" % name: "${{ secrets.NORN_SCCACHE_%s }}" % name
+                         for name in ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")})),
+                    ("cache-key step on hosted runners", lambda job: next(step for step in job["steps"]
+                        if step.get("id") == "sccache-keys").pop("if")),
+                    ("cache-key step without its OIDC token", lambda job: job.pop("permissions")),
+                    ("job-wide write permissions for the cache", lambda job: job.__setitem__("permissions", "write-all")),
                     ("fatal start", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):
                 document = copy.deepcopy(workflow)
                 change(document["jobs"][name])
                 rejected(f"{name} sccache {label}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["core"]["permissions"].pop("actions")
+        rejected("core secret inventory without environment read permission", document)
+        document = copy.deepcopy(workflow)
+        step = next(step for step in document["jobs"]["core"]["steps"]
+                    if step.get("name") == "Audit Actions secret inventory")
+        step["continue-on-error"] = True
+        rejected("core secret inventory failure ignored", document)
+        # Outside core and test no job mints an OIDC token, `write-all` included.
+        for name in ("full", "trusted-policy"):
+            for label, permissions in (("write-all", "write-all"), ("id-token", {"id-token": "write"})):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["permissions"] = permissions
+                rejected(f"{name} OIDC token by {label}", document)
         # The bundle may drop only the cargo target dir, between tasks that share no build.
         source_runner = validator.CORE_RUNNER
         core = source_runner.read_text(encoding="utf-8")
@@ -2542,6 +2641,7 @@ def main() -> int:
         workflow_sccache_canaries(source)
         studio_browser_phase_canaries()
         studio_browser_pin_canaries()
+        integration_partition_canaries()
         rust_parity_evidence_canaries()
         workflow_trusted_policy_canaries(source)
         workflow_expression_cap_canaries()

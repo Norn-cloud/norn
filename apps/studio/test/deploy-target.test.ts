@@ -76,7 +76,7 @@ test("the state scan reads only the app's own subtree: the password beside it is
 })
 
 test("registry, credential and private-key variables are scanned too, plain auth settings are not", () => {
-  const env = { DOCKER_AUTH_CONFIG: "eyJhdXRocyI6eyJyZWdpc3RyeSI6e319fQ==", GOOGLE_CREDENTIALS: "service-account-json", SSH_PRIVATE: "-----BEGIN KEY-----", AUTH_URL: "https://auth.example.test" }
+  const env = { DOCKER_AUTH_CONFIG: btoa('{"auths":{"registry":{}}}'), GOOGLE_CREDENTIALS: "service-account-json", SSH_PRIVATE: "-----BEGIN KEY-----", AUTH_URL: "https://auth.example.test" }
   const state = JSON.stringify({ props: { env } })
   expect(leakedSecrets(state, env)).toEqual({ DOCKER_AUTH_CONFIG: 1, GOOGLE_CREDENTIALS: 1, SSH_PRIVATE: 1 })
 })
