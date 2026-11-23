@@ -48,11 +48,11 @@ jobs:
             exit 0
           fi
           changed="$RUNNER_TEMP/codeql-changed-files.z"
-          git diff --name-only -z HEAD^1 HEAD > "$changed"
+          git diff --name-only --no-renames -z HEAD^1 HEAD > "$changed"
           rust=false
           while IFS= read -r -d '' path; do
             case "$path" in
-              *.rs|Cargo.toml|*/Cargo.toml|Cargo.lock|*/Cargo.lock|rust-toolchain|rust-toolchain.toml|.cargo/*|crates/*|vendor/*|.github/workflows/codeql.yml|.github/codeql/*)
+              *.rs|Cargo.toml|*/Cargo.toml|Cargo.lock|*/Cargo.lock|rust-toolchain|rust-toolchain.toml|.cargo/*|crates/*|vendor/*|registry/*|fixtures/*|verification/*|tools/norn-ts/fixtures/*|apps/studio/test/fixtures/*|docs/platform/structured-physics.tsv|.github/workflows/codeql.yml|.github/codeql/*)
                 rust=true
                 break
                 ;;
@@ -82,8 +82,8 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
   analyze-rust:
-    # Rust build-mode:none takes ~25 min; run it on PRs that touch Rust/Cargo or
-    # CodeQL config, and always on main merges, weekly schedule, and dispatch.
+    # Rust build-mode:none takes ~25 min; run it on PRs that touch Rust/Cargo,
+    # embedded Rust inputs, or CodeQL config, and always on main/schedule/dispatch.
     needs: changes
     if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-24.04
