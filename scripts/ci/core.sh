@@ -89,11 +89,13 @@ ensure_checker_wasm_pkg() {
   local out_dir=${1:-}
   local canonical="$CARGO_TARGET_DIR/norn-checker-wasm/pkg"
   local clean_stamp="$CARGO_TARGET_DIR/norn-checker-wasm/.pkg-clean"
-  if ! wasm_sources_clean || [[ ! -f "$clean_stamp" || ! -f "$canonical/norn_checker_wasm_bg.wasm" || ! -f "$canonical/package.json" || ! -f "$canonical/SIZE.txt" || ! "$canonical/SIZE.txt" -nt "$tree_stamp" ]]; then
+  local wasm="$canonical/norn_checker_wasm_bg.wasm"
+  if ! wasm_sources_clean || [[ ! -s "$clean_stamp" || ! -f "$wasm" || ! -f "$canonical/package.json" || ! -f "$canonical/SIZE.txt" || ! "$canonical/SIZE.txt" -nt "$tree_stamp" ]] \
+    || ! sha256sum --check --status "$clean_stamp" < "$wasm"; then
     ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
     rm -f "$clean_stamp" "$canonical/SIZE.txt"
     crates/norn-checker-wasm/scripts/build-pkg.sh "$canonical"
-    if wasm_sources_clean; then : > "$clean_stamp"; fi
+    if wasm_sources_clean; then sha256sum < "$wasm" > "$clean_stamp"; fi
   fi
   if [[ -n $out_dir && $out_dir != "$canonical" ]]; then
     python3 -c 'import pathlib, shutil, sys; src, dst = map(pathlib.Path, sys.argv[1:3]); shutil.rmtree(dst, ignore_errors=True); dst.parent.mkdir(parents=True, exist_ok=True); shutil.copytree(src, dst)' "$canonical" "$out_dir"
@@ -103,11 +105,13 @@ ensure_checker_wasm_engine() {
   local out_dir=${1:-}
   local canonical="$CARGO_TARGET_DIR/norn-checker-wasm/engine"
   local clean_stamp="$CARGO_TARGET_DIR/norn-checker-wasm/.engine-clean"
-  if ! wasm_sources_clean || [[ ! -f "$clean_stamp" || ! -f "$canonical/norn_engine_wasm_bg.wasm" || ! -f "$canonical/package.json" || ! -f "$canonical/SIZE.txt" || ! "$canonical/SIZE.txt" -nt "$tree_stamp" ]]; then
+  local wasm="$canonical/norn_engine_wasm_bg.wasm"
+  if ! wasm_sources_clean || [[ ! -s "$clean_stamp" || ! -f "$wasm" || ! -f "$canonical/package.json" || ! -f "$canonical/SIZE.txt" || ! "$canonical/SIZE.txt" -nt "$tree_stamp" ]] \
+    || ! sha256sum --check --status "$clean_stamp" < "$wasm"; then
     ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
     rm -f "$clean_stamp" "$canonical/SIZE.txt"
     NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh "$canonical"
-    if wasm_sources_clean; then : > "$clean_stamp"; fi
+    if wasm_sources_clean; then sha256sum < "$wasm" > "$clean_stamp"; fi
   fi
   if [[ -n $out_dir && $out_dir != "$canonical" ]]; then
     python3 -c 'import pathlib, shutil, sys; src, dst = map(pathlib.Path, sys.argv[1:3]); shutil.rmtree(dst, ignore_errors=True); dst.parent.mkdir(parents=True, exist_ok=True); shutil.copytree(src, dst)' "$canonical" "$out_dir"

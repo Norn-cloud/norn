@@ -506,6 +506,14 @@ printf 'ok\\n' > "$out/SIZE.txt"
         self.assertEqual(run_ensure(), ["pkg", "engine"] * 5)
         manifest.write_text(original_manifest)
 
+        # A direct overwrite with a clean tree and fresh SIZE.txt still forces a rebuild.
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 6)
+        canonical = target_dir / "norn-checker-wasm"
+        (canonical / "pkg/norn_checker_wasm_bg.wasm").write_bytes(b"overwritten checker")
+        (canonical / "engine/norn_engine_wasm_bg.wasm").write_bytes(b"overwritten engine")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 7)
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 7)
+
     def test_bundle_executor_logs_success_and_propagates_failure(self):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
         plan = {"mode": "affected", "shard": [], "phase": ["test-shards"]}
