@@ -32,26 +32,31 @@ pub struct LedgerPackSeal {
 
 impl LedgerPackSeal {
     /// Canonical SHA-256 identity of the exact ordered pack IR.
+    #[must_use]
     pub fn pack_sha256(&self) -> &str {
         self.pack_sha256.as_str()
     }
 
     /// Checker-generated certificates for all admitted template partitions.
+    #[must_use]
     pub fn certificates(&self) -> &[ConservationCertificate] {
         self.certificates.as_slice()
     }
 
     /// Pack identifier bound into this seal.
+    #[must_use]
     pub fn pack_id(&self) -> &str {
         self.compiled.pack_id.as_str()
     }
 
     /// Exact ontology artifact identity bound by this seal.
+    #[must_use]
     pub fn ontology_artifact(&self) -> &LedgerOntologyArtifactPin {
         &self.ontology_artifact
     }
 
     /// Digest of the exact ordered unit-term and quantity-kind bindings.
+    #[must_use]
     pub fn unit_bindings_sha256(&self) -> &str {
         self.unit_bindings_sha256.as_str()
     }
@@ -223,6 +228,11 @@ pub fn conservation_certificate_sha256(certificate: &ConservationCertificate) ->
 }
 
 /// Validates and compiles a pack into the only seal accepted by the posting boundary.
+///
+/// # Errors
+///
+/// Returns the full [`LedgerPackValidation`] report when the pack fails
+/// structural, precision, bound, or conservation validation.
 pub fn seal_ledger_pack(pack: &LedgerPackIr) -> Result<LedgerPackSeal, LedgerPackValidation> {
     let (validation, compiled) = check_ledger_pack(pack);
     match compiled {
@@ -239,6 +249,11 @@ pub fn seal_ledger_pack(pack: &LedgerPackIr) -> Result<LedgerPackSeal, LedgerPac
 
 /// Replays the executable checker and verifies that one certificate belongs to
 /// this exact pack, checker, IR, template, unit, layer, and precision.
+///
+/// # Errors
+///
+/// Returns diagnostics when the certificate version, pack binding, SHA-256
+/// digest, or claims disagree with the active checker over `pack`.
 pub fn verify_conservation_certificate(
     pack: &LedgerPackIr,
     certificate: &ConservationCertificate,
@@ -300,52 +315,18 @@ pub fn verify_conservation_certificate(
 
 /// Checks proof references and exact runtime inputs, then emits the only
 /// commitment a future CALA posting adapter should accept.
+///
+/// # Errors
+///
+/// Returns diagnostics when the posting intent fails header validation,
+/// template evaluation fails, or the seal's conservation certificates do not
+/// match the evaluated `(unit, layer, precision)` partitions.
 pub fn prepare_quantity_posting(
     seal: &LedgerPackSeal,
     intent: &QuantityPostingIntent,
 ) -> Result<QuantityPostingCommitment, Vec<Diagnostic>> {
     let artifact_id = Some(seal.pack_id().to_string());
-    let mut diagnostics = Vec::new();
-    if intent.contract_version != QUANTITY_POSTING_CONTRACT_VERSION {
-        diagnostics.push(diag(
-            diagnostic_codes::POSTING_CONTRACT_VERSION_MISMATCH,
-            format!(
-                "unsupported posting contract version `{}`; expected `{QUANTITY_POSTING_CONTRACT_VERSION}`",
-                intent.contract_version
-            ),
-            "contractVersion",
-            artifact_id.clone(),
-        ));
-    }
-    for (path, value) in [
-        ("scopeKey", intent.scope_key.as_str()),
-        ("transitionId", intent.transition_id.as_str()),
-        ("idempotencyKey", intent.idempotency_key.as_str()),
-        ("templateId", intent.template_id.as_str()),
-    ] {
-        if value.is_empty() || value.trim() != value {
-            diagnostics.push(diag(
-                diagnostic_codes::POSTING_IDENTITY_EMPTY,
-                format!("{path} must be non-empty and contain no surrounding whitespace"),
-                path,
-                artifact_id.clone(),
-            ));
-        }
-    }
-    if intent.pack_id != seal.pack_id()
-        || intent.pack_sha256 != seal.pack_sha256()
-        || intent.checker_version != LEDGER_PACK_CHECKER_VERSION
-    {
-        diagnostics.push(diag(
-            diagnostic_codes::POSTING_REFERENCE_MISMATCH,
-            "posting references do not match the installed pack seal and checker",
-            "packSha256",
-            artifact_id.clone(),
-        ));
-    }
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
-    }
+    validate_posting_intent_header(seal, intent, artifact_id.as_deref())?;
 
     let evaluation = evaluate_ledger_template(
         &seal.compiled,
@@ -424,7 +405,62 @@ pub fn prepare_quantity_posting(
     })
 }
 
+fn validate_posting_intent_header(
+    seal: &LedgerPackSeal,
+    intent: &QuantityPostingIntent,
+    artifact_id: Option<&str>,
+) -> Result<(), Vec<Diagnostic>> {
+    let mut diagnostics = Vec::new();
+    if intent.contract_version != QUANTITY_POSTING_CONTRACT_VERSION {
+        diagnostics.push(diag(
+            diagnostic_codes::POSTING_CONTRACT_VERSION_MISMATCH,
+            format!(
+                "unsupported posting contract version `{}`; expected `{QUANTITY_POSTING_CONTRACT_VERSION}`",
+                intent.contract_version
+            ),
+            "contractVersion",
+            artifact_id.map(str::to_owned),
+        ));
+    }
+    for (path, value) in [
+        ("scopeKey", intent.scope_key.as_str()),
+        ("transitionId", intent.transition_id.as_str()),
+        ("idempotencyKey", intent.idempotency_key.as_str()),
+        ("templateId", intent.template_id.as_str()),
+    ] {
+        if value.is_empty() || value.trim() != value {
+            diagnostics.push(diag(
+                diagnostic_codes::POSTING_IDENTITY_EMPTY,
+                format!("{path} must be non-empty and contain no surrounding whitespace"),
+                path,
+                artifact_id.map(str::to_owned),
+            ));
+        }
+    }
+    if intent.pack_id != seal.pack_id()
+        || intent.pack_sha256 != seal.pack_sha256()
+        || intent.checker_version != LEDGER_PACK_CHECKER_VERSION
+    {
+        diagnostics.push(diag(
+            diagnostic_codes::POSTING_REFERENCE_MISMATCH,
+            "posting references do not match the installed pack seal and checker",
+            "packSha256",
+            artifact_id.map(str::to_owned),
+        ));
+    }
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
+    }
+}
+
 /// Classifies a retry without performing any mutation.
+///
+/// # Errors
+///
+/// Returns diagnostics when an existing idempotency record belongs to a
+/// different scope or key, or lacks a canonical SHA-256 `stableResultSha256`.
 pub fn classify_quantity_replay(
     commitment: &QuantityPostingCommitment,
     existing: Option<&QuantityIdempotencyRecord>,
@@ -463,6 +499,12 @@ pub fn classify_quantity_replay(
 /// This checker detects partial or cross-wired evidence after reopen. It does
 /// not establish that the store is atomic; crash injection must demonstrate
 /// that partial observations are unreachable in the authority host's SQLite adapter.
+///
+/// # Errors
+///
+/// Returns diagnostics when the observed post-state is partial, overflows
+/// `ownerVersion`, or contains mismatched hashes, idempotency, or outbox
+/// records.
 pub fn verify_quantity_commit_observation(
     commitment: &QuantityPostingCommitment,
     observation: &QuantityAuthorityCommitObservation,
@@ -473,6 +515,41 @@ pub fn verify_quantity_commit_observation(
 
     let artifact_id = Some(commitment.pack_id.clone());
     let mut diagnostics = Vec::new();
+    verify_observation_hashes(
+        commitment,
+        observation,
+        artifact_id.as_deref(),
+        &mut diagnostics,
+    );
+    let stable_result_sha256 = verify_observation_owner_and_records(
+        commitment,
+        observation,
+        artifact_id.as_deref(),
+        &mut diagnostics,
+    );
+
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+    match stable_result_sha256 {
+        Some(stable_result_sha256) => Ok(QuantityCommitStatus::Committed {
+            stable_result_sha256,
+        }),
+        None => Err(vec![diag(
+            diagnostic_codes::PARTIAL_COMMIT_EVIDENCE,
+            "committed observation has no stable result",
+            "idempotencyResult",
+            Some(commitment.pack_id.clone()),
+        )]),
+    }
+}
+
+fn verify_observation_hashes(
+    commitment: &QuantityPostingCommitment,
+    observation: &QuantityAuthorityCommitObservation,
+    artifact_id: Option<&str>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     for (path, observed) in [
         (
             "quantityTransactionInputSha256",
@@ -511,11 +588,18 @@ pub fn verify_quantity_commit_observation(
             path,
             observed,
             commitment.posting_input_sha256.as_str(),
-            artifact_id.clone(),
-            &mut diagnostics,
+            artifact_id.map(str::to_owned),
+            diagnostics,
         );
     }
+}
 
+fn verify_observation_owner_and_records(
+    commitment: &QuantityPostingCommitment,
+    observation: &QuantityAuthorityCommitObservation,
+    artifact_id: Option<&str>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<String> {
     match commitment.expected_owner_version.checked_add(1) {
         Some(expected) if observation.owner_version == Some(expected) => {}
         Some(expected) => diagnostics.push(diag(
@@ -526,13 +610,13 @@ pub fn verify_quantity_commit_observation(
             },
             format!("owner version must be present and equal {expected}"),
             "ownerVersion",
-            artifact_id.clone(),
+            artifact_id.map(str::to_owned),
         )),
         None => diagnostics.push(diag(
             diagnostic_codes::OWNER_VERSION_OVERFLOW,
             "expected owner version cannot advance without overflow",
             "expectedOwnerVersion",
-            artifact_id.clone(),
+            artifact_id.map(str::to_owned),
         )),
     }
 
@@ -550,13 +634,13 @@ pub fn verify_quantity_commit_observation(
             diagnostic_codes::IDEMPOTENCY_RECORD_MISMATCH,
             "idempotency result does not match scope, key, input, and stable result obligations",
             "idempotencyResult",
-            artifact_id.clone(),
+            artifact_id.map(str::to_owned),
         )),
         None => diagnostics.push(diag(
             diagnostic_codes::PARTIAL_COMMIT_EVIDENCE,
             "committed observation is missing its idempotency result",
             "idempotencyResult",
-            artifact_id.clone(),
+            artifact_id.map(str::to_owned),
         )),
     }
 
@@ -569,30 +653,17 @@ pub fn verify_quantity_commit_observation(
             diagnostic_codes::COMMIT_EVIDENCE_MISMATCH,
             "outbox identity, transition, or input hash does not match the posting commitment",
             "outbox",
-            artifact_id,
+            artifact_id.map(str::to_owned),
         )),
         None => diagnostics.push(diag(
             diagnostic_codes::PARTIAL_COMMIT_EVIDENCE,
             "committed observation is missing its outbox record",
             "outbox",
-            artifact_id,
+            artifact_id.map(str::to_owned),
         )),
     }
 
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
-    }
-    match stable_result_sha256 {
-        Some(stable_result_sha256) => Ok(QuantityCommitStatus::Committed {
-            stable_result_sha256,
-        }),
-        None => Err(vec![diag(
-            diagnostic_codes::PARTIAL_COMMIT_EVIDENCE,
-            "committed observation has no stable result",
-            "idempotencyResult",
-            Some(commitment.pack_id.clone()),
-        )]),
-    }
+    stable_result_sha256
 }
 
 fn parameter_sha256(parameters: &[LedgerParameterValue]) -> String {

@@ -261,6 +261,21 @@ fn validate_correspondence(
             artifact_id,
         ));
     }
+    validate_correspondence_evidence(item, path, diagnostics, artifact_id);
+    for field in ["transformRef", "rulingRef"] {
+        if item.contains_key(field) {
+            required(field, diagnostics);
+        }
+    }
+    id.zip(from_term)
+}
+
+fn validate_correspondence_evidence(
+    item: &std::collections::BTreeMap<String, JsonValue>,
+    path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
     let evidence = string_list(
         item.get("evidenceRefs"),
         &format!("{path}.evidenceRefs"),
@@ -298,12 +313,6 @@ fn validate_correspondence(
             artifact_id,
         )),
     }
-    for field in ["transformRef", "rulingRef"] {
-        if item.contains_key(field) {
-            required(field, diagnostics);
-        }
-    }
-    id.zip(from_term)
 }
 
 fn validate_residuals(

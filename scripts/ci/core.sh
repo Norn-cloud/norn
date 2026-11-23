@@ -11,7 +11,7 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # `all` runs every phase, in this order, in one checkout. CI packs its
 # selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
-phases=(cheap test doctest features duckdb wasm clippy doc guards integration-authoring integration-wasm integration-clients browser formal provenance)
+phases=(cheap test doctest features duckdb wasm clippy doc rivet guards integration-authoring integration-wasm integration-clients browser formal rivet-conformance provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
@@ -54,6 +54,10 @@ refresh_sources() {
   [[ $previous == "$current" ]] || printf '%s\n' "$current" > "$tree_stamp"
 }
 refresh_sources
+# Keep the hosted planner independent of a Cargo build.
+case "${1:-}" in
+  bundle|bundle-plan|bundle-check) exec cargo xtask ci "$@" ;;
+esac
 # Fails unless binary $1 was built after this tree was stamped.
 require_fresh() {
   [[ -x $1 && $1 -nt $tree_stamp ]] || { echo "core.sh: $1 is older than this tree; rebuild it" >&2; exit 1; }
@@ -251,7 +255,7 @@ PYTHON
 )
 
 run_phase() {
-  if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
+  if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && $1 != rivet && $1 != rivet-conformance && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
     cheap)
       bash scripts/ci/secret-scan.sh .
@@ -287,15 +291,15 @@ run_phase() {
       lint_workflows
       cargo xtask ci policy
       cargo xtask ci provenance
-      # The Rust half of the concurrency parity check runs on every plan, whatever packages the
-      # plan selects, and its two named tests must have run and passed.
+      # The Rust concurrency and bundle checks run on every plan, whatever packages the
+      # plan selects, and all named tests must have run and passed.
       ensure_nextest
       # nextest keeps its reports under the workspace root's target/nextest, whatever
       # CARGO_TARGET_DIR says, and the guard's workspace root is its own directory (#1270).
       parity_report="$(cargo metadata --locked --format-version 1 --no-deps "${guard[@]}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["workspace_root"])')/target/nextest/ci/junit.xml"
       rm -f "$parity_report"
-      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
-      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture
+      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture) | test(=ci::bundle::tests::matches_python_on_real_plans) | test(=ci::bundle::tests::refuses_wrong_inventories_and_ids) | test(=ci::bundle::tests::groups_shared_builds_and_prunes_every_other_boundary) | test(=ci::bundle::tests::prunes_only_workspace_cargo_outputs)'
+      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture ci::bundle::tests::matches_python_on_real_plans ci::bundle::tests::refuses_wrong_inventories_and_ids ci::bundle::tests::groups_shared_builds_and_prunes_every_other_boundary ci::bundle::tests::prunes_only_workspace_cargo_outputs
       ;;
     test)
       select_shard "${2:-all}"
@@ -366,7 +370,10 @@ PY
       # tenant engine's correspondence suite and the transform backend); full plans run this
       # phase, and affected plans run it whenever norn-cell is reached. The in-process
       # `duckdb_question` target was retired with the SQL question path (#1395).
-      cargo test --locked -p norn-cell --features duckdb --lib -- suites::analytics_engine:: suites::duckdb_transform::
+      cargo test --locked -p norn-cell --features duckdb --lib -- suites::analytics_engine:: suites::duckdb_transform:: analytics::engine::tests::
+      # MANIFEST-LAWS-1 (#1514): compare set-based laws with the per-row path in the
+      # DuckDB-only dataset_laws module of the integration suite.
+      cargo test --locked -p norn-cell --features duckdb --test suites dataset_laws::
       ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
@@ -381,6 +388,25 @@ PY
     doc)
       RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
       RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps
+      ;;
+    rivet)
+      # crates/norn-cell-rivet is its own Cargo workspace (D131): Rivet's SQLite and the native
+      # engine cannot share the root lockfile. Its .cargo/config.toml (the SQLite flags Rivet's VFS
+      # requires) applies only from its own directory, and it builds in its own target subtree.
+      # A RivetKit change ships only with a storage version bump, judged against the base (#1513).
+      python3 scripts/ci/test_rivetkit_channel.py
+      python3 scripts/ci/rivetkit_channel.py --base "${NORN_CI_BASE:-origin/main}" --require-lock
+      (
+        cd crates/norn-cell-rivet
+        export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/rivet"
+        cargo fmt --check
+        cargo clippy --locked --all-targets -- -D warnings
+        cargo clippy --locked --all-targets --features conformance -- -D warnings
+        RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
+        RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features conformance
+        cargo test --locked
+        cargo test --locked --features conformance
+      )
       ;;
     guards)
       crates/norn-skeleton-guard/scripts/zen-dependency-tree.sh
@@ -506,6 +532,16 @@ PY
       scripts/bootstrap-rust-extraction-tools.sh
       scripts/verify-promoted-subsystems.sh full
       ;;
+    rivet-conformance)
+      # The host conformance suite on the native Rivet host: Rivet Engine 3.1.1 in Docker (pinned
+      # digest) with two runners of a release `conformance` build, against the native reference.
+      # About 20 minutes on a default VM, past a bundle's 11-minute target, and it needs Docker:
+      # like formal, it is a Boat gate that no CI plan selects.
+      (cd crates/norn-cell-rivet && CARGO_TARGET_DIR="$CARGO_TARGET_DIR/rivet" cargo build --locked --release --features conformance)
+      NORN_CELL_DO_CONFORMANCE_OUT="$upstream/rivet-reference.json" cargo test --locked -p norn-cell-do --test suites conformance_reference::
+      NORN_CELL_RIVET="$CARGO_TARGET_DIR/rivet/release/norn-cell-rivet" python3 apps/norn-cell-do/conformance/conformance.py \
+        --reference "$upstream/rivet-reference.json" --host rivet-native --out "$upstream/rivet-conformance.json"
+      ;;
     provenance)
       export CI=true
       cargo xtask ci provenance
@@ -516,36 +552,16 @@ PY
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
 }
-# Drops Cargo build outputs between bundle tasks (#1059). Only the workspace's own
-# target dir is touched: CARGO_TARGET_DIR is canonicalized (symlinks and `..` resolved)
-# and anything else (empty, /, $HOME, the workspace or an ancestor, a sibling, a
-# symlink out of the workspace) is refused and left in place. Inside it only Cargo's
-# profile and target-triple trees (each holds a `.fingerprint`) and `doc` go;
-# verification evidence and tools (target/verification-*), symlinks and any other
-# content stay.
-prune_target() {
-  local root target entry name
-  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0
-  if [[ $target != "$root/target" ]]; then
-    printf '::warning::refusing to prune %s: only %s/target may be pruned\n' "$target" "$root"
-    return 0
-  fi
-  for entry in "$target"/*; do
-    name=${entry##*/}
-    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue
-    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then
-      rm -rf -- "$entry"
-    fi
-  done
-}
-bundle_plan() {
-  python3 - "$1" "$2" "${3:-}" "$(list_shards)" "${phases[*]}" <<'PY'
+# The hosted plan job has no prebuilt xtask. Keep its packing model in sync
+# with the Rust runner until the planner can use a cached or prebuilt binary.
+hosted_bundle_plan() {
+  python3 - "$1" "$(list_shards)" "${phases[*]}" <<'PY'
 import json, sys
-mode, raw, selected, shards, phases = sys.argv[1:]
+raw, shards, phases = sys.argv[1:]
 plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
-    if phase not in {"cheap", "test", "formal"}}
+    if phase not in {"cheap", "test", "formal", "rivet-conformance"}}
 # Task seconds on Boat, where merge groups and allowlisted pull requests run (#1348): p50 of
 # green tasks over 287 Boat bundle jobs of 80 green runs (40 merge groups, 40 pull requests,
 # runs 44493680372..44951869655, 2026-11-19..21). A test task's seconds are net of the test
@@ -561,6 +577,8 @@ weights = {
     "test/rest-1": 348, "test/rest-2": 348, "test/rest-3": 348,
     "phase/doctest": 48, "phase/features": 791, "phase/duckdb": 630, "phase/wasm": 239,
     "phase/clippy": 119, "phase/doc": 88, "phase/guards": 532,
+    # Not yet recorded in CI: one Boat run on an empty target (default VM), 2026-11-21.
+    "phase/rivet": 496,
     # Split integration timings from run 45037150223; authoring includes an estimate for two concurrent Bun shards.
     "phase/integration-authoring": 1030, "phase/integration-wasm": 707,
     "phase/integration-clients": 170, "phase/provenance": 13, "phase/test-shards": 14,
@@ -627,28 +645,18 @@ bins = min(candidates, default=(0, 0, []))[2]
 bundles = [{"id": f"b{index}", "tasks": tasks} for index, tasks in enumerate(bins) if tasks]
 if sorted(task for bundle in bundles for task in bundle["tasks"]) != sorted(tasks):
     raise SystemExit("bundle inventory dropped a planned task")
-if mode == "pack":
-    plan["bundle"] = bundles
-    print(json.dumps(plan))
-elif mode in {"check", "tasks"}:
-    if plan.get("bundle") != bundles:
-        raise SystemExit("bundle inventory differs from the deterministic plan")
-    if mode == "tasks":
-        matching = [bundle for bundle in bundles if bundle["id"] == selected]
-        if len(matching) != 1:
-            raise SystemExit("unknown bundle identity")
-        print("\n".join(matching[0]["tasks"]))
-else:
-    raise SystemExit("unknown bundle operation")
+plan["bundle"] = bundles
+print(json.dumps(plan))
 PY
 }
 
 case "${1:-all}" in
   # Pull requests get the dependency closure of their diff. Merge groups, main and manual runs
-  # (no base) and unplannable changes run every shard and phase; formal remains a Boat gate.
+  # (no base) and unplannable changes run every shard and phase; formal and rivet-conformance
+  # remain Boat gates.
   plan)
     others=()
-    for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test || $phase == formal ]] || others+=("$phase"); done
+    for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test || $phase == formal || $phase == rivet-conformance ]] || others+=("$phase"); done
     case "${2:-}" in
       '') [[ $# -le 1 ]] || run_phase usage; changed='' ;;
       --affected) [[ $# -ge 3 && $# -le 4 && $3 =~ ^[0-9a-f]{40}$ && ${4:-HEAD} =~ ^([0-9a-f]{40}|HEAD)$ ]] || run_phase usage; changed=$(git diff --name-only --no-renames "$3" "${4:-HEAD}" --) || exit 2 ;;
@@ -724,48 +732,16 @@ selected_heavy = [f"heavy-{i}" for i, expression in enumerate(heavy, 1)
 browser = ["browser"] if "norn-checker-wasm" in reached else []
 # The DuckDB backend lives in norn-cell: a change that reaches it builds and tests it (#1206).
 duckdb = ["duckdb"] if "norn-cell" in reached else []
+# The Rivet host's own workspace builds these root crates by path; its own files plan in full.
+rivet = ["rivet"] if reached & {"norn-api", "norn-cell", "norn-cell-do"} else []
 # A plan that reaches no workspace package (Markdown only) runs no test shard: empty packages
 # would not narrow a shard, and the guard's own suite runs in the guards phase (#1270).
 rest_names = [f"rest-{i}" for i in range(1, parts + 1)] if reached else []
-done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + browser + duckdb,
+done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + browser + duckdb + rivet,
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
 PY
 )
-    bundle_plan pack "$plan"
-    ;;
-  bundle-plan) [[ $# -eq 2 ]] || run_phase usage; bundle_plan pack "$2" ;;
-  bundle-check) [[ $# -eq 2 ]] || run_phase usage; bundle_plan check "$2" ;;
-  bundle)
-    [[ $# -eq 3 ]] || run_phase usage
-    task_lines=$(bundle_plan tasks "$2" "$3")
-    [[ $task_lines == phase/test-shards ]] || prepare_inputs
-    # One test build per bundle (#1348 CI2): every test shard of a plan builds the same test
-    # binaries (same packages, same features), and so does `test-shards` in a plan that
-    # names no packages. Those tasks run first and back to back, and no prune separates
-    # them, so the first builds and the rest reuse it. Same tasks, only their order changes.
-    shares_build() { [[ $1 == test/* || ( $1 == phase/test-shards && -z ${NORN_CI_PACKAGES:-} ) ]]; }
-    task_lines=$(while read -r task; do if shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines"
-                 while read -r task; do if ! shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines")
-    pruned='' previous=''
-    while IFS=/ read -r kind item; do
-      task="$kind/$item"
-      # Other bundle tasks never share build outputs (the planner packs them freely), so each
-      # drops the previous task's target dir and starts as on a fresh VM (#1059). Three bundles
-      # put disk-heavy tasks together: guards after integration ran out of a default VM's disk
-      # with more than 40 GiB free at the boundary (#1498), so a free-space threshold is not enough.
-      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; }; then
-        prune_target
-        printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
-      fi
-      pruned=1 previous=$task
-      printf '::group::%s\n' "$task"
-      (
-        task_start=$SECONDS
-        span_begin "$task"
-        trap 'task_status=$?; span_end "$task_status"; result=failure; [[ $task_status -ne 0 ]] || result=success; printf "::notice::task=%s result=%s seconds=%s\n::endgroup::\n" "$task" "$result" "$((SECONDS-task_start))"; exit "$task_status"' EXIT
-        if [[ $kind == test ]]; then run_phase test "$item"; else run_phase "$item"; fi
-      )
-    done <<<"$task_lines"
+    hosted_bundle_plan "$plan"
     ;;
   all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do timed_phase "$phase"; done ;;
   shards) list_shards ;;

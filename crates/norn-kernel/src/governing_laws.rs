@@ -565,6 +565,41 @@ impl TypeCatalog<'_> {
         Ok(laws)
     }
 }
+/// MANIFEST-LAWS-1: one governing law of `subject` as a bulk evaluator reads
+/// it: its declaration and the rule identity its findings carry. A law with
+/// semantics the per-row evaluator refuses, or that reads a link, is refused
+/// here too.
+///
+/// # Errors
+/// Unsupported semantics, a link read, or an undecodable law.
+pub fn law_rule(
+    catalog: &TypeCatalog<'_>,
+    subject: &ObjectTypeName,
+    artifact: &ArtifactEnvelope,
+) -> Result<(LawIR, norn_ir::DataQualityRuleRef), LawEvaluationError> {
+    let law = decode(catalog, artifact)?;
+    if !supported(law) {
+        return Err(LawEvaluationError::Unsupported(law.id.clone()));
+    }
+    if !law_link_reads(catalog, subject, law)?.is_empty() {
+        return Err(LawEvaluationError::Unsupported(format!(
+            "{}: a law that reads a link has no dataset semantics",
+            law.id
+        )));
+    }
+    invariant_binding(catalog, subject, law)?;
+    Ok((law.clone(), pin(artifact, law)?))
+}
+
+/// MANIFEST-LAWS-1: a law or invariant source over one row bound to `self`,
+/// as the bounded row tree a set-based evaluator lowers, or `None` when the
+/// source uses anything outside that subset (VIEW-ENGINE-1). A `None` law is
+/// decided by the per-row evaluator alone.
+#[must_use]
+pub fn law_row_tree(source: &str) -> Option<norn_expr::RowExpr> {
+    norn_expr::row_expression(source, "self").ok().flatten()
+}
+
 fn supported(law: &LawIR) -> bool {
     // An exception tree has no commit-path semantics until the per-write fold
     // lands; refusing keeps a law from being evaluated without its exceptions.

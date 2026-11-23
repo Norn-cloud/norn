@@ -34,6 +34,10 @@ class FakeCell {
   static fixturesEnabled() {
     return false;
   }
+  /** The cell's engine step bound (MANIFEST-LAWS-1 S1); small, so the Worker's loop is seen to end at it. */
+  static engineSteps() {
+    return 3;
+  }
   configureConnect(sources, vars) {
     world.wired.push({ call: "configureConnect", vars });
   }
@@ -508,5 +512,24 @@ describe("the analytics signing key's wiring (OLAP-01)", () => {
       // The connections still get their own secrets and storage settings.
       expect(JSON.parse(vars), call).toMatchObject({ NORN_SECRET_ERPNEXT_REST_TOKEN: "connection-token", NORN_S3_SECRET_ACCESS_KEY: "storage-secret" });
     }
+  });
+});
+
+describe("the engine step bound (MANIFEST-LAWS-1 S1)", () => {
+  test("the Worker makes at most the cell's own bound of engine calls, then answers unsettled", async () => {
+    const { ctx } = object();
+    const cell = new Cell(ctx, { NORN_OLAP_URL: "http://olapd.internal:8790" });
+    const call = (op) => JSON.stringify({ op, credential: "minted", body: "{}" });
+    const calls = [];
+    cell.engine = async (sent) => {
+      calls.push(sent.op);
+      return { status: 200, body: "{}" };
+    };
+    // A cell that always asks for one more settle: only the bound ends the loop.
+    cell.cell = { resumeEngine: () => ({ engine: call("settle") }) };
+    const reply = await cell.settle(new Request("https://cell.invalid/v1/datasets:load", { method: "POST" }), "{}", { engine: call("land") });
+    expect(calls.length).toBe(FakeCell.engineSteps());
+    expect(reply.status).toBe(503);
+    expect(JSON.parse(reply.body).code).toBe("analytics.unsettled");
   });
 });
