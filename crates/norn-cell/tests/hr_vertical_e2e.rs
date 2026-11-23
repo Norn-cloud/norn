@@ -22,10 +22,13 @@ use norn_cell::{
     InstalledDefinitionInput, MAIN_WORLD, MarkingDeclassification, MarkingReveal, Model,
     SqliteCell, StoreOptions,
 };
-use norn_checker::{EntityArtifactSetContext, check_artifact_set, marking_catalog_from_artifacts};
+use norn_checker::{
+    EntityArtifactSetContext, ReceiptSources, admission_receipt_sha256, check_artifact_set,
+    check_artifact_set_with_receipt, marking_catalog_from_artifacts,
+};
 use norn_ir::{
     AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, InterfaceDef, MarkingId, MaskPolicy,
-    ObjectTypeDef, PropertyTypeDef, RuntimeValue,
+    ObjectTypeDef, PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
 };
 use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, DenyReason, Pdp,
@@ -316,8 +319,11 @@ impl ActionAuthorizer for HrPrincipals {
 }
 
 struct HrVerticalFixture {
+    base_values: Vec<Value>,
     artifact_values: Vec<Value>,
     artifacts: Vec<ArtifactEnvelope>,
+    admission_receipt: String,
+    receipt_sha256: String,
     types: Vec<ObjectTypeDef>,
     properties: Vec<PropertyTypeDef>,
     interfaces: Vec<InterfaceDef>,
@@ -333,20 +339,42 @@ impl HrVerticalFixture {
         let base = decode_envelopes(&base_values);
         let artifacts = decode_envelopes(&artifact_values);
 
+        let to_runtime = |values: &[Value]| -> Vec<RuntimeValue> {
+            values
+                .iter()
+                .map(|value| RuntimeValue::from_json(value.clone()).expect("exact artifact JSON"))
+                .collect()
+        };
+        let sources = to_runtime(&artifact_values);
+        let base_sources = to_runtime(&base_values);
         let registry = BTreeSet::new();
-        let findings = check_artifact_set(
-            &artifacts,
+        let checked = check_artifact_set_with_receipt(
+            &ReceiptSources::new(&sources, &base_sources).expect("receipt sources"),
             &EntityArtifactSetContext {
                 registry: &registry,
                 base: &base,
                 tenant: None,
             },
-        );
-        let errors: Vec<_> = findings.iter().filter(|d| d.is_error()).collect();
+            &ResourceLimitProfile::norn_limits_v1(),
+        )
+        .expect("HR vertical admission receipt");
         assert!(
-            errors.is_empty(),
-            "HR vertical packs must admit with zero error diagnostics: {errors:#?}"
+            checked.receipt.admitted,
+            "HR vertical packs must admit with zero error diagnostics: {:#?}",
+            checked.diagnostics
         );
+        let admission_receipt = String::from_utf8(
+            norn_ir::canonical::serialize(
+                &checked
+                    .receipt
+                    .to_canonical_value()
+                    .expect("admission receipt canonical value"),
+            )
+            .expect("admission receipt canonicalizes"),
+        )
+        .expect("admission receipt is UTF-8");
+        let receipt_sha256 =
+            admission_receipt_sha256(&admission_receipt).expect("admission receipt sha256");
 
         let mut types = Vec::new();
         let mut properties = Vec::new();
@@ -406,8 +434,11 @@ impl HrVerticalFixture {
         let principals = HrPrincipals::new(&types, &interfaces, &properties, &actions, &policies);
 
         Self {
+            base_values,
             artifact_values,
             artifacts,
+            admission_receipt,
+            receipt_sha256,
             types,
             properties,
             interfaces,
@@ -432,18 +463,20 @@ impl HrVerticalFixture {
     }
 
     fn install_input(&self) -> InstalledDefinitionInput {
+        let mut combined = self.artifact_values.clone();
+        combined.extend(self.base_values.iter().cloned());
         let canonical_set = String::from_utf8(
-            RuntimeValue::from_json(Value::Array(self.artifact_values.clone()))
-                .expect("HR vertical artifact set is exact JSON")
+            RuntimeValue::from_json(Value::Array(combined))
+                .expect("HR vertical + core base artifact set is exact JSON")
                 .canonical_json()
-                .expect("HR vertical artifact set canonicalizes"),
+                .expect("HR vertical + core base artifact set canonicalizes"),
         )
-        .expect("canonical HR vertical set is UTF-8");
+        .expect("canonical HR vertical + core base set is UTF-8");
         InstalledDefinitionInput {
             canonical_set,
             registry: Vec::new(),
-            receipt_sha256: "hr-vertical-e2e-v1".to_owned(),
-            admission_receipt: None,
+            receipt_sha256: self.receipt_sha256.clone(),
+            admission_receipt: Some(self.admission_receipt.clone()),
             readmission: None,
             diff: json!({"added": {"count": self.artifacts.len()}}),
             installed_at: KNOWN_AT,
