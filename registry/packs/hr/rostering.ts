@@ -359,7 +359,7 @@ export const ProposeRoster = Norn.action({
   ledgered: true,
   access: { artifactId: "hr.access.policy", version: "0.1.0" },
   input: Schema.Struct({ rosterId: Schema.String }),
-  output: Schema.Struct({ rosterId: Schema.String, status: RosterStatus }),
+  output: Schema.Struct({ rosterId: Schema.String, status: Schema.String }),
   writes: [{ type: Roster, change: "modified" }],
   effect: {
     kind: "fire_transition",
@@ -386,7 +386,7 @@ export const PublishRoster = Norn.action({
     Norn.unsafeZen<boolean>("slice.roster.solver_receipt_digest != null"),
   ],
   input: Schema.Struct({ rosterId: Schema.String }),
-  output: Schema.Struct({ rosterId: Schema.String, status: RosterStatus }),
+  output: Schema.Struct({ rosterId: Schema.String, status: Schema.String }),
   writes: [{ type: Roster, change: "modified" }],
   effect: {
     kind: "fire_transition",
@@ -408,7 +408,7 @@ export const RecordAttendance = Norn.action({
   access: { artifactId: "hr.access.policy", version: "0.1.0" },
   input: Schema.Struct({
     id: Schema.String,
-    action: Schema.Literals(["transfer_ownership", "transfer_custody", "consume", "produce"]),
+    action: Schema.String,
     occurred_at: Schema.String,
     quantity: Norn.decimal(6),
     unit: Schema.NullOr(Schema.String),
@@ -446,7 +446,7 @@ export const SubmitAttendanceRequest = Norn.action({
   ledgered: true,
   access: { artifactId: "hr.access.policy", version: "0.1.0" },
   input: Schema.Struct({ requestId: Schema.String }),
-  output: Schema.Struct({ requestId: Schema.String, status: AttendanceRequestStatus }),
+  output: Schema.Struct({ requestId: Schema.String, status: Schema.String }),
   writes: [{ type: AttendanceRequest, change: "modified" }],
   effect: {
     kind: "fire_transition",
@@ -467,7 +467,7 @@ export const ApproveAttendanceRequest = Norn.action({
   ledgered: true,
   access: { artifactId: "hr.access.policy", version: "0.1.0" },
   input: Schema.Struct({ requestId: Schema.String }),
-  output: Schema.Struct({ requestId: Schema.String, status: AttendanceRequestStatus }),
+  output: Schema.Struct({ requestId: Schema.String, status: Schema.String }),
   writes: [{ type: AttendanceRequest, change: "modified" }],
   effect: {
     kind: "fire_transition",

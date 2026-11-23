@@ -324,7 +324,7 @@ const LeaveTransitionInput = Schema.Struct({
 
 const LeaveTransitionOutput = Schema.Struct({
   leaveRequestId: Schema.String,
-  status: LeaveStatus,
+  status: Schema.String,
 })
 
 export const SubmitLeave = Norn.action({

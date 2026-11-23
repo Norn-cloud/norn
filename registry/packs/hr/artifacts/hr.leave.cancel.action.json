@@ -43,13 +43,6 @@
           "type": "string"
         },
         "status": {
-          "enum": [
-            "draft",
-            "pending",
-            "approved",
-            "rejected",
-            "cancelled"
-          ],
           "type": "string"
         }
       },

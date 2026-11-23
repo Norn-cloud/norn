@@ -43,12 +43,6 @@
           "type": "string"
         },
         "status": {
-          "enum": [
-            "draft",
-            "proposed",
-            "published",
-            "superseded"
-          ],
           "type": "string"
         }
       },

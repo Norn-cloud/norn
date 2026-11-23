@@ -50,12 +50,6 @@
       "additionalProperties": false,
       "properties": {
         "action": {
-          "enum": [
-            "transfer_ownership",
-            "transfer_custody",
-            "consume",
-            "produce"
-          ],
           "type": "string"
         },
         "clock_in_at": {
