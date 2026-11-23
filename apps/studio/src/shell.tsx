@@ -457,9 +457,9 @@ function Crumbs({ section, entries, pathname }: { readonly section: Section; rea
   const last = entry === undefined ? "section" : record === undefined ? "entry" : "record"
   return (
     <Breadcrumb className="min-w-0">
-      <BreadcrumbList className="flex-nowrap">
-        <BreadcrumbItem className={cn(last !== "section" && "hidden md:inline-flex")}>
-          {last === "section" || section.index === false ? <BreadcrumbPage className={cn(last !== "section" && "font-normal text-muted-foreground")}>{section.label}</BreadcrumbPage> : <BreadcrumbLink asChild><Link to={section.path}>{section.label}</Link></BreadcrumbLink>}
+      <BreadcrumbList className="min-w-0 flex-nowrap overflow-hidden">
+        <BreadcrumbItem className={cn("min-w-0", last !== "section" && "hidden md:inline-flex")}>
+          {last === "section" || section.index === false ? <BreadcrumbPage className={cn("truncate", last !== "section" && "font-normal text-muted-foreground")}>{section.label}</BreadcrumbPage> : <BreadcrumbLink asChild><Link to={section.path} className="truncate">{section.label}</Link></BreadcrumbLink>}
         </BreadcrumbItem>
         {entry && <>
           <BreadcrumbSeparator className="hidden md:block" />
@@ -718,11 +718,11 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
         </div>
       </Sidebar>
       <SidebarInset className="min-w-0 flex-row overflow-hidden">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="@container flex h-12 shrink-0 items-center justify-between gap-1 border-b px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+        <div className="@container flex min-w-0 flex-1 flex-col">
+          <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
               <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-md text-muted-foreground" />
-              <div className="hidden min-w-0 @xs:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
+              <div className="hidden min-w-0 overflow-hidden @[15rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
             </div>
             <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
             <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">

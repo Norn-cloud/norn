@@ -59,12 +59,26 @@ test("nav: every rail destination and every sidebar entry, in both perspectives,
   expect(errors).toEqual([])
 })
 
-test("header controls do not overlap Search at tablet width with the sidebar and Sidekick open", async ({ page }) => {
-  await page.setViewportSize({ width: 768, height: 900 })
+test("header applies wide spacing on desktop, keeps breadcrumbs visible at 850px with Sidekick, and never overlaps at 768px", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
   await recorded(page, [])
   await page.route("**/sidekick/config.json", (route) => route.fulfill({ json: { sidekick: 1, socket: "/sidekick/ws" } }))
-  await page.goto("/")
+  // Switch to Builder perspective and open a type detail page whose parent crumb is the Sources link.
+  await page.goto("/sources")
   await settled(page)
+  await page.getByRole("group", { name: "Perspective" }).getByRole("button", { name: "Builder" }).click()
+  await page.getByRole("navigation", { name: "Builder" }).getByRole("link", { name: "Holding" }).click()
+  await expect(page).toHaveURL(/\/sources\/canon\.Holding$/)
+  // On wide desktop, the enclosing @container activates <header>'s own @2xl/@4xl spacing and centered grid.
+  const headerStyle = () => page.locator("header").first().evaluate((el) => {
+    const style = getComputedStyle(el)
+    return { display: style.display, paddingLeft: Number.parseFloat(style.paddingLeft), columnGap: Number.parseFloat(style.columnGap) }
+  })
+  const desktopStyle = await headerStyle()
+  expect(desktopStyle.display).toBe("grid")
+  expect(desktopStyle.paddingLeft).toBeGreaterThanOrEqual(14)
+  expect(desktopStyle.columnGap).toBeGreaterThanOrEqual(10)
+
   const checkHeader = async () => {
     const header = await page.locator("header").first().boundingBox()
     const trigger = await page.getByRole("button", { name: "Toggle Sidebar" }).boundingBox()
@@ -76,11 +90,29 @@ test("header controls do not overlap Search at tablet width with the sidebar and
     expect(search!.x + search!.width).toBeLessThanOrEqual(perspective!.x + 1)
     expect(perspective!.x + perspective!.width).toBeLessThanOrEqual(notifications!.x + 1)
     expect(notifications!.x + notifications!.width).toBeLessThanOrEqual(header!.x + header!.width + 1)
+    return { search: search! }
   }
-  await checkHeader()
-  // Open Sidekick alongside the open sidebar: the header stays ~204px wide and controls still do not overlap.
+
+  // Open Sidekick alongside the open sidebar.
   await page.getByRole("toolbar", { name: "Studio" }).getByRole("button", { name: "Sidekick" }).click()
   await expect(page.locator('[data-slot="assistant-panel"]')).toBeVisible()
+
+  // At 850px with both panels docked, the Sources parent breadcrumb link remains visible and non-overlapping.
+  await page.setViewportSize({ width: 850, height: 900 })
+  const { search: searchAt850 } = await checkHeader()
+  const sourcesCrumb = page.getByRole("navigation", { name: "breadcrumb" }).getByRole("link", { name: "Sources" })
+  await expect(sourcesCrumb).toBeVisible()
+  const crumbBox = await sourcesCrumb.boundingBox()
+  expect(crumbBox).toBeTruthy()
+  expect(crumbBox!.width).toBeGreaterThan(0)
+  expect(crumbBox!.x + crumbBox!.width).toBeLessThanOrEqual(searchAt850.x + 1)
+
+  // At 768px with both panels docked, <header> drops back to compact flex spacing and controls still never overlap.
+  await page.setViewportSize({ width: 768, height: 900 })
+  const compactStyle = await headerStyle()
+  expect(compactStyle.display).toBe("flex")
+  expect(desktopStyle.paddingLeft).toBeGreaterThan(compactStyle.paddingLeft)
+  expect(desktopStyle.columnGap).toBeGreaterThan(compactStyle.columnGap)
   await checkHeader()
 })
 
