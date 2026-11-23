@@ -507,15 +507,15 @@ impl HrVerticalFixture {
         input: &Value,
         actor: &str,
         idempotency_key: &str,
-    ) -> Result<ActionOutcome, ActionRefusal<norn_cell::CellError>> {
+    ) -> Result<ActionOutcome, Box<ActionRefusal<norn_cell::CellError>>> {
         let registered = &self.actions[action_id];
-        let call = ActionCall {
+        let request = ActionCall {
             action: &registered.root,
             action_artifact_id: &registered.artifact_id,
             action_version: &registered.version,
             scope: test_scope_map(),
             actor: actor.to_owned(),
-            input: serde_json::from_value(input.clone()).expect("action input decodes"),
+            input: decode_json_object(input),
             idempotency_key: idempotency_key.to_owned(),
             object_type: None,
             turn: DecisionTurn {
@@ -525,8 +525,12 @@ impl HrVerticalFixture {
                 consumes: None,
             },
         };
-        commit_action(cell, &self.catalog(), &call, &self.principals)
+        commit_action(cell, &self.catalog(), &request, &self.principals).map_err(Box::new)
     }
+}
+
+fn decode_json_object(value: &Value) -> JsonObject {
+    serde_json::from_value(value.clone()).expect("JSON object decodes")
 }
 
 fn put_fact(object_type: &str, id: &str, values: &Value) -> FactWrite {
@@ -580,9 +584,8 @@ fn mask_text(value: &str, policy: &MaskPolicy) -> Option<String> {
             };
             Some(format!("[REDACTED]{tail}"))
         }
-        MaskPolicy::Null {} => None,
+        MaskPolicy::Null {} | MaskPolicy::Refuse {} => None,
         MaskPolicy::Pseudonym { subject } => Some(format!("{subject} #PSEUDONYM")),
-        MaskPolicy::Refuse {} => None,
     }
 }
 
@@ -1337,7 +1340,7 @@ fn hr_pii_markings_persist_and_mask_in_real_cell() {
         vec!["pii.demographic".to_owned()]
     );
     assert_eq!(person_markings["phone"], vec!["pii.demographic".to_owned()]);
-    assert!(person_markings["display_name"].is_empty());
+    assert_eq!(person_markings["display_name"], [] as [String; 0]);
 
     let batch_markings = cell
         .store()
@@ -1439,7 +1442,7 @@ fn hr_pii_markings_persist_and_mask_in_real_cell() {
         .effective_markings(MAIN_WORLD, "hr.Person", "person_nour", Some(1))
         .expect("historical markings")
         .expect("complete snapshot");
-    assert!(current_after["national_id"].is_empty());
+    assert_eq!(current_after["national_id"], [] as [String; 0]);
     assert_eq!(historical_v1["national_id"], vec!["pii.gov_id".to_owned()]);
     cell.store()
         .read()
