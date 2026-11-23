@@ -135,6 +135,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/datasets/{type}/rows/{row}:lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the
+         *     records grid names it, to the manifest that admitted it, the source
+         *     upload and the data file, each by content hash and row offset, with what
+         *     held it back. Held-back rows are traced too. Requires Population, Values
+         *     and Sources on the type; no value is disclosed.
+         * @description # Errors
+         *     A denied gate (one opaque 403), no dataset or no such row (404), or an
+         *     unreachable engine.
+         */
+        get: operations["dataset_lineage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/datasets:load": {
         parameters: {
             query?: never;
@@ -2427,6 +2453,32 @@ export interface components {
             sha256: string;
             /** @description The object's durable URI. */
             uri: string;
+        };
+        /** @description The outcome of `GET /v1/datasets/{type}/rows/{row}:lineage`. */
+        NornDatasetLineage: {
+            /**
+             * Format: int64
+             * @description The commit that admitted it.
+             */
+            commitSeq: number;
+            data?: components["schemas"]["NornLineageFile"] | null;
+            /** @description Every rule the row fails. */
+            findings: components["schemas"]["NornRowFinding"][];
+            /** @description Whether the row is held back (not typed, or failing a rule that holds). */
+            held: boolean;
+            /** @description The manifest that admitted the dataset. */
+            manifest: string;
+            /** @description The dataset's object type. */
+            objectType: string;
+            /** @description Why the row was not typed (`bulk.*`), if it was not. */
+            refused?: string | null;
+            /**
+             * Format: int64
+             * @description The source row offset; dataset answers name rows by it.
+             */
+            row: number;
+            /** @description The source upload, at the row. */
+            source: components["schemas"]["NornLineageFile"];
         };
         /** @description The outcome of `POST /v1/datasets:load`. */
         NornDatasetLoad: {
@@ -11812,6 +11864,19 @@ export interface components {
              */
             seq: number;
         };
+        /** @description One file a dataset row is traced through, and the row's offset in it. */
+        NornLineageFile: {
+            /**
+             * Format: int64
+             * @description The row's source offset (1-based, in source file order); the data
+             *     file carries it as its `:row` column.
+             */
+            row: number;
+            /** @description Its SHA-256. */
+            sha256: string;
+            /** @description The object's durable URI. */
+            uri: string;
+        };
         /** @description The visible links of one declared link type in one direction. */
         NornLinkCount: {
             /**
@@ -12640,6 +12705,15 @@ export interface components {
             receipt: components["schemas"]["NornRevealReceipt"];
             /** @description The stored value, of the property's type; decimals are exact JSON number tokens. */
             value: unknown;
+        };
+        /** @description One law or invariant a dataset row fails. */
+        NornRowFinding: {
+            /** @description Whether it holds the row back. */
+            holds: boolean;
+            /** @description The law (`law:<id>`) or invariant (`invariant:<id>`). */
+            label: string;
+            /** @description The rule identity (canonical JSON of its reference). */
+            rule: string;
         };
         /** @description MANIFEST-LAWS-1: one law or invariant's findings over a dataset. */
         NornRuleFindings: {
@@ -13840,6 +13914,63 @@ export interface operations {
             };
             /** @description The request was refused: the scope's stored cell cannot be opened. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    dataset_lineage: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The dataset's object type. */
+                type: string;
+                /** @description The source row offset. */
+                row: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The row's lineage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornDatasetLineage"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

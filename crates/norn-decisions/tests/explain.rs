@@ -69,7 +69,7 @@ fn decision() -> AdmittedDecision {
     }))
     .expect("rule");
     let binding = DecisionBinding {
-        profile_id: "norn-zen/6".to_owned(),
+        profile_id: "norn-zen/7".to_owned(),
         environment_hash: "sha256:test".to_owned(),
     };
     AdmittedDecision::admit(&rule, &BTreeMap::new(), binding).expect("admits")

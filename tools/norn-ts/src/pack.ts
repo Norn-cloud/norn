@@ -33,6 +33,8 @@ export interface PackOptions {
   readonly imports?: ReadonlyArray<string>
   /** Provenance paths are written relative to this directory (default: the working directory). */
   readonly root?: string
+  /** Promote `NORN-AUTHORING-UNSAFE-ZEN` from warning to hard error; defaults to true when `registry` is set or any pack/module path lies under a `registry/` directory segment. */
+  readonly forbidUnsafeZen?: boolean
 }
 
 export interface PackFlow {
@@ -71,6 +73,7 @@ export type PackResult =
   | { readonly ok: false; readonly failures: ReadonlyArray<PackModuleFailure>; readonly profile: string }
 
 const posix = (path: string): string => path.split(sep).join("/")
+const hasRegistrySegment = (path: string): boolean => /(?:^|\/)registry(?:\/|$)/.test(posix(path))
 
 /** The pack's modules: top-level `*.ts` files (not `*.d.ts`), sorted; subdirectories hold shared support modules. */
 export function packModules(dir: string): string[] {
@@ -146,12 +149,18 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     }
   }
   const modules = options.modules ? options.modules.map((file) => resolve(file)) : packModules(dir)
+  const absDir = resolve(dir)
+  const isRegistryPath =
+    registryPackagePath !== undefined ||
+    hasRegistrySegment(absDir) ||
+    modules.some((m) => hasRegistrySegment(m))
+  const forbidUnsafeZen = options.forbidUnsafeZen ?? isRegistryPath
   const envelope = (path: string) => ({
     scope: registryPackagePath ? {} : options.scope,
     sourcePath: posix(relative(root, path)),
     ...(registryPackagePath ? { registryPackagePath } : {}),
   })
-  const results = compileDefinitionFiles(modules, envelope, {}, { allowEmpty: true })
+  const results = compileDefinitionFiles(modules, envelope, {}, { allowEmpty: true, forbidUnsafeZen })
   const failures: PackModuleFailure[] = []
   const artifacts: Json[] = []
   const sources = new Map<string, string>()
@@ -187,7 +196,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     }
     if (result.flows > 0) {
       // A flow lowers through the syntax compiler to its Run type and decide rule (T7-EFX-2).
-      const flow = compileFile(path, { ...envelope(path), sourceRoot: root })
+      const flow = compileFile(path, { ...envelope(path), sourceRoot: root, forbidUnsafeZen })
       if (!flow.ok) { failures.push({ file, diagnostics: flow.diagnostics }); return }
       warnings.push(...flow.warnings.map((warning) => ({ ...warning, file })))
       for (const artifact of flow.artifacts) add(artifact, file)

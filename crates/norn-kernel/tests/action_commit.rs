@@ -4313,7 +4313,7 @@ fn synchronous_writer() -> norn_kernel::SynchronousRule {
         &root,
         &BTreeMap::new(),
         norn_decisions::DecisionBinding {
-            profile_id: "norn-zen/6".into(),
+            profile_id: "norn-zen/7".into(),
             environment_hash: "test".into(),
         },
     )

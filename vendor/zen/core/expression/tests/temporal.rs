@@ -520,4 +520,177 @@ mod metering {
             assert_eq!(meter.scan_steps(), 0);
         }
     }
+
+    #[test]
+    fn zen7_interval_and_tz_costs_are_pinned_and_sticky() {
+        let overlap = "intervals_overlap(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T18:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T20:00:00Z'))";
+        let gap = "interval_gap_seconds(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T17:00:00Z'), timestamp('2025-03-09T19:00:00Z'))";
+        let intersection = "interval_intersection_seconds(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T18:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T20:00:00Z'))";
+        let resolve =
+            "resolve_local_timestamp('2025-01-15T09:00:00', 'America/New_York', 'reject')";
+
+        // 4 * 22 (timestamp parsing) + 4 (dynamic arg sizes) + 8 (TEMPORAL_ARITHMETIC) + 1 (CallFunction) = 101
+        // resolve: 3 PushString (3) + 19 + 16 + 6 (arg byte lengths) + 16 (TEMPORAL_TZ_RESOLVE) + 1 (CallFunction) = 61
+        for (expression, expected) in [
+            (overlap, 101),
+            (gap, 101),
+            (intersection, 101),
+            (resolve, 61),
+        ] {
+            let meter = Meter::new(u64::MAX);
+            Isolate::new()
+                .with_meter(Some(meter.clone()))
+                .run_standard(expression)
+                .unwrap();
+            assert_eq!(meter.used(), expected, "{expression}");
+            assert_eq!(meter.exhausted(), None);
+
+            let tight = Meter::new(expected - 1);
+            let mut isolate = Isolate::new().with_meter(Some(tight.clone()));
+            let want = BudgetExhausted {
+                limit: expected - 1,
+                used: expected,
+            };
+            assert_eq!(
+                exhausted(isolate.run_standard(expression).unwrap_err()),
+                want,
+                "{expression}"
+            );
+            assert_eq!(tight.exhausted(), Some(want));
+        }
+    }
+}
+
+#[test]
+fn zen7_half_open_intervals_overlap_gap_and_intersection() {
+    // Partial overlap: [14:00, 18:00) and [16:00, 20:00) -> 2h intersection, 0 gap.
+    boolean(
+        "intervals_overlap(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T18:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T20:00:00Z'))",
+        true,
+    );
+    number(
+        "interval_intersection_seconds(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T18:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T20:00:00Z'))",
+        "7200",
+    );
+    number(
+        "interval_gap_seconds(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T18:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T20:00:00Z'))",
+        "0",
+    );
+
+    // Touching half-open intervals [14:00, 16:00) and [16:00, 18:00): no overlap, 0 gap, 0 intersection.
+    boolean(
+        "intervals_overlap(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T18:00:00Z'))",
+        false,
+    );
+    number(
+        "interval_gap_seconds(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T18:00:00Z'))",
+        "0",
+    );
+    number(
+        "interval_intersection_seconds(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T18:00:00Z'))",
+        "0",
+    );
+
+    // Disjoint with subsecond precision, symmetric order.
+    boolean(
+        "intervals_overlap(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T15:00:00.25Z'), timestamp('2025-03-09T15:00:01.75Z'), timestamp('2025-03-09T16:00:00Z'))",
+        false,
+    );
+    number(
+        "interval_gap_seconds(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T15:00:00.25Z'), timestamp('2025-03-09T15:00:01.75Z'), timestamp('2025-03-09T16:00:00Z'))",
+        "1.5",
+    );
+    number(
+        "interval_gap_seconds(timestamp('2025-03-09T15:00:01.75Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T15:00:00.25Z'))",
+        "1.5",
+    );
+    number(
+        "interval_intersection_seconds(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T15:00:00.75Z'), timestamp('2025-03-09T15:00:00.25Z'), timestamp('2025-03-09T16:00:00Z'))",
+        "0.5",
+    );
+
+    // Improper intervals (start == end or start > end) MUST fail closed rather than returning false / 0.
+    for func in [
+        "intervals_overlap",
+        "interval_gap_seconds",
+        "interval_intersection_seconds",
+    ] {
+        rejected(&format!(
+            "{func}(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T15:00:00Z'), timestamp('2025-03-09T16:00:00Z'))"
+        ));
+        rejected(&format!(
+            "{func}(timestamp('2025-03-09T15:00:00Z'), timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T15:00:00Z'), timestamp('2025-03-09T16:00:00Z'))"
+        ));
+        rejected(&format!(
+            "{func}(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T15:00:00Z'), timestamp('2025-03-09T16:00:00Z'), timestamp('2025-03-09T16:00:00Z'))"
+        ));
+        rejected(&format!(
+            "{func}(timestamp('2025-03-09T14:00:00Z'), timestamp('2025-03-09T15:00:00Z'), timestamp('2025-03-09T17:00:00Z'), timestamp('2025-03-09T16:00:00Z'))"
+        ));
+        // Mixed date / timestamp fails closed.
+        rejected(&format!(
+            "{func}(date('2025-03-09'), timestamp('2025-03-09T15:00:00Z'), timestamp('2025-03-09T15:00:00Z'), timestamp('2025-03-09T16:00:00Z'))"
+        ));
+    }
+}
+
+#[test]
+fn zen7_resolve_local_timestamp_handles_dst_and_refuses_invalid_inputs() {
+    // Unambiguous standard and daylight wall times.
+    text(
+        "string(resolve_local_timestamp('2025-01-15T09:00:00', 'America/New_York', 'reject'))",
+        "2025-01-15T14:00:00Z",
+    );
+    text(
+        "string(resolve_local_timestamp('2025-07-15T09:00:00.125', 'America/New_York', 'reject'))",
+        "2025-07-15T13:00:00.125Z",
+    );
+    text(
+        "string(resolve_local_timestamp('2025-03-09T01:59:59', 'America/New_York', 'reject'))",
+        "2025-03-09T06:59:59Z",
+    );
+    text(
+        "string(resolve_local_timestamp('2025-03-09T03:00:00', 'America/New_York', 'reject'))",
+        "2025-03-09T07:00:00Z",
+    );
+
+    // DST spring-forward nonexistent wall time refused under ALL policies.
+    for policy in ["reject", "earlier", "later"] {
+        rejected(&format!(
+            "resolve_local_timestamp('2025-03-09T02:30:00', 'America/New_York', '{policy}')"
+        ));
+        rejected(&format!(
+            "resolve_local_timestamp('2025-03-30T01:30:00', 'Europe/London', '{policy}')"
+        ));
+    }
+
+    // DST fall-back ambiguous wall time: refused under 'reject', deterministic under 'earlier'/'later'.
+    rejected("resolve_local_timestamp('2025-11-02T01:30:00', 'America/New_York', 'reject')");
+    text(
+        "string(resolve_local_timestamp('2025-11-02T01:30:00', 'America/New_York', 'earlier'))",
+        "2025-11-02T05:30:00Z",
+    );
+    text(
+        "string(resolve_local_timestamp('2025-11-02T01:30:00', 'America/New_York', 'later'))",
+        "2025-11-02T06:30:00Z",
+    );
+    // Composes cleanly with interval operations.
+    number(
+        "seconds_between(resolve_local_timestamp('2025-11-02T01:30:00', 'America/New_York', 'earlier'), resolve_local_timestamp('2025-11-02T01:30:00', 'America/New_York', 'later'))",
+        "3600",
+    );
+
+    // Invalid timezone, invalid policy, and offset-bearing or malformed wall times refused.
+    for expr in [
+        "resolve_local_timestamp('2025-01-15T09:00:00', 'Mars/Olympus', 'reject')",
+        "resolve_local_timestamp('2025-01-15T09:00:00', 'america/new_york', 'reject')",
+        "resolve_local_timestamp('2025-01-15T09:00:00', 'Factory', 'reject')",
+        "resolve_local_timestamp('2025-01-15T09:00:00', 'UTC', 'shift')",
+        "resolve_local_timestamp('2025-01-15T09:00:00Z', 'UTC', 'reject')",
+        "resolve_local_timestamp('2025-01-15T09:00:00+00:00', 'UTC', 'reject')",
+        "resolve_local_timestamp('2025-02-29T09:00:00', 'UTC', 'reject')",
+        "resolve_local_timestamp('0000-01-01T00:00:00', 'UTC', 'reject')",
+    ] {
+        rejected(expr);
+    }
 }

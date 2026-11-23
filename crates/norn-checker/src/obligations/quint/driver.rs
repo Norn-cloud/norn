@@ -309,7 +309,7 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
     let authority = ApprovedContract::approve(
         &original,
         &registry,
-        json!({"expression":"norn-zen/6","lowering":"norn.quint.one-create/1"}),
+        json!({"expression":"norn-zen/7","lowering":"norn.quint.one-create/1"}),
         json!({"store":"empty","objects":1,"steps":1}),
         json!({"level":"exhaustive-finite/bounded"}),
     )?;
@@ -615,7 +615,7 @@ mod tests {
         let authority = ApprovedContract::approve(
             &source,
             &registry,
-            json!({"expr":"norn-zen/6"}),
+            json!({"expr":"norn-zen/7"}),
             json!({"store":"empty"}),
             json!({"level":"bounded"}),
         )
@@ -732,7 +732,7 @@ mod tests {
         let authority = ApprovedContract::approve(
             &original,
             &registry,
-            json!({"expression":"norn-zen/6","lowering":"norn.quint.one-create/1"}),
+            json!({"expression":"norn-zen/7","lowering":"norn.quint.one-create/1"}),
             json!({"store":"empty","objects":1,"steps":1}),
             json!({"level":"exhaustive-finite/bounded"}),
         )

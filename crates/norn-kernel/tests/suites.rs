@@ -66,3 +66,5 @@ mod refusal_taxonomy;
 mod result_reconciliation;
 #[path = "snapshot_observe.rs"]
 mod snapshot_observe;
+#[path = "temporal_intervals.rs"]
+mod temporal_intervals;

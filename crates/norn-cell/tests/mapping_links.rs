@@ -2110,7 +2110,18 @@ fn retain_as_before_decimal_text(
 /// (`fixtures/mapping-bundle-main-decimal-text.json`) was captured by this
 /// exact sequence on the merged main parent's code.
 fn decimal_text_holding(path: &Path) -> (Cell, Value, String) {
-    let mut cell = setup(path);
+    // The frozen main-era bundle fixture was captured before `core.time` and
+    // `core.TimeInterval` joined `registry/core/artifacts/`; install that exact
+    // historical definition set so the untouched main-era bundle verifies
+    // against the definitions it was captured under.
+    let mut cell = setup_with(path, |artifacts| {
+        artifacts.retain(|artifact| {
+            !matches!(
+                artifact.artifact_id.as_str(),
+                "core.time" | "core.TimeInterval.interface"
+            )
+        });
+    });
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");
     for row in rows

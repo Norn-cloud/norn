@@ -176,6 +176,38 @@ pub fn uniform_gate<E: SqlEngine>(
     Ok(permitted(host, access, &actor, &every, Values))
 }
 
+/// D102 / MANIFEST-LINEAGE-1: the collection gate, then the uniform row gate
+/// requiring `Population`, `Values` and `Sources` (the same three capabilities
+/// as [`crate::object_links::get_object_lineage`] and
+/// [`crate::object_review::get_object_findings`]). Fails closed with the opaque
+/// 403 before any row, manifest or engine call is touched.
+///
+/// # Errors
+/// A denied collection, population, values or sources gate (one opaque 403).
+pub(crate) fn uniform_sources_gate<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    object_type: &str,
+    access: &dyn ObjectAccess,
+) -> Result<(), Refusal> {
+    let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
+    let every = ObjectRecord {
+        object_type: object_type.to_owned(),
+        id: norn_cell::compute::ALL_MEMBERS.to_owned(),
+        scope: host.scope().key(),
+        version: 0,
+        values: std::collections::BTreeMap::new(),
+    };
+    let allowed = [Population, Values, ReadCapability::Sources]
+        .into_iter()
+        .all(|capability| permitted(host, access, &actor, &every, capability));
+    if !allowed {
+        return Err(read_denied());
+    }
+    Ok(())
+}
+
 /// For each listed row: whether it is held back, and (for a visible one)
 /// its effective markings; with the cell's marking catalog.
 type HeldAndMarked = (

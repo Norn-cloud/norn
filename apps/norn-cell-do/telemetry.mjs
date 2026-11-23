@@ -106,6 +106,7 @@ const REFUSAL_CODES = new Set(Object.entries({
     "upgrade_required",
   object: "not_found scan_bound_exceeded snapshot_moved snapshot_unavailable unknown_type",
   observations: "too_large",
+  privacy: "marked_column",
   query:
     "cursor_invalid invalid limit_invalid op_invalid property_unknown sort_invalid too_many " +
     "value_invalid",
