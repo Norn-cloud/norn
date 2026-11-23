@@ -5,14 +5,24 @@
  * `verification/core-physics-v1/obligations.json` (the norn.core laws PRs,
  * norn#77 and norn#90).
  *
- * Currencies are ISO 4217 codes held as `core.code` until the public registry
- * has an `iso4217.currency_code` value type. The per-record laws (positive
- * quantity, exactly one of unit and currency) are declared, not yet
- * enforced as invariants: invariant expressions cannot read registry-typed
- * properties yet.
+ * Currencies on these interfaces stay `core.code` for pack compatibility while
+ * `iso4217.currency_code` is materialized in `std.value_types.entity`. The
+ * per-record laws (non-negative/positive quantity, non-zero/positive amount,
+ * and unit/currency exclusivity) are enforced directly as interface invariants
+ * over the materialized value-type catalogs (#1583).
  */
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
+
+const QuantityAndMeasure = Schema.Struct({
+  quantity: Norn.decimal(6),
+  unit: Schema.NullOr(Schema.String),
+  currency: Schema.NullOr(Schema.String),
+})
+
+const MoneyAmount = Schema.Struct({
+  amount: Norn.decimal(6),
+})
 
 export const Agent = Norn.interfaceType({
   name: "core.Agent",
@@ -20,6 +30,9 @@ export const Agent = Norn.interfaceType({
   title: "Agent",
   version: "0.1.0",
   description: "An actor that holds resources, takes part in economic events and makes commitments: a person, an organisation or a system (REA agent).",
+  dependencies: [
+    { artifactId: "core.value_types.entity", version: "0.2.0", kind: "entity" },
+  ],
   properties: Schema.Struct({
     display_name: Norn.ref("core.display_name"),
     kind: Schema.Literals(["person", "organization", "system"]),
@@ -31,6 +44,10 @@ export const AgentRole = Norn.interfaceType({
   title: "Agent role",
   version: "0.1.0",
   description: "A role an agent plays over a period (customer, supplier, employee, carrier). A role is a relationship, not a subtype of the agent.",
+  dependencies: [
+    { artifactId: "core.value_types.entity", version: "0.2.0", kind: "entity" },
+    { artifactId: "std.value_types.entity", version: "0.1.0", kind: "entity" },
+  ],
   properties: Schema.Struct({
     role: Norn.ref("core.code"),
     valid_from: Schema.NullOr(Norn.ref("iso8601.date")),
@@ -48,6 +65,10 @@ export const Resource = Norn.interfaceType({
   title: "Resource",
   version: "0.1.0",
   description: "Something of value that is conserved: goods, money, time, capacity or a right, held as a quantity in exactly one unit (a UCUM unit, or a currency for money). `valuation_method` is the governed parameter of core.law.stock_valuation (FIFO or moving average); it is null for a resource that is not valued.",
+  dependencies: [
+    { artifactId: "core.value_types.entity", version: "0.2.0", kind: "entity" },
+    { artifactId: "std.value_types.entity", version: "0.1.0", kind: "entity" },
+  ],
   properties: Schema.Struct({
     resource_code: Norn.ref("core.code"),
     quantity: Norn.ref("core.quantity"),
@@ -59,6 +80,21 @@ export const Resource = Norn.interfaceType({
     { id: "owner", description: "The agent that owns the resource.", target: Agent, cardinality: { to: "one", from: "many" } },
     { id: "custodian", description: "The agent that holds the resource, when it is not the owner.", target: Agent, cardinality: { to: "one", from: "many" } },
   ],
+  invariants: [
+    {
+      id: "non_negative_quantity",
+      message: "A resource quantity must be non-negative.",
+      expression: Norn.expression(QuantityAndMeasure, (self) => self.quantity >= 0),
+    },
+    {
+      id: "single_measure",
+      message: "A resource must carry either a unit or a currency, never both or neither.",
+      expression: Norn.expression(
+        QuantityAndMeasure,
+        (self) => (self.unit !== null && self.currency === null) || (self.unit === null && self.currency !== null),
+      ),
+    },
+  ],
 })
 
 export const Commitment = Norn.interfaceType({
@@ -67,6 +103,10 @@ export const Commitment = Norn.interfaceType({
   title: "Commitment",
   version: "0.1.0",
   description: "A promise of a future economic event: an order line, a contract term, a subscription period. It ends fulfilled, cancelled or breached and is never dropped (DEMO request, promise, execute).",
+  dependencies: [
+    { artifactId: "core.value_types.entity", version: "0.2.0", kind: "entity" },
+    { artifactId: "std.value_types.entity", version: "0.1.0", kind: "entity" },
+  ],
   properties: Schema.Struct({
     status: Schema.Literals(["requested", "promised", "fulfilled", "cancelled", "breached"]),
     due_at: Norn.ref("iso8601.timestamp"),
@@ -79,6 +119,21 @@ export const Commitment = Norn.interfaceType({
     { id: "receiver", description: "The agent the promise is made to.", target: Agent, cardinality: { to: "one", from: "many", required: true } },
     { id: "resource", description: "The resource promised.", target: Resource, cardinality: { to: "one", from: "many" } },
   ],
+  invariants: [
+    {
+      id: "positive_quantity",
+      message: "A commitment quantity must be strictly positive.",
+      expression: Norn.expression(QuantityAndMeasure, (self) => self.quantity > 0),
+    },
+    {
+      id: "single_measure",
+      message: "A commitment must carry either a unit or a currency, never both or neither.",
+      expression: Norn.expression(
+        QuantityAndMeasure,
+        (self) => (self.unit !== null && self.currency === null) || (self.unit === null && self.currency !== null),
+      ),
+    },
+  ],
 })
 
 export const Hold = Norn.interfaceType({
@@ -87,6 +142,10 @@ export const Hold = Norn.interfaceType({
   title: "Hold",
   version: "0.1.0",
   description: "A quantity set aside against a balance: an escrow, a stock reservation or a use of a quota. A hold is released, consumed or expires, and never exceeds what is available (core.law.escrow_non_negative).",
+  dependencies: [
+    { artifactId: "core.value_types.entity", version: "0.2.0", kind: "entity" },
+    { artifactId: "std.value_types.entity", version: "0.1.0", kind: "entity" },
+  ],
   properties: Schema.Struct({
     status: Schema.Literals(["open", "released", "consumed", "expired"]),
     quantity: Norn.ref("core.quantity"),
@@ -99,6 +158,21 @@ export const Hold = Norn.interfaceType({
     { id: "holder", description: "The agent the quantity is held for.", target: Agent, cardinality: { to: "one", from: "many", required: true } },
     { id: "secures", description: "The commitment the hold secures, if any.", target: Commitment, cardinality: { to: "one", from: "many" } },
   ],
+  invariants: [
+    {
+      id: "positive_quantity",
+      message: "A hold quantity must be strictly positive.",
+      expression: Norn.expression(QuantityAndMeasure, (self) => self.quantity > 0),
+    },
+    {
+      id: "single_measure",
+      message: "A hold must carry either a unit or a currency, never both or neither.",
+      expression: Norn.expression(
+        QuantityAndMeasure,
+        (self) => (self.unit !== null && self.currency === null) || (self.unit === null && self.currency !== null),
+      ),
+    },
+  ],
 })
 
 export const EconomicEvent = Norn.interfaceType({
@@ -107,6 +181,10 @@ export const EconomicEvent = Norn.interfaceType({
   title: "Economic event",
   version: "0.1.0",
   description: "A posted change of resources. A transfer moves ownership or custody from provider to receiver; a transformation consumes inputs and produces outputs. Posted events are immutable; a correction is a new event that reverses its original.",
+  dependencies: [
+    { artifactId: "core.value_types.entity", version: "0.2.0", kind: "entity" },
+    { artifactId: "std.value_types.entity", version: "0.1.0", kind: "entity" },
+  ],
   properties: Schema.Struct({
     action: Schema.Literals(["transfer_ownership", "transfer_custody", "consume", "produce"]),
     occurred_at: Norn.ref("iso8601.timestamp"),
@@ -121,6 +199,21 @@ export const EconomicEvent = Norn.interfaceType({
     { id: "fulfils", description: "The commitment this event fulfils, in whole or in part.", target: Commitment, cardinality: { to: "one", from: "many" } },
     { id: "reverses", description: "The posted event this event exactly reverses.", target: "core.EconomicEvent", cardinality: { to: "one", from: "one" } },
   ],
+  invariants: [
+    {
+      id: "positive_quantity",
+      message: "An economic event quantity must be strictly positive.",
+      expression: Norn.expression(QuantityAndMeasure, (self) => self.quantity > 0),
+    },
+    {
+      id: "single_measure",
+      message: "An economic event must carry either a unit or a currency, never both or neither.",
+      expression: Norn.expression(
+        QuantityAndMeasure,
+        (self) => (self.unit !== null && self.currency === null) || (self.unit === null && self.currency !== null),
+      ),
+    },
+  ],
 })
 
 export const LedgerEffect = Norn.interfaceType({
@@ -129,6 +222,9 @@ export const LedgerEffect = Norn.interfaceType({
   title: "Ledger effect",
   version: "0.1.0",
   description: "The value view of an economic event: one signed amount on one account. A positive amount is a debit and a negative one a credit; the side is presentation only and is never stored. The effects posted together balance (core.law.value_conservation).",
+  dependencies: [
+    { artifactId: "core.value_types.entity", version: "0.2.0", kind: "entity" },
+  ],
   properties: Schema.Struct({
     account_code: Norn.ref("core.code"),
     amount: Norn.ref("core.money_amount"),
@@ -136,6 +232,13 @@ export const LedgerEffect = Norn.interfaceType({
   }),
   links: [
     { id: "event", description: "The economic event this effect values.", target: EconomicEvent, cardinality: { to: "one", from: "many", required: true } },
+  ],
+  invariants: [
+    {
+      id: "non_zero_amount",
+      message: "A ledger effect amount must be non-zero.",
+      expression: Norn.expression(MoneyAmount, (self) => self.amount !== 0),
+    },
   ],
 })
 
@@ -145,6 +248,10 @@ export const Claim = Norn.interfaceType({
   title: "Claim",
   version: "0.1.0",
   description: "An economic claim: a right to receive resources, such as an invoice or a receivable, settled by economic events. Not a catalog claim about definitions. Disjoint from core.Commitment (Commitment ⊓ Claim = ∅): a promise is not yet a right, and no type is both. A fulfilled or accepted commitment gives rise to claims (givesRiseTo); the relation is recorded on the claim as `arises_from`, because a commitment is not edited when a claim arises.",
+  dependencies: [
+    { artifactId: "core.value_types.entity", version: "0.2.0", kind: "entity" },
+    { artifactId: "std.value_types.entity", version: "0.1.0", kind: "entity" },
+  ],
   properties: Schema.Struct({
     amount: Norn.ref("core.money_amount"),
     currency: Norn.ref("core.code"),
@@ -154,6 +261,13 @@ export const Claim = Norn.interfaceType({
     { id: "creditor", description: "The agent entitled to receive.", target: Agent, cardinality: { to: "one", from: "many", required: true } },
     { id: "debtor", description: "The agent obliged to give.", target: Agent, cardinality: { to: "one", from: "many", required: true } },
     { id: "arises_from", description: "The commitment that gave rise to the claim (givesRiseTo, seen from the claim).", target: Commitment, cardinality: { to: "one", from: "many" } },
+  ],
+  invariants: [
+    {
+      id: "positive_amount",
+      message: "A claim amount must be strictly positive.",
+      expression: Norn.expression(MoneyAmount, (self) => self.amount > 0),
+    },
   ],
 })
 

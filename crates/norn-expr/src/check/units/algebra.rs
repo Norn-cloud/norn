@@ -2,11 +2,13 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Operand<U, C> {
     Literal,
+    LiteralZero,
     Dimensionless,
     Legacy,
     Quantity(U),
     Money(C),
     Rate(C, U),
+    Bound(String),
     Unresolved,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +26,9 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
     left: &Operand<U, C>,
     right: &Operand<U, C>,
 ) -> Option<(Operand<U, C>, Option<U>)> {
-    use self::Operand::{Dimensionless, Legacy, Literal, Money, Quantity, Rate, Unresolved};
+    use self::Operand::{
+        Bound, Dimensionless, Legacy, Literal, LiteralZero, Money, Quantity, Rate, Unresolved,
+    };
     if matches!(left, Unresolved) || matches!(right, Unresolved) {
         return None;
     }
@@ -32,18 +36,25 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
     let result = match op {
         _ if matches!(
             (left, right),
-            (Legacy, Legacy | Literal | Dimensionless) | (Literal | Dimensionless, Legacy)
+            (Legacy, Legacy | Literal | LiteralZero | Dimensionless)
+                | (Literal | LiteralZero | Dimensionless, Legacy)
         ) =>
         {
             Legacy
         }
         Operation::Add | Operation::Subtract | Operation::Compare => {
             let value = match (left, right) {
-                (Quantity(unit), Literal) | (Literal, Quantity(unit)) => {
+                (Quantity(unit), Literal | LiteralZero)
+                | (Literal | LiteralZero, Quantity(unit)) => {
                     inferred = Some(unit.clone());
                     Quantity(unit.clone())
                 }
-                (Literal | Dimensionless, Literal | Dimensionless) => Dimensionless,
+                (Bound(_), LiteralZero) | (LiteralZero, Bound(_)) if op == Operation::Compare => {
+                    Dimensionless
+                }
+                (Literal | LiteralZero | Dimensionless, Literal | LiteralZero | Dimensionless) => {
+                    Dimensionless
+                }
                 _ if left == right => left.clone(),
                 _ => return None,
             };
@@ -60,15 +71,19 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
             {
                 Money(currency.clone())
             }
-            (Quantity(unit), Literal | Dimensionless)
-            | (Literal | Dimensionless, Quantity(unit)) => Quantity(unit.clone()),
-            (Literal | Dimensionless, Literal | Dimensionless) => Dimensionless,
+            (Quantity(unit), Literal | LiteralZero | Dimensionless)
+            | (Literal | LiteralZero | Dimensionless, Quantity(unit)) => Quantity(unit.clone()),
+            (Literal | LiteralZero | Dimensionless, Literal | LiteralZero | Dimensionless) => {
+                Dimensionless
+            }
             _ => return None,
         },
         Operation::Divide => match (left, right) {
             (Money(currency), Quantity(unit)) => Rate(currency.clone(), unit.clone()),
             (Quantity(unit), Quantity(other_unit)) if unit == other_unit => Dimensionless,
-            (Literal | Dimensionless, Literal | Dimensionless) => Dimensionless,
+            (Literal | LiteralZero | Dimensionless, Literal | LiteralZero | Dimensionless) => {
+                Dimensionless
+            }
             _ => return None,
         },
     };
@@ -86,16 +101,27 @@ pub(crate) fn join<U: Clone + Eq, C: Clone + Eq>(
     }
     if matches!(
         (left, right),
-        (Operand::Legacy, Operand::Literal | Operand::Dimensionless)
-            | (Operand::Literal | Operand::Dimensionless, Operand::Legacy)
+        (Operand::Literal, Operand::LiteralZero) | (Operand::LiteralZero, Operand::Literal)
+    ) {
+        return Some(Operand::Literal);
+    }
+    if matches!(
+        (left, right),
+        (
+            Operand::Legacy,
+            Operand::Literal | Operand::LiteralZero | Operand::Dimensionless
+        ) | (
+            Operand::Literal | Operand::LiteralZero | Operand::Dimensionless,
+            Operand::Legacy
+        )
     ) {
         return Some(Operand::Legacy);
     }
     matches!(
         (left, right),
         (
-            Operand::Literal | Operand::Dimensionless,
-            Operand::Literal | Operand::Dimensionless
+            Operand::Literal | Operand::LiteralZero | Operand::Dimensionless,
+            Operand::Literal | Operand::LiteralZero | Operand::Dimensionless
         )
     )
     .then_some(Operand::Dimensionless)
@@ -104,8 +130,13 @@ pub(crate) fn destination<U: Clone + Eq, C: Clone + Eq>(
     found: &Operand<U, C>,
     expected: &Operand<U, C>,
 ) -> bool {
-    !matches!(expected, Operand::Unresolved)
-        && (matches!(found, Operand::Literal)
-            || matches!((found, expected), (Operand::Dimensionless, Operand::Legacy))
-            || join(found, expected).is_some())
+    if matches!(expected, Operand::Unresolved) {
+        return false;
+    }
+    if matches!(expected, Operand::Bound(_)) {
+        return matches!(found, Operand::LiteralZero) || join(found, expected).is_some();
+    }
+    matches!(found, Operand::Literal | Operand::LiteralZero)
+        || matches!((found, expected), (Operand::Dimensionless, Operand::Legacy))
+        || join(found, expected).is_some()
 }

@@ -105,5 +105,43 @@ mod tests {
                 .1,
             Some(grams())
         );
+        assert_eq!(
+            admit(Operation::Compare, &quantity, &Operand::LiteralZero)
+                .unwrap()
+                .1,
+            Some(grams())
+        );
+
+        let bound_mass = Operand::Bound("mass".into());
+        let bound_volume = Operand::Bound("volume".into());
+        assert_eq!(
+            admit(Operation::Compare, &bound_mass, &Operand::LiteralZero),
+            Some((Operand::Dimensionless, None))
+        );
+        assert_eq!(
+            admit(Operation::Compare, &Operand::LiteralZero, &bound_mass),
+            Some((Operand::Dimensionless, None))
+        );
+        assert!(admit(Operation::Compare, &bound_mass, &Operand::Literal).is_none());
+        assert!(admit(Operation::Compare, &bound_mass, &Operand::Dimensionless).is_none());
+        assert!(admit(Operation::Compare, &bound_mass, &bound_volume).is_none());
+        assert!(admit(Operation::Compare, &bound_mass, &quantity).is_none());
+        assert!(admit(Operation::Add, &bound_mass, &Operand::LiteralZero).is_none());
+        assert!(admit(Operation::Add, &bound_mass, &Operand::Literal).is_none());
+        assert!(admit(Operation::Add, &bound_mass, &bound_volume).is_none());
+        assert_eq!(
+            admit(Operation::Add, &bound_mass, &bound_mass),
+            Some((bound_mass.clone(), None))
+        );
+        assert!(admit(Operation::Multiply, &bound_mass, &Operand::LiteralZero).is_none());
+        assert!(admit(Operation::Divide, &bound_mass, &Operand::Literal).is_none());
+        assert!(
+            admit(
+                Operation::Compare,
+                &Operand::Unresolved,
+                &Operand::LiteralZero
+            )
+            .is_none()
+        );
     }
 }

@@ -60,6 +60,8 @@ mod quantity_reservations;
 mod receipt_effect;
 #[path = "refusal_taxonomy.rs"]
 mod refusal_taxonomy;
+#[path = "registry_ref_invariants.rs"]
+mod registry_ref_invariants;
 #[path = "result_reconciliation.rs"]
 mod result_reconciliation;
 #[path = "snapshot_observe.rs"]

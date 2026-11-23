@@ -1,6 +1,13 @@
 {
   "artifactId": "core.Agent.interface",
-  "dependencies": [],
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
   "irVersion": "0.1",
   "kind": "entity",
   "lifecycle": "active",

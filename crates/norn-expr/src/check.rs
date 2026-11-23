@@ -1722,8 +1722,8 @@ fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>, exact: bo
         } else {
             Operand::Dimensionless
         }),
-        Type::DecimalBinding { .. } => T::Number(if exact {
-            Operand::Unresolved
+        Type::DecimalBinding { group } => T::Number(if exact {
+            Operand::Bound(group.clone())
         } else {
             Operand::Dimensionless
         }),
@@ -2347,7 +2347,11 @@ impl<'a> Checker<'a> {
             Node::Null => Some(T::Null),
             Node::Bool(_) => Some(T::Bool),
             Node::Number(number) => match number.to_string().parse::<Number>() {
-                Ok(_) => Some(T::Number(Operand::Literal)),
+                Ok(parsed) => Some(T::Number(if parsed.as_str() == "0" {
+                    Operand::LiteralZero
+                } else {
+                    Operand::Literal
+                })),
                 Err(err) => self.report(node, codes::TYPE_ERROR, err.to_string()),
             },
             Node::String(text) => Some(T::Str(Some(BTreeSet::from([(*text).to_owned()])))),
@@ -3448,7 +3452,7 @@ fn exact_type(mut ty: &Type) -> bool {
     while let Type::Optional(inner) | Type::List(inner) = ty {
         ty = inner;
     }
-    matches!(ty, Type::Decimal { .. })
+    matches!(ty, Type::Decimal { .. } | Type::DecimalBinding { .. })
 }
 
 fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {
