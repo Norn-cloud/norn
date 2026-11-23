@@ -1,0 +1,183 @@
+{
+  "artifactId": "hr_import.ExtractedCandidate.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Extracted import candidate",
+  "namespace": "hr_import",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Untrusted OCR/VLM-extracted HR record carrying 3-timestamp bitemporal provenance (extracted_at, observed_at, effective_on) and gated promotion.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "promoted"
+          ],
+          "initial": [
+            "staged"
+          ],
+          "property": "status",
+          "terminal": [
+            "promoted",
+            "rejected"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "staged"
+              ],
+              "id": "quarantine",
+              "to": "quarantined"
+            },
+            {
+              "from": [
+                "staged",
+                "quarantined"
+              ],
+              "guards": [
+                "(self.open_error_count == 0) and (self.review_receipt_digest != null)"
+              ],
+              "id": "promote",
+              "to": "promoted"
+            },
+            {
+              "from": [
+                "staged",
+                "quarantined"
+              ],
+              "id": "reject",
+              "to": "rejected"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Source upload batch from which this candidate was extracted.",
+          "id": "batch",
+          "target": "hr_import.SourceBatch"
+        }
+      ],
+      "name": "hr_import.ExtractedCandidate",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "target_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "person"
+              },
+              {
+                "value": "leave_request"
+              },
+              {
+                "value": "shift_commitment"
+              },
+              {
+                "value": "attendance_event"
+              }
+            ]
+          }
+        },
+        {
+          "id": "confidence_bps",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "source_span",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extracted_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "observed_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "effective_on",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "default": "0",
+          "id": "open_error_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "review_receipt_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "staged",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "staged"
+              },
+              {
+                "value": "quarantined"
+              },
+              {
+                "value": "promoted"
+              },
+              {
+                "value": "rejected"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.ExtractedCandidate.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

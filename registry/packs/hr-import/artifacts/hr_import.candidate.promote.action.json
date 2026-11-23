@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr_import.candidate.promote.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Promote extracted candidate",
+  "namespace": "hr_import",
+  "payload": {
+    "access": {
+      "artifactId": "hr_import.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr_import.candidate.promote",
+    "description": "Promote a reviewed candidate into authoritative HR state once zero error findings remain and a review receipt is recorded.",
+    "effectProgram": {
+      "entityArtifactId": "hr_import.ExtractedCandidate.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "candidateId",
+      "objectKind": "hr_import.ExtractedCandidate",
+      "transition": "promote"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.candidate.open_error_count == 0 and slice.candidate.review_receipt_digest != null"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "candidateId"
+          }
+        },
+        "name": "candidate",
+        "objectType": "hr_import.ExtractedCandidate"
+      }
+    ],
+    "title": "Promote extracted candidate",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr_import.ExtractedCandidate"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.candidate.promote.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

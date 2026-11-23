@@ -1,0 +1,130 @@
+{
+  "artifactId": "hr_import.DataQualityFinding.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Import data quality finding",
+  "namespace": "hr_import",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Replay-stable quarantine finding attached to an ExtractedCandidate when imported data violates schema, temporal, or domain constraints.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "resolved",
+            "waived"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "id": "resolve",
+              "to": "resolved"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "waive",
+              "to": "waived"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Extracted candidate quarantined or annotated by this finding.",
+          "id": "candidate",
+          "target": "hr_import.ExtractedCandidate"
+        }
+      ],
+      "name": "hr_import.DataQualityFinding",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "severity",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "warning"
+              },
+              {
+                "value": "error"
+              }
+            ]
+          }
+        },
+        {
+          "id": "field_path",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "message",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "open",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "resolved"
+              },
+              {
+                "value": "waived"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.DataQualityFinding.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,73 @@
+{
+  "artifactId": "hr_import.candidate.reject.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Reject extracted candidate",
+  "namespace": "hr_import",
+  "payload": {
+    "access": {
+      "artifactId": "hr_import.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr_import.candidate.reject",
+    "description": "Reject an invalid or duplicate extracted candidate while preserving the source batch and findings as evidence.",
+    "effectProgram": {
+      "entityArtifactId": "hr_import.ExtractedCandidate.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "candidateId",
+      "objectKind": "hr_import.ExtractedCandidate",
+      "transition": "reject"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Reject extracted candidate",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr_import.ExtractedCandidate"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.candidate.reject.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

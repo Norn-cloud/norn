@@ -1,0 +1,153 @@
+{
+  "artifactId": "hr_import.SourceBatch.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Historical import source batch",
+  "namespace": "hr_import",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Raw content-addressed upload batch (BlobRef) captured from WhatsApp exports, spreadsheets, schedule photos, or ERP dumps before untrusted extraction.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "closed"
+          ],
+          "initial": [
+            "received"
+          ],
+          "property": "status",
+          "terminal": [
+            "closed"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "received"
+              ],
+              "id": "begin_extract",
+              "to": "extracting"
+            },
+            {
+              "from": [
+                "extracting"
+              ],
+              "id": "begin_review",
+              "to": "reviewing"
+            },
+            {
+              "from": [
+                "received",
+                "extracting",
+                "reviewing"
+              ],
+              "id": "close",
+              "to": "closed"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Branch or organizational unit owning this uploaded source batch.",
+          "id": "unit",
+          "target": "org.OrgUnit"
+        }
+      ],
+      "name": "hr_import.SourceBatch",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "channel",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "whatsapp_export"
+              },
+              {
+                "value": "spreadsheet_csv"
+              },
+              {
+                "value": "schedule_photo"
+              },
+              {
+                "value": "erp_export"
+              }
+            ]
+          }
+        },
+        {
+          "id": "blob_ref",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "raw_excerpt",
+          "markings": [
+            "pii.raw_chat_media"
+          ],
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "captured_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "default": "received",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "received"
+              },
+              {
+                "value": "extracting"
+              },
+              {
+                "value": "reviewing"
+              },
+              {
+                "value": "closed"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.SourceBatch.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,71 @@
+{
+  "artifactId": "hr_import.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "HR historical import action authorization policy",
+  "namespace": "hr_import",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "hr_import.access",
+    "rules": [
+      {
+        "actions": [
+          "hr_import.candidate.quarantine"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "hr_import_worker",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr_import.ExtractedCandidate",
+        "ruleId": "quarantine_candidate",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr_import.candidate.promote",
+          "hr_import.candidate.reject"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr_import.ExtractedCandidate",
+        "ruleId": "promote_or_reject_candidate",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

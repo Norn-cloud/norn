@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr_import.ExtractedCandidate.confidence_bounds.law",
+  "dependencies": [
+    {
+      "artifactId": "hr_import.ExtractedCandidate.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Extracted candidate confidence stays within 0..10000 basis points",
+  "namespace": "hr_import",
+  "payload": {
+    "id": "hr_import.ExtractedCandidate.confidence_bounds",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr_import",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr-import/hr_import.ts"
+    },
+    "rationale": "OCR/VLM extraction confidence is expressed in integer basis points in [0, 10000] so downstream review gates never compare malformed scores.",
+    "response": {
+      "expression": "self.confidence_bps >= 0 and self.confidence_bps <= 10000",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr_import.ExtractedCandidate"
+      ],
+      "root": {
+        "id": "hr_import.ExtractedCandidate",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr_import.ExtractedCandidate"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.ExtractedCandidate.confidence_bounds.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

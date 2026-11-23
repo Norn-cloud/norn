@@ -1,0 +1,51 @@
+{
+  "artifactId": "hr_import.ExtractedCandidate.promoted_requires_clean_review.law",
+  "dependencies": [
+    {
+      "artifactId": "hr_import.ExtractedCandidate.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Promoted candidates must have zero open errors and an accepted review receipt",
+  "namespace": "hr_import",
+  "payload": {
+    "condition": "self.status == \"promoted\"",
+    "id": "hr_import.ExtractedCandidate.promoted_requires_clean_review",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr_import",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr-import/hr_import.ts"
+    },
+    "rationale": "Untrusted OCR/VLM candidates cannot be promoted into authoritative HR records while error findings remain open or without an authenticated review receipt.",
+    "response": {
+      "expression": "self.open_error_count == 0 and self.review_receipt_digest != null",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr_import.ExtractedCandidate"
+      ],
+      "root": {
+        "id": "hr_import.ExtractedCandidate",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr_import.ExtractedCandidate"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.ExtractedCandidate.promoted_requires_clean_review.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,17 @@
+{
+  "sha256": "cc3961def355186c7f0aebf6484b6240c89c2b9060d3c0ca305702206f0c549b",
+  "origin": "authored",
+  "category": "synthetic-fixture",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

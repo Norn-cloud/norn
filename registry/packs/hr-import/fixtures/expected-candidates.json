@@ -1,0 +1,76 @@
+{
+  "fixtureKind": "synthetic-egypt-retail-hr-import",
+  "zeroRealPii": true,
+  "batches": [
+    {
+      "id": "batch_cairo_wa_20261122",
+      "channel": "whatsapp_export",
+      "blob_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "raw_excerpt": "Nour Hassan: Salma Tarek evening cashier 2026-11-25 14:00-22:00 EET.",
+      "captured_at": "2026-11-22T16:10:00Z",
+      "status": "reviewing",
+      "unit": "unit_cairo_nasr_city"
+    },
+    {
+      "id": "batch_cairo_csv_20261122",
+      "channel": "spreadsheet_csv",
+      "blob_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "raw_excerpt": "CAIRO-NC-01,EMP-SYN-003,Salma Tarek,2026-11-22,14:05,,missing_clock_out_power_glitch",
+      "captured_at": "2026-11-22T20:30:00Z",
+      "status": "reviewing",
+      "unit": "unit_cairo_nasr_city"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "cand_shift_salma_20261125",
+      "batch": "batch_cairo_wa_20261122",
+      "target_kind": "shift_commitment",
+      "confidence_bps": 9450,
+      "source_span": "whatsapp-cairo-shifts.txt:line:4-5",
+      "extracted_at": "2026-11-23T08:00:00Z",
+      "observed_at": "2026-11-22T16:10:00Z",
+      "effective_on": "2026-11-25",
+      "open_error_count": 0,
+      "review_receipt_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "staged"
+    },
+    {
+      "id": "cand_att_nour_20261122",
+      "batch": "batch_cairo_csv_20261122",
+      "target_kind": "attendance_event",
+      "confidence_bps": 9850,
+      "source_span": "attendance-sheet-sample.csv:row:2",
+      "extracted_at": "2026-11-23T08:05:00Z",
+      "observed_at": "2026-11-22T20:30:00Z",
+      "effective_on": "2026-11-22",
+      "open_error_count": 0,
+      "review_receipt_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "status": "staged"
+    },
+    {
+      "id": "cand_att_salma_missing_out_20261122",
+      "batch": "batch_cairo_csv_20261122",
+      "target_kind": "attendance_event",
+      "confidence_bps": 6200,
+      "source_span": "attendance-sheet-sample.csv:row:4",
+      "extracted_at": "2026-11-23T08:05:00Z",
+      "observed_at": "2026-11-22T20:30:00Z",
+      "effective_on": "2026-11-22",
+      "open_error_count": 1,
+      "review_receipt_digest": null,
+      "status": "quarantined"
+    }
+  ],
+  "findings": [
+    {
+      "id": "dqf_salma_missing_clock_out",
+      "candidate": "cand_att_salma_missing_out_20261122",
+      "code": "missing_clock_out",
+      "severity": "error",
+      "field_path": "clock_out_at",
+      "message": "Row 4 (EMP-SYN-003, 2026-11-22) has clock_in_eet 14:05 but no clock_out_eet; quarantined pending supervisor regularization.",
+      "status": "open"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+branch_code,employee_code,employee_name,work_date,clock_in_eet,clock_out_eet,notes
+CAIRO-NC-01,EMP-SYN-001,Nour Hassan,2026-11-22,09:02,17:05,opening_cashier
+CAIRO-NC-01,EMP-SYN-002,Karim Adel,2026-11-22,13:58,22:04,closing_cashier
+CAIRO-NC-01,EMP-SYN-003,Salma Tarek,2026-11-22,14:05,,missing_clock_out_power_glitch
+CAIRO-NC-01,EMP-SYN-004,Tarek Mansour,2026-11-22,09:10,17:00,floor_supervisor
