@@ -93,7 +93,7 @@ function KeyNumbers() {
               <section key={metric.name} data-slot="kpi" className="flex min-w-0 flex-col gap-1.5 px-4 py-3">
                 <h3 className="truncate text-meta text-muted-foreground" title={metricHeading(metric)}>{metricHeading(metric)}</h3>
                 {answer?.isPending && <Skeleton className="h-7 w-24" />}
-                {result && <p className="text-figure leading-none font-medium tracking-tight tabular-nums">{value === undefined ? "—" : groupDigits(value)}</p>}
+                {result && <p className="text-figure leading-none font-medium tracking-tight tabular-nums [overflow-wrap:anywhere]">{value === undefined ? "—" : groupDigits(value)}</p>}
                 {answer?.data && answer.data.kind !== "answer" && <p className="text-sm text-muted-foreground">The cell did not answer this one.</p>}
                 <p className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
                   <span className="truncate">{conceptTitle(metric.objectType)}</span>

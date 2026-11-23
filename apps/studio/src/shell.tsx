@@ -7,7 +7,7 @@ import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
 import { Bell, ChevronRight, ChevronsUpDown, CloudOff, Keyboard, LayoutGrid, LogOut, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react"
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
@@ -230,8 +230,8 @@ type Navigation = ReturnType<typeof useNavigation>
 const railButton = "relative flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-[1.0625rem]"
 
 /** One destination on the rail: its icon, its name as a hint, and its count. */
-function RailLink({ section, count, firstHref, active }: {
-  readonly section: Section; readonly count: string | undefined; readonly firstHref?: string; readonly active?: boolean
+function RailLink({ section, count, firstHref, active, onExpandSection }: {
+  readonly section: Section; readonly count: string | undefined; readonly firstHref?: string; readonly active?: boolean; readonly onExpandSection?: (path: string) => void
 }) {
   const { setOpen, setOpenMobile } = useSidebar()
   const Icon = section.icon
@@ -242,7 +242,7 @@ function RailLink({ section, count, firstHref, active }: {
   if (to === undefined) {
     return (
       <Hint label={section.label}>
-        <ToolbarButton aria-label={label} onClick={() => setOpen(true)}
+        <ToolbarButton aria-label={label} data-active={active || undefined} onClick={() => { onExpandSection?.(section.path); setOpen(true) }}
           className={cn(railButton, active && "bg-sidebar-accent text-foreground")}>
           <Icon aria-hidden />{badge}
         </ToolbarButton>
@@ -254,6 +254,7 @@ function RailLink({ section, count, firstHref, active }: {
       <ToolbarLink
         render={<Link to={to} activeOptions={{ exact: to === "/" }} onClick={() => setOpenMobile(false)} />}
         aria-label={label}
+        data-active={active || undefined}
         className={cn(railButton, "data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground", active && "bg-sidebar-accent text-foreground")}
       >
         <Icon aria-hidden />{badge}
@@ -279,9 +280,10 @@ function AssistantToggle({ title }: { readonly title: string }) {
  * assistant and the viewer. With the sidebar collapsed it also carries the perspective's
  * destinations, so nothing is out of reach.
  */
-function Rail({ sections, perspective, navigation, current, account, onSignOut, assistant }: {
+function Rail({ sections, perspective, navigation, current, account, onSignOut, assistant, railRef, onExpandSection }: {
   readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation
   readonly current: Section | undefined; readonly account: Account; readonly onSignOut: () => void; readonly assistant?: AssistantContent
+  readonly railRef: RefObject<HTMLDivElement | null>; readonly onExpandSection: (path: string) => void
 }) {
   const { state, isMobile } = useSidebar()
   const global = sections.filter((section) => section.perspective === "global")
@@ -289,25 +291,28 @@ function Rail({ sections, perspective, navigation, current, account, onSignOut, 
   const groups = [...new Set(own.map(({ group }) => group))]
   const firstHref = (section: Section) => navigation.menus.get(section.path)?.find(({ href }) => !href.startsWith("#"))?.href
   return (
-    <Toolbar orientation="vertical" aria-label="Studio" className="flex h-full w-(--sidebar-width-icon) shrink-0 flex-col items-center gap-1 py-2">
-      <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-8 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <img src={nornMark} alt="" width={24} height={24} className="size-6 object-contain" />
-      </Link>
-      {global.map((section) => <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)} />)}
-      {groups.map((group) => (
-        <div key={group ?? ""} role="group" aria-label={group} className="flex flex-col items-center gap-1">
-          <div aria-hidden className="my-1.5 h-px w-4 bg-sidebar-border" />
-          {own.filter((section) => section.group === group).map((section) => (
-            <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)}
-              firstHref={firstHref(section)} active={section.index === false && current?.path === section.path} />
-          ))}
+    <div ref={railRef} className="h-full shrink-0">
+      <Toolbar orientation="vertical" aria-label="Studio" className="flex h-full w-(--sidebar-width-icon) flex-col items-center gap-1 py-2">
+        <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-8 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <img src={nornMark} alt="" width={24} height={24} className="size-6 object-contain" />
+        </Link>
+        {global.map((section) => <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)} />)}
+        {groups.map((group) => (
+          <div key={group ?? ""} role="group" aria-label={group} className="flex flex-col items-center gap-1">
+            <div aria-hidden className="my-1.5 h-px w-4 bg-sidebar-border" />
+            {own.filter((section) => section.group === group).map((section) => (
+              <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)}
+                firstHref={firstHref(section)} active={section.index === false && current?.path === section.path}
+                onExpandSection={onExpandSection} />
+            ))}
+          </div>
+        ))}
+        <div className="mt-auto flex flex-col items-center gap-2">
+          {assistant && <AssistantToggle title={assistant.title} />}
+          <AccountMenu account={account} onSignOut={onSignOut} />
         </div>
-      ))}
-      <div className="mt-auto flex flex-col items-center gap-2">
-        {assistant && <AssistantToggle title={assistant.title} />}
-        <AccountMenu account={account} onSignOut={onSignOut} />
-      </div>
-    </Toolbar>
+      </Toolbar>
+    </div>
   )
 }
 
@@ -322,6 +327,20 @@ function currentOf(sections: readonly Section[], navigation: Navigation, pathnam
   if (claimed) return claimed.entry.href
   const section = destinationOf(sections, pathname, navigation.menus)
   return section ? `dest:${section.path}` : null
+}
+
+/** Record only the tree branches the reader actually toggled, leaving untouched branches free to follow defaults. */
+export function diffExpanded(
+  previous: readonly string[],
+  next: readonly string[],
+  chosen: Readonly<Record<string, boolean>>,
+): Readonly<Record<string, boolean>> {
+  const prevSet = new Set(previous)
+  const nextSet = new Set(next)
+  const updated: Record<string, boolean> = { ...chosen }
+  for (const id of prevSet) if (!nextSet.has(id)) updated[id] = false
+  for (const id of nextSet) if (!prevSet.has(id)) updated[id] = true
+  return updated
 }
 
 /**
@@ -348,6 +367,7 @@ function SectionSidebar({ sections, perspective, navigation, pathname }: {
     if (entries.length > 0) defaults.set(`dest:${section.path}`, active || section.index === false)
     const headings = [...new Set(entries.map(({ group }) => group ?? ""))].filter((heading) => heading !== "")
     headings.forEach((heading, index) => defaults.set(`group:${section.path}:${heading}`, index === 0))
+    if (active) holding.add(`space:${section.group ?? ""}`)
     const at = entries.find(({ href }) => href === current)
     if (at) {
       holding.add(`space:${section.group ?? ""}`).add(`dest:${section.path}`)
@@ -363,7 +383,7 @@ function SectionSidebar({ sections, perspective, navigation, pathname }: {
       <div className="px-2 pt-2 pb-1"><ScopeSwitcher /></div>
       <nav aria-label={label} className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
         <Tree aria-label={`${label} pages`} mode="none" expandOnPress current={current} expanded={expanded}
-          onExpandedChange={(next) => setChosen(Object.fromEntries(values.map((value) => [value, next.includes(value)])))}>
+          onExpandedChange={(next) => setChosen((previous) => diffExpanded(expanded, next, previous))}>
           {spaces.map((space) => {
             const members = own.filter((section) => (section.group ?? "") === space)
             const items = members.map((section) => <Destination key={section.path} section={section} entries={navigation.menus.get(section.path) ?? []} badge={navigation.badges.get(section.path)} close={close} />)
@@ -419,7 +439,7 @@ function Destination({ section, entries, badge, close }: { readonly section: Sec
     {badge && <span className="ms-auto rounded-full bg-destructive px-1.5 text-[0.6875rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{badge}</span>}
   </>
   return (
-    <TreeItem value={`dest:${section.path}`} label={section.label} className={focusRow}>
+    <TreeItem value={`dest:${section.path}`} data-section-path={section.path} label={section.label} className={focusRow}>
       {section.index === false
         ? <TreeItemLabel className={cn(row, "cursor-default")}>{head}</TreeItemLabel>
         : <TreeItemLabel render={<Link to={section.path} onClick={close} />} className={cn(row, section.kind && KINDS[section.kind].svg)}>{head}</TreeItemLabel>}
@@ -461,11 +481,11 @@ function Crumbs({ section, entries, pathname }: { readonly section: Section; rea
  */
 function PerspectiveSwitch({ perspective, onChange }: { readonly perspective: Perspective; readonly onChange: (next: Perspective) => void }) {
   return (
-    <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 items-center rounded-md bg-muted p-0.5">
+    <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-md bg-muted p-0.5">
       {PERSPECTIVES.map(({ id, label }) => (
         <button key={id} type="button" aria-pressed={perspective === id} onClick={() => onChange(id)}
-          className="flex h-7 items-center gap-1.5 rounded-[0.3125rem] px-2.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent [&_svg]:size-3.5">
-          {id === "workspace" ? <LayoutGrid aria-hidden /> : <Wrench aria-hidden />}<span className="max-sm:sr-only">{label}</span>
+          className="flex h-7 items-center gap-1.5 rounded-[0.3125rem] px-2 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent @lg:px-2.5 [&_svg]:size-3.5">
+          {id === "workspace" ? <LayoutGrid aria-hidden /> : <Wrench aria-hidden />}<span className="sr-only @lg:not-sr-only">{label}</span>
         </button>
       ))}
     </div>
@@ -483,8 +503,8 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
   ])
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex h-8 w-full max-w-sm min-w-0 items-center gap-2 rounded-md border bg-background px-2.5 text-sm text-muted-foreground outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring max-md:w-8 max-md:justify-center max-md:border-0 max-md:px-0">
-        <Search aria-hidden className="size-4 shrink-0" /><span className="hidden truncate md:inline">Search…</span><Keys className="ms-auto hidden text-xs md:inline">⌘K</Keys>
+      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring @2xl:w-full @2xl:justify-start @2xl:gap-2 @2xl:border @2xl:bg-background @2xl:px-2.5">
+        <Search aria-hidden className="size-4 shrink-0" /><span className="hidden truncate @2xl:inline">Search…</span><Keys className="ms-auto hidden text-xs @2xl:inline">⌘K</Keys>
       </DialogTrigger>
       <DialogBackdrop className="fixed inset-0 bg-black/40 transition-opacity duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0" />
       <DialogContent className="fixed top-[12vh] left-1/2 m-0 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-xl bg-popover p-0 text-popover-foreground shadow-2xl ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
@@ -571,7 +591,7 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
       </Menu>}
       {tools}
       <Popover>
-        <PopoverTrigger aria-label="Keyboard shortcuts" className={cn(iconButton, "max-md:hidden")}><Keyboard aria-hidden /></PopoverTrigger>
+        <PopoverTrigger aria-label="Keyboard shortcuts" className={cn(iconButton, "hidden @xl:flex")}><Keyboard aria-hidden /></PopoverTrigger>
         <KitPopoverContent align="end" className="w-60">
           <PopoverTitle className="mb-2 text-sm font-medium">Keyboard shortcuts</PopoverTitle>
           <dl className="grid grid-cols-[1fr_auto] gap-y-1.5 text-sm">
@@ -624,6 +644,92 @@ function useHashScroll() {
   }, [hash, at])
 }
 
+/** The sidebar, top bar and page frame inside SidebarProvider, preserving keyboard focus across collapse/expand. */
+function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale, pathname, perspective, navigation, current, switchTo }: {
+  readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent
+  readonly account: Account; readonly onSignOut: () => void; readonly locale: ReturnType<typeof useLocale>["locale"]
+  readonly pathname: string; readonly perspective: Perspective; readonly navigation: Navigation
+  readonly current: Section | undefined; readonly switchTo: (next: Perspective) => void
+}) {
+  const { open, isMobile } = useSidebar()
+  const sidebarPanelRef = useRef<HTMLDivElement>(null)
+  const railRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const wasOpenRef = useRef(open)
+  const focusWasInPanelRef = useRef(false)
+  const pendingFocusSectionRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target
+      focusWasInPanelRef.current = target instanceof Node && Boolean(sidebarPanelRef.current?.contains(target))
+    }
+    document.addEventListener("focusin", onFocusIn)
+    return () => document.removeEventListener("focusin", onFocusIn)
+  }, [])
+
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current
+    wasOpenRef.current = open
+    if (isMobile) return
+    if (wasOpen && !open) {
+      const active = document.activeElement
+      const lost = sidebarPanelRef.current?.contains(active) || (active === document.body && focusWasInPanelRef.current)
+      focusWasInPanelRef.current = false
+      if (lost) {
+        const railTarget = railRef.current?.querySelector<HTMLElement>('[data-status="active"], [data-active="true"], [aria-current="page"]')
+        ;(railTarget ?? triggerRef.current)?.focus()
+      }
+      return
+    }
+    if (!wasOpen && open && pendingFocusSectionRef.current !== null) {
+      const path = pendingFocusSectionRef.current
+      pendingFocusSectionRef.current = null
+      const panel = sidebarPanelRef.current
+      const sectionItem = Array.from(panel?.querySelectorAll<HTMLElement>("[data-section-path]") ?? [])
+        .find((element) => element.dataset.sectionPath === path)
+      sectionItem?.focus()
+      if (panel && !panel.contains(document.activeElement)) {
+        panel.querySelector<HTMLElement>('[role="treeitem"], a[href], button')?.focus()
+      }
+    }
+  }, [open, isMobile])
+
+  return (
+    <>
+      <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-sidebar-border">
+        <div className="flex size-full min-w-0 flex-row bg-sidebar">
+          <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account}
+            onSignOut={onSignOut} assistant={assistant} railRef={railRef}
+            onExpandSection={(path) => { pendingFocusSectionRef.current = path }} />
+          <div ref={sidebarPanelRef} className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+            <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname} />
+          </div>
+        </div>
+      </Sidebar>
+      <SidebarInset className="min-w-0 flex-row overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="@container flex h-12 shrink-0 items-center justify-between gap-2 border-b px-3 md:gap-3 md:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-md text-muted-foreground" />
+              <div className="min-w-0">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
+            </div>
+            <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
+            <div className="flex shrink-0 items-center justify-end gap-1.5 @xl:gap-2">
+              <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
+              <BarButtons tools={tools} />
+            </div>
+          </header>
+          <ConnectionBanner />
+          <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8"><Outlet /></div>
+        </div>
+        <Inspector />
+        <AssistantPanel assistant={assistant} />
+      </SidebarInset>
+    </>
+  )
+}
+
 /** The shell in the reader's direction: in Arabic the rail docks on the right. */
 function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
   const { locale } = useLocale()
@@ -643,33 +749,8 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
   return (
     <ViewProvider><InspectorProvider><TooltipProvider>
       <SidebarProvider data-shell="workbench" data-density={density} className="bg-background" style={{ "--sidebar-width": "17rem", "--sidebar-width-icon": "3rem" } as CSSProperties}>
-        <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-sidebar-border">
-          <div className="flex size-full min-w-0 flex-row bg-sidebar">
-            <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account} onSignOut={onSignOut} assistant={assistant} />
-            <div className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-              <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname} />
-            </div>
-          </div>
-        </Sidebar>
-        <SidebarInset className="min-w-0 flex-row overflow-hidden">
-          <div className="flex min-w-0 flex-1 flex-col">
-            <header className="grid h-12 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b px-3 md:px-4">
-              <div className="flex min-w-0 items-center gap-1.5">
-                <SidebarTrigger className="-ms-1 size-8 rounded-md text-muted-foreground" />
-                <div className="min-w-0">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
-              </div>
-              <div className="flex justify-center md:w-[min(24rem,36vw)]"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
-              <div className="flex items-center justify-end gap-2">
-                <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
-                <BarButtons tools={tools} />
-              </div>
-            </header>
-            <ConnectionBanner />
-            <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8"><Outlet /></div>
-          </div>
-          <Inspector />
-          <AssistantPanel assistant={assistant} />
-        </SidebarInset>
+        <WorkbenchFrame sections={sections} tools={tools} assistant={assistant} account={account} onSignOut={onSignOut}
+          locale={locale} pathname={pathname} perspective={perspective} navigation={navigation} current={current} switchTo={switchTo} />
       </SidebarProvider>
     </TooltipProvider></InspectorProvider></ViewProvider>
   )

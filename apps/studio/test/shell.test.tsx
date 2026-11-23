@@ -5,7 +5,7 @@ import { ChartLine, Database, House, Rows3 } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { Account } from "../src/lib/session.ts"
-import { Shell, decoded, initials, perspectiveOf, sectionOf, target, type MenuEntry, type Section } from "../src/shell.tsx"
+import { Shell, decoded, diffExpanded, initials, perspectiveOf, sectionOf, target, type MenuEntry, type Section } from "../src/shell.tsx"
 import { ViewProvider } from "../src/lib/view.tsx"
 import { WORKSPACES } from "../src/lib/workspaces.ts"
 
@@ -174,4 +174,17 @@ test("an assistant mounts in the shell's panel, opened from the rail; a page can
   const none = await at("/sources", () => <Shell sections={[sources]} account={account} onSignOut={() => {}} />)
   expect(none).not.toContain('data-slot="assistant-panel"')
   expect(none).not.toContain('aria-label="Assistant"')
+})
+
+test("collapsing one space records only that branch, leaving untouched destinations free to auto-expand when active", () => {
+  // Initial expanded branches on Home: spaces are open, Records is open, Metrics (inactive) is closed by default.
+  const before = ["space:Data", "space:Analysis", "space:Operations", "dest:/objects"]
+  const after = ["space:Data", "space:Analysis", "dest:/objects"]
+  const chosen = diffExpanded(before, after, {})
+  expect(chosen).toEqual({ "space:Operations": false })
+  // Untouched destination dest:/metrics stays absent from chosen, so navigating to /metrics lets its default (true) apply.
+  expect(chosen["dest:/metrics"]).toBeUndefined()
+  // Expanding an untouched destination later records only that destination as true while preserving the earlier space collapse.
+  const next = diffExpanded(after, [...after, "dest:/metrics"], chosen)
+  expect(next).toEqual({ "space:Operations": false, "dest:/metrics": true })
 })

@@ -83,7 +83,7 @@ export function DecisionsPage() {
         {open.map((d) => (
           <li key={d.id}>
             <button type="button" onClick={() => choose(d.id)} aria-current={selected?.id === d.id ? "true" : undefined}
-              className="grid w-full gap-1 px-4 py-3 text-start transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none aria-current:bg-muted">
+              className="grid w-full gap-1 px-4 py-3 text-start transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-current:bg-muted">
               <span className="flex items-baseline gap-3">
                 <span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium">{d.question}</span>
                 <span className="shrink-0 text-meta"><Countdown expiresAtMs={d.expiresAtMs} now={now} /></span>

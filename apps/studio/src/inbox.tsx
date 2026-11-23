@@ -90,7 +90,7 @@ export function Inbox() {
   )
 }
 
-const rowLink = "flex items-center gap-3 px-4 py-1.5 ps-10 text-sm hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+const rowLink = "flex items-center gap-3 px-4 py-1.5 ps-10 text-sm hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 
 /** A group's head row: a small muted icon, what the group is, its count, and an optional action at the end. */
 function GroupHead({ icon: Icon, title, count, description, children }: { readonly icon: LucideIcon; readonly title: ReactNode; readonly count?: number; readonly description?: ReactNode; readonly children?: ReactNode }) {
@@ -117,7 +117,7 @@ function HeldBack({ group }: { readonly group: Group }) {
       </GroupHead>
       <CollapsibleContent className="pb-1.5">
         {group.records.map((record) => {
-          const name = text(record.values?.doc_number) ?? text(record.values?.label) ?? record.id
+          const name = text(record.values?.label) ?? text(record.values?.display_name) ?? text(record.values?.title) ?? record.id
           // The record's other open findings, or laws a fix would break: the server offers no fix then.
           const others = (record as { readonly otherFindings?: readonly Schemas["NornInboxFinding"][] }).otherFindings ?? []
           return (
