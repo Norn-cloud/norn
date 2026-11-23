@@ -3,11 +3,14 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { useLocale } from "@/lib/locale"
 import { useView } from "@/lib/view"
 import { conceptTitle } from "../lib/catalog.ts"
+import { labelIndex, pick } from "../lib/labels.ts"
 import { listActions, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
 import { useAccount } from "../lib/session.ts"
-import { ActionForm } from "./action-form.tsx"
+import { useCatalog } from "../lib/use-catalog.ts"
+import { ActionForm, type EnumLabelLookup } from "./action-form.tsx"
 import { keptDrafts, sessionKey } from "./kept-drafts.ts"
 import { parkedCalls } from "./parked-calls.ts"
 import type { ParkedCall } from "../lib/screen/call.ts"
@@ -41,6 +44,19 @@ export function ActionSheet({ open, onClose, onView, onChanged }: {
   readonly onChanged?: () => void
 }) {
   const { view } = useView()
+  const { locale } = useLocale()
+  const { read: catalogRead } = useCatalog()
+  const enumLabel = useMemo<EnumLabelLookup>(() => {
+    const artifacts = catalogRead.data?.document
+    if (open === null || artifacts === undefined) return () => undefined
+    const index = labelIndex(artifacts)
+    const objectKind = open.action.objectKind
+    return (pointer, value) => {
+      const property = pointer.split("/").filter(Boolean).at(-1)
+      if (property === undefined) return undefined
+      return pick(index, `enumValue:${objectKind}.${property}=${value}`, locale)?.text
+    }
+  }, [catalogRead.data, open, locale])
   // Kept drafts belong to the session that wrote them (#1469 S6).
   const session = sessionKey(useAccount().data)
   const kept = { get: (k: string) => keptDrafts.get(session, k), set: (k: string, d: Draft) => keptDrafts.set(session, k, d), delete: (k: string) => keptDrafts.delete(session, k) }
@@ -120,6 +136,7 @@ export function ActionSheet({ open, onClose, onView, onChanged }: {
                 parked={parked} runNow={open.runNow === true && parked === open.parked}
                 onParked={(call) => parkedCalls.set(session, draftKey(open), call)} onUnparked={() => parkedCalls.delete(session, draftKey(open))}
                 onChanged={() => { invalidate(open.action.objectKind); onChanged?.() }}
+                enumLabel={enumLabel}
                 technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />
             </div>

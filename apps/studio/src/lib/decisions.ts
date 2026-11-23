@@ -66,6 +66,8 @@ export interface Decided {
   readonly receipt: { readonly receiptHash: string; readonly commitSeq: number; readonly recordedAtMs: number }
   readonly run: { readonly id: string; readonly state: string | null }
   readonly call?: DecidedCall
+  /** The episode the decision projects to, when the cell names it (#1208). Studio never derives it. */
+  readonly episodeId?: string | null
 }
 
 /**

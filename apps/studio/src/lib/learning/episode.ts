@@ -1,5 +1,9 @@
-import { CellUnavailable, readStudioScope, scopedHostFetch } from "../definitions.ts"
+import type { Clause, Predicate, RecordsQuery, Served } from "../records-query.ts"
 import type { ObjectRecord } from "../transport.ts"
+import {
+  DecodeError, defaultFetch, int, list, listLearningObjects, obj, oneOf, readLearningObject, receipt, str, text,
+  type DecodedRecord, type Fetch, type JsonObj, type ObjectListRead, type ReceiptRef,
+} from "./objects.ts"
 
 /**
  * A decision episode from the learning pack (#1208): a read-only ledger projection that joins a
@@ -7,9 +11,10 @@ import type { ObjectRecord } from "../transport.ts"
  * outcomes (#1108), any waiver (#1192) and the recorded Outcome. Studio reads it, it never builds
  * one: agreement, standing and outcome state all arrive from the cell.
  *
- * Served as an ordinary object, `GET /v1/objects/learning.Episode/{id}` → NornObjectRecord, with
- * the fields below in `values` (the shape requested on #1208). Decoding is fail-closed: a record
- * missing a field the timeline reads is not an episode, and the page says so instead of guessing.
+ * Served as an ordinary object, `GET /v1/objects/learning.Episode[/{id}]` → NornObjectPage /
+ * NornObjectRecord, with the fields below in `values` (the shape requested on #1208). Decoding is
+ * fail-closed: a record missing a field the timeline reads is not an episode, and the page says so
+ * instead of guessing.
  */
 
 export const EPISODE_TYPE = "learning.Episode"
@@ -19,8 +24,11 @@ export type Lifecycle = "candidate" | "shadow" | "active" | "retired"
 export type RuleOutcome = "allowed" | "would_block" | "blocked"
 export type OutcomeState = "recorded" | "open" | "overdue"
 export type Verdict = "exception" | "noise" | "pattern" | "gap"
+export type { ReceiptRef }
 
-export interface ReceiptRef { readonly receiptHash: string; readonly commitSeq: number }
+export const AGREEMENTS: readonly Agreement[] = ["accepted", "edited", "overridden", "none"]
+export const OUTCOME_STATES: readonly OutcomeState[] = ["recorded", "open", "overdue"]
+export const VERDICTS: readonly Verdict[] = ["exception", "noise", "pattern", "gap"]
 
 export interface Episode {
   readonly id: string
@@ -61,38 +69,28 @@ export interface Episode {
 
 // ---- Fail-closed decoding -------------------------------------------------------------------
 
-class Bad extends Error {}
-type Obj = Record<string, unknown>
-const obj = (v: unknown, at: string): Obj => { if (typeof v !== "object" || v === null || Array.isArray(v)) throw new Bad(`${at} is not an object`); return v as Obj }
-const str = (v: unknown, at: string): string => { if (typeof v !== "string" || v === "") throw new Bad(`${at} is not text`); return v }
-const text = (v: unknown, at: string): string | null => v === null || v === undefined ? null : str(v, at)
-const int = (v: unknown, at: string): number => { if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) throw new Bad(`${at} is not a whole number`); return v }
-const list = <T,>(v: unknown, at: string, each: (x: unknown, at: string) => T): readonly T[] => { if (!Array.isArray(v)) throw new Bad(`${at} is not a list`); return v.map((x, i) => each(x, `${at}/${i}`)) }
-const oneOf = <T extends string>(v: unknown, at: string, values: readonly T[]): T => { if (!values.includes(v as T)) throw new Bad(`${at} is not one of ${values.join(", ")}`); return v as T }
-const receipt = (o: Obj, at: string): ReceiptRef => ({ receiptHash: str(o.receiptHash, `${at}/receiptHash`), commitSeq: int(o.commitSeq, `${at}/commitSeq`) })
-
-function decodeValues(v: Obj, id: string, version: number): Episode {
+function decodeValues(v: JsonObj, id: string, version: number): Episode {
   const d = obj(v.decision, "/decision")
   const options = list(d.options, "/decision/options", (x, at) => { const o = obj(x, at); return { id: str(o.id, `${at}/id`), label: str(o.label, `${at}/label`) } })
   const choice = str(d.choice, "/decision/choice")
-  if (!options.some((o) => o.id === choice)) throw new Bad("/decision/choice is not one of the decision's options")
+  if (!options.some((o) => o.id === choice)) throw new DecodeError("/decision/choice is not one of the decision's options")
   const run = obj(v.run, "/run"), flow = obj(run.flow, "/run/flow"), step = obj(run.step, "/run/step")
   const rec = v.recommendation === null ? null : obj(v.recommendation, "/recommendation")
   const producer = rec === null ? null : obj(rec.producer, "/recommendation/producer")
   const ctx = obj(v.context, "/context")
   const out = obj(v.outcome, "/outcome"), spec = obj(out.spec, "/outcome/spec")
   const outRec = out.record === null || out.record === undefined ? null : obj(out.record, "/outcome/record")
-  const state = oneOf(out.state, "/outcome/state", ["recorded", "open", "overdue"] as const)
-  if ((state === "recorded") !== (outRec !== null)) throw new Bad("/outcome/record must be present exactly when the outcome is recorded")
+  const state = oneOf(out.state, "/outcome/state", OUTCOME_STATES)
+  if ((state === "recorded") !== (outRec !== null)) throw new DecodeError("/outcome/record must be present exactly when the outcome is recorded")
   const triage = v.triage === null || v.triage === undefined ? null : obj(v.triage, "/triage")
   // The cell derives these; one that contradicts its own parts is not shown as if it held.
-  const agreement = oneOf(v.agreement, "/agreement", ["accepted", "edited", "overridden", "none"] as const)
+  const agreement = oneOf(v.agreement, "/agreement", AGREEMENTS)
   const pick = rec === null ? null : str(rec.pick, "/recommendation/pick")
-  if ((agreement === "none") !== (pick === null)) throw new Bad("/agreement is none exactly when nothing was suggested")
-  if (agreement === "accepted" && pick !== choice) throw new Bad("/agreement is accepted but the choice is not the suggestion")
-  if (agreement === "overridden" && pick === choice) throw new Bad("/agreement is overridden but the choice is the suggestion")
+  if ((agreement === "none") !== (pick === null)) throw new DecodeError("/agreement is none exactly when nothing was suggested")
+  if (agreement === "accepted" && pick !== choice) throw new DecodeError("/agreement is accepted but the choice is not the suggestion")
+  if (agreement === "overridden" && pick === choice) throw new DecodeError("/agreement is overridden but the choice is the suggestion")
   const standing = oneOf(v.standing, "/standing", ["context", "measured"] as const)
-  if ((standing === "measured") !== (state === "recorded")) throw new Bad("/standing is measured exactly when the outcome is recorded")
+  if ((standing === "measured") !== (state === "recorded")) throw new DecodeError("/standing is measured exactly when the outcome is recorded")
   return {
     id, version,
     decision: {
@@ -129,22 +127,27 @@ function decodeValues(v: Obj, id: string, version: number): Episode {
       },
     },
     standing,
-    triage: triage === null ? null : { verdict: oneOf(triage.verdict, "/triage/verdict", ["exception", "noise", "pattern", "gap"] as const), reason: str(triage.reason, "/triage/reason"), curator: str(triage.curator, "/triage/curator"), atMs: int(triage.atMs, "/triage/atMs") },
+    triage: triage === null ? null : { verdict: oneOf(triage.verdict, "/triage/verdict", VERDICTS), reason: str(triage.reason, "/triage/reason"), curator: str(triage.curator, "/triage/curator"), atMs: int(triage.atMs, "/triage/atMs") },
   }
 }
 
 /** The episode in a served record, or why it is not one (the pointer names the first field that failed). */
 export function decodeEpisode(record: ObjectRecord): { readonly kind: "episode"; readonly episode: Episode; readonly record: ObjectRecord } | { readonly kind: "malformed"; readonly problem: string } {
   try {
-    if (record.objectType !== EPISODE_TYPE) throw new Bad(`/objectType is ${record.objectType}, not ${EPISODE_TYPE}`)
+    if (record.objectType !== EPISODE_TYPE) throw new DecodeError(`/objectType is ${record.objectType}, not ${EPISODE_TYPE}`)
     return { kind: "episode", episode: decodeValues(obj(record.values, "/values"), str(record.id, "/id"), int(record.version, "/version")), record }
   } catch (error) {
-    if (error instanceof Bad) return { kind: "malformed", problem: error.message }
+    if (error instanceof DecodeError) return { kind: "malformed", problem: error.message }
     throw error
   }
 }
 
-// ---- Reading one --------------------------------------------------------------------------------
+const decodeAsItem = (record: ObjectRecord): DecodedRecord<Episode> => {
+  const decoded = decodeEpisode(record)
+  return decoded.kind === "episode" ? { kind: "ok", item: decoded.episode, record: decoded.record } : decoded
+}
+
+// ---- Reading one and listing pages --------------------------------------------------------------
 
 export type EpisodeRead =
   /** `record` is the served document as it came, for what the page reads off it as-is (the cell's offers). */
@@ -157,29 +160,54 @@ export type EpisodeRead =
   | { readonly kind: "unavailable" }
   | { readonly kind: "no-cell" }
 
+export type EpisodeListRead = ObjectListRead<Episode>
+
 export const EPISODES_UNAVAILABLE = "This cell doesn't serve decision episodes yet."
 
-type Fetch = (input: string, init?: RequestInit) => Promise<Response>
+export async function readEpisode(id: string, fetcher: Fetch = defaultFetch): Promise<EpisodeRead> {
+  const read = await readLearningObject(EPISODE_TYPE, id, decodeAsItem, fetcher)
+  return read.kind === "ok" ? { kind: "episode", episode: read.item, record: read.record } : read
+}
 
-export async function readEpisode(id: string, fetcher: Fetch = (input, init) => fetch(input, init)): Promise<EpisodeRead> {
-  let scope
-  try { scope = await readStudioScope(fetcher) } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
-  if (scope === null) return { kind: "no-cell" }
-  const active = scope
-  const response = await scopedHostFetch(fetcher, "/api/host", async () => active)(`/v1/objects/${encodeURIComponent(EPISODE_TYPE)}/${encodeURIComponent(id)}`, { headers: { accept: "application/json" } })
-  const raw = await response.text()
-  let body: unknown = null
-  try { body = JSON.parse(raw) } catch { /* not JSON: decided by the status below */ }
-  const code = (body as { code?: unknown } | null)?.code
-  const message = (body as { message?: unknown } | null)?.message
-  if (response.ok) {
-    if (body === null) throw new CellUnavailable(response.status, "The cell's episode was not JSON.")
-    return decodeEpisode(body as ObjectRecord)
+export const listEpisodes = (query: RecordsQuery, fetcher: Fetch = defaultFetch): Promise<EpisodeListRead> =>
+  listLearningObjects(EPISODE_TYPE, query, decodeAsItem, fetcher)
+
+// ---- Server-side filter contract (#1208) --------------------------------------------------------
+
+/** The five server-side filters requested for the episodes grid (#1208). */
+export interface EpisodeFilters {
+  readonly agreement?: Agreement
+  readonly outcomeState?: OutcomeState
+  readonly lawId?: string
+  readonly manifestPin?: string
+  readonly verdict?: Verdict | "untriaged"
+}
+
+export const EMPTY_EPISODE_FILTERS: EpisodeFilters = {}
+
+/** Encode active episode filters as the generic object-query predicate sent to the cell. */
+export function episodeFilterPredicate(filters: EpisodeFilters): Predicate | null {
+  const all: Clause[] = []
+  if (filters.agreement !== undefined) all.push({ property: "agreement", op: "eq", value: filters.agreement })
+  if (filters.outcomeState !== undefined) all.push({ property: "outcome.state", op: "eq", value: filters.outcomeState })
+  if (filters.lawId !== undefined && filters.lawId.trim() !== "") all.push({ property: "ruleOutcomes.lawId", op: "eq", value: filters.lawId.trim() })
+  if (filters.manifestPin !== undefined && filters.manifestPin.trim() !== "") all.push({ property: "recommendation.producer.manifestPin", op: "eq", value: filters.manifestPin.trim() })
+  if (filters.verdict === "untriaged") all.push({ property: "triage.verdict", op: "empty" })
+  else if (filters.verdict !== undefined) all.push({ property: "triage.verdict", op: "eq", value: filters.verdict })
+  return all.length === 0 ? null : { all }
+}
+
+/** Read back the episode filters the cell echoed in `page.query` (Studio never assumes a filter applied). */
+export function episodeFiltersFromServed(served: Served | null): EpisodeFilters {
+  const clauses = served?.filter?.all ?? []
+  const out: { agreement?: Agreement; outcomeState?: OutcomeState; lawId?: string; manifestPin?: string; verdict?: Verdict | "untriaged" } = {}
+  for (const clause of clauses) {
+    if (clause.property === "agreement" && clause.op === "eq" && typeof clause.value === "string" && AGREEMENTS.includes(clause.value as Agreement)) out.agreement = clause.value as Agreement
+    else if (clause.property === "outcome.state" && clause.op === "eq" && typeof clause.value === "string" && OUTCOME_STATES.includes(clause.value as OutcomeState)) out.outcomeState = clause.value as OutcomeState
+    else if (clause.property === "ruleOutcomes.lawId" && clause.op === "eq" && typeof clause.value === "string" && clause.value !== "") out.lawId = clause.value
+    else if (clause.property === "recommendation.producer.manifestPin" && clause.op === "eq" && typeof clause.value === "string" && clause.value !== "") out.manifestPin = clause.value
+    else if (clause.property === "triage.verdict" && clause.op === "empty") out.verdict = "untriaged"
+    else if (clause.property === "triage.verdict" && clause.op === "eq" && typeof clause.value === "string" && VERDICTS.includes(clause.value as Verdict)) out.verdict = clause.value as Verdict
   }
-  if (typeof code === "string" && response.status !== 503) {
-    const words = typeof message === "string" ? message : code
-    return response.status === 404 ? { kind: "not-found", message: words } : { kind: "refused", status: response.status, code, message: words }
-  }
-  if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
-  throw new CellUnavailable(response.status)
+  return out
 }

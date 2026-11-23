@@ -22,6 +22,8 @@ export interface StepReceipt {
   readonly recordedAtMs: number
   /** Display words ("you", a name, "another decider"), never an id. */
   readonly executor?: string | null
+  /** The projected episode id, when the cell names one (#1208). Studio never derives it. */
+  readonly episodeId?: string | null
 }
 
 export interface RunStep {

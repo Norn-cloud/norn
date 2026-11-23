@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
+import { decisionCell } from "./decision-cell.ts"
 import { session } from "./object-cell.ts"
 
 /** Choose a view (Business, Technical) or a language (English, العربية) from the account menu, where they live. */
@@ -237,4 +238,164 @@ test("while the cell takes no actions on episodes, the triage card says so and o
   await open(page, "ep_demo_overridden")
   await expect(triageCard(page)).toContainText("This cell doesn't take actions from Studio yet.")
   await expect(triageCard(page).getByRole("button")).toHaveCount(0)
+})
+
+test("triage: served L-i18n enum labels show in the Verdict dropdown while sending raw enum ids", async ({ page }) => {
+  await page.route("**/api/host/v1/definitions**", (route) => route.fulfill({
+    json: {
+      artifacts: [
+        {
+          id: "learning.labels.v1",
+          kind: "labels",
+          version: 1,
+          payload: {
+            entries: [
+              { target: { kind: "enumValue", objectType: "learning.Episode", property: "verdict", value: "pattern" }, label: { en: "Reusable pattern (pack)" } },
+              { target: { kind: "enumValue", objectType: "learning.Episode", property: "verdict", value: "gap" }, label: { en: "Model gap (pack)" } },
+            ],
+          },
+        },
+      ],
+    },
+  }))
+  const { calls } = await open(page, "ep_demo_overridden", "fixture", { serve: "catalog" })
+  await triageCard(page).getByRole("button", { name: "Triage", exact: true }).click()
+  const verdict = sheet(page).getByLabel("Verdict")
+  await expect(verdict.locator('option[value="pattern"]')).toHaveText("Reusable pattern (pack)")
+  await expect(verdict.locator('option[value="gap"]')).toHaveText("Model gap (pack)")
+  // Unlabelled enum value falls back to its raw id without guessing.
+  await expect(verdict.locator('option[value="exception"]')).toHaveText("exception")
+  await verdict.selectOption("pattern")
+  await sheet(page).getByLabel("Reason").fill("Confirmed via L-i18n label")
+  await sheet(page).getByRole("button", { name: "Triage", exact: true }).click()
+  expect(calls[0]!.input["verdict"]).toBe("pattern")
+})
+
+test("list: Workspace Learning space lists episodes, sends all five server filters, renders withheld rows and opens a timeline", async ({ page }) => {
+  await session(page)
+  const records = structuredClone(fixture.records) as { id: string; objectType: string; scope: string; version: number; values: Record<string, unknown> }[]
+  const queries: URL[] = []
+  let failSnapshotOnce = false
+
+  await page.route("**/api/host/v1/objects/learning.Episode**", (route) => {
+    const url = new URL(route.request().url())
+    const suffix = url.pathname.split("/v1/objects/learning.Episode")[1] ?? ""
+    if (suffix.startsWith("/") && suffix.length > 1) {
+      const asked = decodeURIComponent(suffix.slice(1))
+      const found = records.find((r) => r.id === asked)
+      return found ? route.fulfill({ json: found }) : route.fulfill({ status: 404, json: { code: "object.not_found", message: "No such object." } })
+    }
+    queries.push(url)
+    if (failSnapshotOnce) {
+      failSnapshotOnce = false
+      return route.fulfill({ status: 409, json: { code: "query.snapshot_moved", message: "Snapshot moved" } })
+    }
+    const rawFilter = url.searchParams.get("filter")
+    const filter = rawFilter ? (JSON.parse(rawFilter) as { all?: { property: string; op: string; value?: unknown }[] }) : null
+    const clauses = filter?.all ?? []
+    const matched = records.filter((r) => clauses.every((c) => {
+      if (c.property === "agreement" && c.op === "eq") return r.values["agreement"] === c.value
+      if (c.property === "outcome.state" && c.op === "eq") return (r.values["outcome"] as { state: string }).state === c.value
+      if (c.property === "triage.verdict" && c.op === "empty") return r.values["triage"] === null
+      if (c.property === "triage.verdict" && c.op === "eq") return (r.values["triage"] as { verdict: string } | null)?.verdict === c.value
+      if (c.property === "ruleOutcomes.lawId" && c.op === "eq") return (r.values["ruleOutcomes"] as { lawId: string }[]).some((ro) => ro.lawId === c.value)
+      if (c.property === "recommendation.producer.manifestPin" && c.op === "eq") return (r.values["recommendation"] as { producer: { manifestPin: string } } | null)?.producer.manifestPin === c.value
+      return true
+    }))
+    const rows = clauses.length === 0
+      ? [...matched, { objectType: "learning.Episode", id: "ep_withheld_1", scope: "org_demo/analytics", version: null, values: null, withheld: true, withheldProperties: [] }]
+      : matched
+    return route.fulfill({
+      json: { objectType: "learning.Episode", records: rows, query: { sort: [], filter }, total: { count: rows.length, exact: true }, next: null, quarantineCount: 0 },
+    })
+  })
+
+  // Reach Episodes through the Workspace → Learning space in the shell sidebar.
+  await page.goto("/")
+  const nav = page.getByRole("navigation", { name: "Workspace" })
+  await expect(nav).toContainText("Learning")
+  await nav.getByRole("link", { name: "Episodes" }).click()
+  await expect(page).toHaveURL(/\/learning\/episodes$/)
+
+  const table = page.getByRole("table", { name: "Decision episodes" })
+  await expect(table).toContainText("Release the held shipment?")
+  await expect(table).toContainText("Withheld by cell policy")
+  await shoot(page, "list")
+
+  // Exercise all five server filters (#1208).
+  await page.getByLabel("Filter by agreement").selectOption("overridden")
+  await expect(page.getByText("agreement: overridden")).toBeVisible()
+  await page.getByLabel("Filter by outcome").selectOption("recorded")
+  await expect(page.getByText("outcome: recorded")).toBeVisible()
+  await page.getByLabel("Filter by triage verdict").selectOption("untriaged")
+  await expect(page.getByText("triage: not triaged")).toBeVisible()
+  await page.getByLabel("Law id").fill("demo.credit.hold_over_limit")
+  await page.getByRole("button", { name: "Apply" }).first().click()
+  await expect(page.getByText("law: demo.credit.hold_over_limit")).toBeVisible()
+  await page.getByLabel("Producer pin").fill("sha256:9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c")
+  await page.getByRole("button", { name: "Apply" }).nth(1).click()
+  await expect(table.locator("tbody tr")).toHaveCount(1)
+
+  const lastFilter = JSON.parse(queries.at(-1)!.searchParams.get("filter") ?? "null")
+  expect(lastFilter).toEqual({
+    all: [
+      { property: "agreement", op: "eq", value: "overridden" },
+      { property: "outcome.state", op: "eq", value: "recorded" },
+      { property: "ruleOutcomes.lawId", op: "eq", value: "demo.credit.hold_over_limit" },
+      { property: "recommendation.producer.manifestPin", op: "eq", value: "sha256:9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c" },
+      { property: "triage.verdict", op: "empty" },
+    ],
+  })
+
+  // Snapshot moved notice resets cleanly on refresh.
+  failSnapshotOnce = true
+  await page.getByRole("button", { name: "Refresh" }).click()
+  await expect(page.getByRole("status")).toContainText("changed")
+
+  // Opening an episode row navigates into the episode timeline.
+  await table.getByRole("link", { name: "Release the held shipment?" }).click()
+  await expect(page).toHaveURL(/\/episodes\/ep_demo_overridden$/)
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Release the held shipment?")
+})
+
+test("links: See episode renders from a run receipt and from a decided inbox sheet only when the cell names episodeId", async ({ page }) => {
+  await session(page)
+  const cell = await decisionCell(page)
+  const records = structuredClone(fixture.records)
+  await page.route("**/api/host/v1/objects/learning.Episode/**", (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split("/").pop() ?? "")
+    const found = records.find((r) => r.id === id)
+    return found ? route.fulfill({ json: found }) : route.fulfill({ status: 404, json: { code: "object.not_found", message: "Not found" } })
+  })
+
+  // Inject an episodeId onto a completed run receipt and verify "See episode" links to /episodes/$id.
+  const run = cell.runs.get("run_count_3")!
+  run.steps[0]!.receipts.push({ kind: "decision", receiptHash: "a".repeat(64), commitSeq: 4812, recordedAtMs: Date.now(), executor: "you", episodeId: "ep_demo_overridden" } as never)
+  await page.goto("/runs/run_count_3")
+  await page.getByText(/Done by you/).click()
+  const runLink = page.getByRole("link", { name: "See episode" })
+  await expect(runLink).toHaveAttribute("href", "/episodes/ep_demo_overridden")
+  await runLink.click()
+  await expect(page).toHaveURL(/\/episodes\/ep_demo_overridden$/)
+
+  // Override :decide to return episodeId on the server reply and verify the decision sheet shows "See episode".
+  await page.route("**/api/host/v1/decisions/*:decide**", (route) => route.fulfill({
+    json: {
+      outcome: "decided",
+      decision: { id: "dec_UmVjb3VudC1iaW4", choice: "recount", decidedBy: "you", decidedAtMs: Date.now() },
+      receipt: { receiptHash: "b".repeat(64), commitSeq: 4999, recordedAtMs: Date.now() },
+      run: { id: "run_count_4", state: "running" },
+      episodeId: "ep_demo_overridden",
+    },
+  }))
+  await page.goto("/decisions")
+  await page.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button", { name: /Recount it\?/ }).click()
+  await expect(page.locator("norn-decision-sheet .norn-sheet")).toHaveAttribute("data-engine", "ready", { timeout: 30_000 })
+  await sheet(page).getByLabel("Recount").check()
+  await sheet(page).getByRole("button", { name: "Decide: Recount" }).click()
+  const sheetEpLink = sheet(page).getByRole("link", { name: "See episode" })
+  await expect(sheetEpLink).toBeVisible()
+  await expect(sheetEpLink).toHaveAttribute("href", "/episodes/ep_demo_overridden")
+  await sheetEpLink.click()
+  await expect(page).toHaveURL(/\/episodes\/ep_demo_overridden$/)
 })

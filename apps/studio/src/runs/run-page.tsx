@@ -155,6 +155,9 @@ export function RunPage() {
                           {r.executor && <><span className="text-muted-foreground">By</span><span>{r.executor}</span></>}
                           <span className="text-muted-foreground">Commit</span><span className="tabular-nums">{r.commitSeq}</span>
                           <span className="text-muted-foreground">Recorded</span><time dateTime={at.toISOString()} className="whitespace-nowrap">{at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" })}</time>
+                          {typeof r.episodeId === "string" && r.episodeId !== "" && (
+                            <><span className="text-muted-foreground">Episode</span><Link to="/episodes/$id" params={{ id: r.episodeId }} className="underline-offset-4 hover:underline">See episode</Link></>
+                          )}
                         </li>
                       )
                     })}

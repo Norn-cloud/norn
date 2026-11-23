@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { decodeEpisode, readEpisode } from "../src/lib/learning/episode.ts"
+import { decodeEpisode, episodeFilterPredicate, episodeFiltersFromServed, listEpisodes, readEpisode } from "../src/lib/learning/episode.ts"
+import { EMPTY_QUERY } from "../src/lib/records-query.ts"
 import type { ObjectRecord } from "../src/lib/transport.ts"
 
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/learning-episode.json", import.meta.url), "utf8")) as { readonly records: readonly ObjectRecord[] }
@@ -91,5 +92,60 @@ test("reading an episode: scoped to the session, each answer kept apart, no cell
   expect((await readEpisode("x", cell(() => Response.json({ ...fixture.records[0], values: {} })).fetcher)).kind).toBe("malformed")
   const none = cell(() => { throw new Error("no call") }, { ...ME, environmentId: null })
   expect(await readEpisode("x", none.fetcher)).toEqual({ kind: "no-cell" })
+  expect(none.calls).toHaveLength(0)
+})
+
+test("listing episodes: server filters encode all five clauses, echo back cleanly, and keep withheld/malformed/restart apart", async () => {
+  const pred = episodeFilterPredicate({
+    agreement: "overridden",
+    outcomeState: "recorded",
+    lawId: "demo.credit.hold_over_limit",
+    manifestPin: "sha256:9d8c",
+    verdict: "untriaged",
+  })
+  expect(pred).toEqual({
+    all: [
+      { property: "agreement", op: "eq", value: "overridden" },
+      { property: "outcome.state", op: "eq", value: "recorded" },
+      { property: "ruleOutcomes.lawId", op: "eq", value: "demo.credit.hold_over_limit" },
+      { property: "recommendation.producer.manifestPin", op: "eq", value: "sha256:9d8c" },
+      { property: "triage.verdict", op: "empty" },
+    ],
+  })
+  expect(episodeFiltersFromServed({ sort: [], filter: pred })).toEqual({
+    agreement: "overridden",
+    outcomeState: "recorded",
+    lawId: "demo.credit.hold_over_limit",
+    manifestPin: "sha256:9d8c",
+    verdict: "untriaged",
+  })
+  expect(episodeFilterPredicate({ verdict: "gap" })).toEqual({ all: [{ property: "triage.verdict", op: "eq", value: "gap" }] })
+  expect(episodeFilterPredicate({})).toBeNull()
+
+  const ok = cell(() => Response.json({
+    objectType: "learning.Episode",
+    records: [
+      fixture.records[0],
+      { objectType: "learning.Episode", id: "ep_withheld", scope: "org_demo/analytics", version: null, values: null, withheld: true, withheldProperties: [] },
+      { ...fixture.records[0], id: "ep_bad", values: { ...fixture.records[0]!.values, agreement: "accepted" } },
+    ],
+    query: { sort: [], filter: pred },
+    total: { count: 3, exact: true },
+    next: "cursor_2",
+    quarantineCount: 1,
+  }))
+  const page = await listEpisodes({ ...EMPTY_QUERY, filter: pred }, ok.fetcher)
+  if (page.kind !== "page") throw new Error(`expected page, got ${page.kind}`)
+  expect(ok.calls[0]!.pathname).toBe("/api/host/v1/objects/learning.Episode")
+  expect(JSON.parse(ok.calls[0]!.searchParams.get("filter") ?? "null")).toEqual(pred)
+  expect(page.rows.map((r) => r.kind)).toEqual(["ok", "withheld", "malformed"])
+  expect(page.next).toBe("cursor_2")
+  expect(page.quarantineCount).toBe(1)
+
+  expect(await listEpisodes(EMPTY_QUERY, cell(() => Response.json({ code: "query.snapshot_moved", message: "moved" }, { status: 409 })).fetcher)).toEqual({ kind: "restart" })
+  expect(await listEpisodes(EMPTY_QUERY, cell(() => Response.json({ code: "authz.denied", message: "denied" }, { status: 403 })).fetcher)).toEqual({ kind: "refused", status: 403, code: "authz.denied", message: "denied", diagnostics: [] })
+  expect(await listEpisodes(EMPTY_QUERY, cell(() => Response.json({ code: "object.type_unknown" }, { status: 404 })).fetcher)).toEqual({ kind: "unavailable" })
+  const none = cell(() => { throw new Error("no call") }, { ...ME, environmentId: null })
+  expect(await listEpisodes(EMPTY_QUERY, none.fetcher)).toEqual({ kind: "no-cell" })
   expect(none.calls).toHaveLength(0)
 })
