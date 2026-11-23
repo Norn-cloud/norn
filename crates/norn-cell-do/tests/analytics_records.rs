@@ -700,10 +700,6 @@ fn dataset_lineage_requires_values_and_sources_capabilities() {
 fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
     use norn_api::analytics_routes::EngineQuestions;
     use norn_api::question_routes::AdHocQuestions;
-    use norn_cell::MAIN_WORLD;
-    use norn_cell::dataset_manifest::{
-        DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestSource,
-    };
     use norn_cell_do::questions::DerivedQuestions;
     use norn_ir::ArtifactEnvelope;
 
@@ -764,11 +760,7 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
     assert_eq!(load.status, 200, "{}", load.body);
 
     // Confirm the committed v1 manifest has empty markings.
-    let v1_manifest = host
-        .cell()
-        .unwrap()
-        .store()
-        .dataset_manifest(MAIN_WORLD, "upload.Contacts")
+    let v1_manifest = norn_api::analytics_routes::current_manifest(&host, "upload.Contacts")
         .unwrap()
         .expect("committed manifest");
     assert!(v1_manifest.manifest.markings.is_empty());
@@ -1055,63 +1047,124 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
     )
     .expect("export route");
     assert_eq!(export_v2.status, 403, "{}", export_v2.body);
+}
 
-    // 5. Load-time marked manifest: commit a manifest with `markings` stamped
-    //    at load time, then remove the marking from definitions v3; `:profile`
-    //    must STILL refuse with `privacy.marked_column` without touching DuckDB.
-    {
-        let mut cell = host.cell().unwrap();
-        let table_v2 = cell.store().analytics_table("upload.Contacts").unwrap();
-        let binding = BTreeMap::new();
-        let (data_sha, held_sha) = ("11".repeat(32), "22".repeat(32));
-        let manifest_v2 = DatasetManifest {
-            version: MANIFEST_VERSION.into(),
-            object_type: "upload.Contacts".into(),
-            load: norn_cell::analytics::dataset_cache_id(&table_v2, &data_sha, &held_sha),
-            source: ManifestSource {
-                uri: "s3://uploads/demo/contacts-v2.csv".into(),
-                sha256: "33".repeat(32),
-                format: norn_cell::analytics::FileFormat::Csv,
-                bytes: 64,
-            },
-            pins: cell
-                .store()
-                .dataset_pins("upload.Contacts", &binding, "upload.Contacts.mapping@v2")
-                .unwrap(),
-            binding,
-            markings: cell
-                .store()
-                .dataset_markings("upload.Contacts", &table_v2)
-                .unwrap(),
-            table: table_v2,
-            data: ManifestFile {
-                uri: "s3://uploads/demo/data-v2.parquet".into(),
-                sha256: data_sha,
-                rows: 2,
-                bytes: 64,
-            },
-            held: ManifestFile {
-                uri: "s3://uploads/demo/held-v2.parquet".into(),
-                sha256: held_sha,
-                rows: 0,
-                bytes: 0,
-            },
-            counts: ManifestCounts {
-                source: 2,
-                admitted: 2,
-                held: BTreeMap::new(),
-                findings: BTreeMap::new(),
-                held_by_rules: 0,
-            },
-            valid_time: Vec::new(),
-        };
-        assert_eq!(
-            manifest_v2.markings.get("email"),
-            Some(&vec!["pii.contact".to_owned()])
-        );
-        cell.commit_dataset_manifest(&manifest_v2, None).unwrap();
+/// B2 + B3 / MANIFEST-MARK-1: a dataset whose manifest carries markings at load
+/// time refuses `:profile` with `privacy.marked_column` before touching DuckDB,
+/// and stays refused even if a later model drops the marking declaration
+/// (monotone union). Unauthorized callers still receive opaque `authz.denied`.
+#[test]
+fn profile_refuses_load_time_marked_dataset_and_stays_monotone() {
+    use norn_cell::{
+        CellStore, MAIN_WORLD, Model, StoreOptions,
+        dataset_manifest::{
+            DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestSource,
+        },
+    };
+    use norn_ir::ObjectTypeDef;
+
+    struct PanicTransport;
+    impl Transport for PanicTransport {
+        fn resumed(&self) -> Option<EngineAnswer> {
+            None
+        }
+        fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
+            panic!(
+                "profile must not reach DuckDB for a marked dataset: {}",
+                call.op
+            );
+        }
     }
 
+    let make_model = |marked: bool| -> Model {
+        let email_prop = if marked {
+            json!({
+                "id": "email",
+                "type": {"kind": "text"},
+                "markings": ["pii.contact"]
+            })
+        } else {
+            json!({
+                "id": "email",
+                "type": {"kind": "text"}
+            })
+        };
+        let def: ObjectTypeDef = serde_json::from_value(json!({
+            "name": "test.Customer",
+            "properties": [
+                {"id": "customer_id", "type": {"kind": "text"}},
+                email_prop,
+                {"id": "score", "type": {"kind": "integer"}}
+            ]
+        }))
+        .unwrap();
+        Model::from_definitions(&[def], &[]).unwrap()
+    };
+
+    let scope = seed::demo_scope();
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("marked-dataset.sqlite");
+
+    // Load time: commit a manifest with `email` marked `pii.contact`.
+    let mut store = CellStore::open(
+        NativeEngine::open(&db_path, StoreOptions::default()).unwrap(),
+        make_model(true),
+    )
+    .unwrap();
+    let table = store.analytics_table("test.Customer").unwrap();
+    let binding = BTreeMap::new();
+    let (data_sha, held_sha) = ("11".repeat(32), "22".repeat(32));
+    let manifest = DatasetManifest {
+        version: MANIFEST_VERSION.into(),
+        object_type: "test.Customer".into(),
+        load: norn_cell::analytics::dataset_cache_id(&table, &data_sha, &held_sha),
+        source: ManifestSource {
+            uri: "s3://uploads/demo/customers.csv".into(),
+            sha256: "33".repeat(32),
+            format: norn_cell::analytics::FileFormat::Csv,
+            bytes: 64,
+        },
+        pins: store
+            .dataset_pins("test.Customer", &binding, "test.Customer.mapping@v1")
+            .unwrap(),
+        binding,
+        markings: store.dataset_markings("test.Customer", &table).unwrap(),
+        table,
+        data: ManifestFile {
+            uri: "s3://uploads/demo/customers-data.parquet".into(),
+            sha256: data_sha,
+            rows: 2,
+            bytes: 64,
+        },
+        held: ManifestFile {
+            uri: "s3://uploads/demo/customers-held.parquet".into(),
+            sha256: held_sha,
+            rows: 0,
+            bytes: 0,
+        },
+        counts: ManifestCounts {
+            source: 2,
+            admitted: 2,
+            held: BTreeMap::new(),
+            findings: BTreeMap::new(),
+            held_by_rules: 0,
+        },
+        valid_time: Vec::new(),
+    };
+    assert_eq!(
+        manifest.markings.get("email"),
+        Some(&vec!["pii.contact".to_owned()])
+    );
+    store
+        .commit_dataset_manifest(MAIN_WORLD, &scope.key(), 1, &manifest, None)
+        .unwrap();
+
+    // 1. Marked at load time -> `:profile` refuses before touching DuckDB.
+    let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
+    let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(policy);
     let profile_marked = server::analytics(
         &host,
         &principals,
@@ -1119,7 +1172,7 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
         None,
         &server::Request {
             method: "GET",
-            path: "/v1/objects/upload.Contacts:profile",
+            path: "/v1/objects/test.Customer:profile",
             query: SCOPE,
             authorization: ADMIN,
             now: 0,
@@ -1133,32 +1186,51 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
         "privacy.marked_column"
     );
 
-    // Definitions v3: remove marking from `upload.Contacts.email`; the manifest's
-    // stamped marking is monotone and still refuses `:profile`.
-    let mut unmarked_v3_json: Value = serde_json::to_value(
-        generated
-            .artifacts
-            .iter()
-            .find(|a| a.artifact_id == "upload.Contacts.entity")
-            .expect("upload.Contacts entity"),
-    )
-    .unwrap();
-    unmarked_v3_json["version"] = json!("0.3.0");
-    let unmarked_v3_entity: ArtifactEnvelope = serde_json::from_value(unmarked_v3_json).unwrap();
-    host.install_artifacts(
-        &[unmarked_v3_entity],
-        norn_cell::provision::DEMO_ROWS_AT + 20,
-    )
-    .expect("install v3 removing marking from email");
-
-    let profile_v3 = server::analytics(
+    // Wrong scope gets opaque `authz.denied`, never `privacy.marked_column`.
+    let denied = server::analytics(
         &host,
         &principals,
         &PanicTransport,
         None,
         &server::Request {
             method: "GET",
-            path: "/v1/objects/upload.Contacts:profile",
+            path: "/v1/objects/test.Customer:profile",
+            query: "orgId=org_other&environmentId=dev",
+            authorization: ADMIN,
+            now: 0,
+            body: "",
+        },
+    )
+    .expect("profile route");
+    assert_eq!(denied.status, 403, "{}", denied.body);
+    assert_eq!(
+        serde_json::from_str::<Value>(&denied.body).unwrap()["code"],
+        "authz.denied"
+    );
+    drop(host);
+
+    // 2. Reopen with an unmarked model: the manifest's stamped marking is
+    //    monotone and still refuses `:profile` without touching DuckDB.
+    let store_unmarked = CellStore::open(
+        NativeEngine::open(&db_path, StoreOptions::default()).unwrap(),
+        make_model(false),
+    )
+    .unwrap();
+    let policy_unmarked =
+        ReadPolicy::compile(store_unmarked.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let principals_unmarked = FixturePrincipals::new(DEMO_FIXTURES, policy_unmarked.caller());
+    let host_unmarked =
+        DevHost::from_store(store_unmarked, scope, |command| command.payload.clone())
+            .unwrap()
+            .with_authorizer(policy_unmarked);
+    let profile_monotone = server::analytics(
+        &host_unmarked,
+        &principals_unmarked,
+        &PanicTransport,
+        None,
+        &server::Request {
+            method: "GET",
+            path: "/v1/objects/test.Customer:profile",
             query: SCOPE,
             authorization: ADMIN,
             now: 0,
@@ -1166,9 +1238,9 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
         },
     )
     .expect("profile route");
-    assert_eq!(profile_v3.status, 403, "{}", profile_v3.body);
+    assert_eq!(profile_monotone.status, 403, "{}", profile_monotone.body);
     assert_eq!(
-        serde_json::from_str::<Value>(&profile_v3.body).unwrap()["code"],
+        serde_json::from_str::<Value>(&profile_monotone.body).unwrap()["code"],
         "privacy.marked_column"
     );
 }
