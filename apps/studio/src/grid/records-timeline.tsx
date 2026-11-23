@@ -41,11 +41,13 @@ async function targetOf(objectType: string, id: string, link: string): Promise<L
  * link, read from the cell per record. Opening a bar opens the record's drawer (and its offered
  * actions), exactly as a row does in the table.
  */
-export function RecordsTimeline({ concept, rows, window, zoom, pending, fetching, filter, filterOverflow = 0, read, onZoom, onStep, onToday, onJump, onOpenFilter, onClearFilter, onSwitchToTable, onOpen }: {
+export function RecordsTimeline({ concept, rows, window, zoom, loaded, pending, fetching, filter, filterOverflow = 0, read, onZoom, onStep, onToday, onJump, onOpenFilter, onClearFilter, onSwitchToTable, onOpen }: {
   readonly concept: Concept
   readonly rows: readonly GridRow[]
   readonly window: Span
   readonly zoom: Zoom
+  /** True only when a matching page succeeded; refused or errored reads keep `loaded: false` so no fake empty state renders. */
+  readonly loaded: boolean
   readonly pending: boolean
   readonly fetching: boolean
   /** The reader's own filter, which the empty state's nearest-record reads keep. */
@@ -146,7 +148,7 @@ export function RecordsTimeline({ concept, rows, window, zoom, pending, fetching
     else if (event.key === "End") { event.preventDefault(); focusAt(order.length - 1) }
   }
 
-  const empty = !pending && filterOverflow === 0 && rows.length === 0
+  const empty = loaded && !pending && filterOverflow === 0 && rows.length === 0
   const nearestAllowed = empty && (filter?.all.length ?? 0) <= NEAREST_MAX_USER_CLAUSES
   const after = useQuery({ queryKey: ["timeline-nearest", concept.name, "after", window.end, JSON.stringify(filter)], enabled: nearestAllowed, retry: false, queryFn: () => read(concept.name, { ...nearestQuery(window, filter, "after"), limit: 1 }) })
   const before = useQuery({ queryKey: ["timeline-nearest", concept.name, "before", window.start, JSON.stringify(filter)], enabled: nearestAllowed, retry: false, queryFn: () => read(concept.name, { ...nearestQuery(window, filter, "before"), limit: 1 }) })

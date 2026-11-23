@@ -201,4 +201,36 @@ test.describe("in Cairo", () => {
     await expect(form.getByRole("alert").first()).toContainText("The input doesn't fit this action")
     await expect(form.locator('[aria-invalid="true"]')).toHaveCount(0)
   })
+
+  test("picker: a refusal on Show more keeps page 1 visible, surfaces the alert inline, and Retry re-requests the same cursor", async ({ page }) => {
+    const cell = await intervalCell(page)
+    let refusePage2 = true
+    const page2Cursors: (string | null)[] = []
+    await page.route("**/api/host/v1/objects/facilities.Equipment**", async (route) => {
+      const url = new URL(route.request().url())
+      const after = url.searchParams.get("after")
+      if (after !== null) {
+        page2Cursors.push(after)
+        if (refusePage2) {
+          refusePage2 = false
+          return route.fulfill({ status: 403, json: { code: "authz.denied", message: "Access changed mid-page." } })
+        }
+      }
+      return route.fallback()
+    })
+    await page.goto("/objects/facilities.EquipmentBooking")
+    await page.getByRole("button", { name: "New equipment booking" }).click()
+    const form = sheet(page)
+    await form.getByRole("combobox", { name: "Equipment", exact: true }).click()
+    const list = page.getByRole("listbox")
+    await expect(list.getByRole("option", { name: /Forklift/ })).toBeVisible()
+    await page.getByRole("option", { name: "Show more" }).click()
+    await expect(list.getByRole("alert")).toHaveText("Access changed mid-page.")
+    await expect(list.getByRole("option", { name: /Forklift/ })).toBeVisible()
+    await page.getByRole("option", { name: "Retry" }).click()
+    await expect(list.getByRole("option").filter({ hasText: "Spare unit 30" })).toBeVisible()
+    await expect(list.getByRole("alert")).toHaveCount(0)
+    expect(page2Cursors).toEqual(["25", "25"])
+    expect(cell.requests.length).toBeGreaterThan(0)
+  })
 })

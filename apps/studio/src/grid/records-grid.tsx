@@ -293,15 +293,18 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
           <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review{page.origin === "live" ? "; the Quarantine tab names them" : ""}.</p>
         )}
 
-        {shownTimeline && (
-          <RecordsTimeline concept={concept} rows={result.isPlaceholderData || filterOverflow > 0 ? [] : rows} window={span} zoom={zoom}
-            pending={filterOverflow === 0 && (result.isPending || result.isPlaceholderData)} fetching={result.isFetching} filter={filter}
-            filterOverflow={filterOverflow} read={read}
-            onZoom={(next) => { setZoom(next); restart() }} onStep={(by) => { setAnchor((at) => stepAnchor(zoom, at, by)); restart() }}
-            onToday={() => { setAnchor(new Date()); restart() }} onJump={(at) => { setAnchor(new Date(at)); restart() }}
-            onOpenFilter={() => setFilterOpen(true)} onClearFilter={clearFilter} onSwitchToTable={() => { setLayout("table"); restart(); setNotice(null) }}
-            onOpen={(row) => setOpened(row)} />
-        )}
+        {shownTimeline && (() => {
+          const loaded = page !== undefined && !result.isPlaceholderData && !result.isError && filterOverflow === 0
+          return (
+            <RecordsTimeline concept={concept} rows={loaded ? rows : []} window={span} zoom={zoom}
+              loaded={loaded} pending={filterOverflow === 0 && (result.isPending || result.isPlaceholderData)} fetching={result.isFetching} filter={filter}
+              filterOverflow={filterOverflow} read={read}
+              onZoom={(next) => { setZoom(next); restart() }} onStep={(by) => { setAnchor((at) => stepAnchor(zoom, at, by)); restart() }}
+              onToday={() => { setAnchor(new Date()); restart() }} onJump={(at) => { setAnchor(new Date(at)); restart() }}
+              onOpenFilter={() => setFilterOpen(true)} onClearFilter={clearFilter} onSwitchToTable={() => { setLayout("table"); restart(); setNotice(null) }}
+              onOpen={(row) => setOpened(row)} />
+          )
+        })()}
         <div className={cn("relative overflow-hidden rounded-xl border border-node-border bg-card", shownTimeline && "hidden")}>
           <div ref={scroller} role="grid" tabIndex={0} aria-label={`${concept.title} records`} aria-rowcount={rows.length + 1} aria-colcount={columns.length + 1}
             aria-busy={result.isFetching} aria-activedescendant={rows.length > 0 ? `row-${active}` : undefined} onKeyDown={onKey} onScroll={measureEdges}

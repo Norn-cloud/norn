@@ -130,13 +130,14 @@ test("RecordsTimeline hides stale bars while pending, alerts on filter overflow,
     numbers: new Map(),
   } as never
   const noop = () => {}
-  const render = (props: { pending?: boolean; filterOverflow?: number; locale?: "en" | "ar" }) =>
+  const render = (props: { loaded?: boolean; pending?: boolean; filterOverflow?: number; locale?: "en" | "ar"; rows?: readonly unknown[]; read?: Parameters<typeof RecordsTimeline>[0]["read"] }) =>
     renderToStaticMarkup(
       <LocaleProvider initial={props.locale ?? "en"}>
         <QueryClientProvider client={client}>
-          <RecordsTimeline concept={concept} rows={[row]} window={window} zoom="week"
+          <RecordsTimeline concept={concept} rows={(props.rows ?? [row]) as never} window={window} zoom="week"
+            loaded={props.loaded ?? (!(props.pending ?? false) && (props.filterOverflow ?? 0) === 0)}
             pending={props.pending ?? false} fetching={props.pending ?? false} filter={null} filterOverflow={props.filterOverflow ?? 0}
-            read={async () => ({ kind: "no-cell" })} onZoom={noop} onStep={noop} onToday={noop} onJump={noop} onOpen={noop} />
+            read={props.read ?? (async () => ({ kind: "no-cell" }))} onZoom={noop} onStep={noop} onToday={noop} onJump={noop} onOpen={noop} />
         </QueryClientProvider>
       </LocaleProvider>,
     )
@@ -144,6 +145,21 @@ test("RecordsTimeline hides stale bars while pending, alerts on filter overflow,
   const stalePending = render({ pending: true })
   expect(stalePending).toContain('aria-label="Reading records"')
   expect(stalePending).not.toContain("Prototype run")
+
+  // Refused or failed read (`loaded: false`, `rows: []`): neither renders "Nothing in this week" nor fires nearest queries.
+  let nearestCalls = 0
+  const failedRead = render({
+    loaded: false,
+    pending: false,
+    rows: [],
+    read: async () => { nearestCalls += 1; return { kind: "no-cell" } },
+  })
+  expect(failedRead).not.toContain("Nothing in this week")
+  expect(nearestCalls).toBe(0)
+
+  // Confirmed empty page (`loaded: true`, `rows: []`) renders the empty-window state.
+  const confirmedEmpty = render({ loaded: true, pending: false, rows: [] })
+  expect(confirmedEmpty).toContain("Nothing in this week")
 
   const overflow = render({ filterOverflow: 2 })
   expect(overflow).toContain("Too many filter conditions for Timeline")

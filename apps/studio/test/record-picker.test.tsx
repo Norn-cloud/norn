@@ -71,7 +71,7 @@ test("a snapshot_moved page on Show more stays a combobox (does not collapse to 
   expect(html).toContain('role="combobox"')
 })
 
-test("a refusal on page 2 throws to preserve page 1 and surface Retry rather than collapsing to a null page", async () => {
+test("a refusal on page 2 preserves page 1, keeps the cursor retryable, and retries the same cursor", async () => {
   const refused: RecordsRead = { kind: "refused", status: 403, code: "authz.denied", message: "Access changed.", diagnostics: [] }
   expect(pickerPageError(refused)).toBe("Access changed.")
   // Page 1 (`after: undefined`) returns null so RecordPicker falls back to typing an id.
@@ -79,15 +79,50 @@ test("a refusal on page 2 throws to preserve page 1 and surface Retry rather tha
   // Page 2 (`after: "c2"`) throws the cell's refusal message so TanStack Query preserves page 1 and keeps the cursor retryable.
   await expect(fetchPickerPage(async () => refused, "purchasing.Supplier", "", "label", "c2")).rejects.toThrow("Access changed.")
 
-  // With a page-2 failure state, page 1 stays in combobox mode (does not collapse to a typed input).
+  // Drive a real TanStack InfiniteQueryObserver through page 1 -> page 2 refusal -> Retry on cursor `c2`.
+  const { InfiniteQueryObserver } = await import("@tanstack/react-query")
+  const cursors: (string | undefined)[] = []
+  let failSecondPage = true
+  const read = async (_kind: string, query: { after?: string }): Promise<RecordsRead> => {
+    cursors.push(query.after)
+    if (query.after === undefined) {
+      return {
+        kind: "page", origin: "live", served: null, next: "c2", total: null,
+        read: { document: { records: [{ id: "SUP-0001", values: { label: "Acme" } }] }, numbers: new Map() },
+      } as unknown as RecordsRead
+    }
+    if (failSecondPage) { failSecondPage = false; return refused }
+    return {
+      kind: "page", origin: "live", served: null, next: undefined, total: null,
+      read: { document: { records: [{ id: "SUP-0002", values: { label: "Bravo" } }] }, numbers: new Map() },
+    } as unknown as RecordsRead
+  }
   const client = new QueryClient()
-  client.setQueryData(["picker", "purchasing.Supplier", null, ""], {
-    pages: [{ records: [{ id: "SUP-0001", title: "Acme" }], next: "c2", failed: "Access changed." }],
-    pageParams: [undefined],
+  const observer = new InfiniteQueryObserver(client, {
+    queryKey: ["picker", "purchasing.Supplier", "label", ""],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => fetchPickerPage(read, "purchasing.Supplier", "", "label", pageParam),
+    getNextPageParam: (last) => last?.snapshotMoved ? undefined : last?.next,
+    retry: false,
   })
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><RecordPicker objectKind="purchasing.Supplier" value="SUP-0001" onPick={() => {}} aria={{ "aria-label": "Supplier" }} /></QueryClientProvider>)
-  expect(html).toContain('role="combobox"')
-  expect(html).toContain("Acme")
+  await observer.refetch()
+  const first = observer.getCurrentResult()
+  expect(first.data?.pages).toEqual([{ records: [{ id: "SUP-0001", title: "Acme" }], next: "c2" }])
+  expect(first.hasNextPage).toBe(true)
+
+  const failed = await observer.fetchNextPage()
+  expect(failed.isFetchNextPageError).toBe(true)
+  expect((failed.error as Error | null)?.message).toBe("Access changed.")
+  expect(failed.data?.pages).toEqual([{ records: [{ id: "SUP-0001", title: "Acme" }], next: "c2" }])
+  expect(failed.hasNextPage).toBe(true)
+
+  const retried = await observer.fetchNextPage()
+  expect(retried.isFetchNextPageError).toBe(false)
+  expect(retried.data?.pages).toEqual([
+    { records: [{ id: "SUP-0001", title: "Acme" }], next: "c2" },
+    { records: [{ id: "SUP-0002", title: "Bravo" }], next: undefined },
+  ])
+  expect(cursors).toEqual([undefined, "c2", "c2"])
 })
 
 test("ActionForm DateTimePicker preserves an explicit fall-back offset (-05:00) and matches UTC Z instants (including fractional seconds) by epoch", () => {

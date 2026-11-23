@@ -20,12 +20,11 @@ export const control = "h-9 w-full rounded-lg border border-node-border bg-backg
 /** One record a picker offers: its id (the value it sets) and its title (what it reads as). */
 export interface PickedRecord { readonly id: string; readonly title: string }
 
-/** One page of a picker's records, and the cursor to the next; `snapshotMoved` signals 409 `object.snapshot_moved`, `failed` signals a subsequent-page refusal/error. */
+/** One page of a picker's records, and the cursor to the next; `snapshotMoved` signals 409 `object.snapshot_moved`. */
 export interface PickerPage {
   readonly records: readonly PickedRecord[]
   readonly next: string | undefined
   readonly snapshotMoved?: true
-  readonly failed?: string
 }
 
 const PAGE = 25
@@ -142,7 +141,7 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
   const moved = pickerSnapshotMoved(pages.data?.pages)
   const pageFailure = pages.isFetchNextPageError
     ? (pages.error instanceof Error ? pages.error.message : "Could not load more records.")
-    : (pages.data?.pages ?? []).find((page) => typeof page?.failed === "string")?.failed ?? null
+    : null
   const records = moved ? [] : (pages.data?.pages ?? []).flatMap((page) => page?.records ?? [])
   // Only the unsearched first page decides that the type can't be read; a refused search or page-2 failure keeps the list.
   if (search.trim() === "" && !moved && pickerMode({ data: first, isError: pages.isError && first === undefined }) === "type") {
