@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { Concept, Lifecycle } from "../src/lib/catalog.ts"
+import type { Checker } from "../src/lib/canvas/checker.ts"
 import { LocaleProvider } from "../src/lib/locale.tsx"
 import { LifecycleStepper } from "../src/components/lifecycle-stepper.tsx"
 import { findingsFor } from "../src/components/lifecycle-view.tsx"
@@ -113,7 +114,7 @@ test("findingsFor matches the exact widget page machine by pointer and ignores n
       },
     },
   }
-  const checker = () => ({
+  const checker: Checker = () => ({
     admitted: false,
     diagnostics: {
       diagnostics: [
