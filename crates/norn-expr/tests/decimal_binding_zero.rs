@@ -77,14 +77,70 @@ fn decimal_binding_admits_unit_invariant_comparisons_against_literal_zero() {
         "0 <= input.quantity",
         "0 != input.quantity",
         "input.quantity > 0.0",
+        "input.quantity > 0.00",
         "input.quantity >= -0",
-        "input.quantity == input.other_mass",
-        "input.quantity == input.other_mass + input.other_mass",
     ] {
         let checked = Expression::compile(source)
             .expect("compiles")
             .check_typed(&env, &Type::Bool);
         assert!(checked.is_ok(), "{source} should be admitted: {checked:?}");
+    }
+}
+
+#[test]
+fn decimal_binding_refuses_bound_vs_bound_same_group_operations_join_and_destination() {
+    let env = binding_env();
+    for source in [
+        "input.quantity == input.other_mass",
+        "input.quantity != input.other_mass",
+        "input.quantity > input.other_mass",
+        "input.quantity + input.other_mass > 0",
+        "input.quantity - input.other_mass == 0",
+        "input.quantity * input.other_mass > 0",
+        "input.quantity / input.other_mass > 0",
+    ] {
+        let err = Expression::compile(source)
+            .expect("compiles")
+            .check_typed(&env, &Type::Bool)
+            .expect_err(&format!("{source} must refuse Bound vs Bound"));
+        assert!(
+            err.iter().any(|d| d.code == "core.values.unit_mismatch"),
+            "{source} expected core.values.unit_mismatch, got {err:?}"
+        );
+    }
+
+    for source in [
+        "(input.count > 0 ? input.quantity : input.other_mass) > 0",
+        "(input.count > 0 ? input.quantity : 0) > 0",
+    ] {
+        let err = Expression::compile(source)
+            .expect("compiles")
+            .check_typed(&env, &Type::Bool)
+            .expect_err(&format!("{source} must refuse Bound in join/ternary"));
+        assert!(
+            err.iter().any(|d| d.code == "expr.type.error"),
+            "{source} expected expr.type.error from join refusal, got {err:?}"
+        );
+    }
+
+    let bound_mass = Type::DecimalBinding {
+        group: "mass".into(),
+    };
+    for (source, expected) in [
+        ("input.quantity", &bound_mass),
+        ("0", &bound_mass),
+        ("input.quantity", &Type::Integer),
+    ] {
+        let err = Expression::compile(source)
+            .expect("compiles")
+            .check_typed(&env, expected)
+            .expect_err(&format!(
+                "{source} -> {expected:?} must refuse Bound destination"
+            ));
+        assert!(
+            err.iter().any(|d| d.code == "core.values.unit_mismatch"),
+            "{source} -> {expected:?} expected core.values.unit_mismatch, got {err:?}"
+        );
     }
 }
 

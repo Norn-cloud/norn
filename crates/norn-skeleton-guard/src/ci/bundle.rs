@@ -8,34 +8,35 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-// Measured Boat task durations and cold test-build cost. Also used by the
-// hosted planner in core.sh until that job can use a prebuilt runner.
+// Measured Boat task durations (run 45206607883, df92ecf) and shared compile costs.
+// Also used by the hosted planner in core.sh until that job can use a prebuilt runner.
 const WEIGHTS: &[(&str, u32)] = &[
-    ("test/heavy-1", 13),
-    ("test/heavy-2", 244),
+    ("test/heavy-1", 33),
+    ("test/heavy-2", 146),
     ("test/heavy-3", 90),
-    ("test/heavy-4", 35),
-    ("test/heavy-5", 26),
-    ("test/heavy-6", 57),
-    ("test/rest-1", 348),
-    ("test/rest-2", 348),
-    ("test/rest-3", 348),
-    ("phase/doctest", 48),
-    ("phase/features", 791),
-    ("phase/duckdb", 630),
-    ("phase/wasm", 239),
-    ("phase/clippy", 119),
-    ("phase/doc", 88),
-    ("phase/guards", 532),
-    ("phase/rivet", 496),
-    ("phase/integration-authoring", 1030),
-    ("phase/integration-wasm", 707),
-    ("phase/integration-clients", 170),
-    ("phase/provenance", 13),
-    ("phase/test-shards", 14),
-    ("phase/browser", 596),
+    ("test/heavy-4", 37),
+    ("test/heavy-5", 43),
+    ("test/heavy-6", 56),
+    ("test/rest-1", 221),
+    ("test/rest-2", 391),
+    ("test/rest-3", 312),
+    ("phase/doctest", 17),
+    ("phase/features", 347),
+    ("phase/duckdb", 621),
+    ("phase/wasm", 173),
+    ("phase/clippy", 51),
+    ("phase/doc", 48),
+    ("phase/guards", 117),
+    ("phase/rivet", 259),
+    ("phase/integration-authoring", 695),
+    ("phase/integration-wasm", 293),
+    ("phase/integration-clients", 35),
+    ("phase/provenance", 4),
+    ("phase/test-shards", 3),
+    ("phase/browser", 239),
 ];
 const COMPILE_SECONDS: u32 = 216;
+const WASM_COMPILE_SECONDS: u32 = 300;
 const TARGET_SECONDS: u32 = 660;
 const MAX_BUNDLES: usize = 3;
 
@@ -68,6 +69,13 @@ struct Bundle {
     tasks: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum BuildGroup {
+    Test,
+    WasmPkg,
+    None,
+}
+
 #[derive(Clone, Copy)]
 struct Task {
     name: &'static str,
@@ -75,9 +83,37 @@ struct Task {
 }
 
 impl Task {
-    fn shares_build(self, all_packages: bool) -> bool {
-        self.name.starts_with("test/") || (all_packages && self.name == "phase/test-shards")
+    fn build_group(self, all_packages: bool) -> BuildGroup {
+        if self.name.starts_with("test/") || (all_packages && self.name == "phase/test-shards") {
+            BuildGroup::Test
+        } else if matches!(
+            self.name,
+            "phase/integration-authoring" | "phase/integration-wasm" | "phase/browser"
+        ) {
+            BuildGroup::WasmPkg
+        } else {
+            BuildGroup::None
+        }
     }
+}
+
+fn slice_cost(tasks: &[Task]) -> u32 {
+    let mut total = tasks
+        .iter()
+        .fold(0_u32, |acc, task| acc.saturating_add(task.weight));
+    if tasks
+        .iter()
+        .any(|task| task.build_group(true) == BuildGroup::Test)
+    {
+        total = total.saturating_add(COMPILE_SECONDS);
+    }
+    if tasks
+        .iter()
+        .any(|task| task.build_group(true) == BuildGroup::WasmPkg)
+    {
+        total = total.saturating_add(WASM_COMPILE_SECONDS);
+    }
+    total
 }
 
 #[derive(Default)]
@@ -87,23 +123,41 @@ struct Bin {
 
 impl Bin {
     fn added_cost(&self, task: Task) -> u32 {
-        if task.shares_build(true) && !self.tasks.iter().any(|task| task.shares_build(true)) {
-            task.weight.saturating_add(COMPILE_SECONDS)
-        } else {
-            task.weight
+        self.cost_with(&[task]).saturating_sub(self.cost())
+    }
+
+    fn cost_with(&self, extra: &[Task]) -> u32 {
+        let mut has_test = self
+            .tasks
+            .iter()
+            .any(|task| task.build_group(true) == BuildGroup::Test);
+        let mut has_wasm = self
+            .tasks
+            .iter()
+            .any(|task| task.build_group(true) == BuildGroup::WasmPkg);
+        let mut total = self
+            .tasks
+            .iter()
+            .fold(0_u32, |acc, task| acc.saturating_add(task.weight));
+        for task in extra {
+            total = total.saturating_add(task.weight);
+            match task.build_group(true) {
+                BuildGroup::Test => has_test = true,
+                BuildGroup::WasmPkg => has_wasm = true,
+                BuildGroup::None => {}
+            }
         }
+        if has_test {
+            total = total.saturating_add(COMPILE_SECONDS);
+        }
+        if has_wasm {
+            total = total.saturating_add(WASM_COMPILE_SECONDS);
+        }
+        total
     }
 
     fn cost(&self) -> u32 {
-        self.tasks
-            .iter()
-            .map(|task| task.weight)
-            .sum::<u32>()
-            .saturating_add(if self.tasks.iter().any(|task| task.shares_build(true)) {
-                COMPILE_SECONDS
-            } else {
-                0
-            })
+        slice_cost(&self.tasks)
     }
 }
 
@@ -135,18 +189,28 @@ fn pack(plan: &Plan) -> Result<Vec<Bundle>, String> {
     tasks.sort_by_key(|task| (Reverse(Bin::default().added_cost(*task)), task.name));
     let limit = MAX_BUNDLES.min((tasks.len() / 2).max(1));
     let mut best = Vec::new();
-    let mut best_cost = u32::MAX;
+    let mut best_key = (u32::MAX, usize::MAX, u32::MAX);
     for count in 1..=limit {
-        let bins = pack_count(&tasks, count)?;
-        let cost = bins
-            .iter()
-            .map(Bin::cost)
-            .max()
-            .unwrap_or(0)
-            .max(TARGET_SECONDS);
-        if cost < best_cost {
-            best = bins;
-            best_cost = cost;
+        for coalesce_test in [false, true] {
+            for coalesce_wasm in [false, true] {
+                let Some(bins) = pack_count(&tasks, count, coalesce_test, coalesce_wasm)? else {
+                    continue;
+                };
+                let max_cost = bins
+                    .iter()
+                    .map(Bin::cost)
+                    .max()
+                    .unwrap_or(0)
+                    .max(TARGET_SECONDS);
+                let total_cost = bins
+                    .iter()
+                    .fold(0_u32, |acc, bin| acc.saturating_add(bin.cost()));
+                let key = (max_cost, count, total_cost);
+                if key < best_key {
+                    best = bins;
+                    best_key = key;
+                }
+            }
         }
     }
     let bundles: Vec<_> = best
@@ -173,14 +237,48 @@ fn pack(plan: &Plan) -> Result<Vec<Bundle>, String> {
     Ok(bundles)
 }
 
-fn pack_count(tasks: &[Task], count: usize) -> Result<Vec<Bin>, String> {
-    let mut bins: Vec<_> = (0..count).map(|_| Bin::default()).collect();
+fn pack_count(
+    tasks: &[Task],
+    count: usize,
+    coalesce_test: bool,
+    coalesce_wasm: bool,
+) -> Result<Option<Vec<Bin>>, String> {
+    let mut test_group = Vec::new();
+    let mut wasm_group = Vec::new();
+    let mut other = Vec::new();
     for &task in tasks {
+        match task.build_group(true) {
+            BuildGroup::Test => test_group.push(task),
+            BuildGroup::WasmPkg => wasm_group.push(task),
+            BuildGroup::None => other.push(task),
+        }
+    }
+    let mut items: Vec<Vec<Task>> = Vec::new();
+    if coalesce_test && !test_group.is_empty() {
+        items.push(test_group);
+    } else {
+        items.extend(test_group.into_iter().map(|task| vec![task]));
+    }
+    if coalesce_wasm && !wasm_group.is_empty() {
+        items.push(wasm_group);
+    } else {
+        items.extend(wasm_group.into_iter().map(|task| vec![task]));
+    }
+    items.extend(other.into_iter().map(|task| vec![task]));
+    items.sort_by_key(|group| {
+        (
+            Reverse(slice_cost(group)),
+            group.first().map_or("", |task| task.name),
+        )
+    });
+
+    let mut bins: Vec<_> = (0..count).map(|_| Bin::default()).collect();
+    for group in &items {
         let bin = bins
             .iter_mut()
-            .min_by_key(|bin| bin.cost().saturating_add(bin.added_cost(task)))
+            .min_by_key(|bin| bin.cost_with(group))
             .ok_or("no bundle for task")?;
-        bin.tasks.push(task);
+        bin.tasks.extend_from_slice(group);
     }
     if tasks.len() / 2 >= count {
         for index in 0..count {
@@ -188,7 +286,7 @@ fn pack_count(tasks: &[Task], count: usize) -> Result<Vec<Bin>, String> {
             if recipient.tasks.len() != 1 {
                 continue;
             }
-            let (donor, _, task) = bins
+            let Some((donor, _, task)) = bins
                 .iter()
                 .enumerate()
                 .filter(|(_, bin)| bin.tasks.len() > 2)
@@ -198,7 +296,9 @@ fn pack_count(tasks: &[Task], count: usize) -> Result<Vec<Bin>, String> {
                 .min_by_key(|&(donor, cost, task)| {
                     (recipient.added_cost(task), Reverse(cost), task.name, donor)
                 })
-                .ok_or("no donor for singleton bundle")?;
+            else {
+                return Ok(None);
+            };
             bins.get_mut(donor)
                 .ok_or("missing donor bundle")?
                 .tasks
@@ -209,7 +309,10 @@ fn pack_count(tasks: &[Task], count: usize) -> Result<Vec<Bin>, String> {
                 .push(task);
         }
     }
-    Ok(bins)
+    if bins.iter().any(|bin| bin.tasks.is_empty()) {
+        return Ok(None);
+    }
+    Ok(Some(bins))
 }
 
 struct PlanFormatter;
@@ -352,13 +455,14 @@ fn execute(
             .ok_or("unknown bundle task")?;
         tasks.push(Task { name, weight });
     }
-    tasks.sort_by_key(|task| !task.shares_build(all_packages));
-    let mut previous_shared = None;
+    tasks.sort_by_key(|task| task.build_group(all_packages));
+    let mut previous_group = None;
     for task in tasks {
-        let shared = task.shares_build(all_packages);
-        let prune = previous_shared.is_some_and(|previous| !(previous && shared));
+        let group = task.build_group(all_packages);
+        let prune =
+            previous_group.is_some_and(|previous| group == BuildGroup::None || previous != group);
         run(task, prune)?;
-        previous_shared = Some(shared);
+        previous_group = Some(group);
     }
     Ok(())
 }
@@ -467,7 +571,11 @@ fn prune_target(root: &Path, target: &Path) -> io::Result<()> {
             continue;
         }
         let path = entry.path();
-        if name == "doc" || path.join(".fingerprint").is_dir() || has_nested_fingerprint(&path)? {
+        if name == "doc"
+            || name == "norn-checker-wasm"
+            || path.join(".fingerprint").is_dir()
+            || has_nested_fingerprint(&path)?
+        {
             fs::remove_dir_all(path)?;
         }
     }
@@ -490,19 +598,18 @@ fn has_nested_fingerprint(path: &Path) -> io::Result<bool> {
 mod tests {
     use super::*;
 
-    // Byte-for-byte outputs from core.sh at 5bd9c06c07: full, norn-api
-    // (ce4ea784d^..ce4ea784d), and norn-cell (1c894feba^..1c894feba).
+    // Byte-for-byte outputs from core.sh: full, norn-api, and norn-cell affected plans.
     const PYTHON_PLANS: &[&str] = &[
         concat!(
-            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "test/rest-1", "test/rest-3", "test/heavy-2", "test/heavy-6", "test/heavy-5", "phase/test-shards", "test/heavy-1", "phase/integration-clients", "phase/doc"]}, {"id": "b1", "tasks": ["phase/features", "phase/browser", "phase/guards", "test/heavy-3", "test/heavy-4", "phase/wasm", "phase/doctest"]}, {"id": "b2", "tasks": ["phase/integration-wasm", "phase/duckdb", "test/rest-2", "phase/rivet", "phase/clippy", "phase/provenance"]}]}"#,
+            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "test/rest-3", "test/rest-1", "test/heavy-2", "test/heavy-3", "test/heavy-6", "test/heavy-5", "test/heavy-4", "test/heavy-1", "phase/test-shards", "phase/integration-clients"]}, {"id": "b1", "tasks": ["phase/integration-authoring", "phase/integration-wasm", "phase/browser", "phase/doc", "phase/provenance"]}, {"id": "b2", "tasks": ["phase/duckdb", "phase/features", "phase/rivet", "phase/wasm", "phase/guards", "phase/clippy", "phase/doctest"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["test/rest-1", "phase/clippy", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/guards", "phase/rivet"]}]}"#,
+            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["test/rest-1", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/rivet", "phase/guards", "phase/clippy"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["phase/duckdb", "phase/rivet", "phase/clippy"]}, {"id": "b1", "tasks": ["test/rest-1", "test/rest-3", "test/heavy-2", "test/heavy-6", "test/heavy-5"]}, {"id": "b2", "tasks": ["test/rest-2", "phase/guards", "test/heavy-3", "test/heavy-4", "phase/provenance"]}]}"#,
+            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["phase/duckdb", "phase/rivet", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-2", "test/heavy-2", "test/heavy-6", "test/heavy-5", "phase/guards"]}, {"id": "b2", "tasks": ["test/rest-3", "test/rest-1", "test/heavy-3", "test/heavy-4", "phase/clippy"]}]}"#,
             "\n"
         ),
     ];
@@ -543,10 +650,13 @@ mod tests {
             id: "b0".into(),
             tasks: [
                 "phase/clippy",
+                "phase/browser",
                 "test/rest-2",
                 "phase/test-shards",
+                "phase/integration-wasm",
                 "test/rest-1",
                 "phase/doc",
+                "phase/integration-authoring",
             ]
             .into_iter()
             .map(str::to_owned)
@@ -559,6 +669,9 @@ mod tests {
                     ("test/rest-2", false),
                     ("phase/test-shards", false),
                     ("test/rest-1", false),
+                    ("phase/browser", true),
+                    ("phase/integration-wasm", false),
+                    ("phase/integration-authoring", false),
                     ("phase/clippy", true),
                     ("phase/doc", true),
                 ],
@@ -568,6 +681,9 @@ mod tests {
                 [
                     ("test/rest-2", false),
                     ("test/rest-1", false),
+                    ("phase/browser", true),
+                    ("phase/integration-wasm", false),
+                    ("phase/integration-authoring", false),
                     ("phase/clippy", true),
                     ("phase/test-shards", true),
                     ("phase/doc", true),
@@ -607,7 +723,7 @@ mod tests {
             root.join("src"),
             target.join("verification-results"),
             target.join("verification-tools/release/.fingerprint"),
-            target.join("norn-checker-wasm/pkg"),
+            target.join("other-output/pkg"),
             target.join(".hidden/.fingerprint"),
         ];
         for dir in &kept {
@@ -638,11 +754,19 @@ mod tests {
                 "wasm32-unknown-unknown/debug/.fingerprint",
                 "rivet/debug/.fingerprint",
                 "doc",
+                "norn-checker-wasm/pkg",
+                "norn-checker-wasm/engine",
             ] {
                 fs::create_dir_all(target.join(dir)).expect("create Cargo output");
             }
             prune_target(&root, &configured).expect("prune");
-            for dir in ["debug", "wasm32-unknown-unknown", "rivet", "doc"] {
+            for dir in [
+                "debug",
+                "wasm32-unknown-unknown",
+                "rivet",
+                "doc",
+                "norn-checker-wasm",
+            ] {
                 assert_eq!(target.join(dir).exists(), !deletes, "{configured:?}: {dir}");
             }
             assert!(kept.iter().all(|path| path.is_dir()), "{configured:?}");
@@ -654,5 +778,65 @@ mod tests {
         prune_target(&root, &target).expect("refuse symlink");
         assert!(outside.join("doc").is_dir());
         assert!(target.is_symlink());
+    }
+
+    #[test]
+    fn prune_target_clears_wasm_pkg_between_incompatible_groups_only() {
+        let tmp = tempfile::tempdir().expect("scratch workspace");
+        let root = tmp.path();
+        let target = root.join("target");
+        let bundle = Bundle {
+            id: "b0".into(),
+            tasks: [
+                "phase/doc",
+                "phase/browser",
+                "phase/integration-authoring",
+                "phase/integration-wasm",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        };
+        let wasm_pkg = target.join("norn-checker-wasm/pkg");
+        let wasm_engine = target.join("norn-checker-wasm/engine");
+        let mut seen = Vec::new();
+        execute(&bundle, true, |task, prune| {
+            if prune {
+                prune_target(root, &target).expect("prune");
+            }
+            match task.name {
+                "phase/browser" => {
+                    assert!(!wasm_pkg.exists(), "clean before first WasmPkg task");
+                    fs::create_dir_all(&wasm_pkg).expect("create wasm pkg");
+                    fs::create_dir_all(&wasm_engine).expect("create wasm engine");
+                }
+                "phase/integration-authoring" | "phase/integration-wasm" => {
+                    assert!(
+                        wasm_pkg.is_dir() && wasm_engine.is_dir(),
+                        "consecutive WasmPkg task {} must keep cached wasm outputs",
+                        task.name
+                    );
+                }
+                "phase/doc" => {
+                    assert!(
+                        !target.join("norn-checker-wasm").exists(),
+                        "incompatible group must prune target/norn-checker-wasm"
+                    );
+                }
+                other => return Err(format!("unexpected task {other}").into()),
+            }
+            seen.push((task.name, prune));
+            Ok(())
+        })
+        .expect("execute");
+        assert_eq!(
+            seen,
+            [
+                ("phase/browser", false),
+                ("phase/integration-authoring", false),
+                ("phase/integration-wasm", false),
+                ("phase/doc", true),
+            ]
+        );
     }
 }

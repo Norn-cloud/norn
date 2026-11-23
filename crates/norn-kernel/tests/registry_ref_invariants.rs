@@ -317,3 +317,58 @@ fn core_rea_invariants_refuse_violations_at_commit() {
         );
     }
 }
+
+#[test]
+fn core_rea_single_measure_handles_omitted_nullable_keys() {
+    let mut cell = rea_cell();
+
+    // Omitting nullable `currency` while supplying `unit` satisfies single_measure.
+    assert_eq!(
+        put(
+            &mut cell,
+            "test.Holding",
+            "h-unit-only",
+            json!({
+                "resource_code": "GOLD-UNIT-ONLY",
+                "quantity": 5,
+                "unit": "g"
+            }),
+        ),
+        Ok(())
+    );
+
+    // Omitting nullable `unit` while supplying `currency` satisfies single_measure.
+    assert_eq!(
+        put(
+            &mut cell,
+            "test.Holding",
+            "h-currency-only",
+            json!({
+                "resource_code": "CASH-CURRENCY-ONLY",
+                "quantity": 100,
+                "currency": "USD"
+            }),
+        ),
+        Ok(())
+    );
+
+    // Omitting both nullable `unit` and `currency` violates single_measure.
+    let err = put(
+        &mut cell,
+        "test.Holding",
+        "h-omitted-both",
+        json!({
+            "resource_code": "GOLD-OMITTED-BOTH",
+            "quantity": 5
+        }),
+    )
+    .expect_err("omitting both unit and currency must refuse");
+    assert_eq!(err, "commit.invariant_violation");
+    assert!(
+        !cell
+            .load(&FactKey::new("test.Holding", "h-omitted-both"))
+            .unwrap()
+            .exists(),
+        "refused omitted-measure holding must not persist"
+    );
+}

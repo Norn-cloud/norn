@@ -52,6 +52,7 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
                 (Bound(_), LiteralZero) | (LiteralZero, Bound(_)) if op == Operation::Compare => {
                     Dimensionless
                 }
+                (Bound(_), _) | (_, Bound(_)) => return None,
                 (Literal | LiteralZero | Dimensionless, Literal | LiteralZero | Dimensionless) => {
                     Dimensionless
                 }
@@ -93,7 +94,9 @@ pub(crate) fn join<U: Clone + Eq, C: Clone + Eq>(
     left: &Operand<U, C>,
     right: &Operand<U, C>,
 ) -> Option<Operand<U, C>> {
-    if matches!(left, Operand::Unresolved) || matches!(right, Operand::Unresolved) {
+    if matches!(left, Operand::Unresolved | Operand::Bound(_))
+        || matches!(right, Operand::Unresolved | Operand::Bound(_))
+    {
         return None;
     }
     if left == right {
@@ -130,11 +133,10 @@ pub(crate) fn destination<U: Clone + Eq, C: Clone + Eq>(
     found: &Operand<U, C>,
     expected: &Operand<U, C>,
 ) -> bool {
-    if matches!(expected, Operand::Unresolved) {
+    if matches!(expected, Operand::Unresolved | Operand::Bound(_))
+        || matches!(found, Operand::Unresolved | Operand::Bound(_))
+    {
         return false;
-    }
-    if matches!(expected, Operand::Bound(_)) {
-        return matches!(found, Operand::LiteralZero) || join(found, expected).is_some();
     }
     matches!(found, Operand::Literal | Operand::LiteralZero)
         || matches!((found, expected), (Operand::Dimensionless, Operand::Legacy))

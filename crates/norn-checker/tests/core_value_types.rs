@@ -92,6 +92,44 @@ fn core_and_std_value_types_match_generated_admitted_catalogs() {
 }
 
 #[test]
+fn iso4217_table_matches_canon_records_and_is_strictly_sorted() {
+    assert_eq!(value_types::ISO_4217.len(), 176);
+    for pair in value_types::ISO_4217.windows(2) {
+        assert!(
+            pair[0] < pair[1],
+            "ISO_4217 must be strictly sorted and unique: {:?} >= {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+    for code in value_types::ISO_4217 {
+        assert_eq!(code.len(), 3, "currency code {code} must be 3 chars");
+        assert!(
+            code.bytes().all(|b| b.is_ascii_uppercase()),
+            "currency code {code} must be ASCII uppercase"
+        );
+        assert!(
+            code != "XTS" && code != "XXX",
+            "ISO_4217 must exclude testing/no-currency sentinel {code}"
+        );
+    }
+
+    let canon_records = include_str!("../../../registry/packs/canon/records.ts");
+    let (_, rest) = canon_records
+        .split_once("export const ISO_4217 = [")
+        .expect("ISO_4217 export in registry/packs/canon/records.ts");
+    let (body, _) = rest
+        .split_once("] as const")
+        .expect("closing `] as const` for ISO_4217");
+    let canon_codes: Vec<&str> = body.split('"').skip(1).step_by(2).collect();
+    assert_eq!(
+        canon_codes.as_slice(),
+        value_types::ISO_4217.as_slice(),
+        "ISO_4217 in registry/core/src/value_types.rs drifted from registry/packs/canon/records.ts"
+    );
+}
+
+#[test]
 fn materialized_value_types_validate_scalars_and_iso4217_codes() {
     let catalog = combined_catalog();
 

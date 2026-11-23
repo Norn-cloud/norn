@@ -11,10 +11,10 @@
       "1d538ebe3e9a2c5307c49eebd2713a83a7b831ef467a48ec8e2d9aaed1f0a5c5"
     ]
   ],
-  "definitionsDigest": "9f89a042c3858669edc4a065634afe2bb11f300273bd300c954789f436f0de63",
+  "definitionsDigest": "67519ffd2745a85a2aa8e760c8bcaf6f17c69e1d3bb463472c9ea051913d6c07",
   "definitionsVersion": 1,
   "diagnostics": [],
-  "digest": "6e089ffa25b514e3c94f1bf9e0db52533e6b378d46636f9c62eb2a5546e9a61b",
+  "digest": "fdcc3f9729ad5b12d03217fc2a8db270150926608473baac8bb49171fe3ff33c",
   "input": {
     "connectorInstance": "demo",
     "dataset": "Warehouse Lot Balance",

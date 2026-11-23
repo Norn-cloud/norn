@@ -124,17 +124,31 @@ mod tests {
         );
         assert!(admit(Operation::Compare, &bound_mass, &Operand::Literal).is_none());
         assert!(admit(Operation::Compare, &bound_mass, &Operand::Dimensionless).is_none());
+        assert!(admit(Operation::Compare, &bound_mass, &bound_mass).is_none());
         assert!(admit(Operation::Compare, &bound_mass, &bound_volume).is_none());
         assert!(admit(Operation::Compare, &bound_mass, &quantity).is_none());
         assert!(admit(Operation::Add, &bound_mass, &Operand::LiteralZero).is_none());
         assert!(admit(Operation::Add, &bound_mass, &Operand::Literal).is_none());
+        assert!(admit(Operation::Add, &bound_mass, &bound_mass).is_none());
         assert!(admit(Operation::Add, &bound_mass, &bound_volume).is_none());
-        assert_eq!(
-            admit(Operation::Add, &bound_mass, &bound_mass),
-            Some((bound_mass.clone(), None))
-        );
+        assert!(admit(Operation::Subtract, &bound_mass, &Operand::LiteralZero).is_none());
+        assert!(admit(Operation::Subtract, &bound_mass, &bound_mass).is_none());
+        assert!(admit(Operation::Subtract, &bound_mass, &bound_volume).is_none());
         assert!(admit(Operation::Multiply, &bound_mass, &Operand::LiteralZero).is_none());
+        assert!(admit(Operation::Multiply, &bound_mass, &bound_mass).is_none());
         assert!(admit(Operation::Divide, &bound_mass, &Operand::Literal).is_none());
+        assert!(admit(Operation::Divide, &bound_mass, &bound_mass).is_none());
+        assert!(join(&bound_mass, &bound_mass).is_none());
+        assert!(join(&bound_mass, &bound_volume).is_none());
+        assert!(join(&bound_mass, &Operand::LiteralZero).is_none());
+        assert!(join(&Operand::LiteralZero, &bound_mass).is_none());
+        assert!(!destination(&bound_mass, &bound_mass));
+        assert!(!destination(&bound_mass, &bound_volume));
+        assert!(!destination(&Operand::LiteralZero, &bound_mass));
+        assert!(!destination(&Operand::Literal, &bound_mass));
+        assert!(!destination(&bound_mass, &Operand::Dimensionless));
+        assert!(!destination(&bound_mass, &Operand::Legacy));
+        assert!(!destination(&bound_mass, &quantity));
         assert!(
             admit(
                 Operation::Compare,
