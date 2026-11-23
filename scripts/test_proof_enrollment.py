@@ -353,7 +353,7 @@ class AffectedPlanTests(unittest.TestCase):
 import json, os, sys
 args = sys.argv[1:]
 if args[:2] == ["xtask", "ci"]:
-    os.execv(os.environ["BUNDLE_CANARY_XTASK"], [os.environ["BUNDLE_CANARY_XTASK"], *args[2:]])
+    os.execv(os.environ["BUNDLE_CANARY_XTASK"], [os.environ["BUNDLE_CANARY_XTASK"], *args[1:]])
 if os.environ.get("BUNDLE_CANARY_FAIL") == "1":
     sys.exit(23)
 if args == ["nextest", "--version"]:
