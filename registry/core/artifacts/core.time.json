@@ -1,0 +1,116 @@
+{
+  "artifactId": "core.time",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Core temporal value types",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "propertyTypes": [
+      {
+        "description": "An exact UTC instant (RFC 3339 normalized to UTC, at most nanosecond precision).",
+        "name": "core.time.instant",
+        "type": {
+          "kind": "timestamp",
+          "timezone": "utc"
+        }
+      },
+      {
+        "description": "A proleptic-Gregorian calendar date (YYYY-MM-DD), with no time-of-day and no timezone.",
+        "name": "core.time.date",
+        "type": {
+          "kind": "date"
+        }
+      },
+      {
+        "description": "An exact elapsed duration (ISO 8601 duration with fixed-length units).",
+        "name": "core.time.duration",
+        "type": {
+          "kind": "duration"
+        }
+      },
+      {
+        "constraints": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$"
+        },
+        "description": "A canonical IANA timezone identifier from the pinned timezone database (tzdb 2025b).",
+        "name": "core.time.iana_timezone",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
+        "description": "Explicit disambiguation policy for ambiguous DST fall-back wall times (reject, earlier, or later).",
+        "name": "core.time.dst_policy",
+        "type": {
+          "kind": "enum",
+          "values": [
+            {
+              "value": "reject"
+            },
+            {
+              "value": "earlier"
+            },
+            {
+              "value": "later"
+            }
+          ]
+        }
+      },
+      {
+        "description": "A half-open UTC instant interval [starts_at, ends_at) where starts_at < ends_at.",
+        "name": "core.time.proper_interval",
+        "type": {
+          "kind": "record",
+          "members": [
+            {
+              "id": "starts_at",
+              "type": {
+                "kind": "timestamp",
+                "timezone": "utc"
+              }
+            },
+            {
+              "id": "ends_at",
+              "type": {
+                "kind": "timestamp",
+                "timezone": "utc"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "description": "A calendar date interval bounded by starts_at and ends_at.",
+        "name": "core.time.date_interval",
+        "type": {
+          "kind": "record",
+          "members": [
+            {
+              "id": "starts_at",
+              "type": {
+                "kind": "date"
+              }
+            },
+            {
+              "id": "ends_at",
+              "type": {
+                "kind": "date"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/src/time.rs"
+  },
+  "scope": {},
+  "version": "1.0.0"
+}

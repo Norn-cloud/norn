@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use cargo_metadata::{Metadata, MetadataCommand};
 use norn_skeleton_guard::{
     CRATES, NON_CARGO_SURFACES, RAW_JSON_BYTES_OWNER, Ring, Violation, ZenPin, check_baseline,
-    check_dependencies, check_layout, check_norn_ir_validators, check_ring0_io_free,
-    check_validators_against, check_zen_lock, check_zen_packages, check_zen_vendor,
-    pub_validate_fns, raw_json_byte_calls, raw_json_byte_calls_in,
+    check_baseline_against, check_dependencies, check_layout, check_norn_ir_validators,
+    check_ring0_io_free, check_validators_against, check_zen_lock, check_zen_packages,
+    check_zen_vendor, pub_validate_fns, raw_json_byte_calls, raw_json_byte_calls_in,
 };
 use serde_json::{Value, json};
 
@@ -564,6 +564,10 @@ fn guard_detects_unlisted_ring0_third_party_dependency() {
     }
     // Listed crates pass; ring-1 third-party is governed by bans + cargo-deny.
     assert_eq!(check_dependencies(&with_dep("norn-ir", "schemars")), []);
+    for ok in ["serde", "serde_json", "sha2", "unicode-normalization"] {
+        let v = check_dependencies(&with_dep("norn-canonical", ok));
+        assert_eq!(v, [], "norn-canonical -> {ok}: {}", render(&v));
+    }
     for ok in ["serde", "thiserror"] {
         let v = check_dependencies(&with_dep("norn-kernel", ok));
         assert_eq!(v, [], "norn-kernel -> {ok}: {}", render(&v));
@@ -1394,17 +1398,26 @@ fn guard_detects_allowlist_growth_beyond_baseline() {
         std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("baseline.json"))
             .expect("read baseline.json");
     let mut value: Value = serde_json::from_str(&baseline).expect("json");
-    // Simulate an allowlist entry that the frozen baseline does not contain.
-    value["third_party"]
-        .as_array_mut()
-        .expect("third-party baseline")
-        .pop()
-        .expect("one retained baseline entry");
+    assert_eq!(value["norn_edges"], json!([]));
+    assert_eq!(value["third_party"], json!([]));
+    assert_eq!(value["norn_ir_validators"], json!([]));
     value["norn_ir_validators"]
         .as_array_mut()
         .expect("validators")
         .push(json!("lib.rs::validate_extra"));
+    // Against the empty real allowlists, a baseline entry is stale.
     let v = check_baseline(&value.to_string()).expect("parse");
+    assert_eq!(rules_of(&v), ["stale-baseline"], "{}", render(&v));
+
+    // Against a synthetic allowlist, an entry missing from baseline.json is
+    // reported as `allowlist-grew` alongside any stale baseline entry.
+    let v = check_baseline_against(
+        &value.to_string(),
+        &[],
+        &[("norn-canonical", "base64", "synthetic growth")],
+        &[],
+    )
+    .expect("parse");
     assert_eq!(
         rules_of(&v),
         ["allowlist-grew", "stale-baseline"],

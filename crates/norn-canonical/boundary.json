@@ -3,5 +3,10 @@
   "ring": "Zero",
   "allowed_norn": [],
   "dev_only_norn": [],
-  "third_party": []
+  "third_party": [
+    "serde",
+    "serde_json",
+    "sha2",
+    "unicode-normalization"
+  ]
 }

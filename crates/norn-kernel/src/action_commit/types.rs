@@ -252,6 +252,53 @@ pub struct ActionPreconditionOutcome {
     pub satisfied: bool,
 }
 
+/// One effective-dated parameter resolved and pinned during an action commit
+/// (D07, PARAM-EXACT-1, PARAM-BOUND-1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionParameterPin {
+    /// The declared parameter slice entry name.
+    pub entry: String,
+    /// The stable parameter key.
+    pub setting_key: String,
+    /// The declared effective timestamp evaluated for this selection.
+    pub effective_at: String,
+    /// The selected setting fact's concrete object type and key.
+    pub setting: FactKey,
+    /// The committed fact version of the selected setting at commit time.
+    pub version: u64,
+    /// Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's
+    /// exact values at commit time.
+    pub digest: String,
+}
+
+impl ActionParameterPin {
+    fn to_runtime_value(&self) -> JsonValue {
+        let string = |value: &str| JsonValue::String(value.to_owned());
+        JsonValue::Object(JsonObject::from([
+            ("entry".to_owned(), string(&self.entry)),
+            ("settingKey".to_owned(), string(&self.setting_key)),
+            ("effectiveAt".to_owned(), string(&self.effective_at)),
+            (
+                "setting".to_owned(),
+                JsonValue::Object(JsonObject::from([
+                    (
+                        "objectType".to_owned(),
+                        string(self.setting.object_type.as_str()),
+                    ),
+                    ("key".to_owned(), string(&self.setting.key)),
+                ])),
+            ),
+            (
+                "version".to_owned(),
+                JsonValue::Number(norn_ir::Decimal::from(self.version)),
+            ),
+            ("digest".to_owned(), string(&self.digest)),
+        ]))
+    }
+}
+
 /// The result of applying ordered derivations and validating the final input.
 #[derive(Debug, PartialEq)]
 pub struct ActionInputPreparation<'a> {
@@ -352,6 +399,10 @@ pub struct ActionCallRecord {
     /// Successful precondition results, in declaration order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub precondition_outcomes: Vec<ActionPreconditionOutcome>,
+    /// Effective-dated parameter pins resolved by declared parameter slices
+    /// (D07, PARAM-EXACT-1, PARAM-BOUND-1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameter_pins: Vec<ActionParameterPin>,
     /// The actor.
     pub actor: String,
     /// The turn the call committed in.
@@ -396,6 +447,7 @@ impl ActionCallRecord {
             effective_input: preparation.recorded_effective_input(),
             derived_values: preparation.derived_values.clone(),
             precondition_outcomes: Vec::new(),
+            parameter_pins: Vec::new(),
             actor: call.actor.clone(),
             turn: call.turn.id.clone(),
             transition: transition.as_str().to_owned(),
@@ -504,6 +556,17 @@ impl ActionCallRecord {
                     .collect(),
             ),
         );
+        if !self.parameter_pins.is_empty() {
+            values.insert(
+                "parameterPins".to_owned(),
+                JsonValue::Array(
+                    self.parameter_pins
+                        .iter()
+                        .map(ActionParameterPin::to_runtime_value)
+                        .collect(),
+                ),
+            );
+        }
         if let Some(action_artifact_id) = &self.action_artifact_id {
             values.insert("actionArtifactId".to_owned(), string(action_artifact_id));
         }
@@ -573,6 +636,16 @@ impl ActionCallRecord {
             None | Some(JsonValue::Null) => Vec::new(),
             Some(value) => norn_ir::runtime::decode(value).ok()?,
         };
+        let parameter_pins = match values.get("parameterPins") {
+            None | Some(JsonValue::Null) => Vec::new(),
+            Some(value) => {
+                let decoded: Vec<ActionParameterPin> = norn_ir::runtime::decode(value).ok()?;
+                if !decoded.iter().all(super::parameter::validate_parameter_pin) {
+                    return None;
+                }
+                decoded
+            }
+        };
         let trace = match values.get("trace") {
             None | Some(JsonValue::Null) => None,
             Some(value) => {
@@ -596,6 +669,7 @@ impl ActionCallRecord {
             effective_input,
             derived_values,
             precondition_outcomes,
+            parameter_pins,
             actor: string("actor")?,
             turn: string("turn")?,
             transition: string("transition")?,
@@ -720,6 +794,16 @@ pub enum ActionRefusal<X> {
         /// The declared entry.
         entry: String,
     },
+    /// PARAM-EXACT-1 / PARAM-BOUND-1: effective-dated parameter resolution refused.
+    #[error("parameter slice {entry:?} refused ({reason})")]
+    ParameterRefused {
+        /// The declared parameter slice entry.
+        entry: String,
+        /// The canonical parameter resolution error.
+        error: norn_checker::parameter::ParameterError,
+        /// Safe refusal detail.
+        reason: String,
+    },
     /// A precondition's fact or adjacency read changed before commit.
     #[error("action precondition read changed before commit at {key}")]
     StalePreconditionRead {
@@ -804,6 +888,7 @@ impl<X> ActionRefusal<X> {
             Self::AggregateBytesExceeded { .. } => "action.aggregate_bytes_exceeded",
             Self::AggregateUnavailable { .. } => "action.aggregate_unavailable",
             Self::SliceObjectMissing { .. } => "action.slice_object_missing",
+            Self::ParameterRefused { error, .. } => error.code(),
             Self::StalePreconditionRead { .. } => "action.precondition_stale_read",
             Self::StaleAggregateRead { .. } => "action.aggregate_stale_read",
             Self::PreconditionFailed { .. } => "action.precondition_failed",

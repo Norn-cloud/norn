@@ -4,6 +4,7 @@ import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
+import { FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
 import { Braces, Database, EyeOff, GitBranch, History as HistoryIcon, Link2, RefreshCw, Rows3, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
@@ -86,6 +87,16 @@ export function ObjectPage() {
   const access = typeAccess.data?.kind === "read" ? typeAccess.data.read.document : undefined
   const sources = access?.capabilities.sources.decision
   const actionTitles = new Map(access?.roles.flatMap(({ actions }) => actions.map(({ actionId, title }) => [actionId, title] as const)) ?? [])
+  const maskedRecord = data?.object.document.masked
+  const recordWithheld = maskedRecord !== undefined && Object.keys(maskedRecord).length > 0
+  // Derive header status strictly from real typed cell fields (quarantined/open findings and masked properties).
+  const recordStatus = live
+    ? deriveFactStatus({
+      quarantined: heldBack,
+      openFindings: broken.length,
+      withheld: reads.isSuccess && data !== null && recordWithheld,
+    })
+    : null
   return (
     <section className="space-y-6">
       {/* One header: the record's name with its state beside it, one quiet line of facts under it, the record's actions at the end. */}
@@ -94,6 +105,7 @@ export function ObjectPage() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="min-w-0 text-title leading-tight font-semibold tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
+            {recordStatus !== null && <FactStatusBadge status={recordStatus} />}
             {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
             {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
           </div>

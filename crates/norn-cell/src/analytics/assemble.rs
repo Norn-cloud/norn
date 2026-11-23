@@ -23,6 +23,9 @@ use crate::read::LedgerHead;
 use crate::system::LEDGER;
 use crate::{CellError, CellStore};
 
+/// MANIFEST-MARK-1: a question over a dataset's marked column refuses.
+const MARKED_COLUMN: &str = "privacy.marked_column";
+
 /// The bucket value a group key stands for, as the shared projection gives it.
 ///
 /// # Errors
@@ -156,6 +159,16 @@ impl<E: SqlEngine> CellStore<E> {
             if let Some(dataset) = self.dataset_manifest(crate::MAIN_WORLD, grain)? {
                 if cutoff.is_some() {
                     return Err(refused(UNSUPPORTED_ENGINE));
+                }
+                // MANIFEST-MARK-1: an answer over a marked column would carry
+                // its stored values outside any projection.
+                let markings = self.effective_dataset_markings(&dataset.manifest)?;
+                if plan
+                    .properties()
+                    .iter()
+                    .any(|property| markings.contains_key(property.id.as_str()))
+                {
+                    return Err(refused(MARKED_COLUMN));
                 }
                 (
                     Source::Dataset {
