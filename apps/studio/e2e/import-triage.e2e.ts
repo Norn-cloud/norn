@@ -170,12 +170,33 @@ test("step 2 (split-pane review): locks persist across step navigation, disputed
   await expect(card.locator('[data-fact-status="imported_unverified"]')).toHaveText("Imported (unverified)")
   await expect(card.locator('[data-fact-status="verified_fact"]')).toHaveCount(0)
 
-  // Return to Step 2 -> disputed row is now released with Capture B's values and can be promoted!
+  // Return to Step 2 and switch to Capture B (art-w47-b) -> disputed row is now released with Capture B's values and evidence!
   await page.locator('[data-triage-step="review"]').click()
+  await page.getByLabel("Source artifact", { exact: true }).selectOption("art-w47-b")
   await expect(disputedRow.locator('[data-fact-status="imported_unverified"]')).toHaveText("Imported (unverified)")
   await expect(disputedRow.locator('[data-field-name="duration_hours"] input')).toHaveValue("8.50")
+
+  // Hold the authoritative refetch so we verify the receipt NEVER optimistically paints "Verified fact".
+  const releaseRead = cell.holdNextTriageRead()
   await disputedRow.getByRole("button", { name: "Promote row" }).click()
+  await expect(disputedRow.locator('[data-row-outcome="committed"]')).toBeVisible()
+  await expect(disputedRow.locator('[data-fact-status="imported_unverified"]')).toHaveText("Imported (unverified)")
+  await expect(disputedRow.locator('[data-fact-status="verified_fact"]')).toHaveCount(0)
+
+  // Once the authoritative cell read arrives, the row transitions to Verified fact.
+  releaseRead()
   await expect(disputedRow.locator('[data-fact-status="verified_fact"]')).toHaveText("Verified fact")
+
+  // Final promotion request for the released row must carry Capture B's evidence digests alongside Capture B's values.
+  const disputedPromote = cell.calls.find(
+    (c) => c.actionId === "canon.import.promote_row" && c.input.rowId === "row-w47-5",
+  )
+  expect(disputedPromote).toBeDefined()
+  expect(disputedPromote!.input.artifactId).toBe("art-w47-b")
+  expect(disputedPromote!.input.blobDigest).toBe(`sha256:${(102).toString(16).padStart(64, "b")}`)
+  expect(disputedPromote!.input.functionReceiptDigest).toBe(`sha256:${(202).toString(16).padStart(64, "b")}`)
+  expect(disputedPromote!.input.observedAt).toBe("2026-11-16T11:19:00Z")
+  expect(disputedPromote!.input.values).toEqual({ slot_code: "SLOT-10", duration_hours: "8.50" })
 })
 
 test("step 2 (batch switch mid-queue & stale local draft vs authoritative verified value)", async ({ page }) => {
@@ -224,6 +245,26 @@ test("step 2 (batch switch mid-queue & stale local draft vs authoritative verifi
   // Row 2 of batch-w48-sync must NEVER have been dispatched after switching to batch-w49-sync!
   const w48Promotes = cell.calls.filter((c) => c.actionId === "canon.import.promote_row" && c.input.batchId === "batch-w48-sync")
   expect(w48Promotes.map((c) => c.input.rowId)).toEqual(["row-w47-1"])
+
+  // 3) Leaving `/imports` mid-queue unmounts ImportTriagePage and halts remaining queued rows.
+  await page.locator('[data-triage-step="aliases"]').click()
+  await northRow.getByRole("button", { name: "Select suggestion" }).click()
+  await northRow.getByRole("button", { name: "Bind alias" }).click()
+  await expect(northRow.locator('[data-alias-resolved="bound"]')).toBeVisible()
+  await page.locator('[data-triage-step="review"]').click()
+
+  const releaseW49 = cell.holdNextPromote("row-w47-1")
+  await page.getByRole("button", { name: "Promote 2 clean rows" }).click()
+  await expect.poll(() => cell.calls.filter((c) => c.actionId === "canon.import.promote_row" && c.input.batchId === "batch-w49-sync").length).toBe(1)
+
+  // Navigate off `/imports` so ImportTriagePage unmounts while row 1 is in flight.
+  await page.locator('a[href="/"]').first().click()
+  await expect(page.locator('[data-triage-batch]')).toHaveCount(0)
+  releaseW49()
+  await page.waitForTimeout(300)
+
+  const w49Promotes = cell.calls.filter((c) => c.actionId === "canon.import.promote_row" && c.input.batchId === "batch-w49-sync")
+  expect(w49Promotes.map((c) => c.input.rowId)).toEqual(["row-w47-1"])
 })
 
 test("step 2 (structured 500 retry, pending approval, and 422 refusal): exact key reuse and zero fabricated findings", async ({ page }) => {
@@ -232,6 +273,11 @@ test("step 2 (structured 500 retry, pending approval, and 422 refusal): exact ke
   await page.goto("/imports?step=review")
 
   const row1 = page.locator('[data-candidate-row="row-w47-1"]')
+  const hoursInput = row1.locator('[data-field-name="duration_hours"] input')
+  const resetHoursBtn = row1.getByRole("button", { name: "Reset Duration (hours) edit" })
+
+  // No Reset button before any local edit exists.
+  await expect(resetHoursBtn).toHaveCount(0)
 
   // Structured JSON HTTP 500 -> retryable error banner (NOT non-retryable refusal), no fabricated finding.
   cell.failNextPromote("row-w47-1")
@@ -240,15 +286,28 @@ test("step 2 (structured 500 retry, pending approval, and 422 refusal): exact ke
   await expect(row1).toHaveAttribute("data-row-status", "imported_unverified")
   await expect(row1.locator("[data-cell-findings]")).toHaveCount(0)
 
-  // Retry reuses exact same idempotencyKey; cell returns 202 pending approval.
-  cell.pendingNextPromote("row-w47-1", "dec_approval_99")
+  // Retry button reuses the exact same idempotencyKey.
+  cell.failNextPromote("row-w47-1")
   await row1.locator('[data-row-outcome="error"]').getByRole("button", { name: "Retry" }).click()
+  await expect(row1.locator('[data-row-outcome="error"]')).toContainText("internal.storage_busy")
+
+  // Edit then Reset back to baseline -> Reset disappears, and retrying the unchanged outgoing payload
+  // STILL reuses the exact same idempotencyKey!
+  await hoursInput.fill("9.50")
+  await expect(resetHoursBtn).toBeVisible()
+  await resetHoursBtn.click()
+  await expect(resetHoursBtn).toHaveCount(0)
+  await expect(hoursInput).toHaveValue("8.00")
+
+  // Re-submitting unchanged payload reuses exact same idempotencyKey; cell returns 202 pending approval.
+  cell.pendingNextPromote("row-w47-1", "dec_approval_99")
+  await row1.getByRole("button", { name: "Promote row" }).click()
   await expect(row1.locator('[data-row-outcome="pending"]')).toContainText("dec_approval_99")
   await expect(row1).toHaveAttribute("data-row-status", "imported_unverified")
   await expect(row1.locator("[data-cell-findings]")).toHaveCount(0)
 
   // Edit field -> rotates idempotency key; 422 refusal -> distinct refusal banner without Retry or fabricated findings.
-  await row1.locator('[data-field-name="duration_hours"] input').fill("9.00")
+  await hoursInput.fill("9.00")
   cell.refuseNextPromote("row-w47-1", "law.boundary_cap", "Cell law refused duration 9.00.")
   await row1.getByRole("button", { name: "Promote row" }).click()
   await expect(row1.locator('[data-row-outcome="refused"]')).toContainText("law.boundary_cap")
@@ -257,9 +316,10 @@ test("step 2 (structured 500 retry, pending approval, and 422 refusal): exact ke
   await expect(row1.locator("[data-cell-findings]")).toHaveCount(0)
 
   const keys = cell.calls.map((c) => c.idempotencyKey)
-  expect(keys).toHaveLength(3)
+  expect(keys).toHaveLength(4)
   expect(keys[0]).toBe(keys[1])
-  expect(keys[2]).not.toBe(keys[1])
+  expect(keys[2]).toBe(keys[0])
+  expect(keys[3]).not.toBe(keys[2])
 })
 
 test("step 2 (scoped blob media, broken image error state, withheld fields, and external URL rejection)", async ({ page }) => {

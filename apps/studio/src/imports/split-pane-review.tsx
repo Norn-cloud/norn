@@ -150,8 +150,8 @@ export function SplitPaneReview({
   readonly queuedRowIds: ReadonlySet<string>
   readonly batchRunning: boolean
   readonly batchReport: BatchRunReport | null
-  readonly onSetFieldValue: (batchId: string, rowId: string, fieldName: string, currentValue: string, next: string) => void
-  readonly onResetFieldValue: (batchId: string, rowId: string, fieldName: string) => void
+  readonly onSetFieldValue: (batchId: string, rowId: string, fieldName: string, baselineValue: string, currentValue: string, next: string) => void
+  readonly onResetFieldValue: (batchId: string, rowId: string, fieldName: string, baselineValue: string) => void
   readonly onPromoteRow: (batchId: string, row: CandidateRow, artifact: StagedArtifact) => Promise<void>
   readonly onPromoteCleanBatch: (batchId: string, eligibleRows: readonly CandidateRow[], keptQuarantined: number) => Promise<void>
   readonly onJumpToAliases: () => void
@@ -582,8 +582,14 @@ export function SplitPaneReview({
               const queued = queuedRowIds.has(row.id)
               const locked = busy || queued
               const outcome = rowOutcomes[row.id] ?? null
-              const rowArtifact = artifacts.find((item) => item.id === row.artifactId) ?? activeArtifact
-              const canPromote = rowStatus === "imported_unverified" && entity.kind === "resolved" && !locked && !batchRunning && rowArtifact !== undefined
+              const committedAwaitingRead = outcome?.kind === "committed"
+              const rowArtifact = artifacts.find((item) => item.id === row.artifactId)
+              const canPromote = rowStatus === "imported_unverified"
+                && entity.kind === "resolved"
+                && !locked
+                && !batchRunning
+                && !committedAwaitingRead
+                && rowArtifact !== undefined
 
               return (
                 <article
@@ -661,8 +667,10 @@ export function SplitPaneReview({
                       }
 
                       // Verified rows ALWAYS show the authoritative cell value, never stale local drafts.
-                      const current = verified ? field.value : (edits[`${row.id}:${field.name}`] ?? field.value)
-                      const edited = !verified && current !== field.extractedValue
+                      const localEdit = edits[`${row.id}:${field.name}`]
+                      const current = verified ? field.value : (localEdit ?? field.value)
+                      const hasLocalEdit = !verified && localEdit !== undefined && localEdit !== field.value
+                      const differsFromExtracted = !verified && current !== field.extractedValue
                       const hasAmber = !hasRed && lowConf
 
                       return (
@@ -718,30 +726,30 @@ export function SplitPaneReview({
                               dir="auto"
                               value={current}
                               readOnly={verified}
-                              disabled={locked}
+                              disabled={locked || committedAwaitingRead}
                               onFocus={() => { setFocusedRowId(row.id); setFocusedFieldId(field.id) }}
-                              onChange={(event) => onSetFieldValue(batchId, row.id, field.name, current, event.target.value)}
+                              onChange={(event) => onSetFieldValue(batchId, row.id, field.name, field.value, current, event.target.value)}
                               aria-invalid={hasRed || undefined}
                               className={cn(
                                 "h-7 min-w-0 flex-1 rounded border bg-background px-2 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
                                 hasRed ? "border-tone-red/50" : hasAmber ? "border-tone-amber/50" : "border-border",
-                                (verified || locked) && "cursor-default bg-muted/40 text-foreground/85",
+                                (verified || locked || committedAwaitingRead) && "cursor-default bg-muted/40 text-foreground/85",
                               )}
                             />
-                            {edited && (
+                            {hasLocalEdit && (
                               <button
                                 type="button"
-                                disabled={locked}
-                                aria-label={`Reset ${field.label} to extracted value`}
-                                title={`Extracted as "${field.extractedValue}" — click to reset`}
-                                onClick={(event) => { event.stopPropagation(); onResetFieldValue(batchId, row.id, field.name) }}
+                                disabled={locked || committedAwaitingRead}
+                                aria-label={`Reset ${field.label} edit`}
+                                title={`Row baseline is "${field.value}" — click to undo local edit`}
+                                onClick={(event) => { event.stopPropagation(); onResetFieldValue(batchId, row.id, field.name, field.value) }}
                                 className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
                               >
                                 <RotateCcw className="size-3" />
                               </button>
                             )}
                           </div>
-                          {edited && (
+                          {differsFromExtracted && (
                             <div className="text-[0.6875rem] text-muted-foreground">
                               Extracted: <span className="font-mono"><bdi>{field.extractedValue}</bdi></span> (preserved in lineage)
                             </div>
@@ -770,24 +778,41 @@ export function SplitPaneReview({
                     </div>
                   )}
 
-                  {/* Distinct request outcome banner (never fabricated into a cell quarantine finding) */}
+                  {/* Distinct request outcome banner (never fabricated into a cell quarantine finding or optimistic Verified fact) */}
                   {outcome !== null && !verified && (
                     <div
-                      role={outcome.kind === "pending" ? "status" : "alert"}
+                      role={outcome.kind === "committed" || outcome.kind === "pending" || outcome.kind === "stale" ? "status" : "alert"}
                       data-row-outcome={outcome.kind}
                       className={cn(
                         "flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-2 text-xs",
-                        outcome.kind === "pending"
-                          ? "border-tone-amber/40 bg-tone-amber/8 text-foreground"
-                          : "border-destructive/35 bg-destructive/5 text-destructive",
+                        outcome.kind === "committed"
+                          ? "border-tone-green/40 bg-tone-green/5 text-foreground"
+                          : outcome.kind === "pending" || outcome.kind === "stale"
+                            ? "border-tone-amber/40 bg-tone-amber/8 text-foreground"
+                            : "border-destructive/35 bg-destructive/5 text-destructive",
                       )}
                     >
+                      {outcome.kind === "committed" && (
+                        <>
+                          <CheckCircle2 aria-hidden className="size-3.5 shrink-0 text-tone-green" />
+                          <span className="tabular-nums">
+                            Committed (commit {outcome.receipt.receipt.commitSeq}) — awaiting authoritative read from cell.
+                          </span>
+                          <CopyId value={outcome.receipt.receipt.receiptHash} short={10} />
+                        </>
+                      )}
                       {outcome.kind === "pending" && (
                         <>
                           <Clock aria-hidden className="size-3.5 shrink-0 text-tone-amber" />
                           <span>
                             Pending approval decision <code className="font-mono">{outcome.decisionId}</code> — nothing is committed until approved.
                           </span>
+                        </>
+                      )}
+                      {outcome.kind === "stale" && (
+                        <>
+                          <AlertTriangle aria-hidden className="size-3.5 shrink-0 text-tone-amber" />
+                          <span>{outcome.message}</span>
                         </>
                       )}
                       {outcome.kind === "refused" && (
@@ -842,7 +867,7 @@ export function SplitPaneReview({
                         onClick={(event) => { event.stopPropagation(); if (rowArtifact) void onPromoteRow(batchId, row, rowArtifact) }}
                         className="h-7 rounded border-border bg-background px-2.5 text-xs shadow-none"
                       >
-                        {busy ? "Promoting…" : queued ? "Queued…" : "Promote row"}
+                        {busy ? "Promoting…" : queued ? "Queued…" : committedAwaitingRead ? "Committed — syncing…" : "Promote row"}
                       </Button>
                     )}
                   </div>
@@ -860,6 +885,7 @@ export function SplitPaneReview({
               <span>
                 Batch run complete: <strong className="font-medium text-tone-green">{batchReport.promoted} promoted</strong>
                 {batchReport.pendingApproval > 0 && <>, <strong className="font-medium text-tone-amber">{batchReport.pendingApproval} pending approval</strong></>}
+                {batchReport.skippedStale > 0 && <>, <strong className="font-medium text-tone-amber">{batchReport.skippedStale} skipped (basis changed)</strong></>}
                 {batchReport.refused > 0 && <>, <strong className="font-medium text-tone-red">{batchReport.refused} refused by action</strong></>}
                 {batchReport.failed > 0 && <>, <strong className="font-medium text-tone-red">{batchReport.failed} failed to send</strong></>}
                 , <span className="text-muted-foreground">{batchReport.keptQuarantined} held in quarantine.</span>

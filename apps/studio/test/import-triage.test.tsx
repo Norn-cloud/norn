@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import { renderToStaticMarkup } from "react-dom/server"
 import { deriveFactStatus, FactStatusBadge } from "../src/components/fact-status-badge.tsx"
 import {
+  canonicalPayloadKey,
   classifyTriageActionResult,
   commitAliasBinding,
   commitRowPromotion,
@@ -19,15 +20,20 @@ import {
   patchAliasDraftState,
   patchSupersessionDraftState,
   resolveArtifactMediaSource,
+  resolvePayloadIdempotencyKey,
   resolveRowEntity,
   runBatchPromotionQueue,
   supersessionFactStatus,
   timeDeltaLabel,
   triageSummary,
+  verifyQueuedPromotionBasis,
   type AliasCandidate,
   type AliasResolution,
   type CandidateRow,
   type ImportTriageWorkspace,
+  type PayloadBoundKeyEntry,
+  type QueuedPromotionItem,
+  type StagedArtifact,
   type SupersessionConflict,
 } from "../src/lib/import-triage.ts"
 
@@ -242,6 +248,151 @@ test("runBatchPromotionQueue stops dispatching remaining queued rows immediately
   expect(dispatched).toEqual(["row-1"])
   expect(report.aborted).toBe(true)
   expect(report.promoted).toBe(1)
+})
+
+test("runBatchPromotionQueue halts immediately when /imports unmounts and tallies basis-change skips", async () => {
+  let mounted = true
+  const dispatched: string[] = []
+  const unmountReport = await runBatchPromotionQueue(
+    "batch-A",
+    ["row-1", "row-2", "row-3"],
+    () => "batch-A",
+    1,
+    async (rowId) => {
+      dispatched.push(rowId)
+      if (rowId === "row-1") mounted = false
+      return "promoted"
+    },
+    () => mounted,
+  )
+  expect(dispatched).toEqual(["row-1"])
+  expect(unmountReport.aborted).toBe(true)
+  expect(unmountReport.promoted).toBe(1)
+
+  const staleReport = await runBatchPromotionQueue(
+    "batch-A",
+    ["row-1", "row-2"],
+    () => "batch-A",
+    0,
+    async (rowId) => (rowId === "row-2" ? "stale" : "promoted"),
+    () => true,
+  )
+  expect(staleReport.aborted).toBe(false)
+  expect(staleReport.promoted).toBe(1)
+  expect(staleReport.skippedStale).toBe(1)
+})
+
+test("verifyQueuedPromotionBasis skips queued rows whose live status, entity, or evidence digests drifted", () => {
+  const artifactA: StagedArtifact = {
+    id: "art-1",
+    label: "Capture A",
+    sourceChannel: "feed-ops",
+    mediaType: "image/svg+xml",
+    documentUri: "data:image/svg+xml;charset=utf-8,%3Csvg/%3E",
+    blobDigest: "sha256:" + "1".repeat(64),
+    functionReceiptDigest: "sha256:" + "2".repeat(64),
+    extractor: "norn.extract.grid",
+    extractorVersion: "1.0.0",
+    observedAt: "2026-11-16T09:15:00Z",
+    windowLabel: "2026-W47",
+    markings: [],
+    contextMessages: [],
+  }
+  const baseWorkspace: ImportTriageWorkspace = {
+    batchId: "batch-1",
+    title: "Window W47",
+    targetObjectType: "canon.Allocation",
+    lowConfidenceThresholdBps: 9000,
+    actions: {
+      bindAlias: "canon.alias.bind",
+      createEntity: "canon.entity.create_and_bind",
+      ignoreAlias: "canon.alias.ignore",
+      promoteRow: "canon.import.promote_row",
+      resolveSupersession: "canon.import.resolve_supersession",
+    },
+    aliases: [],
+    availableEntities: [{ id: "ent-001", label: "Unit Alpha" }],
+    artifacts: [artifactA],
+    rows: [cleanRow],
+    supersessions: [],
+  }
+  const queuedItem: QueuedPromotionItem = {
+    rowId: cleanRow.id,
+    artifactId: artifactA.id,
+    blobDigest: artifactA.blobDigest,
+    functionReceiptDigest: artifactA.functionReceiptDigest,
+    targetRecordId: "ent-001",
+    effectiveAt: cleanRow.effectiveAt,
+    observedAt: cleanRow.observedAt,
+    values: { slot_code: "S-01", duration_hours: "8.0" },
+  }
+
+  expect(verifyQueuedPromotionBasis(baseWorkspace, "batch-1", queuedItem).kind).toBe("ready")
+
+  // Digest drift -> stale.
+  const digestChanged: ImportTriageWorkspace = {
+    ...baseWorkspace,
+    artifacts: [{ ...artifactA, blobDigest: "sha256:" + "9".repeat(64) }],
+  }
+  expect(verifyQueuedPromotionBasis(digestChanged, "batch-1", queuedItem).kind).toBe("stale")
+
+  // Row became quarantined or verified before dispatch -> stale.
+  const quarantinedNow: ImportTriageWorkspace = {
+    ...baseWorkspace,
+    rows: [{ ...cleanRow, status: "quarantined" }],
+  }
+  expect(verifyQueuedPromotionBasis(quarantinedNow, "batch-1", queuedItem).kind).toBe("stale")
+
+  const verifiedNow: ImportTriageWorkspace = {
+    ...baseWorkspace,
+    rows: [{ ...cleanRow, status: "verified_fact", receipt: sampleReceipt }],
+  }
+  expect(verifyQueuedPromotionBasis(verifiedNow, "batch-1", queuedItem).kind).toBe("stale")
+
+  // Row removed or batch switched -> stale.
+  expect(verifyQueuedPromotionBasis({ ...baseWorkspace, rows: [] }, "batch-1", queuedItem).kind).toBe("stale")
+  expect(verifyQueuedPromotionBasis({ ...baseWorkspace, batchId: "batch-2" }, "batch-1", queuedItem).kind).toBe("stale")
+})
+
+test("resolvePayloadIdempotencyKey reuses exact key for identical payloads (and no-op resets) and mints fresh key when payload or cell basis changes", () => {
+  const cache = new Map<string, PayloadBoundKeyEntry>()
+  let seq = 0
+  const mint = () => `key-${++seq}`
+
+  const payload1 = {
+    batchId: "batch-1",
+    rowId: "row-clean",
+    artifactId: "art-1",
+    blobDigest: "sha256:" + "1".repeat(64),
+    values: { duration_hours: "8.0", slot_code: "S-01" },
+  }
+  // Same logical payload with reversed key insertion order -> identical canonical fingerprint & exact key reuse.
+  const payload1Reordered = {
+    values: { slot_code: "S-01", duration_hours: "8.0" },
+    blobDigest: "sha256:" + "1".repeat(64),
+    artifactId: "art-1",
+    rowId: "row-clean",
+    batchId: "batch-1",
+  }
+
+  expect(canonicalPayloadKey("canon.import.promote_row", payload1)).toBe(
+    canonicalPayloadKey("canon.import.promote_row", payload1Reordered),
+  )
+
+  const k1 = resolvePayloadIdempotencyKey(cache, "row:batch-1:row-clean", "canon.import.promote_row", payload1, mint)
+  const k1Retry = resolvePayloadIdempotencyKey(cache, "row:batch-1:row-clean", "canon.import.promote_row", payload1Reordered, mint)
+  expect(k1).toBe("key-1")
+  expect(k1Retry).toBe("key-1")
+
+  // Refresh changes artifact blobDigest (outgoing payload changed) -> mints a fresh key instead of colliding.
+  const payloadAfterRefresh = { ...payload1, blobDigest: "sha256:" + "2".repeat(64) }
+  const k2 = resolvePayloadIdempotencyKey(cache, "row:batch-1:row-clean", "canon.import.promote_row", payloadAfterRefresh, mint)
+  expect(k2).toBe("key-2")
+
+  // Retrying the refreshed payload reuses k2; editing a value mints k3.
+  expect(resolvePayloadIdempotencyKey(cache, "row:batch-1:row-clean", "canon.import.promote_row", payloadAfterRefresh, mint)).toBe("key-2")
+  const payloadEdited = { ...payloadAfterRefresh, values: { slot_code: "S-01", duration_hours: "8.5" } }
+  expect(resolvePayloadIdempotencyKey(cache, "row:batch-1:row-clean", "canon.import.promote_row", payloadEdited, mint)).toBe("key-3")
 })
 
 test("classifyTriageActionResult treats structured HTTP 5xx as retryable error and HTTP 4xx as domain refusal", () => {

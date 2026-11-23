@@ -75,6 +75,8 @@ export interface ImportTriageCell {
   failNextSupersession(conflictId: string): void
   /** Hold the next promotion call for `rowId` until the returned release callback is invoked. */
   holdNextPromote(rowId: string): () => void
+  /** Hold the next `GET /v1/imports/triage` read until the returned release callback is invoked. */
+  holdNextTriageRead(): () => void
   /** Simulate another operator committing a row on the cell with authoritative values. */
   commitRowElsewhere(rowId: string, values: Readonly<Record<string, string>>): void
   /** Switch the cell's active triage batch to a fresh batchId (e.g. next window). */
@@ -572,6 +574,7 @@ export async function importTriageCell(
   const promoteFailures = new Set<string>()
   const supersessionFailures = new Set<string>()
   const holds = new Map<string, Promise<void>>()
+  let heldRead: Promise<void> | null = null
 
   const scoped = (url: URL) => url.searchParams.get("orgId") === "org_demo" && url.searchParams.get("environmentId") === "analytics"
   const refuse = (route: Route, status: number, code: string, message: string) =>
@@ -590,6 +593,11 @@ export async function importTriageCell(
   await page.route("**/api/host/v1/imports/triage**", async (route) => {
     const url = new URL(route.request().url())
     if (!scoped(url)) return refuse(route, 403, "scope.denied", "Not your workspace.")
+    if (heldRead) {
+      const waitFor = heldRead
+      heldRead = null
+      await waitFor
+    }
     return route.fulfill({ json: workspace })
   })
 
@@ -660,6 +668,10 @@ export async function importTriageCell(
       receipt: { receiptHash: hash(seq).replace("sha256:", ""), commitSeq: seq, recordedAtMs },
     }
 
+    if (input.batchId !== workspace.batchId) {
+      return route.fulfill({ json: receipt })
+    }
+
     if (actionId === workspace.actions.bindAlias) {
       const aliasId = String(input.aliasId)
       const targetId = String(input.targetRecordId)
@@ -715,17 +727,26 @@ export async function importTriageCell(
             receipt,
           },
         } : s),
-        // Governed conflict resolution releases the FEED-CONFLICT hold on the disputed row.
+        // Governed conflict resolution releases the FEED-CONFLICT hold and aligns the row's
+        // evidence artifact, observedAt, and field values with the accepted capture.
         rows: choice === "keep_disputed" ? workspace.rows : workspace.rows.map((r) => {
           if (r.id !== "row-w47-5") return r
+          const conflict = workspace.supersessions.find((s) => s.id === conflictId)
+          const acceptedRef = choice === "accept_newer" ? conflict?.newer : conflict?.earlier
           const nextFields = r.fields.map((f) => {
             if (f.kind === "withheld") return f
-            if (choice === "accept_newer" && f.name === "duration_hours") return { ...f, value: "8.50" }
-            if (choice === "accept_newer" && f.name === "slot_code") return { ...f, value: "SLOT-10" }
+            if (choice === "accept_newer" && f.name === "duration_hours") {
+              return { ...f, extractedValue: "8.50", value: "8.50" }
+            }
+            if (choice === "accept_newer" && f.name === "slot_code") {
+              return { ...f, extractedValue: "SLOT-10", value: "SLOT-10" }
+            }
             return f
           })
           return {
             ...r,
+            artifactId: acceptedRef?.artifactId ?? r.artifactId,
+            observedAt: acceptedRef?.observedAt ?? r.observedAt,
             status: "imported_unverified",
             fields: nextFields,
             findings: r.findings.map((f) => f.code === "FEED-CONFLICT" ? { ...f, status: "resolved" as const } : f),
@@ -747,6 +768,11 @@ export async function importTriageCell(
     holdNextPromote: (rowId) => {
       let release!: () => void
       holds.set(rowId, new Promise<void>((resolve) => { release = resolve }))
+      return release
+    },
+    holdNextTriageRead: () => {
+      let release!: () => void
+      heldRead = new Promise<void>((resolve) => { release = resolve })
       return release
     },
     commitRowElsewhere: (rowId, values) => {

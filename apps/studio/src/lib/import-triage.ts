@@ -133,8 +133,10 @@ export interface RowFinding {
 
 /** Honest client-observed outcome of a governed action call (never fabricated as a cell finding). */
 export type RowActionOutcome =
+  | { readonly kind: "committed"; readonly receipt: ActionReceipt }
   | { readonly kind: "pending"; readonly decisionId: string; readonly expiresAtMs: number }
   | { readonly kind: "refused"; readonly code: string; readonly message: string }
+  | { readonly kind: "stale"; readonly message: string }
   | { readonly kind: "error"; readonly message: string }
 
 export interface CandidateRow {
@@ -312,35 +314,148 @@ export function patchSupersessionDraftState(
   return next
 }
 
-// ---- Batch queue execution with batch-switch abort guard ---------------------------------------
+// ---- Canonical payload-bound idempotency key cache --------------------------------------------
+
+function canonicalizeJsonValue(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalizeJsonValue).join(",")}]`
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b))
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalizeJsonValue(v)}`).join(",")}}`
+}
+
+/** Deterministic canonical fingerprint of an outgoing governed action call (`actionId` + payload). */
+export function canonicalPayloadKey(actionId: string, payload: unknown): string {
+  return `${actionId}:${canonicalizeJsonValue(payload)}`
+}
+
+export interface PayloadBoundKeyEntry {
+  readonly payloadFingerprint: string
+  readonly idempotencyKey: string
+}
+
+/**
+ * Resolve an idempotency key bound strictly to the exact canonical outgoing payload for `scopeKey`:
+ * - Retrying the exact same `(actionId, payload)` reuses the exact same `idempotencyKey`.
+ * - Any change to the outgoing payload (operator edit OR a cell refresh updating evidence digests,
+ *   timestamps, target record, or baseline field values) mints a fresh `idempotencyKey` instead of
+ *   risking `action.idempotency_conflict`.
+ * - No-op edits or resets that keep the outgoing payload unchanged preserve the exact same key.
+ */
+export function resolvePayloadIdempotencyKey(
+  cache: Map<string, PayloadBoundKeyEntry>,
+  scopeKey: string,
+  actionId: string,
+  payload: unknown,
+  mintKey: () => string = newIdempotencyKey,
+): string {
+  const payloadFingerprint = canonicalPayloadKey(actionId, payload)
+  const existing = cache.get(scopeKey)
+  if (existing && existing.payloadFingerprint === payloadFingerprint) {
+    return existing.idempotencyKey
+  }
+  const nextKey = mintKey()
+  cache.set(scopeKey, { payloadFingerprint, idempotencyKey: nextKey })
+  return nextKey
+}
+
+// ---- Batch queue execution with live-basis, batch-switch & unmount guards ---------------------
+
+export interface QueuedPromotionItem {
+  readonly rowId: string
+  readonly artifactId: string
+  readonly blobDigest: string
+  readonly functionReceiptDigest: string
+  readonly targetRecordId: string
+  readonly effectiveAt: string
+  readonly observedAt: string
+  readonly values: Readonly<Record<string, string>>
+}
+
+export type LiveBasisCheck =
+  | { readonly kind: "ready"; readonly row: CandidateRow; readonly artifact: StagedArtifact; readonly targetRecordId: string }
+  | { readonly kind: "stale"; readonly reason: string }
+
+/**
+ * Re-validate a queued promotion item against the latest live batch read before dispatching it.
+ * Rejects the item as `stale` if the batch changed, the row disappeared, is no longer unverified
+ * and unquarantined/unwithheld, its resolved entity changed, or its artifact/evidence digests or
+ * temporal coordinates drifted after queuing.
+ */
+export function verifyQueuedPromotionBasis(
+  workspace: ImportTriageWorkspace | undefined,
+  requestBatchId: string,
+  item: QueuedPromotionItem,
+): LiveBasisCheck {
+  if (!workspace || workspace.batchId !== requestBatchId) {
+    return { kind: "stale", reason: "Active batch changed before this queued row was dispatched." }
+  }
+  const liveRow = workspace.rows.find((candidate) => candidate.id === item.rowId)
+  if (!liveRow) {
+    return { kind: "stale", reason: "Row is no longer present in the live batch." }
+  }
+  const status = effectiveRowStatus(liveRow)
+  if (status !== "imported_unverified") {
+    return {
+      kind: "stale",
+      reason: status === "verified_fact"
+        ? "Row was already verified by the cell before dispatch."
+        : "Row is no longer eligible (quarantined or withheld) before dispatch.",
+    }
+  }
+  const resolvedAliases = new Map<string, AliasResolution>()
+  for (const alias of workspace.aliases) {
+    if (alias.resolution !== null) resolvedAliases.set(alias.id, alias.resolution)
+  }
+  const resolved = resolveRowEntity(liveRow, resolvedAliases)
+  if (resolved.kind !== "resolved" || resolved.targetId !== item.targetRecordId) {
+    return { kind: "stale", reason: "Row entity resolution changed after queuing — review and promote again." }
+  }
+  const liveArtifact = workspace.artifacts.find((artifact) => artifact.id === liveRow.artifactId)
+  if (
+    !liveArtifact
+    || liveArtifact.id !== item.artifactId
+    || liveArtifact.blobDigest !== item.blobDigest
+    || liveArtifact.functionReceiptDigest !== item.functionReceiptDigest
+    || liveRow.effectiveAt !== item.effectiveAt
+    || liveRow.observedAt !== item.observedAt
+  ) {
+    return { kind: "stale", reason: "Row evidence or capture digests changed after queuing — review and promote again." }
+  }
+  return { kind: "ready", row: liveRow, artifact: liveArtifact, targetRecordId: resolved.targetId }
+}
 
 export interface BatchRunReport {
   readonly promoted: number
   readonly refused: number
   readonly pendingApproval: number
   readonly failed: number
+  readonly skippedStale: number
   readonly aborted: boolean
   readonly keptQuarantined: number
 }
 
 /**
  * Execute a snapshotted promotion queue sequentially, stopping immediately before the next item if
- * the active `batchId` has changed so stale queues never dispatch remaining rows across batches.
+ * the active `batchId` changed or `/imports` unmounted so stale queues never dispatch after navigation.
  */
 export async function runBatchPromotionQueue<T>(
   requestBatchId: string,
   queue: readonly T[],
   getActiveBatchId: () => string | undefined,
   keptQuarantined: number,
-  dispatchOne: (item: T) => Promise<"promoted" | "refused" | "pending" | "error" | "skipped">,
+  dispatchOne: (item: T) => Promise<"promoted" | "refused" | "pending" | "error" | "stale" | "skipped">,
+  isMounted: () => boolean = () => true,
 ): Promise<BatchRunReport> {
   let promoted = 0
   let refused = 0
   let pendingApproval = 0
   let failed = 0
+  let skippedStale = 0
   let aborted = false
   for (const item of queue) {
-    if (getActiveBatchId() !== requestBatchId) {
+    if (!isMounted() || getActiveBatchId() !== requestBatchId) {
       aborted = true
       break
     }
@@ -349,8 +464,9 @@ export async function runBatchPromotionQueue<T>(
     else if (outcome === "refused") refused += 1
     else if (outcome === "pending") pendingApproval += 1
     else if (outcome === "error") failed += 1
+    else if (outcome === "stale") skippedStale += 1
   }
-  return { promoted, refused, pendingApproval, failed, aborted, keptQuarantined }
+  return { promoted, refused, pendingApproval, failed, skippedStale, aborted, keptQuarantined }
 }
 
 // ---- Action result classification (5xx is retryable error, 4xx is domain refusal) --------------
