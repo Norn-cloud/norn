@@ -330,6 +330,7 @@ pub fn run(raw: &str, selected: Option<&str>) -> Result<(), Failure> {
         execute(bundle, all_packages, |task, prune| {
             if prune {
                 prune_target(&root, &target).map_err(|error| format!("prune target: {error}"))?;
+                report_prune(task);
             }
             run_task(task)
         })?;
@@ -401,6 +402,28 @@ fn run_task(task: Task) -> Result<(), Failure> {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "df reports free space at the prune boundary"
+)]
+fn report_prune(task: Task) {
+    let output = Command::new("df").args(["-Pk", "/"]).output();
+    let free_space = output
+        .as_ref()
+        .ok()
+        .map(|result| String::from_utf8_lossy(&result.stdout));
+    let free_kib = free_space
+        .as_deref()
+        .and_then(|text| text.lines().nth(1))
+        .and_then(|line| line.split_whitespace().nth(3))
+        .unwrap_or_default();
+    let _notice = writeln!(
+        io::stdout().lock(),
+        "::notice::pruned target before {}; {free_kib} KiB free",
+        task.name
+    );
+}
+
 fn visible(name: &std::ffi::OsStr) -> bool {
     !name.as_encoded_bytes().starts_with(b".")
 }
@@ -453,7 +476,9 @@ fn prune_target(root: &Path, target: &Path) -> io::Result<()> {
 fn has_nested_fingerprint(path: &Path) -> io::Result<bool> {
     for child in fs::read_dir(path)? {
         let child = child?;
-        if visible(&child.file_name()) && child.path().join(".fingerprint").exists() {
+        if visible(&child.file_name())
+            && child.path().join(".fingerprint").symlink_metadata().is_ok()
+        {
             return Ok(true);
         }
     }
