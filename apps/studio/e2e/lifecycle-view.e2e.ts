@@ -426,15 +426,17 @@ test.describe("Records page Lifecycle view mode", () => {
     await expect(statusView.locator(".norn-life")).toHaveAttribute("dir", "rtl")
     await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("٦٬٢٠٠ على الأقل")
     await expect(statusView.getByText("١٠٬٠٠٠ سجل على الأقل")).toBeVisible()
-    const draftBox = await card(statusView, "draft").boundingBox()
-    const submittedBox = await card(statusView, "submitted").boundingBox()
-    const stageBox = await statusView.locator('[data-region="stage"]').boundingBox()
-    expect(draftBox && submittedBox && stageBox).toBeTruthy()
-    expect(draftBox!.x).toBeGreaterThan(submittedBox!.x)
-    const firstPathD = await statusView.locator(".norn-life-arrows > path").first().getAttribute("d")
-    const match = /^M([\d.-]+)\s+([\d.-]+)/.exec(firstPathD ?? "")
-    expect(match).not.toBeNull()
-    expect(Number(match![1])).toBeCloseTo(draftBox!.x - stageBox!.x, 0)
+    // Wait for the WASM checker findings to settle before measuring card/arrow geometry and taking the screenshot.
+    await expect(statusView.getByRole("button", { name: "قد تعرض الصفحة «Done» بينما أمر شراء ما زال «مسودة»، ولا شيء يستطيع إنهاءه." })).toBeVisible({ timeout: 20_000 })
+    await expect.poll(async () => {
+      const draftBox = await card(statusView, "draft").boundingBox()
+      const submittedBox = await card(statusView, "submitted").boundingBox()
+      const stageBox = await statusView.locator('[data-region="stage"]').boundingBox()
+      const firstPathD = await statusView.locator(".norn-life-arrows > path").first().getAttribute("d")
+      const match = /^M([\d.-]+)\s+([\d.-]+)/.exec(firstPathD ?? "")
+      if (!draftBox || !submittedBox || !stageBox || !match) return false
+      return draftBox.x > submittedBox.x && Math.abs(Number(match[1]) - (draftBox.x - stageBox.x)) < 1
+    }).toBe(true)
     await shoot(page, "records-rtl")
   })
 
