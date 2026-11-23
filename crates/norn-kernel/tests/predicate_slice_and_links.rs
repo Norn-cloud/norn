@@ -356,9 +356,10 @@ fn schedule_action(max_items: u32, with_duplicate_aggregate: bool) -> ActionRoot
 
 fn hhmm_minutes(iso_utc: &str) -> i64 {
     let time = iso_utc.split('T').nth(1).expect("iso time");
-    let hh: i64 = time[0..2].parse().expect("hh");
-    let mm: i64 = time[3..5].parse().expect("mm");
-    hh * 60 + mm
+    let mut parts = time.split(':');
+    let hh: i64 = parts.next().expect("hh").parse().expect("hh");
+    let mm: i64 = parts.next().expect("mm").parse().expect("mm");
+    hh.saturating_mul(60).saturating_add(mm)
 }
 
 fn schedule_call<'a>(

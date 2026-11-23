@@ -8,15 +8,17 @@
 
 use std::collections::BTreeSet;
 
-use norn_ir::{LinkChange, ObjectTypeName};
+use norn_ir::{DecisionOutput, LinkChange, ObjectTypeName};
 
 use crate::action_commit::{ActionAuthorizer, ActionCall, ActionReadAuthzRequest, ActionRefusal};
 use crate::cell_host::{
-    CellHost, FactKey, FactMutation, FactWrite, JsonObject, LinkKey, LinkMutation, LinkWrite,
+    CellCommit, CellHost, FactKey, FactMutation, FactState, FactWrite, JsonObject, JsonValue,
+    LinkKey, LinkMutation, LinkWrite,
 };
 use crate::commit_check::CommitModel;
 use crate::decider::EnvelopeKind;
 use crate::decision_commit::{DecisionRefusal, FactSlice, TypeCatalog};
+use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter};
 use crate::limits::EnvelopeLimits;
 
 /// Pure validation of [`norn_ir::DecisionOutput::links`] during decision
@@ -337,4 +339,142 @@ fn invalid_link<X>(reason: impl Into<String>) -> DecisionRefusal<X> {
     DecisionRefusal::InvalidOutput {
         reason: reason.into(),
     }
+}
+
+/// Attach resolved `DecisionOutput.links` to a prepared commit and verify the
+/// shared turn envelope meter before submitting to the host.
+pub(crate) fn finalize_decision_commit<H>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    output: &DecisionOutput,
+    meter: Option<&TurnEnvelopeMeter>,
+    commit: &mut CellCommit<H::Event, H::Command, H::Input>,
+) -> Result<EnvelopeCounts, DecisionRefusal<H::Error>>
+where
+    H: CellHost + ?Sized,
+{
+    commit.links =
+        prepare_decision_link_writes(host, catalog, slice, &commit.writes, &output.links)?;
+    let counts = EnvelopeCounts::new(
+        commit.events.len(),
+        output.commands.len(),
+        output.timers.len(),
+    );
+    if let Some(meter) = meter {
+        meter
+            .check(counts)
+            .map_err(|exceeded| DecisionRefusal::TurnEnvelopeExceeded {
+                kind: exceeded.kind,
+                limit: exceeded.limit,
+                actual: exceeded.actual,
+            })?;
+    }
+    Ok(counts)
+}
+
+/// Inputs for authorizing and resolving all links of an atomic action commit.
+pub(crate) struct ActionCommitLinks<'a> {
+    pub(crate) catalog: &'a TypeCatalog<'a>,
+    pub(crate) call: &'a ActionCall<'a>,
+    pub(crate) effective_input: &'a JsonObject,
+    pub(crate) authorizer: &'a dyn ActionAuthorizer,
+    pub(crate) target: &'a FactKey,
+    pub(crate) slice: &'a FactSlice,
+    pub(crate) prepared_writes: &'a [FactWrite],
+    pub(crate) decision_links: &'a [LinkChange],
+    pub(crate) limits: &'a EnvelopeLimits,
+}
+
+/// Authorize and resolve all action-created links (`createLinks` +
+/// `synchronousRule` `DecisionOutput.links`) for one atomic action commit.
+pub(crate) fn prepare_action_commit_links<H: CellHost + ?Sized>(
+    host: &H,
+    ctx: &ActionCommitLinks<'_>,
+) -> Result<Vec<LinkWrite>, ActionRefusal<H::Error>> {
+    let ActionCommitLinks {
+        catalog,
+        call,
+        effective_input,
+        authorizer,
+        target,
+        slice,
+        prepared_writes,
+        decision_links,
+        limits,
+    } = *ctx;
+    authorize_action_decision_links(
+        catalog,
+        call,
+        effective_input,
+        authorizer,
+        slice,
+        prepared_writes,
+        decision_links,
+    )?;
+    let mut created_links = Vec::new();
+    for binding in &call.action.create_links {
+        let linked_target = action_link_endpoint::<H::Error>(
+            effective_input,
+            &binding.target_type,
+            &binding.target_id_field,
+        )?;
+        let source = match &binding.source {
+            Some(source) => action_link_endpoint::<H::Error>(
+                effective_input,
+                &source.object_type,
+                &source.id_field,
+            )?,
+            None => target.clone(),
+        };
+        if CommitModel::new(catalog)
+            .link(&source.object_type, &binding.link)
+            .is_none_or(|link| link.target.as_str() != binding.target_type)
+            || !prepared_writes.iter().any(|write| {
+                write.key == source && matches!(write.mutation, FactMutation::Put { .. })
+            })
+            || !(slice.get(&linked_target).is_some_and(FactState::exists)
+                || prepared_writes.iter().any(|write| {
+                    write.key == linked_target && matches!(write.mutation, FactMutation::Put { .. })
+                }))
+            || (binding.source.is_some() && call.action.synchronous_rule.is_none())
+            || !created_links.iter().all(|write: &LinkWrite| {
+                write.key != LinkKey::new(source.clone(), &binding.link, linked_target.clone())
+            })
+        {
+            return Err(crate::synchronous_rule::refused(
+                "a link requires a written source and a captured or proposed target",
+            ));
+        }
+        let key = LinkKey::new(source, &binding.link, linked_target);
+        let expected = host
+            .load_link(&key)
+            .map_err(|error| ActionRefusal::Decision(DecisionRefusal::Host(error)))?
+            .version;
+        created_links.push(LinkWrite {
+            key,
+            expected,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        });
+    }
+    let decision_link_writes =
+        prepare_decision_link_writes(host, catalog, slice, prepared_writes, decision_links)?;
+    merge_action_link_writes(catalog, created_links, decision_link_writes, limits)
+}
+
+fn action_link_endpoint<X>(
+    input: &JsonObject,
+    object_type: &str,
+    field: &str,
+) -> Result<FactKey, ActionRefusal<X>> {
+    input
+        .get(field)
+        .and_then(JsonValue::as_str)
+        .filter(|key| !key.trim().is_empty())
+        .map(|key| FactKey::new(object_type, key))
+        .ok_or_else(|| ActionRefusal::InvalidInput {
+            field: field.to_owned(),
+        })
 }

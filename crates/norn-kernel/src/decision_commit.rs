@@ -2794,27 +2794,14 @@ where
 {
     let mut commit =
         decision_cell_commit::<_, _, _, H::Error>(catalog, slice, turn, output, limits)?;
-    commit.links = crate::decision_links::prepare_decision_link_writes(
+    let counts = crate::decision_links::finalize_decision_commit(
         host,
         catalog,
         slice,
-        &commit.writes,
-        &output.links,
+        output,
+        meter.as_deref(),
+        &mut commit,
     )?;
-    let counts = EnvelopeCounts::new(
-        commit.events.len(),
-        output.commands.len(),
-        output.timers.len(),
-    );
-    if let Some(meter) = meter.as_deref() {
-        meter
-            .check(counts)
-            .map_err(|exceeded| DecisionRefusal::TurnEnvelopeExceeded {
-                kind: exceeded.kind,
-                limit: exceeded.limit,
-                actual: exceeded.actual,
-            })?;
-    }
     match host.commit(commit) {
         Ok(receipt) => {
             if let Some(meter) = meter {

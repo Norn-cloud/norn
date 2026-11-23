@@ -1674,9 +1674,8 @@ where
     )?;
     let output = DecisionOutput {
         facts: changes,
-        links: Vec::new(),
         commands,
-        timers: Vec::new(),
+        ..DecisionOutput::default()
     };
     let mut prepared =
         prepare_owned_rows::<H::Error>(catalog, &slice, &call.turn, &output, limits)?;

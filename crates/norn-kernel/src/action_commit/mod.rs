@@ -74,7 +74,6 @@ use norn_ir::{ActionEffectProgram, FactChange, ObjectTypeName};
 use crate::action::{ActionCommandRejection, ActionCommandShape, check_action_command};
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactWrite, JsonObject,
-    JsonValue, LinkKey, LinkMutation, LinkWrite,
 };
 use crate::decision_commit::{
     DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_limits, widen_effect,
@@ -473,72 +472,19 @@ where
         timers: Vec::new(),
     };
     let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
-    crate::decision_links::authorize_action_decision_links(
-        catalog,
-        call,
-        &effective_input,
-        authorizer,
-        &slice,
-        &prepared.writes,
-        &decision_links,
-    )?;
-    let mut created_links = Vec::new();
-    // TXN-ATOMIC-1: links only connect captured or proposed endpoints; no extra transaction.
-    for binding in &call.action.create_links {
-        let linked_target = action_link_endpoint::<H::Error>(
-            &effective_input,
-            &binding.target_type,
-            &binding.target_id_field,
-        )?;
-        let source = match &binding.source {
-            Some(source) => action_link_endpoint::<H::Error>(
-                &effective_input,
-                &source.object_type,
-                &source.id_field,
-            )?,
-            None => target.clone(),
-        };
-        if crate::CommitModel::new(catalog)
-            .link(&source.object_type, &binding.link)
-            .is_none_or(|link| link.target.as_str() != binding.target_type)
-            || !prepared.writes.iter().any(|write| {
-                write.key == source && matches!(write.mutation, FactMutation::Put { .. })
-            })
-            || !(slice.get(&linked_target).is_some_and(FactState::exists)
-                || prepared.writes.iter().any(|write| {
-                    write.key == linked_target && matches!(write.mutation, FactMutation::Put { .. })
-                }))
-            || (binding.source.is_some() && call.action.synchronous_rule.is_none())
-            || !created_links.iter().all(|write: &LinkWrite| {
-                write.key != LinkKey::new(source.clone(), &binding.link, linked_target.clone())
-            })
-        {
-            return Err(crate::synchronous_rule::refused(
-                "a link requires a written source and a captured or proposed target",
-            ));
-        }
-        let key = LinkKey::new(source, &binding.link, linked_target);
-        let expected = host.load_link(&key).map_err(host_failure)?.version;
-        created_links.push(LinkWrite {
-            key,
-            expected,
-            mutation: LinkMutation::Add {
-                values: JsonObject::new(),
-            },
-        });
-    }
-    let decision_link_writes = crate::decision_links::prepare_decision_link_writes(
+    let created_links = crate::decision_links::prepare_action_commit_links(
         host,
-        catalog,
-        &slice,
-        &prepared.writes,
-        &decision_links,
-    )?;
-    let created_links = crate::decision_links::merge_action_link_writes(
-        catalog,
-        created_links,
-        decision_link_writes,
-        limits,
+        &crate::decision_links::ActionCommitLinks {
+            catalog,
+            call,
+            effective_input: &effective_input,
+            authorizer,
+            target: &target,
+            slice: &slice,
+            prepared_writes: &prepared.writes,
+            decision_links: &decision_links,
+            limits,
+        },
     )?;
 
     for write in &mut prepared.writes {
@@ -1090,19 +1036,4 @@ fn replay<X>(
             key: key.to_owned(),
         }),
     }
-}
-
-fn action_link_endpoint<X>(
-    input: &JsonObject,
-    object_type: &str,
-    field: &str,
-) -> Result<FactKey, ActionRefusal<X>> {
-    input
-        .get(field)
-        .and_then(JsonValue::as_str)
-        .filter(|key| !key.trim().is_empty())
-        .map(|key| FactKey::new(object_type, key))
-        .ok_or_else(|| ActionRefusal::InvalidInput {
-            field: field.to_owned(),
-        })
 }

@@ -15,7 +15,7 @@
 //!   the action contract and may not target `norn.*` system types or bypass
 //!   owned-child authority.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
     ActionRoot, ArtifactEnvelope, ArtifactKind, DiagnosticRemediation, DiagnosticSeverity,
@@ -452,5 +452,105 @@ fn finding(code: &str, message: String, artifact: &ArtifactEnvelope, pointer: &s
         span: Some(Span::pointer(pointer)),
         artifact_id: Some(artifact.artifact_id.clone()),
         remediation: Some(DiagnosticRemediation::FixDefinition),
+    }
+}
+
+/// A decide graph's input or output record: every `members` (plus any
+/// declared `optional` members), all required, each a closed record (`lists`:
+/// a list of closed records).
+pub(crate) fn check_decide_record(
+    schema: Option<&JsonValue>,
+    path: &str,
+    members: &[&str],
+    optional: &[&str],
+    lists: bool,
+    diagnostics: &mut Vec<norn_ir::Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    let Some(properties) = schema
+        .and_then(JsonValue::as_object)
+        .and_then(|schema| schema.get("properties"))
+        .and_then(JsonValue::as_object)
+    else {
+        return;
+    };
+    let shape = if lists {
+        "a list of closed records"
+    } else {
+        "a closed record"
+    };
+    for member in members {
+        if !properties.contains_key(*member) {
+            diagnostics.push(invalid_diagnostic(
+                jdm_codes::INVALID_DECISION_CONTRACT,
+                format!(
+                    "a decide graph's {path} declares exactly {members:?}; '{member}' is missing"
+                ),
+                format!("{path}.properties"),
+                artifact_id,
+            ));
+        }
+    }
+    for (member, member_schema) in properties {
+        let member_path = format!("{path}.properties.{member}");
+        if !members.contains(&member.as_str()) && !optional.contains(&member.as_str()) {
+            diagnostics.push(invalid_diagnostic(
+                jdm_codes::INVALID_DECISION_CONTRACT,
+                format!(
+                    "a decide graph's {path} declares exactly {members:?}; '{member}' is not part of the decision contract"
+                ),
+                member_path,
+                artifact_id,
+            ));
+            continue;
+        }
+        let type_of = |value: Option<&JsonValue>| {
+            value
+                .and_then(JsonValue::as_object)
+                .and_then(|schema| schema.get("type"))
+                .and_then(JsonValue::as_string)
+                .map(str::to_owned)
+        };
+        let record = if lists {
+            (type_of(Some(member_schema)).as_deref() == Some("array"))
+                .then(|| {
+                    member_schema
+                        .as_object()
+                        .and_then(|schema| schema.get("items"))
+                })
+                .flatten()
+        } else {
+            Some(member_schema)
+        };
+        if type_of(record).as_deref() != Some("object") {
+            diagnostics.push(invalid_diagnostic(
+                jdm_codes::INVALID_DECISION_CONTRACT,
+                format!("decision contract member '{member}' must be {shape}"),
+                member_path,
+                artifact_id,
+            ));
+        }
+    }
+    let required: BTreeSet<&str> = schema
+        .and_then(JsonValue::as_object)
+        .and_then(|schema| schema.get("required"))
+        .and_then(JsonValue::as_array)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(JsonValue::as_string)
+        .collect();
+    if let Some(member) = members
+        .iter()
+        .chain(optional.iter())
+        .find(|member| properties.contains_key(**member) && !required.contains(**member))
+    {
+        diagnostics.push(invalid_diagnostic(
+            jdm_codes::INVALID_DECISION_CONTRACT,
+            format!(
+                "a decide graph's {path} requires every decision contract member; '{member}' is not required"
+            ),
+            format!("{path}.required"),
+            artifact_id,
+        ));
     }
 }

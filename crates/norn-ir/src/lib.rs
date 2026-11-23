@@ -189,7 +189,7 @@ pub use flow_source_map::{
 pub use jdm::{JdmGraph, JdmNode, JdmNodeType};
 pub use layout::{
     ArtifactLayout, CanvasPosition, ColumnLayout, EdgeLayout, LAYOUT_SIDECAR_VERSION, LayoutField,
-    LayoutSidecar, LayoutViewport, NodeLayout, RowLayout,
+    LayoutSidecar, LayoutViewport, NodeLayout, RowLayout, layout_sidecar_schema,
 };
 pub use limit_profile::{
     DecideBudget, EnvelopeLimits, HelperLimits, LIMIT_PROFILE_HASH_PROFILE, LimitProfileRef,
@@ -2215,12 +2215,6 @@ pub fn diagnostic_severity_schema() -> Schema {
 #[must_use]
 pub fn diagnostic_remediation_schema() -> Schema {
     schema_for!(DiagnosticRemediation)
-}
-
-/// JSON Schema for the versioned editor-layout sidecar.
-#[must_use]
-pub fn layout_sidecar_schema() -> Schema {
-    schema_for!(LayoutSidecar)
 }
 
 /// Emit the JSON Schema for the closed payload root selected by an envelope kind.

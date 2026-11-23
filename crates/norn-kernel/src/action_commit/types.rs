@@ -14,10 +14,7 @@ use crate::limits::EnvelopeLimits;
 use crate::naming_series::SeriesCandidate;
 
 /// The object type of the kernel's idempotency records of action calls.
-///
-/// A schema-backed host must register this internal type in its model before
-/// calling [`commit_action`](super::commit_action). The native dev host integration owns that model
-/// registration (#2911); the kernel never creates host storage tables.
+/// Schema-backed hosts register this internal type before calling [`commit_action`](super::commit_action) (#2911).
 pub const ACTION_CALL_TYPE: &str = "norn.ActionCall";
 
 /// Protected per-parent/collection manifest of stable child row ids and order.
@@ -929,7 +926,6 @@ pub(super) struct Pending {
     pub(super) recorded: FactState,
     pub(super) record: ActionCallRecord,
     pub(super) series_candidate: Option<SeriesCandidate>,
-    /// Checked link mutations emitted by a `synchronousRule` writer (#1586).
     pub(super) decision_links: Vec<norn_ir::LinkChange>,
     /// RECEIPT-EFFECT-1: the receipt delivery this commit consumes.
     pub(super) receipt: Option<crate::result_reconciliation::Acceptance>,

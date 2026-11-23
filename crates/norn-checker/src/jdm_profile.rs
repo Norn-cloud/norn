@@ -1216,21 +1216,23 @@ pub(crate) fn validate_rule_contract(
         }
     };
     if contract == RuleContractV2::Decide {
-        check_decide_record(
+        crate::decision_links::check_decide_record(
             payload.get("inputSchema"),
             "payload.inputSchema",
             &DECIDE_INPUT_MEMBERS,
             &[],
             false,
-            &mut sink,
+            sink.diagnostics,
+            artifact_id,
         );
-        check_decide_record(
+        crate::decision_links::check_decide_record(
             payload.get("outputSchema"),
             "payload.outputSchema",
             &DECIDE_OUTPUT_MEMBERS,
             &DECIDE_OPTIONAL_OUTPUT_MEMBERS,
             true,
-            &mut sink,
+            sink.diagnostics,
+            artifact_id,
         );
         crate::lifecycle_writes::validate_fact_change_schema(
             payload.get("outputSchema"),
@@ -1241,103 +1243,6 @@ pub(crate) fn validate_rule_contract(
             payload.get("outputSchema"),
             sink.diagnostics,
             artifact_id,
-        );
-    }
-}
-
-/// A decide graph's input or output record: every `members` (plus any
-/// declared `optional` members), all required, each a closed record (`lists`:
-/// a list of closed records).
-fn check_decide_record(
-    schema: Option<&JsonValue>,
-    path: &str,
-    members: &[&str],
-    optional: &[&str],
-    lists: bool,
-    sink: &mut Sink<'_>,
-) {
-    let Some(properties) = schema
-        .and_then(JsonValue::as_object)
-        .and_then(|schema| schema.get("properties"))
-        .and_then(JsonValue::as_object)
-    else {
-        // Not a closed record: reported by the closed-schema check.
-        return;
-    };
-    let shape = if lists {
-        "a list of closed records"
-    } else {
-        "a closed record"
-    };
-    for member in members {
-        if !properties.contains_key(*member) {
-            sink.push(
-                codes::INVALID_DECISION_CONTRACT,
-                format!(
-                    "a decide graph's {path} declares exactly {members:?}; '{member}' is missing"
-                ),
-                format!("{path}.properties"),
-            );
-        }
-    }
-    for (member, member_schema) in properties {
-        let member_path = format!("{path}.properties.{member}");
-        if !members.contains(&member.as_str()) && !optional.contains(&member.as_str()) {
-            sink.push(
-                codes::INVALID_DECISION_CONTRACT,
-                format!(
-                    "a decide graph's {path} declares exactly {members:?}; '{member}' is not part of the decision contract"
-                ),
-                member_path,
-            );
-            continue;
-        }
-        let type_of = |value: Option<&JsonValue>| {
-            value
-                .and_then(JsonValue::as_object)
-                .and_then(|schema| schema.get("type"))
-                .and_then(JsonValue::as_string)
-                .map(str::to_owned)
-        };
-        let record = if lists {
-            (type_of(Some(member_schema)).as_deref() == Some("array"))
-                .then(|| {
-                    member_schema
-                        .as_object()
-                        .and_then(|schema| schema.get("items"))
-                })
-                .flatten()
-        } else {
-            Some(member_schema)
-        };
-        if type_of(record).as_deref() != Some("object") {
-            sink.push(
-                codes::INVALID_DECISION_CONTRACT,
-                format!("decision contract member '{member}' must be {shape}"),
-                member_path,
-            );
-        }
-    }
-    let required: BTreeSet<&str> = schema
-        .and_then(JsonValue::as_object)
-        .and_then(|schema| schema.get("required"))
-        .and_then(JsonValue::as_array)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(JsonValue::as_string)
-        .collect();
-    // A missing member is reported above; a declared one must be required.
-    if let Some(member) = members
-        .iter()
-        .chain(optional.iter())
-        .find(|member| properties.contains_key(**member) && !required.contains(**member))
-    {
-        sink.push(
-            codes::INVALID_DECISION_CONTRACT,
-            format!(
-                "a decide graph's {path} requires every decision contract member; '{member}' is not required"
-            ),
-            format!("{path}.required"),
         );
     }
 }
