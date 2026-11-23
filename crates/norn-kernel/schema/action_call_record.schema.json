@@ -71,6 +71,13 @@
         "$ref": "#/$defs/ActionPreconditionOutcome"
       }
     },
+    "parameterPins": {
+      "description": "Effective-dated parameter pins resolved by declared parameter slices\n(D07, PARAM-EXACT-1, PARAM-BOUND-1).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActionParameterPin"
+      }
+    },
     "actor": {
       "description": "The actor.",
       "type": "string"
@@ -181,6 +188,47 @@
       "required": [
         "expression",
         "satisfied"
+      ]
+    },
+    "ActionParameterPin": {
+      "description": "One effective-dated parameter resolved and pinned during an action commit\n(D07, PARAM-EXACT-1, PARAM-BOUND-1).",
+      "type": "object",
+      "properties": {
+        "entry": {
+          "description": "The declared parameter slice entry name.",
+          "type": "string"
+        },
+        "settingKey": {
+          "description": "The stable parameter key.",
+          "type": "string"
+        },
+        "effectiveAt": {
+          "description": "The declared effective timestamp evaluated for this selection.",
+          "type": "string"
+        },
+        "setting": {
+          "description": "The selected setting fact's concrete object type and key.",
+          "$ref": "#/$defs/FactKey"
+        },
+        "version": {
+          "description": "The committed fact version of the selected setting at commit time.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "digest": {
+          "description": "Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's\nexact values at commit time.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entry",
+        "settingKey",
+        "effectiveAt",
+        "setting",
+        "version",
+        "digest"
       ]
     },
     "TraceContext": {
