@@ -126,6 +126,8 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
 
 let mode: Promise<Mode> | undefined
 const browserFetch: Fetch = (input, init) => fetch(input, init)
+const fetchWithSignal = (signal?: AbortSignal): Fetch =>
+  signal === undefined ? browserFetch : (input, init) => fetch(input, { ...init, signal })
 
 /** The mode this page load reads in; a failed decision is tried again on the next read. */
 export function currentMode(fetcher: Fetch = browserFetch): Promise<Mode> {
@@ -157,7 +159,13 @@ export async function cellRead<T>(path: string, what: string, init: RequestInit 
 
 /** Where this page load reads from, for a page that shows something only a connected cell has. */
 /** The mode, retried while the session server or the cell does not answer (backing off to 8 s); its error is shown, never replaced by the recording. */
-export const useMode = () => useQuery({ queryKey: ["studio-mode"], queryFn: () => currentMode(), retry: 6, retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000), staleTime: Infinity })
+export const useMode = () => useQuery({
+  queryKey: ["studio-mode"],
+  queryFn: ({ signal }) => currentMode(fetchWithSignal(signal)),
+  retry: 6,
+  retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+  staleTime: Infinity,
+})
 
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type). */
 export function refreshMode(): void { mode = undefined }

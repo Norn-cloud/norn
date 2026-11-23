@@ -432,7 +432,7 @@ test("#1460: acceptInvitation preserves upstream headers (including multiple Set
 
   const rewritten = await acceptInvitation(upstream)
   expect(rewritten.status).toBe(400)
-  expect(await rewritten.json()).toEqual({
+  expect((await rewritten.json()) as unknown).toEqual({
     code: "INVITATION_NOT_FOUND",
     message: "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one.",
   })
@@ -460,7 +460,7 @@ test("#1460: a failed accept-invitation that refreshes an aging session still de
 
   const response = await post(env, "/api/auth/organization/accept-invitation", { invitationId: "inv_missing" }, { cookie })
   expect(response.status).toBe(400)
-  expect(await response.json()).toEqual({
+  expect((await response.json()) as unknown).toEqual({
     code: "INVITATION_NOT_FOUND",
     message: "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one.",
   })

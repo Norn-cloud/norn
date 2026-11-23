@@ -105,13 +105,15 @@ export const workspaceApi = {
 
 /** Forget previous workspace reads and cached cell mode, then re-read session, scope, mode and workspaces. */
 export async function switchWorkspaceCaches(client: QueryClient): Promise<void> {
+  await client.cancelQueries({ predicate: (query) => query.queryKey[0] !== "session" && query.queryKey[0] !== "auth-config" })
   forgetParkedCalls()
   refreshMode()
-  forgetReads(client)
+  await client.refetchQueries({ queryKey: ["session"] })
+  refreshMode()
+  forgetReads(client, { refetchActive: true })
   await Promise.all([
-    client.invalidateQueries({ queryKey: ["session"] }),
-    client.invalidateQueries({ queryKey: WORKSPACES_QUERY_KEY }),
-    client.invalidateQueries({ queryKey: ["studio-scope"] }),
-    client.invalidateQueries({ queryKey: ["studio-mode"] }),
+    client.refetchQueries({ queryKey: WORKSPACES_QUERY_KEY }),
+    client.refetchQueries({ queryKey: ["studio-scope"] }),
+    client.refetchQueries({ queryKey: ["studio-mode"] }),
   ])
 }

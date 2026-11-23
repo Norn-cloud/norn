@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandItemIcon, CommandList } from "@ui-sdk/react/command"
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle, DialogTrigger } from "@ui-sdk/react/dialog"
-import { MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
+import { MenuGroup, MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
 import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
@@ -185,7 +185,7 @@ function ScopeSwitcher({ onArchived }: { readonly onArchived: (workspace: { read
       }
       return
     }
-    if (value === "action:request") { setDialog({ kind: "request" }); return }
+    if (value === "action:request" || value === "action:requests") { setDialog({ kind: "request" }); return }
     if (value === "action:rename" && active?.canRename) { setDialog({ kind: "rename", workspace: active }); return }
     if (value === "action:archive" && active?.canArchive) { setDialog({ kind: "archive", workspace: active }); return }
     if (value === "action:delete" && active?.canDelete) { setDialog({ kind: "delete", workspace: active }); return }
@@ -209,12 +209,12 @@ function ScopeSwitcher({ onArchived }: { readonly onArchived: (workspace: { read
         </MenuTrigger>
         <KitMenuContent align="start" className="w-72">
           {showWorkspaceSection && (
-            <div role="none">
-              <KitMenuLabel>Your workspaces</KitMenuLabel>
+            <>
               <MenuRadioGroup
                 value={realWorkspaces.length > 0 ? (active ? `ws:${active.id}` : "") : live ? "live" : ""}
                 onValueChange={(next) => { if (next.startsWith("ws:")) void selectWorkspace(next.slice(3)) }}
               >
+                <KitMenuLabel>Your workspaces</KitMenuLabel>
                 {realWorkspaces.length > 0
                   ? realWorkspaces.map((workspace) => (
                       <KitMenuRadioItem key={workspace.id} value={`ws:${workspace.id}`} label={workspace.name} closeOnSelect className="flex-col items-start gap-0">
@@ -230,10 +230,10 @@ function ScopeSwitcher({ onArchived }: { readonly onArchived: (workspace: { read
                     )}
               </MenuRadioGroup>
               {switchError && <p role="alert" className="px-2 py-1 text-xs text-destructive">{switchError}</p>}
-            </div>
+            </>
           )}
           {(showManageActions || archivedWorkspaces.length > 0) && (
-            <div role="none">
+            <>
               {showWorkspaceSection && <KitMenuSeparator />}
               {active?.canRename && <KitMenuItem value="action:rename" label="Rename workspace" closeOnSelect><Pencil aria-hidden />Rename workspace…</KitMenuItem>}
               {active?.canArchive && <KitMenuItem value="action:archive" label="Archive workspace" closeOnSelect><Archive aria-hidden />Archive workspace…</KitMenuItem>}
@@ -244,10 +244,10 @@ function ScopeSwitcher({ onArchived }: { readonly onArchived: (workspace: { read
                   <span className="ms-auto text-xs text-muted-foreground tabular-nums">{archivedWorkspaces.length}</span>
                 </KitMenuItem>
               )}
-            </div>
+            </>
           )}
           {showCreationAction && (
-            <div role="none">
+            <>
               <KitMenuSeparator />
               {doc.creation.mode === "self-serve" ? (
                 <KitMenuItem value="action:create" label="New workspace" closeOnSelect><Plus aria-hidden />New workspace</KitMenuItem>
@@ -255,31 +255,42 @@ function ScopeSwitcher({ onArchived }: { readonly onArchived: (workspace: { read
                 <KitMenuItem value="action:request" label="Request a workspace" closeOnSelect><Plus aria-hidden />Request a workspace</KitMenuItem>
               )}
               {pendingRequests > 0 && (
-                <KitMenuItem value="action:request" label="Workspace requests" closeOnSelect>
+                <KitMenuItem value="action:requests" label="Workspace requests" closeOnSelect>
                   <InboxIcon aria-hidden /><span>Workspace requests</span>
                   <span className="ms-auto rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground tabular-nums">{pendingRequests}</span>
                 </KitMenuItem>
               )}
-            </div>
+            </>
           )}
           {examples.length > 0 && (
-            <div role="none">
+            <>
               {(showWorkspaceSection || showManageActions || showCreationAction) && <KitMenuSeparator />}
-              <KitMenuLabel>Examples</KitMenuLabel>
-              <MenuRadioGroup value={live ? "" : open?.id ?? ""}>
-                {examples.map((workspace) => workspace.results !== undefined
-                  ? (
+              {live ? (
+                <MenuGroup>
+                  <KitMenuLabel>Examples</KitMenuLabel>
+                  {examples.map((workspace) => (
                     <KitMenuItem key={workspace.id} value={`example:${workspace.id}`} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
                       <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
                     </KitMenuItem>
-                  )
-                  : (
-                    <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} disabled={live || !workspace.recorded} className="flex-col items-start gap-0">
-                      <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
-                    </KitMenuRadioItem>
                   ))}
-              </MenuRadioGroup>
-            </div>
+                </MenuGroup>
+              ) : (
+                <MenuRadioGroup value={open?.id ?? ""}>
+                  <KitMenuLabel>Examples</KitMenuLabel>
+                  {examples.map((workspace) => workspace.results !== undefined
+                    ? (
+                      <KitMenuItem key={workspace.id} value={`example:${workspace.id}`} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
+                        <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
+                      </KitMenuItem>
+                    )
+                    : (
+                      <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} disabled={!workspace.recorded} className="flex-col items-start gap-0">
+                        <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
+                      </KitMenuRadioItem>
+                    ))}
+                </MenuRadioGroup>
+              )}
+            </>
           )}
         </KitMenuContent>
       </Menu>
@@ -697,6 +708,13 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
 function ConnectionBanner() {
   const mode = useMode()
   const slow = useSlowConnecting()
+  const client = useQueryClient()
+  const retryNow = async () => {
+    refreshMode()
+    await client.cancelQueries({ queryKey: ["studio-mode"] })
+    refreshMode()
+    void mode.refetch({ cancelRefetch: true })
+  }
   if (mode.data !== undefined) return null
   if (mode.failureCount === 0 && !mode.isError) {
     if (!slow) return null
@@ -705,7 +723,7 @@ function ConnectionBanner() {
         <Loader2 aria-hidden className="size-4 shrink-0 animate-spin text-muted-foreground" />
         <span className="font-medium">Connecting to your workspace cell…</span>
         <span className="text-muted-foreground">Starting a cold cell can take a moment.</span>
-        <Button type="button" variant="outline" size="xs" className="ms-auto" onClick={() => { refreshMode(); void mode.refetch() }}>Retry now</Button>
+        <Button type="button" variant="outline" size="xs" className="ms-auto" onClick={() => void retryNow()}>Retry now</Button>
       </div>
     )
   }
@@ -714,7 +732,7 @@ function ConnectionBanner() {
       <CloudOff aria-hidden className="size-4 shrink-0" />
       <span className="font-medium">Couldn't reach the cell.</span>
       <span className="text-foreground/80">{mode.isError ? "It didn't answer after several tries." : `Retrying (attempt ${mode.failureCount + 1})…`}</span>
-      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={() => { refreshMode(); void mode.refetch() }}>Retry now</Button>
+      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={() => void retryNow()}>Retry now</Button>
     </div>
   )
 }

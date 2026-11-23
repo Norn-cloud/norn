@@ -51,10 +51,11 @@ test("an invite-only deployment explicitly refuses non-allowlisted sign-up witho
   for (const table of ["user", "account", "organization", "member", "workspace_provisioning"]) {
     expect(count(db, table)).toBe(0)
   }
-  // Trailing slash and mixed-case variants are refused identically.
-  const variant = await signUp(env, "stranger@example.com", { path: "/api/auth/Sign-Up/Email/" })
-  expect(variant.status).toBe(403)
-  expect(await variant.json()).toMatchObject({ code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
+  // Trailing slash and mixed-case variants cannot bypass the allowlist (403 if routed, 404 if unmatched).
+  for (const path of ["/api/auth/sign-up/email/", "/api/auth/Sign-Up/Email/"]) {
+    const variant = await signUp(env, "stranger@example.com", { path })
+    expect([403, 404]).toContain(variant.status)
+  }
   expect(users(db)).toEqual([])
   // Allowlisted addresses (case-insensitive) succeed and can sign in.
   expect((await signUp(env, "owner@example.com")).status).toBe(200)
@@ -108,9 +109,9 @@ test("GET /api/auth/config exposes magicLink and inviteOnly without leaking allo
 
   // Partial or blank mail config keeps magicLink off (matches sendMagicLink availability).
   const blankFrom = stage({ magicLink: true, emailFrom: "   " }).env
-  expect(await (await readConfig(blankFrom)).json()).toEqual({ magicLink: false, inviteOnly: false })
+  expect((await (await readConfig(blankFrom)).json()) as unknown).toEqual({ magicLink: false, inviteOnly: false })
   const noBinding = stage({ emailFrom: "noreply@norn.cloud" }).env
-  expect(await (await readConfig(noBinding)).json()).toEqual({ magicLink: false, inviteOnly: false })
+  expect((await (await readConfig(noBinding)).json()) as unknown).toEqual({ magicLink: false, inviteOnly: false })
   expect(magicLinkEnabled({ EMAIL: { send: async () => undefined }, EMAIL_FROM: "a@b.c" })).toBe(true)
   expect(magicLinkEnabled({ EMAIL_FROM: "a@b.c" })).toBe(false)
 

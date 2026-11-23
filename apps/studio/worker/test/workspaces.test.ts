@@ -290,3 +290,30 @@ test("workspace requests: members record and withdraw; admins see org requests a
   expect((await mutate(env, "POST", `/api/workspaces/requests/${firstPending}/decide`, { decision: "dismissed" }, { cookie: member.cookie })).status).toBe(200)
   expect((await mutate(env, "POST", "/api/workspaces/requests", { name: "Now fits" }, { cookie: member.cookie })).status).toBe(201)
 })
+
+test("#1414: accepting an invitation to an archived workspace is refused until restored", async () => {
+  const { db, env } = stage()
+  const owner = await enroll(env, "owner@example.com", "Owner")
+  const invitee = await enroll(env, "invitee@example.com", "Invitee")
+  db.prepare(`update "user" set "emailVerified" = 1 where "id" = ?`).run(invitee.userId)
+  const created = (await (await mutate(env, "POST", "/api/workspaces", { name: "Archived Target" }, { cookie: owner.cookie })).json()) as { id: string }
+  const invId = crypto.randomUUID()
+  const now = new Date().toISOString()
+  db.prepare(`insert into "invitation" ("id", "organizationId", "email", "role", "status", "expiresAt", "createdAt", "inviterId") values (?, ?, ?, 'member', 'pending', ?, ?, ?)`)
+    .run(invId, created.id, "invitee@example.com", new Date(Date.now() + 3_600_000).toISOString(), now, owner.userId)
+
+  expect((await mutate(env, "POST", `/api/workspaces/${created.id}/archive`, {}, { cookie: owner.cookie })).status).toBe(200)
+  const listed = (await (await call(env, "/api/workspaces", { headers: { cookie: owner.cookie } })).json()) as WorkspacesDocument
+  expect(listed.archived.find((w) => w.id === created.id)?.canArchive).toBe(false)
+
+  const blocked = await mutate(env, "POST", "/api/workspaces/invitations/accept", { invitationId: invId }, { cookie: invitee.cookie })
+  expect(blocked.status).toBe(409)
+  expect(((await blocked.json()) as { code: string }).code).toBe("WORKSPACE_ARCHIVED")
+  expect(db.prepare(`select count(*) as n from "member" where "organizationId" = ? and "userId" = ?`).get(created.id, invitee.userId)).toEqual({ n: 0 })
+
+  // After restore, the same pending invitation succeeds.
+  expect((await mutate(env, "POST", `/api/workspaces/${created.id}/restore`, { activate: false }, { cookie: owner.cookie })).status).toBe(200)
+  const accepted = await mutate(env, "POST", "/api/workspaces/invitations/accept", { invitationId: invId }, { cookie: invitee.cookie })
+  expect(accepted.status).toBe(200)
+  expect(db.prepare(`select count(*) as n from "member" where "organizationId" = ? and "userId" = ?`).get(created.id, invitee.userId)).toEqual({ n: 1 })
+})

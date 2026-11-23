@@ -4,7 +4,26 @@ import type { WorkspaceItem, WorkspaceRequestItem, WorkspacesDocument } from "..
 
 const INVITE_ONLY_MESSAGE = "This alpha is invite-only; ask your admin for an invitation."
 const POPULATED_DEFS = JSON.parse(readFileSync(new URL("../../../fixtures/demo/explorer/three-systems.definitions.json", import.meta.url), "utf8")) as unknown[]
-const EMPTY_BASE_DEFS = [{ artifactId: "core.units", kind: "entity" }, { artifactId: "std.value_types", kind: "entity" }]
+const EMPTY_BASE_DEFS = POPULATED_DEFS.filter((artifact) => {
+  const id = (artifact as { artifactId?: string }).artifactId ?? ""
+  return id.startsWith("core.") || id.startsWith("std.")
+})
+
+// SHOTS=<dir> saves key states in light and dark mode at 1440x900 for visual inspection and PR evidence.
+const shots = process.env.SHOTS
+async function shoot(page: Page, name: string) {
+  if (!shots) return
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme })
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: `${shots}/onboarding-${name}-${scheme}.png` })
+  }
+  await page.emulateMedia({ colorScheme: "light" })
+}
+
+test.beforeEach(({ }, info) => {
+  test.skip(Boolean(process.env.E2E_BASE), `${info.title}: replays stubbed auth and workspace endpoints`)
+})
 
 async function signedOut(page: Page, config: { magicLink: boolean; inviteOnly: boolean }, options: { allowlist?: readonly string[] } = {}) {
   await page.route("**/api/me", (route) => route.fulfill({ status: 401, json: { error: "Sign in first." } }))
@@ -21,6 +40,7 @@ async function signedOut(page: Page, config: { magicLink: boolean; inviteOnly: b
 }
 
 test("#1412: invite-only deployment hides Email link tab and refuses non-allowlisted sign-up without claiming Account ready", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
   await signedOut(page, { magicLink: false, inviteOnly: true }, { allowlist: ["invited@example.com"] })
   await page.goto("/")
   await expect(page.getByRole("tab", { name: "Sign in" })).toBeVisible()
@@ -39,6 +59,7 @@ test("#1412: invite-only deployment hides Email link tab and refuses non-allowli
   await expect(page.getByRole("alert")).toHaveText(INVITE_ONLY_MESSAGE)
   await expect(page.getByText(/Account ready/i)).toHaveCount(0)
   await expect(page.getByRole("tab", { name: "Create account" })).toHaveAttribute("aria-selected", "true")
+  await shoot(page, "invite-only-refused")
 
   // Allowlisted sign-up succeeds and moves cleanly to Sign in.
   await page.getByLabel("Email").fill("invited@example.com")
@@ -48,11 +69,13 @@ test("#1412: invite-only deployment hides Email link tab and refuses non-allowli
 })
 
 test("#1412: Email link tab appears when the server reports magicLink enabled", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
   await signedOut(page, { magicLink: true, inviteOnly: false })
   await page.goto("/")
   const tab = page.getByRole("tab", { name: "Email link" })
   await expect(tab).toBeVisible()
   await tab.click()
+  await shoot(page, "magic-link-enabled")
   await page.getByLabel("Email").fill("ada@example.com")
   await page.getByRole("button", { name: "Send link" }).click()
   await expect(page.getByRole("status")).toContainText("sign-in link is on its way")
@@ -198,6 +221,9 @@ async function mountWorkspaceServer(
 }
 
 test("#1414: switcher separates real workspaces from Examples, never renders raw ids, and supports create -> empty Home -> rename -> archive/undo -> delete", async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on("pageerror", (error) => pageErrors.push(error.message))
+  await page.setViewportSize({ width: 1440, height: 900 })
   const { RAW_ORG_ID } = await mountWorkspaceServer(page, { creation: { mode: "self-serve", allowed: true } })
   await page.goto("/")
 
@@ -217,9 +243,22 @@ test("#1414: switcher separates real workspaces from Examples, never renders raw
   await expect(menu.getByRole("menuitemradio", { name: /Shared Workspace/ })).toBeVisible()
   await expect(menu).not.toContainText(RAW_ORG_ID)
   await expect(menu).not.toContainText("rehearsal2")
+  await shoot(page, "switcher")
+
+  // Switching to a viewer workspace updates the active workspace and hides management actions per server flags.
+  await menu.getByRole("menuitemradio", { name: /Shared Workspace/ }).click()
+  await expect(trigger).toContainText("Shared Workspace")
+  await trigger.click()
+  await expect(page.getByRole("menuitem", { name: "Rename workspace" })).toHaveCount(0)
+  await expect(page.getByRole("menuitem", { name: "Archive workspace" })).toHaveCount(0)
+  await expect(page.getByRole("menuitem", { name: "Delete workspace" })).toHaveCount(0)
+  // Switch back to Core Analytics.
+  await page.getByRole("menuitemradio", { name: /Core Analytics/ }).click()
+  await expect(trigger).toContainText("Core Analytics")
 
   // Create a new workspace from the switcher -> lands on empty Home with 4-step checklist.
-  await menu.getByRole("menuitem", { name: "New workspace" }).click()
+  await trigger.click()
+  await page.getByRole("menuitem", { name: "New workspace" }).click()
   const dialog = page.getByRole("dialog")
   await expect(dialog.getByRole("heading", { name: "New workspace" })).toBeVisible()
   await dialog.getByLabel("Workspace name").fill("North Operations")
@@ -228,11 +267,13 @@ test("#1414: switcher separates real workspaces from Examples, never renders raw
 
   await expect(trigger).toContainText("North Operations")
   await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByRole("heading", { name: "Get started" })).toBeVisible()
-  await expect(page.getByRole("link", { name: /Add a source/ })).toBeVisible()
-  await expect(page.getByRole("link", { name: /Model it/ })).toBeVisible()
-  await expect(page.getByRole("link", { name: /Rules/ })).toBeVisible()
-  await expect(page.getByRole("link", { name: /Dashboard/ })).toBeVisible()
+  const main = page.locator("main")
+  await expect(main.getByRole("heading", { name: "Get started" })).toBeVisible()
+  await expect(main.getByRole("link", { name: /Add a source/ })).toBeVisible()
+  await expect(main.getByRole("link", { name: /Model it/ })).toBeVisible()
+  await expect(main.getByRole("link", { name: /Rules/ })).toBeVisible()
+  await expect(main.getByRole("link", { name: /Dashboard/ })).toBeVisible()
+  await shoot(page, "empty-home")
 
   // Rename the workspace.
   await trigger.click()
@@ -250,6 +291,7 @@ test("#1414: switcher separates real workspaces from Examples, never renders raw
   await expect(trigger).toContainText("Core Analytics")
   const undoBanner = page.locator("[data-workspace-undo]")
   await expect(undoBanner).toContainText("North Ops Live")
+  await shoot(page, "archive-undo")
   await undoBanner.getByRole("button", { name: "Undo" }).click()
   await expect(undoBanner).toHaveCount(0)
   await expect(trigger).toContainText("North Ops Live")
@@ -265,9 +307,11 @@ test("#1414: switcher separates real workspaces from Examples, never renders raw
   await expect(archivedDialog).toContainText("North Ops Live")
   await archivedDialog.getByRole("button", { name: "Delete" }).click()
   await expect(archivedDialog).toContainText("No archived workspaces.")
+  expect(pageErrors).toEqual([])
 })
 
 test("#1414: request-only deployment offers Request a workspace and lets admins review recorded requests", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
   await mountWorkspaceServer(page, { creation: { mode: "request" } })
   await page.goto("/")
 
@@ -283,6 +327,7 @@ test("#1414: request-only deployment offers Request a workspace and lets admins 
   await dialog.getByRole("button", { name: "Submit request" }).click()
   await expect(dialog.getByText("Request recorded")).toBeVisible()
   await expect(dialog.getByText("Regional Hub")).toBeVisible()
+  await shoot(page, "request-workspace")
 
   await dialog.getByRole("button", { name: "Approve" }).click()
   await expect(dialog.getByText("approved")).toBeVisible()

@@ -46,8 +46,15 @@ export function useAuthConfig() {
 }
 
 /** Forget every read made as the reader who made it (records, picker choices, the inbox): all but the session itself. */
-export function forgetReads(client: QueryClient): void {
-  client.removeQueries({ predicate: (query) => query.queryKey[0] !== SESSION[0] && query.queryKey[0] !== AUTH_CONFIG[0] })
+export function forgetReads(client: QueryClient, options: { readonly refetchActive?: boolean } = {}): void {
+  const isRead = (query: { readonly queryKey: readonly unknown[] }) =>
+    query.queryKey[0] !== SESSION[0] && query.queryKey[0] !== AUTH_CONFIG[0]
+  if (options.refetchActive) {
+    client.removeQueries({ predicate: isRead, type: "inactive" })
+    void client.resetQueries({ predicate: isRead, type: "active" })
+    return
+  }
+  client.removeQueries({ predicate: isRead })
 }
 
 /**
@@ -67,7 +74,7 @@ export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init)
         // nor for the same reader coming back after a tenant switch or an expiry.
         forgetParkedCalls()
         refreshMode()
-        forgetReads(client)
+        forgetReads(client, { refetchActive: account !== null })
       }
       return account
     },

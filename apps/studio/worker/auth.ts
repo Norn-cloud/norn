@@ -479,7 +479,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       // non-allowlisted sign-up on an invite-only deployment is explicitly refused (403 INVITE_ONLY)
       // rather than answered as a synthetic 200.
       before: createAuthMiddleware(async (ctx) => {
-        if (ctx.path === "/sign-up/email" && config.signUpEmails !== undefined) {
+        if (ctx.path.replace(/\/+$/, "").toLowerCase() === "/sign-up/email" && config.signUpEmails !== undefined) {
           const body = ctx.body as { email?: unknown } | undefined
           if (typeof body?.email === "string" && body.email.trim() !== "" && !signUpAllowed(config.signUpEmails, body.email)) {
             throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })

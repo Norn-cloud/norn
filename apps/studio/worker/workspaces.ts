@@ -1,5 +1,5 @@
 import { hostToken, type NornActor } from "./actor.ts"
-import { activeMembership, atomically, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
+import { activeMembership, atomically, isOrganizationArchived, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
 import { admitCell, admitMember, entitlementOf, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
 
 /**
@@ -255,7 +255,7 @@ export async function listWorkspaces(request: Request, context: WorkspaceContext
       archived: isArchived,
       archivedAt: row.archived_at,
       canRename: !isArchived && isAdmin(row.role),
-      canArchive: owner && !isDefault,
+      canArchive: !isArchived && owner && !isDefault,
       canDelete: owner && !isDefault,
     }
     if (isArchived) {
@@ -585,6 +585,7 @@ export async function acceptWorkspaceInvitation(request: Request, context: Works
   if (invitation.email.toLowerCase() !== session.user.email.toLowerCase()) return failure(403, "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION", "You are not the recipient of the invitation")
   if (!session.user.emailVerified) return failure(403, "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION", "Email verification required before accepting or rejecting invitation")
   if (await first(context.db, `select 1 as "found" from "organization" where "id" = ?`, invitation.organizationId) === null) return failure(400, "ORGANIZATION_NOT_FOUND", "Organization not found")
+  if (await isOrganizationArchived(context.auth, invitation.organizationId)) return failure(409, "WORKSPACE_ARCHIVED", "This workspace is archived. Ask an owner to restore it before joining.")
   const count = await first<{ n: number }>(context.db, `select count(*) as "n" from "member" where "organizationId" = ?`, invitation.organizationId)
   if ((count?.n ?? 0) >= MEMBERSHIP_LIMIT) return failure(403, "ORGANIZATION_MEMBERSHIP_LIMIT_REACHED", "Organization membership limit reached")
   const member = { id: crypto.randomUUID(), organizationId: invitation.organizationId, userId: session.user.id, role: invitation.role ?? "member", createdAt: new Date().toISOString() }
