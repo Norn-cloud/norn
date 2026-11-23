@@ -6576,6 +6576,47 @@
         },
         "additionalProperties": false
       },
+      "NornActionActionParameterPin": {
+        "type": "object",
+        "description": "One effective-dated parameter resolved and pinned during an action commit\n(D07, PARAM-EXACT-1, PARAM-BOUND-1).",
+        "required": [
+          "entry",
+          "settingKey",
+          "effectiveAt",
+          "setting",
+          "version",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "description": "Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's\nexact values at commit time."
+          },
+          "effectiveAt": {
+            "type": "string",
+            "description": "The declared effective timestamp evaluated for this selection."
+          },
+          "entry": {
+            "type": "string",
+            "description": "The declared parameter slice entry name."
+          },
+          "setting": {
+            "$ref": "#/components/schemas/NornActionFactKey",
+            "description": "The selected setting fact's concrete object type and key."
+          },
+          "settingKey": {
+            "type": "string",
+            "description": "The stable parameter key."
+          },
+          "version": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The committed fact version of the selected setting at commit time.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "NornActionActionPreconditionOutcome": {
         "type": "object",
         "description": "The successful outcome of one action precondition.",
@@ -6670,6 +6711,13 @@
           "object": {
             "$ref": "#/components/schemas/NornActionFactKey",
             "description": "The target object."
+          },
+          "parameterPins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionActionParameterPin"
+            },
+            "description": "Effective-dated parameter pins resolved by declared parameter slices\n(D07, PARAM-EXACT-1, PARAM-BOUND-1)."
           },
           "preconditionOutcomes": {
             "type": "array",

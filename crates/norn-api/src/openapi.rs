@@ -120,6 +120,7 @@ mod action_contract_tests {
             "effectiveInput",
             "derivedValues",
             "preconditionOutcomes",
+            "parameterPins",
             "rowOperations",
             "trace",
         ] {

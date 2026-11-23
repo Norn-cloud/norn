@@ -44,6 +44,7 @@ test/refusal-access.test.ts
 test/registry-packs.test.ts
 test/runnable-docs.test.ts
 test/schema-lowering.test.ts
+test/setting.test.ts
 test/soundness-authoring.test.ts
 test/stock-definitions.test.ts
 test/stock-trace.test.ts

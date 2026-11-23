@@ -1762,6 +1762,30 @@ export interface components {
              */
             value: unknown;
         };
+        /**
+         * @description One effective-dated parameter resolved and pinned during an action commit
+         *     (D07, PARAM-EXACT-1, PARAM-BOUND-1).
+         */
+        NornActionActionParameterPin: {
+            /**
+             * @description Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's
+             *     exact values at commit time.
+             */
+            digest: string;
+            /** @description The declared effective timestamp evaluated for this selection. */
+            effectiveAt: string;
+            /** @description The declared parameter slice entry name. */
+            entry: string;
+            /** @description The selected setting fact's concrete object type and key. */
+            setting: components["schemas"]["NornActionFactKey"];
+            /** @description The stable parameter key. */
+            settingKey: string;
+            /**
+             * Format: uint64
+             * @description The committed fact version of the selected setting at commit time.
+             */
+            version: number;
+        };
         /** @description The successful outcome of one action precondition. */
         NornActionActionPreconditionOutcome: {
             /** @description The expression evaluated. */
@@ -1812,6 +1836,11 @@ export interface components {
             };
             /** @description The target object. */
             object: components["schemas"]["NornActionFactKey"];
+            /**
+             * @description Effective-dated parameter pins resolved by declared parameter slices
+             *     (D07, PARAM-EXACT-1, PARAM-BOUND-1).
+             */
+            parameterPins?: components["schemas"]["NornActionActionParameterPin"][];
             /** @description Successful precondition results, in declaration order. */
             preconditionOutcomes?: components["schemas"]["NornActionActionPreconditionOutcome"][];
             /** @description Normalized row operations committed by a parent-and-rows action. */

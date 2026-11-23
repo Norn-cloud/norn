@@ -54,6 +54,7 @@
 
 mod input;
 mod owned_rows;
+mod parameter;
 mod receipt;
 mod series;
 mod slice;
@@ -84,9 +85,9 @@ pub use input::{actor_derived_fields, prepare_action_input, prepare_action_input
 pub use types::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
     ActionCall, ActionCallRecord, ActionDenial, ActionDerivedValue, ActionInputPreparation,
-    ActionOutcome, ActionPreconditionOutcome, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
-    ActionReferenceReads, ActionRefusal, NamingSeriesInspectionRequest, OWNED_ROWS_TYPE,
-    owned_rows_manifest_key,
+    ActionOutcome, ActionParameterPin, ActionPreconditionOutcome, ActionReadAuthzRequest,
+    ActionReadTypeAuthzRequest, ActionReferenceReads, ActionRefusal, NamingSeriesInspectionRequest,
+    OWNED_ROWS_TYPE, owned_rows_manifest_key,
 };
 
 use input::{build_action_commands, check_action_record_size};

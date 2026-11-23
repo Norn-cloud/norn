@@ -1084,5 +1084,58 @@ declare module "@norn/authoring" {
     interface ConnectorDefinition { readonly _tag: "NornConnector" }
     /** Declarative read-only connector; host configuration supplies endpoints and secret resolution. */
     function connector(meta: ConnectorSpec): ConnectorDefinition
+
+    /** Review state of a governed setting artifact (`SettingReviewState`). */
+    type SettingReviewState = "draft" | "proposed" | "approved" | "active" | "rejected" | "superseded"
+
+    /** Exact setting artifact version superseded by a newer revision. */
+    interface SettingSupersedesSpec {
+      readonly artifactId: string
+      readonly version: string
+    }
+
+    /** Review metadata of a governed setting artifact. */
+    interface SettingReviewSpec {
+      readonly state: SettingReviewState
+      readonly reviewedBy?: string
+      readonly reviewedAt?: string
+      readonly reason?: string
+    }
+
+    interface SettingSpecBase {
+      /** Dotted setting artifact id (`retail.setting.reorder_threshold`). */
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      /** Stable parameter key (`retail.sku.default_reorder_threshold`). */
+      readonly settingKey: string
+      /** Inclusive RFC 3339 effective start timestamp. */
+      readonly effectiveFrom: string
+      /** Optional exclusive RFC 3339 effective end timestamp (must sort after `effectiveFrom`). */
+      readonly effectiveTo?: string
+      /** The exact setting version this revision replaces. */
+      readonly supersedes?: SettingSupersedesSpec
+      readonly review: SettingReviewSpec
+      /** Scope dimensions required when resolving this setting (`orgId`, `environmentId`, ...). */
+      readonly scopeRequired: ReadonlyArray<`${ScopeDimension}Id`>
+    }
+
+    /**
+     * `SettingRoot` specification. Numeric settings (`valueType: "number"`) require
+     * exact `DecimalLiteral` strings; binary JavaScript numbers are refused (VAL-EXACT-1).
+     */
+    type SettingSpec =
+      | (SettingSpecBase & { readonly valueType: "text"; readonly value: string })
+      | (SettingSpecBase & { readonly valueType: "number"; readonly value: string })
+      | (SettingSpecBase & { readonly valueType: "boolean"; readonly value: boolean })
+      | (SettingSpecBase & { readonly valueType: "json"; readonly value: JsonData })
+
+    /** Opaque setting definition; the syntax compiler lowers the call to a `setting` artifact. */
+    interface SettingDefinition {
+      readonly _tag: "NornSetting"
+    }
+
+    /** Governed effective-dated parameter (`SettingRoot`, PARAM-EXACT-1 / PARAM-BOUND-1). */
+    function setting(meta: SettingSpec): SettingDefinition
   }
 }

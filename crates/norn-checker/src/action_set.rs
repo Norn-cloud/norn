@@ -1043,7 +1043,173 @@ fn action_slice_key_findings(
             Some(_) => {}
         }
     }
+
+    if let SliceKey::Parameter { .. } = &entry.key {
+        findings.extend(action_parameter_slice_findings(
+            artifact,
+            root,
+            index,
+            entry,
+            &path,
+            environment,
+        ));
+    }
     findings
+}
+
+fn action_parameter_slice_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    index: usize,
+    entry: &norn_ir::SliceDeclaration,
+    path: &str,
+    environment: &ZenTypeEnv,
+) -> Vec<Diagnostic> {
+    let SliceKey::Parameter {
+        from, default_from, ..
+    } = &entry.key
+    else {
+        return Vec::new();
+    };
+    let kind = entry.object_type.as_str();
+    let mut findings = Vec::new();
+    if let Some(source) = root
+        .slice
+        .iter()
+        .take(index)
+        .find(|prior| prior.name == *from)
+        && source.object_type.as_str() != kind
+    {
+        findings.push(finding(
+            codes::INVALID_SLICE,
+            format!(
+                "slice entry {:?} names {kind:?}, but parameter source {from:?} loads {:?}",
+                entry.name,
+                source.object_type.as_str()
+            ),
+            artifact,
+            &format!("{path}/objectType"),
+        ));
+    }
+    if let Some(default_name) = default_from
+        && let Some(default_source) = root
+            .slice
+            .iter()
+            .take(index)
+            .find(|prior| prior.name == *default_name)
+        && default_source.object_type.as_str() != kind
+    {
+        findings.push(finding(
+            codes::INVALID_SLICE,
+            format!(
+                "slice entry {:?} names {kind:?}, but parameter defaultFrom {default_name:?} loads {:?}",
+                entry.name,
+                default_source.object_type.as_str()
+            ),
+            artifact,
+            &format!("{path}/key/defaultFrom"),
+        ));
+    }
+    if let Some(record) = environment.record(kind) {
+        validate_parameter_fact_profile(
+            artifact,
+            entry.name.as_str(),
+            kind,
+            record,
+            &format!("{path}/objectType"),
+            &mut findings,
+        );
+    }
+    findings
+}
+
+fn unwrap_optional_type(ty: &Type) -> &Type {
+    if let Type::Optional(inner) = ty {
+        inner.as_ref()
+    } else {
+        ty
+    }
+}
+
+fn validate_parameter_fact_profile(
+    artifact: &ArtifactEnvelope,
+    entry_name: &str,
+    kind: &str,
+    record: &RecordType,
+    pointer: &str,
+    findings: &mut Vec<Diagnostic>,
+) {
+    let stored = |name: &str| {
+        record
+            .fields
+            .get(name)
+            .filter(|field| matches!(field.source, FieldSource::Property { .. }))
+            .map(|field| &field.ty)
+    };
+    let require = |findings: &mut Vec<Diagnostic>, name: &str, ok: bool, expected: &str| {
+        if !ok {
+            findings.push(finding(
+                codes::INVALID_SLICE,
+                format!(
+                    "parameter slice entry {entry_name:?} type {kind:?} must declare stored property {name:?} as {expected}"
+                ),
+                artifact,
+                pointer,
+            ));
+        }
+    };
+    require(
+        findings,
+        "setting_key",
+        stored("setting_key").is_some_and(|ty| matches!(ty, Type::Text { .. })),
+        "a non-nullable string",
+    );
+    require(
+        findings,
+        "value",
+        stored("value").is_some_and(|ty| matches!(ty, Type::Decimal { .. })),
+        "a non-nullable exact decimal",
+    );
+    require(
+        findings,
+        "effective_from",
+        stored("effective_from")
+            .is_some_and(|ty| matches!(ty, Type::Timestamp { .. } | Type::Text { .. })),
+        "a non-nullable timestamp or string",
+    );
+    require(
+        findings,
+        "effective_to",
+        stored("effective_to").is_some_and(|ty| {
+            matches!(
+                unwrap_optional_type(ty),
+                Type::Timestamp { .. } | Type::Text { .. }
+            )
+        }),
+        "a nullable or non-nullable timestamp or string",
+    );
+    require(
+        findings,
+        "review_state",
+        stored("review_state")
+            .is_some_and(|ty| matches!(ty, Type::Text { .. } | Type::Enum { .. })),
+        "a non-nullable string or enum",
+    );
+    for dimension in [
+        "org_id",
+        "tenant_id",
+        "workspace_id",
+        "environment_id",
+        "business_unit_id",
+    ] {
+        require(
+            findings,
+            dimension,
+            stored(dimension)
+                .is_some_and(|ty| matches!(unwrap_optional_type(ty), Type::Text { .. })),
+            "a nullable or non-nullable string",
+        );
+    }
 }
 
 #[expect(
