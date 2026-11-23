@@ -71,7 +71,7 @@ test("a snapshot_moved page on Show more stays a combobox (does not collapse to 
   expect(html).toContain('role="combobox"')
 })
 
-test("ActionForm DateTimePicker preserves an explicit fall-back offset (-05:00) in its preview", () => {
+test("ActionForm DateTimePicker preserves an explicit fall-back offset (-05:00) and matches UTC Z instants by epoch", () => {
   const client = new QueryClient()
   const html = renderToStaticMarkup(
     <QueryClientProvider client={client}>
@@ -81,4 +81,15 @@ test("ActionForm DateTimePicker preserves an explicit fall-back offset (-05:00) 
   )
   expect(html).toContain("sent as ")
   expect(html).toContain("2026-11-01T01:30:00-05:00")
+
+  const utcHtml = renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <ActionForm action={BOOK_EQUIPMENT as never} objectTitle="Equipment booking"
+        remembered={{ id: "b/2", label: "Fall back UTC", equipment: "equipment/1", starts_at: "2026-11-01T06:30:00Z", ends_at: "2026-11-01T08:00:00Z", inspect_on: "", daily_check: "" }} />
+    </QueryClientProvider>,
+  )
+  expect(utcHtml).toContain("2026-11-01T06:30:00Z")
+  if (Intl.DateTimeFormat().resolvedOptions().timeZone === "America/New_York") {
+    expect(utcHtml).toContain('value="2026-11-01T01:30:00-05:00" selected=""')
+  }
 })

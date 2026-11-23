@@ -93,14 +93,40 @@ export function RecordsTimeline({ concept, rows, window, zoom, pending, fetching
   // Roving focus over the bars: one bar is in the tab order; arrows move between bars and lanes.
   const order = useMemo(() => lanes.flatMap((l, laneIndex) => [...l.placed].sort((a, b) => a.start - b.start).map((bar) => ({ laneIndex, bar }))), [lanes])
   const [focused, setFocused] = useState(0)
-  useEffect(() => { setFocused((current) => clampFocus(current, order.length)) }, [order.length])
-  const activeIndex = clampFocus(focused, order.length)
+  const barsGroupRef = useRef<HTMLDivElement>(null)
+  const focusInBars = useRef(false)
+  const focusedId = useRef<string | null>(null)
   const barRefs = useRef(new Map<string, HTMLButtonElement>())
+  const activeIndex = clampFocus(focused, order.length)
+
+  useEffect(() => {
+    const nextIndex = clampFocus(focused, order.length)
+    const previousId = focusedId.current
+    const stillPresent = previousId === null ? -1 : order.findIndex((entry) => entry.bar.item.record.id === previousId)
+    if (stillPresent >= 0) {
+      if (stillPresent !== focused) setFocused(stillPresent)
+      return
+    }
+    if (nextIndex !== focused) setFocused(nextIndex)
+    const replacement = order[nextIndex]
+    const activeEl = typeof document === "undefined" ? null : document.activeElement
+    const wasInside = focusInBars.current || (activeEl !== null && barsGroupRef.current?.contains(activeEl) === true)
+    if (replacement !== undefined && wasInside && (activeEl === null || activeEl === document.body || barsGroupRef.current?.contains(activeEl) === true)) {
+      focusedId.current = replacement.bar.item.record.id
+      barRefs.current.get(replacement.bar.item.record.id)?.focus()
+    } else if (replacement === undefined) {
+      focusedId.current = null
+      focusInBars.current = false
+    }
+  }, [order, focused])
+
   const focusAt = (index: number) => {
     const clamped = clampFocus(index, order.length)
     const next = order[clamped]
     if (next === undefined) return
     setFocused(clamped)
+    focusedId.current = next.bar.item.record.id
+    focusInBars.current = true
     barRefs.current.get(next.bar.item.record.id)?.focus()
   }
   const onKey = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -193,7 +219,9 @@ export function RecordsTimeline({ concept, rows, window, zoom, pending, fetching
             </div>
           )}
           {filterOverflow === 0 && !pending && lanes.length > 0 && (
-            <div role="group" aria-label="Bars" onKeyDown={onKey}>
+            <div ref={barsGroupRef} role="group" aria-label="Bars" onKeyDown={onKey}
+              onFocus={() => { focusInBars.current = true }}
+              onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusInBars.current = false }}>
               {lanes.map((l) => (
                 <div key={l.key} role="group" aria-label={l.label} className="grid grid-cols-[12rem_minmax(0,1fr)] border-b border-node-border/70 last:border-b-0">
                   <div className="flex min-w-0 flex-col justify-center gap-0.5 px-3 py-2 text-sm">
@@ -213,7 +241,7 @@ export function RecordsTimeline({ concept, rows, window, zoom, pending, fetching
                       return (
                         <button key={row.record.id} type="button" ref={(el) => { if (el) barRefs.current.set(row.record.id, el); else barRefs.current.delete(row.record.id) }}
                           tabIndex={index === activeIndex ? 0 : -1} aria-label={words} title={words} data-overlaps={bar.overlaps || undefined}
-                          onFocus={() => setFocused(index)} onClick={() => onOpen(row)}
+                          onFocus={() => { setFocused(index); focusedId.current = row.record.id; focusInBars.current = true }} onClick={() => onOpen(row)}
                           className={cn("absolute flex min-w-1.5 items-center gap-1 overflow-hidden rounded-md border px-1.5 text-left text-xs shadow-node outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
                             "border-primary/40 bg-[color-mix(in_oklab,var(--primary)_14%,var(--card))] text-foreground hover:bg-[color-mix(in_oklab,var(--primary)_22%,var(--card))]",
                             bar.overlaps && "border-dashed border-[var(--tint-wait)]",

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { instantText, isDiagnosticPlaced, offsetText, pickerDateTime, resolveDateTime, type LocalWallOffsets } from "../src/lib/actions.ts"
+import { instantText, isDiagnosticPlaced, offsetText, pickerDateTime, resolveDateTime, runtimeWallOffsets, selectedAlternative, type LocalWallOffsets } from "../src/lib/actions.ts"
 import { BOOK_EQUIPMENT } from "../e2e/interval-fixtures.ts"
 import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
@@ -346,9 +346,28 @@ test("a refusal's nested pointer lands on the member's row; unmatched nested poi
     "Unknown item field",
     "Out of range item",
   ])
+
+  // Nullable object set to null: child FieldRows are hidden by Nullable, so child pointers must stay in `unplaced`.
+  const nullableObjectFields = fieldsOf({
+    type: "object",
+    properties: {
+      location: { type: ["object", "null"], properties: { site: { type: "string" } } },
+    },
+  })
+  const nullDraft: Draft = { location: null }
+  const presentDraft: Draft = { location: { site: "" } }
+  const nullableDiagnostics = [
+    { code: "e", message: "Site required", pointer: "/input/location/site" },
+    { code: "f", message: "Location required", pointer: "/input/location" },
+  ]
+  expect(isDiagnosticPlaced("/location/site", nullableObjectFields, nullDraft)).toBe(false)
+  expect(isDiagnosticPlaced("/location", nullableObjectFields, nullDraft)).toBe(true)
+  expect(unplaced(nullableDiagnostics, nullableObjectFields, nullDraft).map((d) => d.message)).toEqual(["Site required"])
+  expect(isDiagnosticPlaced("/location/site", nullableObjectFields, presentDraft)).toBe(true)
+  expect(unplaced(nullableDiagnostics, nullableObjectFields, presentDraft)).toEqual([])
 })
 
-test("DST spring gap is flagged without shifting; fall repeat preserves exact offset and exposes both occurrences", () => {
+test("DST spring gap is flagged without shifting; fall repeat matches by epoch instant and supports 2-hour repeats", () => {
   // Simulate America/New_York DST transitions:
   // - 2026-03-08 02:00..02:59 does not exist (spring forward -05:00 -> -04:00)
   // - 2026-11-01 01:00..01:59 occurs twice (fall back -04:00 then -05:00)
@@ -368,6 +387,35 @@ test("DST spring gap is flagged without shifting; fall repeat preserves exact of
     text: "2026-11-01T01:30:00-04:00",
     alternatives: ["2026-11-01T01:30:00-04:00", "2026-11-01T01:30:00-05:00"],
   })
+
+  // Fall repeat restored as UTC `Z` (`2026-11-01T06:30:00Z` === `01:30:00-05:00`, the second occurrence):
+  // `selectedAlternative` matches by epoch instant rather than string offset equality.
+  expect(selectedAlternative("2026-11-01T06:30:00Z", repeat.kind === "ok" ? repeat.alternatives : [])).toBe("2026-11-01T01:30:00-05:00")
+  expect(selectedAlternative("2026-11-01T05:30:00Z", repeat.kind === "ok" ? repeat.alternatives : [])).toBe("2026-11-01T01:30:00-04:00")
+
+  // 2-hour fall-back repeat (Antarctica/Troll: +02:00 -> Z): both occurrences are exposed and matched by instant.
+  const troll: LocalWallOffsets = (p) =>
+    p.year === 2026 && p.month === 10 && p.day === 25 && p.hour === 1 ? [120, 0] : [0]
+  const trollRepeat = resolveDateTime("2026-10-25T01:30", troll)
+  expect(trollRepeat).toEqual({
+    kind: "ok",
+    text: "2026-10-25T01:30:00+02:00",
+    alternatives: ["2026-10-25T01:30:00+02:00", "2026-10-25T01:30:00Z"],
+  })
+  expect(selectedAlternative("2026-10-25T01:30:00+00:00", trollRepeat.kind === "ok" ? trollRepeat.alternatives : [])).toBe("2026-10-25T01:30:00Z")
+  // When running under real TZ=Antarctica/Troll, runtimeWallOffsets also discovers both 2-hour-apart occurrences.
+  if (Intl.DateTimeFormat().resolvedOptions().timeZone === "Antarctica/Troll") {
+    expect(runtimeWallOffsets({ year: 2026, month: 10, day: 25, hour: 1, minute: 30, second: 0 })).toEqual([120, 0])
+  }
+  if (Intl.DateTimeFormat().resolvedOptions().timeZone === "America/New_York") {
+    expect(runtimeWallOffsets({ year: 2026, month: 3, day: 8, hour: 2, minute: 30, second: 0 })).toEqual([])
+    expect(runtimeWallOffsets({ year: 2026, month: 11, day: 1, hour: 1, minute: 30, second: 0 })).toEqual([-240, -300])
+    const utcSecond = resolveDateTime("2026-11-01T06:30:00Z")
+    expect(utcSecond.kind).toBe("ok")
+    if (utcSecond.kind === "ok") {
+      expect(selectedAlternative(utcSecond.text, utcSecond.alternatives)).toBe("2026-11-01T01:30:00-05:00")
+    }
+  }
 
   // Fall repeat already carrying `-05:00` (restored/prefilled): preserves exact `-05:00` in both preview & encoded payload.
   const restored = resolveDateTime("2026-11-01T01:30:00-05:00", newYork)

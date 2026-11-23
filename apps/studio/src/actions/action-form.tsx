@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, instantText, isDiagnosticPlaced, pickerDateTime, rebaseFields, resolveDateTime, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, instantText, isDiagnosticPlaced, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
 import { parkedOf, type ParkedCall, type Phase } from "../lib/screen/call.ts"
@@ -385,7 +385,7 @@ function DateTimePicker({ aria, value, onChange }: { readonly aria: Aria; readon
         <Input {...aria} aria-invalid={gap || aria["aria-invalid"] === true || undefined} type="datetime-local" step={60} className="h-9 w-60 tabular-nums" value={shown} onChange={(e) => onChange(e.target.value)} />
         {alternatives !== null && (
           <select aria-label="Time zone offset" className="h-9 rounded-lg border border-node-border bg-background px-2 font-mono text-xs tabular-nums"
-            value={alternatives.includes(sent ?? "") ? (sent ?? alternatives[0]) : alternatives[0]}
+            value={selectedAlternative(sent, alternatives)}
             onChange={(e) => onChange(e.target.value)}>
             {alternatives.map((iso, idx) => (
               <option key={iso} value={iso}>

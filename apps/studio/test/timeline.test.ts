@@ -117,7 +117,7 @@ test("groupLanes separates pending, unavailable, and unlinked/hidden buckets and
   expect(lanes.slice(1).every((l) => l.placed.every((p) => !p.overlaps))).toBe(true)
 })
 
-test("day ticks step in epoch hours so 23-hour spring DST days have no duplicate and 25-hour fall DST days include both occurrences", () => {
+test("day ticks step in epoch hours, handle 23h/25h DST days, and include minutes on half-hour DST shifts", () => {
   const HOUR = 3_600_000
   const start = Date.UTC(2026, 2, 8, 5)
   const spring = ticksOf("day", { start, end: start + 23 * HOUR }, "en-US")
@@ -128,9 +128,16 @@ test("day ticks step in epoch hours so 23-hour spring DST days have no duplicate
   const fall = ticksOf("day", { start: fallStart, end: fallStart + 25 * HOUR }, "en-US")
   expect(fall).toHaveLength(25)
   expect(new Set(fall.map((t) => t.at)).size).toBe(25)
+
+  // Australia/Lord_Howe springs forward 30 minutes on 2026-10-04 (02:00+10:30 -> 02:30+11:00):
+  // midnight is 2026-10-03T13:30:00Z, so hourly epoch ticks hit 00:00, 01:00, then 02:30, 03:30, ...
+  const lordHoweMidnight = Date.UTC(2026, 9, 3, 13, 30)
+  const lordHowe = ticksOf("day", { start: lordHoweMidnight, end: lordHoweMidnight + 23 * HOUR }, "en-GB", "Australia/Lord_Howe")
+  expect(lordHowe[2]!.label).toContain("30")
+  expect(lordHowe[0]!.label).not.toContain("30")
 })
 
-test("roving focus clamps when the bar list shrinks and timeline formatting honours Studio locale (including Arabic)", () => {
+test("roving focus clamps when the bar list shrinks and timeline formatting honours Studio locale on Gregorian calendar", () => {
   expect(clampFocus(4, 2)).toBe(1)
   expect(clampFocus(3, 0)).toBe(0)
   expect(clampFocus(-1, 3)).toBe(0)
@@ -143,6 +150,11 @@ test("roving focus clamps when the bar list shrinks and timeline formatting hono
   const arTitle = windowTitle("month", win, "ar")
   const enTitle = windowTitle("month", win, "en-GB")
   expect(arTitle).not.toBe(enTitle)
+  // `ar-SA` defaults to Hijri unless `calendar: "gregory"` is passed: verify Gregorian November 2026.
+  const arSaTitle = windowTitle("month", win, "ar-SA")
+  expect(arSaTitle).toContain("نوفمبر")
+  expect(arSaTitle).toMatch(/2026|٢٠٢٦/)
+  expect(arSaTitle).not.toMatch(/1448|١٤٤٨/)
   expect(timeText(Date.UTC(2026, 10, 23, 9), "UTC", "ar")).not.toBe(timeText(Date.UTC(2026, 10, 23, 9), "UTC", "en-GB"))
   expect(clockText(Date.UTC(2026, 10, 23, 9, 30), "UTC", "ar").length).toBeGreaterThan(0)
 })

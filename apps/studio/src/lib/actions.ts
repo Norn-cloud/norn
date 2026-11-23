@@ -362,9 +362,28 @@ export function runtimeWallOffsets(parts: WallParts): readonly number[] {
     if (!matches.has(offset)) matches.set(offset, at.getTime())
   }
   add(wall)
-  // Check +/-30m and +/-60m around `wall` to discover the sibling occurrence on a fall-back transition.
-  for (const delta of [-3_600_000, -1_800_000, 1_800_000, 3_600_000]) add(new Date(wall.getTime() + delta))
+  // Probe half-hour steps across ±3 hours around `wall` to discover sibling occurrences on any DST
+  // fall-back transition (including 30m shifts like Australia/Lord_Howe and 2h shifts like Antarctica/Troll).
+  for (let half = -6; half <= 6; half += 1) {
+    if (half !== 0) add(new Date(wall.getTime() + half * 1_800_000))
+  }
   return [...matches.entries()].sort(([, ta], [, tb]) => ta - tb).map(([offset]) => offset)
+}
+
+/**
+ * Match `sent` (which may carry `Z` or any equivalent offset) against `alternatives` by epoch
+ * instant, so a restored instant like `2026-11-01T06:30:00Z` in `America/New_York` selects the
+ * second occurrence (`2026-11-01T01:30:00-05:00`) rather than falling back to the first.
+ */
+export function selectedAlternative(sent: string | null, alternatives: readonly string[]): string {
+  if (sent !== null) {
+    const at = Date.parse(sent)
+    if (!Number.isNaN(at)) {
+      const match = alternatives.find((iso) => Date.parse(iso) === at)
+      if (match !== undefined) return match
+    }
+  }
+  return alternatives[0] ?? ""
 }
 
 const pad2 = (n: number) => String(n).padStart(2, "0")
@@ -560,6 +579,8 @@ export function isDiagnosticPlaced(at: string, fields: readonly FormField[], dra
   for (const field of fields) {
     if (at === field.pointer) return true
     if (field.spec.kind === "object") {
+      // Nullable hides an object's child FieldRows when its value is explicitly null.
+      if (draft !== undefined && draftAt(draft, field.pointer) === null) continue
       if (at.startsWith(`${field.pointer}/`) && isDiagnosticPlaced(at, field.spec.fields, draft)) return true
       continue
     }

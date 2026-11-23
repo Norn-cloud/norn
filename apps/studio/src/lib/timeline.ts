@@ -83,14 +83,26 @@ export interface Tick { readonly at: number; readonly label: string; readonly da
 
 /**
  * The axis of a window: epoch hours over a day (so a 23-hour spring DST day emits no duplicate
- * tick and a 25-hour fall DST day includes both occurrences of the repeated hour), and calendar
- * days over a week or month, labelled in `locale`.
+ * tick, a 25-hour fall DST day includes both occurrences of the repeated hour, and half-hour DST
+ * shifts like `Australia/Lord_Howe` include minutes when non-zero), and Gregorian calendar days
+ * over a week or month, labelled in `locale`.
  */
-export function ticksOf(zoom: Zoom, window: Span, locale?: string): readonly Tick[] {
+export function ticksOf(zoom: Zoom, window: Span, locale?: string, timeZone?: string): readonly Tick[] {
   const ticks: Tick[] = []
+  const tz = timeZone === undefined ? {} : { timeZone }
   if (zoom === "day") {
     for (let at = window.start; at < window.end; at += HOUR_MS) {
-      ticks.push({ at, label: new Date(at).toLocaleTimeString(locale, { hour: "numeric" }), day: at === window.start })
+      const dt = new Date(at)
+      const minute = timeZone === undefined
+        ? dt.getMinutes()
+        : Number(new Intl.DateTimeFormat("en-US", { minute: "numeric", timeZone }).format(dt))
+      const label = dt.toLocaleTimeString(locale, {
+        calendar: "gregory",
+        hour: "numeric",
+        ...minute !== 0 ? { minute: "2-digit" } : {},
+        ...tz,
+      })
+      ticks.push({ at, label, day: at === window.start })
     }
     return ticks
   }
@@ -100,8 +112,8 @@ export function ticksOf(zoom: Zoom, window: Span, locale?: string): readonly Tic
     if (at >= window.end) break
     if (ticks.at(-1)?.at === at) continue
     const label = zoom === "week"
-      ? new Date(at).toLocaleDateString(locale, { weekday: "short", day: "numeric" })
-      : new Date(at).toLocaleDateString(locale, { day: "numeric" })
+      ? new Date(at).toLocaleDateString(locale, { calendar: "gregory", weekday: "short", day: "numeric", ...tz })
+      : new Date(at).toLocaleDateString(locale, { calendar: "gregory", day: "numeric", ...tz })
     ticks.push({ at, label, day: true })
   }
   return ticks
@@ -170,13 +182,13 @@ export function zoneOf(values: Readonly<Record<string, unknown>> | null | undefi
   return typeof zone === "string" && zone !== "" && knownZone(zone) ? zone : null
 }
 
-/** "Mon 23 Nov, 09:00": an instant in `zone` (the reader's when null). */
+/** "Mon 23 Nov, 09:00": an instant in `zone` (the reader's when null), always on the Gregorian calendar. */
 export const timeText = (at: number, zone: string | null, locale?: string): string =>
-  new Date(at).toLocaleString(locale, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", ...zone === null ? {} : { timeZone: zone } })
+  new Date(at).toLocaleString(locale, { calendar: "gregory", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", ...zone === null ? {} : { timeZone: zone } })
 
 /** "09:00": the clock time of an instant in `zone`, formatted cleanly in any locale (including Arabic). */
 export const clockText = (at: number, zone: string | null, locale?: string): string =>
-  new Date(at).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", ...zone === null ? {} : { timeZone: zone } })
+  new Date(at).toLocaleTimeString(locale, { calendar: "gregory", hour: "2-digit", minute: "2-digit", ...zone === null ? {} : { timeZone: zone } })
 
 /** A record placed on the timeline: its span, which sub-row of its lane it takes, and whether it shares time with another. */
 export interface Placed<T> {
@@ -283,11 +295,11 @@ export function geometry(span: Span, window: Span): { readonly left: number; rea
   return { left: ((start - window.start) / total) * 100, width: Math.max(0, ((end - start) / total) * 100), clippedStart: span.start < window.start, clippedEnd: span.end > window.end }
 }
 
-/** The heading of a window: "Monday 23 November 2026", "23 – 29 Nov 2026" or "November 2026". */
+/** The heading of a window: "Monday 23 November 2026", "23 – 29 Nov 2026" or "November 2026" (always Gregorian). */
 export function windowTitle(zoom: Zoom, window: Span, locale?: string): string {
   const start = new Date(window.start)
-  if (zoom === "day") return start.toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long", year: "numeric" })
-  if (zoom === "month") return start.toLocaleDateString(locale, { month: "long", year: "numeric" })
+  if (zoom === "day") return start.toLocaleDateString(locale, { calendar: "gregory", weekday: "long", day: "numeric", month: "long", year: "numeric" })
+  if (zoom === "month") return start.toLocaleDateString(locale, { calendar: "gregory", month: "long", year: "numeric" })
   const last = new Date(window.end - 1)
-  return `${start.toLocaleDateString(locale, { day: "numeric", month: "short" })} – ${last.toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" })}`
+  return `${start.toLocaleDateString(locale, { calendar: "gregory", day: "numeric", month: "short" })} – ${last.toLocaleDateString(locale, { calendar: "gregory", day: "numeric", month: "short", year: "numeric" })}`
 }

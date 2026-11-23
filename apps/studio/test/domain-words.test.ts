@@ -28,31 +28,50 @@ const LINE_PATTERNS: readonly { readonly name: string; readonly pattern: RegExp 
   { name: "the HR namespace", pattern: /\bhr\.[A-Za-z]|\bpacks\/hr\b/ },
 ]
 
-/** Split one line into ordered word tokens across punctuation, snake_case, kebab-case, and camelCase/PascalCase boundaries. */
-export function tokenizeLine(line: string): readonly string[] {
-  const words = line.match(/[A-Za-z0-9]+/g) ?? []
-  return words.flatMap((word) =>
-    word
-      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
-      .split(" ")
-      .filter(Boolean),
-  )
+/** Split one compound identifier (`payrollRun`, `hr_manager`, `ShiftSchedule`) into word sub-tokens. */
+export function splitIdentifier(ident: string): readonly string[] {
+  return ident
+    .split(/[_-]+/)
+    .flatMap((part) =>
+      part
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+        .split(" ")
+        .filter(Boolean),
+    )
 }
 
 /** Every domain word on each line of `text`, by line number. */
 export function domainWords(text: string): readonly { readonly line: number; readonly word: string; readonly text: string }[] {
   return text.split("\n").flatMap((line, index) => {
     const hits: { readonly line: number; readonly word: string; readonly text: string }[] = []
-    const tokens = tokenizeLine(line)
-    for (let i = 0; i < tokens.length; i += 1) {
-      const token = tokens[i]!
-      for (const rule of SINGLE_TOKEN_DOMAIN) {
-        if (rule.match(token)) hits.push({ line: index + 1, word: `${token} (${rule.name})`, text: line.trim() })
+    // 1. Check each compound identifier independently (catches camelCase/snake_case, including `hrManager`/`hr_manager`).
+    const idents = line.match(/[A-Za-z0-9_-]+/g) ?? []
+    for (const ident of idents) {
+      const parts = splitIdentifier(ident)
+      for (let i = 0; i < parts.length; i += 1) {
+        const token = parts[i]!
+        for (const rule of SINGLE_TOKEN_DOMAIN) {
+          if (rule.match(token)) hits.push({ line: index + 1, word: `${token} (${rule.name})`, text: line.trim() })
+        }
+        if (parts.length >= 2 && /^hr$/i.test(token) && token !== "HR") {
+          hits.push({ line: index + 1, word: `${ident} (HR identifier)`, text: line.trim() })
+        }
+        const next = parts[i + 1]
+        if (next !== undefined && /^(shift|leave)$/i.test(token) && SHIFT_LEAVE_SECOND.test(next)) {
+          hits.push({ line: index + 1, word: `${token} ${next} (shift/leave domain term)`, text: line.trim() })
+        }
       }
-      const next = tokens[i + 1]
-      if (next !== undefined && /^(shift|leave)$/i.test(token) && SHIFT_LEAVE_SECOND.test(next)) {
-        hits.push({ line: index + 1, word: `${token} ${next} (shift/leave domain term)`, text: line.trim() })
+    }
+    // 2. Check space-separated prose phrases without crossing statement punctuation (`;`, `(`, `)`, `.`, `,`, `{`, `}`).
+    for (const phrase of line.split(/[^A-Za-z0-9_\-\s]+/)) {
+      const words = phrase.trim().split(/\s+/).filter(Boolean)
+      for (let i = 0; i < words.length - 1; i += 1) {
+        const a = words[i]!
+        const b = words[i + 1]!
+        if (/^(shift|leave)$/i.test(a) && SHIFT_LEAVE_SECOND.test(b)) {
+          hits.push({ line: index + 1, word: `${a} ${b} (shift/leave domain term)`, text: line.trim() })
+        }
       }
     }
     for (const { name, pattern } of LINE_PATTERNS) {
@@ -82,12 +101,14 @@ test("the matcher finds domain identifiers (including camelCase and snake_case) 
     "hr.Employee", "registry/packs/hr", "ShiftCommitment", "LeaveRequest", "LeaveBalance",
     "leave_request", "Shift requirement", "payroll", "Roster", "jewelry", "Jewellery",
     "scrap-yield", "gold scrap", "melting", "the HR team",
-    "payrollRun", "employee_roster", "ShiftSchedule", "shift_schedule", "HRManager", "getHRData", "rosterGrid", "scrapYield",
+    "payrollRun", "employee_roster", "ShiftSchedule", "shift_schedule", "HRManager",
+    "hrManager", "hr_manager", "getHRData", "rosterGrid", "scrapYield",
   ]) {
     expect(domainWords(hit), `expected hit on ${hit}`).not.toHaveLength(0)
   }
   for (const miss of [
-    "pending.shift()", "queue.shift()", "onMouseLeave", "onPointerLeave", "leave the draft as it is",
+    "pending.shift()", "queue.shift()", "list.shift(); schedule()", "a.shift(), schedule()",
+    "onMouseLeave", "onPointerLeave", "leave the draft as it is",
     "Shift adds a key", "event.shiftKey", "<hr />", "threshold", "shrink", "scrape", "scrapbook",
     "smelt", "href", "chr.code", "thr.x", "leaves",
   ]) {
