@@ -690,20 +690,29 @@ def workflow_verdict_canaries(source: str) -> None:
 
 
 def rust_parity_evidence_canaries() -> None:
-    """The cheap phase requires the two Rust parity tests to have run and passed (nextest JUnit)."""
+    """The cheap phase requires the Rust concurrency and bundle tests to have run and passed (nextest JUnit)."""
     validator = load_module("norn_rust_parity_evidence_canaries", VALIDATOR)
     core = validator.CORE_RUNNER.read_text(encoding="utf-8")
     first = "ci::tests::the_parity_fixture_keeps_every_gate_pinned_case"
     second = "ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture"
-    call = f"      require_passed \"$parity_report\" norn-skeleton-guard {first} {second}\n"
-    run = f"      \"${{nextest[@]}}\" run --locked --ignore-default-filter \"${{guard[@]}}\" --lib -E 'test(={first}) | test(={second})'\n"
+    bundle_tests = (
+        'ci::bundle::tests::matches_python_on_real_plans',
+        'ci::bundle::tests::refuses_wrong_inventories_and_ids',
+        'ci::bundle::tests::groups_shared_builds_and_prunes_every_other_boundary',
+        'ci::bundle::tests::prunes_only_workspace_cargo_outputs',
+    )
+    bundle_selector = " | ".join(f"test(={name})" for name in bundle_tests)
+    bundle_names = " ".join(bundle_tests)
+    call = f'      require_passed "$parity_report" norn-skeleton-guard {first} {second} {bundle_names}\n'
+    run = f"""      "${{nextest[@]}}" run --locked --ignore-default-filter "${{guard[@]}}" --lib -E 'test(={first}) | test(={second}) | {bundle_selector}'\n"""
     with tempfile.TemporaryDirectory() as directory:
         mutated = Path(directory) / "core.sh"
         for label, before, after in (
                 ("the parity tests are not run", run, ""),
                 ("their run is not required", call, ""),
                 ("a parity test renamed", call, call.replace(f" {first} ", " ci::tests::renamed ")),
-                ("only one parity test required", call, call.replace(f" {second}", "")),
+                ("one parity test missing", call, call.replace(f" {second}", "")),
+                ("a bundle test missing", call, call.replace(f" {bundle_tests[-1]}", "")),
                 ("a skipped test counts as passed", '"failure", "error", "skipped", ', '"failure", "error", '),
                 ("the default filter decides", 'run --locked --ignore-default-filter "${guard[@]}" --lib', 'run --locked "${guard[@]}" --lib')):
             if core.count(before) != 1:
@@ -713,7 +722,7 @@ def rust_parity_evidence_canaries() -> None:
             try:
                 validator.validate_workflow_integrity([])
             except validator.InvalidCoverage as error:
-                if "cheap phase must require the two Rust concurrency parity tests" in str(error):
+                if "cheap phase must require the Rust concurrency and bundle tests" in str(error):
                     continue
                 raise AssertionError(f"Rust parity evidence mutation ({label}) refused for another reason: {error}")
             finally:

@@ -340,10 +340,11 @@ class AffectedPlanTests(unittest.TestCase):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
         plan = {"mode": "affected", "shard": [], "phase": ["test-shards"]}
         plan = json.loads(subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], text=True))
+        target = os.environ.get("CARGO_TARGET_DIR") or str(ROOT / "target")
         metadata = json.loads(subprocess.check_output([
             "cargo", "metadata", "--locked", "--no-deps", "--format-version", "1",
             "--manifest-path", "crates/norn-skeleton-guard/Cargo.toml",
-        ], cwd=ROOT, text=True))
+        ], cwd=ROOT, env={**os.environ, "CARGO_TARGET_DIR": target}, text=True))
         xtask = Path(metadata["target_directory"]) / "debug" / "xtask"
         tools = self.root / "cargo-home" / "bin"
         tools.mkdir(parents=True)

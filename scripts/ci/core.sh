@@ -8,10 +8,6 @@ export PYTHONPYCACHEPREFIX="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/norn-py
 python3 -c 'import sys; sys.exit(0 if sys.flags.safe_path and sys.dont_write_bytecode and sys.pycache_prefix else 1)' || { echo "Python isolation not honoured" >&2; exit 1; }
 set -euo pipefail
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-# Keep the hosted planner independent of a Cargo build.
-case "${1:-}" in
-  bundle|bundle-plan|bundle-check) exec cargo xtask ci "$@" ;;
-esac
 # `all` runs every phase, in this order, in one checkout. CI packs its
 # selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
@@ -58,6 +54,10 @@ refresh_sources() {
   [[ $previous == "$current" ]] || printf '%s\n' "$current" > "$tree_stamp"
 }
 refresh_sources
+# Keep the hosted planner independent of a Cargo build.
+case "${1:-}" in
+  bundle|bundle-plan|bundle-check) exec cargo xtask ci "$@" ;;
+esac
 # Fails unless binary $1 was built after this tree was stamped.
 require_fresh() {
   [[ -x $1 && $1 -nt $tree_stamp ]] || { echo "core.sh: $1 is older than this tree; rebuild it" >&2; exit 1; }
@@ -291,15 +291,15 @@ run_phase() {
       lint_workflows
       cargo xtask ci policy
       cargo xtask ci provenance
-      # The Rust half of the concurrency parity check runs on every plan, whatever packages the
-      # plan selects, and its two named tests must have run and passed.
+      # The Rust concurrency and bundle checks run on every plan, whatever packages the
+      # plan selects, and all named tests must have run and passed.
       ensure_nextest
       # nextest keeps its reports under the workspace root's target/nextest, whatever
       # CARGO_TARGET_DIR says, and the guard's workspace root is its own directory (#1270).
       parity_report="$(cargo metadata --locked --format-version 1 --no-deps "${guard[@]}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["workspace_root"])')/target/nextest/ci/junit.xml"
       rm -f "$parity_report"
-      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
-      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture
+      "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture) | test(=ci::bundle::tests::matches_python_on_real_plans) | test(=ci::bundle::tests::refuses_wrong_inventories_and_ids) | test(=ci::bundle::tests::groups_shared_builds_and_prunes_every_other_boundary) | test(=ci::bundle::tests::prunes_only_workspace_cargo_outputs)'
+      require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture ci::bundle::tests::matches_python_on_real_plans ci::bundle::tests::refuses_wrong_inventories_and_ids ci::bundle::tests::groups_shared_builds_and_prunes_every_other_boundary ci::bundle::tests::prunes_only_workspace_cargo_outputs
       ;;
     test)
       select_shard "${2:-all}"

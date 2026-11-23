@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{self, Write as _};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
