@@ -33,7 +33,7 @@ export interface PackOptions {
   readonly imports?: ReadonlyArray<string>
   /** Provenance paths are written relative to this directory (default: the working directory). */
   readonly root?: string
-  /** Promote `NORN-AUTHORING-UNSAFE-ZEN` from warning to hard error; defaults to true for `registry/` and domain packs. */
+  /** Promote `NORN-AUTHORING-UNSAFE-ZEN` from warning to hard error; defaults to true when `registry` is set or any pack/module path lies under a `registry/` directory segment. */
   readonly forbidUnsafeZen?: boolean
 }
 
@@ -73,6 +73,7 @@ export type PackResult =
   | { readonly ok: false; readonly failures: ReadonlyArray<PackModuleFailure>; readonly profile: string }
 
 const posix = (path: string): string => path.split(sep).join("/")
+const hasRegistrySegment = (path: string): boolean => /(?:^|\/)registry(?:\/|$)/.test(posix(path))
 
 /** The pack's modules: top-level `*.ts` files (not `*.d.ts`), sorted; subdirectories hold shared support modules. */
 export function packModules(dir: string): string[] {
@@ -148,12 +149,11 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     }
   }
   const modules = options.modules ? options.modules.map((file) => resolve(file)) : packModules(dir)
-  const dirRel = posix(relative(root, resolve(dir)))
+  const absDir = resolve(dir)
   const isRegistryPath =
     registryPackagePath !== undefined ||
-    dirRel === "registry" ||
-    dirRel.startsWith("registry/") ||
-    modules.some((m) => posix(relative(root, m)).startsWith("registry/"))
+    hasRegistrySegment(absDir) ||
+    modules.some((m) => hasRegistrySegment(m))
   const forbidUnsafeZen = options.forbidUnsafeZen ?? isRegistryPath
   const envelope = (path: string) => ({
     scope: registryPackagePath ? {} : options.scope,

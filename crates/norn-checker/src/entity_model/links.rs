@@ -1311,7 +1311,8 @@ impl<'a> Checker<'a, '_> {
         };
         // A per-artifact object check has no installed base layer. Its
         // missing supertype is already a model-level refusal, so defer this
-        // invariant's member typing until the complete model is available.
+        // invariant's member typing until the complete model is available,
+        // while still enforcing profile source bounds and construct allowlist.
         if let InvariantSubject::Object(name) = subject
             && self.types.get(name).is_some_and(|entry| {
                 entry
@@ -1321,6 +1322,7 @@ impl<'a> Checker<'a, '_> {
                     .is_some_and(|parent| !self.types.contains_key(parent))
             })
         {
+            self.check_invariant_profile_constructs(at, invariant);
             return;
         }
         if let InvariantSubject::Interface(name) = subject
@@ -1332,13 +1334,19 @@ impl<'a> Checker<'a, '_> {
                     .any(|parent| !self.interfaces.contains_key(parent))
             })
         {
+            self.check_invariant_profile_constructs(at, invariant);
             return;
         }
-        // A per-artifact check also has no property-type catalog (`catalog` is
-        // empty), which would turn `ref` properties into opaque `json-ext`
-        // placeholders; defer member typing until the catalog is available
-        // (and genuinely missing refs are already refused as `unknown_ref`).
-        if self.subject_has_unresolved_property_ref(subject) {
+        // Only local, catalog-absent per-artifact (T2) checking defers member
+        // typing on unresolved `PropertyType::Ref` properties, because no
+        // property-type catalog is loaded yet. Even then, source bounds and
+        // the profile construct/builtin allowlist still fail closed locally.
+        // Whole-model (T3) checking never skips `check_invariant_type`.
+        if self.local_only
+            && self.context.catalog.is_empty()
+            && self.subject_has_unresolved_property_ref(subject)
+        {
+            self.check_invariant_profile_constructs(at, invariant);
             return;
         }
         let (detail, cross_object_link) = self.invariant_expression_detail(&expression, subject);
@@ -1361,6 +1369,26 @@ impl<'a> Checker<'a, '_> {
             message,
             span_at(at, &["expression"]),
         ));
+    }
+
+    fn check_invariant_profile_constructs(&mut self, at: &[&str], invariant: &Invariant) {
+        let limits = norn_ir::ResourceLimitProfile::norn_limits_v1();
+        if let Err(diagnostics) =
+            norn_expr::validate_profile_constructs(invariant.expression.as_str(), &limits)
+        {
+            let detail = diagnostics.first().map_or_else(
+                || "expression uses a construct outside the admitted profile".to_owned(),
+                |diagnostic| diagnostic.message.clone(),
+            );
+            self.out.push(error(
+                codes::INVALID_INVARIANT_EXPRESSION,
+                format!(
+                    "the expression of invariant {:?} is not an admitted ZEN Expression: {detail}",
+                    invariant.id.as_str()
+                ),
+                span_at(at, &["expression"]),
+            ));
+        }
     }
 
     fn subject_has_unresolved_property_ref(&self, subject: InvariantSubject<'_>) -> bool {

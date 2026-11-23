@@ -592,8 +592,9 @@ fn timestamp_shape(value: &str) -> Result<(), TemporalError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        NAMING_SERIES_TZDB_VERSION, NamingSeriesDate, TemporalError, canonical_timestamp,
-        naming_series_date_at, timestamp_ordering_key, validate_date, validate_timezone,
+        DstPolicy, NAMING_SERIES_TZDB_VERSION, NamingSeriesDate, TemporalError,
+        canonical_timestamp, naming_series_date_at, resolve_local_timestamp,
+        timestamp_ordering_key, validate_date, validate_timezone,
     };
 
     #[test]
@@ -886,6 +887,100 @@ mod tests {
                 month: 1,
                 day: 1,
             })
+        );
+    }
+
+    #[test]
+    fn resolve_local_timestamp_handles_unambiguous_gaps_folds_and_validation() {
+        // Unambiguous standard and DST wall times, including fractional seconds.
+        assert_eq!(
+            resolve_local_timestamp("2025-01-15T09:30:00", "America/New_York", DstPolicy::Reject),
+            Ok("2025-01-15T14:30:00Z".to_owned())
+        );
+        assert_eq!(
+            resolve_local_timestamp(
+                "2025-07-04T12:00:00.125000",
+                "America/New_York",
+                DstPolicy::Reject
+            ),
+            Ok("2025-07-04T16:00:00.125Z".to_owned())
+        );
+
+        // DST spring-forward gap: always refused regardless of policy.
+        for policy in [DstPolicy::Reject, DstPolicy::Earlier, DstPolicy::Later] {
+            assert_eq!(
+                resolve_local_timestamp("2025-03-09T02:30:00", "America/New_York", policy),
+                Err(TemporalError::NonexistentLocalTime),
+                "gap must fail under {policy:?}"
+            );
+        }
+
+        // DST fall-back fold: refused under Reject, deterministic under Earlier/Later.
+        assert_eq!(
+            resolve_local_timestamp("2025-11-02T01:30:00", "America/New_York", DstPolicy::Reject),
+            Err(TemporalError::AmbiguousLocalTime)
+        );
+        assert_eq!(
+            resolve_local_timestamp(
+                "2025-11-02T01:30:00",
+                "America/New_York",
+                DstPolicy::Earlier
+            ),
+            Ok("2025-11-02T05:30:00Z".to_owned())
+        );
+        assert_eq!(
+            resolve_local_timestamp("2025-11-02T01:30:00", "America/New_York", DstPolicy::Later),
+            Ok("2025-11-02T06:30:00Z".to_owned())
+        );
+
+        // Invalid local timestamps (offsets, Z, year 0000, invalid calendar date).
+        for bad in [
+            "2025-03-09T14:00:00Z",
+            "2025-03-09T14:00:00-05:00",
+            "0000-01-01T00:00:00",
+            "2025-02-29T12:00:00",
+            "2025-03-09 14:00:00",
+            "2025-03-09T14:00:00.1234567890",
+        ] {
+            assert_eq!(
+                resolve_local_timestamp(bad, "UTC", DstPolicy::Reject),
+                Err(TemporalError::InvalidLocalTimestamp),
+                "{bad}"
+            );
+        }
+
+        // Invalid timezones (including `Factory` and non-canonical case).
+        for tz in ["Factory", "america/new_york", "Not/A_Zone", ""] {
+            assert_eq!(
+                resolve_local_timestamp("2025-03-09T14:00:00", tz, DstPolicy::Reject),
+                Err(TemporalError::InvalidTimezone),
+                "{tz}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_local_timestamp_refuses_year_0001_and_9999_utc_shift_overflow() {
+        // Positive offset (+09:00 / Etc/GMT-9) shifts 0001-01-01T00:30:00 back into year 0000 UTC.
+        assert_eq!(
+            resolve_local_timestamp("0001-01-01T00:30:00", "Etc/GMT-9", DstPolicy::Reject),
+            Err(TemporalError::InstantOutOfRange)
+        );
+        // Exactly at the lower boundary stays within year 0001 UTC.
+        assert_eq!(
+            resolve_local_timestamp("0001-01-01T09:00:00", "Etc/GMT-9", DstPolicy::Reject),
+            Ok("0001-01-01T00:00:00Z".to_owned())
+        );
+
+        // Negative offset (-05:00 / Etc/GMT+5) shifts 9999-12-31T23:30:00 forward past year 9999 UTC.
+        assert_eq!(
+            resolve_local_timestamp("9999-12-31T23:30:00", "Etc/GMT+5", DstPolicy::Reject),
+            Err(TemporalError::InstantOutOfRange)
+        );
+        // Exactly at the upper boundary stays within year 9999 UTC.
+        assert_eq!(
+            resolve_local_timestamp("9999-12-31T18:59:59", "Etc/GMT+5", DstPolicy::Reject),
+            Ok("9999-12-31T23:59:59Z".to_owned())
         );
     }
 }

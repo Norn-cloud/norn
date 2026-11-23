@@ -19,7 +19,7 @@
     clippy::large_futures
 )]
 
-//! Conformance with the published profile `norn-zen/6` (`PROFILE.md`,
+//! Conformance with the published profile `norn-zen/7` (`PROFILE.md`,
 //! T1-EXPR-6 #2766): positive and negative fixtures per rule section, the
 //! zen adoption review's mandatory counterexamples, and the pin that ties
 //! `PROFILE.md`'s content to the profile id.
@@ -37,7 +37,7 @@ use support::{Model, fields, roomy_limits};
 
 /// The Norn1 hash of `PROFILE.md`, pinned with the profile id: editing the
 /// profile without bumping `CHECKER_PROFILE` (and re-pinning) fails here.
-const PROFILE_MD_HASH: &str = "0fc84e38dc4c293cd0f27a39057f519ab4caba8b98db0035fccf5ca542b32471";
+const PROFILE_MD_HASH: &str = "7f8ab6c9d09a5b0ba65b09c6bb2fba18f621592b1d0645e69bac0ad6c7a063bd";
 
 fn probe_env() -> ZenTypeEnv {
     let model = Model::retail();

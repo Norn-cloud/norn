@@ -726,7 +726,7 @@ mod tests {
             object_types: &types,
             ..EntityModel::EMPTY
         };
-        let mut checker = Checker::new(&model, &context, &Roots::DOCUMENT);
+        let mut checker = Checker::new(&model, &context, &Roots::DOCUMENT, false);
         checker.register();
         checker.find_cycles();
         let name = ObjectTypeName("test.Sub".to_owned());

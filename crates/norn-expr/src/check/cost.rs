@@ -1,5 +1,5 @@
 //! The static cost estimate under the `norn-expr/4` structural grammar and
-//! `norn-zen/6` language profile (T1-EXPR-4, #2522): a proved
+//! `norn-zen/7` language profile (T1-EXPR-4, #2522): a proved
 //! upper bound on the units the metered evaluator charges for one evaluation
 //! of an admitted expression on a **conforming slice**.
 //!

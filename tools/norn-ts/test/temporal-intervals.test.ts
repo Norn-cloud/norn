@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join, relative, resolve } from "node:path"
 import { compileDefinitionFiles, compileDefinitions } from "../src/compiler/definitions.ts"
 import { checkPack, compilePack } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
@@ -169,6 +169,28 @@ export const Shift = Norn.interfaceType({
     if (!regDefault.ok) {
       expect(regDefault.failures[0]?.diagnostics.some((d) => d.code === "NORN-AUTHORING-UNSAFE-ZEN")).toBe(true)
     }
+
+    // cwd = tools/norn-ts compiling a relative path into a registry/ directory MUST still hard-error (no cwd bypass).
+    const regFromToolRoot = compilePack(regSubdir, { scope: { orgId: "o1", environmentId: "dev" }, root: TOOL_ROOT })
+    expect(regFromToolRoot.ok).toBe(false)
+    if (!regFromToolRoot.ok) {
+      expect(regFromToolRoot.failures[0]?.diagnostics.some((d) => d.code === "NORN-AUTHORING-UNSAFE-ZEN")).toBe(true)
+    }
+    const relFromToolRoot = relative(TOOL_ROOT, regSubdir)
+    const cliFromToolRoot = Bun.spawnSync({
+      cmd: [process.execPath, CLI, "compile", relFromToolRoot, "--org", "o1", "--env", "dev"],
+      cwd: TOOL_ROOT,
+    })
+    expect(cliFromToolRoot.exitCode).toBe(1)
+    expect(new TextDecoder().decode(cliFromToolRoot.stdout)).toContain("NORN-AUTHORING-UNSAFE-ZEN")
+
+    // Running from inside registry/packs/demo compiling `.` MUST also still hard-error (no cwd bypass).
+    const cliInsideRegistry = Bun.spawnSync({
+      cmd: [process.execPath, CLI, "compile", ".", "--org", "o1", "--env", "dev"],
+      cwd: regSubdir,
+    })
+    expect(cliInsideRegistry.exitCode).toBe(1)
+    expect(new TextDecoder().decode(cliInsideRegistry.stdout)).toContain("NORN-AUTHORING-UNSAFE-ZEN")
 
     // CLI --forbid-unsafe-zen flag returns non-zero exit code with NORN-AUTHORING-UNSAFE-ZEN.
     const cli = Bun.spawnSync({
