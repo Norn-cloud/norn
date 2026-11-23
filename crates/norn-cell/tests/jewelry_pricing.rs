@@ -157,6 +157,7 @@ fn call<'a>(action: &'a norn_ir::ActionRoot, input: JsonObject, request: &str) -
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 

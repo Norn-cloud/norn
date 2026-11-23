@@ -6,10 +6,11 @@ import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronDown, ChevronRight, ChevronsLeft, CloudOff, Keyboard, LogOut, Plus, Search, SlidersHorizontal, Sparkles, type LucideIcon } from "lucide-react"
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react"
+import { Bell, ChevronLeft, ChevronRight, ChevronsUpDown, CloudOff, Keyboard, LayoutGrid, LogOut, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
+import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
 import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Hint, KitMenuContent, KitMenuItem, KitMenuLabel, KitMenuRadioItem, KitMenuSeparator, KitPopoverContent, Menu, Popover } from "@/components/kit"
@@ -29,21 +30,20 @@ export interface Section {
   readonly path: string
   readonly label: string
   readonly icon: LucideIcon
-  readonly summary: string
-  /** The kind of artefact the section lists, which colours its icon. */
-  readonly kind?: Kind
-  /** The section's own items (each object type, question or workflow), listed under it. */
-  readonly useMenu?: () => readonly MenuEntry[] | undefined
-  /** A count that needs attention, shown on the section; text (e.g. "500+") is shown as the server's lower bound. */
-  readonly useBadge?: () => number | string | undefined
-  /** The rail group the section is listed under. */
+  /** The perspective that lists it; a global destination (Home, Inbox) sits on the rail in both. */
+  readonly perspective: Perspective | "global"
+  /** The sidebar section (a space) it is listed under: purely organisational, collapsible, never a wall. */
   readonly group?: string
-  /** Listed at the foot of the rail instead of with the sections. */
-  readonly foot?: boolean
-  /** Other route prefixes that belong to this applet, e.g. `/objects` (a type's records) under Sources. */
+  /** The kind of artefact the destination lists, which colours its icon. */
+  readonly kind?: Kind
+  /** The destination's own items (each object type, metric or workflow), listed under it. */
+  readonly useMenu?: () => readonly MenuEntry[] | undefined
+  /** A count that needs attention, shown on the destination; text (e.g. "500+") is shown as the server's lower bound. */
+  readonly useBadge?: () => number | string | undefined
+  /** Other route prefixes that belong to this destination, e.g. `/objects` (a type's records) under Sources. */
   readonly paths?: readonly string[]
-  /** The applet's primary action, shown under its title. */
-  readonly action?: { readonly label: string; readonly to: string }
+  /** False when the destination has no page of its own and only groups its items (Records). */
+  readonly index?: false
 }
 
 export interface MenuEntry {
@@ -58,12 +58,18 @@ export interface MenuEntry {
   readonly kind?: Kind
   /** A count the server reported for the entry (records, open items). */
   readonly count?: number | string
+  /** Another route prefix that is this entry too, e.g. a type's record pages under `/sources/<type>`. */
+  readonly also?: string
 }
 
 const none = () => undefined
 
 /** Whether a route is the entry's page or a page under it. */
 const within = (href: string, pathname: string) => !href.startsWith("#") && (pathname === href || pathname.startsWith(`${href}/`))
+
+/** The prefix of `pathname` an entry claims: its own route, or the other route it also is; none when it claims neither. */
+const claim = (entry: Pick<MenuEntry, "href" | "also">, pathname: string) =>
+  within(entry.href, pathname) ? entry.href : entry.also !== undefined && within(entry.also, pathname) ? entry.also : undefined
 
 /** Where an entry goes: its route, or an anchor on its section's page. */
 export const target = (section: Pick<Section, "path">, href: string) =>
@@ -72,6 +78,20 @@ export const target = (section: Pick<Section, "path">, href: string) =>
 /** The section a route belongs to: its own path, or a record page under it. */
 export const sectionOf = (sections: readonly Section[], pathname: string) =>
   sections.find(({ path }) => within(path, pathname)) ?? sections.find(({ paths }) => paths?.some((prefix) => within(prefix, pathname)))
+
+/** The destination a route belongs to: by its own routes, else the destination one of whose items claims it. */
+export const destinationOf = (sections: readonly Section[], pathname: string, menus: ReadonlyMap<string, readonly MenuEntry[]>) =>
+  sectionOf(sections, pathname) ?? sections.find(({ path }) => (menus.get(path) ?? []).some((entry) => claim(entry, pathname) !== undefined))
+
+/**
+ * The perspective a page is shown in: the reader's own while the page belongs to it (or to both, like
+ * Home), else the one that lists it, so the sidebar always shows where the reader is.
+ */
+export function perspectiveOf(sections: readonly Section[], pathname: string, chosen: Perspective, menus: ReadonlyMap<string, readonly MenuEntry[]> = new Map()): Perspective {
+  if (destinationOf(sections.filter(({ perspective }) => perspective === chosen || perspective === "global"), pathname, menus) !== undefined) return chosen
+  const other = destinationOf(sections, pathname, menus)?.perspective
+  return other === undefined || other === "global" ? chosen : other
+}
 
 export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"
 
@@ -111,12 +131,13 @@ function ScopeSwitcher() {
   const { live, open } = useOpenWorkspace()
   return (
     <Menu>
-      <MenuTrigger data-scope className="group/scope -mx-1.5 flex max-w-full min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-start text-sm text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent">
-        <span className="grid min-w-0 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
-          <span className="truncate text-foreground/80">{open?.name}</span>
-          <span className="truncate text-xs">{open?.detail}</span>
+      <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring data-open:bg-sidebar-accent">
+        <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-foreground text-[0.6875rem] font-semibold text-background">{initials(open?.name ?? "")}</span>
+        <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
+          <span className="truncate font-medium">{open?.name}</span>
+          <span className="truncate text-xs text-muted-foreground">{open?.detail}</span>
         </span>
-        <ChevronDown aria-hidden className="size-3.5 shrink-0 self-start mt-0.5 transition-transform group-data-open/scope:rotate-180" />
+        <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       </MenuTrigger>
       <KitMenuContent align="start" className="w-72">
         <MenuRadioGroup value={live ? "live" : open?.id ?? ""}>
@@ -173,7 +194,7 @@ export function AccountMenu({ account, onSignOut }: { readonly account: Account;
   return (
     <Menu onAction={(value) => { if (value === "sign-out") onSignOut() }}>
       <Hint label={`${user.name} · ${organization ? `${organization.name} · ${organization.role}` : "No organization"}`}>
-        <ToolbarButton render={<MenuTrigger />} aria-label="Account" className="flex size-9 items-center justify-center rounded-full bg-background text-xs font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:ring-2 focus-visible:ring-ring">
+        <ToolbarButton render={<MenuTrigger />} aria-label="Account" className="flex size-8 items-center justify-center rounded-full bg-background text-[0.6875rem] font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:ring-2 focus-visible:ring-ring">
           {initials(user.name || user.email)}
         </ToolbarButton>
       </Hint>
@@ -196,20 +217,47 @@ export function AccountMenu({ account, onSignOut }: { readonly account: Account;
   )
 }
 
-/** One applet on the rail: its icon, its name as a hint, and its count. */
-function RailLink({ section }: { readonly section: Section }) {
-  const { setOpenMobile } = useSidebar()
-  const count = shown((section.useBadge ?? none)())
+/** Every destination's items and count, read once for the rail, the sidebar, the breadcrumbs and search. */
+function useNavigation(sections: readonly Section[]) {
+  // Every section's hooks run on every render, in one order, whichever perspective is shown.
+  const menus = new Map(sections.map((section) => [section.path, (section.useMenu ?? none)() ?? []] as const))
+  const badges = new Map(sections.map((section) => [section.path, shown((section.useBadge ?? none)())] as const))
+  return { menus, badges }
+}
+
+type Navigation = ReturnType<typeof useNavigation>
+
+const railButton = "relative flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-[1.0625rem]"
+
+/** One destination on the rail: its icon, its name as a hint, and its count. */
+function RailLink({ section, count, firstHref, active, onExpandSection }: {
+  readonly section: Section; readonly count: string | undefined; readonly firstHref?: string; readonly active?: boolean; readonly onExpandSection?: (path: string) => void
+}) {
+  const { setOpen, setOpenMobile } = useSidebar()
   const Icon = section.icon
+  const label = count ? `${section.label}, ${count} open` : section.label
+  const badge = count && <span data-count className="absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.625rem] leading-none font-semibold text-destructive-foreground tabular-nums ring-2 ring-sidebar">{count}</span>
+  // A destination without its own index page (Records) opens its first item, or expands the sidebar when none is loaded yet.
+  const to = section.index === false ? firstHref : section.path
+  if (to === undefined) {
+    return (
+      <Hint label={section.label}>
+        <ToolbarButton aria-label={label} data-active={active || undefined} onClick={() => { onExpandSection?.(section.path); setOpen(true) }}
+          className={cn(railButton, active && "bg-sidebar-accent text-foreground")}>
+          <Icon aria-hidden />{badge}
+        </ToolbarButton>
+      </Hint>
+    )
+  }
   return (
     <Hint label={section.label}>
       <ToolbarLink
-        render={<Link to={section.path} activeOptions={{ exact: section.path === "/" }} onClick={() => setOpenMobile(false)} />}
-        aria-label={count ? `${section.label}, ${count} open` : section.label}
-        className="relative flex size-9 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[status=active]:bg-background data-[status=active]:text-foreground data-[status=active]:shadow-sm data-[status=active]:ring-1 data-[status=active]:ring-border [&_svg]:size-[1.15rem]"
+        render={<Link to={to} activeOptions={{ exact: to === "/" }} onClick={() => setOpenMobile(false)} />}
+        aria-label={label}
+        data-active={active || undefined}
+        className={cn(railButton, "data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground", active && "bg-sidebar-accent text-foreground")}
       >
-        <Icon aria-hidden />
-        {count && <span data-count className="absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.625rem] leading-none font-semibold text-destructive-foreground tabular-nums ring-2 ring-sidebar">{count}</span>}
+        <Icon aria-hidden />{badge}
       </ToolbarLink>
     </Hint>
   )
@@ -220,174 +268,282 @@ function AssistantToggle({ title }: { readonly title: string }) {
   const { open, toggle } = useAssistant()
   return (
     <Hint label={<>{title} <Keys className="opacity-70">⌘J</Keys></>}>
-      <ToolbarButton aria-label={title} aria-pressed={open} onClick={toggle}
-        className="flex size-9 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm aria-pressed:ring-1 aria-pressed:ring-border [&_svg]:size-[1.15rem]">
+      <ToolbarButton aria-label={title} aria-pressed={open} onClick={toggle} className={cn(railButton, "aria-pressed:bg-sidebar-accent aria-pressed:text-foreground")}>
         <Sparkles aria-hidden />
       </ToolbarButton>
     </Hint>
   )
 }
 
-/** The thin rail of applets: the mark, every section, then the assistant and the viewer. */
-function Rail({ sections, account, onSignOut, assistant }: { readonly sections: readonly Section[]; readonly account: Account; readonly onSignOut: () => void; readonly assistant?: AssistantContent }) {
-  const main = sections.filter(({ foot }) => foot !== true)
-  const foot = sections.filter(({ foot }) => foot === true)
-  const groups = [...new Set(main.map(({ group }) => group))]
+/**
+ * The slim rail: the mark, the destinations every perspective shares (Home, Inbox), then the
+ * assistant and the viewer. With the sidebar collapsed it also carries the perspective's
+ * destinations, so nothing is out of reach.
+ */
+function Rail({ sections, perspective, navigation, current, account, onSignOut, assistant, railRef, onExpandSection }: {
+  readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation
+  readonly current: Section | undefined; readonly account: Account; readonly onSignOut: () => void; readonly assistant?: AssistantContent
+  readonly railRef: RefObject<HTMLDivElement | null>; readonly onExpandSection: (path: string) => void
+}) {
+  const { state, isMobile } = useSidebar()
+  const global = sections.filter((section) => section.perspective === "global")
+  const own = state === "collapsed" && !isMobile ? sections.filter((section) => section.perspective === perspective) : []
+  const groups = [...new Set(own.map(({ group }) => group))]
+  const firstHref = (section: Section) => navigation.menus.get(section.path)?.find(({ href }) => !href.startsWith("#"))?.href
   return (
-    <Toolbar orientation="vertical" aria-label="Applets" className="flex h-full w-(--sidebar-width-icon) shrink-0 flex-col items-center gap-1 py-3">
-      <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-9 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain" />
-      </Link>
-      {groups.map((group, index) => (
-        <div key={group ?? ""} role="group" aria-label={group} className="flex flex-col items-center gap-1">
-          {index > 0 && <div aria-hidden className="my-1.5 h-px w-5 bg-sidebar-border" />}
-          {main.filter((section) => section.group === group).map((section) => <RailLink key={section.path} section={section} />)}
+    <div ref={railRef} className="h-full shrink-0">
+      <Toolbar orientation="vertical" aria-label="Studio" className="flex h-full w-(--sidebar-width-icon) flex-col items-center gap-1 py-2">
+        <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-8 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <img src={nornMark} alt="" width={24} height={24} className="size-6 object-contain" />
+        </Link>
+        {global.map((section) => <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)} />)}
+        {groups.map((group) => (
+          <div key={group ?? ""} role="group" aria-label={group} className="flex flex-col items-center gap-1">
+            <div aria-hidden className="my-1.5 h-px w-4 bg-sidebar-border" />
+            {own.filter((section) => section.group === group).map((section) => (
+              <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)}
+                firstHref={firstHref(section)} active={section.index === false && current?.path === section.path}
+                onExpandSection={onExpandSection} />
+            ))}
+          </div>
+        ))}
+        <div className="mt-auto flex flex-col items-center gap-2">
+          {assistant && <AssistantToggle title={assistant.title} />}
+          <AccountMenu account={account} onSignOut={onSignOut} />
         </div>
-      ))}
-      <div className="mt-auto flex flex-col items-center gap-2">
-        {foot.map((section) => <RailLink key={section.path} section={section} />)}
-        {assistant && <AssistantToggle title={assistant.title} />}
-        <AccountMenu account={account} onSignOut={onSignOut} />
-      </div>
-    </Toolbar>
+      </Toolbar>
+    </div>
   )
 }
 
-const OVERVIEW = "__overview"
-
 // Focus stays on the tree item; its row is the label inside.
 const focusRow = "outline-none focus-visible:[&>[data-slot=tree-label]]:ring-2 focus-visible:[&>[data-slot=tree-label]]:ring-ring"
+const row = "flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground/80 outline-none hover:bg-sidebar-accent hover:text-sidebar-foreground data-current:bg-sidebar-accent data-current:font-medium data-current:text-sidebar-foreground [&_svg]:size-4 [&_svg]:shrink-0"
 
-/** The selected applet's sidebar: its title, the scope, its primary action, and its pages grouped with their counts. */
-function AppletPanel({ section, pathname }: { readonly section: Section; readonly pathname: string }) {
-  const { setOpenMobile, toggleSidebar } = useSidebar()
-  const entries = (section.useMenu ?? none)() ?? []
-  const badge = shown((section.useBadge ?? none)())
-  const groups = [...new Set(entries.map(({ group }) => group ?? ""))]
-  const current = [...entries].filter(({ href }) => within(href, pathname)).sort((a, b) => b.href.length - a.href.length)[0]?.href ?? (pathname === section.path ? OVERVIEW : null)
-  // The first group starts open and the rest closed, until the reader opens or closes one; the current page's group never closes.
-  const [chosen, setChosen] = useState<Readonly<Record<string, boolean>>>({})
-  const values = groups.map((heading) => `group:${heading}`)
+/** The current page's tree value: the item that claims the longest prefix of it, else its destination. */
+function currentOf(sections: readonly Section[], navigation: Navigation, pathname: string): string | null {
+  const claimed = sections.flatMap((section) => (navigation.menus.get(section.path) ?? []).map((entry) => ({ entry, at: claim(entry, pathname) })))
+    .filter(({ at }) => at !== undefined).sort((a, b) => (b.at?.length ?? 0) - (a.at?.length ?? 0))[0]
+  if (claimed) return claimed.entry.href
+  const section = destinationOf(sections, pathname, navigation.menus)
+  return section ? `dest:${section.path}` : null
+}
+
+/** Record only the tree branches the reader actually toggled, leaving untouched branches free to follow defaults. */
+export function diffExpanded(
+  previous: readonly string[],
+  next: readonly string[],
+  chosen: Readonly<Record<string, boolean>>,
+): Readonly<Record<string, boolean>> {
+  const prevSet = new Set(previous)
+  const nextSet = new Set(next)
+  const updated: Record<string, boolean> = { ...chosen }
+  for (const id of prevSet) if (!nextSet.has(id)) updated[id] = false
+  for (const id of nextSet) if (!prevSet.has(id)) updated[id] = true
+  return updated
+}
+
+/**
+ * The perspective's sidebar: the workspace switcher, then its spaces (collapsible headings, never
+ * walls), each listing its destinations; the open destination lists its items under it.
+ */
+function SectionSidebar({ sections, perspective, navigation, pathname, chosen, onChosenChange }: {
+  readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation; readonly pathname: string
+  readonly chosen: Readonly<Record<string, boolean>>
+  readonly onChosenChange: (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) => void
+}) {
+  const { setOpenMobile } = useSidebar()
+  const own = sections.filter((section) => section.perspective === perspective)
+  const open = destinationOf(own, pathname, navigation.menus)
+  const current = currentOf(own, navigation, pathname)
+  const spaces = [...new Set(own.map(({ group }) => group ?? ""))]
+  // Spaces start open, the open destination's items show, and a destination's first group of items starts open;
+  // the reader's own choices win, except that the current page's row is never hidden.
+  const defaults = new Map<string, boolean>()
+  const holding = new Set<string>()
+  for (const space of spaces) defaults.set(`space:${space}`, true)
+  for (const section of own) {
+    const entries = navigation.menus.get(section.path) ?? []
+    const active = section === open
+    if (entries.length > 0) defaults.set(`dest:${section.path}`, active || section.index === false)
+    const headings = [...new Set(entries.map(({ group }) => group ?? ""))].filter((heading) => heading !== "")
+    headings.forEach((heading, index) => defaults.set(`group:${section.path}:${heading}`, index === 0))
+    if (active) holding.add(`space:${section.group ?? ""}`)
+    const at = entries.find(({ href }) => href === current)
+    if (at) {
+      holding.add(`space:${section.group ?? ""}`).add(`dest:${section.path}`)
+      if (at.group) holding.add(`group:${section.path}:${at.group}`)
+    }
+  }
+  const values = [...defaults.keys()]
+  const expanded = values.filter((value) => holding.has(value) || (chosen[value] ?? defaults.get(value)))
   const close = () => setOpenMobile(false)
-  const label = "flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-sm text-sidebar-foreground/85 outline-none hover:bg-sidebar-accent hover:text-sidebar-foreground data-current:bg-sidebar-accent data-current:font-medium data-current:text-sidebar-foreground [&_svg]:size-4 [&_svg]:shrink-0"
+  const label = PERSPECTIVES.find(({ id }) => id === perspective)?.label ?? ""
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <div className="space-y-3 px-4 pt-5 pb-3">
-        <div className="space-y-1">
-          <h2 className="truncate text-xl font-semibold tracking-tight">{section.label}</h2>
-          <ScopeSwitcher />
-        </div>
-        {section.action && (
-          <Button asChild className="w-full rounded-full">
-            <Link to={section.action.to} onClick={close}><Plus aria-hidden />{section.action.label}</Link>
-          </Button>
-        )}
-      </div>
-      <nav aria-label={section.label} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        <Tree aria-label={`${section.label} pages`} mode="none" expandOnPress current={current} expanded={values.filter((value, index) => (chosen[value] ?? index === 0) || holds(value, current, entries))} onExpandedChange={(next) => setChosen(Object.fromEntries(values.map((value) => [value, next.includes(value)])))}>
-          <TreeItem value={OVERVIEW} label="Overview" className={focusRow}>
-            <TreeItemLabel render={<Link to={section.path} onClick={close} />} className={cn(label, section.kind && KINDS[section.kind].svg)}>
-              <section.icon aria-hidden /><span className="truncate">Overview</span>
-              {badge && <span className="ms-auto rounded-full bg-destructive px-1.5 text-[0.6875rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{badge}</span>}
-            </TreeItemLabel>
-          </TreeItem>
-          {groups.map((heading) => {
-            const members = entries.filter((entry) => (entry.group ?? "") === heading)
-            const items = members.map((entry) => {
-              const Icon = entry.icon ?? (entry.kind ? KINDS[entry.kind].icon : undefined)
-              const text = typeof entry.label === "string" ? entry.label : undefined
-              const count = shown(entry.count)
-              return (
-                <TreeItem key={entry.href} value={entry.href} label={text} className={focusRow}>
-                  <TreeItemLabel render={<Link {...target(section, entry.href)} onClick={close} />} className={cn(label, entry.kind && KINDS[entry.kind].svg)}>
-                    {Icon && <Icon aria-hidden />}<span className="truncate">{entry.label}</span>
-                    {count && <span className="ms-auto text-xs text-muted-foreground tabular-nums">{count}</span>}
-                  </TreeItemLabel>
-                </TreeItem>
-              )
-            })
-            if (heading === "") return items
+      <div className="px-2 pt-2 pb-1"><ScopeSwitcher /></div>
+      <nav aria-label={label} className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+        <Tree aria-label={`${label} pages`} mode="none" expandOnPress current={current} expanded={expanded}
+          onExpandedChange={(next) => onChosenChange((previous) => diffExpanded(expanded, next, previous))}>
+          {spaces.map((space) => {
+            const members = own.filter((section) => (section.group ?? "") === space)
+            const items = members.map((section) => <Destination key={section.path} section={section} entries={navigation.menus.get(section.path) ?? []} badge={navigation.badges.get(section.path)} close={close} />)
+            if (space === "") return items
             return (
-              <TreeItem key={heading} value={`group:${heading}`} label={heading} className={cn("mt-3", focusRow)}>
-                <TreeItemLabel className="group/heading flex h-7 w-full items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground outline-none hover:text-foreground">
-                  <span className="truncate">{heading}</span>
-                  <span className="text-muted-foreground/70 tabular-nums">{members.length}</span>
+              <TreeItem key={space} value={`space:${space}`} label={space} className={cn("mt-4 first:mt-2", focusRow)}>
+                <TreeItemLabel className="group/heading flex h-6 w-full items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground outline-none hover:text-foreground">
+                  <span className="truncate">{space}</span>
                   <TreeItemIndicator className="ms-auto flex opacity-0 transition-[opacity,rotate] group-hover/heading:opacity-100 data-expanded:rotate-90"><ChevronRight aria-hidden className="size-3.5" /></TreeItemIndicator>
                 </TreeItemLabel>
-                <TreeGroup className="mt-0.5 space-y-0.5">{items}</TreeGroup>
+                <TreeGroup className="mt-0.5 space-y-px">{items}</TreeGroup>
               </TreeItem>
             )
           })}
         </Tree>
       </nav>
-      <div className="flex items-center px-3 pb-3">
-        <Hint label={<>Collapse the sidebar <Keys className="opacity-70">⌘B</Keys></>} side="top">
-          <button type="button" onClick={toggleSidebar} aria-label="Collapse the sidebar" className="flex size-8 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring rtl:rotate-180"><ChevronsLeft aria-hidden className="size-4" /></button>
-        </Hint>
-      </div>
     </div>
   )
 }
 
-/** The current page's group stays open so its row is never hidden. */
-const holds = (value: string, current: string | null, entries: readonly MenuEntry[]) =>
-  current !== null && entries.some(({ href, group: heading }) => href === current && `group:${heading ?? ""}` === value)
+/** One destination in the sidebar: its row (a link, or a plain heading when it has no page), then its items. */
+function Destination({ section, entries, badge, close }: { readonly section: Section; readonly entries: readonly MenuEntry[]; readonly badge: string | undefined; readonly close: () => void }) {
+  const headings = [...new Set(entries.map(({ group }) => group ?? ""))]
+  // Items carry no icon: under one destination they are all one kind, so an icon would repeat, not help scanning.
+  const rows = (members: readonly MenuEntry[]) => members.map((entry) => {
+    const count = shown(entry.count)
+    return (
+      <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
+        <TreeItemLabel render={<Link {...target(section, entry.href)} onClick={close} />} className={cn(row, "ps-8", entry.kind && KINDS[entry.kind].svg)}>
+          <span className="truncate">{entry.label}</span>
+          {count && <span className="ms-auto text-xs text-muted-foreground tabular-nums">{count}</span>}
+        </TreeItemLabel>
+      </TreeItem>
+    )
+  })
+  const children = headings.map((heading) => {
+    const members = entries.filter((entry) => (entry.group ?? "") === heading)
+    if (heading === "") return rows(members)
+    return (
+      <TreeItem key={heading} value={`group:${section.path}:${heading}`} label={heading} className={cn("mt-1", focusRow)}>
+        <TreeItemLabel className="group/heading flex h-6 w-full items-center gap-1 rounded-md ps-8 pe-2 text-xs text-muted-foreground outline-none hover:text-foreground">
+          <span className="truncate">{heading}</span>
+          <span className="text-muted-foreground/70 tabular-nums">{members.length}</span>
+          <TreeItemIndicator className="ms-auto flex opacity-0 transition-[opacity,rotate] group-hover/heading:opacity-100 data-expanded:rotate-90"><ChevronRight aria-hidden className="size-3.5" /></TreeItemIndicator>
+        </TreeItemLabel>
+        <TreeGroup className="space-y-px">{rows(members)}</TreeGroup>
+      </TreeItem>
+    )
+  })
+  const Icon = section.icon
+  const head = <>
+    <Icon aria-hidden /><span className="truncate">{section.label}</span>
+    {badge && <span className="ms-auto rounded-full bg-destructive px-1.5 text-[0.6875rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{badge}</span>}
+  </>
+  return (
+    <TreeItem value={`dest:${section.path}`} data-section-path={section.path} label={section.label} className={focusRow}>
+      {section.index === false
+        ? <TreeItemLabel className={cn(row, "cursor-default")}>{head}</TreeItemLabel>
+        : <TreeItemLabel render={<Link to={section.path} onClick={close} />} className={cn(row, section.kind && KINDS[section.kind].svg)}>{head}</TreeItemLabel>}
+      {entries.length > 0 && <TreeGroup className="mt-px space-y-px">{children}</TreeGroup>}
+    </TreeItem>
+  )
+}
 
-/** Section, item, then the record under it. */
-function Crumbs({ section, pathname }: { readonly section: Section; readonly pathname: string }) {
-  const entry = ((section.useMenu ?? none)() ?? []).find(({ href }) => within(href, pathname))
-  const record = entry && pathname !== entry.href ? decoded(pathname.slice(entry.href.length + 1)) : undefined
+/** Destination, item, then the record under it. Collapses to the immediate parent link at narrow container widths so no link is crushed to 0px. */
+function Crumbs({ section, entries, pathname }: { readonly section: Section; readonly entries: readonly MenuEntry[]; readonly pathname: string }) {
+  const found = entries.map((entry) => ({ entry, at: claim(entry, pathname) })).filter(({ at }) => at !== undefined).sort((a, b) => (b.at?.length ?? 0) - (a.at?.length ?? 0))[0]
+  const entry = found?.entry
+  const record = found?.at !== undefined && pathname !== found.at ? decoded(pathname.slice(found.at.length + 1)) : undefined
   const last = entry === undefined ? "section" : record === undefined ? "entry" : "record"
+  const sectionClass = last === "record" ? "hidden @md:inline-flex" : last === "entry" && section.index === false ? "hidden @sm:inline-flex" : ""
+  const entryClass = last === "entry" && section.index !== false ? "hidden @sm:inline-flex" : ""
+  const sep1Class = last === "record" ? "hidden @md:block" : "hidden @sm:block"
   return (
     <Breadcrumb className="min-w-0">
-      <BreadcrumbList className="flex-nowrap">
-        <BreadcrumbItem className={cn(last !== "section" && "hidden md:inline-flex")}>
-          {last === "section" ? <BreadcrumbPage>{section.label}</BreadcrumbPage> : <BreadcrumbLink asChild><Link to={section.path}>{section.label}</Link></BreadcrumbLink>}
+      <BreadcrumbList className="min-w-0 flex-nowrap overflow-hidden">
+        <BreadcrumbItem className={cn("min-w-0", sectionClass)}>
+          {last === "section" || section.index === false
+            ? <BreadcrumbPage className={cn("truncate", last !== "section" && "font-normal text-muted-foreground")}>{section.label}</BreadcrumbPage>
+            : <BreadcrumbLink asChild><Link to={section.path} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className={cn("size-3.5 shrink-0 rtl:rotate-180", last === "entry" ? "@sm:hidden" : "hidden")} /><span className="truncate">{section.label}</span></Link></BreadcrumbLink>}
         </BreadcrumbItem>
         {entry && <>
-          <BreadcrumbSeparator className="hidden md:block" />
-          <BreadcrumbItem className={cn("min-w-0", last === "record" && "hidden md:inline-flex")}>
-            {last === "entry" ? <BreadcrumbPage className="truncate">{entry.label}</BreadcrumbPage> : <BreadcrumbLink asChild><Link to={entry.href} className="truncate">{entry.label}</Link></BreadcrumbLink>}
+          <BreadcrumbSeparator className={sep1Class} />
+          <BreadcrumbItem className={cn("min-w-0", entryClass)}>
+            {last === "entry"
+              ? <BreadcrumbPage className="truncate">{entry.label}</BreadcrumbPage>
+              : <BreadcrumbLink asChild><Link to={entry.href} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className="size-3.5 shrink-0 rtl:rotate-180 @md:hidden" /><span className="truncate">{entry.label}</span></Link></BreadcrumbLink>}
           </BreadcrumbItem>
         </>}
         {record !== undefined && <>
-          <BreadcrumbSeparator className="hidden md:block" />
-          <BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate font-mono text-xs">{record}</BreadcrumbPage></BreadcrumbItem>
+          <BreadcrumbSeparator className="hidden @md:block" />
+          <BreadcrumbItem className="hidden min-w-0 @md:inline-flex"><BreadcrumbPage className="truncate font-mono text-xs">{record}</BreadcrumbPage></BreadcrumbItem>
         </>}
       </BreadcrumbList>
     </Breadcrumb>
   )
 }
 
-/** "Search… ⌘K": every applet and every page the applets list. */
-function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
+/**
+ * The top-level perspective switch. It changes what the navigation lists and the default density,
+ * never what the reader may do; a page the other perspective lists opens its home instead.
+ */
+function PerspectiveSwitch({ perspective, onChange }: { readonly perspective: Perspective; readonly onChange: (next: Perspective) => void }) {
+  return (
+    <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-md bg-muted p-0.5">
+      {PERSPECTIVES.map(({ id, label }) => (
+        <button key={id} type="button" aria-pressed={perspective === id} onClick={() => onChange(id)}
+          className="flex h-7 items-center gap-1.5 rounded-[0.3125rem] px-1.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent @sm:px-2 @lg:px-2.5 [&_svg]:size-3.5">
+          {id === "workspace" ? <LayoutGrid aria-hidden /> : <Wrench aria-hidden />}<span className="sr-only @lg:not-sr-only">{label}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** "Search… ⌘K", the universal entry: every destination in both perspectives, every page they list, and the perspective switch. */
+function CommandMenu({ sections, navigation, onPerspective }: { readonly sections: readonly Section[]; readonly navigation: Navigation; readonly onPerspective: (next: Perspective) => void }) {
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
-  const lists = sections.map((section) => ({ section, entries: (section.useMenu ?? none)() ?? [] }))
+  const lists = sections.map((section) => ({ section, entries: navigation.menus.get(section.path) ?? [] }))
   const routes = new Map<string, { to: string; hash?: string }>([
     ...sections.map(({ path }) => [`section:${path}`, { to: path }] as const),
     ...lists.flatMap(({ section, entries }) => entries.map(({ href }) => [`entry:${section.path}:${href}`, target(section, href)] as const)),
   ])
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex h-9 w-full max-w-md min-w-0 items-center gap-2 rounded-full bg-muted/60 px-3 text-sm text-muted-foreground ring-1 ring-border outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring max-md:w-9 max-md:justify-center max-md:px-0">
-        <Search aria-hidden className="size-4 shrink-0" /><span className="hidden truncate md:inline">Search…</span><Keys className="ms-auto hidden text-meta md:inline">⌘K</Keys>
+      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring @2xl:w-full @2xl:justify-start @2xl:gap-2 @2xl:border @2xl:bg-background @2xl:px-2.5">
+        <Search aria-hidden className="size-4 shrink-0" /><span className="hidden truncate @2xl:inline">Search…</span><Keys className="ms-auto hidden text-xs @2xl:inline">⌘K</Keys>
       </DialogTrigger>
       <DialogBackdrop className="fixed inset-0 bg-black/40 transition-opacity duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0" />
-      <DialogContent className="fixed top-[12vh] left-1/2 m-0 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-2xl bg-popover p-0 text-popover-foreground shadow-2xl ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
+      <DialogContent className="fixed top-[12vh] left-1/2 m-0 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-xl bg-popover p-0 text-popover-foreground shadow-2xl ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
         <DialogTitle className="sr-only">Search Studio</DialogTitle>
-        <Command onAction={(value) => { const to = routes.get(value); setOpen(false); if (to) void navigate(to) }}>
+        <Command onAction={(value) => {
+          setOpen(false)
+          const perspective = value.startsWith("perspective:") ? value.slice("perspective:".length) : undefined
+          if (isPerspective(perspective)) return onPerspective(perspective)
+          const to = routes.get(value)
+          if (to) void navigate(to)
+        }}>
           <div className="flex items-center gap-2 border-b px-4">
             <Search aria-hidden className="size-4 text-muted-foreground" />
-            <CommandInput aria-label="Search applets, object types, questions" placeholder="Search applets, object types, questions…" className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
+            <CommandInput aria-label="Search pages, object types, metrics" placeholder="Search pages, object types, metrics…" className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
           </div>
           <CommandEmpty className="hidden px-4 py-8 text-center text-sm text-muted-foreground data-empty:block">Nothing matches.</CommandEmpty>
           <CommandList className="max-h-[min(24rem,60vh)] overflow-y-auto p-1.5">
             <CommandGroup>
-              <CommandGroupLabel className="px-2 pt-2 pb-1 text-xs text-muted-foreground">Applets</CommandGroupLabel>
-              {sections.map(({ path, label, icon: Icon }) => (
-                <CommandItem key={path} value={`section:${path}`} label={label} className="flex cursor-default items-center gap-2 rounded-lg px-2 py-1.5 text-sm data-highlighted:bg-accent">
+              <CommandGroupLabel className="px-2 pt-2 pb-1 text-xs text-muted-foreground">Go to</CommandGroupLabel>
+              {sections.filter((section) => section.index !== false).map(({ path, label, icon: Icon, perspective }) => (
+                <CommandItem key={path} value={`section:${path}`} label={label} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
                   <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Icon /></CommandItemIcon>{label}
+                  {perspective !== "global" && <span className="ms-auto text-xs text-muted-foreground">{PERSPECTIVES.find(({ id }) => id === perspective)?.label}</span>}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+            <CommandGroup>
+              <CommandGroupLabel className="px-2 pt-3 pb-1 text-xs text-muted-foreground">Perspective</CommandGroupLabel>
+              {PERSPECTIVES.map(({ id, label }) => (
+                <CommandItem key={id} value={`perspective:${id}`} label={`Switch to ${label}`} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                  <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4">{id === "workspace" ? <LayoutGrid /> : <Wrench />}</CommandItemIcon>Switch to {label}
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -395,7 +551,7 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
               <CommandGroup key={section.path}>
                 <CommandGroupLabel className="px-2 pt-3 pb-1 text-xs text-muted-foreground">{section.label}</CommandGroupLabel>
                 {entries.map((entry) => (
-                  <CommandItem key={entry.href} value={`entry:${section.path}:${entry.href}`} label={typeof entry.label === "string" ? entry.label : entry.href} keywords={entry.group ? [entry.group] : undefined} className="flex cursor-default items-center gap-2 rounded-lg px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                  <CommandItem key={entry.href} value={`entry:${section.path}:${entry.href}`} label={typeof entry.label === "string" ? entry.label : entry.href} keywords={entry.group ? [entry.group] : undefined} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
                     {(() => { const Icon = entry.icon ?? (entry.kind ? KINDS[entry.kind].icon : section.icon); return <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Icon /></CommandItemIcon> })()}
                     <span className="truncate">{entry.label}</span>{entry.group && <span className="ms-auto truncate text-xs text-muted-foreground">{entry.group}</span>}
                   </CommandItem>
@@ -426,7 +582,7 @@ function ConnectionBanner() {
   )
 }
 
-const iconButton = "flex size-9 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent [&_svg]:size-[1.15rem]"
+const iconButton = "flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent [&_svg]:size-4"
 
 /** The page bar's right-hand buttons: the page's own tools, then shortcuts and notifications. */
 function BarButtons({ tools }: { readonly tools?: ReactNode }) {
@@ -443,13 +599,13 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
       </Menu>}
       {tools}
       <Popover>
-        <PopoverTrigger aria-label="Keyboard shortcuts" className={cn(iconButton, "max-md:hidden")}><Keyboard aria-hidden /></PopoverTrigger>
+        <PopoverTrigger aria-label="Keyboard shortcuts" className={cn(iconButton, "hidden @xl:flex")}><Keyboard aria-hidden /></PopoverTrigger>
         <KitPopoverContent align="end" className="w-60">
           <PopoverTitle className="mb-2 text-sm font-medium">Keyboard shortcuts</PopoverTitle>
           <dl className="grid grid-cols-[1fr_auto] gap-y-1.5 text-sm">
             <dt className="text-muted-foreground">Search</dt><dd><Keys>⌘K</Keys></dd>
             <dt className="text-muted-foreground">Collapse the sidebar</dt><dd><Keys>⌘B</Keys></dd>
-            <dt className="text-muted-foreground">Move between applets</dt><dd><Keys>↑ ↓</Keys></dd>
+            <dt className="text-muted-foreground">Move between rail items</dt><dd><Keys>↑ ↓</Keys></dd>
             <dt className="text-muted-foreground">Jump to a page</dt><dd className="text-muted-foreground">type its name</dd>
           </dl>
         </KitPopoverContent>
@@ -466,11 +622,12 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
 }
 
 /**
- * The app rail and the selected applet's sidebar (shadcn's sidebar-09 layout), the page in a
- * rounded card beside them, and the inspector docked on its right.
+ * The workbench shell: a slim rail and the perspective's sidebar on one quiet tint, the page flat on
+ * the background beside them under one bar (breadcrumbs, search, the perspective switch), and the
+ * inspector and assistant docked on the end side.
  */
 export function Shell(props: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
-  return <LocaleProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></LocaleProvider>
+  return <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
 }
 
 /**
@@ -495,44 +652,122 @@ function useHashScroll() {
   }, [hash, at])
 }
 
+/** The sidebar, top bar and page frame inside SidebarProvider, preserving keyboard focus across collapse/expand. */
+function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale, pathname, perspective, navigation, current, switchTo }: {
+  readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent
+  readonly account: Account; readonly onSignOut: () => void; readonly locale: ReturnType<typeof useLocale>["locale"]
+  readonly pathname: string; readonly perspective: Perspective; readonly navigation: Navigation
+  readonly current: Section | undefined; readonly switchTo: (next: Perspective) => void
+}) {
+  const { open, isMobile } = useSidebar()
+  const sidebarPanelRef = useRef<HTMLDivElement>(null)
+  const railRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const wasOpenRef = useRef(open)
+  const focusWasInPanelRef = useRef(false)
+  const pendingFocusSectionRef = useRef<string | null>(null)
+  const [chosenByPerspective, setChosenByPerspective] = useState<Readonly<Record<Perspective, Readonly<Record<string, boolean>>>>>({ workspace: {}, builder: {} })
+  const updateChosen = (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) =>
+    setChosenByPerspective((all) => ({ ...all, [perspective]: update(all[perspective]) }))
+  const expandSection = (path: string) => {
+    pendingFocusSectionRef.current = path
+    const section = sections.find((candidate) => candidate.path === path && candidate.perspective === perspective)
+    if (section?.group) updateChosen((previous) => ({ ...previous, [`space:${section.group}`]: true }))
+  }
+
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target
+      focusWasInPanelRef.current = target instanceof Node && Boolean(sidebarPanelRef.current?.contains(target))
+    }
+    document.addEventListener("focusin", onFocusIn)
+    return () => document.removeEventListener("focusin", onFocusIn)
+  }, [])
+
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current
+    wasOpenRef.current = open
+    if (isMobile) return
+    if (wasOpen && !open) {
+      const active = document.activeElement
+      const lost = sidebarPanelRef.current?.contains(active) || (active === document.body && focusWasInPanelRef.current)
+      focusWasInPanelRef.current = false
+      if (lost) {
+        const railTarget = railRef.current?.querySelector<HTMLElement>('[data-status="active"], [data-active="true"], [aria-current="page"]')
+        ;(railTarget ?? triggerRef.current)?.focus()
+      }
+      return
+    }
+    if (!wasOpen && open && pendingFocusSectionRef.current !== null) {
+      const path = pendingFocusSectionRef.current
+      pendingFocusSectionRef.current = null
+      const panel = sidebarPanelRef.current
+      const sectionItem = Array.from(panel?.querySelectorAll<HTMLElement>("[data-section-path]") ?? [])
+        .find((element) => element.dataset.sectionPath === path)
+      sectionItem?.focus()
+      if (panel && !panel.contains(document.activeElement)) {
+        panel.querySelector<HTMLElement>('[role="treeitem"], a[href], button')?.focus()
+      }
+    }
+  }, [open, isMobile])
+
+  return (
+    <>
+      <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-sidebar-border">
+        <div className="flex size-full min-w-0 flex-row bg-sidebar">
+          <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account}
+            onSignOut={onSignOut} assistant={assistant} railRef={railRef}
+            onExpandSection={expandSection} />
+          <div ref={sidebarPanelRef} className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+            <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname}
+              chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} />
+          </div>
+        </div>
+      </Sidebar>
+      <SidebarInset className="min-w-0 flex-row overflow-hidden">
+        <div className="@container flex min-w-0 flex-1 flex-col">
+          <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-md text-muted-foreground" />
+              <div className="hidden min-w-0 overflow-hidden @[17rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
+            </div>
+            <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
+            <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
+              <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
+              <BarButtons tools={tools} />
+            </div>
+          </header>
+          <ConnectionBanner />
+          <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8"><Outlet /></div>
+        </div>
+        <Inspector />
+        <AssistantPanel assistant={assistant} />
+      </SidebarInset>
+    </>
+  )
+}
+
 /** The shell in the reader's direction: in Arabic the rail docks on the right. */
 function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
   const { locale } = useLocale()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const current = sectionOf(sections, pathname)
+  const navigate = useNavigate()
+  const chosen = usePerspective()
+  const navigation = useNavigation(sections)
+  const perspective = perspectiveOf(sections, pathname, chosen.perspective, navigation.menus)
+  const density = PERSPECTIVES.find(({ id }) => id === perspective)?.density ?? "comfortable"
+  const shown = sections.filter((section) => section.perspective === perspective || section.perspective === "global")
+  const current = destinationOf(shown, pathname, navigation.menus)
+  const switchTo = (next: Perspective) => {
+    chosen.setPerspective(next)
+    if (perspectiveOf(sections, pathname, next, navigation.menus) !== next) void navigate({ to: PERSPECTIVES.find(({ id }) => id === next)?.home ?? "/" })
+  }
   useHashScroll()
   return (
     <ViewProvider><InspectorProvider><TooltipProvider>
-      <SidebarProvider data-shell="rail" className="bg-shell has-data-[variant=inset]:bg-shell" style={{ "--sidebar-width": "20rem", "--sidebar-width-icon": "3.5rem" } as CSSProperties}>
-        <Sidebar collapsible="icon" variant="inset" side={directionOf(locale) === "rtl" ? "right" : "left"}
-          className="overflow-hidden p-0! group-data-[collapsible=icon]:w-(--sidebar-width-icon)!">
-          <div className="flex size-full min-w-0 flex-row bg-shell">
-          <Rail sections={sections} account={account} onSignOut={onSignOut} assistant={assistant} />
-          <div className="flex min-w-0 flex-1 py-2 max-md:pe-2">
-            <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl bg-sidebar ring-1 ring-sidebar-border">
-              {current
-                ? <AppletPanel key={current.path} section={current} pathname={pathname} />
-                : <div className="min-w-0 space-y-1 px-4 pt-5"><h2 className="text-xl font-semibold tracking-tight">Studio</h2><ScopeSwitcher /></div>}
-            </div>
-          </div>
-          </div>
-        </Sidebar>
-        <SidebarInset className="min-w-0 flex-row overflow-hidden ring-1 ring-border md:m-2! md:peer-data-[state=expanded]:ms-2! md:peer-data-[side=left]:peer-data-[state=collapsed]:ms-0!">
-          <div className="flex min-w-0 flex-1 flex-col">
-            <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 md:px-4">
-              <div className="flex min-w-0 items-center gap-1.5">
-                <SidebarTrigger className={cn("-ms-1 text-muted-foreground")} />
-                <div className="min-w-0">{current && <Crumbs key={current.path} section={current} pathname={pathname} />}</div>
-              </div>
-              <div className="flex justify-center md:w-[min(28rem,40vw)]"><CommandMenu sections={sections} /></div>
-              <div className="flex justify-end"><BarButtons tools={tools} /></div>
-            </header>
-            <ConnectionBanner />
-            <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8"><Outlet /></div>
-          </div>
-          <Inspector />
-          <AssistantPanel assistant={assistant} />
-        </SidebarInset>
+      <SidebarProvider data-shell="workbench" data-density={density} className="bg-background" style={{ "--sidebar-width": "17rem", "--sidebar-width-icon": "3rem" } as CSSProperties}>
+        <WorkbenchFrame sections={sections} tools={tools} assistant={assistant} account={account} onSignOut={onSignOut}
+          locale={locale} pathname={pathname} perspective={perspective} navigation={navigation} current={current} switchTo={switchTo} />
       </SidebarProvider>
     </TooltipProvider></InspectorProvider></ViewProvider>
   )

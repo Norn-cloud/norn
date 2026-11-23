@@ -443,6 +443,7 @@ fn governed_on(store: CellStore, model: &Model, transition: &str, key: &str, all
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     };
     commit_action(&mut cell, &catalog, &invocation, &Authority(allow)).is_ok()
 }

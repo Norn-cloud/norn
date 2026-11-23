@@ -468,6 +468,7 @@ fn existence_never_leaks_matrix() {
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     };
     let invisible = Policy(Some(ActionDenial::Invisible));
     let forbidden = Policy(Some(ActionDenial::Forbidden {

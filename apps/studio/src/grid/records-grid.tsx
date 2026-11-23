@@ -42,11 +42,11 @@ function SortMark({ direction }: { readonly direction: "asc" | "desc" | undefine
   return <ArrowUpDown className="size-3 opacity-40" aria-hidden />
 }
 
-/** The Records card, on the D65 depth model the canvas uses: hairline border, top highlight, contact plus ambient shadow. */
+/** The Records section: flat on the page (design v3), its heading, then the rail, the toolbar and the one framed table. */
 function Shell({ children }: { readonly children: ReactNode }) {
   return (
-    <section aria-label="Records" className="rounded-node border border-node-border bg-card p-3 shadow-[var(--node-highlight),var(--elevation-node)]">
-      <h2 className="flex items-center gap-2 px-1 pb-3 text-panel font-medium"><Rows3 className="size-4 text-muted-foreground" aria-hidden />Records</h2>
+    <section aria-label="Records" className="min-w-0">
+      <h2 className="flex items-center gap-2 pb-3 text-section font-medium"><Rows3 className="size-4 text-muted-foreground" aria-hidden />Records</h2>
       {children}
     </section>
   )
@@ -217,7 +217,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          <div role="toolbar" aria-label="Records" className="flex w-max flex-nowrap items-center gap-0.5 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
+          <div role="toolbar" aria-label="Records" className="flex w-max flex-nowrap items-center gap-0.5">
             <Popover open={filterOpen} onOpenChange={(open) => { setFilterOpen(open); if (open && draft.length === 0 && filterCount === 0) { const first = filterable(fields)[0]; if (first) setDraft([blankClause(first)]) } }}>
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="sm" className={pill} disabled={!canQuery || filterable(fields).length === 0} title={off}>
@@ -267,7 +267,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
           <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review{page.origin === "live" ? "; the Quarantine tab names them" : ""}.</p>
         )}
 
-        <div className="relative overflow-hidden rounded-xl border border-node-border bg-card">
+        <div className="relative overflow-hidden rounded-lg border bg-card">
           <div ref={scroller} role="grid" tabIndex={0} aria-label={`${concept.title} records`} aria-rowcount={rows.length + 1} aria-colcount={columns.length + 1}
             aria-busy={result.isFetching} aria-activedescendant={rows.length > 0 ? `row-${active}` : undefined} onKeyDown={onKey} onScroll={measureEdges}
             className={cn("max-h-[60vh] overflow-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset", result.isFetching && "opacity-70")}>
