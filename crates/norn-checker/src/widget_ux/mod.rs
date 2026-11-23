@@ -16,8 +16,6 @@ mod effects;
 mod forms;
 mod indexing;
 mod routes;
-#[cfg(test)]
-mod tests;
 mod tree;
 mod types;
 
@@ -478,3 +476,6 @@ fn path_index(path: &str, array_prefix: &str) -> Option<usize> {
         .parse()
         .ok()
 }
+
+#[cfg(test)]
+mod tests;
