@@ -132,9 +132,9 @@ services:
       - -c
       - >-
         for i in $$(seq 60); do
-        code=$$(printf 'user = "%s:%s"\n' "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY" |
-        curl -s -o /dev/null -w '%{http_code}' -X PUT --aws-sigv4 "aws:amz:$$S3_REGION:s3"
-        -K - "http://s3:9000/$$S3_BUCKET");
+        code=$$(curl -s -o /dev/null -w '%{http_code}' -X PUT --aws-sigv4 "aws:amz:$$S3_REGION:s3"
+        --variable %S3_ACCESS_KEY_ID --variable %S3_SECRET_ACCESS_KEY
+        --expand-user '{{S3_ACCESS_KEY_ID}}:{{S3_SECRET_ACCESS_KEY}}' "http://s3:9000/$$S3_BUCKET");
         case "$$code" in 200|409) exit 0;; esac; sleep 1; done; exit 1
 
 volumes:
