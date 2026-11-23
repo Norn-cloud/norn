@@ -148,6 +148,7 @@ pub(crate) fn run(
                 world: World::Main,
                 consumes: None,
             },
+            trace: None,
         },
         &Allow,
     )

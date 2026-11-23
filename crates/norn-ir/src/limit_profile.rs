@@ -45,6 +45,17 @@ pub const NORN_LIMITS_V1_SHA256: &str =
 /// The hash profile the limit-profile content hash is computed under.
 pub const LIMIT_PROFILE_HASH_PROFILE: HashProfile = HashProfile::Norn1;
 
+/// Host storage limit: maximum physical `SQLite` columns per projected object
+/// or link table (ruling 2026-09-25 §6).
+///
+/// Projected tables keep their system columns and earliest stored properties
+/// as physical columns within this budget and spill any remaining stored
+/// properties into `_overflow`. Both `norn-projections::sqlite_ddl` (table
+/// DDL emission) and `norn-checker::widget_ux` (rejecting query filter/sort
+/// properties that spill into `_overflow`) consume this single canonical
+/// constant.
+pub const MAX_SQLITE_COLUMNS_PER_TABLE: usize = 100;
+
 const KIB: u64 = 1024;
 const MIB: u64 = 1024 * 1024;
 

@@ -234,10 +234,13 @@ class AffectedPlanTests(unittest.TestCase):
         self.git("commit", "-qm", "synthetic change")
         return self.git("rev-parse", "HEAD")
 
-    def plan(self, *args):
-        return json.loads(subprocess.check_output(
+    def hosted_plan(self, *args):
+        return subprocess.check_output(
             ["bash", str(ROOT / "scripts/ci/core.sh"), "plan", *args],
-            cwd=self.root, text=True))
+            cwd=self.root, text=True, env={**os.environ, "CARGO_TARGET_DIR": str(self.root / ".git/target")})
+
+    def plan(self, *args):
+        return json.loads(self.hosted_plan(*args))
 
     def test_combined_group_diff_and_explicit_head(self):
         first = self.commit("crates/norn-cell/src/lib.rs")
@@ -317,6 +320,24 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertLess(len(plan["bundle"]), len(self.full["bundle"]))
         self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in plan["bundle"]))
 
+    def test_hosted_bundle_packing_matches_xtask(self):
+        command = ["bash", str(ROOT / "scripts/ci/core.sh")]
+        cases = [()]
+        for package in ("norn-api", "norn-cell", "norn-checker"):
+            base = self.git("rev-parse", "HEAD")
+            self.commit(f"crates/{package}/src/lib.rs")
+            cases.append(("--affected", base, self.git("rev-parse", "HEAD")))
+        for args in cases:
+            with self.subTest(args=args):
+                hosted = self.hosted_plan(*args)
+                raw = json.loads(hosted)
+                if args:
+                    self.assertEqual(raw["mode"], "affected")
+                    self.assertTrue(raw["packages"])
+                del raw["bundle"]
+                rust = subprocess.check_output(command + ["bundle-plan", json.dumps(raw)], cwd=ROOT, text=True)
+                self.assertEqual(rust, hosted)
+
     def test_bundle_inventory_is_exact_and_deterministic(self):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
         expected = ["test/" + value for value in self.full["shard"]]
@@ -352,18 +373,68 @@ class AffectedPlanTests(unittest.TestCase):
         result = subprocess.run(command + ["bundle-plan", json.dumps(incomplete)], capture_output=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
 
+    def built_xtask(self):
+        target = os.environ.get("CARGO_TARGET_DIR") or str(ROOT / "target")
+        metadata = json.loads(subprocess.check_output([
+            "cargo", "metadata", "--locked", "--no-deps", "--format-version", "1",
+            "--manifest-path", "crates/norn-skeleton-guard/Cargo.toml",
+        ], cwd=ROOT, env={**os.environ, "CARGO_TARGET_DIR": target}, text=True))
+        return Path(metadata["target_directory"]) / "debug" / "xtask"
+
+    def test_bundle_executor_prunes_only_between_incompatible_builds(self):
+        command = ["bash", str(ROOT / "scripts/ci/core.sh")]
+        task_script = self.root / "scripts/ci/core.sh"
+        task_script.parent.mkdir(parents=True)
+        task_script.write_text(r"""set -eu
+printf '%s\n' "$*" >> calls
+if [[ $1 == test && $2 == rest-1 ]]; then
+    [[ ! -e target/debug ]]
+    mkdir -p target/debug/.fingerprint
+else
+    case "$*" in
+        "test rest-2") [[ -d target/debug/.fingerprint ]] ;;
+        doc) [[ ! -e target/debug ]] ;;
+        *) exit 24 ;;
+    esac
+fi
+""")
+        environment = {**os.environ, "CARGO_TARGET_DIR": str(self.root / "target"),
+                       "NORN_CI_PACKAGES": ""}
+        for shared in (False, True):
+            with self.subTest(shared=shared):
+                plan = {"mode": "affected", "shard": ["rest-1", "rest-2"] if shared else ["rest-1"],
+                        "phase": [] if shared else ["doc"]}
+                packed = subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], cwd=ROOT, text=True)
+                execute = [str(self.built_xtask()), "ci", "bundle"]
+                calls = self.root / "calls"
+                for flag in ("--help", "-h", "--version"):
+                    for arguments in ([flag, "b0"], [packed, flag]):
+                        result = subprocess.run(execute + arguments, cwd=self.root,
+                                                env=environment, capture_output=True, text=True, timeout=10)
+                        self.assertNotEqual(result.returncode, 0, result.stdout)
+                        self.assertFalse(calls.exists(), result.stdout)
+                result = subprocess.run(execute + [packed, "b0"], cwd=self.root,
+                                        env=environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(calls.read_text().splitlines(), ["test rest-1", "test rest-2" if shared else "doc"])
+                self.assertEqual((self.root / "target/debug").exists(), shared)
+                calls.unlink()
+
     def test_bundle_executor_logs_success_and_propagates_failure(self):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
         plan = {"mode": "affected", "shard": [], "phase": ["test-shards"]}
         plan = json.loads(subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], text=True))
+        xtask = self.built_xtask()
         tools = self.root / "cargo-home" / "bin"
         tools.mkdir(parents=True)
         cargo = tools / "cargo"
         cargo.write_text('''#!/usr/bin/env python3
 import json, os, sys
+args = sys.argv[1:]
+if args[:2] == ["xtask", "ci"]:
+    os.execv(os.environ["BUNDLE_CANARY_XTASK"], [os.environ["BUNDLE_CANARY_XTASK"], *args[1:]])
 if os.environ.get("BUNDLE_CANARY_FAIL") == "1":
     sys.exit(23)
-args = sys.argv[1:]
 if args == ["nextest", "--version"]:
     print("cargo-nextest 0.9.150 (synthetic)")
 elif "list" in args:
@@ -376,7 +447,8 @@ else:
         cargo.chmod(0o755)
         for fail in ("0", "1"):
             environment = {**os.environ, "CARGO_HOME": str(tools.parent),
-                           "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "3", "BUNDLE_CANARY_FAIL": fail}
+                           "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "3",
+                           "BUNDLE_CANARY_XTASK": str(xtask), "BUNDLE_CANARY_FAIL": fail}
             result = subprocess.run(command + ["bundle", json.dumps(plan), plan["bundle"][0]["id"]],
                                     env=environment, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 23 if fail == "1" else 0, result.stderr)

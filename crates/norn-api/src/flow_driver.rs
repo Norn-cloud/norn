@@ -495,6 +495,7 @@ fn step_approval<E: SqlEngine>(
             && held.call.idempotency_key == step.call_key
             && held.call.action == action.action
             && held.call.input == action.input
+            && held.call.trace == action.trace
             && held.call.definitions_version.is_none()
             && held.call.requester == *starter;
         if exact {
@@ -658,6 +659,7 @@ pub fn drive_run<E: SqlEngine>(
                 let request = crate::actions::ActionRequest {
                     input: RuntimeValue::Object(action.input),
                     idempotency_key: step.call_key.clone(),
+                    trace: action.trace.map(Into::into),
                 };
                 // S2: the request's own authenticated principal, read before
                 // any recorded authority stands in for it. Only a try run as

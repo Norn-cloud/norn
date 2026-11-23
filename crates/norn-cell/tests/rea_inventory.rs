@@ -321,6 +321,7 @@ impl Fixture {
                 now: LogicalTime::from_millis(KNOWN_AT),
                 consumes: None,
             },
+            trace: None,
         };
         commit_action(host, &self.catalog(), &call, &self.principals).map_err(Box::new)
     }

@@ -295,6 +295,7 @@ fn call<'a>(action: &'a ActionRoot, key: &str, input: Value) -> ActionCall<'a> {
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 

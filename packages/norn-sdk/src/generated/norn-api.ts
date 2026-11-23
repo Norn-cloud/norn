@@ -1103,6 +1103,8 @@ export interface components {
             outcome: components["schemas"]["ActionCallOutcome"];
             /** @description The original commit, the same on every replay. */
             receipt: components["schemas"]["ActionCommit"];
+            /** @description Optional provenance trace context retained from the original call. */
+            trace?: components["schemas"]["TraceContext"];
             /**
              * Format: int64
              * @description The target's version as the original commit wrote it.
@@ -1114,6 +1116,8 @@ export interface components {
             /** @description The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes. */
             idempotencyKey: string;
             input: components["schemas"]["NornActionInput"];
+            /** @description Optional provenance trace context persisted on the committed receipt. */
+            trace?: components["schemas"]["TraceContext"];
         };
         /** @description `POST /v1/questions:trace`: one bucket of an ad-hoc question's answer. */
         AdHocTraceRequest: {
@@ -1334,6 +1338,8 @@ export interface components {
             input: {
                 [key: string]: unknown;
             };
+            /** @description Optional provenance trace context carried by the parked call. */
+            trace?: components["schemas"]["TraceContext"];
         };
         /** @description What the decision is about. Empty in this version. */
         DecisionContext: {
@@ -1814,6 +1820,8 @@ export interface components {
             ruleBinding?: string | null;
             /** @description The state it entered. */
             to: string;
+            /** @description Optional provenance trace context supplied by the caller. */
+            trace?: components["schemas"]["NornActionTraceContext"] | null;
             /** @description The fired transition. */
             transition: string;
             /** @description The turn the call committed in. */
@@ -1829,6 +1837,14 @@ export interface components {
             /** @description The callable actions an effect program can run, ordered by identity. */
             items: components["schemas"]["NornActionSummary"][];
         };
+        /**
+         * @description A content digest, `sha256:<64 lower-case hex>`.
+         *
+         *     Decoding accepts any string so that admission can report a mutable
+         *     identity (a tag, URI, or object key) as a finding;
+         *     [`Digest::is_well_formed`] is the rule.
+         */
+        NornActionDigest: string;
         /**
          * @description How an action's admitted effect program changes its target.
          * @enum {string}
@@ -1893,6 +1909,33 @@ export interface components {
             toState?: string | null;
             /** @description The effects a caller must handle. */
             uiEffects: components["schemas"]["NornActionUiEffects"];
+        };
+        /**
+         * @description Optional provenance trace context attached to an action call and persisted
+         *     on its committed receipt.
+         *
+         *     Strictly optional and additive: callers without trace context are unaffected,
+         *     and raw transcript text is never stored (`sessionDigest` admits only a
+         *     content-addressed SHA-256 digest).
+         */
+        NornActionTraceContext: {
+            /**
+             * @description Optional reference to the goal, prompt, commitment, or decision that
+             *     initiated the action (1 to 512 UTF-8 bytes, no control characters or
+             *     outer whitespace).
+             */
+            intentRef?: string;
+            /**
+             * @description Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)
+             *     of an off-ledger agent or user session transcript. Raw transcript text
+             *     is never stored in the ledger.
+             */
+            sessionDigest?: string;
+            /**
+             * @description Opaque correlation identifier tying multi-step causes and effects
+             *     together (1 to 256 UTF-8 bytes, no control characters or outer whitespace).
+             */
+            traceId: string;
         };
         /** @description The effects a form must handle before it calls, from the action's own definition. */
         NornActionUiEffects: {
@@ -12837,6 +12880,8 @@ export interface components {
             };
             /** @enum {string} */
             kind: "action";
+            /** @description Optional provenance trace context recorded on the action call. */
+            trace?: components["schemas"]["TraceContext"];
         } | {
             /** @enum {string} */
             kind: "other";
@@ -13056,6 +13101,8 @@ export interface components {
                 [key: string]: unknown;
             };
             state?: components["schemas"]["DecidedCall"] | null;
+            /** @description Optional provenance trace context carried by the parked call. */
+            trace?: components["schemas"]["TraceContext"];
         };
         /**
          * @description One approval-gated call the caller made, as its requester sees it
@@ -13288,6 +13335,29 @@ export interface components {
          * @enum {string}
          */
         StepWait: "decision" | "executor" | "timer";
+        /**
+         * @description Optional provenance trace context attached to an action call and retained
+         *     on its committed receipt.
+         */
+        TraceContext: {
+            /**
+             * @description Optional reference to the goal, prompt, commitment, or decision that
+             *     initiated the action (1 to 512 UTF-8 bytes, no control characters or
+             *     outer whitespace).
+             */
+            intentRef?: string;
+            /**
+             * @description Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)
+             *     of an off-ledger agent or user session transcript. Raw transcript text
+             *     is never stored in the ledger.
+             */
+            sessionDigest?: string;
+            /**
+             * @description Opaque correlation identifier tying multi-step causes and effects
+             *     together (1 to 256 UTF-8 bytes, no control characters or outer whitespace).
+             */
+            traceId: string;
+        };
     };
     responses: never;
     parameters: never;
