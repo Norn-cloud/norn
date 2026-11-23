@@ -474,13 +474,17 @@ pub struct TypeEnvRef {
     pub sha256: String,
 }
 
-/// A closed, versioned ZEN Expression type environment. See the module docs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ZenTypeEnv {
+struct ZenTypeEnvData {
     options: EnvOptions,
     records: BTreeMap<String, RecordType>,
     variables: BTreeMap<String, Type>,
+    decimal_binding_owners: BTreeMap<(String, String), String>,
 }
+
+/// A closed, versioned ZEN Expression type environment. See the module docs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZenTypeEnv(Box<ZenTypeEnvData>);
 
 impl ZenTypeEnv {
     /// VAL-ENV: pin exact schema refinements using the existing env/2 records.
@@ -527,27 +531,10 @@ impl ZenTypeEnv {
             BTreeMap::from([("value".to_owned(), root_type)]),
         );
         for (name, fields) in records {
-            if self.records.contains_key(&name) {
+            if self.0.records.contains_key(&name) {
                 return Err("duplicate exact schema record".into());
             }
-            self.records.insert(
-                name,
-                RecordType {
-                    kind: RecordKind::Builtin,
-                    fields: fields
-                        .into_iter()
-                        .map(|(name, ty)| {
-                            (
-                                name,
-                                Field {
-                                    ty,
-                                    source: FieldSource::Builtin,
-                                },
-                            )
-                        })
-                        .collect(),
-                },
-            );
+            self.0.records.insert(name, builtin_record(fields));
         }
         Ok(self)
     }
@@ -609,22 +596,23 @@ impl ZenTypeEnv {
         options: EnvOptions,
     ) -> Result<Self, Vec<EnvError>> {
         let mut errors = Vec::new();
-        let records =
+        let (records, decimal_binding_owners) =
             Derivation::new(defs, registry_types, opaque_unresolved_refs, &mut errors).run();
         if !errors.is_empty() {
             return Err(errors);
         }
-        let mut env = Self {
+        let mut env = Self(Box::new(ZenTypeEnvData {
             options,
             records,
             variables: BTreeMap::new(),
-        };
+            decimal_binding_owners,
+        }));
         for (name, record) in actor::records() {
-            if env.records.insert(name.clone(), record).is_some() {
+            if env.0.records.insert(name.clone(), record).is_some() {
                 errors.push(EnvError::DuplicateName { name });
             }
         }
-        env.variables.insert(
+        env.0.variables.insert(
             ACTOR_VARIABLE.to_owned(),
             Type::Record(actor::ACTOR_RECORD.to_owned()),
         );
@@ -649,11 +637,12 @@ impl ZenTypeEnv {
         fields: BTreeMap<String, Type>,
         options: EnvOptions,
     ) -> Result<Self, EnvError> {
-        Self {
+        Self(Box::new(ZenTypeEnvData {
             options,
             records: BTreeMap::new(),
             variables: BTreeMap::new(),
-        }
+            decimal_binding_owners: BTreeMap::new(),
+        }))
         .bind_input(fields)
     }
 
@@ -724,33 +713,16 @@ impl ZenTypeEnv {
             }
         }
 
-        let env = Self {
+        let records = records
+            .into_iter()
+            .map(|(name, members)| (name, builtin_record(members)))
+            .collect();
+        let env = Self(Box::new(ZenTypeEnvData {
             options,
-            records: records
-                .into_iter()
-                .map(|(name, members)| {
-                    (
-                        name,
-                        RecordType {
-                            kind: RecordKind::Builtin,
-                            fields: members
-                                .into_iter()
-                                .map(|(field, ty)| {
-                                    (
-                                        field,
-                                        Field {
-                                            ty,
-                                            source: FieldSource::Builtin,
-                                        },
-                                    )
-                                })
-                                .collect(),
-                        },
-                    )
-                })
-                .collect(),
+            records,
             variables: BTreeMap::new(),
-        };
+            decimal_binding_owners: BTreeMap::new(),
+        }));
         env.bind_input(fields)
     }
 
@@ -761,7 +733,7 @@ impl ZenTypeEnv {
     /// [`EnvError::Unresolved`] if `name` is not an object type of the
     /// environment; [`EnvError::AlreadyBound`] if `self` is bound.
     pub fn bind_self(mut self, name: &ObjectTypeName) -> Result<Self, EnvError> {
-        match self.records.get(name.as_str()) {
+        match self.0.records.get(name.as_str()) {
             Some(record) if record.kind == RecordKind::Object => {}
             _ => {
                 return Err(EnvError::Unresolved {
@@ -791,7 +763,7 @@ impl ZenTypeEnv {
         name: &ObjectTypeName,
         excluded_fields: &BTreeSet<String>,
     ) -> Result<Self, EnvError> {
-        let Some(record) = self.records.get_mut(name.as_str()) else {
+        let Some(record) = self.0.records.get_mut(name.as_str()) else {
             return Err(EnvError::Unresolved {
                 site: SELF_VARIABLE.to_owned(),
                 name: name.as_str().to_owned(),
@@ -824,7 +796,7 @@ impl ZenTypeEnv {
     /// [`EnvError::Unresolved`] if `name` is not an interface of the
     /// environment; [`EnvError::AlreadyBound`] if `self` is bound.
     pub fn bind_interface_self(mut self, name: &InterfaceName) -> Result<Self, EnvError> {
-        match self.records.get(name.as_str()) {
+        match self.0.records.get(name.as_str()) {
             Some(record) if record.kind == RecordKind::Interface => {}
             _ => {
                 return Err(EnvError::Unresolved {
@@ -848,45 +820,32 @@ impl ZenTypeEnv {
         for (field, ty) in &fields {
             let mut names = Vec::new();
             ty.records(&mut names);
-            if let Some(name) = names.into_iter().find(|n| !self.records.contains_key(n)) {
+            if let Some(name) = names.into_iter().find(|n| !self.0.records.contains_key(n)) {
                 return Err(EnvError::Unresolved {
                     site: format!("{INPUT_VARIABLE}.{field}"),
                     name,
                 });
             }
         }
-        if self.variables.contains_key(INPUT_VARIABLE) {
+        if self.0.variables.contains_key(INPUT_VARIABLE) {
             return Err(EnvError::AlreadyBound {
                 variable: INPUT_VARIABLE.to_owned(),
             });
         }
-        let record = RecordType {
-            kind: RecordKind::Builtin,
-            fields: fields
-                .into_iter()
-                .map(|(name, ty)| {
-                    (
-                        name,
-                        Field {
-                            ty,
-                            source: FieldSource::Builtin,
-                        },
-                    )
-                })
-                .collect(),
-        };
-        self.records.insert(INPUT_RECORD.to_owned(), record);
+        self.0
+            .records
+            .insert(INPUT_RECORD.to_owned(), builtin_record(fields));
         self.bind(INPUT_VARIABLE, Type::Record(INPUT_RECORD.to_owned()))?;
         Ok(self)
     }
 
     fn bind(&mut self, variable: &str, ty: Type) -> Result<(), EnvError> {
-        if self.variables.contains_key(variable) {
+        if self.0.variables.contains_key(variable) {
             return Err(EnvError::AlreadyBound {
                 variable: variable.to_owned(),
             });
         }
-        self.variables.insert(variable.to_owned(), ty);
+        self.0.variables.insert(variable.to_owned(), ty);
         Ok(())
     }
 
@@ -905,7 +864,7 @@ impl ZenTypeEnv {
         ty.records(&mut names);
         if let Some(name) = names
             .into_iter()
-            .find(|name| !self.records.contains_key(name))
+            .find(|name| !self.0.records.contains_key(name))
         {
             return Err(EnvError::Unresolved {
                 site: variable.to_owned(),
@@ -918,26 +877,33 @@ impl ZenTypeEnv {
 
     /// The derivation options.
     #[must_use]
-    pub const fn options(&self) -> EnvOptions {
-        self.options
+    pub fn options(&self) -> EnvOptions {
+        self.0.options
     }
 
     /// Every record, by name.
     #[must_use]
-    pub const fn records(&self) -> &BTreeMap<String, RecordType> {
-        &self.records
+    pub fn records(&self) -> &BTreeMap<String, RecordType> {
+        &self.0.records
+    }
+
+    pub(crate) fn decimal_binding_owner(&self, record: &str, field: &str) -> Option<&str> {
+        self.0
+            .decimal_binding_owners
+            .get(&(record.to_owned(), field.to_owned()))
+            .map(String::as_str)
     }
 
     /// The record named `name`.
     #[must_use]
     pub fn record(&self, name: &str) -> Option<&RecordType> {
-        self.records.get(name)
+        self.0.records.get(name)
     }
 
     /// The bound variables and their types.
     #[must_use]
-    pub const fn variables(&self) -> &BTreeMap<String, Type> {
-        &self.variables
+    pub fn variables(&self) -> &BTreeMap<String, Type> {
+        &self.0.variables
     }
 
     /// The environment as a Norn1 canonical JSON value.
@@ -948,11 +914,13 @@ impl ZenTypeEnv {
 
     fn canonical_value_at_version(&self, version: TypeEnvVersion) -> JsonValue {
         let records = self
+            .0
             .records
             .iter()
             .map(|(name, record)| (name.clone(), record_value(record, version)))
             .collect();
         let variables = self
+            .0
             .variables
             .iter()
             .map(|(name, ty)| (name.clone(), ty.to_canonical_value(version)))
@@ -962,7 +930,7 @@ impl ZenTypeEnv {
             ("version", number(u64::from(version.number()))),
             (
                 "maxLinkDepth",
-                number(u64::from(self.options.max_link_depth)),
+                number(u64::from(self.0.options.max_link_depth)),
             ),
             ("records", JsonValue::Object(records)),
             ("variables", JsonValue::Object(variables)),
@@ -1000,8 +968,9 @@ impl ZenTypeEnv {
             )
         };
         if version == TypeEnvVersion::V1
-            && (self.variables.values().any(is_rate)
+            && (self.0.variables.values().any(is_rate)
                 || self
+                    .0
                     .records
                     .values()
                     .flat_map(|record| record.fields.values())
@@ -1180,7 +1149,12 @@ impl<'d, 'e> Derivation<'d, 'e> {
             .collect()
     }
 
-    fn run(mut self) -> BTreeMap<String, RecordType> {
+    fn run(
+        mut self,
+    ) -> (
+        BTreeMap<String, RecordType>,
+        BTreeMap<(String, String), String>,
+    ) {
         let mut records = BTreeMap::new();
         for ext in self.defs.extensions {
             if !self.objects.contains_key(ext.target.as_str()) {
@@ -1286,7 +1260,12 @@ impl<'d, 'e> Derivation<'d, 'e> {
         // inverse roles its members gained above.
         self.enrich_intersections(&records);
         records.extend(self.value_records);
-        records
+        let owners = crate::check::units::collect_decimal_binding_owners(
+            &self.interfaces,
+            &self.intersection_members,
+            &records,
+        );
+        (records, owners)
     }
 
     /// Give every intersection record the inverse roles of its members. Merging two members'
@@ -1826,6 +1805,24 @@ impl<'d, 'e> Derivation<'d, 'e> {
             };
             return (ty, nullable);
         }
+    }
+}
+
+fn builtin_record(fields: BTreeMap<String, Type>) -> RecordType {
+    RecordType {
+        kind: RecordKind::Builtin,
+        fields: fields
+            .into_iter()
+            .map(|(name, ty)| {
+                (
+                    name,
+                    Field {
+                        ty,
+                        source: FieldSource::Builtin,
+                    },
+                )
+            })
+            .collect(),
     }
 }
 

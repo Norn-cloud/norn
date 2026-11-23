@@ -1,10 +1,254 @@
 //! VAL-UNIT / VAL-RATE: bounded numeric dimensions, without implicit conversion.
-use crate::{Type, ZenTypeEnv};
-use norn_ir::{UnitRef, metric::DimensionPath};
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::{RecordType, Type, ZenTypeEnv};
+use norn_ir::{InterfaceDef, PropertyType, UnitRef, metric::DimensionPath};
+use zen_expression::parser::Node;
 
 mod algebra;
-pub(super) use algebra::{Operation, admit, destination, join};
+pub(super) use algebra::{
+    BoundScope, Operation, admit, admit_rounding, admit_sum, destination, join,
+};
 pub(super) type Operand = algebra::Operand<UnitRef, String>;
+
+pub(super) fn literal(value: &crate::Number) -> Operand {
+    if value.as_str() == "0" {
+        Operand::LiteralZero
+    } else {
+        Operand::Literal
+    }
+}
+
+pub(super) fn bound_operand(
+    owner: Option<&str>,
+    instance: Option<Vec<String>>,
+    group: &str,
+) -> Operand {
+    Operand::Bound(owner.zip(instance).map(|(owner, instance)| BoundScope {
+        owner: owner.to_owned(),
+        instance,
+        group: group.to_owned(),
+    }))
+}
+
+pub(super) fn decimal_binding_group(mut ty: &Type) -> Option<&str> {
+    while let Type::Optional(inner) = ty {
+        ty = inner;
+    }
+    match ty {
+        Type::DecimalBinding { group } => Some(group.as_str()),
+        Type::Bool
+        | Type::Text { .. }
+        | Type::Integer
+        | Type::Decimal { .. }
+        | Type::Number
+        | Type::Timestamp { .. }
+        | Type::Date
+        | Type::Duration
+        | Type::Enum { .. }
+        | Type::Json
+        | Type::Record(_)
+        | Type::List(_)
+        | Type::Optional(_) => None,
+    }
+}
+
+pub(super) fn instance_path(
+    node: &Node<'_>,
+    resolve_alias: &impl Fn(&str) -> Option<usize>,
+    innermost_scope: Option<usize>,
+) -> Option<Vec<String>> {
+    match node {
+        Node::Parenthesized(inner) => instance_path(inner, resolve_alias, innermost_scope),
+        Node::Identifier(name) => Some(vec![match resolve_alias(name) {
+            Some(id) => format!("$scope:{id}"),
+            None => (*name).to_owned(),
+        }]),
+        Node::Pointer => innermost_scope.map(|id| vec![format!("$scope:{id}")]),
+        Node::Member { node, property } => {
+            let Node::String(key) = property else {
+                return None;
+            };
+            let mut path = instance_path(node, resolve_alias, innermost_scope)?;
+            path.push((*key).to_owned());
+            Some(path)
+        }
+        Node::Null
+        | Node::Bool(_)
+        | Node::Number(_)
+        | Node::String(_)
+        | Node::TemplateString(_)
+        | Node::Array(_)
+        | Node::Object(_)
+        | Node::Assignments { .. }
+        | Node::Closure { .. }
+        | Node::Root
+        | Node::Slice { .. }
+        | Node::Interval { .. }
+        | Node::Conditional { .. }
+        | Node::Unary { .. }
+        | Node::Binary { .. }
+        | Node::FunctionCall { .. }
+        | Node::MethodCall { .. }
+        | Node::Error { .. } => None,
+    }
+}
+
+pub(super) fn strip_scope_operand(operand: &mut Operand, scope_id: usize) {
+    let tag = format!("$scope:{scope_id}");
+    if let Operand::Bound(Some(bound)) = operand
+        && bound.instance.first().map(String::as_str) == Some(tag.as_str())
+    {
+        *operand = Operand::Bound(None);
+    }
+}
+
+pub(crate) fn collect_decimal_binding_owners(
+    interfaces: &BTreeMap<&str, &InterfaceDef>,
+    intersections: &BTreeMap<String, BTreeSet<String>>,
+    records: &BTreeMap<String, RecordType>,
+) -> BTreeMap<(String, String), String> {
+    let mut out = BTreeMap::new();
+    for (name, def) in interfaces {
+        let Ok(lineage) =
+            crate::env::interface_lineage(def, |parent| interfaces.get(parent.as_str()).copied())
+        else {
+            continue;
+        };
+        let mut owners: BTreeMap<&str, Option<&str>> = BTreeMap::new();
+        for definition in lineage {
+            for property in &definition.properties {
+                let next = matches!(property.property_type, PropertyType::DecimalBinding { .. })
+                    .then_some(definition.name.as_str());
+                owners
+                    .entry(property.id.as_str())
+                    .and_modify(|existing| {
+                        if *existing != next {
+                            *existing = None;
+                        }
+                    })
+                    .or_insert(next);
+            }
+        }
+        for (field, declaring) in owners {
+            if let Some(declaring) = declaring {
+                out.insert(((*name).to_owned(), field.to_owned()), declaring.to_owned());
+            }
+        }
+    }
+    for (inter_name, members) in intersections {
+        let mut owners: BTreeMap<&str, Option<String>> = BTreeMap::new();
+        for member in members {
+            let Some(record) = records.get(member) else {
+                continue;
+            };
+            for field in record.fields.keys() {
+                let next = out.get(&(member.clone(), field.clone())).cloned();
+                owners
+                    .entry(field.as_str())
+                    .and_modify(|existing| {
+                        if *existing != next {
+                            *existing = None;
+                        }
+                    })
+                    .or_insert(next);
+            }
+        }
+        for (field, declaring) in owners {
+            if let Some(declaring) = declaring {
+                out.insert((inter_name.clone(), field.to_owned()), declaring);
+            }
+        }
+    }
+    out
+}
+
+pub(super) fn exact_type(mut ty: &Type) -> bool {
+    while let Type::Optional(inner) | Type::List(inner) = ty {
+        ty = inner;
+    }
+    matches!(ty, Type::Decimal { .. } | Type::DecimalBinding { .. })
+}
+
+pub(super) fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {
+    let mut pending = vec![ty];
+    let mut visited = BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if exact_type(ty) {
+            return true;
+        }
+        let mut names = Vec::new();
+        ty.records(&mut names);
+        for name in names {
+            if visited.insert(name.clone())
+                && let Some(record) = env.record(&name)
+            {
+                pending.extend(record.fields.values().map(|field| &field.ty));
+            }
+        }
+    }
+    false
+}
+
+pub(crate) fn decimal_destination(mut ty: &Type) -> Option<PropertyType> {
+    while let Type::Optional(inner) = ty {
+        ty = inner;
+    }
+    let Type::Decimal {
+        scale,
+        unit,
+        rounding,
+        currency_source,
+        per_unit,
+    } = ty
+    else {
+        return None;
+    };
+    Some(PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+        scale: norn_ir::WholeNumber(*scale),
+        unit: unit.clone(),
+        rounding: Some(*rounding),
+        currency_source: currency_source.clone(),
+        per_unit: per_unit.clone(),
+        unit_source: Vec::new(),
+    })
+}
+
+pub(crate) fn validate_exact_environment(env: &ZenTypeEnv, prefix: &str) -> Result<(), String> {
+    for (name, record) in env
+        .records()
+        .iter()
+        .filter(|(name, _)| name.starts_with(prefix))
+    {
+        for field in record.fields.values() {
+            let mut ty = &field.ty;
+            while let Type::Optional(inner) | Type::List(inner) = ty {
+                ty = inner;
+            }
+            if let Type::Decimal {
+                unit,
+                currency_source,
+                per_unit,
+                ..
+            } = ty
+                && matches!(
+                    declared(
+                        env,
+                        Some(name),
+                        unit.as_ref(),
+                        currency_source.as_ref(),
+                        per_unit.as_ref()
+                    ),
+                    Operand::Unresolved
+                )
+            {
+                return Err("exact currency requires a fixed singleton currencySource and compatible Decimal bindings".into());
+            }
+        }
+    }
+    Ok(())
+}
 
 pub(super) fn declared(
     env: &ZenTypeEnv,
@@ -111,44 +355,6 @@ mod tests {
                 .1,
             Some(grams())
         );
-
-        let bound_mass = Operand::Bound("mass".into());
-        let bound_volume = Operand::Bound("volume".into());
-        assert_eq!(
-            admit(Operation::Compare, &bound_mass, &Operand::LiteralZero),
-            Some((Operand::Dimensionless, None))
-        );
-        assert_eq!(
-            admit(Operation::Compare, &Operand::LiteralZero, &bound_mass),
-            Some((Operand::Dimensionless, None))
-        );
-        assert!(admit(Operation::Compare, &bound_mass, &Operand::Literal).is_none());
-        assert!(admit(Operation::Compare, &bound_mass, &Operand::Dimensionless).is_none());
-        assert!(admit(Operation::Compare, &bound_mass, &bound_mass).is_none());
-        assert!(admit(Operation::Compare, &bound_mass, &bound_volume).is_none());
-        assert!(admit(Operation::Compare, &bound_mass, &quantity).is_none());
-        assert!(admit(Operation::Add, &bound_mass, &Operand::LiteralZero).is_none());
-        assert!(admit(Operation::Add, &bound_mass, &Operand::Literal).is_none());
-        assert!(admit(Operation::Add, &bound_mass, &bound_mass).is_none());
-        assert!(admit(Operation::Add, &bound_mass, &bound_volume).is_none());
-        assert!(admit(Operation::Subtract, &bound_mass, &Operand::LiteralZero).is_none());
-        assert!(admit(Operation::Subtract, &bound_mass, &bound_mass).is_none());
-        assert!(admit(Operation::Subtract, &bound_mass, &bound_volume).is_none());
-        assert!(admit(Operation::Multiply, &bound_mass, &Operand::LiteralZero).is_none());
-        assert!(admit(Operation::Multiply, &bound_mass, &bound_mass).is_none());
-        assert!(admit(Operation::Divide, &bound_mass, &Operand::Literal).is_none());
-        assert!(admit(Operation::Divide, &bound_mass, &bound_mass).is_none());
-        assert!(join(&bound_mass, &bound_mass).is_none());
-        assert!(join(&bound_mass, &bound_volume).is_none());
-        assert!(join(&bound_mass, &Operand::LiteralZero).is_none());
-        assert!(join(&Operand::LiteralZero, &bound_mass).is_none());
-        assert!(!destination(&bound_mass, &bound_mass));
-        assert!(!destination(&bound_mass, &bound_volume));
-        assert!(!destination(&Operand::LiteralZero, &bound_mass));
-        assert!(!destination(&Operand::Literal, &bound_mass));
-        assert!(!destination(&bound_mass, &Operand::Dimensionless));
-        assert!(!destination(&bound_mass, &Operand::Legacy));
-        assert!(!destination(&bound_mass, &quantity));
         assert!(
             admit(
                 Operation::Compare,
@@ -157,5 +363,118 @@ mod tests {
             )
             .is_none()
         );
+        assert!(admit_sum(&Operand::Unresolved).is_none());
+        assert!(admit_rounding(&Operand::Unresolved).is_none());
+        assert_eq!(admit_sum(&quantity), Some(quantity.clone()));
+        assert_eq!(admit_sum(&usd), Some(usd.clone()));
+        assert_eq!(admit_sum(&rate), Some(rate.clone()));
+        assert_eq!(admit_rounding(&quantity), Some(quantity));
+        assert_eq!(admit_rounding(&usd), Some(usd));
+        assert_eq!(admit_rounding(&rate), Some(rate));
+        assert_eq!(
+            admit_rounding(&Operand::Dimensionless),
+            Some(Operand::Dimensionless)
+        );
+        assert_eq!(admit_rounding(&Operand::Literal), Some(Operand::Literal));
+        assert_eq!(
+            admit_rounding(&Operand::LiteralZero),
+            Some(Operand::LiteralZero)
+        );
+        assert_eq!(admit_rounding(&Operand::Legacy), Some(Operand::Legacy));
+    }
+
+    #[test]
+    fn bound_scope_enforces_owner_instance_group_sum_and_rounding() {
+        let quantity = Operand::Quantity(grams());
+        let bound_conv_self = Operand::Bound(Some(BoundScope {
+            owner: "core.Conversion".into(),
+            instance: vec!["self".into()],
+            group: "conversion".into(),
+        }));
+        let bound_conv_other_instance = Operand::Bound(Some(BoundScope {
+            owner: "core.Conversion".into(),
+            instance: vec!["self".into(), "other".into()],
+            group: "conversion".into(),
+        }));
+        let bound_conv_other_owner = Operand::Bound(Some(BoundScope {
+            owner: "other.Conversion".into(),
+            instance: vec!["self".into()],
+            group: "conversion".into(),
+        }));
+        let bound_conv_other_group = Operand::Bound(Some(BoundScope {
+            owner: "core.Conversion".into(),
+            instance: vec!["self".into()],
+            group: "volume".into(),
+        }));
+        let bound_unknown = Operand::Bound(None);
+
+        assert_eq!(
+            admit(Operation::Add, &bound_conv_self, &bound_conv_self),
+            Some((bound_conv_self.clone(), None))
+        );
+        assert_eq!(
+            admit(Operation::Subtract, &bound_conv_self, &bound_conv_self),
+            Some((bound_conv_self.clone(), None))
+        );
+        assert_eq!(
+            admit(Operation::Compare, &bound_conv_self, &bound_conv_self),
+            Some((Operand::Dimensionless, None))
+        );
+        assert_eq!(
+            join(&bound_conv_self, &bound_conv_self),
+            Some(bound_conv_self.clone())
+        );
+        assert!(destination(&bound_conv_self, &bound_conv_self));
+        assert!(admit(Operation::Multiply, &bound_conv_self, &bound_conv_self).is_none());
+        assert!(admit(Operation::Divide, &bound_conv_self, &bound_conv_self).is_none());
+
+        for bound in [&bound_conv_self, &bound_unknown] {
+            assert_eq!(
+                admit(Operation::Compare, bound, &Operand::LiteralZero),
+                Some((Operand::Dimensionless, None))
+            );
+            assert_eq!(
+                admit(Operation::Compare, &Operand::LiteralZero, bound),
+                Some((Operand::Dimensionless, None))
+            );
+            assert!(admit(Operation::Compare, bound, &Operand::Literal).is_none());
+            assert!(admit(Operation::Compare, bound, &Operand::Dimensionless).is_none());
+            assert!(admit(Operation::Compare, bound, &quantity).is_none());
+            assert!(admit(Operation::Add, bound, &Operand::LiteralZero).is_none());
+            assert!(admit(Operation::Subtract, bound, &Operand::LiteralZero).is_none());
+            assert!(admit(Operation::Multiply, bound, &Operand::LiteralZero).is_none());
+            assert!(admit(Operation::Divide, bound, &Operand::Literal).is_none());
+            assert!(join(bound, &Operand::LiteralZero).is_none());
+            assert!(join(&Operand::LiteralZero, bound).is_none());
+            assert!(!destination(&Operand::LiteralZero, bound));
+            assert!(!destination(&Operand::Literal, bound));
+            assert!(!destination(bound, &Operand::Dimensionless));
+            assert!(!destination(bound, &Operand::Legacy));
+            assert!(!destination(bound, &quantity));
+            assert!(admit_sum(bound).is_none());
+            assert!(admit_rounding(bound).is_none());
+        }
+        for (a, b) in [
+            (&bound_conv_self, &bound_conv_other_instance),
+            (&bound_conv_self, &bound_conv_other_owner),
+            (&bound_conv_self, &bound_conv_other_group),
+            (&bound_conv_self, &bound_unknown),
+            (&bound_unknown, &bound_unknown),
+        ] {
+            for op in [
+                Operation::Add,
+                Operation::Subtract,
+                Operation::Multiply,
+                Operation::Divide,
+                Operation::Compare,
+            ] {
+                assert!(
+                    admit(op, a, b).is_none(),
+                    "{op:?} must refuse {a:?} & {b:?}"
+                );
+            }
+            assert!(join(a, b).is_none());
+            assert!(!destination(a, b));
+        }
     }
 }

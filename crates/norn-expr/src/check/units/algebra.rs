@@ -1,4 +1,16 @@
 //! VAL-UNIT / VAL-RATE: pure bounded cancellation table.
+
+/// Provenance for an interface-local `DecimalBinding` operand.
+/// Two `Bound` operands share a concrete `(unit, scale)` only when they come
+/// from the same declaring interface (`owner`), canonical runtime instance
+/// (`instance`), and binding group (`group`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BoundScope {
+    pub(crate) owner: String,
+    pub(crate) instance: Vec<String>,
+    pub(crate) group: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Operand<U, C> {
     Literal,
@@ -8,8 +20,12 @@ pub(crate) enum Operand<U, C> {
     Quantity(U),
     Money(C),
     Rate(C, U),
-    Bound(String),
+    Bound(Option<BoundScope>),
     Unresolved,
+}
+
+fn same_bound(left: Option<&BoundScope>, right: Option<&BoundScope>) -> bool {
+    matches!((left, right), (Some(a), Some(b)) if a == b)
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Operation {
@@ -52,6 +68,7 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
                 (Bound(_), LiteralZero) | (LiteralZero, Bound(_)) if op == Operation::Compare => {
                     Dimensionless
                 }
+                (Bound(a), Bound(b)) if same_bound(a.as_ref(), b.as_ref()) => Bound(a.clone()),
                 (Bound(_), _) | (_, Bound(_)) => return None,
                 (Literal | LiteralZero | Dimensionless, Literal | LiteralZero | Dimensionless) => {
                     Dimensionless
@@ -94,9 +111,13 @@ pub(crate) fn join<U: Clone + Eq, C: Clone + Eq>(
     left: &Operand<U, C>,
     right: &Operand<U, C>,
 ) -> Option<Operand<U, C>> {
-    if matches!(left, Operand::Unresolved | Operand::Bound(_))
-        || matches!(right, Operand::Unresolved | Operand::Bound(_))
-    {
+    if matches!(left, Operand::Unresolved) || matches!(right, Operand::Unresolved) {
+        return None;
+    }
+    if let (Operand::Bound(a), Operand::Bound(b)) = (left, right) {
+        return same_bound(a.as_ref(), b.as_ref()).then(|| Operand::Bound(a.clone()));
+    }
+    if matches!(left, Operand::Bound(_)) || matches!(right, Operand::Bound(_)) {
         return None;
     }
     if left == right {
@@ -129,14 +150,35 @@ pub(crate) fn join<U: Clone + Eq, C: Clone + Eq>(
     )
     .then_some(Operand::Dimensionless)
 }
+pub(crate) fn admit_sum<U: Clone + Eq, C: Clone + Eq>(
+    operand: &Operand<U, C>,
+) -> Option<Operand<U, C>> {
+    if matches!(operand, Operand::Bound(_) | Operand::Unresolved) {
+        return None;
+    }
+    admit(Operation::Add, operand, operand).map(|(result, _)| result)
+}
+pub(crate) fn admit_rounding<U: Clone, C: Clone>(operand: &Operand<U, C>) -> Option<Operand<U, C>> {
+    match operand {
+        Operand::Bound(_) | Operand::Unresolved => None,
+        Operand::Literal
+        | Operand::LiteralZero
+        | Operand::Dimensionless
+        | Operand::Legacy
+        | Operand::Quantity(_)
+        | Operand::Money(_)
+        | Operand::Rate(_, _) => Some(operand.clone()),
+    }
+}
 pub(crate) fn destination<U: Clone + Eq, C: Clone + Eq>(
     found: &Operand<U, C>,
     expected: &Operand<U, C>,
 ) -> bool {
-    if matches!(expected, Operand::Unresolved | Operand::Bound(_))
-        || matches!(found, Operand::Unresolved | Operand::Bound(_))
-    {
+    if matches!(expected, Operand::Unresolved) || matches!(found, Operand::Unresolved) {
         return false;
+    }
+    if matches!(expected, Operand::Bound(_)) || matches!(found, Operand::Bound(_)) {
+        return join(found, expected).is_some();
     }
     matches!(found, Operand::Literal | Operand::LiteralZero)
         || matches!((found, expected), (Operand::Dimensionless, Operand::Legacy))
