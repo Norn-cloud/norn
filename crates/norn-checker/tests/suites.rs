@@ -156,15 +156,7 @@ mod transform_sql;
 mod typed_members;
 #[path = "typed_payload_roots_compatibility.rs"]
 mod typed_payload_roots_compatibility;
-#[path = "ui_interaction.rs"]
-mod ui_interaction;
-#[path = "ui_laws.rs"]
-mod ui_laws;
-#[path = "ui_lifecycle.rs"]
-mod ui_lifecycle;
 #[path = "vendor_mapping_install.rs"]
 mod vendor_mapping_install;
-#[path = "widget_ux.rs"]
-mod widget_ux;
 #[path = "write_back_lens.rs"]
 mod write_back_lens;

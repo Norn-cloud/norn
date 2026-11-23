@@ -314,13 +314,31 @@ pub fn check_artifact_set(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
-    check_artifact_set_using(artifacts, context, &mut crate::check_artifact)
+    check_artifact_set_with(
+        artifacts,
+        context,
+        &mut crate::check_artifact,
+        &mut |_, _| Vec::new(),
+    )
 }
 
 pub(crate) fn check_artifact_set_using(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
     local: &mut impl FnMut(&ArtifactEnvelope) -> Vec<Diagnostic>,
+) -> Vec<Diagnostic> {
+    check_artifact_set_with(artifacts, context, local, &mut |_, _| Vec::new())
+}
+
+/// Resolve `artifacts` against `context.base` and run the Ring-0 set checks
+/// together with caller-provided `local` per-artifact checks and `extra_set`
+/// post-resolution checks (used by higher-ring checkers such as `norn-ui-checker`).
+#[must_use]
+pub fn check_artifact_set_with(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    local: &mut impl FnMut(&ArtifactEnvelope) -> Vec<Diagnostic>,
+    extra_set: &mut impl FnMut(&[ArtifactEnvelope], &EntityArtifactSetContext<'_>) -> Vec<Diagnostic>,
 ) -> Vec<Diagnostic> {
     let mut layout_findings = Vec::new();
     let normalized_artifacts = normalize_artifacts(artifacts, &mut layout_findings);
@@ -361,13 +379,7 @@ pub(crate) fn check_artifact_set_using(
                     &normalized_base,
                     normalized_context.registry,
                 ))
-                // Typed Widget UX references and expression contracts resolve
-                // only after the candidate and installed-base artifact pool
-                // is available.
-                .chain(crate::widget_ux::check_widget_ux_set(
-                    &normalized_artifacts,
-                    &normalized_context,
-                ))
+                .chain(extra_set(&normalized_artifacts, &normalized_context))
                 .chain(crate::markings::check_references(
                     &normalized_artifacts,
                     &normalized_base,

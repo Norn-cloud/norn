@@ -49,7 +49,7 @@ mod finite;
 pub mod flow_performs;
 pub mod flow_source_map;
 pub mod function;
-mod graph;
+pub mod graph;
 /// Closure-keyed structural admission evidence reuse.
 pub mod incremental;
 mod inheritance;
@@ -68,7 +68,7 @@ pub mod metric_interchange;
 mod model;
 mod model_privacy;
 pub mod posting;
-mod soundness;
+pub mod soundness;
 pub mod source_agreement;
 pub mod table_analysis;
 pub mod tool_effect;
@@ -98,13 +98,7 @@ pub mod source_schema;
 pub mod tool_ports;
 pub mod transform;
 pub mod typed_roots;
-pub mod ui_catalog;
-pub mod ui_interaction;
-pub mod ui_lifecycle;
-pub mod ui_machine;
-pub mod ui_view;
 pub mod verification;
-pub mod widget_ux;
 
 pub use action_set::{check_action_firing, check_action_set};
 pub use agent::{AgentContext, check_agent};
@@ -138,7 +132,9 @@ pub use entity_model::{
     EffectiveViewRefused, EntityContext, EntityModel, check_entity_model, check_interface_local,
     check_object_type_extension_local, check_object_type_local, effective_object_types,
 };
-pub use envelope::{ArtifactValidation, plan_graph_load, validate_artifact};
+pub use envelope::{
+    ArtifactValidation, plan_graph_load, validate_artifact, validate_artifact_with,
+};
 pub use flow_source_map::validate_flow_source_map;
 pub use jdm_profile::{RuleClosure, RuleClosureError, rule_closure};
 pub use layout::{
@@ -167,7 +163,6 @@ pub use receipt::{
     check_artifact_set_with_receipt, check_artifact_set_with_verified_receipt, derive_type_env,
     recover_legacy_admission_receipt, verify_admission_receipt,
 };
-pub use widget_ux::{GeneratedTransitionEnabledWhenError, generated_transition_enabled_when};
 
 pub use sealing::{
     seal, validate_customization_overlay, validate_runtime_capability_backstop,
@@ -184,6 +179,20 @@ pub use typed_roots::decode_artifact_json;
 /// envelope's wire JSON (see [`Span::from_legacy_path_in`]).
 #[must_use]
 pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
+    check_artifact_with(artifact, |_, _, _| {})
+}
+
+/// Check one artifact envelope with an additional payload validator hook (for
+/// higher rings such as `norn-ui-checker`) before typed-root agreement.
+#[must_use]
+pub fn check_artifact_with(
+    artifact: &norn_ir::ArtifactEnvelope,
+    extra_payload_validator: impl FnOnce(
+        &norn_ir::ArtifactEnvelope,
+        &norn_ir::JsonValue,
+        &mut Vec<norn_ir::Diagnostic>,
+    ),
+) -> Vec<Diagnostic> {
     if let Some(finding) = definition_catalog::catalog_write(artifact) {
         return vec![finding];
     }
@@ -191,7 +200,8 @@ pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
         Ok((normalized, _layout)) => (normalized, Vec::new()),
         Err(findings) => (artifact.clone(), findings),
     };
-    let legacy = crate::envelope::collect_artifact_diagnostics(&normalized);
+    let legacy =
+        crate::envelope::collect_artifact_diagnostics_with(&normalized, extra_payload_validator);
     // Resolve dotted paths against the envelope's wire JSON so keys that
     // contain `.` stay one pointer segment.
     let mut checked = match serde_json::to_value(artifact) {
@@ -220,16 +230,84 @@ pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
 /// [`Diagnostic`] model, with spans resolved against `value`.
 #[must_use]
 pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
+    check_artifact_json_with(value, |_, _, _| {})
+}
+
+/// Decode an artifact envelope from its wire JSON and check it using
+/// [`check_artifact_with`].
+#[must_use]
+pub fn check_artifact_json_with(
+    value: &serde_json::Value,
+    extra_payload_validator: impl FnOnce(
+        &norn_ir::ArtifactEnvelope,
+        &norn_ir::JsonValue,
+        &mut Vec<norn_ir::Diagnostic>,
+    ),
+) -> Vec<Diagnostic> {
     if let Some(finding) = definition_catalog::catalog_write_json(value) {
         return vec![finding];
     }
     match decode_artifact_json(value) {
-        Ok(artifact) => check_artifact(&artifact),
+        Ok(artifact) => check_artifact_with(&artifact, extra_payload_validator),
         Err(legacy) => legacy
             .into_iter()
             .map(|diagnostic| Diagnostic::from_legacy_in(diagnostic, value))
             .collect(),
     }
+}
+
+/// Check `artifacts` using a custom set-check function `check_set` and issue
+/// its [`CheckReceipt`]. Used by higher-ring checkers (`norn-ui-checker`) to
+/// compose Ring-0 and Ring-1 checks under one admission receipt.
+///
+/// # Errors
+/// As [`check_artifact_set_with_receipt`].
+pub fn check_artifact_set_with_receipt_using(
+    artifacts: &ReceiptSources,
+    context: &EntityArtifactSetContext<'_>,
+    limits: &norn_ir::ResourceLimitProfile,
+    check_set: impl FnOnce(
+        &[norn_ir::ArtifactEnvelope],
+        &EntityArtifactSetContext<'_>,
+    ) -> Vec<Diagnostic>,
+) -> Result<CheckedArtifactSet, ReceiptError> {
+    receipt::check_artifact_set_with_profile_using(
+        &artifacts.artifacts,
+        &artifacts.context(context)?,
+        limits,
+        artifacts.identity.clone(),
+        IDENTIFIER_ADMISSION_PROFILE,
+        None,
+        false,
+        check_set,
+    )
+}
+
+/// Check `artifacts` with an optional flow source map using a custom set-check
+/// function `check_set` and issue its [`CheckReceipt`].
+///
+/// # Errors
+/// As [`check_artifact_set_with_flow_source_map`].
+pub fn check_artifact_set_with_flow_source_map_using(
+    artifacts: &ReceiptSources,
+    context: &EntityArtifactSetContext<'_>,
+    limits: &norn_ir::ResourceLimitProfile,
+    flow_source_map: Option<&norn_ir::FlowSourceMap>,
+    check_set: impl FnOnce(
+        &[norn_ir::ArtifactEnvelope],
+        &EntityArtifactSetContext<'_>,
+    ) -> Vec<Diagnostic>,
+) -> Result<CheckedArtifactSet, ReceiptError> {
+    receipt::check_artifact_set_with_profile_using(
+        &artifacts.artifacts,
+        &artifacts.context(context)?,
+        limits,
+        artifacts.identity.clone(),
+        IDENTIFIER_ADMISSION_PROFILE,
+        flow_source_map,
+        false,
+        check_set,
+    )
 }
 
 /// Single-cell execution diagnostic shared with runtime admission.

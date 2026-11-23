@@ -8,13 +8,13 @@ mod customization;
 mod derived_view;
 mod entity;
 mod graph_load;
-mod helpers;
+/// Shared JSON-shape, field, and diagnostic helpers for envelope validators.
+pub mod helpers;
 mod pack;
 mod policy;
 mod relation;
 mod rule;
 mod setting;
-mod widget;
 
 use norn_ir::identifier_limits::MAX_ACTION_ID_BYTES;
 use norn_ir::{
@@ -45,7 +45,6 @@ use policy::validate_policy_payload;
 use relation::validate_relation_payload;
 use rule::validate_rule_payload;
 use setting::validate_setting_payload;
-use widget::{validate_widget_binding_dependencies, validate_widget_payload};
 
 /// Stable diagnostic for identifier lengths at new admission boundaries.
 pub const IDENTIFIER_TOO_LONG: &str = "identifier.validation.too_long";
@@ -75,11 +74,24 @@ impl ArtifactValidation for ArtifactEnvelope {
 ///
 /// Returns every diagnostic found when the envelope is invalid.
 pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<Diagnostic>> {
+    validate_artifact_with(artifact, |_, _, _| {})
+}
+
+/// Validate one artifact envelope and its kind payload, running `extra_payload_validator`
+/// before typed-root agreement so higher rings can validate non-Ring-0 payload kinds.
+///
+/// # Errors
+///
+/// Returns every diagnostic found when the envelope is invalid.
+pub fn validate_artifact_with(
+    artifact: &ArtifactEnvelope,
+    extra_payload_validator: impl FnOnce(&ArtifactEnvelope, &JsonValue, &mut Vec<Diagnostic>),
+) -> Result<(), Vec<Diagnostic>> {
     let (normalized, layout_findings) = match crate::layout::normalize_artifact(artifact) {
         Ok((normalized, _layout)) => (normalized, Vec::new()),
         Err(findings) => (artifact.clone(), findings),
     };
-    let mut diagnostics = collect_artifact_diagnostics(&normalized);
+    let mut diagnostics = collect_artifact_diagnostics_with(&normalized, extra_payload_validator);
     for diagnostic in layout_findings.into_iter().map(layout_finding_to_legacy) {
         if !diagnostics.iter().any(|existing| {
             existing.code == diagnostic.code
@@ -99,7 +111,13 @@ pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<Diagnost
     }
 }
 
-pub(crate) fn collect_artifact_diagnostics(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
+/// Collect legacy envelope diagnostics for one normalized artifact, running
+/// `extra_payload_validator` on the payload before typed-root agreement.
+#[must_use]
+pub fn collect_artifact_diagnostics_with(
+    artifact: &ArtifactEnvelope,
+    extra_payload_validator: impl FnOnce(&ArtifactEnvelope, &JsonValue, &mut Vec<Diagnostic>),
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     if artifact.ir_version != SUPPORTED_IR_VERSION {
@@ -161,7 +179,7 @@ pub(crate) fn collect_artifact_diagnostics(artifact: &ArtifactEnvelope) -> Vec<D
         &mut diagnostics,
         Some(artifact.artifact_id.as_str()),
     );
-    validate_kind_payload(artifact, &mut diagnostics);
+    validate_kind_payload(artifact, &mut diagnostics, extra_payload_validator);
 
     diagnostics
 }
@@ -209,7 +227,11 @@ fn required_field(path: &str) -> Diagnostic {
     }
 }
 
-fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_kind_payload(
+    artifact: &ArtifactEnvelope,
+    diagnostics: &mut Vec<Diagnostic>,
+    extra_payload_validator: impl FnOnce(&ArtifactEnvelope, &JsonValue, &mut Vec<Diagnostic>),
+) {
     let artifact_id = Some(artifact.artifact_id.as_str());
     let before = diagnostics.len();
     let code = artifact_payload_validation_code(&artifact.kind());
@@ -247,20 +269,17 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         ArtifactPayload::BusinessPack(_) => {
             validate_business_pack_payload(&payload, diagnostics, artifact_id);
         }
-        ArtifactPayload::Widget(_) => {
-            validate_widget_payload(&payload, diagnostics, artifact_id);
-            validate_widget_binding_dependencies(artifact, diagnostics);
-        }
-        // Both roots are strict serde types: the typed-root check below
-        // decodes them, and their semantic checks are `crate::source_schema`
-        // and `crate::mapping` (run per document and over the artifact set).
-        ArtifactPayload::SourceSchema(_)
+        // Widget payload validation lives in Ring-1 `norn-ui-checker`; the
+        // remaining strict-serde roots are checked by their dedicated modules.
+        ArtifactPayload::Widget(_)
+        | ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
         | ArtifactPayload::Law(_)
         | ArtifactPayload::DefinedConcept(_)
         | ArtifactPayload::Labels(_)
         | ArtifactPayload::Model(_) => {}
     }
+    extra_payload_validator(artifact, &payload, diagnostics);
     if matches!(artifact.payload, ArtifactPayload::Law(_)) {
         diagnostics.extend(
             crate::verification::check_law_local(artifact)

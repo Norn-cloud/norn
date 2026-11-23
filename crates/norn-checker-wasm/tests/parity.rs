@@ -18,8 +18,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use norn_checker::{
-    ArtifactRef, EntityArtifactSetContext, check_artifact_set_with_flow_source_map,
-    decode_artifact_json, diagnostics_to_json,
+    ArtifactRef, EntityArtifactSetContext, decode_artifact_json, diagnostics_to_json,
 };
 use norn_checker_wasm::{
     canonical_runtime_value_json, check_agent_json, check_artifact_set_json, check_expression_json,
@@ -27,6 +26,7 @@ use norn_checker_wasm::{
 };
 use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
 use norn_ir::ResourceLimitProfile;
+use norn_ui_checker::check_artifact_set_with_flow_source_map;
 use serde_json::Value;
 
 const OUT_ENV: &str = "NORN_CHECKER_WASM_PARITY_OUT";

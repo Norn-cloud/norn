@@ -11,9 +11,8 @@ use norn_checker::function::{
 };
 use norn_checker::receipt::{CHECKER_VERSION, EXPR_PROFILE, RECEIPT_FORMAT};
 use norn_checker::{
-    DIAGNOSTICS_FORMAT, Diagnostic, EntityArtifactSetContext, TenantLayer, check_artifact_set,
-    check_artifact_set_with_flow_source_map, declared_lifecycles, decode_artifact_json,
-    derive_type_env, diagnostics_to_json,
+    DIAGNOSTICS_FORMAT, Diagnostic, EntityArtifactSetContext, TenantLayer, declared_lifecycles,
+    decode_artifact_json, derive_type_env, diagnostics_to_json,
 };
 use norn_expr::{Expression, Type, ZenTypeEnv};
 use norn_ir::canonical::CanonicalJsonError;
@@ -22,6 +21,7 @@ use norn_ir::{
     ArtifactEnvelope, DiagnosticSeverity, ExtensionNamespace, FlowSourceMap, ObjectTypeName,
     PropertyTypeName, ResourceLimitProfile,
 };
+use norn_ui_checker::{check_artifact_set, check_artifact_set_with_flow_source_map};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -188,7 +188,7 @@ fn has_errors(diagnostics: &[Diagnostic]) -> bool {
 }
 
 /// Check a candidate artifact set and issue its receipt
-/// (`norn_checker::check_artifact_set_with_flow_source_map`).
+/// (`norn_ui_checker::check_artifact_set_with_flow_source_map`).
 ///
 /// `artifacts_json` is a JSON array of artifact envelopes. `context_json` is
 /// `null` or an object with the optional members `base` (the installed base

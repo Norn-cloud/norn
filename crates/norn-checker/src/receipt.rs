@@ -2,36 +2,16 @@
 //! was run over and under, content-addressed so later tiers can pin it.
 //!
 //! [`check_artifact_set_with_receipt`] runs [`crate::check_artifact_set`] and
-//! issues a [`CheckReceipt`] that binds:
+//! issues a [`CheckReceipt`] binding the semantic artifact set
+//! ([`ArtifactSetRef`]), resource-limit profile ([`LimitProfileRef`]), derived
+//! ZEN Expression type environment ([`TypeEnvRef`] beside [`EXPR_PROFILE`]),
+//! checker identity, identifier admission profile, and findings digest
+//! ([`DiagnosticsDigest`]). The receipt is Norn1 canonical JSON
+//! ([`CheckReceipt::canonical_json`], [`CheckReceipt::content_sha256`],
+//! format [`RECEIPT_FORMAT`]).
 //!
-//! - the **semantic artifact set**: every candidate and installed-base
-//!   artifact as `(artifactId, version, sha256)`, each definition hashed as
-//!   Norn1 canonical JSON after removing editor-only layout fields, and one
-//!   hash over the whole list ([`ArtifactSetRef`]);
-//! - the **resource-limit profile** it was checked under
-//!   ([`LimitProfileRef`], `norn.limits/1` by default), which also fixes the
-//!   type environment's link depth;
-//! - the **ZEN Expression type environment** derived from the set's `EntityIR`
-//!   v2 definitions ([`TypeEnvRef`], `norn.expr.env/1`), and the expression
-//!   checker profile beside it ([`EXPR_PROFILE`], `norn-zen/7`);
-//! - the **checker** name and version, the **identifier admission profile**,
-//!   and a digest of the findings ([`DiagnosticsDigest`], over
-//!   [`crate::diagnostics_to_json`]).
-//!
-//! The receipt is Norn1 canonical JSON ([`CheckReceipt::canonical_json`]) and
-//! has its own content hash ([`CheckReceipt::content_sha256`]); the format is
-//! [`RECEIPT_FORMAT`].
-//!
-//! # The type environment
-//!
-//! The environment is derived only for a set with no error findings: its
-//! derivation expects a checked model. It records the set-level environment,
-//! with only `actor` bound. Expression sites are not yet type-checked here:
-//! wiring `norn_expr::check_expression` into T2 for every site, with each
-//! site's `self`/`input` binding and its own environment reference, is
-//! T1-EXPR-5 (#2523). A clean set whose environment cannot be derived (for
-//! example a `ref` to a registry value type the checker has only by name) is
-//! not admitted: [`codes::ENVIRONMENT_UNDERIVABLE`], fail-closed.
+//! The type environment is derived only when the set has no error findings;
+//! an underivable clean set fails closed with [`codes::ENVIRONMENT_UNDERIVABLE`].
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -300,9 +280,9 @@ impl From<CanonicalJsonError> for ReceiptError {
 /// Retained exact candidate and base sources, prepared together for receipt issuance.
 #[derive(Debug, Clone)]
 pub struct ReceiptSources {
-    artifacts: Vec<ArtifactEnvelope>,
+    pub(crate) artifacts: Vec<ArtifactEnvelope>,
     base: Vec<ArtifactEnvelope>,
-    identity: ArtifactSetRef,
+    pub(crate) identity: ArtifactSetRef,
 }
 
 impl ReceiptSources {
@@ -331,7 +311,7 @@ impl ReceiptSources {
         })
     }
 
-    fn context<'a>(
+    pub(crate) fn context<'a>(
         &'a self,
         context: &EntityArtifactSetContext<'a>,
     ) -> Result<EntityArtifactSetContext<'a>, ReceiptError> {
@@ -516,8 +496,34 @@ fn check_artifact_set_with_profile(
     flow_source_map: Option<&FlowSourceMap>,
     retained: bool,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
+    check_artifact_set_with_profile_using(
+        artifacts,
+        context,
+        limits,
+        artifact_set,
+        identifier_profile,
+        flow_source_map,
+        retained,
+        crate::check_artifact_set,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal receipt profile helper parameterized by caller check pass"
+)]
+pub(crate) fn check_artifact_set_with_profile_using(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    limits: &ResourceLimitProfile,
+    artifact_set: ArtifactSetRef,
+    identifier_profile: &str,
+    flow_source_map: Option<&FlowSourceMap>,
+    retained: bool,
+    check_set: impl FnOnce(&[ArtifactEnvelope], &EntityArtifactSetContext<'_>) -> Vec<Diagnostic>,
+) -> Result<CheckedArtifactSet, ReceiptError> {
     let limit_profile = limits.reference()?;
-    let mut diagnostics = crate::check_artifact_set(artifacts, context);
+    let mut diagnostics = check_set(artifacts, context);
     if !retained {
         for artifact in artifacts {
             if matches!(&artifact.payload, norn_ir::ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into())))
@@ -603,23 +609,12 @@ pub fn admission_receipt_sha256(stored: &str) -> Result<String, ReceiptError> {
 }
 
 /// Verify a stored clean admission receipt without rerunning the current
-/// admission checker.
-///
-/// This is used when opening persisted definitions: it verifies the receipt's
-/// integrity, its exact versioned checker identity, and its bindings to the
-/// supplied definitions, base, limits, and derived type environment. Historic
-/// versions are accepted only when explicitly listed by this crate. A
-/// retained-definition caller uses [`verify_admission_receipt_sources`] for
-/// recheck authority. Typed verification validates historical integrity only.
+/// admission checker (historical integrity only; use
+/// [`verify_admission_receipt_sources`] for recheck authority).
 ///
 /// # Errors
 ///
-/// [`ReceiptError`] if the body is malformed or tampered with, names an
-/// unknown checker/profile pair, is not an admitted receipt, or is bound to
-/// different artifacts, limits, or type environment.
-/// Validate historical typed receipts without granting recheck authority.
-/// # Errors
-/// Refuses invalid receipts or mismatched definitions.
+/// Refuses malformed, tampered, unsupported, or mismatched receipts.
 pub fn verify_admission_receipt(
     stored: &str,
     expected_sha256: &str,
