@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Display};
 use std::path::{Path, PathBuf};
 
+use norn_cell::cell_identity::CellId;
 use norn_cell::engine::{
     DoEngine, DoStorageEmulator, EngineFault, EngineFaultKind, FaultEngine, FaultSwitch,
     NativeEngine, SqlEngine,
@@ -115,16 +116,46 @@ impl<T, E: Display> Ctx<T> for Result<T, E> {
     }
 }
 
-fn dst_seeds(defaults: &[u64]) -> DstResult<Vec<u64>> {
+struct SeedPlan {
+    seeds: Vec<u64>,
+    assert_batch_coverage: bool,
+}
+
+fn dst_seeds(defaults: &[u64]) -> DstResult<SeedPlan> {
     match std::env::var("NORN_DST_SEED") {
         Ok(raw) => raw
             .trim()
             .parse::<u64>()
-            .map(|seed| vec![seed])
+            .map(|seed| SeedPlan {
+                seeds: vec![seed],
+                assert_batch_coverage: false,
+            })
             .map_err(|err| format!("invalid NORN_DST_SEED={raw:?}: {err}")),
-        Err(std::env::VarError::NotPresent) => Ok(defaults.to_vec()),
+        Err(std::env::VarError::NotPresent) => Ok(SeedPlan {
+            seeds: defaults.to_vec(),
+            assert_batch_coverage: true,
+        }),
         Err(std::env::VarError::NotUnicode(_)) => Err("NORN_DST_SEED is not UTF-8".to_owned()),
     }
+}
+
+fn deterministic_cell_id(seed: u64, step: usize, stream: u64) -> DstResult<CellId> {
+    let mut rng = SplitMix64::new(seed ^ stream.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let hi = rng.next_u64();
+    let lo = rng.next_u64();
+    CellId::try_from(format!("{hi:016x}{lo:016x}"))
+        .map_err(|err| fail(seed, step, format!("deterministic cell_id: {err}")))
+}
+
+fn assert_batch_counts(suite: &str, counters: &[(&str, u64)]) -> DstResult<()> {
+    for &(name, count) in counters {
+        if count == 0 {
+            return Err(format!(
+                "{suite}: default seed batch never exercised required branch `{name}`"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn fail(seed: u64, step: usize, msg: impl Display) -> String {
@@ -154,14 +185,14 @@ fn ensure_eq<T: PartialEq + Debug>(
     )
 }
 
-fn simulator_dir() -> DstResult<tempfile::TempDir> {
+fn simulator_dir(seed: u64, step: usize) -> DstResult<tempfile::TempDir> {
     let shm = Path::new("/dev/shm");
     if shm.is_dir()
         && let Ok(dir) = tempfile::tempdir_in(shm)
     {
         return Ok(dir);
     }
-    tempfile::tempdir().map_err(|err| format!("tempdir: {err}"))
+    tempfile::tempdir().ctx(seed, step, "tempdir")
 }
 
 fn dump_of<E, C, I, S: SqlEngine>(
@@ -237,7 +268,7 @@ fn dst_responder(cmd: &Command<DstCommand>) -> DstInput {
     }
 }
 
-fn dst_object_types() -> DstResult<Vec<ObjectTypeDef>> {
+fn dst_object_types(seed: u64, step: usize) -> DstResult<Vec<ObjectTypeDef>> {
     let account: ObjectTypeDef = serde_json::from_value(json!({
         "name": ACCOUNT_TYPE,
         "identity": [{ "name": "primary", "properties": ["id"] }],
@@ -261,7 +292,7 @@ fn dst_object_types() -> DstResult<Vec<ObjectTypeDef>> {
             { "id": LINK_PEER, "target": ACCOUNT_TYPE, "cardinality": { "to": "many", "from": "many" } }
         ]
     }))
-    .map_err(|err| format!("account type: {err}"))?;
+    .ctx(seed, step, "account type")?;
 
     let note: ObjectTypeDef = serde_json::from_value(json!({
         "name": NOTE_TYPE,
@@ -272,7 +303,7 @@ fn dst_object_types() -> DstResult<Vec<ObjectTypeDef>> {
             { "id": "derived_note", "type": { "kind": "text" } }
         ]
     }))
-    .map_err(|err| format!("note type: {err}"))?;
+    .ctx(seed, step, "note type")?;
 
     let mut fields: Vec<serde_json::Value> =
         ["actionId", "actor", "turn", "transition", "from", "to"]
@@ -306,13 +337,13 @@ fn dst_object_types() -> DstResult<Vec<ObjectTypeDef>> {
     let action_call: ObjectTypeDef = serde_json::from_value(
         json!({"name": norn_kernel::ACTION_CALL_TYPE, "properties": fields}),
     )
-    .map_err(|err| format!("action call type: {err}"))?;
+    .ctx(seed, step, "action call type")?;
     Ok(vec![account, note, action_call])
 }
 
-fn dst_model() -> DstResult<Model> {
-    let defs = dst_object_types()?;
-    Model::from_definitions(&defs, &[]).map_err(|err| format!("model: {err}"))
+fn dst_model(seed: u64, step: usize) -> DstResult<Model> {
+    let defs = dst_object_types(seed, step)?;
+    Model::from_definitions(&defs, &[]).ctx(seed, step, "model")
 }
 
 fn account_key(index: usize) -> FactKey {
@@ -540,6 +571,15 @@ impl RefModel {
             let actual = cell.load_link(link_key).ctx(seed, step, "load link")?;
             ensure_eq(seed, step, "link state equivalence", &actual, expected)?;
         }
+        self.verify_queues(seed, step, cell)
+    }
+
+    fn verify_queues<S: SqlEngine>(
+        &self,
+        seed: u64,
+        step: usize,
+        cell: &DstCell<S>,
+    ) -> DstResult<()> {
         let actual_cmds = cell
             .pending_commands()
             .ctx(seed, step, "pending_commands")?;
@@ -559,11 +599,136 @@ impl RefModel {
             "timers equivalence",
             &actual_timers,
             &expected_timers,
+        )?;
+        let actual_obs_rows =
+            cell.store()
+                .read()
+                .pending_observations()
+                .ctx(seed, step, "pending_observations")?;
+        let mut actual_obs = Vec::with_capacity(actual_obs_rows.len());
+        for row in actual_obs_rows {
+            let decoded: Observed<DstInput> = norn_ir::runtime::decode(&row.observed).ctx(
+                seed,
+                step,
+                "decode pending observation",
+            )?;
+            ensure_eq(
+                seed,
+                step,
+                "pending observation id matches row",
+                &row.observation_id,
+                &decoded.id.0,
+            )?;
+            actual_obs.push(decoded);
+        }
+        ensure_eq(
+            seed,
+            step,
+            "pending observations equivalence",
+            &actual_obs,
+            &self.pending_obs,
+        )?;
+        ensure(
+            seed,
+            step,
+            self.pending_obs
+                .iter()
+                .all(|obs| self.seen_obs.contains(&obs.id)),
+            "every pending observation must be tracked in seen_obs",
         )
     }
 }
 
 // ------------------------------------------------------------------ Part 1: Native CellHost DST
+
+#[derive(Debug, Default, Clone)]
+struct MainCoverage {
+    object_conflict: u64,
+    link_conflict: u64,
+    link_read_conflict: u64,
+    qty_stale_version: u64,
+    qty_delayed_replay: u64,
+    qty_idempotency_conflict: u64,
+    outbox_claim_crash_unknown: u64,
+    outbox_generation_supersession: u64,
+    outbox_completed: u64,
+    outbox_consumed: u64,
+    timer_aba_reschedule_refusal: u64,
+    observation_dedup_consume: u64,
+    engine_fault_crash: u64,
+    engine_fault_io: u64,
+    sqlite_reopen: u64,
+}
+
+impl MainCoverage {
+    fn merge(&mut self, other: &Self) {
+        self.object_conflict = self.object_conflict.saturating_add(other.object_conflict);
+        self.link_conflict = self.link_conflict.saturating_add(other.link_conflict);
+        self.link_read_conflict = self
+            .link_read_conflict
+            .saturating_add(other.link_read_conflict);
+        self.qty_stale_version = self
+            .qty_stale_version
+            .saturating_add(other.qty_stale_version);
+        self.qty_delayed_replay = self
+            .qty_delayed_replay
+            .saturating_add(other.qty_delayed_replay);
+        self.qty_idempotency_conflict = self
+            .qty_idempotency_conflict
+            .saturating_add(other.qty_idempotency_conflict);
+        self.outbox_claim_crash_unknown = self
+            .outbox_claim_crash_unknown
+            .saturating_add(other.outbox_claim_crash_unknown);
+        self.outbox_generation_supersession = self
+            .outbox_generation_supersession
+            .saturating_add(other.outbox_generation_supersession);
+        self.outbox_completed = self.outbox_completed.saturating_add(other.outbox_completed);
+        self.outbox_consumed = self.outbox_consumed.saturating_add(other.outbox_consumed);
+        self.timer_aba_reschedule_refusal = self
+            .timer_aba_reschedule_refusal
+            .saturating_add(other.timer_aba_reschedule_refusal);
+        self.observation_dedup_consume = self
+            .observation_dedup_consume
+            .saturating_add(other.observation_dedup_consume);
+        self.engine_fault_crash = self
+            .engine_fault_crash
+            .saturating_add(other.engine_fault_crash);
+        self.engine_fault_io = self.engine_fault_io.saturating_add(other.engine_fault_io);
+        self.sqlite_reopen = self.sqlite_reopen.saturating_add(other.sqlite_reopen);
+    }
+
+    fn assert_covered(&self) -> DstResult<()> {
+        assert_batch_counts(
+            "dst_cell_host_adversarial_schedule_and_crash_recovery",
+            &[
+                ("object_conflict", self.object_conflict),
+                ("link_conflict", self.link_conflict),
+                ("link_read_conflict", self.link_read_conflict),
+                ("qty_stale_version", self.qty_stale_version),
+                ("qty_delayed_replay", self.qty_delayed_replay),
+                ("qty_idempotency_conflict", self.qty_idempotency_conflict),
+                (
+                    "outbox_claim_crash_unknown",
+                    self.outbox_claim_crash_unknown,
+                ),
+                (
+                    "outbox_generation_supersession",
+                    self.outbox_generation_supersession,
+                ),
+                ("outbox_completed", self.outbox_completed),
+                ("outbox_consumed", self.outbox_consumed),
+                (
+                    "timer_aba_reschedule_refusal",
+                    self.timer_aba_reschedule_refusal,
+                ),
+                ("observation_dedup_consume", self.observation_dedup_consume),
+                ("engine_fault_crash", self.engine_fault_crash),
+                ("engine_fault_io", self.engine_fault_io),
+                ("sqlite_reopen", self.sqlite_reopen),
+            ],
+        )
+    }
+}
 
 struct NativeDstHarness {
     seed: u64,
@@ -578,14 +743,15 @@ struct NativeDstHarness {
     next_obs: u64,
     next_qty: u64,
     stale_consumed: Vec<Consumed>,
+    cov: MainCoverage,
 }
 
 impl NativeDstHarness {
     fn open(seed: u64, accounts: usize) -> DstResult<Self> {
-        let dir = simulator_dir()?;
+        let dir = simulator_dir(seed, 0)?;
         let path = dir.path().join(format!("dst-{seed}.sqlite"));
         let faults = FaultSwitch::default();
-        let cell = Self::open_cell(&path, &faults)?;
+        let cell = Self::open_cell(seed, 0, &path, &faults)?;
         let mut h = Self {
             seed,
             rng: SplitMix64::new(seed),
@@ -599,20 +765,31 @@ impl NativeDstHarness {
             next_obs: 1,
             next_qty: 1,
             stale_consumed: Vec::new(),
+            cov: MainCoverage::default(),
         };
         h.bootstrap_quantity()?;
         Ok(h)
     }
 
     fn open_cell(
+        seed: u64,
+        step: usize,
         path: &Path,
         faults: &FaultSwitch,
     ) -> DstResult<DstCell<FaultEngine<NativeEngine>>> {
-        let native = NativeEngine::open_unsynced(path, StoreOptions::default())
-            .map_err(|err| format!("open_unsynced: {err}"))?;
-        let store = CellStore::from_engine(FaultEngine::new(native, faults.clone()), dst_model()?)
-            .map_err(|err| format!("store: {err}"))?;
-        SqliteCell::new(store, SCOPE, dst_responder).map_err(|err| format!("cell: {err}"))
+        let native = NativeEngine::open_unsynced(path, StoreOptions::default()).ctx(
+            seed,
+            step,
+            "open_unsynced",
+        )?;
+        let cell_id = deterministic_cell_id(seed, step, 1)?;
+        let store = CellStore::from_engine_with_identity_source(
+            FaultEngine::new(native, faults.clone()),
+            dst_model(seed, step)?,
+            move |_| Ok(cell_id.clone()),
+        )
+        .ctx(seed, step, "store")?;
+        SqliteCell::new(store, SCOPE, dst_responder).ctx(seed, step, "cell")
     }
 
     fn bootstrap_quantity(&mut self) -> DstResult<()> {
@@ -646,7 +823,8 @@ impl NativeDstHarness {
         let before_dump = dump_of(&self.cell, self.seed, step)?;
         let before_head = head_of(&self.cell, self.seed, step)?;
         let saved_now = self.cell.now();
-        self.cell = Self::open_cell(&self.path, &self.faults).ctx(self.seed, step, "reopen")?;
+        self.cell = Self::open_cell(self.seed, step, &self.path, &self.faults)?;
+        self.cov.sqlite_reopen = self.cov.sqlite_reopen.saturating_add(1);
         ensure(
             self.seed,
             step,
@@ -693,11 +871,35 @@ impl NativeDstHarness {
         Ok(())
     }
 
-    fn commit_refused(&mut self, step: usize, commit: DstCommit) -> DstResult<()> {
+    fn commit_refused(
+        &mut self,
+        step: usize,
+        commit: DstCommit,
+        expected_label: &str,
+        expected: impl FnOnce(&CommitError<CellError>) -> bool,
+    ) -> DstResult<()> {
         let before_dump = dump_of(&self.cell, self.seed, step)?;
         let before_seq = self.model.head.commits;
-        let res = self.cell.commit(commit);
-        ensure(self.seed, step, res.is_err(), "expected commit refusal")?;
+        match self.cell.commit(commit) {
+            Ok(receipt) => {
+                return Err(fail(
+                    self.seed,
+                    step,
+                    format!(
+                        "expected {expected_label}, but commit succeeded at seq {}",
+                        receipt.seq.0
+                    ),
+                ));
+            }
+            Err(err) => {
+                ensure(
+                    self.seed,
+                    step,
+                    expected(&err),
+                    format!("expected {expected_label}, got {err:?}"),
+                )?;
+            }
+        }
         ensure_eq(
             self.seed,
             step,
@@ -754,7 +956,11 @@ impl NativeDstHarness {
             })],
             ..CellCommit::empty()
         };
-        self.commit_refused(step, stale)
+        self.commit_refused(step, stale, "CommitError::Conflict", |err| {
+            matches!(err, CommitError::Conflict { .. })
+        })?;
+        self.cov.object_conflict = self.cov.object_conflict.saturating_add(1);
+        Ok(())
     }
 
     fn step_link_contention(&mut self, step: usize) -> DstResult<()> {
@@ -782,9 +988,9 @@ impl NativeDstHarness {
             step,
             &CellCommit {
                 links: vec![LinkWrite {
-                    key: lk,
+                    key: lk.clone(),
                     expected: state.version,
-                    mutation,
+                    mutation: mutation.clone(),
                 }],
                 link_reads: vec![LinkReadExpectation {
                     source: src.clone(),
@@ -793,12 +999,31 @@ impl NativeDstHarness {
                 }],
                 events: vec![DstEvent::LinkMutated {
                     source: src.key.clone(),
-                    target: dst.key,
+                    target: dst.key.clone(),
                     added: adding,
                 }],
                 ..CellCommit::empty()
             },
         )?;
+        self.commit_refused(
+            step,
+            CellCommit {
+                links: vec![LinkWrite {
+                    key: lk,
+                    expected: state.version,
+                    mutation,
+                }],
+                events: vec![DstEvent::LinkMutated {
+                    source: src.key.clone(),
+                    target: dst.key,
+                    added: adding,
+                }],
+                ..CellCommit::empty()
+            },
+            "CommitError::LinkConflict",
+            |err| matches!(err, CommitError::LinkConflict { .. }),
+        )?;
+        self.cov.link_conflict = self.cov.link_conflict.saturating_add(1);
         self.commit_refused(
             step,
             CellCommit {
@@ -813,7 +1038,11 @@ impl NativeDstHarness {
                 }],
                 ..CellCommit::empty()
             },
-        )
+            "CommitError::LinkReadConflict",
+            |err| matches!(err, CommitError::LinkReadConflict { .. }),
+        )?;
+        self.cov.link_read_conflict = self.cov.link_read_conflict.saturating_add(1);
+        Ok(())
     }
 
     fn step_outbox(&mut self, step: usize) -> DstResult<()> {
@@ -866,7 +1095,13 @@ impl NativeDstHarness {
                 ..CellCommit::empty()
             },
         )?;
-        self.commit_refused(step, CellCommit::empty().consuming(consumed))
+        self.cov.outbox_consumed = self.cov.outbox_consumed.saturating_add(1);
+        self.commit_refused(
+            step,
+            CellCommit::empty().consuming(consumed),
+            "CommitError::NotPending",
+            |err| matches!(err, CommitError::NotPending { .. }),
+        )
     }
 
     fn step_claim_outbox(&mut self, step: usize, head: &PendingCmdRef) -> DstResult<()> {
@@ -905,6 +1140,8 @@ impl NativeDstHarness {
                 matches!(err, Err(CellError::PerformOutcomeUnknown { .. })),
                 format!("perform must return PerformOutcomeUnknown, got {err:?}"),
             )?;
+            self.cov.outbox_claim_crash_unknown =
+                self.cov.outbox_claim_crash_unknown.saturating_add(1);
         }
         Ok(())
     }
@@ -914,7 +1151,7 @@ impl NativeDstHarness {
         step: usize,
         head: &PendingCmdRef,
     ) -> DstResult<()> {
-        if self.rng.coin(1, 3) {
+        if head.command.generation.0 == 0 && self.rng.coin(1, 2) {
             let next_gen = Generation(head.command.generation.0.saturating_add(1));
             let retry = Command {
                 id: head.command.id.clone(),
@@ -939,13 +1176,16 @@ impl NativeDstHarness {
                 .cell
                 .complete_perform(&head.command, dst_responder(&head.command))
                 .ctx(self.seed, step, "stale complete")?;
-            return ensure_eq(
+            ensure_eq(
                 self.seed,
                 step,
                 "stale generation completion ignored",
                 &stale,
                 &None,
-            );
+            )?;
+            self.cov.outbox_generation_supersession =
+                self.cov.outbox_generation_supersession.saturating_add(1);
+            return Ok(());
         }
         let ans = dst_responder(&head.command);
         let rec = self
@@ -966,7 +1206,9 @@ impl NativeDstHarness {
             self.cell
                 .complete_perform(&head.command, ans)
                 .ctx(self.seed, step, "dup complete")?;
-        ensure_eq(self.seed, step, "duplicate completion ignored", &dup, &None)
+        ensure_eq(self.seed, step, "duplicate completion ignored", &dup, &None)?;
+        self.cov.outbox_completed = self.cov.outbox_completed.saturating_add(1);
+        Ok(())
     }
 
     fn step_clock(&mut self, step: usize) -> DstResult<()> {
@@ -999,7 +1241,15 @@ impl NativeDstHarness {
                         ..CellCommit::empty()
                     },
                 )?;
-                return self.commit_refused(step, CellCommit::empty().consuming(due.consumed()));
+                self.commit_refused(
+                    step,
+                    CellCommit::empty().consuming(due.consumed()),
+                    "CommitError::NotPending",
+                    |err| matches!(err, CommitError::NotPending { .. }),
+                )?;
+                self.cov.timer_aba_reschedule_refusal =
+                    self.cov.timer_aba_reschedule_refusal.saturating_add(1);
+                return Ok(());
             }
             return self.commit_ok(
                 step,
@@ -1034,6 +1284,12 @@ impl NativeDstHarness {
             ensure(
                 self.seed,
                 step,
+                self.model.seen_obs.contains(&obs.id),
+                "observed inbox row must be tracked in seen_obs",
+            )?;
+            ensure(
+                self.seed,
+                step,
                 !self.cell.inject(&obs).ctx(self.seed, step, "dup inject")?,
                 "pending obs deduplicates",
             )?;
@@ -1053,10 +1309,18 @@ impl NativeDstHarness {
                 !self.cell.inject(&obs).ctx(self.seed, step, "post-dup")?,
                 "consumed obs stays seen",
             )?;
+            self.cov.observation_dedup_consume =
+                self.cov.observation_dedup_consume.saturating_add(1);
             return Ok(());
         }
         let id = ObservationId(format!("obs-{}", self.next_obs));
         self.next_obs = self.next_obs.saturating_add(1);
+        ensure(
+            self.seed,
+            step,
+            !self.model.seen_obs.contains(&id),
+            "fresh obs id must not already be in seen_obs",
+        )?;
         let obs = Observed {
             id: id.clone(),
             provenance: Provenance {
@@ -1107,6 +1371,7 @@ impl NativeDstHarness {
                     replayed.receipt(),
                     &orig_receipt,
                 )?;
+                self.cov.qty_delayed_replay = self.cov.qty_delayed_replay.saturating_add(1);
                 // Mutated payload under the same idempotency key must refuse IdempotencyConflict.
                 let mut mutated = quantity_support::post(
                     1,
@@ -1122,6 +1387,8 @@ impl NativeDstHarness {
                     matches!(res, Err(CellError::IdempotencyConflict(_))),
                     format!("mutated qty key must conflict, got {res:?}"),
                 )?;
+                self.cov.qty_idempotency_conflict =
+                    self.cov.qty_idempotency_conflict.saturating_add(1);
                 return ensure_eq(
                     self.seed,
                     step,
@@ -1168,6 +1435,7 @@ impl NativeDstHarness {
                 &dump_of(&self.cell, self.seed, step)?,
                 &before,
             )?;
+            self.cov.qty_stale_version = self.cov.qty_stale_version.saturating_add(1);
         }
         let committed =
             self.cell
@@ -1252,9 +1520,30 @@ impl NativeDstHarness {
             fired && res.is_err(),
             "armed engine fault must fire and fail",
         )?;
+        if kind == EngineFaultKind::Io {
+            self.cov.engine_fault_io = self.cov.engine_fault_io.saturating_add(1);
+            ensure_eq(
+                self.seed,
+                step,
+                "io fault live rollback dump",
+                &dump_of(&self.cell, self.seed, step)?,
+                &before_dump,
+            )?;
+            ensure_eq(
+                self.seed,
+                step,
+                "io fault live rollback head",
+                &head_of(&self.cell, self.seed, step)?,
+                &before_head,
+            )?;
+            self.model
+                .verify(self.seed, step, &self.cell, self.accounts)?;
+        } else {
+            self.cov.engine_fault_crash = self.cov.engine_fault_crash.saturating_add(1);
+        }
         let saved_now = self.cell.now();
-        self.cell =
-            Self::open_cell(&self.path, &self.faults).ctx(self.seed, step, "reopen after fault")?;
+        self.cell = Self::open_cell(self.seed, step, &self.path, &self.faults)?;
+        self.cov.sqlite_reopen = self.cov.sqlite_reopen.saturating_add(1);
         self.cell.advance_to(saved_now);
         ensure_eq(
             self.seed,
@@ -1272,12 +1561,12 @@ impl NativeDstHarness {
         )
     }
 
-    fn run_steps(&mut self, steps: usize) -> DstResult<()> {
+    fn run_steps(&mut self, steps: usize) -> DstResult<MainCoverage> {
         for step in 1..=steps {
             let roll = self.rng.bound(100);
-            if roll < 22 {
+            if roll < 19 {
                 self.step_account_contention(step)?;
-            } else if roll < 38 {
+            } else if roll < 33 {
                 self.step_link_contention(step)?;
             } else if roll < 56 {
                 self.step_outbox(step)?;
@@ -1293,7 +1582,12 @@ impl NativeDstHarness {
             if !self.stale_consumed.is_empty() && self.rng.coin(1, 5) {
                 let pick = self.rng.index(self.stale_consumed.len());
                 if let Some(stale) = self.stale_consumed.get(pick).cloned() {
-                    self.commit_refused(step, CellCommit::empty().consuming(stale))?;
+                    self.commit_refused(
+                        step,
+                        CellCommit::empty().consuming(stale),
+                        "CommitError::NotPending",
+                        |err| matches!(err, CommitError::NotPending { .. }),
+                    )?;
                 }
             }
             if self.rng.coin(1, 7) {
@@ -1302,44 +1596,111 @@ impl NativeDstHarness {
             self.model
                 .verify(self.seed, step, &self.cell, self.accounts)?;
         }
-        Ok(())
+        Ok(self.cov.clone())
     }
 }
 
 // ------------------------------------------------------------------ Part 2: DO vs Native equivalence
 
-fn open_native_cell(path: &Path) -> DstResult<DstCell<NativeEngine>> {
-    let eng = NativeEngine::open_unsynced(path, StoreOptions::default())
-        .map_err(|e| format!("open: {e}"))?;
-    let store = CellStore::from_engine(eng, dst_model()?).map_err(|e| format!("store: {e}"))?;
-    SqliteCell::new(store, SCOPE, dst_responder).map_err(|e| format!("cell: {e}"))
+#[derive(Debug, Default, Clone)]
+struct DoCoverage {
+    commits: u64,
+    stale_refusals: u64,
+    commit_faults: u64,
+    reopens: u64,
+}
+
+impl DoCoverage {
+    fn merge(&mut self, other: &Self) {
+        self.commits = self.commits.saturating_add(other.commits);
+        self.stale_refusals = self.stale_refusals.saturating_add(other.stale_refusals);
+        self.commit_faults = self.commit_faults.saturating_add(other.commit_faults);
+        self.reopens = self.reopens.saturating_add(other.reopens);
+    }
+
+    fn assert_covered(&self) -> DstResult<()> {
+        assert_batch_counts(
+            "dst_do_engine_commit_fault_and_native_equivalence",
+            &[
+                ("commits", self.commits),
+                ("stale_refusals", self.stale_refusals),
+                ("commit_faults", self.commit_faults),
+                ("reopens", self.reopens),
+            ],
+        )
+    }
+}
+
+fn open_native_cell(
+    seed: u64,
+    step: usize,
+    stream: u64,
+    path: &Path,
+) -> DstResult<DstCell<NativeEngine>> {
+    let eng = NativeEngine::open_unsynced(path, StoreOptions::default()).ctx(seed, step, "open")?;
+    let cell_id = deterministic_cell_id(seed, step, stream)?;
+    let store =
+        CellStore::from_engine_with_identity_source(eng, dst_model(seed, step)?, move |_| {
+            Ok(cell_id.clone())
+        })
+        .ctx(seed, step, "store")?;
+    SqliteCell::new(store, SCOPE, dst_responder).ctx(seed, step, "cell")
 }
 
 fn open_do_cell(
+    seed: u64,
+    step: usize,
+    stream: u64,
     path: &Path,
     faults: &FaultSwitch,
 ) -> DstResult<DstCell<FaultEngine<DoEngine<DoStorageEmulator>>>> {
-    let eng = NativeEngine::open_unsynced(path, StoreOptions::default())
-        .map_err(|e| format!("open: {e}"))?;
+    let eng = NativeEngine::open_unsynced(path, StoreOptions::default()).ctx(seed, step, "open")?;
+    let cell_id = deterministic_cell_id(seed, step, stream)?;
     let storage = DoStorageEmulator::new(eng).with_faults(faults.clone());
-    let store = CellStore::from_engine(
+    let store = CellStore::from_engine_with_identity_source(
         FaultEngine::new(DoEngine::new(storage), faults.clone()),
-        dst_model()?,
+        dst_model(seed, step)?,
+        move |_| Ok(cell_id.clone()),
     )
-    .map_err(|e| format!("do store: {e}"))?;
-    SqliteCell::new(store, SCOPE, dst_responder).map_err(|e| format!("do cell: {e}"))
+    .ctx(seed, step, "do store")?;
+    SqliteCell::new(store, SCOPE, dst_responder).ctx(seed, step, "do cell")
 }
 
-fn run_do_vs_native_seed(seed: u64, steps: usize) -> DstResult<()> {
+fn assert_native_do_eq(
+    seed: u64,
+    step: usize,
+    phase: &str,
+    native_cell: &DstCell<NativeEngine>,
+    do_cell: &DstCell<FaultEngine<DoEngine<DoStorageEmulator>>>,
+) -> DstResult<()> {
+    ensure_eq(
+        seed,
+        step,
+        &format!("Native vs DO head ({phase})"),
+        &head_of(native_cell, seed, step)?,
+        &head_of(do_cell, seed, step)?,
+    )?;
+    ensure_eq(
+        seed,
+        step,
+        &format!("Native vs DO full dump ({phase})"),
+        &dump_of(native_cell, seed, step)?,
+        &dump_of(do_cell, seed, step)?,
+    )
+}
+
+fn run_do_vs_native_seed(seed: u64, steps: usize) -> DstResult<DoCoverage> {
     let mut rng = SplitMix64::new(seed);
-    let dir = simulator_dir()?;
+    let mut cov = DoCoverage::default();
+    let dir = simulator_dir(seed, 0)?;
     let (native_path, do_path) = (
         dir.path().join("native.sqlite"),
         dir.path().join("do.sqlite"),
     );
     let faults = FaultSwitch::default();
-    let mut native_cell = open_native_cell(&native_path)?;
-    let mut do_cell = open_do_cell(&do_path, &faults)?;
+    let mut native_cell = open_native_cell(seed, 0, 2, &native_path)?;
+    let mut do_cell = open_do_cell(seed, 0, 2, &do_path, &faults)?;
+    assert_native_do_eq(seed, 0, "initial", &native_cell, &do_cell)?;
 
     for step in 1..=steps {
         let key = account_key(rng.index(3));
@@ -1386,26 +1747,65 @@ fn run_do_vs_native_seed(seed: u64, steps: usize) -> DstResult<()> {
                 &dump_of(&do_cell, seed, step)?,
                 &before,
             )?;
+            assert_native_do_eq(seed, step, "after DO commit fault", &native_cell, &do_cell)?;
+            cov.commit_faults = cov.commit_faults.saturating_add(1);
         }
         let r_nat = native_cell.commit(commit.clone()).map_err(|err| err.code());
         let r_do = do_cell.commit(commit).map_err(|err| err.code());
         ensure_eq(seed, step, "Native vs DO commit outcome", &r_nat, &r_do)?;
-        if rng.coin(1, 5) {
-            native_cell = open_native_cell(&native_path)?;
-            do_cell = open_do_cell(&do_path, &faults)?;
+        if r_nat.is_ok() {
+            cov.commits = cov.commits.saturating_add(1);
+        } else {
+            cov.stale_refusals = cov.stale_refusals.saturating_add(1);
         }
-        ensure_eq(
-            seed,
-            step,
-            "Native vs DO head",
-            &head_of(&native_cell, seed, step)?,
-            &head_of(&do_cell, seed, step)?,
-        )?;
+        assert_native_do_eq(seed, step, "after commit", &native_cell, &do_cell)?;
+        if rng.coin(1, 5) {
+            native_cell = open_native_cell(seed, step, 2, &native_path)?;
+            do_cell = open_do_cell(seed, step, 2, &do_path, &faults)?;
+            cov.reopens = cov.reopens.saturating_add(1);
+            assert_native_do_eq(seed, step, "after reopen", &native_cell, &do_cell)?;
+        }
     }
-    Ok(())
+    Ok(cov)
 }
 
 // ------------------------------------------------------------------ Part 3: ActionCommit DST
+
+#[derive(Debug, Default, Clone)]
+struct ActionCoverage {
+    commits: u64,
+    stale_precondition_reads: u64,
+    replays: u64,
+    idempotency_conflicts: u64,
+    reopens: u64,
+}
+
+impl ActionCoverage {
+    fn merge(&mut self, other: &Self) {
+        self.commits = self.commits.saturating_add(other.commits);
+        self.stale_precondition_reads = self
+            .stale_precondition_reads
+            .saturating_add(other.stale_precondition_reads);
+        self.replays = self.replays.saturating_add(other.replays);
+        self.idempotency_conflicts = self
+            .idempotency_conflicts
+            .saturating_add(other.idempotency_conflicts);
+        self.reopens = self.reopens.saturating_add(other.reopens);
+    }
+
+    fn assert_covered(&self) -> DstResult<()> {
+        assert_batch_counts(
+            "dst_action_commit_idempotency_and_stale_precondition",
+            &[
+                ("commits", self.commits),
+                ("stale_precondition_reads", self.stale_precondition_reads),
+                ("replays", self.replays),
+                ("idempotency_conflicts", self.idempotency_conflicts),
+                ("reopens", self.reopens),
+            ],
+        )
+    }
+}
 
 struct AllowAll;
 
@@ -1424,7 +1824,7 @@ impl ActionAuthorizer for AllowAll {
     }
 }
 
-fn guarded_toggle_action(transition: &str) -> DstResult<ActionRoot> {
+fn guarded_toggle_action(seed: u64, step: usize, transition: &str) -> DstResult<ActionRoot> {
     serde_json::from_value(json!({
         "actionId": format!("dst.account.{transition}"),
         "title": format!("Account {transition}"),
@@ -1455,7 +1855,7 @@ fn guarded_toggle_action(transition: &str) -> DstResult<ActionRoot> {
             "transition": transition
         }
     }))
-    .map_err(|err| format!("toggle action: {err}"))
+    .ctx(seed, step, "toggle action")
 }
 
 struct PreconditionRaceHost<'a> {
@@ -1600,189 +2000,264 @@ fn action_call<'a>(
     }
 }
 
-fn open_action_cell(path: &Path) -> DstResult<SqliteCell<FactEvent, JsonObject, JsonObject>> {
-    let eng = NativeEngine::open_unsynced(path, StoreOptions::default())
-        .map_err(|e| format!("open: {e}"))?;
-    let store = CellStore::from_engine(eng, dst_model()?).map_err(|e| format!("store: {e}"))?;
+fn open_action_cell(
+    seed: u64,
+    step: usize,
+    path: &Path,
+) -> DstResult<SqliteCell<FactEvent, JsonObject, JsonObject>> {
+    let eng = NativeEngine::open_unsynced(path, StoreOptions::default()).ctx(seed, step, "open")?;
+    let cell_id = deterministic_cell_id(seed, step, 3)?;
+    let store =
+        CellStore::from_engine_with_identity_source(eng, dst_model(seed, step)?, move |_| {
+            Ok(cell_id.clone())
+        })
+        .ctx(seed, step, "store")?;
     SqliteCell::new(store, SCOPE, |cmd: &Command<JsonObject>| {
         cmd.payload.clone()
     })
-    .map_err(|e| format!("cell: {e}"))
+    .ctx(seed, step, "cell")
 }
 
-fn verify_action_replay_and_conflict(
+struct ActionDstHarness {
     seed: u64,
-    step: usize,
-    cell: &mut SqliteCell<FactEvent, JsonObject, JsonObject>,
-    catalog: &TypeCatalog<'_>,
-    act: &ActionRoot,
-    entry: &(String, String, String),
-) -> DstResult<()> {
-    let (target_id, actor, idem) = entry;
-    let before_dump = dump_of(cell, seed, step)?;
-    let before_head = head_of(cell, seed, step)?;
-    let replay_req = action_call(act, target_id, "acct-0", actor, idem);
-    let replay = commit_action(cell, catalog, &replay_req, &AllowAll).ctx(seed, step, "replay")?;
-    ensure(
-        seed,
-        step,
-        matches!(replay, ActionOutcome::Replayed { .. }),
-        "exact action retry must replay",
-    )?;
-    let mutated = action_call(act, target_id, "acct-0", "other-actor", idem);
-    let conflict = commit_action(cell, catalog, &mutated, &AllowAll);
-    ensure(
-        seed,
-        step,
-        matches!(conflict, Err(ActionRefusal::IdempotencyConflict { .. })),
-        format!("mutated action key must conflict, got {conflict:?}"),
-    )?;
-    ensure_eq(
-        seed,
-        step,
-        "replay+conflict zero diff",
-        &dump_of(cell, seed, step)?,
-        &before_dump,
-    )?;
-    ensure_eq(
-        seed,
-        step,
-        "replay+conflict head unchanged",
-        &head_of(cell, seed, step)?,
-        &before_head,
-    )
+    rng: SplitMix64,
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+    cell: SqliteCell<FactEvent, JsonObject, JsonObject>,
+    committed: Vec<(bool, String, String, String)>,
+    next_key: u64,
+    cov: ActionCoverage,
 }
 
-fn verify_raced_precondition(
-    seed: u64,
-    step: usize,
-    cell: &mut SqliteCell<FactEvent, JsonObject, JsonObject>,
-    catalog: &TypeCatalog<'_>,
-    req: &ActionCall<'_>,
-    target_key: &FactKey,
-    cur: &FactState,
-) -> DstResult<()> {
-    let before = head_of(cell, seed, step)?;
-    let mut raced = PreconditionRaceHost {
-        cell,
-        interleave_guard: Some(account_key(0)),
-        fired: false,
-    };
-    let res = commit_action(&mut raced, catalog, req, &AllowAll);
-    ensure(
-        seed,
-        step,
-        matches!(res, Err(ActionRefusal::StalePreconditionRead { .. })),
-        format!("expected StalePreconditionRead, got {res:?}"),
-    )?;
-    ensure_eq(
-        seed,
-        step,
-        "raced action leaves target unchanged",
-        &cell.load(target_key).ctx(seed, step, "reload")?,
-        cur,
-    )?;
-    ensure_eq(
-        seed,
-        step,
-        "only guard race committed",
-        &head_of(cell, seed, step)?.commits,
-        &before.commits.saturating_add(1),
-    )
-}
-
-fn run_action_dst_seed(seed: u64, steps: usize) -> DstResult<()> {
-    let mut rng = SplitMix64::new(seed);
-    let dir = simulator_dir()?;
-    let path = dir.path().join("action-dst.sqlite");
-    let defs = dst_object_types()?;
-    let catalog = TypeCatalog::new(&defs);
-    let (lock_act, unlock_act) = (
-        guarded_toggle_action("lock")?,
-        guarded_toggle_action("unlock")?,
-    );
-    let mut cell = open_action_cell(&path)?;
-    let writes = (0..4)
-        .map(|i| {
-            let key = account_key(i);
-            FactWrite {
-                key: key.clone(),
-                expected: FactVersion::ABSENT,
-                mutation: FactMutation::Put {
-                    values: account_values(&key.key, 100, "open", "seed"),
-                },
-            }
+impl ActionDstHarness {
+    fn open(seed: u64) -> DstResult<Self> {
+        let dir = simulator_dir(seed, 0)?;
+        let path = dir.path().join("action-dst.sqlite");
+        let mut cell = open_action_cell(seed, 0, &path)?;
+        let writes = (0..4)
+            .map(|i| {
+                let key = account_key(i);
+                FactWrite {
+                    key: key.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: account_values(&key.key, 100, "open", "seed"),
+                    },
+                }
+            })
+            .collect();
+        cell.commit(CellCommit {
+            writes,
+            ..CellCommit::empty()
         })
-        .collect();
-    cell.commit(CellCommit {
-        writes,
-        ..CellCommit::empty()
-    })
-    .ctx(seed, 0, "seed")?;
+        .ctx(seed, 0, "seed")?;
+        Ok(Self {
+            seed,
+            rng: SplitMix64::new(seed),
+            _dir: dir,
+            path,
+            cell,
+            committed: Vec::new(),
+            next_key: 1,
+            cov: ActionCoverage::default(),
+        })
+    }
 
-    let mut committed: Vec<(bool, String, String, String)> = Vec::new();
-    let mut next_key: u64 = 1;
-    for step in 1..=steps {
-        if !committed.is_empty() && rng.coin(1, 3) {
-            let pick = rng.index(committed.len());
-            if let Some((is_lock, target, actor, idem)) = committed.get(pick).cloned() {
-                let act = if is_lock { &lock_act } else { &unlock_act };
-                verify_action_replay_and_conflict(
-                    seed,
+    fn verify_replay_and_conflict(
+        &mut self,
+        step: usize,
+        catalog: &TypeCatalog<'_>,
+        act: &ActionRoot,
+        entry: &(String, String, String),
+    ) -> DstResult<()> {
+        let (target_id, actor, idem) = entry;
+        let before_dump = dump_of(&self.cell, self.seed, step)?;
+        let before_head = head_of(&self.cell, self.seed, step)?;
+        let replay_req = action_call(act, target_id, "acct-0", actor, idem);
+        let replay = commit_action(&mut self.cell, catalog, &replay_req, &AllowAll)
+            .ctx(self.seed, step, "replay")?;
+        ensure(
+            self.seed,
+            step,
+            matches!(replay, ActionOutcome::Replayed { .. }),
+            "exact action retry must replay",
+        )?;
+        self.cov.replays = self.cov.replays.saturating_add(1);
+        let mutated = action_call(act, target_id, "acct-0", "other-actor", idem);
+        let conflict = commit_action(&mut self.cell, catalog, &mutated, &AllowAll);
+        ensure(
+            self.seed,
+            step,
+            matches!(conflict, Err(ActionRefusal::IdempotencyConflict { .. })),
+            format!("mutated action key must conflict, got {conflict:?}"),
+        )?;
+        self.cov.idempotency_conflicts = self.cov.idempotency_conflicts.saturating_add(1);
+        ensure_eq(
+            self.seed,
+            step,
+            "replay+conflict zero diff",
+            &dump_of(&self.cell, self.seed, step)?,
+            &before_dump,
+        )?;
+        ensure_eq(
+            self.seed,
+            step,
+            "replay+conflict head unchanged",
+            &head_of(&self.cell, self.seed, step)?,
+            &before_head,
+        )
+    }
+
+    fn verify_raced_precondition(
+        &mut self,
+        step: usize,
+        catalog: &TypeCatalog<'_>,
+        req: &ActionCall<'_>,
+        target_key: &FactKey,
+        cur: &FactState,
+    ) -> DstResult<()> {
+        let before = head_of(&self.cell, self.seed, step)?;
+        let mut raced = PreconditionRaceHost {
+            cell: &mut self.cell,
+            interleave_guard: Some(account_key(0)),
+            fired: false,
+        };
+        let res = commit_action(&mut raced, catalog, req, &AllowAll);
+        ensure(
+            self.seed,
+            step,
+            matches!(res, Err(ActionRefusal::StalePreconditionRead { .. })),
+            format!("expected StalePreconditionRead, got {res:?}"),
+        )?;
+        self.cov.stale_precondition_reads = self.cov.stale_precondition_reads.saturating_add(1);
+        ensure_eq(
+            self.seed,
+            step,
+            "raced action leaves target unchanged",
+            &self.cell.load(target_key).ctx(self.seed, step, "reload")?,
+            cur,
+        )?;
+        ensure_eq(
+            self.seed,
+            step,
+            "only guard race committed",
+            &head_of(&self.cell, self.seed, step)?.commits,
+            &before.commits.saturating_add(1),
+        )
+    }
+
+    fn run(&mut self, steps: usize) -> DstResult<ActionCoverage> {
+        let defs = dst_object_types(self.seed, 0)?;
+        let catalog = TypeCatalog::new(&defs);
+        let (lock_act, unlock_act) = (
+            guarded_toggle_action(self.seed, 0, "lock")?,
+            guarded_toggle_action(self.seed, 0, "unlock")?,
+        );
+        for step in 1..=steps {
+            if !self.committed.is_empty() && self.rng.coin(1, 3) {
+                let pick = self.rng.index(self.committed.len());
+                if let Some((is_lock, target, actor, idem)) = self.committed.get(pick).cloned() {
+                    let act = if is_lock { &lock_act } else { &unlock_act };
+                    self.verify_replay_and_conflict(step, &catalog, act, &(target, actor, idem))?;
+                    continue;
+                }
+            }
+            let target_key = account_key(self.rng.index(3).saturating_add(1));
+            let cur = self
+                .cell
+                .load(&target_key)
+                .ctx(self.seed, step, "load target")?;
+            let is_open = cur
+                .values
+                .as_ref()
+                .and_then(|v| v.get("status"))
+                .and_then(JsonValue::as_str)
+                == Some("open");
+            let act = if is_open { &lock_act } else { &unlock_act };
+            let idem = format!("act-{}", self.next_key);
+            self.next_key = self.next_key.saturating_add(1);
+            let actor = format!("user-{}", self.rng.index(3));
+            let req = action_call(act, &target_key.key, "acct-0", &actor, &idem);
+            if self.rng.coin(1, 3) {
+                self.verify_raced_precondition(step, &catalog, &req, &target_key, &cur)?;
+            } else {
+                let out = commit_action(&mut self.cell, &catalog, &req, &AllowAll).ctx(
+                    self.seed,
                     step,
-                    &mut cell,
-                    &catalog,
-                    act,
-                    &(target, actor, idem),
+                    "commit_action",
                 )?;
-                continue;
+                ensure(
+                    self.seed,
+                    step,
+                    matches!(out, ActionOutcome::Committed { .. }),
+                    "fresh action must commit",
+                )?;
+                self.cov.commits = self.cov.commits.saturating_add(1);
+                self.committed.push((is_open, target_key.key, actor, idem));
+            }
+            if self.rng.coin(1, 5) {
+                let before = dump_of(&self.cell, self.seed, step)?;
+                self.cell = open_action_cell(self.seed, step, &self.path)?;
+                self.cov.reopens = self.cov.reopens.saturating_add(1);
+                ensure_eq(
+                    self.seed,
+                    step,
+                    "action reopen equivalence",
+                    &dump_of(&self.cell, self.seed, step)?,
+                    &before,
+                )?;
             }
         }
-        let target_key = account_key(rng.index(3).saturating_add(1));
-        let cur = cell.load(&target_key).ctx(seed, step, "load target")?;
-        let is_open = cur
-            .values
-            .as_ref()
-            .and_then(|v| v.get("status"))
-            .and_then(JsonValue::as_str)
-            == Some("open");
-        let act = if is_open { &lock_act } else { &unlock_act };
-        let idem = format!("act-{next_key}");
-        next_key = next_key.saturating_add(1);
-        let actor = format!("user-{}", rng.index(3));
-        let req = action_call(act, &target_key.key, "acct-0", &actor, &idem);
-        if rng.coin(1, 3) {
-            verify_raced_precondition(seed, step, &mut cell, &catalog, &req, &target_key, &cur)?;
-        } else {
-            let out = commit_action(&mut cell, &catalog, &req, &AllowAll).ctx(
-                seed,
-                step,
-                "commit_action",
-            )?;
-            ensure(
-                seed,
-                step,
-                matches!(out, ActionOutcome::Committed { .. }),
-                "fresh action must commit",
-            )?;
-            committed.push((is_open, target_key.key, actor, idem));
-        }
-        if rng.coin(1, 5) {
-            let before = dump_of(&cell, seed, step)?;
-            cell = open_action_cell(&path)?;
-            ensure_eq(
-                seed,
-                step,
-                "action reopen equivalence",
-                &dump_of(&cell, seed, step)?,
-                &before,
-            )?;
-        }
+        Ok(self.cov.clone())
     }
-    Ok(())
+}
+
+fn run_action_dst_seed(seed: u64, steps: usize) -> DstResult<ActionCoverage> {
+    ActionDstHarness::open(seed)?.run(steps)
 }
 
 // ------------------------------------------------------------------ Part 4: Two-Execution Confidentiality DST (#716)
+
+#[derive(Debug, Default, Clone)]
+struct ConfidentialityCoverage {
+    secret_writes: u64,
+    stale_version_refusals: u64,
+    tainted_note_writes: u64,
+    paired_links: u64,
+    reopens: u64,
+    declassifications: u64,
+}
+
+impl ConfidentialityCoverage {
+    fn merge(&mut self, other: &Self) {
+        self.secret_writes = self.secret_writes.saturating_add(other.secret_writes);
+        self.stale_version_refusals = self
+            .stale_version_refusals
+            .saturating_add(other.stale_version_refusals);
+        self.tainted_note_writes = self
+            .tainted_note_writes
+            .saturating_add(other.tainted_note_writes);
+        self.paired_links = self.paired_links.saturating_add(other.paired_links);
+        self.reopens = self.reopens.saturating_add(other.reopens);
+        self.declassifications = self
+            .declassifications
+            .saturating_add(other.declassifications);
+    }
+
+    fn assert_covered(&self) -> DstResult<()> {
+        assert_batch_counts(
+            "dst_two_execution_confidentiality_noninterference",
+            &[
+                ("secret_writes", self.secret_writes),
+                ("stale_version_refusals", self.stale_version_refusals),
+                ("tainted_note_writes", self.tainted_note_writes),
+                ("paired_links", self.paired_links),
+                ("reopens", self.reopens),
+                ("declassifications", self.declassifications),
+            ],
+        )
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct PublicObservation {
@@ -1802,6 +2277,8 @@ struct MaskedObject {
 }
 
 fn read_masked_object(
+    seed: u64,
+    step: usize,
     reader: &norn_cell::StoreReader<'_, NativeEngine>,
     object_type: &str,
     id: &str,
@@ -1809,13 +2286,13 @@ fn read_masked_object(
 ) -> DstResult<Option<MaskedObject>> {
     let Some(record) = reader
         .object(MAIN_WORLD, object_type, id)
-        .map_err(|e| format!("read: {e}"))?
+        .ctx(seed, step, "read")?
     else {
         return Ok(None);
     };
     let Some(occurrence) = reader
         .fact_occurrence_markings(MAIN_WORLD, object_type, id, None)
-        .map_err(|e| format!("occurrence markings: {e}"))?
+        .ctx(seed, step, "occurrence markings")?
     else {
         return Ok(None);
     };
@@ -1824,7 +2301,7 @@ fn read_masked_object(
     }
     let Some(prop_markings) = reader
         .effective_markings(MAIN_WORLD, object_type, id, None)
-        .map_err(|e| format!("effective markings: {e}"))?
+        .ctx(seed, step, "effective markings")?
     else {
         return Ok(None);
     };
@@ -1835,7 +2312,7 @@ fn read_masked_object(
             .get(prop)
             .is_some_and(|labels| labels.iter().all(|l| clearances.contains(l.as_str())));
         if allowed {
-            let encoded = serde_json::to_string(value).map_err(|e| format!("encode: {e}"))?;
+            let encoded = serde_json::to_string(value).ctx(seed, step, "encode")?;
             visible_fields.insert(prop.clone(), encoded);
         } else {
             redacted_fields.push(prop.clone());
@@ -1849,37 +2326,53 @@ fn read_masked_object(
     }))
 }
 
-fn observe_world(
+fn observe_world_struct(
+    seed: u64,
+    step: usize,
     cell: &DstCell<NativeEngine>,
     clearances: &BTreeSet<&str>,
     accounts: usize,
     notes: usize,
     refusals: &[String],
-) -> DstResult<Vec<u8>> {
+) -> DstResult<PublicObservation> {
     let reader = cell.store().read();
     let mut visible_accounts = Vec::new();
     for idx in 0..accounts {
-        if let Some(m) =
-            read_masked_object(&reader, ACCOUNT_TYPE, &format!("acct-{idx}"), clearances)?
-        {
+        if let Some(m) = read_masked_object(
+            seed,
+            step,
+            &reader,
+            ACCOUNT_TYPE,
+            &format!("acct-{idx}"),
+            clearances,
+        )? {
             visible_accounts.push(m);
         }
     }
     let mut visible_notes = Vec::new();
     for idx in 0..notes {
-        if let Some(m) = read_masked_object(&reader, NOTE_TYPE, &format!("note-{idx}"), clearances)?
-        {
+        if let Some(m) = read_masked_object(
+            seed,
+            step,
+            &reader,
+            NOTE_TYPE,
+            &format!("note-{idx}"),
+            clearances,
+        )? {
             visible_notes.push(m);
         }
     }
-    serde_json::to_vec(&PublicObservation {
+    Ok(PublicObservation {
         account_count: visible_accounts.len(),
         note_count: visible_notes.len(),
         visible_accounts,
         visible_notes,
         refusal_codes: refusals.to_vec(),
     })
-    .map_err(|err| format!("serialize observation: {err}"))
+}
+
+fn encode_observation(seed: u64, step: usize, obs: &PublicObservation) -> DstResult<Vec<u8>> {
+    serde_json::to_vec(obs).ctx(seed, step, "serialize observation")
 }
 
 struct ConfidentialityPair {
@@ -1894,11 +2387,12 @@ struct ConfidentialityPair {
     refusals_b: Vec<String>,
     accounts: usize,
     notes: usize,
+    cov: ConfidentialityCoverage,
 }
 
 impl ConfidentialityPair {
     fn new(seed: u64) -> DstResult<Self> {
-        let dir = simulator_dir()?;
+        let dir = simulator_dir(seed, 0)?;
         let (path_a, path_b) = (
             dir.path().join("world-a.sqlite"),
             dir.path().join("world-b.sqlite"),
@@ -1907,14 +2401,15 @@ impl ConfidentialityPair {
             seed,
             rng: SplitMix64::new(seed),
             _dir: dir,
-            world_a: open_native_cell(&path_a)?,
-            world_b: open_native_cell(&path_b)?,
+            world_a: open_native_cell(seed, 0, 4, &path_a)?,
+            world_b: open_native_cell(seed, 0, 4, &path_b)?,
             path_a,
             path_b,
             refusals_a: Vec::new(),
             refusals_b: Vec::new(),
             accounts: 4,
             notes: 4,
+            cov: ConfidentialityCoverage::default(),
         };
         let key = account_key(0);
         let mk = |sec: &str| CellCommit {
@@ -1950,7 +2445,8 @@ impl ConfidentialityPair {
             .version;
         ensure_eq(self.seed, step, "paired account version", &ver_a, &ver_b)?;
         let bal = i64::try_from(self.rng.bound(10_000)).unwrap_or(0);
-        let expected = if self.rng.coin(1, 5) {
+        let stale = self.rng.coin(1, 5);
+        let expected = if stale {
             FactVersion(ver_a.0.saturating_add(5))
         } else {
             ver_a
@@ -1973,28 +2469,80 @@ impl ConfidentialityPair {
             }],
             ..CellCommit::empty()
         };
-        if let Err(err) = self.world_a.commit(mk(sec_a)) {
-            self.refusals_a.push(err.code().to_owned());
-        }
-        if let Err(err) = self.world_b.commit(mk(sec_b)) {
-            self.refusals_b.push(err.code().to_owned());
+        let res_a = self.world_a.commit(mk(sec_a));
+        let res_b = self.world_b.commit(mk(sec_b));
+        if stale {
+            match (res_a, res_b) {
+                (Err(ea), Err(eb)) => {
+                    ensure(
+                        self.seed,
+                        step,
+                        matches!(ea, CommitError::Conflict { .. })
+                            && matches!(eb, CommitError::Conflict { .. }),
+                        format!("stale secret write must refuse Conflict, got {ea:?} vs {eb:?}"),
+                    )?;
+                    self.refusals_a.push(ea.code().to_owned());
+                    self.refusals_b.push(eb.code().to_owned());
+                    self.cov.stale_version_refusals =
+                        self.cov.stale_version_refusals.saturating_add(1);
+                }
+                (a, b) => {
+                    return Err(fail(
+                        self.seed,
+                        step,
+                        format!("stale secret write expected both Err, got A={a:?} B={b:?}"),
+                    ));
+                }
+            }
+        } else {
+            let _a = res_a.ctx(self.seed, step, "secret write A")?;
+            let _b = res_b.ctx(self.seed, step, "secret write B")?;
+            self.cov.secret_writes = self.cov.secret_writes.saturating_add(1);
         }
         Ok(())
     }
 
     fn step_tainted_note(&mut self, step: usize) -> DstResult<()> {
-        let src_key = account_key(self.rng.index(self.accounts));
+        let mut src_key = account_key(self.rng.index(self.accounts));
         let dst_key = note_key(self.rng.index(self.notes));
-        let src_a = self.world_a.load(&src_key).ctx(self.seed, step, "src A")?;
-        let src_b = self.world_b.load(&src_key).ctx(self.seed, step, "src B")?;
-        if !src_a.exists() || !src_b.exists() {
-            return Ok(());
+        let mut src_a = self.world_a.load(&src_key).ctx(self.seed, step, "src A")?;
+        let mut src_b = self.world_b.load(&src_key).ctx(self.seed, step, "src B")?;
+        ensure_eq(
+            self.seed,
+            step,
+            "tainted note src version",
+            &src_a.version,
+            &src_b.version,
+        )?;
+        if !src_a.exists() {
+            src_key = account_key(0);
+            src_a = self.world_a.load(&src_key).ctx(self.seed, step, "src0 A")?;
+            src_b = self.world_b.load(&src_key).ctx(self.seed, step, "src0 B")?;
+            ensure_eq(
+                self.seed,
+                step,
+                "tainted note fallback src version",
+                &src_a.version,
+                &src_b.version,
+            )?;
         }
-        let dst_ver = self
+        let dst_ver_a = self
             .world_a
             .load(&dst_key)
             .ctx(self.seed, step, "dst A")?
             .version;
+        let dst_ver_b = self
+            .world_b
+            .load(&dst_key)
+            .ctx(self.seed, step, "dst B")?
+            .version;
+        ensure_eq(
+            self.seed,
+            step,
+            "tainted note dst version",
+            &dst_ver_a,
+            &dst_ver_b,
+        )?;
         let tag = format!("tag-{step}");
         let (der_a, der_b) = (
             format!("A-{step}-{}", self.rng.next_u64()),
@@ -2007,7 +2555,7 @@ impl ConfidentialityPair {
             }],
             writes: vec![FactWrite {
                 key: dst_key.clone(),
-                expected: dst_ver,
+                expected: dst_ver_a,
                 mutation: FactMutation::Put {
                     values: note_values(&dst_key.key, &tag, &derived),
                 },
@@ -2018,12 +2566,15 @@ impl ConfidentialityPair {
             }],
             ..CellCommit::empty()
         };
-        if let Err(err) = self.world_a.commit(mk(der_a)) {
-            self.refusals_a.push(err.code().to_owned());
-        }
-        if let Err(err) = self.world_b.commit(mk(der_b)) {
-            self.refusals_b.push(err.code().to_owned());
-        }
+        let _a = self
+            .world_a
+            .commit(mk(der_a))
+            .ctx(self.seed, step, "tainted note A")?;
+        let _b = self
+            .world_b
+            .commit(mk(der_b))
+            .ctx(self.seed, step, "tainted note B")?;
+        self.cov.tainted_note_writes = self.cov.tainted_note_writes.saturating_add(1);
         Ok(())
     }
 
@@ -2033,39 +2584,159 @@ impl ConfidentialityPair {
             LINK_PARENT,
             account_key(self.rng.index(self.accounts)),
         );
-        let ver = self
+        let state_a = self
             .world_a
             .load_link(&lk)
-            .ctx(self.seed, step, "load link")?
-            .version;
+            .ctx(self.seed, step, "load link A")?;
+        let state_b = self
+            .world_b
+            .load_link(&lk)
+            .ctx(self.seed, step, "load link B")?;
+        ensure_eq(
+            self.seed,
+            step,
+            "paired link version",
+            &state_a.version,
+            &state_b.version,
+        )?;
+        let mutation = if state_a.exists() {
+            LinkMutation::Remove
+        } else {
+            LinkMutation::Add {
+                values: JsonObject::new(),
+            }
+        };
         let commit = CellCommit {
             links: vec![LinkWrite {
                 key: lk,
-                expected: ver,
-                mutation: LinkMutation::Add {
-                    values: JsonObject::new(),
-                },
+                expected: state_a.version,
+                mutation,
             }],
             ..CellCommit::empty()
         };
-        if let Err(err) = self.world_a.commit(commit.clone()) {
-            self.refusals_a.push(err.code().to_owned());
+        match (
+            self.world_a.commit(commit.clone()),
+            self.world_b.commit(commit),
+        ) {
+            (Ok(_), Ok(_)) => {
+                self.cov.paired_links = self.cov.paired_links.saturating_add(1);
+                Ok(())
+            }
+            (Err(ea), Err(eb)) => {
+                self.refusals_a.push(ea.code().to_owned());
+                self.refusals_b.push(eb.code().to_owned());
+                Ok(())
+            }
+            (a, b) => Err(fail(
+                self.seed,
+                step,
+                format!("paired link outcome diverged: A={a:?} B={b:?}"),
+            )),
         }
-        if let Err(err) = self.world_b.commit(commit) {
-            self.refusals_b.push(err.code().to_owned());
+    }
+
+    fn verify_non_vacuity(&self, step: usize) -> DstResult<()> {
+        let public = BTreeSet::new();
+        let privileged = BTreeSet::from([SECRET_MARKING]);
+        let pub_a = observe_world_struct(
+            self.seed,
+            step,
+            &self.world_a,
+            &public,
+            self.accounts,
+            self.notes,
+            &self.refusals_a,
+        )?;
+        let pub_b = observe_world_struct(
+            self.seed,
+            step,
+            &self.world_b,
+            &public,
+            self.accounts,
+            self.notes,
+            &self.refusals_b,
+        )?;
+        let priv_a = observe_world_struct(
+            self.seed,
+            step,
+            &self.world_a,
+            &privileged,
+            self.accounts,
+            self.notes,
+            &self.refusals_a,
+        )?;
+        let priv_b = observe_world_struct(
+            self.seed,
+            step,
+            &self.world_b,
+            &privileged,
+            self.accounts,
+            self.notes,
+            &self.refusals_b,
+        )?;
+        ensure(
+            self.seed,
+            step,
+            priv_a != priv_b && priv_a.visible_accounts != priv_b.visible_accounts,
+            "non-vacuity: privileged worlds and accounts must diverge",
+        )?;
+        ensure(
+            self.seed,
+            step,
+            !priv_a.visible_notes.is_empty()
+                && !priv_b.visible_notes.is_empty()
+                && priv_a.visible_notes != priv_b.visible_notes,
+            "non-vacuity: privileged visible_notes must be non-empty and diverge",
+        )?;
+        ensure_eq(
+            self.seed,
+            step,
+            "unprivileged visible_notes must match",
+            &pub_a.visible_notes,
+            &pub_b.visible_notes,
+        )?;
+        ensure(
+            self.seed,
+            step,
+            !pub_a.visible_notes.is_empty(),
+            "non-vacuity: unprivileged visible_notes must be non-empty",
+        )?;
+        for note in &pub_a.visible_notes {
+            ensure(
+                self.seed,
+                step,
+                note.redacted_fields.iter().any(|f| f == "derived_note")
+                    && !note.visible_fields.contains_key("derived_note"),
+                format!(
+                    "derived_note must be redacted for public reader on {}",
+                    note.id
+                ),
+            )?;
         }
         Ok(())
     }
 
     fn verify_declassification(&mut self, step: usize) -> DstResult<()> {
         let key = account_key(0);
-        let hist_ver = self
+        let hist_a = self
             .world_a
             .load(&key)
-            .ctx(self.seed, step, "load hist")?
-            .version
-            .0;
+            .ctx(self.seed, step, "load hist A")?
+            .version;
+        let hist_b = self
+            .world_b
+            .load(&key)
+            .ctx(self.seed, step, "load hist B")?
+            .version;
+        ensure_eq(
+            self.seed,
+            step,
+            "declassification historical version",
+            &hist_a,
+            &hist_b,
+        )?;
         let released = account_values(&key.key, 42, "open", "approved-for-release");
+        let mut new_versions = Vec::with_capacity(2);
         for world in [&mut self.world_a, &mut self.world_b] {
             let cur = world.load(&key).ctx(self.seed, step, "load cur")?;
             world
@@ -2080,12 +2751,13 @@ impl ConfidentialityPair {
                     ..CellCommit::empty()
                 })
                 .ctx(self.seed, step, "prep declassify")?;
-            let new_ver = world.load(&key).ctx(self.seed, step, "new ver")?.version.0;
+            let new_ver = world.load(&key).ctx(self.seed, step, "new ver")?.version;
+            new_versions.push(new_ver);
             let change = MarkingDeclassification {
                 object_type: ACCOUNT_TYPE.to_owned(),
                 key: key.key.clone(),
                 property: "secret_note".to_owned(),
-                expected_version: new_ver,
+                expected_version: new_ver.0,
                 markings: vec![SECRET_MARKING.to_owned()],
                 actor: "privacy-officer".to_owned(),
                 reason: "explicit-dst-release".to_owned(),
@@ -2098,7 +2770,7 @@ impl ConfidentialityPair {
             let hist = world
                 .store()
                 .read()
-                .effective_markings(MAIN_WORLD, ACCOUNT_TYPE, &key.key, Some(hist_ver))
+                .effective_markings(MAIN_WORLD, ACCOUNT_TYPE, &key.key, Some(hist_a.0))
                 .ctx(self.seed, step, "hist markings")?;
             ensure(
                 self.seed,
@@ -2108,12 +2780,68 @@ impl ConfidentialityPair {
                 "historical version must retain pii.secret after declassification",
             )?;
         }
-        Ok(())
+        ensure_eq(
+            self.seed,
+            step,
+            "declassification new version",
+            &new_versions.first().copied(),
+            &new_versions.get(1).copied(),
+        )?;
+        self.cov.declassifications = self.cov.declassifications.saturating_add(1);
+        self.verify_public_release(step, &key)
     }
 
-    fn run(&mut self, steps: usize) -> DstResult<()> {
+    fn verify_public_release(&self, step: usize, key: &FactKey) -> DstResult<()> {
         let public = BTreeSet::new();
-        let privileged = BTreeSet::from([SECRET_MARKING]);
+        let final_a = observe_world_struct(
+            self.seed,
+            step,
+            &self.world_a,
+            &public,
+            self.accounts,
+            self.notes,
+            &self.refusals_a,
+        )?;
+        let final_b = observe_world_struct(
+            self.seed,
+            step,
+            &self.world_b,
+            &public,
+            self.accounts,
+            self.notes,
+            &self.refusals_b,
+        )?;
+        for (label, obs) in [("world A", &final_a), ("world B", &final_b)] {
+            let acct = obs
+                .visible_accounts
+                .iter()
+                .find(|a| a.id == key.key)
+                .ok_or_else(|| fail(self.seed, step, format!("{label}: acct-0 missing")))?;
+            ensure_eq(
+                self.seed,
+                step,
+                &format!("{label}: public reader observes declassified secret_note"),
+                &acct.visible_fields.get("secret_note").map(String::as_str),
+                &Some("\"approved-for-release\""),
+            )?;
+            ensure(
+                self.seed,
+                step,
+                !acct.redacted_fields.iter().any(|f| f == "secret_note"),
+                format!("{label}: declassified secret_note must not be redacted"),
+            )?;
+        }
+        ensure_eq(
+            self.seed,
+            step,
+            "post-declassification noninterference",
+            &encode_observation(self.seed, step, &final_a)?,
+            &encode_observation(self.seed, step, &final_b)?,
+        )
+    }
+
+    fn run(&mut self, steps: usize) -> DstResult<ConfidentialityCoverage> {
+        let public = BTreeSet::new();
         for step in 1..=steps {
             let roll = self.rng.bound(100);
             if roll < 45 {
@@ -2123,17 +2851,22 @@ impl ConfidentialityPair {
             } else if roll < 90 {
                 self.step_paired_link(step)?;
             } else {
-                self.world_a = open_native_cell(&self.path_a)?;
-                self.world_b = open_native_cell(&self.path_b)?;
+                self.world_a = open_native_cell(self.seed, step, 4, &self.path_a)?;
+                self.world_b = open_native_cell(self.seed, step, 4, &self.path_b)?;
+                self.cov.reopens = self.cov.reopens.saturating_add(1);
             }
-            let obs_a = observe_world(
+            let obs_a = observe_world_struct(
+                self.seed,
+                step,
                 &self.world_a,
                 &public,
                 self.accounts,
                 self.notes,
                 &self.refusals_a,
             )?;
-            let obs_b = observe_world(
+            let obs_b = observe_world_struct(
+                self.seed,
+                step,
                 &self.world_b,
                 &public,
                 self.accounts,
@@ -2144,52 +2877,16 @@ impl ConfidentialityPair {
                 self.seed,
                 step,
                 "two-execution noninterference",
-                &obs_a,
-                &obs_b,
+                &encode_observation(self.seed, step, &obs_a)?,
+                &encode_observation(self.seed, step, &obs_b)?,
             )?;
         }
-        let priv_a = observe_world(
-            &self.world_a,
-            &privileged,
-            self.accounts,
-            self.notes,
-            &self.refusals_a,
-        )?;
-        let priv_b = observe_world(
-            &self.world_b,
-            &privileged,
-            self.accounts,
-            self.notes,
-            &self.refusals_b,
-        )?;
-        ensure(
-            self.seed,
-            steps,
-            priv_a != priv_b,
-            "non-vacuity: privileged worlds must diverge",
-        )?;
+        if self.cov.tainted_note_writes == 0 {
+            self.step_tainted_note(steps.saturating_add(1))?;
+        }
+        self.verify_non_vacuity(steps)?;
         self.verify_declassification(steps)?;
-        let final_a = observe_world(
-            &self.world_a,
-            &public,
-            self.accounts,
-            self.notes,
-            &self.refusals_a,
-        )?;
-        let final_b = observe_world(
-            &self.world_b,
-            &public,
-            self.accounts,
-            self.notes,
-            &self.refusals_b,
-        )?;
-        ensure_eq(
-            self.seed,
-            steps,
-            "post-declassification noninterference",
-            &final_a,
-            &final_b,
-        )
+        Ok(self.cov.clone())
     }
 }
 
@@ -2197,32 +2894,56 @@ impl ConfidentialityPair {
 
 #[test]
 fn dst_cell_host_adversarial_schedule_and_crash_recovery() -> DstResult<()> {
-    for seed in dst_seeds(MAIN_SEEDS)? {
-        NativeDstHarness::open(seed, 4)?.run_steps(28)?;
+    let plan = dst_seeds(MAIN_SEEDS)?;
+    let mut cov = MainCoverage::default();
+    for seed in plan.seeds {
+        let run = NativeDstHarness::open(seed, 4)?.run_steps(30)?;
+        cov.merge(&run);
+    }
+    if plan.assert_batch_coverage {
+        cov.assert_covered()?;
     }
     Ok(())
 }
 
 #[test]
 fn dst_do_engine_commit_fault_and_native_equivalence() -> DstResult<()> {
-    for seed in dst_seeds(DO_SEEDS)? {
-        run_do_vs_native_seed(seed, 20)?;
+    let plan = dst_seeds(DO_SEEDS)?;
+    let mut cov = DoCoverage::default();
+    for seed in plan.seeds {
+        let run = run_do_vs_native_seed(seed, 20)?;
+        cov.merge(&run);
+    }
+    if plan.assert_batch_coverage {
+        cov.assert_covered()?;
     }
     Ok(())
 }
 
 #[test]
 fn dst_action_commit_idempotency_and_stale_precondition() -> DstResult<()> {
-    for seed in dst_seeds(ACTION_SEEDS)? {
-        run_action_dst_seed(seed, 20)?;
+    let plan = dst_seeds(ACTION_SEEDS)?;
+    let mut cov = ActionCoverage::default();
+    for seed in plan.seeds {
+        let run = run_action_dst_seed(seed, 20)?;
+        cov.merge(&run);
+    }
+    if plan.assert_batch_coverage {
+        cov.assert_covered()?;
     }
     Ok(())
 }
 
 #[test]
 fn dst_two_execution_confidentiality_noninterference() -> DstResult<()> {
-    for seed in dst_seeds(CONF_SEEDS)? {
-        ConfidentialityPair::new(seed)?.run(24)?;
+    let plan = dst_seeds(CONF_SEEDS)?;
+    let mut cov = ConfidentialityCoverage::default();
+    for seed in plan.seeds {
+        let run = ConfidentialityPair::new(seed)?.run(24)?;
+        cov.merge(&run);
+    }
+    if plan.assert_batch_coverage {
+        cov.assert_covered()?;
     }
     Ok(())
 }
