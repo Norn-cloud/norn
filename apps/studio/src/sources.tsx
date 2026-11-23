@@ -1,14 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
-import { ArrowRight, Box, Database, Layers, Search, Shapes } from "lucide-react"
+import { Box, Database, Layers, Plus, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { Chip } from "@/components/chip"
 import { cn } from "@/lib/utils"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useView, type View } from "@/lib/view"
@@ -24,12 +23,12 @@ import type { MenuEntry } from "./shell.tsx"
 import { Iso } from "@/components/iso"
 import { directionOf, useLocale } from "@/lib/locale"
 
-/** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
+/** The "dense, crisp" tier for data tables: one hairline frame, 13px tabular figures, a quiet header, no zebra. */
 export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-lg border">
-      <Table className="text-[0.8125rem] tabular-nums">
-        <TableHeader className="bg-muted">{head}</TableHeader>
+      <Table className="text-meta tabular-nums">
+        <TableHeader>{head}</TableHeader>
         <TableBody>{children}</TableBody>
       </Table>
     </div>
@@ -46,25 +45,24 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
   return (
     <div className="space-y-3">
       <StatStrip>
-        <KpiTile icon={Database} label="Connected systems" value={outside.length} sub={outside.map(({ name }) => name).join(" · ") || "none mapped yet"} />
-        <KpiTile icon={Shapes} label="One business model" value={concepts.length} sub={`object types, built on ${catalog.concepts.length - concepts.length} shared interfaces`} />
-        <KpiTile icon={ArrowRight} label="Links between them" value={relationships} sub="declared once, read the same from every system" />
+        <KpiTile label="Connected systems" value={outside.length} sub={outside.map(({ name }) => name).join(" · ") || "none mapped yet"} />
+        <KpiTile label="Object types" value={concepts.length} sub={`built on ${catalog.concepts.length - concepts.length} shared interfaces`} />
+        <KpiTile label="Links between them" value={relationships} sub="declared once, read the same from every system" />
       </StatStrip>
       <Panel icon={Database} label="Connected systems">
         <Well className="divide-y divide-border/70">
           {outside.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
           {outside.map((system, index) => (
             <div key={system.id} className="flex items-center gap-3 px-4 py-2.5">
-              <span aria-hidden className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg text-sm font-semibold", MONOGRAM[index % MONOGRAM.length])}>{system.name.charAt(0).toUpperCase()}</span>
+              <span aria-hidden className={cn("flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold", MONOGRAM[index % MONOGRAM.length])}>{system.name.charAt(0).toUpperCase()}</span>
               <span className="min-w-0 flex-1">
                 <span className="block font-medium">{system.name}</span>
                 {system.schema && <span className="block truncate text-xs text-muted-foreground">
                   {[system.schema.instance && `instance ${system.schema.instance}`, system.schema.version && `schema ${system.schema.version}`, system.schema.observedAt && `observed ${system.schema.observedAt}`].filter(Boolean).join(" · ")}
                 </span>}
               </span>
-              <span className="flex shrink-0 flex-wrap justify-end gap-1.5 tabular-nums" title={`${system.datasets.length} kinds of record · feeds ${system.feeds.length} object types`}>
-                <Chip tone="gray">{system.datasets.length} kinds of record</Chip>
-                <Chip tone="violet" icon={ArrowRight}>{system.feeds.length} object types</Chip>
+              <span className="shrink-0 text-meta text-muted-foreground tabular-nums" title={`${system.datasets.length} kinds of record · feeds ${system.feeds.length} object types`}>
+                {system.datasets.length} kinds of record <span aria-hidden>→</span> {system.feeds.length} object types
               </span>
             </div>
           ))}
@@ -92,22 +90,23 @@ const about = (concept: Concept, view: View): { readonly text: string; readonly 
   return concept.summary === undefined ? undefined : { text: concept.summary, lang: concept.summaryLang }
 }
 
-function ConceptCard({ concept }: { readonly concept: Concept }) {
+/** One object type as a row: its name and summary, what it records and links, and the systems that feed it. */
+function ConceptRow({ concept }: { readonly concept: Concept }) {
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
   const { view } = useView()
+  const text = about(concept, view)
   return (
-    <Link to="/sources/$concept" params={{ concept: concept.name }} className="h-full rounded-lg text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
-      <Card size="sm" className="h-full ring-foreground/10 transition-colors hover:ring-foreground/25">
-        <CardHeader>
-          <CardTitle lang={concept.titleLang}>{concept.title}</CardTitle>
-          <CardDescription lang={about(concept, view)?.lang} className="line-clamp-2 min-h-[2lh]">{about(concept, view)?.text}</CardDescription>
-        </CardHeader>
-        <CardContent className="mt-auto space-y-3 text-sm">
-          <p className="text-muted-foreground tabular-nums">{concept.fields.length} facts · {concept.relationships.length} links</p>
-          {systems.length > 0 && <div className="flex flex-wrap gap-1">{systems.map((system) => <Badge key={system} variant="secondary">{system}</Badge>)}</div>}
-        </CardContent>
-      </Card>
-    </Link>
+    <TableRow className="relative">
+      <TableCell className="w-[30%] min-w-48 py-2 align-top">
+        <Link to="/sources/$concept" params={{ concept: concept.name }} lang={concept.titleLang}
+          className="font-medium outline-none after:absolute after:inset-0 hover:underline focus-visible:underline underline-offset-4">{concept.title}</Link>
+        {view === "technical" && <Iso className="block font-mono text-xs text-muted-foreground">{concept.name}</Iso>}
+      </TableCell>
+      <TableCell lang={text?.lang} className="py-2 align-top whitespace-normal text-muted-foreground"><span className="line-clamp-2">{text?.text}</span></TableCell>
+      <TableCell className="py-2 text-end align-top text-muted-foreground tabular-nums">{concept.fields.length}</TableCell>
+      <TableCell className="py-2 text-end align-top text-muted-foreground tabular-nums">{concept.relationships.length}</TableCell>
+      <TableCell className="py-2 align-top text-muted-foreground">{systems.join(", ") || "—"}</TableCell>
+    </TableRow>
   )
 }
 
@@ -280,6 +279,14 @@ export function useSourcesMenu(): readonly MenuEntry[] | undefined {
     .map((concept): MenuEntry => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, kind: "objectType", count: menuCount(counts?.[concept.name]) })))
 }
 
+/** The operator's view of the same model: each object type's records (its grid), with the count the cell gave this caller. */
+export function useRecordsMenu(): readonly MenuEntry[] | undefined {
+  const { catalog } = useCatalog()
+  const counts = useQuery({ queryKey: ["catalog", "counts"], queryFn: transport.objectCounts }).data
+  return catalog?.concepts.filter((concept) => concept.definition === "object type")
+    .map((concept): MenuEntry => ({ href: `/objects/${concept.name}`, also: `/sources/${concept.name}`, label: concept.title, kind: "objectType", count: menuCount(counts?.[concept.name]) }))
+}
+
 /** A menu entry's count: exact, or the server's lower bound as text ("500+"); none when the cell sent none. */
 export const menuCount = (total: Total | undefined): number | string | undefined =>
   total === undefined ? undefined : total.approximate ? `${total.count.toLocaleString("en-US")}+` : total.count
@@ -298,42 +305,42 @@ export function SourcesPage() {
   const { view } = useView()
   const matches = (concept: Concept) => `${concept.title} ${about(concept, view)?.text ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
   return (
-    <section className="space-y-5">
+    <section className="space-y-8">
       <PageHeader title="Sources" meta={read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
-        description="Each connected system keeps its own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered." />
+        description="The systems that feed this workspace, and the one model every system's records are mapped into."
+        primary={<Button asChild><Link to="/connections"><Plus aria-hidden />Connect a source</Link></Button>} />
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && <>
         <Systems catalog={catalog} />
         {read.data?.origin === "live" && <SourceConnections />}
-        <Panel icon={Shapes} label="The business model">
-          <Tabs defaultValue="cards" className="p-1">
-          <TabsList className="mx-3 mt-2"><TabsTrigger value="cards">Types</TabsTrigger><TabsTrigger value="graph">Graph</TabsTrigger></TabsList>
-          <TabsContent value="graph" className="p-3"><ModelGraph catalog={catalog} /></TabsContent>
-          <TabsContent value="cards">
-          <Well className="space-y-6 p-4">
-            <label className="relative block w-full max-w-sm">
+        <Tabs defaultValue="types" className="gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-section font-medium">The model</h2>
+            <TabsList className="ms-2"><TabsTrigger value="types">Types</TabsTrigger><TabsTrigger value="graph">Graph</TabsTrigger></TabsList>
+            <label className="relative ms-auto block w-full max-w-64">
               <span className="sr-only">Find an object type</span>
-              <Search aria-hidden className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input type="search" placeholder="Find an object type" value={search} onChange={(event) => setSearch(event.target.value)}
-                className="border-border bg-background ps-9 dark:bg-background" />
+              <Search aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input type="search" placeholder="Find an object type" value={search} onChange={(event) => setSearch(event.target.value)} className="h-8 ps-8" />
             </label>
-            {OVERVIEW_GROUPS.filter(({ has }) => search.trim() !== "" || catalog.concepts.some(has)).map(({ label, has }) => (
-              <div key={label} className="space-y-3">
-                <h3 className="text-meta font-medium text-muted-foreground">{label}</h3>
-                {catalog.concepts.some((concept) => has(concept) && matches(concept))
-                  ? <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {catalog.concepts.filter((concept) => has(concept) && matches(concept)).map((concept) => (
-                        <ConceptCard key={concept.name} concept={concept} />
-                      ))}
-                    </div>
-                  : <EmptyState icon={Search}>Nothing here matches “{search.trim()}”.</EmptyState>}
-              </div>
-            ))}
-          </Well>
+          </div>
+          <TabsContent value="graph" className="overflow-hidden rounded-lg border p-3"><ModelGraph catalog={catalog} /></TabsContent>
+          <TabsContent value="types" className="space-y-6">
+            {OVERVIEW_GROUPS.filter(({ has }) => search.trim() !== "" || catalog.concepts.some(has)).map(({ label, has }) => {
+              const shown = catalog.concepts.filter((concept) => has(concept) && matches(concept))
+              return (
+                <div key={label} className="space-y-2">
+                  <h3 className="text-meta font-medium text-muted-foreground">{label} <span className="font-normal tabular-nums">{shown.length}</span></h3>
+                  {shown.length > 0
+                    ? <DenseTable head={<TableRow><TableHead>Name</TableHead><TableHead>What it is</TableHead><TableHead className="text-end">Facts</TableHead><TableHead className="text-end">Links</TableHead><TableHead>Fed by</TableHead></TableRow>}>
+                        {shown.map((concept) => <ConceptRow key={concept.name} concept={concept} />)}
+                      </DenseTable>
+                    : <div className="rounded-lg border"><EmptyState icon={Search}>Nothing here matches “{search.trim()}”.</EmptyState></div>}
+                </div>
+              )
+            })}
           </TabsContent>
-          </Tabs>
-        </Panel>
+        </Tabs>
       </>}
     </section>
   )

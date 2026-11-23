@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { CheckCircle2, Hourglass, Inbox, Play, RefreshCw, Sparkles } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { EmptyState } from "@/components/panel"
+import { EmptyState, PageHeader } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
@@ -65,7 +65,7 @@ export function DecisionsPage() {
   const refresh = () => void client.invalidateQueries({ queryKey: ["decisions"] })
 
   const body = (() => {
-    if (read.isPending) return <div className="grid gap-2" aria-label="Reading decisions">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-20 rounded-node" />)}</div>
+    if (read.isPending) return <div className="grid gap-2" aria-label="Reading decisions">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
     if (read.isError) return (
       <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
         <span>{read.error instanceof Error ? read.error.message : "The decisions could not be read."}</span><span className="flex-1" />
@@ -78,21 +78,21 @@ export function DecisionsPage() {
     if (result?.kind === "refused") return <p role="alert" className="text-sm text-destructive">{result.refusal.message}</p>
     if (open.length === 0) return <EmptyState icon={Inbox} title="Nothing waits on you">When a flow asks you to decide, it shows here.</EmptyState>
     return (
-      <ol className="grid gap-2" aria-label="Decisions waiting on you">
+      // One ruled list, not a stack of cards: the question leads, its deadline sits at the end, the rest is one quiet line.
+      <ol className="divide-y overflow-hidden rounded-lg border bg-card" aria-label="Decisions waiting on you">
         {open.map((d) => (
           <li key={d.id}>
-            <button type="button" onClick={() => choose(d.id)}
-              className={cn("grid w-full gap-1.5 rounded-node border border-node-border bg-card p-4 text-start shadow-[var(--node-highlight),var(--elevation-node)] transition-shadow hover:shadow-[var(--node-highlight),var(--elevation-node-hover)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                selected?.id === d.id && "ring-2 ring-primary/40")}>
-              <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
-                <span>{flowTitle(d)} · {stepTitle(d)}</span><span className="flex-1" />
-                <Countdown expiresAtMs={d.expiresAtMs} now={now} />
+            <button type="button" onClick={() => choose(d.id)} aria-current={selected?.id === d.id ? "true" : undefined}
+              className="grid w-full gap-1 px-4 py-3 text-start transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none aria-current:bg-muted">
+              <span className="flex items-baseline gap-3">
+                <span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium">{d.question}</span>
+                <span className="shrink-0 text-meta"><Countdown expiresAtMs={d.expiresAtMs} now={now} /></span>
               </span>
-              <span className="line-clamp-2 text-sm font-medium">{d.question}</span>
-              <span className="flex flex-wrap items-center gap-2">
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
                 <RiskChip risk={d.risk} />
-                <span className="text-meta text-muted-foreground">{d.options.length} options</span>
-                {d.agentPick !== null && <span className="inline-flex items-center gap-1 text-meta text-muted-foreground"><Sparkles className="size-3" aria-hidden />Suggested: {d.options.find((o) => o.id === d.agentPick)?.label ?? d.agentPick}</span>}
+                <span>{flowTitle(d)} · {stepTitle(d)}</span>
+                <span aria-hidden>·</span><span>{d.options.length} options</span>
+                {d.agentPick !== null && <><span aria-hidden>·</span><span className="inline-flex items-center gap-1"><Sparkles className="size-3" aria-hidden />Suggested: {d.options.find((o) => o.id === d.agentPick)?.label ?? d.agentPick}</span></>}
               </span>
             </button>
           </li>
@@ -102,14 +102,11 @@ export function DecisionsPage() {
   })()
 
   return (
-    <div className="grid max-w-4xl gap-4">
-      <header className="flex flex-wrap items-baseline gap-3">
-        <h1 className="text-title font-semibold tracking-tight">Decisions</h1>
-        {page && <span className="text-meta tabular-nums text-muted-foreground" aria-live="polite">{page.total === 0 ? "None waiting" : `${badgeText(page)} waiting on you`}</span>}
-        <span className="flex-1" />
-        <Button variant="ghost" size="sm" onClick={refresh} disabled={read.isFetching}><RefreshCw className={cn(read.isFetching && "animate-spin")} /> Refresh</Button>
-      </header>
-      {missing && <p role="status" className="rounded-lg border border-node-border bg-muted/50 px-3 py-2 text-sm">That decision isn't waiting on you: it was resolved, it expired, or you're not one of its deciders.</p>}
+    <div className="grid max-w-4xl gap-6">
+      <PageHeader title="Inbox" description="Decisions your flows wait on you to make, soonest deadline first."
+        meta={page && <span className="tabular-nums" aria-live="polite">{page.total === 0 ? "None waiting" : `${badgeText(page)} waiting on you`}</span>}
+        actions={<Button variant="ghost" size="sm" onClick={refresh} disabled={read.isFetching}><RefreshCw className={cn(read.isFetching && "animate-spin")} /> Refresh</Button>} />
+      {missing && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-sm">That decision isn't waiting on you: it was resolved, it expired, or you're not one of its deciders.</p>}
       {body}
       <RequestedCalls />
       <DecisionSheet decision={selected} now={now} onClose={() => choose(undefined)} onSettled={refresh} />
@@ -140,10 +137,10 @@ function RequestedCalls() {
   return (
     <>
     {items.length > 0 && <section aria-labelledby="requested-heading" className="grid gap-2">
-      <h2 id="requested-heading" className="text-sm font-medium text-muted-foreground">Your requests</h2>
-      <ol className="grid gap-2" aria-label="Your requests">
+      <h2 id="requested-heading" className="text-section font-medium">Your requests</h2>
+      <ol className="divide-y overflow-hidden rounded-lg border bg-card" aria-label="Your requests">
         {items.map((item) => (
-          <li key={item.id} className="flex flex-wrap items-center gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
+          <li key={item.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
             {item.status === "approved"
               ? <CheckCircle2 className="size-4 shrink-0 text-[var(--tint-outcome)]" aria-hidden />
               : <Hourglass className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
