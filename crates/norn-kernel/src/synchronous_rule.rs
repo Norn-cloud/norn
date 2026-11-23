@@ -121,7 +121,7 @@ impl SynchronousRule {
             .ok_or_else(|| refused("the rule exceeded the action fuel"))?;
         if !evaluated.output.commands.is_empty() || !evaluated.output.timers.is_empty() {
             return Err(refused(
-                "synchronous rules are facts-only; use declared action commands",
+                "synchronous rules may emit only facts and links; use declared action commands",
             ));
         }
         Ok(evaluated.output)

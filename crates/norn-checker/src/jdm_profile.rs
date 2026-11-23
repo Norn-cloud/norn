@@ -99,7 +99,8 @@ use norn_ir::jdm::{
 };
 use norn_ir::{
     ArtifactDependency, ArtifactEnvelope, ArtifactKind, DECIDE_INPUT_MEMBERS,
-    DECIDE_OUTPUT_MEMBERS, DiagnosticRemediation, DiagnosticSeverity, JsonValue, RuleContractV2,
+    DECIDE_OPTIONAL_OUTPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, DiagnosticRemediation,
+    DiagnosticSeverity, JsonValue, RuleContractV2,
 };
 
 use crate::envelope::{
@@ -1219,6 +1220,7 @@ pub(crate) fn validate_rule_contract(
             payload.get("inputSchema"),
             "payload.inputSchema",
             &DECIDE_INPUT_MEMBERS,
+            &[],
             false,
             &mut sink,
         );
@@ -1226,6 +1228,7 @@ pub(crate) fn validate_rule_contract(
             payload.get("outputSchema"),
             "payload.outputSchema",
             &DECIDE_OUTPUT_MEMBERS,
+            &DECIDE_OPTIONAL_OUTPUT_MEMBERS,
             true,
             &mut sink,
         );
@@ -1234,15 +1237,22 @@ pub(crate) fn validate_rule_contract(
             sink.diagnostics,
             artifact_id,
         );
+        crate::decision_links::validate_link_change_schema(
+            payload.get("outputSchema"),
+            sink.diagnostics,
+            artifact_id,
+        );
     }
 }
 
-/// A decide graph's input or output record: exactly `members`, all required,
-/// each a closed record (`lists`: a list of closed records).
+/// A decide graph's input or output record: every `members` (plus any
+/// declared `optional` members), all required, each a closed record (`lists`:
+/// a list of closed records).
 fn check_decide_record(
     schema: Option<&JsonValue>,
     path: &str,
     members: &[&str],
+    optional: &[&str],
     lists: bool,
     sink: &mut Sink<'_>,
 ) {
@@ -1272,7 +1282,7 @@ fn check_decide_record(
     }
     for (member, member_schema) in properties {
         let member_path = format!("{path}.properties.{member}");
-        if !members.contains(&member.as_str()) {
+        if !members.contains(&member.as_str()) && !optional.contains(&member.as_str()) {
             sink.push(
                 codes::INVALID_DECISION_CONTRACT,
                 format!(
@@ -1319,6 +1329,7 @@ fn check_decide_record(
     // A missing member is reported above; a declared one must be required.
     if let Some(member) = members
         .iter()
+        .chain(optional.iter())
         .find(|member| properties.contains_key(**member) && !required.contains(**member))
     {
         sink.push(

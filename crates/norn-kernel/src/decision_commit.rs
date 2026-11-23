@@ -2676,7 +2676,7 @@ fn prepare_decision_with_limits_for<X>(
             expected: state.version,
         })
         .collect();
-    let writes = working
+    let writes: Vec<FactWrite> = working
         .into_iter()
         .filter(|(_, entry)| entry.written)
         .map(|(key, entry)| FactWrite {
@@ -2687,6 +2687,7 @@ fn prepare_decision_with_limits_for<X>(
                 .map_or(FactMutation::Delete, |values| FactMutation::Put { values }),
         })
         .collect();
+    crate::decision_links::validate_decision_links(catalog, slice, &writes, &output.links, limits)?;
     Ok(CellCommit {
         consumes: turn.consumes.clone(),
         reads,
@@ -2791,7 +2792,15 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    let commit = decision_cell_commit::<_, _, _, H::Error>(catalog, slice, turn, output, limits)?;
+    let mut commit =
+        decision_cell_commit::<_, _, _, H::Error>(catalog, slice, turn, output, limits)?;
+    commit.links = crate::decision_links::prepare_decision_link_writes(
+        host,
+        catalog,
+        slice,
+        &commit.writes,
+        &output.links,
+    )?;
     let counts = EnvelopeCounts::new(
         commit.events.len(),
         output.commands.len(),

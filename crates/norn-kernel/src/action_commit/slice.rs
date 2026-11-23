@@ -204,19 +204,20 @@ pub(super) struct ActionSliceContext<'a, 'model, 'call, H: CellHost + ?Sized> {
     pub(super) authorizer: &'a dyn ActionAuthorizer,
 }
 
-struct ActionSliceState {
-    facts: FactSlice,
-    values: JsonObject,
-    link_reads: Vec<LinkReadExpectation>,
-    precondition_keys: BTreeSet<FactKey>,
-    entry_keys: BTreeMap<String, Option<FactKey>>,
-    entry_list_keys: BTreeMap<String, Vec<FactKey>>,
-    entry_depths: BTreeMap<String, u32>,
-    parameter_pins: Vec<ActionParameterPin>,
-    observed_records: u32,
-    meter: SliceMeter,
-    read_types: BTreeSet<ObjectTypeName>,
-    limits: crate::SliceLimits,
+pub(super) struct ActionSliceState {
+    pub(super) facts: FactSlice,
+    pub(super) values: JsonObject,
+    pub(super) link_reads: Vec<LinkReadExpectation>,
+    pub(super) predicate_snapshots: Vec<(PredicateQuery, Vec<PredicateObject>)>,
+    pub(super) precondition_keys: BTreeSet<FactKey>,
+    pub(super) entry_keys: BTreeMap<String, Option<FactKey>>,
+    pub(super) entry_list_keys: BTreeMap<String, Vec<FactKey>>,
+    pub(super) entry_depths: BTreeMap<String, u32>,
+    pub(super) parameter_pins: Vec<ActionParameterPin>,
+    pub(super) observed_records: u32,
+    pub(super) meter: SliceMeter,
+    pub(super) read_types: BTreeSet<ObjectTypeName>,
+    pub(super) limits: crate::SliceLimits,
 }
 
 fn action_slice_key<X>(
@@ -282,6 +283,7 @@ fn action_slice_key<X>(
             };
             (from_depth.max(default_depth), None)
         }
+        SliceKey::Predicate { .. } => (0, None),
         SliceKey::TriggerObject
         | SliceKey::TriggerBefore
         | SliceKey::TriggerAfter
@@ -309,11 +311,19 @@ fn load_action_slice_entry<H: CellHost + ?Sized>(
     } = *context;
     let (depth, key) =
         action_slice_key(entry, effective_input, &state.values, &state.entry_depths)?;
-    if matches!(entry.key, SliceKey::Link { .. }) {
-        return load_action_slice_links(context, state, entry, depth);
-    }
-    if matches!(entry.key, SliceKey::Parameter { .. }) {
-        return load_action_slice_parameter(context, state, entry, depth);
+    match &entry.key {
+        SliceKey::Link { .. } => return load_action_slice_links(context, state, entry, depth),
+        SliceKey::Parameter { .. } => {
+            return load_action_slice_parameter(context, state, entry, depth);
+        }
+        SliceKey::Predicate { .. } => {
+            return super::predicate::load_action_slice_predicate(context, state, entry);
+        }
+        SliceKey::Property { .. }
+        | SliceKey::TriggerObject
+        | SliceKey::TriggerBefore
+        | SliceKey::TriggerAfter
+        | SliceKey::TriggerChanges => {}
     }
     let ActionSliceState {
         facts,
@@ -385,16 +395,7 @@ fn load_action_slice_entry<H: CellHost + ?Sized>(
             entry: entry.name.clone(),
         });
     };
-    let concrete_key = facts
-        .keys()
-        .find(|fact| {
-            fact.key == requested.key
-                && catalog
-                    .lineage(&fact.object_type)
-                    .contains(&entry.object_type)
-        })
-        .cloned()
-        .unwrap_or(requested);
+    let concrete_key = known_fact_key(facts, catalog, &requested);
     entry_keys.insert(entry.name.clone(), Some(concrete_key));
     entry_depths.insert(entry.name.clone(), depth);
     values.insert(entry.name.clone(), RuntimeValue::Object(object.clone()));
@@ -659,6 +660,7 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
         facts,
         values,
         link_reads,
+        predicate_snapshots: Vec::new(),
         precondition_keys,
         entry_keys,
         entry_list_keys,
@@ -683,12 +685,14 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
             );
         load_action_slice_entry(context, &mut state, entry, identity_only)?;
     }
-    let (aggregates, predicate_reads) = load_action_aggregates(
+    let aggregates = load_action_aggregates(
         context,
         &mut state.read_types,
         &mut state.meter,
         &state.limits,
+        &mut state.predicate_snapshots,
     )?;
+    let predicate_reads = super::predicate::predicate_read_expectations(state.predicate_snapshots);
     let ActionSliceState {
         mut facts,
         values,
@@ -746,7 +750,8 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
     read_types: &mut BTreeSet<ObjectTypeName>,
     meter: &mut SliceMeter,
     limits: &crate::SliceLimits,
-) -> Result<(JsonObject, Vec<PredicateReadExpectation>), ActionRefusal<H::Error>> {
+    snapshots: &mut Vec<(PredicateQuery, Vec<PredicateObject>)>,
+) -> Result<JsonObject, ActionRefusal<H::Error>> {
     let ActionSliceContext {
         host,
         catalog,
@@ -755,9 +760,8 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
         authorizer,
     } = *context;
     let mut values = JsonObject::new();
-    // Aggregates over the same predicate fold one snapshot: the commit pins
-    // each distinct predicate once.
-    let mut snapshots: Vec<(PredicateQuery, Vec<PredicateObject>)> = Vec::new();
+    // Aggregates over the same predicate (or a predicate slice entry) fold one
+    // snapshot: the commit pins each distinct predicate once.
     for aggregate in &call.action.aggregates {
         let unavailable = |reason: String| ActionRefusal::AggregateUnavailable {
             aggregate: aggregate.name.clone(),
@@ -832,14 +836,7 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
         .map_err(|error| unavailable(error.to_string()))?;
         values.insert(aggregate.name.clone(), value);
     }
-    let reads = snapshots
-        .into_iter()
-        .map(|(predicate, objects)| PredicateReadExpectation {
-            predicate,
-            members: objects.iter().map(PredicateObject::member).collect(),
-        })
-        .collect();
-    Ok((values, reads))
+    Ok(values)
 }
 
 /// Reconciles a declared slice read of the action target with the separately
@@ -998,7 +995,7 @@ fn load_action_fact<H: CellHost + ?Sized>(
     Ok(bounded.state)
 }
 
-fn admit_action_fact_record<X>(
+pub(super) fn admit_action_fact_record<X>(
     values: Option<&JsonObject>,
     meter: &mut SliceMeter,
     observed_records: &mut u32,

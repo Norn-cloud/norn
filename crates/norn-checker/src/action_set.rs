@@ -456,6 +456,9 @@ fn check_action(
         } else {
             findings.push(finding(codes::UNDECLARED_EFFECT_WRITE, "synchronousRule requires finite objectType and supported op enums in its closed fact schema".to_owned(), artifact, "/payload/synchronousRule"));
         }
+        findings.extend(crate::decision_links::synchronous_writer_link_findings(
+            artifact, root, writer, model,
+        ));
     }
     if let Some(program) = &root.effect_program {
         let kind = program.target().object_kind;
@@ -960,57 +963,17 @@ fn action_slice_key_findings(
     };
     let path = format!("/payload/slice/{index}");
     let kind = entry.object_type.as_str();
-    if let SliceKey::Property { from, property } = &entry.key
+    if let SliceKey::Property { from, .. } = &entry.key
         && from != "input"
     {
-        let Some(source) = root
-            .slice
-            .iter()
-            .take(index)
-            .find(|prior| prior.name == *from)
-        else {
-            return findings;
-        };
-        match environment
-            .record(source.object_type.as_str())
-            .and_then(|record| record.fields.get(property.as_str()))
-            .filter(|field| matches!(field.source, FieldSource::Property { .. }))
-        {
-            None => findings.push(finding(
-                codes::INVALID_SLICE,
-                format!(
-                    "slice key property {:?} is not declared on source type {:?}",
-                    property.as_str(),
-                    source.object_type.as_str()
-                ),
-                artifact,
-                &format!("{path}/key/property"),
-            )),
-            Some(field) if !is_action_string_key_type(&field.ty) => findings.push(finding(
-                codes::INVALID_SLICE,
-                format!(
-                    "slice key property {:?} must be a string or enum",
-                    property.as_str()
-                ),
-                artifact,
-                &format!("{path}/key/property"),
-            )),
-            Some(field)
-                if (source.optional || matches!(field.ty, Type::Optional(_)))
-                    && !entry.optional =>
-            {
-                findings.push(finding(
-                    codes::INVALID_SLICE,
-                    format!(
-                        "slice key property {:?} of entry {from:?} may be absent or null; mark the slice entry optional",
-                        property.as_str(),
-                    ),
-                    artifact,
-                    &format!("{path}/key/property"),
-                ));
-            }
-            Some(_) => {}
-        }
+        findings.extend(crate::predicate_slice::action_property_slice_findings(
+            artifact,
+            root,
+            index,
+            entry,
+            &path,
+            environment,
+        ));
     }
 
     if let SliceKey::Link { from, link } = &entry.key
@@ -1052,6 +1015,16 @@ fn action_slice_key_findings(
             entry,
             &path,
             environment,
+        ));
+    }
+    if let SliceKey::Predicate { .. } = &entry.key
+        && let (Some(effective), Some(record)) = (
+            model.effective_object_type_named(kind),
+            environment.record(kind),
+        )
+    {
+        findings.extend(crate::predicate_slice::action_predicate_slice_findings(
+            artifact, root, entry, &path, effective, record,
         ));
     }
     findings
@@ -1209,18 +1182,6 @@ fn validate_parameter_fact_profile(
                 .is_some_and(|ty| matches!(unwrap_optional_type(ty), Type::Text { .. })),
             "a nullable or non-nullable string",
         );
-    }
-}
-
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "The foreign non-exhaustive enum requires a catch-all; unknown variants retain the existing fallback"
-)]
-fn is_action_string_key_type(ty: &Type) -> bool {
-    match ty {
-        Type::Text { .. } | Type::Enum { .. } => true,
-        Type::Optional(inner) => is_action_string_key_type(inner),
-        _ => false,
     }
 }
 
@@ -2476,7 +2437,7 @@ impl<'a> Model<'a> {
         self.by_name.get(name).and_then(|defined| defined.first())
     }
 
-    fn effective_object_type_named(&self, name: &str) -> Option<&EffectiveObjectType> {
+    pub(crate) fn effective_object_type_named(&self, name: &str) -> Option<&EffectiveObjectType> {
         self.by_name
             .get(name)?
             .iter()
@@ -2485,7 +2446,7 @@ impl<'a> Model<'a> {
 
     /// Whether an effect target is an owned child type or its subtype, using
     /// the same effective ownership and lineage model as the runtime catalog.
-    fn is_owned_child_target(&self, target_name: &str) -> bool {
+    pub(crate) fn is_owned_child_target(&self, target_name: &str) -> bool {
         let Some(target) = self.effective_object_type_named(target_name) else {
             return false;
         };

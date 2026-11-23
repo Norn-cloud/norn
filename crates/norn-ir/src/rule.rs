@@ -52,6 +52,8 @@ pub const DECIDE_INPUT_MEMBERS: [&str; 2] = ["slice", "event"];
 /// Members of a decide graph's `outputSchema`: the fact changes, commands, and
 /// timers the decision emits (ruling 2026-09-25 §3).
 pub const DECIDE_OUTPUT_MEMBERS: [&str; 3] = ["facts", "commands", "timers"];
+/// Optional members a decide graph's `outputSchema` may additionally declare.
+pub const DECIDE_OPTIONAL_OUTPUT_MEMBERS: [&str; 1] = ["links"];
 
 /// Maximum causal depth admitted for rule-to-rule cascades.
 pub const MAX_RULE_CAUSAL_DEPTH: u8 = 8;
@@ -370,6 +372,15 @@ where
         .map_err(serde::de::Error::custom)
 }
 
+fn deserialize_optional_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    u32::try_from(WholeNumber::deserialize(deserializer)?.0)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
 impl RuleTrigger {
     /// Object type named by an object-specific trigger.
     #[must_use]
@@ -431,10 +442,11 @@ pub struct SliceDeclaration {
 }
 
 impl SliceDeclaration {
-    /// Whether the entry loads a list ([`SliceKey::Link`]).
+    /// Whether the entry loads a list ([`SliceKey::Link`] or
+    /// [`SliceKey::Predicate`]).
     #[must_use]
     pub const fn is_list(&self) -> bool {
-        matches!(self.key, SliceKey::Link { .. })
+        matches!(self.key, SliceKey::Link { .. } | SliceKey::Predicate { .. })
     }
 }
 
@@ -528,5 +540,32 @@ pub enum SliceKey {
         from: String,
         /// The link id, declared on that entry's type or a supertype.
         link: String,
+    },
+    /// Bounded predicate read over stored objects of the entry's type, fenced
+    /// into the commit's `predicate_reads` (`TXN-PHANTOM`, #1586).
+    #[serde(rename_all = "camelCase")]
+    Predicate {
+        /// Equality filter: each stored indexed-scalar property must equal the
+        /// named action input field. An empty filter matches every object of
+        /// the type within the bound.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        filter: BTreeMap<crate::PropertyId, String>,
+        /// Optional window over one date or timestamp property.
+        #[serde(
+            default,
+            deserialize_with = "crate::members::present_non_null",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "crate::AggregateWindow")]
+        window: Option<crate::AggregateWindow>,
+        /// Optional cap on matching objects (further bounded by the limit
+        /// profile's `slice.max_records`). Exceeding refuses; never truncates.
+        #[serde(
+            default,
+            deserialize_with = "deserialize_optional_u32",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "u32")]
+        max_items: Option<u32>,
     },
 }

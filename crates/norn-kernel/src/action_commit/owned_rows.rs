@@ -1674,6 +1674,7 @@ where
     )?;
     let output = DecisionOutput {
         facts: changes,
+        links: Vec::new(),
         commands,
         timers: Vec::new(),
     };

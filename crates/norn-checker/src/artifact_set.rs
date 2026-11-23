@@ -348,6 +348,10 @@ pub(crate) fn check_artifact_set_using(
                     &normalized_artifacts,
                     &normalized_context,
                 ))
+                .chain(crate::decision_links::check_decision_links_set(
+                    &normalized_artifacts,
+                    &normalized_context,
+                ))
                 .chain(crate::rule_bindings::check_rule_binding_set(
                     &normalized_artifacts,
                     &normalized_context,

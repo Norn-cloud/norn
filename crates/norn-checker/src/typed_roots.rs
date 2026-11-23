@@ -388,50 +388,15 @@ fn validate_action_slice(
                 artifact_id,
             ));
         }
-        let source_depth = match &entry.key {
-            SliceKey::Parameter { .. } => validate_action_parameter_slice_key(
-                payload,
-                derivations,
-                &slice,
-                index,
-                &link_depths,
-                diagnostics,
-                artifact_id,
-            ),
-            SliceKey::TriggerObject
-            | SliceKey::TriggerBefore
-            | SliceKey::TriggerAfter
-            | SliceKey::TriggerChanges => {
-                diagnostics.push(invalid_diagnostic(
-                    ACTION_CODE,
-                    "actions select slice objects from input properties or earlier slice entries; rule trigger keys are not available",
-                    format!("{path}.key"),
-                    artifact_id,
-                ));
-                0
-            }
-            SliceKey::Property { from, .. } if from == "input" => {
-                validate_action_input_slice_key(
-                    payload,
-                    derivations,
-                    entry,
-                    &path,
-                    diagnostics,
-                    artifact_id,
-                );
-                0
-            }
-            SliceKey::Property { from, .. } | SliceKey::Link { from, .. } => {
-                action_prior_slice_depth(
-                    &slice,
-                    index,
-                    from,
-                    &link_depths,
-                    diagnostics,
-                    artifact_id,
-                )
-            }
-        };
+        let source_depth = validate_action_slice_entry_key(
+            payload,
+            derivations,
+            &slice,
+            index,
+            &link_depths,
+            diagnostics,
+            artifact_id,
+        );
         link_depths.insert(entry.name.clone(), source_depth);
         if source_depth > limits.max_relation_depth {
             diagnostics.push(invalid_diagnostic(
@@ -455,6 +420,69 @@ fn validate_action_slice(
     }
 }
 
+fn validate_action_slice_entry_key(
+    payload: &BTreeMap<String, JsonValue>,
+    derivations: &ActionDerivationCheck,
+    slice: &[SliceDeclaration],
+    index: usize,
+    link_depths: &BTreeMap<String, u32>,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) -> u32 {
+    let Some(entry) = slice.get(index) else {
+        return 0;
+    };
+    let path = format!("payload.slice[{index}]");
+    match &entry.key {
+        SliceKey::Parameter { .. } => validate_action_parameter_slice_key(
+            payload,
+            derivations,
+            slice,
+            index,
+            link_depths,
+            diagnostics,
+            artifact_id,
+        ),
+        SliceKey::Predicate { .. } => {
+            crate::predicate_slice::validate_action_predicate_slice_key(
+                payload,
+                entry,
+                &path,
+                &|field| action_input_key_is_guaranteed(payload, field, derivations),
+                diagnostics,
+                artifact_id,
+            );
+            0
+        }
+        SliceKey::TriggerObject
+        | SliceKey::TriggerBefore
+        | SliceKey::TriggerAfter
+        | SliceKey::TriggerChanges => {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                "actions select slice objects from input properties or earlier slice entries; rule trigger keys are not available",
+                format!("{path}.key"),
+                artifact_id,
+            ));
+            0
+        }
+        SliceKey::Property { from, .. } if from == "input" => {
+            validate_action_input_slice_key(
+                payload,
+                derivations,
+                entry,
+                &path,
+                diagnostics,
+                artifact_id,
+            );
+            0
+        }
+        SliceKey::Property { from, .. } | SliceKey::Link { from, .. } => {
+            action_prior_slice_depth(slice, index, from, link_depths, diagnostics, artifact_id)
+        }
+    }
+}
+
 /// Validate an action's bounded aggregate inputs (#1105): names, bounds, and
 /// the input fields they read. Object types and property kinds are checked
 /// over the artifact set ([`crate::action_set`]).
@@ -474,73 +502,13 @@ fn validate_action_aggregates(
     ) else {
         return;
     };
-    let limits = ResourceLimitProfile::norn_limits_v1().slice;
-    let total_items = aggregates.iter().fold(0_u64, |total, aggregate| {
-        total.saturating_add(u64::from(aggregate.max_items))
-    });
-    if total_items > u64::from(limits.max_records) {
-        diagnostics.push(invalid_diagnostic(
-            ACTION_CODE,
-            format!(
-                "aggregates may match {total_items} objects in total, above the profile's slice record cap of {}",
-                limits.max_records
-            ),
-            "payload.aggregates",
-            artifact_id,
-        ));
-    }
-    let slice_names: BTreeSet<&str> = payload
-        .get("slice")
-        .and_then(JsonValue::as_array)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|entry| entry.as_object()?.get("name")?.as_string())
-        .collect();
-    let mut names = BTreeSet::new();
-    for (index, aggregate) in aggregates.iter().enumerate() {
-        let path = format!("payload.aggregates[{index}]");
-        if !is_action_member_name(&aggregate.name)
-            || slice_names.contains(aggregate.name.as_str())
-            || !names.insert(aggregate.name.as_str())
-        {
-            diagnostics.push(invalid_diagnostic(
-                ACTION_CODE,
-                format!(
-                    "aggregate name {:?} is empty, repeated, or also a slice entry",
-                    aggregate.name
-                ),
-                format!("{path}.name"),
-                artifact_id,
-            ));
-        }
-        if aggregate.max_items == 0 {
-            diagnostics.push(invalid_diagnostic(
-                ACTION_CODE,
-                "aggregate maxItems must be at least 1",
-                format!("{path}.maxItems"),
-                artifact_id,
-            ));
-        }
-        for field in aggregate.input_fields() {
-            if action_input_field_type(payload.get("inputSchema"), field).is_none() {
-                diagnostics.push(invalid_diagnostic(
-                    ACTION_CODE,
-                    format!("aggregate input field {field:?} is not declared in inputSchema"),
-                    path.clone(),
-                    artifact_id,
-                ));
-            } else if !action_input_key_is_guaranteed(payload, field, derivations) {
-                diagnostics.push(invalid_diagnostic(
-                    ACTION_CODE,
-                    format!(
-                        "aggregate input field {field:?} may be absent; require its final input value"
-                    ),
-                    path.clone(),
-                    artifact_id,
-                ));
-            }
-        }
-    }
+    crate::predicate_slice::validate_action_aggregates_decoded(
+        payload,
+        &aggregates,
+        &|field| action_input_key_is_guaranteed(payload, field, derivations),
+        diagnostics,
+        artifact_id,
+    );
 }
 
 fn action_prior_slice_depth(
@@ -1749,7 +1717,7 @@ fn is_optional_type(ty: &Type) -> bool {
     matches!(ty, Type::Optional(_))
 }
 
-fn is_action_member_name(value: &str) -> bool {
+pub(crate) fn is_action_member_name(value: &str) -> bool {
     let mut bytes = value.bytes();
     bytes
         .next()

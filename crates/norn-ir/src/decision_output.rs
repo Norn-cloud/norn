@@ -20,8 +20,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::FactChange;
 use crate::runtime::RuntimeObject;
+use crate::{FactChange, LinkChange};
 
 /// Reserved timer-record member: the delay in milliseconds from the turn's
 /// logical time (a non-negative integer).
@@ -36,6 +36,9 @@ pub const TIMER_ID_MEMBER: &str = "timerId";
 pub struct DecisionOutput {
     /// Fact changes, applied in order.
     pub facts: Vec<FactChange>,
+    /// Typed link changes, applied atomically alongside `facts`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<LinkChange>,
     /// Outbound command records, enqueued in order (exact runtime values).
     pub commands: Vec<RuntimeObject>,
     /// Timer records, scheduled in order (exact runtime values).

@@ -10,8 +10,9 @@ use norn_ir::jdm::{
     JdmHitPolicy, JdmNode, JdmSchemaContent, JdmSubDecisionContent, JdmSwitchContent,
 };
 use norn_ir::{
-    DECIDE_INPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, JsonValue, RULE_IR_V2_VERSION,
-    ResourceLimitProfile, RuleContractV2, RuleRoot, RuntimeObject, RuntimeValue,
+    DECIDE_INPUT_MEMBERS, DECIDE_OPTIONAL_OUTPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, JsonValue,
+    RULE_IR_V2_VERSION, ResourceLimitProfile, RuleContractV2, RuleRoot, RuntimeObject,
+    RuntimeValue,
 };
 use zen_engine::Decision;
 use zen_engine::loader::MemoryLoader;
@@ -736,30 +737,37 @@ fn closed_record(rule: &RuleRoot, member: &str) -> Result<(), AdmissionError> {
     }
 }
 
-/// The record members of a decide schema, which must be exactly `members`,
-/// all required.
+/// The record members of a decide schema: all `members` plus any declared
+/// `optional` members, all required.
 fn contract_members(
     rule: &RuleRoot,
     schema: &Schema,
     member: &str,
     members: &[&str],
+    optional: &[&str],
 ) -> Result<BTreeMap<String, Schema>, AdmissionError> {
     let properties = schema
         .properties()
         .ok_or_else(|| invalid_schema(&rule.rule_id, member, "must be a closed record"))?;
     let declared: BTreeSet<&str> = properties.keys().map(String::as_str).collect();
-    let expected: BTreeSet<&str> = members.iter().copied().collect();
     let required: BTreeSet<&str> = schema
         .required()
         .into_iter()
         .flatten()
         .map(String::as_str)
         .collect();
-    if declared != expected || required != expected {
+    if !members.iter().all(|m| declared.contains(m))
+        || !declared
+            .iter()
+            .all(|d| members.contains(d) || optional.contains(d))
+        || required != declared
+    {
         return Err(invalid_schema(
             &rule.rule_id,
             member,
-            format!("the decide contract requires exactly the members {members:?}, all required"),
+            format!(
+                "the decide contract requires {members:?} (optional {optional:?}), all required"
+            ),
         ));
     }
     Ok(properties.clone())
@@ -767,7 +775,7 @@ fn contract_members(
 
 fn decide_input(rule: &RuleRoot) -> Result<(Schema, Schema), AdmissionError> {
     let schema = parse_schema(rule, "inputSchema")?;
-    let mut members = contract_members(rule, &schema, "inputSchema", &DECIDE_INPUT_MEMBERS)?;
+    let mut members = contract_members(rule, &schema, "inputSchema", &DECIDE_INPUT_MEMBERS, &[])?;
     let mut record = |name: &str| {
         members
             .remove(name)
@@ -787,7 +795,13 @@ fn decide_input(rule: &RuleRoot) -> Result<(Schema, Schema), AdmissionError> {
 
 fn decide_output(rule: &RuleRoot) -> Result<Schema, AdmissionError> {
     let schema = parse_schema(rule, "outputSchema")?;
-    let members = contract_members(rule, &schema, "outputSchema", &DECIDE_OUTPUT_MEMBERS)?;
+    let members = contract_members(
+        rule,
+        &schema,
+        "outputSchema",
+        &DECIDE_OUTPUT_MEMBERS,
+        &DECIDE_OPTIONAL_OUTPUT_MEMBERS,
+    )?;
     for (name, member) in &members {
         match member {
             Schema::Array(items) if items.properties().is_some() => {}

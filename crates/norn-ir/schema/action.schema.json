@@ -1096,6 +1096,42 @@
           "required": [
             "link"
           ]
+        },
+        {
+          "description": "Bounded predicate read over stored objects of the entry's type, fenced\ninto the commit's `predicate_reads` (`TXN-PHANTOM`, #1586).",
+          "type": "object",
+          "properties": {
+            "predicate": {
+              "type": "object",
+              "properties": {
+                "filter": {
+                  "description": "Equality filter: each stored indexed-scalar property must equal the\nnamed action input field. An empty filter matches every object of\nthe type within the bound.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "patternProperties": {
+                    "^[a-z][a-z0-9_]*$": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "maxItems": {
+                  "description": "Optional cap on matching objects (further bounded by the limit\nprofile's `slice.max_records`). Exceeding refuses; never truncates.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "window": {
+                  "description": "Optional window over one date or timestamp property.",
+                  "$ref": "#/$defs/AggregateWindow"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "predicate"
+          ]
         }
       ]
     },

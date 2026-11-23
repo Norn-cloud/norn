@@ -1,5 +1,5 @@
 {
-  "sha256": "8ad2cfd8213699dcef4e00b52f5f72270b28c83502449bbe15f6b46ebd4926fb",
+  "sha256": "1fec2106302c36c9609113460f8390c62770dacccabdede2066f63d00f96615c",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -37,6 +37,7 @@
     "crates/norn-ir/src/lib.rs",
     "crates/norn-ir/src/limit_profile.rs",
     "crates/norn-ir/src/lineage.rs",
+    "crates/norn-ir/src/link_change.rs",
     "crates/norn-ir/src/mapping.rs",
     "crates/norn-ir/src/mapping_evidence.rs",
     "crates/norn-ir/src/marking.rs",

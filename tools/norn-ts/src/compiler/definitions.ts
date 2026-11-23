@@ -865,7 +865,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations", ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS])
+    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "ownedCollections", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations", ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()
@@ -879,6 +879,7 @@ class DefinitionCompiler {
     const implementsNode = members.get("implements")
     const extendsNode = members.get("extends")
     const linksNode = members.get("links")
+    const ownedCollectionsNode = members.get("ownedCollections")
     const identityNode = members.get("identity")
     const lifecyclesNode = members.get("lifecycles")
     return E.objectType({
@@ -903,6 +904,7 @@ class DefinitionCompiler {
       }) } : {}),
       implements: implementsNode ? this.list(implementsNode).map((x) => this.typeName(x, INTERFACES)) : [],
       links: linksNode ? this.list(linksNode).map((x) => this.link(x)) : [],
+      ...(ownedCollectionsNode ? { ownedCollections: this.list(ownedCollectionsNode).map((x) => this.ownedCollection(x)) } : {}),
       identity: identityNode ? this.list(identityNode).map((x) => this.key(x)) : [],
       lifecycles: lifecyclesNode ? this.list(lifecyclesNode).map((x) => this.lifecycle(x)) : [],
       ...(() => { const norms = this.norms(call, members); return norms.length ? { norms } : {} })(),
@@ -1174,8 +1176,24 @@ class DefinitionCompiler {
     return labels
   }
 
+  private ownedCollection(input: ts.Expression): E.OwnedChildCollectionDecl {
+    const m = this.closedRecord(
+      input,
+      ["id", "childType", "rowIdProperty", "orderingKey", "cascadeOnParentDelete", "maxRows"],
+      ["id", "childType", "rowIdProperty", "orderingKey", "cascadeOnParentDelete", "maxRows"],
+    )
+    return {
+      id: this.string(m.get("id")!),
+      childType: this.typeName(m.get("childType")!, OBJECT_TYPES),
+      rowIdProperty: this.string(m.get("rowIdProperty")!),
+      orderingKey: this.string(m.get("orderingKey")!),
+      cascadeOnParentDelete: this.boolean(m.get("cascadeOnParentDelete")!),
+      maxRows: this.wholePositiveInt(m.get("maxRows")!, "maxRows"),
+    }
+  }
+
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", "fromCaller", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "aggregates", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", "fromCaller", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -1186,18 +1204,59 @@ class DefinitionCompiler {
     }
     const effectNode = members.get("effect"), compensation = members.get("compensation")
     const description = members.get("description"), ledgerCategory = members.get("ledgerCategory")
+    const compiledEffect = effectNode ? this.effect(effectNode) : undefined
+    let inputSchema = schema("input")
+    const extraDependencies: R.DecisionDependencyPin[] = []
+    if (compiledEffect?.kind === "mutate_parent_with_rows") {
+      const rowOpsProp = inputSchema.properties[compiledEffect.rowOpsField]
+      if (!rowOpsProp || rowOpsProp.type !== "array") {
+        throw new CompileError("NORN-FLOW-SCHEMA-PROJECTION", `mutate_parent_with_rows rowOpsField ${JSON.stringify(compiledEffect.rowOpsField)} must be a Schema.Array field on action input`, effectNode!)
+      }
+      inputSchema = {
+        ...inputSchema,
+        properties: {
+          ...inputSchema.properties,
+          [compiledEffect.rowOpsField]: S.array(S.jsonValue),
+        },
+      }
+      // Auto-pin local owned child entity artifacts so exact dependency checks pass.
+      const effectMembers = this.record(effectNode!)
+      const parentRef = this.referenced(effectMembers.get("type")!, OBJECT_TYPES, "a Norn.type definition")
+      const ownedNode = parentRef.members.get("ownedCollections")
+      if (ownedNode) {
+        for (const item of this.list(ownedNode)) {
+          const cm = this.record(item)
+          const childExpr = cm.get("childType")
+          if (!childExpr) continue
+          const deref = this.deref(childExpr)
+          if (ts.isCallExpression(deref)) {
+            const child = this.typeRef(childExpr, OBJECT_TYPES, "a Norn.type definition")
+            extraDependencies.push({ kind: "entity", artifactId: `${child.name}.entity`, version: child.version })
+          }
+        }
+      }
+    }
+    const explicitDependencies = members.has("dependencies")
+      ? this.list(members.get("dependencies")!).map((pin) => this.decisionDependency(pin))
+      : []
+    const allDependencies = [...explicitDependencies]
+    for (const dep of extraDependencies) {
+      if (!allDependencies.some((existing) => existing.artifactId === dep.artifactId && existing.version === dep.version)) {
+        allDependencies.push(dep)
+      }
+    }
     return A.action({
       ...this.localized(members),
       id: this.string(need("id")),
       title: this.string(need("title")),
       version: this.string(need("version")),
       ...(description ? { description: this.string(description) } : {}),
-      ...(members.has("dependencies") ? {dependencies:this.list(members.get("dependencies")!).map(pin=>this.decisionDependency(pin))}:{}),
+      ...(allDependencies.length > 0 ? { dependencies: allDependencies } : {}),
       scopeRequired: this.strings(need("scopeRequired")),
       idempotent: this.boolean(need("idempotent")),
       ledgered: this.boolean(need("ledgered")),
       ...(ledgerCategory ? { ledgerCategory: this.string(ledgerCategory) } : {}),
-      input: schema("input"),
+      input: inputSchema,
       output: schema("output"),
       ...(members.has("inputLabels") ? { inputLabels: this.inputLabels(need("inputLabels")) } : {}),
       ...(members.has("inputGroups")
@@ -1209,6 +1268,7 @@ class DefinitionCompiler {
           }
         : {}),
       slice: members.has("slice") ? this.list(need("slice")).map((entry) => this.sliceEntry(entry)) : [],
+      ...(members.has("aggregates") ? { aggregates: this.list(need("aggregates")).map((entry) => this.actionAggregate(entry)) } : {}),
       derive: [
         // CALLER-FIELD-1: each `fromCaller` field is the verified caller's
         // subject id; the server binds it and a caller never supplies it.
@@ -1239,7 +1299,7 @@ class DefinitionCompiler {
           })
         : [],
       ...(members.has("synchronousRule") ? { synchronousRule: this.synchronousRule(need("synchronousRule")) } : {}),
-      ...(effectNode ? { effect: this.effect(effectNode) } : {}),
+      ...(compiledEffect ? { effect: compiledEffect } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       ...(members.has("access") ? { access: this.accessRef(need("access")) } : {}),
       at: this.at(call),
@@ -1320,18 +1380,135 @@ class DefinitionCompiler {
     }
   }
 
+  private actionAggregate(input: ts.Expression): A.ActionAggregateInput {
+    const m = this.closedRecord(
+      input,
+      ["name", "type", "filter", "window", "aggregate", "maxItems"],
+      ["name", "type", "aggregate", "maxItems"],
+    )
+    const filterNode = m.get("filter")
+    const filter = filterNode ? this.stringMap(filterNode) : undefined
+    const windowNode = m.get("window")
+    const window = windowNode ? this.predicateWindow(windowNode) : undefined
+    const aggNode = m.get("aggregate")!
+    const agg = this.closedRecord(aggNode, ["kind", "property"], ["kind"])
+    const aggKind = this.string(agg.get("kind")!)
+    let aggregate: A.AggregateFunction
+    if (aggKind === "count") {
+      if (agg.has("property")) throw new CompileError("NORN-FLOW-LITERAL", "count aggregate takes no property", agg.get("property")!)
+      aggregate = { kind: "count" }
+    } else if (aggKind === "sum") {
+      const property = agg.get("property")
+      if (!property) throw new CompileError("NORN-FLOW-LITERAL", "sum aggregate requires property", aggNode)
+      aggregate = { kind: "sum", property: this.string(property) }
+    } else {
+      throw new CompileError("NORN-FLOW-LITERAL", "aggregate kind must be sum or count", agg.get("kind")!)
+    }
+    return {
+      name: this.string(m.get("name")!),
+      objectType: this.typeName(m.get("type")!, OBJECT_TYPES),
+      ...(filter && Object.keys(filter).length > 0 ? { filter } : {}),
+      ...(window ? { window } : {}),
+      aggregate,
+      maxItems: this.wholePositiveInt(m.get("maxItems")!, "maxItems"),
+    }
+  }
+
+  private predicateWindow(input: ts.Expression): R.PredicateWindow {
+    const m = this.closedRecord(
+      input,
+      ["property", "start", "end", "startInclusive", "endInclusive"],
+      ["property", "start", "end", "startInclusive", "endInclusive"],
+    )
+    return {
+      property: this.string(m.get("property")!),
+      start: this.string(m.get("start")!),
+      end: this.string(m.get("end")!),
+      startInclusive: this.boolean(m.get("startInclusive")!),
+      endInclusive: this.boolean(m.get("endInclusive")!),
+    }
+  }
+
+  private stringMap(input: ts.Expression): Readonly<Record<string, string>> {
+    const out: Record<string, string> = {}
+    for (const [key, value] of this.record(input)) {
+      if (key === "__proto__") throw new CompileError("NORN-FLOW-LITERAL", "__proto__ is not a portable JSON member name", value.parent)
+      out[key] = this.string(value)
+    }
+    return out
+  }
+
+  private wholePositiveInt(input: ts.Expression, label: string): number {
+    const e = this.deref(input)
+    if (!ts.isNumericLiteral(e) || !/^[0-9]+$/.test(e.text)) {
+      throw new CompileError("NORN-FLOW-LITERAL", `${label} must be a positive whole integer literal`, e)
+    }
+    const value = BigInt(e.text)
+    if (value < 1n || value > 4_294_967_295n) {
+      throw new CompileError("NORN-FLOW-LITERAL", `${label} must be between 1 and 4294967295`, e)
+    }
+    return Number(value)
+  }
+
   private effect(input: ts.Expression): A.ActionEffect {
-    const m = this.closedRecord(input, ["kind", "type", "objectIdField", "lifecycle", "transition", "writeMode", "acceptReceipt"], ["kind", "type", "objectIdField"])
+    const m = this.closedRecord(
+      input,
+      ["kind", "type", "objectIdField", "lifecycle", "transition", "writeMode", "acceptReceipt", "parentValuesField", "rowOpsField", "parentVersionField", "parentDeleteField", "collections"],
+      ["kind", "type", "objectIdField"],
+    )
     const kind = this.string(m.get("kind")!)
     const type = this.typeRef(m.get("type")!, OBJECT_TYPES, "a Norn.type definition")
     const field = this.string(m.get("objectIdField")!)
     if (kind === "upsert_input_object") {
-      if (m.has("lifecycle") || m.has("transition") || m.has("acceptReceipt")) throw new CompileError("NORN-FLOW-LITERAL", "upsert_input_object takes no lifecycle or transition", input)
+      for (const extra of ["lifecycle", "transition", "acceptReceipt", "parentValuesField", "rowOpsField", "parentVersionField", "parentDeleteField", "collections"]) {
+        if (m.has(extra)) throw new CompileError("NORN-FLOW-LITERAL", `upsert_input_object takes no ${extra}`, m.get(extra)!)
+      }
       const writeMode = m.get("writeMode")
       return A.upsertInputObject(type, field, writeMode ? this.upsertWriteMode(writeMode) : undefined)
     }
-    if (kind !== "fire_transition") throw new CompileError("NORN-FLOW-LITERAL", "an effect kind is fire_transition or upsert_input_object", m.get("kind")!)
-    if (m.has("writeMode")) throw new CompileError("NORN-FLOW-LITERAL", "writeMode belongs to upsert_input_object", m.get("writeMode")!)
+    if (kind === "mutate_parent_with_rows") {
+      for (const extra of ["lifecycle", "transition", "writeMode", "acceptReceipt"]) {
+        if (m.has(extra)) throw new CompileError("NORN-FLOW-LITERAL", `mutate_parent_with_rows takes no ${extra}`, m.get(extra)!)
+      }
+      const parentValuesField = m.get("parentValuesField")
+      const rowOpsField = m.get("rowOpsField")
+      const parentVersionField = m.get("parentVersionField")
+      if (!parentValuesField || !rowOpsField || !parentVersionField) {
+        throw new CompileError("NORN-FLOW-LITERAL", "mutate_parent_with_rows requires parentValuesField, rowOpsField, and parentVersionField", input)
+      }
+      const parentDeleteField = m.get("parentDeleteField")
+      const collectionsNode = m.get("collections")
+      const collections = collectionsNode
+        ? this.list(collectionsNode).map((entry): A.OwnedCollectionAction => {
+            const cm = this.closedRecord(entry, ["id", "preconditions", "derive"], ["id"])
+            const preconditionsNode = cm.get("preconditions")
+            const deriveNode = cm.get("derive")
+            const derive: Record<string, string> = {}
+            if (deriveNode) {
+              for (const [prop, expr] of this.record(deriveNode)) {
+                if (prop === "__proto__") throw new CompileError("NORN-FLOW-LITERAL", "__proto__ is not a portable JSON member name", expr.parent)
+                derive[prop] = this.zen(expr, "self")
+              }
+            }
+            return {
+              id: this.string(cm.get("id")!),
+              ...(preconditionsNode ? { preconditions: this.list(preconditionsNode).map((expr) => this.zen(expr, "self")) } : {}),
+              ...(deriveNode ? { derive } : {}),
+            }
+          })
+        : undefined
+      return A.mutateParentWithRows(type, field, {
+        parentValuesField: this.string(parentValuesField),
+        rowOpsField: this.string(rowOpsField),
+        parentVersionField: this.string(parentVersionField),
+        ...(parentDeleteField ? { parentDeleteField: this.string(parentDeleteField) } : {}),
+        ...(collections ? { collections } : {}),
+      })
+    }
+    if (kind !== "fire_transition") throw new CompileError("NORN-FLOW-LITERAL", "an effect kind is fire_transition, upsert_input_object, or mutate_parent_with_rows", m.get("kind")!)
+    for (const extra of ["writeMode", "parentValuesField", "rowOpsField", "parentVersionField", "parentDeleteField", "collections"]) {
+      if (m.has(extra)) throw new CompileError("NORN-FLOW-LITERAL", `${extra} does not belong to fire_transition`, m.get(extra)!)
+    }
     const lifecycle = m.get("lifecycle"), transition = m.get("transition")
     if (!lifecycle || !transition) throw new CompileError("NORN-FLOW-LITERAL", "fire_transition names its lifecycle and transition", input)
     const receipt = m.get("acceptReceipt")
@@ -2260,10 +2437,25 @@ class DefinitionCompiler {
       if (keyNode.text !== "triggerObject") throw new CompileError("NORN-FLOW-LITERAL", "a slice key is \"triggerObject\", { property: { from, property } }, or { link: { from, link } }", keyNode)
       key = "triggerObject"
     } else {
-      const k = this.closedRecord(keyNode, ["property", "link", "parameter"], [])
-      const property = k.get("property"), link = k.get("link"), parameter = k.get("parameter")
-      if ([property, link, parameter].filter((member) => member !== undefined).length !== 1) throw new CompileError("NORN-FLOW-LITERAL", "a slice key is { property: { from, property } } or { link: { from, link } }", keyNode)
-      if (parameter) {
+      const k = this.closedRecord(keyNode, ["property", "link", "parameter", "predicate"], [])
+      const property = k.get("property"), link = k.get("link"), parameter = k.get("parameter"), predicate = k.get("predicate")
+      if ([property, link, parameter, predicate].filter((member) => member !== undefined).length !== 1) throw new CompileError("NORN-FLOW-LITERAL", "a slice key is { property }, { link }, { parameter }, or { predicate }", keyNode)
+      if (predicate) {
+        const p = this.closedRecord(predicate, ["filter", "window", "maxItems"], [])
+        const filterNode = p.get("filter")
+        const filter = filterNode ? this.stringMap(filterNode) : undefined
+        const windowNode = p.get("window")
+        const window = windowNode ? this.predicateWindow(windowNode) : undefined
+        const maxItemsNode = p.get("maxItems")
+        const maxItems = maxItemsNode ? this.wholePositiveInt(maxItemsNode, "maxItems") : undefined
+        key = {
+          predicate: {
+            ...(filter && Object.keys(filter).length > 0 ? { filter } : {}),
+            ...(window ? { window } : {}),
+            ...(maxItems !== undefined ? { maxItems } : {}),
+          },
+        }
+      } else if (parameter) {
         const p = this.closedRecord(parameter, ["from", "settingKey", "effectiveAt", "precedence", "defaultFrom"], ["from", "settingKey", "effectiveAt", "precedence"])
         const precedence = this.list(p.get("precedence")!).map((scope) => Object.fromEntries([...this.closedRecord(scope, ["orgId", "tenantId", "workspaceId", "environmentId", "businessUnitId"], [])].map(([name, value]) => [name, this.string(value)])))
         const defaultFrom = p.get("defaultFrom")

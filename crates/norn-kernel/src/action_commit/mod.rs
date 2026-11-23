@@ -55,6 +55,7 @@
 mod input;
 mod owned_rows;
 mod parameter;
+mod predicate;
 mod receipt;
 mod series;
 mod slice;
@@ -443,6 +444,7 @@ where
         recorded,
         record,
         series_candidate,
+        decision_links,
         receipt,
     } = pending;
     let generated_key = series_candidate.is_some();
@@ -466,10 +468,20 @@ where
     )?;
     let output = norn_ir::DecisionOutput {
         facts: changes,
+        links: decision_links.clone(),
         commands,
         timers: Vec::new(),
     };
     let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
+    crate::decision_links::authorize_action_decision_links(
+        catalog,
+        call,
+        &effective_input,
+        authorizer,
+        &slice,
+        &prepared.writes,
+        &decision_links,
+    )?;
     let mut created_links = Vec::new();
     // TXN-ATOMIC-1: links only connect captured or proposed endpoints; no extra transaction.
     for binding in &call.action.create_links {
@@ -515,6 +527,19 @@ where
             },
         });
     }
+    let decision_link_writes = crate::decision_links::prepare_decision_link_writes(
+        host,
+        catalog,
+        &slice,
+        &prepared.writes,
+        &decision_links,
+    )?;
+    let created_links = crate::decision_links::merge_action_link_writes(
+        catalog,
+        created_links,
+        decision_link_writes,
+        limits,
+    )?;
 
     for write in &mut prepared.writes {
         let key = write.key.clone();
