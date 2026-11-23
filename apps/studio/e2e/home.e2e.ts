@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
-import { metrics } from "../test/fixtures/metrics-builder/metrics.json"
-import scannedTotalRefusal from "../test/fixtures/metrics-builder/scanned-total-refusal.json"
+import listedMetrics from "../test/fixtures/metrics-builder/metrics.json" with { type: "json" }
+import scannedTotalRefusal from "../test/fixtures/metrics-builder/scanned-total-refusal.json" with { type: "json" }
 import { session } from "./object-cell.ts"
 
 /** A live cell: its definitions, and the work queue it serves this caller (`GET /v1/inbox`, as the server projects it). */
@@ -66,7 +66,7 @@ test("home: nothing to do says so", async ({ page }) => {
 
 test("home: a key number the server refuses leaves Home, and the server's reason says why", async ({ page }, info) => {
   await cell(page, { scanLimit: 10000, sections: sections.map((entry) => ({ ...entry, count: 0, shown: 0 })), items: [] })
-  const keyMetrics = metrics.filter(({ objectType }) => objectType === "docs.LedgerEntry" || objectType === "docs.ScannedDocument")
+  const keyMetrics = listedMetrics.metrics.filter(({ objectType }) => objectType === "docs.LedgerEntry" || objectType === "docs.ScannedDocument")
   const scannedMetric = keyMetrics.find(({ objectType }) => objectType === "docs.ScannedDocument")?.name
   const answered = JSON.parse(readFileSync(new URL("../test/fixtures/metrics-builder/unit-groups.json", import.meta.url), "utf8")) as unknown
   await page.route("**/api/host/v1/questions:metrics**", (route) => route.fulfill({ json: { metrics: keyMetrics } }))
