@@ -35,7 +35,11 @@ export interface OpenAction {
  * A governed action's form in a sheet. Closing a draft with unsent changes asks first; so does
  * leaving the page. After a commit the object type's records are read again.
  */
-export function ActionSheet({ open, onClose, onView }: { readonly open: OpenAction | null; readonly onClose: () => void; readonly onView?: (objectId: string) => void }) {
+export function ActionSheet({ open, onClose, onView, onChanged }: {
+  readonly open: OpenAction | null; readonly onClose: () => void; readonly onView?: (objectId: string) => void
+  /** The cell committed something: besides the type's records, read whatever else shows it again. */
+  readonly onChanged?: () => void
+}) {
   const { view } = useView()
   // Kept drafts belong to the session that wrote them (#1469 S6).
   const session = sessionKey(useAccount().data)
@@ -115,7 +119,7 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
                 onCommitted={() => { kept.delete(draftKey(open)); parkedCalls.delete(session, draftKey(open)); setBanner(false) }}
                 parked={parked} runNow={open.runNow === true && parked === open.parked}
                 onParked={(call) => parkedCalls.set(session, draftKey(open), call)} onUnparked={() => parkedCalls.delete(session, draftKey(open))}
-                onChanged={() => invalidate(open.action.objectKind)}
+                onChanged={() => { invalidate(open.action.objectKind); onChanged?.() }}
                 technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />
             </div>

@@ -134,10 +134,10 @@ function decodeValues(v: Obj, id: string, version: number): Episode {
 }
 
 /** The episode in a served record, or why it is not one (the pointer names the first field that failed). */
-export function decodeEpisode(record: ObjectRecord): { readonly kind: "episode"; readonly episode: Episode } | { readonly kind: "malformed"; readonly problem: string } {
+export function decodeEpisode(record: ObjectRecord): { readonly kind: "episode"; readonly episode: Episode; readonly record: ObjectRecord } | { readonly kind: "malformed"; readonly problem: string } {
   try {
     if (record.objectType !== EPISODE_TYPE) throw new Bad(`/objectType is ${record.objectType}, not ${EPISODE_TYPE}`)
-    return { kind: "episode", episode: decodeValues(obj(record.values, "/values"), str(record.id, "/id"), int(record.version, "/version")) }
+    return { kind: "episode", episode: decodeValues(obj(record.values, "/values"), str(record.id, "/id"), int(record.version, "/version")), record }
   } catch (error) {
     if (error instanceof Bad) return { kind: "malformed", problem: error.message }
     throw error
@@ -147,7 +147,8 @@ export function decodeEpisode(record: ObjectRecord): { readonly kind: "episode";
 // ---- Reading one --------------------------------------------------------------------------------
 
 export type EpisodeRead =
-  | { readonly kind: "episode"; readonly episode: Episode }
+  /** `record` is the served document as it came, for what the page reads off it as-is (the cell's offers). */
+  | { readonly kind: "episode"; readonly episode: Episode; readonly record: ObjectRecord }
   | { readonly kind: "malformed"; readonly problem: string }
   /** 404 with a Norn code: absent, or not readable by this actor (the cell does not say which). */
   | { readonly kind: "not-found"; readonly message: string }

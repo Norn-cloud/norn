@@ -1,7 +1,11 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Bot, CheckCircle2, CircleDashed, Clock, Database, GitCompareArrows, Hourglass, Scale, ShieldAlert, ShieldCheck, ShieldX, UserCheck, type LucideIcon } from "lucide-react"
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
+import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
+import { ACTIONS_UNAVAILABLE } from "../lib/actions.ts"
+import { offeredFor } from "../lib/screen/call.ts"
+import type { ObjectRecord } from "../lib/transport.ts"
 import { CopyId } from "@/components/copy-id"
 import { EmptyState } from "@/components/panel"
 import { Button } from "@/components/ui/button"
@@ -10,7 +14,7 @@ import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
 import { humanize } from "../lib/cell-read.ts"
-import { EPISODES_UNAVAILABLE, readEpisode, type Agreement, type Episode, type OutcomeState, type RuleOutcome, type Verdict } from "../lib/learning/episode.ts"
+import { EPISODE_TYPE, EPISODES_UNAVAILABLE, readEpisode, type Agreement, type Episode, type OutcomeState, type RuleOutcome, type Verdict } from "../lib/learning/episode.ts"
 
 /**
  * `/episodes/$id`: one decision episode as a timeline (#1220 L-1): what was known, what was
@@ -34,7 +38,7 @@ export function EpisodePage() {
     case "not-found": return <EmptyState icon={GitCompareArrows} title="No such episode">{result.message}</EmptyState>
     case "refused": return <EmptyState icon={GitCompareArrows} title="Can't read this episode">{result.message}</EmptyState>
     case "malformed": return <EmptyState icon={GitCompareArrows} title="Can't show this episode">The cell sent an episode Studio can't read ({result.problem}). Nothing is guessed.</EmptyState>
-    case "episode": return <Timeline episode={result.episode} />
+    case "episode": return <Timeline episode={result.episode} record={result.record} />
     default: return null
   }
 }
@@ -71,7 +75,7 @@ function Chip({ tone, children, className }: { readonly tone: string; readonly c
 
 const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 
-function Timeline({ episode: e }: { readonly episode: Episode }) {
+function Timeline({ episode: e, record }: { readonly episode: Episode; readonly record: ObjectRecord }) {
   const { view } = useView()
   const technical = view === "technical"
   const label = (option: string) => e.decision.options.find((o) => o.id === option)?.label ?? option
@@ -169,6 +173,7 @@ function Timeline({ episode: e }: { readonly episode: Episode }) {
             {e.triage === null
               ? <p className="flex items-center gap-1.5 text-meta text-muted-foreground"><CircleDashed className="size-3.5" aria-hidden />Not triaged yet</p>
               : <div className="grid gap-1 text-sm"><Chip tone="agent" className="justify-self-start">{VERDICT[e.triage.verdict]}</Chip><p className="text-muted-foreground">{e.triage.reason}</p><p className="text-meta text-muted-foreground">{e.triage.curator}, {when(e.triage.atMs)}</p></div>}
+            <EpisodeActions record={record} />
           </section>
           <section className="grid gap-2 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
             <h2 className="text-sm font-medium">Receipts</h2>
@@ -182,6 +187,36 @@ function Timeline({ episode: e }: { readonly episode: Episode }) {
           </section>
         </aside>
       </div>
+    </div>
+  )
+}
+
+/**
+ * What the cell lets this reader do to the episode (triage, retract it, and later curate), as its
+ * own governed actions: the catalog it serves for learning.Episode, narrowed by the record's own
+ * offers when it sends them. Each opens the action's server-built form with the episode filled in;
+ * a commit reads the episode again. Studio adds no action and hides none on its own.
+ */
+function EpisodeActions({ record }: { readonly record: ObjectRecord }) {
+  const catalog = useActions(EPISODE_TYPE)
+  const client = useQueryClient()
+  const [acting, setActing] = useState<OpenAction | null>(null)
+  const off = catalog.isError ? (catalog.error instanceof Error ? catalog.error.message : ACTIONS_UNAVAILABLE)
+    : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE : catalog.data?.kind === "refused" ? catalog.data.message
+      : catalog.data?.kind === "no-cell" ? NO_DATA_CELL : undefined
+  const actions = catalog.data?.kind === "catalog" ? offeredFor(catalog.data.items, record) : []
+  if (catalog.isPending) return <Skeleton className="h-8" />
+  return (
+    <div className="grid gap-2 border-t border-node-border pt-3" aria-label="Episode actions" role="group">
+      {off !== undefined
+        ? <p className="text-meta text-muted-foreground">{off}</p>
+        : actions.length === 0
+          ? <p className="text-meta text-muted-foreground">The cell offers you no actions on this episode.</p>
+          : <div className="flex flex-wrap gap-2">{actions.map((action) => (
+            <Button key={action.actionId} variant="outline" size="sm" className="border-node-border shadow-node"
+              onClick={() => setActing({ action, prefill: { [action.objectIdField]: record.id } })}>{action.title}</Button>
+          ))}</div>}
+      <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={() => void client.invalidateQueries({ queryKey: ["episode", record.id] })} />
     </div>
   )
 }

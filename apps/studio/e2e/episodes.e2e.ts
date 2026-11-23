@@ -14,7 +14,33 @@ async function chooseFromAccountMenu(page: Page, name: string) {
 // the decoder), so these skip on a stage until the learning pack serves learning.Episode.
 // SHOTS=<dir> saves every state in light and dark for review.
 
-const fixture = JSON.parse(readFileSync(new URL("../test/fixtures/learning-episode.json", import.meta.url), "utf8")) as { readonly records: readonly { readonly id: string; readonly values: unknown }[] }
+const fixture = JSON.parse(readFileSync(new URL("../test/fixtures/learning-episode.json", import.meta.url), "utf8")) as { readonly records: readonly { readonly id: string; readonly values: Record<string, unknown> }[] }
+/** The served receipt and refusal documents the action route's own test writes (#1203, #1215). */
+const served = JSON.parse(readFileSync(new URL("../test/fixtures/action-call.json", import.meta.url), "utf8")) as { readonly committed: { readonly receipt: object }; readonly conflict: object }
+
+/**
+ * The learning pack's triage actions as the catalog would list them for learning.Episode: the names
+ * and inputs requested on #1208, in the served ActionSummary shape. They go when the pack serves its
+ * own catalog. A triage receipt offers its undo (the action's compensation), as requested there too.
+ */
+const TRIAGE = {
+  actionId: "learning.triage_episode", title: "Triage", description: "Say what this decision teaches: a one-off, noise, a reusable pattern or a gap in the model.",
+  objectKind: "learning.Episode", effect: "fire_transition", objectIdField: "episodeId", uiEffects: { irreversible: false, destructive: false, money: [] },
+  inputSchema: {
+    type: "object", additionalProperties: false, required: ["episodeId", "verdict", "reason"],
+    properties: {
+      episodeId: { type: "string", title: "Episode" },
+      verdict: { type: "string", title: "Verdict", enum: ["exception", "noise", "pattern", "gap"] },
+      reason: { type: "string", title: "Reason" },
+      rememberAsContext: { type: "boolean", title: "Remember this for next time" },
+    },
+  },
+}
+const RETRACT = {
+  actionId: "learning.retract_triage", title: "Retract triage", description: "Withdraw the current verdict; the episode reads as not triaged.",
+  objectKind: "learning.Episode", effect: "fire_transition", objectIdField: "episodeId", uiEffects: { irreversible: false, destructive: false, money: [] },
+  inputSchema: { type: "object", additionalProperties: false, required: ["episodeId"], properties: { episodeId: { type: "string", title: "Episode" } } },
+}
 const shots = process.env.SHOTS
 async function shoot(page: Page, name: string) {
   if (!shots) return
@@ -29,16 +55,42 @@ async function shoot(page: Page, name: string) {
 test.beforeEach(({ }, info) => { test.skip(Boolean(process.env.E2E_BASE), `${info.title}: uses the episode route stand-in`) })
 
 type Serve = "fixture" | "unserved" | "malformed"
-async function open(page: Page, id: string, serve: Serve = "fixture") {
+interface Actions { readonly serve: "catalog" | "unserved"; readonly refuseNext?: boolean }
+async function open(page: Page, id: string, serve: Serve = "fixture", actions: Actions = { serve: "unserved" }) {
   await session(page)
+  const records = structuredClone(fixture.records) as { id: string; values: Record<string, unknown> }[]
+  const calls: { actionId: string; input: Record<string, unknown> }[] = []
+  let refuse = actions.refuseNext === true
+  let seq = 6000
+  await page.route("**/api/host/v1/actions**", (route) => {
+    if (actions.serve === "unserved") return route.fulfill({ status: 404, body: "not found" })
+    const request = route.request()
+    if (request.method() === "GET") return route.fulfill({ json: { items: [TRIAGE, RETRACT] } })
+    const actionId = decodeURIComponent(new URL(request.url()).pathname.split("/v1/actions/")[1] ?? "")
+    const { input } = JSON.parse(request.postData() ?? "{}") as { input: Record<string, unknown> }
+    calls.push({ actionId, input })
+    if (refuse) { refuse = false; return route.fulfill({ status: 409, json: served.conflict }) }
+    const record = records.find((r) => r.id === input["episodeId"])!
+    record.values["triage"] = actionId === TRIAGE.actionId
+      ? { verdict: input["verdict"], reason: input["reason"], curator: "you", atMs: 1794600000000 + seq }
+      : null
+    seq += 1
+    return route.fulfill({
+      json: {
+        ...served.committed, objectType: "learning.Episode", objectId: record.id, receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() },
+        ...actionId === TRIAGE.actionId ? { undo: { actionId: RETRACT.actionId, input: { episodeId: record.id } } } : {},
+      },
+    })
+  })
   await page.route("**/api/host/v1/objects/learning.Episode/**", (route) => {
     if (serve === "unserved") return route.fulfill({ status: 404, body: "not found" })
     const asked = decodeURIComponent(new URL(route.request().url()).pathname.split("/").pop() ?? "")
-    const record = fixture.records.find((r) => r.id === asked)
+    const record = records.find((r) => r.id === asked)
     if (record === undefined) return route.fulfill({ status: 404, json: { code: "object.not_found", message: "No object with that id is readable here." } })
     return route.fulfill({ json: serve === "malformed" ? { ...record, values: { ...record.values as object, agreement: "accepted" } } : record })
   })
   await page.goto(`/episodes/${id}`)
+  return { calls }
 }
 const band = (page: Page, title: string) => page.getByRole("region", { name: title })
 
@@ -123,4 +175,66 @@ test("an episode that contradicts itself is refused, not drawn", async ({ page }
   await expect(page.getByText("/agreement is accepted but the choice is not the suggestion")).toBeVisible()
   await expect(page.getByRole("region", { name: "What was decided" })).toHaveCount(0)
   await shoot(page, "malformed")
+})
+
+// By CSS, not role: while the action sheet is open the page behind it is hidden from the accessibility tree.
+const triageCard = (page: Page) => page.locator('aside[aria-label="Receipts"] section').first()
+const sheet = (page: Page) => page.getByRole("dialog")
+
+async function triage(page: Page, verdict: string, reason: string) {
+  await triageCard(page).getByRole("button", { name: "Triage", exact: true }).click()
+  await expect(sheet(page).getByLabel("Episode")).toHaveValue("ep_demo_overridden")
+  await sheet(page).getByLabel("Verdict").selectOption(verdict)
+  await sheet(page).getByLabel("Reason").fill(reason)
+}
+
+test("triage: mark an episode with a verdict and reason; the card shows it, and Undo retracts it through the cell", async ({ page }) => {
+  const { calls } = await open(page, "ep_demo_overridden", "fixture", { serve: "catalog" })
+  await expect(triageCard(page)).toContainText("Not triaged yet")
+  await triage(page, "pattern", "Phone-confirmed payments clear within days")
+  await shoot(page, "triage-form")
+  await sheet(page).getByRole("button", { name: "Triage", exact: true }).click()
+  await expect(sheet(page).getByRole("status")).toContainText("ep_demo_overridden")
+  await expect(triageCard(page)).toContainText("Reusable pattern")
+  await expect(triageCard(page)).toContainText("Phone-confirmed payments clear within days")
+  await shoot(page, "triaged")
+  await sheet(page).getByRole("button", { name: "Undo" }).click()
+  await expect(sheet(page).getByText(/^Undone · /)).toBeVisible()
+  await expect(triageCard(page)).toContainText("Not triaged yet")
+  expect(calls.map((c) => c.actionId)).toEqual(["learning.triage_episode", "learning.retract_triage"])
+  expect(calls[1]!.input).toEqual({ episodeId: "ep_demo_overridden" })
+})
+
+test("triage: a later verdict supersedes the first, and Retract triage withdraws it", async ({ page }) => {
+  await open(page, "ep_demo_overridden", "fixture", { serve: "catalog" })
+  await triage(page, "exception", "One-off: the customer called the owner directly")
+  await sheet(page).getByRole("button", { name: "Triage", exact: true }).click()
+  await sheet(page).getByRole("button", { name: "Done" }).click()
+  await expect(triageCard(page)).toContainText("Exception")
+  await triage(page, "gap", "The credit rule has no path for a confirmed phone payment")
+  await sheet(page).getByRole("button", { name: "Triage", exact: true }).click()
+  await sheet(page).getByRole("button", { name: "Done" }).click()
+  await expect(triageCard(page)).toContainText("System gap")
+  await expect(triageCard(page)).not.toContainText("Exception")
+  await triageCard(page).getByRole("button", { name: "Retract triage" }).click()
+  await sheet(page).getByRole("button", { name: "Retract triage" }).click()
+  await sheet(page).getByRole("button", { name: "Done" }).click()
+  await expect(triageCard(page)).toContainText("Not triaged yet")
+})
+
+test("triage: the cell's refusal reads in the form and nothing changes", async ({ page }) => {
+  await open(page, "ep_demo_overridden", "fixture", { serve: "catalog", refuseNext: true })
+  await triage(page, "noise", "Wrong customer on the delivery")
+  await sheet(page).getByRole("button", { name: "Triage", exact: true }).click()
+  await expect(sheet(page).getByRole("alert")).toContainText("the request conflicts with current state")
+  await shoot(page, "triage-refused")
+  await page.keyboard.press("Escape")
+  await page.getByRole("button", { name: "Discard" }).click()
+  await expect(triageCard(page)).toContainText("Not triaged yet")
+})
+
+test("while the cell takes no actions on episodes, the triage card says so and offers none", async ({ page }) => {
+  await open(page, "ep_demo_overridden")
+  await expect(triageCard(page)).toContainText("This cell doesn't take actions from Studio yet.")
+  await expect(triageCard(page).getByRole("button")).toHaveCount(0)
 })
