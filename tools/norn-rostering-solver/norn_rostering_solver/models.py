@@ -23,10 +23,13 @@ from .boundary import (
     parse_bool,
     parse_decimal,
     parse_int,
+    parse_str,
+    parse_str_list,
     parse_utc_timestamp,
-    reject_pii_and_floats,
     timedelta_exact_minutes,
     timedelta_exact_seconds,
+    validate_preference_profile_payload,
+    validate_solve_request_payload,
 )
 
 FUNCTION_ID = "norn.solver.rostering"
@@ -305,7 +308,7 @@ class PreferenceProfileInput:
         }
 
     @classmethod
-    def from_dict(cls, raw_profile: dict[str, Any], path: str = "$.profile") -> PreferenceProfileInput:
+    def from_dict(cls, raw_profile: Any, path: str = "$.profile") -> PreferenceProfileInput:
         return _preference_profile_from_dict(raw_profile, path)
 
 
@@ -352,35 +355,26 @@ class SolveRequest:
         }
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> SolveRequest:
-        reject_pii_and_floats(raw, "$")
+    def from_dict(cls, raw: Any, path: str = "$") -> SolveRequest:
+        validate_solve_request_payload(raw, path)
         try:
-            roster_id = str(raw["roster_id"])
-            unit_id = str(raw["unit_id"])
+            roster_id = parse_str(raw["roster_id"], f"{path}.roster_id")
+            unit_id = parse_str(raw["unit_id"], f"{path}.unit_id")
             raw_profile = raw["profile"]
             raw_employees = raw["employees"]
             raw_shifts = raw["shifts"]
         except KeyError as exc:
-            raise SolverContractError("NORN-SOLVER-SCHEMA", f"missing required field {exc.args[0]!r}") from exc
+            raise SolverContractError("NORN-SOLVER-SCHEMA", f"missing required field {path}.{exc.args[0]}") from exc
 
-        if not isinstance(raw_profile, dict):
-            raise SolverContractError("NORN-SOLVER-SCHEMA", "$.profile must be an object")
-        if not isinstance(raw_employees, list):
-            raise SolverContractError("NORN-SOLVER-SCHEMA", "$.employees must be a list")
-        if not isinstance(raw_shifts, list):
-            raise SolverContractError("NORN-SOLVER-SCHEMA", "$.shifts must be a list")
-
-        profile = PreferenceProfileInput.from_dict(raw_profile, "$.profile")
+        profile = PreferenceProfileInput.from_dict(raw_profile, f"{path}.profile")
 
         employees: list[EmployeeInput] = []
         for idx, emp in enumerate(raw_employees):
-            p = f"$.employees[{idx}]"
-            if not isinstance(emp, dict):
-                raise SolverContractError("NORN-SOLVER-SCHEMA", f"{p} must be an object")
+            p = f"{path}.employees[{idx}]"
             try:
-                employee_id = str(emp["employee_id"])
-                home_unit_id = str(emp["home_unit_id"])
-                skills = tuple(str(s) for s in emp["skills"])
+                employee_id = parse_str(emp["employee_id"], f"{p}.employee_id")
+                home_unit_id = parse_str(emp["home_unit_id"], f"{p}.home_unit_id")
+                skills = parse_str_list(emp["skills"], f"{p}.skills")
                 max_reg = _parse_hours_or_minutes(
                     emp,
                     hours_key="max_regular_weekly_hours",
@@ -391,13 +385,20 @@ class SolveRequest:
             except KeyError as exc:
                 raise SolverContractError("NORN-SOLVER-SCHEMA", f"missing required field {p}.{exc.args[0]}") from exc
 
-            leave_windows = tuple(
-                TimeWindow(
-                    starts_at=parse_utc_timestamp(w["starts_at"], f"{p}.approved_leave[{j}].starts_at"),
-                    ends_at=parse_utc_timestamp(w["ends_at"], f"{p}.approved_leave[{j}].ends_at"),
-                )
-                for j, w in enumerate(emp.get("approved_leave", []))
-            )
+            raw_leave = emp.get("approved_leave", [])
+            leave_windows_list: list[TimeWindow] = []
+            for j, w in enumerate(raw_leave):
+                lp = f"{p}.approved_leave[{j}]"
+                try:
+                    leave_start = parse_utc_timestamp(w["starts_at"], f"{lp}.starts_at")
+                    leave_end = parse_utc_timestamp(w["ends_at"], f"{lp}.ends_at")
+                except KeyError as exc:
+                    raise SolverContractError(
+                        "NORN-SOLVER-SCHEMA",
+                        f"missing required field {lp}.{exc.args[0]}",
+                    ) from exc
+                leave_windows_list.append(TimeWindow(starts_at=leave_start, ends_at=leave_end))
+
             max_ot = _parse_hours_or_minutes(
                 emp,
                 hours_key="max_overtime_weekly_hours",
@@ -412,41 +413,55 @@ class SolveRequest:
                 path=p,
                 default_money=Decimal("0.00"),
             )
+            display_label = parse_str(emp["display_label"], f"{p}.display_label") if "display_label" in emp else employee_id
+            eligible_unit_ids = (
+                parse_str_list(emp["eligible_unit_ids"], f"{p}.eligible_unit_ids")
+                if "eligible_unit_ids" in emp
+                else (home_unit_id,)
+            )
             employees.append(
                 EmployeeInput(
                     employee_id=employee_id,
-                    display_label=str(emp.get("display_label", employee_id)),
+                    display_label=display_label,
                     home_unit_id=home_unit_id,
-                    eligible_unit_ids=tuple(str(u) for u in emp.get("eligible_unit_ids", [home_unit_id])),
+                    eligible_unit_ids=eligible_unit_ids,
                     skills=skills,
-                    cross_trainable_skills=tuple(str(s) for s in emp.get("cross_trainable_skills", [])),
+                    cross_trainable_skills=parse_str_list(
+                        emp.get("cross_trainable_skills", []),
+                        f"{p}.cross_trainable_skills",
+                    ),
                     max_regular_weekly_hours=max_reg,
                     max_overtime_weekly_hours=max_ot,
                     overtime_cost_per_hour=ot_cost,
-                    approved_leave=leave_windows,
-                    preferred_shift_ids=tuple(str(s) for s in emp.get("preferred_shift_ids", [])),
-                    avoid_shift_ids=tuple(str(s) for s in emp.get("avoid_shift_ids", [])),
+                    approved_leave=tuple(leave_windows_list),
+                    preferred_shift_ids=parse_str_list(
+                        emp.get("preferred_shift_ids", []),
+                        f"{p}.preferred_shift_ids",
+                    ),
+                    avoid_shift_ids=parse_str_list(
+                        emp.get("avoid_shift_ids", []),
+                        f"{p}.avoid_shift_ids",
+                    ),
                     prior_weekend_shifts=parse_int(emp.get("prior_weekend_shifts", 0), f"{p}.prior_weekend_shifts"),
                 )
             )
 
         shifts: list[ShiftRequirementInput] = []
         for idx, sh in enumerate(raw_shifts):
-            p = f"$.shifts[{idx}]"
-            if not isinstance(sh, dict):
-                raise SolverContractError("NORN-SOLVER-SCHEMA", f"{p} must be an object")
+            p = f"{path}.shifts[{idx}]"
             try:
-                shift_id = str(sh["shift_id"])
-                role_code = str(sh["role_code"])
+                shift_id = parse_str(sh["shift_id"], f"{p}.shift_id")
+                role_code = parse_str(sh["role_code"], f"{p}.role_code")
                 starts_at = parse_utc_timestamp(sh["starts_at"], f"{p}.starts_at")
                 ends_at = parse_utc_timestamp(sh["ends_at"], f"{p}.ends_at")
                 required_count = parse_int(sh["required_count"], f"{p}.required_count", minimum=1)
             except KeyError as exc:
                 raise SolverContractError("NORN-SOLVER-SCHEMA", f"missing required field {p}.{exc.args[0]}") from exc
+            sh_unit_id = parse_str(sh["unit_id"], f"{p}.unit_id") if "unit_id" in sh else unit_id
             shifts.append(
                 ShiftRequirementInput(
                     shift_id=shift_id,
-                    unit_id=str(sh.get("unit_id", unit_id)),
+                    unit_id=sh_unit_id,
                     role_code=role_code,
                     starts_at=starts_at,
                     ends_at=ends_at,
@@ -463,9 +478,12 @@ class SolveRequest:
             profile=profile,
             allow_cross_branch_transfers=parse_bool(
                 raw.get("allow_cross_branch_transfers", False),
-                "$.allow_cross_branch_transfers",
+                f"{path}.allow_cross_branch_transfers",
             ),
-            authorized_transfer_employee_ids=tuple(str(e) for e in raw.get("authorized_transfer_employee_ids", [])),
+            authorized_transfer_employee_ids=parse_str_list(
+                raw.get("authorized_transfer_employee_ids", []),
+                f"{path}.authorized_transfer_employee_ids",
+            ),
         )
 
 
@@ -505,11 +523,11 @@ def _parse_money_or_minor(
     raise KeyError(money_key)
 
 
-def _preference_profile_from_dict(raw_profile: dict[str, Any], path: str = "$.profile") -> PreferenceProfileInput:
-    reject_pii_and_floats(raw_profile, path)
+def _preference_profile_from_dict(raw_profile: Any, path: str = "$.profile") -> PreferenceProfileInput:
+    validate_preference_profile_payload(raw_profile, path)
     try:
-        profile_id = str(raw_profile["profile_id"])
-        currency = str(raw_profile["currency"])
+        profile_id = parse_str(raw_profile["profile_id"], f"{path}.profile_id")
+        currency = parse_str(raw_profile["currency"], f"{path}.currency")
         budget = _parse_money_or_minor(
             raw_profile,
             money_key="weekly_overtime_budget",
@@ -542,9 +560,10 @@ def _preference_profile_from_dict(raw_profile: dict[str, Any], path: str = "$.pr
         path=path,
         default_hours=Decimal("48.00"),
     )
+    label = parse_str(raw_profile["label"], f"{path}.label") if "label" in raw_profile else profile_id
     return PreferenceProfileInput(
         profile_id=profile_id,
-        label=str(raw_profile.get("label", profile_id)),
+        label=label,
         currency=currency,
         weekly_overtime_budget=budget,
         min_rest_hours=min_rest,

@@ -10,8 +10,9 @@ Deterministic Google OR-Tools CP-SAT shift-rostering solver worker for the Norn 
 2. **Zero IEEE `float` Arithmetic (`boundary.py`):**
    - Strict JSON parser rejects bare JSON floats, `NaN`, and `Infinity` at ingress with `NORN-SOLVER-FLOAT-FORBIDDEN`.
    - All shift durations, rest gaps, daily/weekly caps, and costs use exact integer minutes and exact integer minor / sub-minor currency units.
-3. **Fail-Closed PII Boundary (`boundary.py`):**
-   - Recursively refuses any payload containing marked PII fields (`national_id`, `phone`, `email`, `base_salary`, `hourly_overtime_rate`, `medical_note`, `gender`, `dob`, `bank_account`, etc.) with `NORN-SOLVER-PII-FORBIDDEN`.
+3. **Fail-Closed PII & Closed-Schema Boundary (`boundary.py`):**
+   - Recursively refuses any payload containing marked PII fields (`name`, `full_name_ar`, `national_id`, `iqama`, `phone`, `mobile_no`, `email`, `base_salary`, `hourly_overtime_rate`, `medical_note`, `gender`, `dob`, `bank_account`, `bank_iban`, `emergency_contact`, `home_address`, etc.) with `NORN-SOLVER-PII-FORBIDDEN`.
+   - Enforces a strict closed-schema allowlist at every object level (`SolveRequest`, `PreferenceProfileInput`, `EmployeeInput`, `TimeWindow`, `ShiftRequirementInput`, and perform envelope); any unallowlisted key fails closed with `NORN-SOLVER-UNKNOWN-FIELD` and its exact dotted JSON path, and malformed container shapes fail closed with `NORN-SOLVER-SCHEMA`.
 4. **Hard Laws (`HR-SH-01..04` + statutory baselines):**
    - Exact shift coverage (`required_count`), role/skill and branch/unit eligibility, non-overlapping half-open UTC intervals `[starts_at, ends_at)`, minimum rest gap (`min_rest_minutes`, e.g. Egypt 11h = 660 min), maximum weekly hours (`max_weekly_minutes`, e.g. Egypt 48h = 2880 min), maximum daily hours (e.g. Egypt 10h = 600 min), maximum consecutive working days (e.g. 6), approved leave exclusion, and weekly overtime budget cap.
 5. **Independent Hard-Law Post-Verifier (`verifier.py`):**

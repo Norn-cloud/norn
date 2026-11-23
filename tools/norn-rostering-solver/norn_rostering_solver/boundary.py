@@ -1,8 +1,14 @@
-"""Fail-closed PII, IEEE-float, and canonical JSON boundary for `norn.solver.rostering@0.1.0`.
+"""Fail-closed PII, closed-schema allowlist, IEEE-float, and canonical JSON boundary for `norn.solver.rostering@0.1.0`.
 
 Every ingress payload passes through this boundary before reaching the solver:
-- Any marked PII key anywhere in the payload (recursively, case-insensitively) is refused
-  with `NORN-SOLVER-PII-FORBIDDEN`.
+- Any marked PII key anywhere in the payload (recursively, case-insensitively and
+  normalized across snake_case / camelCase / kebab-case) is refused with
+  `NORN-SOLVER-PII-FORBIDDEN`.
+- Every JSON object level (perform envelope, top-level request, employee, leave window,
+  shift requirement, preference profile) is checked against a strict closed schema
+  allowlist; any unallowlisted key fails closed with `NORN-SOLVER-UNKNOWN-FIELD` and
+  its exact dotted JSON path.
+- Unexpected non-dict / non-list container shapes fail closed with `NORN-SOLVER-SCHEMA`.
 - Any IEEE 754 `float` (including JSON decimal literals, `NaN`, `Infinity`) is refused
   with `NORN-SOLVER-FLOAT-FORBIDDEN`.
 - All business quantities are parsed into exact integers (minutes, minor currency units)
@@ -13,27 +19,214 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+_CAMEL_BOUNDARY_1 = re.compile(r"([a-z0-9])([A-Z])")
+_CAMEL_BOUNDARY_2 = re.compile(r"([A-Z]+)([A-Z][a-z])")
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def normalize_field_key(key: str) -> str:
+    """Normalize a field key to canonical lowercase snake_case for PII matching."""
+    step1 = _CAMEL_BOUNDARY_1.sub(r"\1_\2", key)
+    step2 = _CAMEL_BOUNDARY_2.sub(r"\1_\2", step1)
+    return _NON_ALNUM.sub("_", step2.lower()).strip("_")
+
+
 FORBIDDEN_PII_FIELDS: frozenset[str] = frozenset(
     {
+        # Personal names
+        "arabic_name",
+        "employee_name",
+        "english_name",
+        "family_name",
+        "first_name",
+        "full_name",
+        "full_name_ar",
+        "full_name_en",
+        "given_name",
+        "last_name",
+        "legal_name",
+        "middle_name",
+        "name",
+        "surname",
+        # Contact & address
         "address",
-        "bank_account",
-        "base_salary",
-        "date_of_birth",
-        "dob",
+        "cell_phone",
         "email",
-        "gender",
-        "hourly_overtime_rate",
-        "medical_note",
-        "national_id",
-        "nationality",
-        "passport_number",
+        "email_address",
+        "emergency_contact",
+        "emergency_contact_name",
+        "emergency_contact_phone",
+        "emergency_phone",
+        "home_address",
+        "mailing_address",
+        "mobile",
+        "mobile_no",
+        "mobile_number",
+        "next_of_kin",
+        "personal_email",
         "phone",
-        "religion",
+        "phone_no",
+        "phone_number",
+        "residential_address",
+        "street_address",
+        "telephone",
+        "whatsapp",
+        "whatsapp_number",
+        "work_email",
+        # Government, residency, tax & insurance IDs
+        "civil_id",
+        "emirates_id",
+        "gov_id",
+        "government_id",
+        "id_number",
+        "iqama",
+        "iqama_no",
+        "iqama_number",
+        "national_id",
+        "national_id_number",
+        "nid",
+        "passport",
+        "passport_no",
+        "passport_number",
+        "residency_id",
+        "resident_id",
+        "social_insurance_number",
+        "social_security_number",
+        "ssn",
+        "tax_id",
+        "tin",
+        "visa_number",
+        # Banking & compensation
+        "annual_salary",
+        "bank_account",
+        "bank_account_number",
+        "bank_iban",
+        "bank_name",
+        "base_salary",
+        "basic_salary",
+        "compensation",
+        "gross_salary",
+        "hourly_overtime_rate",
+        "hourly_rate",
+        "hourly_wage",
+        "iban",
+        "monthly_salary",
+        "net_salary",
+        "pay_rate",
+        "payroll_account",
+        "routing_number",
         "salary",
+        "swift_code",
+        "wage",
+        # Demographic & medical
+        "birth_date",
+        "birthdate",
+        "blood_type",
+        "citizenship",
+        "date_of_birth",
+        "diagnosis",
+        "disability",
+        "dob",
+        "ethnicity",
+        "gender",
+        "health_condition",
+        "health_note",
+        "marital_status",
+        "medical_info",
+        "medical_note",
+        "medical_notes",
+        "medical_record",
+        "nationality",
+        "place_of_birth",
+        "race",
+        "religion",
+        "sex",
+    }
+)
+
+# Strict closed schema allowlists for every raw JSON object level.
+ALLOWED_PERFORM_ENVELOPE_FIELDS: frozenset[str] = frozenset(
+    {
+        "alt_profile",
+        "input",
+        "invocation_id",
+    }
+)
+
+ALLOWED_SOLVE_REQUEST_FIELDS: frozenset[str] = frozenset(
+    {
+        "allow_cross_branch_transfers",
+        "authorized_transfer_employee_ids",
+        "employees",
+        "profile",
+        "roster_id",
+        "shifts",
+        "unit_id",
+    }
+)
+
+ALLOWED_EMPLOYEE_FIELDS: frozenset[str] = frozenset(
+    {
+        "approved_leave",
+        "avoid_shift_ids",
+        "cross_trainable_skills",
+        "display_label",
+        "eligible_unit_ids",
+        "employee_id",
+        "home_unit_id",
+        "max_overtime_weekly_hours",
+        "max_overtime_weekly_minutes",
+        "max_regular_weekly_hours",
+        "max_regular_weekly_minutes",
+        "overtime_cost_minor_per_hour",
+        "overtime_cost_per_hour",
+        "preferred_shift_ids",
+        "prior_weekend_shifts",
+        "skills",
+    }
+)
+
+ALLOWED_TIME_WINDOW_FIELDS: frozenset[str] = frozenset(
+    {
+        "ends_at",
+        "starts_at",
+    }
+)
+
+ALLOWED_SHIFT_FIELDS: frozenset[str] = frozenset(
+    {
+        "ends_at",
+        "is_weekend",
+        "required_count",
+        "role_code",
+        "shift_id",
+        "starts_at",
+        "unit_id",
+    }
+)
+
+ALLOWED_PROFILE_FIELDS: frozenset[str] = frozenset(
+    {
+        "avoid_split_shifts",
+        "currency",
+        "label",
+        "max_consecutive_days",
+        "max_daily_hours",
+        "max_daily_minutes",
+        "max_weekly_hours",
+        "max_weekly_minutes",
+        "min_rest_hours",
+        "min_rest_minutes",
+        "profile_id",
+        "staff_preference_priority",
+        "weekend_fairness_priority",
+        "weekly_overtime_budget",
+        "weekly_overtime_budget_minor",
     }
 )
 
@@ -55,6 +248,18 @@ class PiiViolationError(SolverContractError):
         super().__init__(
             "NORN-SOLVER-PII-FORBIDDEN",
             f"marked PII field {field_path!r} is forbidden in the unmarked rostering solver slice",
+        )
+
+
+class UnknownFieldError(SolverContractError):
+    """Raised when an unallowlisted field appears at any object level in a solver payload."""
+
+    def __init__(self, field_path: str, allowed_fields: frozenset[str] | None = None) -> None:
+        self.field_path = field_path
+        self.allowed_fields = allowed_fields
+        super().__init__(
+            "NORN-SOLVER-UNKNOWN-FIELD",
+            f"unknown field {field_path!r} is not allowed in the closed rostering solver schema",
         )
 
 
@@ -87,12 +292,18 @@ def reject_pii_and_floats(value: Any, path: str = "$") -> None:
     if isinstance(value, float):
         raise FloatRefusalError(path, value)
     if isinstance(value, dict):
-        for k, v in value.items():
-            key_str = str(k)
-            child_path = f"{path}.{key_str}"
-            if key_str.lower() in FORBIDDEN_PII_FIELDS:
+        items = sorted(value.items(), key=lambda kv: str(kv[0]))
+        for k, _v in items:
+            if not isinstance(k, str):
+                raise SolverContractError(
+                    "NORN-SOLVER-SCHEMA",
+                    f"{path} object keys must be strings, got {type(k).__name__}",
+                )
+            child_path = f"{path}.{k}"
+            if normalize_field_key(k) in FORBIDDEN_PII_FIELDS:
                 raise PiiViolationError(child_path)
-            reject_pii_and_floats(v, child_path)
+        for k, v in items:
+            reject_pii_and_floats(v, f"{path}.{k}")
     elif isinstance(value, (list, tuple)):
         for idx, item in enumerate(value):
             reject_pii_and_floats(item, f"{path}[{idx}]")
@@ -208,6 +419,250 @@ def parse_bool(raw: Any, path: str) -> bool:
     if not isinstance(raw, bool):
         raise SolverContractError("NORN-SOLVER-SCHEMA", f"{path} must be a boolean, got {raw!r}")
     return raw
+
+
+def parse_str(raw: Any, path: str) -> str:
+    """Parse a strict string (rejecting non-strings, floats, bools, and containers)."""
+    if isinstance(raw, float):
+        raise FloatRefusalError(path, raw)
+    if not isinstance(raw, str):
+        raise SolverContractError(
+            "NORN-SOLVER-SCHEMA",
+            f"{path} must be a string, got {type(raw).__name__}",
+        )
+    return raw
+
+
+def parse_str_list(raw: Any, path: str) -> tuple[str, ...]:
+    """Parse a strict JSON array of strings (rejecting bare strings, dicts, and non-string items)."""
+    if not isinstance(raw, list):
+        raise SolverContractError(
+            "NORN-SOLVER-SCHEMA",
+            f"{path} must be a list of strings, got {type(raw).__name__}",
+        )
+    return tuple(parse_str(item, f"{path}[{idx}]") for idx, item in enumerate(raw))
+
+
+def _validate_object_keys(
+    raw: Any,
+    allowed_fields: frozenset[str],
+    path: str,
+) -> dict[str, Any]:
+    """Validate that `raw` is a JSON object whose keys all belong to `allowed_fields`."""
+    if not isinstance(raw, dict):
+        raise SolverContractError(
+            "NORN-SOLVER-SCHEMA",
+            f"{path} must be an object, got {type(raw).__name__}",
+        )
+    for k in sorted(raw.keys(), key=str):
+        if not isinstance(k, str):
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"{path} object keys must be strings, got {type(k).__name__}",
+            )
+        if k not in allowed_fields:
+            child_path = f"{path}.{k}"
+            if normalize_field_key(k) in FORBIDDEN_PII_FIELDS:
+                raise PiiViolationError(child_path)
+            raise UnknownFieldError(child_path, allowed_fields)
+    return raw
+
+
+def validate_time_window_payload(
+    raw: Any,
+    path: str,
+    *,
+    _skip_pii_scan: bool = False,
+) -> None:
+    """Validate a raw TimeWindow object against the strict closed schema allowlist."""
+    if not _skip_pii_scan:
+        reject_pii_and_floats(raw, path)
+    obj = _validate_object_keys(raw, ALLOWED_TIME_WINDOW_FIELDS, path)
+    for key in ("starts_at", "ends_at"):
+        if key in obj and not isinstance(obj[key], (str, datetime)):
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"{path}.{key} must be ISO-8601 timestamp string or datetime, got {type(obj[key]).__name__}",
+            )
+
+
+def validate_preference_profile_payload(
+    raw: Any,
+    path: str = "$.profile",
+    *,
+    _skip_pii_scan: bool = False,
+) -> None:
+    """Validate a raw PreferenceProfileInput object against the strict closed schema allowlist."""
+    if not _skip_pii_scan:
+        reject_pii_and_floats(raw, path)
+    obj = _validate_object_keys(raw, ALLOWED_PROFILE_FIELDS, path)
+    for key in ("profile_id", "label", "currency", "weekend_fairness_priority", "staff_preference_priority"):
+        if key in obj:
+            parse_str(obj[key], f"{path}.{key}")
+    if "avoid_split_shifts" in obj:
+        parse_bool(obj["avoid_split_shifts"], f"{path}.avoid_split_shifts")
+    for key in (
+        "max_consecutive_days",
+        "weekly_overtime_budget_minor",
+        "min_rest_minutes",
+        "max_daily_minutes",
+        "max_weekly_minutes",
+    ):
+        if key in obj:
+            min_val = 1 if key == "max_consecutive_days" else 0
+            parse_int(obj[key], f"{path}.{key}", minimum=min_val)
+    for key in ("weekly_overtime_budget", "min_rest_hours", "max_daily_hours", "max_weekly_hours"):
+        if key in obj:
+            parse_decimal(obj[key], f"{path}.{key}")
+
+
+def validate_employee_payload(
+    raw: Any,
+    path: str,
+    *,
+    _skip_pii_scan: bool = False,
+) -> None:
+    """Validate a raw EmployeeInput object against the strict closed schema allowlist."""
+    if not _skip_pii_scan:
+        reject_pii_and_floats(raw, path)
+    obj = _validate_object_keys(raw, ALLOWED_EMPLOYEE_FIELDS, path)
+    for key in ("employee_id", "display_label", "home_unit_id"):
+        if key in obj:
+            parse_str(obj[key], f"{path}.{key}")
+    for key in (
+        "eligible_unit_ids",
+        "skills",
+        "cross_trainable_skills",
+        "preferred_shift_ids",
+        "avoid_shift_ids",
+    ):
+        if key in obj:
+            parse_str_list(obj[key], f"{path}.{key}")
+    for key in (
+        "prior_weekend_shifts",
+        "max_regular_weekly_minutes",
+        "max_overtime_weekly_minutes",
+        "overtime_cost_minor_per_hour",
+    ):
+        if key in obj:
+            parse_int(obj[key], f"{path}.{key}", minimum=0)
+    for key in ("max_regular_weekly_hours", "max_overtime_weekly_hours", "overtime_cost_per_hour"):
+        if key in obj:
+            parse_decimal(obj[key], f"{path}.{key}")
+    if "approved_leave" in obj:
+        raw_leave = obj["approved_leave"]
+        if not isinstance(raw_leave, list):
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"{path}.approved_leave must be a list, got {type(raw_leave).__name__}",
+            )
+        for idx, win in enumerate(raw_leave):
+            validate_time_window_payload(win, f"{path}.approved_leave[{idx}]", _skip_pii_scan=True)
+
+
+def validate_shift_payload(
+    raw: Any,
+    path: str,
+    *,
+    _skip_pii_scan: bool = False,
+) -> None:
+    """Validate a raw ShiftRequirementInput object against the strict closed schema allowlist."""
+    if not _skip_pii_scan:
+        reject_pii_and_floats(raw, path)
+    obj = _validate_object_keys(raw, ALLOWED_SHIFT_FIELDS, path)
+    for key in ("shift_id", "unit_id", "role_code"):
+        if key in obj:
+            parse_str(obj[key], f"{path}.{key}")
+    for key in ("starts_at", "ends_at"):
+        if key in obj and not isinstance(obj[key], (str, datetime)):
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"{path}.{key} must be ISO-8601 timestamp string or datetime, got {type(obj[key]).__name__}",
+            )
+    if "required_count" in obj:
+        parse_int(obj["required_count"], f"{path}.required_count", minimum=1)
+    if "is_weekend" in obj:
+        parse_bool(obj["is_weekend"], f"{path}.is_weekend")
+
+
+def validate_solve_request_payload(
+    raw: Any,
+    path: str = "$",
+    *,
+    _skip_pii_scan: bool = False,
+) -> None:
+    """Validate a raw SolveRequest payload against the strict closed schema allowlist."""
+    if not _skip_pii_scan:
+        reject_pii_and_floats(raw, path)
+    obj = _validate_object_keys(raw, ALLOWED_SOLVE_REQUEST_FIELDS, path)
+    for key in ("roster_id", "unit_id"):
+        if key in obj:
+            parse_str(obj[key], f"{path}.{key}")
+    if "allow_cross_branch_transfers" in obj:
+        parse_bool(obj["allow_cross_branch_transfers"], f"{path}.allow_cross_branch_transfers")
+    if "authorized_transfer_employee_ids" in obj:
+        parse_str_list(obj["authorized_transfer_employee_ids"], f"{path}.authorized_transfer_employee_ids")
+    if "profile" in obj:
+        validate_preference_profile_payload(obj["profile"], f"{path}.profile", _skip_pii_scan=True)
+    if "employees" in obj:
+        raw_employees = obj["employees"]
+        if not isinstance(raw_employees, list):
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"{path}.employees must be a list, got {type(raw_employees).__name__}",
+            )
+        for idx, emp in enumerate(raw_employees):
+            validate_employee_payload(emp, f"{path}.employees[{idx}]", _skip_pii_scan=True)
+    if "shifts" in obj:
+        raw_shifts = obj["shifts"]
+        if not isinstance(raw_shifts, list):
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"{path}.shifts must be a list, got {type(raw_shifts).__name__}",
+            )
+        for idx, sh in enumerate(raw_shifts):
+            validate_shift_payload(sh, f"{path}.shifts[{idx}]", _skip_pii_scan=True)
+
+
+def validate_invoke_payload(raw: Any) -> tuple[dict[str, Any], str, str | None, dict[str, Any] | None]:
+    """Validate a worker `/invoke` payload (perform envelope or direct request + optional `alt_profile`).
+
+    Returns `(raw_request, request_path, invocation_id, raw_alt_profile)`.
+    """
+    reject_pii_and_floats(raw, "$")
+    if not isinstance(raw, dict):
+        raise SolverContractError(
+            "NORN-SOLVER-SCHEMA",
+            f"request payload must be a JSON object, got {type(raw).__name__}",
+        )
+
+    if "input" in raw:
+        obj = _validate_object_keys(raw, ALLOWED_PERFORM_ENVELOPE_FIELDS, "$")
+        raw_request = obj["input"]
+        if not isinstance(raw_request, dict):
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"$.input must be an object, got {type(raw_request).__name__}",
+            )
+        invocation_id: str | None = None
+        if "invocation_id" in obj and obj["invocation_id"] is not None:
+            invocation_id = parse_str(obj["invocation_id"], "$.invocation_id")
+        raw_alt_profile: dict[str, Any] | None = None
+        if "alt_profile" in obj and obj["alt_profile"] is not None:
+            validate_preference_profile_payload(obj["alt_profile"], "$.alt_profile", _skip_pii_scan=True)
+            raw_alt_profile = obj["alt_profile"]
+        validate_solve_request_payload(raw_request, "$.input", _skip_pii_scan=True)
+        return raw_request, "$.input", invocation_id, raw_alt_profile
+
+    allowed_direct = ALLOWED_SOLVE_REQUEST_FIELDS | frozenset({"alt_profile"})
+    obj = _validate_object_keys(raw, allowed_direct, "$")
+    raw_alt_profile = None
+    if "alt_profile" in obj and obj["alt_profile"] is not None:
+        validate_preference_profile_payload(obj["alt_profile"], "$.alt_profile", _skip_pii_scan=True)
+        raw_alt_profile = obj["alt_profile"]
+    direct_request = {k: v for k, v in obj.items() if k != "alt_profile"}
+    validate_solve_request_payload(direct_request, "$", _skip_pii_scan=True)
+    return direct_request, "$", None, raw_alt_profile
 
 
 def parse_utc_timestamp(raw: Any, path: str) -> datetime:

@@ -27,6 +27,7 @@ from .boundary import (
     canonical_json,
     domain_sha256_digest,
     parse_strict_json,
+    validate_invoke_payload,
 )
 from .models import (
     CONTRACT_ID,
@@ -88,7 +89,12 @@ def _input_schema_doc() -> dict[str, object]:
             "unitId": "string",
             "preferenceProfileId": "string",
         },
-        "refusals": ["NORN-SOLVER-PII-FORBIDDEN", "NORN-SOLVER-FLOAT-FORBIDDEN", "NORN-SOLVER-SCHEMA"],
+        "refusals": [
+            "NORN-SOLVER-PII-FORBIDDEN",
+            "NORN-SOLVER-UNKNOWN-FIELD",
+            "NORN-SOLVER-FLOAT-FORBIDDEN",
+            "NORN-SOLVER-SCHEMA",
+        ],
     }
 
 
@@ -134,6 +140,7 @@ def _error_schema_doc() -> dict[str, object]:
             "NORN-SOLVER-PII-FORBIDDEN",
             "NORN-SOLVER-POSTVERIFY-FAILED",
             "NORN-SOLVER-SCHEMA",
+            "NORN-SOLVER-UNKNOWN-FIELD",
         ],
     }
 
@@ -267,31 +274,20 @@ def handle_invoke_payload(raw_bytes: bytes) -> tuple[int, dict[str, object]]:
 
     try:
         parsed = parse_strict_json(raw_bytes)
-        if not isinstance(parsed, dict):
-            raise SolverContractError("NORN-SOLVER-SCHEMA", "request payload must be a JSON object")
+        raw_request, request_path, invocation_id, raw_alt_profile = validate_invoke_payload(parsed)
 
-        # Support both direct SolveRequest payloads and Norn perform envelopes (`{"input": {...}}`).
-        invocation_id: str | None = None
-        raw_alt_profile: Any = None
-        if "input" in parsed and isinstance(parsed["input"], dict):
-            raw_request = parsed["input"]
-            if "invocation_id" in parsed:
-                invocation_id = str(parsed["invocation_id"])
-            raw_alt_profile = parsed.get("alt_profile")
-        else:
-            raw_request = parsed
-            raw_alt_profile = parsed.get("alt_profile")
+        request = SolveRequest.from_dict(raw_request, request_path)
+        alt_profile = (
+            PreferenceProfileInput.from_dict(raw_alt_profile, "$.alt_profile")
+            if raw_alt_profile is not None
+            else None
+        )
 
-        request = SolveRequest.from_dict(raw_request)
         response = solve_roster(request)
         payload: dict[str, object] = response.to_dict()
         if invocation_id is not None:
             payload["invocation_id"] = invocation_id
-
-        if raw_alt_profile is not None:
-            if not isinstance(raw_alt_profile, dict):
-                raise SolverContractError("NORN-SOLVER-SCHEMA", "$.alt_profile must be an object")
-            alt_profile = PreferenceProfileInput.from_dict(raw_alt_profile, "$.alt_profile")
+        if alt_profile is not None:
             payload["what_if"] = compare_what_if(request, alt_profile).to_dict()
 
         return int(HTTPStatus.OK), payload

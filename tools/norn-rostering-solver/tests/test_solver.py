@@ -14,7 +14,14 @@ from typing import Any
 import pytest
 
 from norn_rostering_solver import (
+    ALLOWED_EMPLOYEE_FIELDS,
+    ALLOWED_PERFORM_ENVELOPE_FIELDS,
+    ALLOWED_PROFILE_FIELDS,
+    ALLOWED_SHIFT_FIELDS,
+    ALLOWED_SOLVE_REQUEST_FIELDS,
+    ALLOWED_TIME_WINDOW_FIELDS,
     CONTRACT_ID,
+    FORBIDDEN_PII_FIELDS,
     FUNCTION_ID,
     FUNCTION_VERSION,
     Assignment,
@@ -25,12 +32,16 @@ from norn_rostering_solver import (
     PreferenceProfileInput,
     Priority,
     ShiftRequirementInput,
+    SolverContractError,
     SolveRequest,
     TimeWindow,
+    UnknownFieldError,
     build_function_manifest,
     canonical_json,
     compare_what_if,
     create_worker_server,
+    handle_invoke_payload,
+    normalize_field_key,
     parse_strict_json,
     solve_roster,
     verify_or_raise,
@@ -156,6 +167,256 @@ def test_float_inputs_refused_in_dict_and_strict_json() -> None:
     with pytest.raises(FloatRefusalError) as exc_nan:
         parse_strict_json(raw_json_with_nan)
     assert exc_nan.value.code == "NORN-SOLVER-FLOAT-FORBIDDEN"
+
+
+def test_pii_denylist_disjoint_from_all_closed_schema_allowlists() -> None:
+    all_allowed = (
+        ALLOWED_PERFORM_ENVELOPE_FIELDS
+        | ALLOWED_SOLVE_REQUEST_FIELDS
+        | ALLOWED_EMPLOYEE_FIELDS
+        | ALLOWED_TIME_WINDOW_FIELDS
+        | ALLOWED_SHIFT_FIELDS
+        | ALLOWED_PROFILE_FIELDS
+    )
+    normalized_allowed = {normalize_field_key(k) for k in all_allowed}
+    assert normalized_allowed.isdisjoint(FORBIDDEN_PII_FIELDS)
+
+
+@pytest.mark.parametrize(
+    ("pii_field", "val"),
+    [
+        # Known core PII keys
+        ("name", "SYNTH_TOKEN_NAME"),
+        ("national_id", "SYNTH_NID_0001"),
+        ("phone", "SYNTH_PHONE_0001"),
+        ("salary", "10000.00"),
+        ("medical_note", "SYNTH_NOTE_0001"),
+        # Previously missed / audit PII variants & casing normalizations
+        ("mobile_no", "SYNTH_MOBILE_0001"),
+        ("mobileNo", "SYNTH_MOBILE_0002"),
+        ("full_name_ar", "SYNTH_NAME_AR_0001"),
+        ("fullNameAr", "SYNTH_NAME_AR_0002"),
+        ("iqama", "SYNTH_IQAMA_0001"),
+        ("IQAMA_NO", "SYNTH_IQAMA_0002"),
+        ("bank_iban", "SYNTH_IBAN_0001"),
+        ("bankIBAN", "SYNTH_IBAN_0002"),
+        ("passport_number", "SYNTH_PASS_0001"),
+        ("passport-number", "SYNTH_PASS_0002"),
+        ("emergency_contact", "SYNTH_EMERG_0001"),
+        ("home_address", "SYNTH_ADDR_0001"),
+        ("homeAddress", "SYNTH_ADDR_0002"),
+    ],
+)
+def test_adversarial_pii_keys_refused_with_exact_path(pii_field: str, val: str) -> None:
+    payload = _valid_raw_payload()
+    payload["employees"][0][pii_field] = val
+    with pytest.raises(PiiViolationError) as exc_info:
+        SolveRequest.from_dict(payload)
+    assert exc_info.value.code == "NORN-SOLVER-PII-FORBIDDEN"
+    assert exc_info.value.field_path == f"$.employees[0].{pii_field}"
+    assert f"$.employees[0].{pii_field}" in exc_info.value.message
+
+
+@pytest.mark.parametrize(
+    ("mutator_kind", "expected_path"),
+    [
+        ("top_level", "$.unexpected_top_key"),
+        ("employee", "$.employees[0].unlisted_employee_attr"),
+        ("shift", "$.shifts[0].unlisted_shift_attr"),
+        ("leave_block", "$.employees[0].approved_leave[0].unlisted_leave_attr"),
+        ("profile", "$.profile.unlisted_profile_weight"),
+    ],
+)
+def test_closed_schema_rejects_unknown_keys_at_every_object_level(
+    mutator_kind: str,
+    expected_path: str,
+) -> None:
+    payload = _valid_raw_payload()
+    payload["employees"][0]["approved_leave"] = [
+        {"starts_at": "2026-11-29T00:00:00Z", "ends_at": "2026-11-29T08:00:00Z"}
+    ]
+    if mutator_kind == "top_level":
+        payload["unexpected_top_key"] = "opaque_val"
+    elif mutator_kind == "employee":
+        payload["employees"][0]["unlisted_employee_attr"] = "opaque_val"
+    elif mutator_kind == "shift":
+        payload["shifts"][0]["unlisted_shift_attr"] = "opaque_val"
+    elif mutator_kind == "leave_block":
+        payload["employees"][0]["approved_leave"][0]["unlisted_leave_attr"] = "opaque_val"
+    elif mutator_kind == "profile":
+        payload["profile"]["unlisted_profile_weight"] = 42
+
+    with pytest.raises(UnknownFieldError) as exc_info:
+        SolveRequest.from_dict(payload)
+    assert exc_info.value.code == "NORN-SOLVER-UNKNOWN-FIELD"
+    assert exc_info.value.field_path == expected_path
+    assert expected_path in exc_info.value.message
+
+
+def test_closed_schema_rejects_unknown_keys_in_worker_envelopes_and_alt_profile() -> None:
+    # 1. Unknown key on perform envelope
+    env_extra: dict[str, Any] = {
+        "invocation_id": "inv_adv_1",
+        "input": _valid_raw_payload(),
+        "shadow_header": "opaque",
+    }
+    status, body = handle_invoke_payload(canonical_json(env_extra).encode("utf-8"))
+    assert status == 422
+    assert body["code"] == "NORN-SOLVER-UNKNOWN-FIELD"
+    assert "$.shadow_header" in str(body["error"])
+
+    # 2. Unknown key nested inside `input` of perform envelope
+    env_nested: dict[str, Any] = {
+        "invocation_id": "inv_adv_2",
+        "input": _valid_raw_payload(),
+    }
+    env_nested["input"]["employees"][0]["custom_badge_code"] = "B-01"
+    status, body = handle_invoke_payload(canonical_json(env_nested).encode("utf-8"))
+    assert status == 422
+    assert body["code"] == "NORN-SOLVER-UNKNOWN-FIELD"
+    assert "$.input.employees[0].custom_badge_code" in str(body["error"])
+
+    # 3. Unknown key inside `alt_profile`
+    direct_alt = _valid_raw_payload()
+    direct_alt["alt_profile"] = {
+        **direct_alt["profile"],
+        "profile_id": "prof_alt",
+        "unlisted_override": True,
+    }
+    status, body = handle_invoke_payload(canonical_json(direct_alt).encode("utf-8"))
+    assert status == 422
+    assert body["code"] == "NORN-SOLVER-UNKNOWN-FIELD"
+    assert "$.alt_profile.unlisted_override" in str(body["error"])
+
+    # 4. Previously missed PII key via HTTP invoke payload
+    pii_req = _valid_raw_payload()
+    pii_req["employees"][0]["iqama"] = "SYNTH_IQAMA_999"
+    status, body = handle_invoke_payload(canonical_json(pii_req).encode("utf-8"))
+    assert status == 422
+    assert body["code"] == "NORN-SOLVER-PII-FORBIDDEN"
+    assert "$.employees[0].iqama" in str(body["error"])
+
+
+@pytest.mark.parametrize(
+    "bad_payload_factory",
+    [
+        lambda: ["not", "an", "object"],
+        lambda: "not-an-object",
+        lambda: 42,
+        lambda: {**_valid_raw_payload(), "profile": ["not", "a", "dict"]},
+        lambda: {**_valid_raw_payload(), "employees": {"emp_01": {}}},
+        lambda: {**_valid_raw_payload(), "employees": ["not-a-dict"]},
+        lambda: {**_valid_raw_payload(), "shifts": {"sh_1": {}}},
+        lambda: {**_valid_raw_payload(), "shifts": [123]},
+        lambda: {**_valid_raw_payload(), "authorized_transfer_employee_ids": "emp_01"},
+        lambda: {**_valid_raw_payload(), "authorized_transfer_employee_ids": [123]},
+        lambda: {
+            **_valid_raw_payload(),
+            "employees": [{**_valid_raw_payload()["employees"][0], "skills": "cashier"}],
+        },
+        lambda: {
+            **_valid_raw_payload(),
+            "employees": [{**_valid_raw_payload()["employees"][0], "skills": [123]}],
+        },
+        lambda: {
+            **_valid_raw_payload(),
+            "employees": [{**_valid_raw_payload()["employees"][0], "approved_leave": {"starts_at": "2026-11-29T00:00:00Z"}}],
+        },
+        lambda: {
+            **_valid_raw_payload(),
+            "employees": [{**_valid_raw_payload()["employees"][0], "approved_leave": [["2026-11-29T00:00:00Z"]]}],
+        },
+        lambda: {
+            **_valid_raw_payload(),
+            "employees": [{**_valid_raw_payload()["employees"][0], "approved_leave": [{"starts_at": "2026-11-29T00:00:00Z"}]}],
+        },
+        lambda: {**_valid_raw_payload(), "roster_id": ["not-a-string"]},
+    ],
+)
+def test_unexpected_container_shapes_fail_closed_cleanly(bad_payload_factory: Any) -> None:
+    bad_payload = bad_payload_factory()
+    with pytest.raises(SolverContractError) as exc_info:
+        SolveRequest.from_dict(bad_payload)
+    assert exc_info.value.code == "NORN-SOLVER-SCHEMA"
+
+
+def test_worker_rejects_malformed_envelope_containers_cleanly() -> None:
+    for bad_envelope in (
+        ["list-root"],
+        {"input": ["not-a-dict"]},
+        {"input": _valid_raw_payload(), "invocation_id": {"nested": "bad"}},
+        {"input": _valid_raw_payload(), "alt_profile": ["not-a-dict"]},
+    ):
+        status, body = handle_invoke_payload(canonical_json(bad_envelope).encode("utf-8"))
+        assert status == 422
+        assert body["code"] == "NORN-SOLVER-SCHEMA"
+        assert body["status"] == "refused"
+
+
+def test_valid_full_allowlist_payload_solves_deterministically_and_passes_verification() -> None:
+    payload: dict[str, Any] = {
+        "roster_id": "ros_allowlist_full",
+        "unit_id": "branch_maadi",
+        "allow_cross_branch_transfers": False,
+        "authorized_transfer_employee_ids": [],
+        "profile": {
+            "profile_id": "prof_allowlist",
+            "label": "Full Allowlist Cairo Profile",
+            "currency": "EGP",
+            "weekly_overtime_budget": "500.00",
+            "min_rest_hours": "11.00",
+            "max_daily_hours": "10.00",
+            "max_weekly_hours": "48.00",
+            "max_consecutive_days": 6,
+            "weekend_fairness_priority": "high",
+            "staff_preference_priority": "medium",
+            "avoid_split_shifts": True,
+        },
+        "employees": [
+            {
+                "employee_id": "emp_token_01",
+                "display_label": "Staff Token #01",
+                "home_unit_id": "branch_maadi",
+                "eligible_unit_ids": ["branch_maadi"],
+                "skills": ["cashier"],
+                "cross_trainable_skills": ["barista"],
+                "max_regular_weekly_hours": "40.00",
+                "max_overtime_weekly_hours": "8.00",
+                "overtime_cost_per_hour": "120.00",
+                "approved_leave": [
+                    {
+                        "starts_at": "2026-11-29T00:00:00Z",
+                        "ends_at": "2026-11-29T12:00:00Z",
+                    }
+                ],
+                "preferred_shift_ids": ["sh_sat_am"],
+                "avoid_shift_ids": [],
+                "prior_weekend_shifts": 1,
+            }
+        ],
+        "shifts": [
+            {
+                "shift_id": "sh_sat_am",
+                "unit_id": "branch_maadi",
+                "role_code": "cashier",
+                "starts_at": "2026-11-28T06:00:00Z",
+                "ends_at": "2026-11-28T14:00:00Z",
+                "required_count": 1,
+                "is_weekend": True,
+            }
+        ],
+    }
+
+    req = SolveRequest.from_dict(payload)
+    res1 = solve_roster(req)
+    res2 = solve_roster(SolveRequest.from_dict(parse_strict_json(canonical_json(payload))))
+
+    assert res1.status == "optimal"
+    assert res1.verification.checked and res1.verification.passed and res1.verification.violation_count == 0
+    assert len(res1.assignments) == 1
+    assert res1.assignments[0].employee_id == "emp_token_01"
+    assert res1.solver_receipt_digest == res2.solver_receipt_digest
+    assert canonical_json(res1.to_dict()) == canonical_json(res2.to_dict())
 
 
 # ---------------------------------------------------------------------------
