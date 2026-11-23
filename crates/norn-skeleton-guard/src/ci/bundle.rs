@@ -27,6 +27,7 @@ const WEIGHTS: &[(&str, u32)] = &[
     ("phase/clippy", 119),
     ("phase/doc", 88),
     ("phase/guards", 532),
+    ("phase/rivet", 496),
     ("phase/integration-authoring", 1030),
     ("phase/integration-wasm", 707),
     ("phase/integration-clients", 170),
@@ -489,19 +490,19 @@ fn has_nested_fingerprint(path: &Path) -> io::Result<bool> {
 mod tests {
     use super::*;
 
-    // Byte-for-byte outputs from core.sh at 1437d52c4c: full, norn-api
+    // Byte-for-byte outputs from core.sh at 5bd9c06c07: full, norn-api
     // (ce4ea784d^..ce4ea784d), and norn-cell (1c894feba^..1c894feba).
     const PYTHON_PLANS: &[&str] = &[
         concat!(
-            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "test/rest-1", "test/rest-3", "test/heavy-3", "test/heavy-6", "test/heavy-4", "test/heavy-5", "test/heavy-1", "phase/doc", "phase/doctest"]}, {"id": "b1", "tasks": ["phase/features", "phase/browser", "phase/guards", "phase/wasm", "phase/integration-clients"]}, {"id": "b2", "tasks": ["phase/integration-wasm", "phase/duckdb", "test/rest-2", "test/heavy-2", "phase/test-shards", "phase/clippy", "phase/provenance"]}]}"#,
+            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "test/rest-1", "test/rest-3", "test/heavy-2", "test/heavy-6", "test/heavy-5", "phase/test-shards", "test/heavy-1", "phase/integration-clients", "phase/doc"]}, {"id": "b1", "tasks": ["phase/features", "phase/browser", "phase/guards", "test/heavy-3", "test/heavy-4", "phase/wasm", "phase/doctest"]}, {"id": "b2", "tasks": ["phase/integration-wasm", "phase/duckdb", "test/rest-2", "phase/rivet", "phase/clippy", "phase/provenance"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["test/rest-1", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/guards", "phase/clippy"]}]}"#,
+            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["test/rest-1", "phase/clippy", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/guards", "phase/rivet"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "duckdb"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["phase/duckdb", "test/heavy-2", "test/heavy-5"]}, {"id": "b1", "tasks": ["test/rest-1", "test/rest-3", "test/heavy-3", "test/heavy-6", "test/heavy-4", "phase/clippy"]}, {"id": "b2", "tasks": ["test/rest-2", "phase/guards", "phase/provenance"]}]}"#,
+            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["phase/duckdb", "phase/rivet", "phase/clippy"]}, {"id": "b1", "tasks": ["test/rest-1", "test/rest-3", "test/heavy-2", "test/heavy-6", "test/heavy-5"]}, {"id": "b2", "tasks": ["test/rest-2", "phase/guards", "test/heavy-3", "test/heavy-4", "phase/provenance"]}]}"#,
             "\n"
         ),
     ];
@@ -635,12 +636,13 @@ mod tests {
             for dir in [
                 "debug/.fingerprint",
                 "wasm32-unknown-unknown/debug/.fingerprint",
+                "rivet/debug/.fingerprint",
                 "doc",
             ] {
                 fs::create_dir_all(target.join(dir)).expect("create Cargo output");
             }
             prune_target(&root, &configured).expect("prune");
-            for dir in ["debug", "wasm32-unknown-unknown", "doc"] {
+            for dir in ["debug", "wasm32-unknown-unknown", "rivet", "doc"] {
                 assert_eq!(target.join(dir).exists(), !deletes, "{configured:?}: {dir}");
             }
             assert!(kept.iter().all(|path| path.is_dir()), "{configured:?}");
