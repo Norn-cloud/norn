@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import { renderToStaticMarkup } from "react-dom/server"
 import { deriveFactStatus, FactStatusBadge } from "../src/components/fact-status-badge.tsx"
 import {
+  classifyTriageActionResult,
   commitAliasBinding,
   commitRowPromotion,
   commitSupersessionDecision,
@@ -15,13 +16,19 @@ import {
   isLowConfidence,
   isRowEligibleForBatchPromotion,
   partitionPromotionBatch,
+  patchAliasDraftState,
+  patchSupersessionDraftState,
   resolveArtifactMediaSource,
   resolveRowEntity,
+  runBatchPromotionQueue,
+  supersessionFactStatus,
   timeDeltaLabel,
   triageSummary,
+  type AliasCandidate,
   type AliasResolution,
   type CandidateRow,
   type ImportTriageWorkspace,
+  type SupersessionConflict,
 } from "../src/lib/import-triage.ts"
 
 const sampleReceipt = {
@@ -30,6 +37,45 @@ const sampleReceipt = {
   objectId: "alloc-01",
   version: 1,
   receipt: { receiptHash: "a".repeat(64), commitSeq: 41, recordedAtMs: Date.UTC(2026, 10, 23, 12, 0, 0) },
+}
+
+const sampleAlias: AliasCandidate = {
+  id: "alias-1",
+  externalHandle: "@handle_north_1",
+  sourceChannel: "channel-ops",
+  occurrences: 3,
+  sampleExcerpt: "Snapshot posted for W47.",
+  firstObservedAt: "2026-11-16T08:30:00Z",
+  suggestedTargetId: "ent-002",
+  suggestedTargetLabel: "Unit Beta",
+  suggestionConfidenceBps: 8100,
+  resolution: null,
+}
+
+const sampleConflict: SupersessionConflict = {
+  id: "sup-1",
+  findingCode: "FEED-CONFLICT",
+  windowLabel: "2026-W47",
+  scopeKey: "zone-south/2026-W47",
+  earlier: {
+    artifactId: "art-1",
+    label: "Snapshot A",
+    blobDigest: "sha256:" + "1".repeat(64),
+    functionReceiptDigest: "sha256:" + "2".repeat(64),
+    observedAt: "2026-11-16T09:00:00Z",
+    sourceChannel: "channel-ops",
+  },
+  newer: {
+    artifactId: "art-2",
+    label: "Snapshot B",
+    blobDigest: "sha256:" + "3".repeat(64),
+    functionReceiptDigest: "sha256:" + "4".repeat(64),
+    observedAt: "2026-11-16T11:15:00Z",
+    sourceChannel: "channel-ops",
+  },
+  cells: [],
+  defaultChoice: "accept_newer",
+  resolution: null,
 }
 
 const cleanRow: CandidateRow = {
@@ -126,15 +172,96 @@ test("deriveFactStatus gives Quarantined and Withheld strict precedence and neve
   expect(deriveFactStatus({ withheld: true, verified: true })).toBe("withheld")
   expect(deriveFactStatus({ quarantined: false, openFindings: 0, unverifiedImport: true })).toBe("imported_unverified")
   expect(deriveFactStatus({ quarantined: false, openFindings: 0, verified: true })).toBe("verified_fact")
-  // Absence of visible findings alone never implies "Verified fact".
   expect(deriveFactStatus({ quarantined: false, openFindings: 0 })).toBeNull()
 })
 
-test("effectiveRowStatus gives Quarantined and Withheld precedence even if raw status claims verified_fact", () => {
+test("effectiveRowStatus and supersessionFactStatus never infer Verified fact without authoritative attestation", () => {
   const contradictory: CandidateRow = { ...violatingRow, status: "verified_fact" }
   expect(effectiveRowStatus(contradictory)).toBe("quarantined")
   expect(effectiveRowStatus(withheldRow)).toBe("withheld")
   expect(effectiveRowStatus(verifiedRow)).toBe("verified_fact")
+
+  // Unresolved or keep_disputed supersession is strictly quarantined.
+  expect(supersessionFactStatus(sampleConflict)).toBe("quarantined")
+  expect(supersessionFactStatus({
+    ...sampleConflict,
+    resolution: { choice: "keep_disputed", preservedHistoricalArtifactId: "art-1", receipt: sampleReceipt },
+  })).toBe("quarantined")
+  // Accepting newer without explicit cell factStatus never fabricates "verified_fact".
+  expect(supersessionFactStatus({
+    ...sampleConflict,
+    resolution: { choice: "accept_newer", preservedHistoricalArtifactId: "art-1", receipt: sampleReceipt },
+  })).toBeNull()
+  expect(supersessionFactStatus({
+    ...sampleConflict,
+    resolution: { choice: "accept_newer", preservedHistoricalArtifactId: "art-1", factStatus: "imported_unverified", receipt: sampleReceipt },
+  })).toBe("imported_unverified")
+  expect(supersessionFactStatus({
+    ...sampleConflict,
+    resolution: { choice: "accept_newer", preservedHistoricalArtifactId: "art-1", factStatus: "verified_fact", receipt: sampleReceipt },
+  })).toBe("verified_fact")
+})
+
+test("draft idempotency keys remain stable on default submit retries and no-op edits, rotating only on logical payload changes", () => {
+  // Default supersession: first submit stores key-1; retry/pending/error preserves key-1.
+  const supSubmitting = patchSupersessionDraftState(undefined, sampleConflict, { idempotencyKey: "key-sup-1", pending: true })
+  expect(supSubmitting.idempotencyKey).toBe("key-sup-1")
+  const supFailed = patchSupersessionDraftState(supSubmitting, sampleConflict, { pending: false, notice: { kind: "error", message: "500" } })
+  expect(supFailed.idempotencyKey).toBe("key-sup-1")
+  // Re-selecting the same default choice keeps key-1.
+  const supSameChoice = patchSupersessionDraftState(supFailed, sampleConflict, { choice: "accept_newer" })
+  expect(supSameChoice.idempotencyKey).toBe("key-sup-1")
+  // Changing choice or note clears/rotates the key.
+  const supNewNote = patchSupersessionDraftState(supSameChoice, sampleConflict, { note: "Updated rationale" })
+  expect(supNewNote.idempotencyKey).toBeNull()
+
+  // Alias draft: re-clicking the already-selected mode keeps key-alias-1; changing mode rotates it.
+  const aliasSelected = patchAliasDraftState(undefined, sampleAlias, { selectedTargetId: "ent-002", idempotencyKey: "key-alias-1" })
+  const aliasSameMode = patchAliasDraftState(aliasSelected, sampleAlias, { mode: "match", notice: null })
+  expect(aliasSameMode.idempotencyKey).toBe("key-alias-1")
+  const aliasSameTarget = patchAliasDraftState(aliasSameMode, sampleAlias, { selectedTargetId: "ent-002" })
+  expect(aliasSameTarget.idempotencyKey).toBe("key-alias-1")
+  const aliasNewMode = patchAliasDraftState(aliasSameTarget, sampleAlias, { mode: "ignore" })
+  expect(aliasNewMode.idempotencyKey).toBeNull()
+})
+
+test("runBatchPromotionQueue stops dispatching remaining queued rows immediately if active batchId changes", async () => {
+  let activeBatch = "batch-A"
+  const dispatched: string[] = []
+  const report = await runBatchPromotionQueue(
+    "batch-A",
+    ["row-1", "row-2", "row-3"],
+    () => activeBatch,
+    1,
+    async (rowId) => {
+      dispatched.push(rowId)
+      if (rowId === "row-1") activeBatch = "batch-B"
+      return "promoted"
+    },
+  )
+  expect(dispatched).toEqual(["row-1"])
+  expect(report.aborted).toBe(true)
+  expect(report.promoted).toBe(1)
+})
+
+test("classifyTriageActionResult treats structured HTTP 5xx as retryable error and HTTP 4xx as domain refusal", () => {
+  const server500 = classifyTriageActionResult({
+    kind: "refused",
+    status: 500,
+    code: "internal.storage_busy",
+    message: "Upstream ledger timeout",
+    diagnostics: [],
+  })
+  expect(server500.kind).toBe("error")
+
+  const law422 = classifyTriageActionResult({
+    kind: "refused",
+    status: 422,
+    code: "law.boundary_cap",
+    message: "Cap exceeded",
+    diagnostics: [],
+  })
+  expect(law422).toEqual({ kind: "refused", code: "law.boundary_cap", message: "Cap exceeded" })
 })
 
 test("confidence, temporal formatting, and withheld field extraction guards", () => {
@@ -149,7 +276,6 @@ test("confidence, temporal formatting, and withheld field extraction guards", ()
   expect(formatTemporal("2026-11-16T08:00:00Z")).toBe("16 Nov 2026, 08:00 UTC")
   expect(timeDeltaLabel("2026-11-16T09:00:00Z", "2026-11-16T11:15:00Z")).toBe("+2h 15m later")
 
-  // Withheld fields are strictly excluded from governed promotion values.
   expect(extractEditableValues(withheldRow, { "row-withheld:contact_note": "spoofed" })).toEqual({
     slot_code: "S-01",
   })
@@ -180,19 +306,28 @@ test("strict alias gating: pre-populated entityRecordId cannot bypass an unresol
   expect(partitioned.verified.map((r) => r.id)).toEqual(["row-verified"])
 })
 
-test("resolveArtifactMediaSource authorizes cell-scoped/data/object-store URIs and rejects external HTTP(S) URLs", () => {
+test("resolveArtifactMediaSource normalizes paths, requires scoped cell-media reads, and rejects traversal or external HTTP(S) URLs", () => {
   expect(resolveArtifactMediaSource("data:image/svg+xml;charset=utf-8,%3Csvg/%3E")).toEqual({
-    kind: "direct",
+    kind: "data-uri",
     url: "data:image/svg+xml;charset=utf-8,%3Csvg/%3E",
   })
   expect(resolveArtifactMediaSource("/v1/blobs/sha256:abc")).toEqual({
-    kind: "direct",
-    url: "/api/host/v1/blobs/sha256:abc",
+    kind: "cell-media",
+    path: "/v1/blobs/sha256:abc",
+  })
+  expect(resolveArtifactMediaSource("/api/host/v1/uploads/cap-1")).toEqual({
+    kind: "cell-media",
+    path: "/v1/uploads/cap-1",
   })
   expect(resolveArtifactMediaSource("s3://bucket/capture-a.png")).toEqual({
     kind: "cell-scan",
     uri: "s3://bucket/capture-a.png",
   })
+  // Reject traversal, percent-encoded traversal, protocol-relative, and arbitrary external URLs.
+  expect(resolveArtifactMediaSource("/v1/blobs/../../secrets").kind).toBe("rejected")
+  expect(resolveArtifactMediaSource("/v1/blobs/%2e%2e/secrets").kind).toBe("rejected")
+  expect(resolveArtifactMediaSource("/api/host/v1/blobs/%2e%2e%2fsecrets").kind).toBe("rejected")
+  expect(resolveArtifactMediaSource("//evil.example/v1/blobs/a").kind).toBe("rejected")
   expect(resolveArtifactMediaSource("https://external.example/tracker.png").kind).toBe("rejected")
   expect(resolveArtifactMediaSource("http://169.254.169.254/latest/meta-data").kind).toBe("rejected")
 })
@@ -228,50 +363,11 @@ test("triageSummary tallies unresolved aliases, unverified/quarantined/withheld/
       promoteRow: "canon.import.promote_row",
       resolveSupersession: "canon.import.resolve_supersession",
     },
-    aliases: [
-      {
-        id: "alias-1",
-        externalHandle: "@handle_north_1",
-        sourceChannel: "channel-ops",
-        occurrences: 3,
-        sampleExcerpt: "Snapshot posted for W47.",
-        firstObservedAt: "2026-11-16T08:30:00Z",
-        suggestedTargetId: "ent-002",
-        suggestedTargetLabel: "Unit Beta",
-        suggestionConfidenceBps: 8100,
-        resolution: null,
-      },
-    ],
+    aliases: [sampleAlias],
     availableEntities: [{ id: "ent-001", label: "Unit Alpha" }],
     artifacts: [],
     rows: [cleanRow, violatingRow, withheldRow, verifiedRow],
-    supersessions: [
-      {
-        id: "sup-1",
-        findingCode: "FEED-CONFLICT",
-        windowLabel: "2026-W47",
-        scopeKey: "zone-north/2026-W47",
-        earlier: {
-          artifactId: "art-1",
-          label: "Snapshot A",
-          blobDigest: "sha256:" + "1".repeat(64),
-          functionReceiptDigest: "sha256:" + "2".repeat(64),
-          observedAt: "2026-11-16T09:00:00Z",
-          sourceChannel: "channel-ops",
-        },
-        newer: {
-          artifactId: "art-2",
-          label: "Snapshot B",
-          blobDigest: "sha256:" + "3".repeat(64),
-          functionReceiptDigest: "sha256:" + "4".repeat(64),
-          observedAt: "2026-11-16T11:15:00Z",
-          sourceChannel: "channel-ops",
-        },
-        cells: [],
-        defaultChoice: "accept_newer",
-        resolution: null,
-      },
-    ],
+    supersessions: [sampleConflict],
   }
   expect(triageSummary(workspace)).toEqual({
     unresolvedAliases: 1,

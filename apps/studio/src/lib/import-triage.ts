@@ -10,6 +10,7 @@
 import { deriveFactStatus, type FactStatus } from "../components/fact-status-badge.tsx"
 import { callAction, newIdempotencyKey, type ActionReceipt, type CallResult } from "./actions.ts"
 import { cellCall, type CellResult, type Fetch } from "./cell-read.ts"
+import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions.ts"
 import { readableTime } from "./format.ts"
 
 export const IMPORT_TRIAGE_UNAVAILABLE = "This cell doesn't serve import triage yet."
@@ -130,7 +131,7 @@ export interface RowFinding {
   readonly status: "open" | "acknowledged" | "resolved" | "superseded"
 }
 
-/** Honest client-observed outcome of a governed row promotion call (never fabricated as a cell finding). */
+/** Honest client-observed outcome of a governed action call (never fabricated as a cell finding). */
 export type RowActionOutcome =
   | { readonly kind: "pending"; readonly decisionId: string; readonly expiresAtMs: number }
   | { readonly kind: "refused"; readonly code: string; readonly message: string }
@@ -183,6 +184,8 @@ export interface SupersessionResolution {
   readonly choice: SupersessionChoice
   readonly note?: string
   readonly preservedHistoricalArtifactId: string
+  /** Optional authoritative fact status reported by the cell after resolution; never guessed client-side. */
+  readonly factStatus?: FactStatus | null
   readonly receipt: ActionReceipt
 }
 
@@ -195,6 +198,8 @@ export interface SupersessionConflict {
   readonly newer: SupersessionArtifactRef
   readonly cells: readonly SupersessionDiffCell[]
   readonly defaultChoice: "accept_newer"
+  /** Optional authoritative cell status for the supersession window. */
+  readonly factStatus?: FactStatus | null
   readonly resolution: SupersessionResolution | null
 }
 
@@ -216,6 +221,172 @@ export type TriageStep = "aliases" | "review" | "supersession"
 export function isTriageStep(value: unknown): value is TriageStep {
   return value === "aliases" || value === "review" || value === "supersession"
 }
+
+// ---- Draft state helpers (payload-change-only idempotency key rotation) ------------------------
+
+export type AliasDecisionMode = "match" | "create" | "ignore"
+
+export interface AliasDraftState {
+  readonly mode: AliasDecisionMode
+  readonly selectedTargetId: string
+  readonly createLabel: string
+  readonly createExternalKey: string
+  readonly ignoreNote: string
+  /** Lazily allocated once per logical draft and preserved across retries; rotated only on payload edits. */
+  readonly idempotencyKey: string | null
+  readonly pending: boolean
+  readonly notice: { readonly kind: "pending" | "refused" | "error"; readonly message: string } | null
+}
+
+export function initialAliasDraft(alias: AliasCandidate): AliasDraftState {
+  return {
+    mode: "match",
+    // Strictly never pre-commit or auto-select a fuzzy ML guess: the operator picks explicitly.
+    selectedTargetId: "",
+    createLabel: alias.externalHandle.replace(/^@/, ""),
+    createExternalKey: alias.externalHandle,
+    ignoreNote: "",
+    idempotencyKey: null,
+    pending: false,
+    notice: null,
+  }
+}
+
+/**
+ * Update an alias draft, rotating `idempotencyKey` ONLY when a logical payload field actually
+ * changes. Re-clicking the already-selected mode or updating UI status (`pending`/`notice`) keeps
+ * the exact same key so retries are idempotent.
+ */
+export function patchAliasDraftState(
+  prev: AliasDraftState | undefined,
+  alias: AliasCandidate,
+  update: Partial<AliasDraftState>,
+): AliasDraftState {
+  const base = prev ?? initialAliasDraft(alias)
+  const next: AliasDraftState = { ...base, ...update }
+  const payloadChanged = next.mode !== base.mode
+    || next.selectedTargetId !== base.selectedTargetId
+    || next.createLabel !== base.createLabel
+    || next.createExternalKey !== base.createExternalKey
+    || next.ignoreNote !== base.ignoreNote
+  if (payloadChanged && update.idempotencyKey === undefined) {
+    return { ...next, idempotencyKey: null }
+  }
+  return next
+}
+
+export interface SupersessionDraftState {
+  readonly choice: SupersessionChoice
+  readonly note: string
+  /** Lazily allocated once per logical draft and preserved across retries; rotated only on payload edits. */
+  readonly idempotencyKey: string | null
+  readonly pending: boolean
+  readonly notice: { readonly kind: "pending" | "refused" | "error"; readonly message: string } | null
+}
+
+export function initialSupersessionDraft(conflict: SupersessionConflict): SupersessionDraftState {
+  return {
+    choice: conflict.defaultChoice,
+    note: "",
+    idempotencyKey: null,
+    pending: false,
+    notice: null,
+  }
+}
+
+/**
+ * Update a supersession draft, rotating `idempotencyKey` ONLY when `choice` or `note` actually
+ * changes. Preserves the exact key across retries of the default supersession choice.
+ */
+export function patchSupersessionDraftState(
+  prev: SupersessionDraftState | undefined,
+  conflict: SupersessionConflict,
+  update: Partial<SupersessionDraftState>,
+): SupersessionDraftState {
+  const base = prev ?? initialSupersessionDraft(conflict)
+  const next: SupersessionDraftState = { ...base, ...update }
+  const payloadChanged = next.choice !== base.choice || next.note !== base.note
+  if (payloadChanged && update.idempotencyKey === undefined) {
+    return { ...next, idempotencyKey: null }
+  }
+  return next
+}
+
+// ---- Batch queue execution with batch-switch abort guard ---------------------------------------
+
+export interface BatchRunReport {
+  readonly promoted: number
+  readonly refused: number
+  readonly pendingApproval: number
+  readonly failed: number
+  readonly aborted: boolean
+  readonly keptQuarantined: number
+}
+
+/**
+ * Execute a snapshotted promotion queue sequentially, stopping immediately before the next item if
+ * the active `batchId` has changed so stale queues never dispatch remaining rows across batches.
+ */
+export async function runBatchPromotionQueue<T>(
+  requestBatchId: string,
+  queue: readonly T[],
+  getActiveBatchId: () => string | undefined,
+  keptQuarantined: number,
+  dispatchOne: (item: T) => Promise<"promoted" | "refused" | "pending" | "error" | "skipped">,
+): Promise<BatchRunReport> {
+  let promoted = 0
+  let refused = 0
+  let pendingApproval = 0
+  let failed = 0
+  let aborted = false
+  for (const item of queue) {
+    if (getActiveBatchId() !== requestBatchId) {
+      aborted = true
+      break
+    }
+    const outcome = await dispatchOne(item)
+    if (outcome === "promoted") promoted += 1
+    else if (outcome === "refused") refused += 1
+    else if (outcome === "pending") pendingApproval += 1
+    else if (outcome === "error") failed += 1
+  }
+  return { promoted, refused, pendingApproval, failed, aborted, keptQuarantined }
+}
+
+// ---- Action result classification (5xx is retryable error, 4xx is domain refusal) --------------
+
+export type ClassifiedActionResult =
+  | { readonly kind: "receipt"; readonly receipt: ActionReceipt }
+  | { readonly kind: "pending"; readonly decisionId: string; readonly expiresAtMs: number }
+  | { readonly kind: "refused"; readonly code: string; readonly message: string }
+  | { readonly kind: "error"; readonly message: string }
+
+/**
+ * Classify a governed `callAction` result honestly:
+ * - HTTP 5xx (even with a structured JSON error body) and `unavailable` are retryable server errors.
+ * - Only HTTP 4xx domain refusals (422 / 409 / 403 / 400) are non-retryable domain refusals.
+ */
+export function classifyTriageActionResult(result: CallResult): ClassifiedActionResult {
+  if (result.kind === "receipt") return result
+  if (result.kind === "pending") {
+    return { kind: "pending", decisionId: result.decision.id, expiresAtMs: result.decision.expiresAtMs }
+  }
+  if (result.kind === "refused") {
+    if (result.status >= 500) {
+      return {
+        kind: "error",
+        message: `Server error (${result.code}): ${result.message}. Retry reuses the same idempotency key.`,
+      }
+    }
+    return { kind: "refused", code: result.code, message: result.message }
+  }
+  return {
+    kind: "error",
+    message: "The cell could not evaluate this action right now. Retry reuses the same idempotency key.",
+  }
+}
+
+// ---- Row, confidence, alias & supersession status helpers --------------------------------------
 
 /** Whether an extracted field's confidence falls below the batch's low-confidence threshold. */
 export function isLowConfidence(confidenceBps: number | null, thresholdBps: number): boolean {
@@ -254,6 +425,27 @@ export function effectiveRowStatus(row: CandidateRow): FactStatus {
     unverifiedImport: row.status === "imported_unverified",
     verified: row.status === "verified_fact",
   }) ?? "imported_unverified"
+}
+
+/**
+ * Authoritative status for a supersession conflict card.
+ * - Unresolved or `keep_disputed`: strictly `quarantined` (open `FEED-CONFLICT`).
+ * - Resolved: ONLY returns `verified_fact` when the cell explicitly attests `factStatus: "verified_fact"`;
+ *   otherwise returns the cell's reported status (`imported_unverified` / `quarantined` / `withheld`)
+ *   or `null` (displayed as a neutral "Resolved" chip rather than claiming "Verified fact").
+ */
+export function supersessionFactStatus(conflict: SupersessionConflict): FactStatus | null {
+  if (conflict.resolution === null || conflict.resolution.choice === "keep_disputed") {
+    return "quarantined"
+  }
+  const reported = conflict.resolution.factStatus ?? conflict.factStatus ?? null
+  if (reported === null) return null
+  return deriveFactStatus({
+    quarantined: reported === "quarantined",
+    withheld: reported === "withheld",
+    unverifiedImport: reported === "imported_unverified",
+    verified: reported === "verified_fact",
+  })
 }
 
 /**
@@ -359,23 +551,37 @@ export function partitionPromotionBatch(
   return { eligible, quarantined, withheld, blockedByAlias, inFlight, verified }
 }
 
+// ---- Strict, normalized, cell-scoped artifact media authorization ------------------------------
+
 /**
- * Authorize how an artifact URI is loaded.
- * - Cell-scoped relative paths (`/api/host/v1/blobs/...`, `/api/host/v1/uploads/...`, `/v1/blobs/...`, `/v1/uploads/...`)
- *   and safe inline synthetic image data URIs (`data:image/svg+xml`, `png`, `webp`, `jpeg`) load directly.
- * - Object-store URIs (`s3://`, `r2://`, `blob://`, `norn-blob://`, `gs://`) are exchanged through
- *   the cell's policy-checked `POST /v1/uploads:read` endpoint.
- * - Arbitrary external `http://` / `https://` URLs are rejected so untrusted import payloads
- *   cannot trigger arbitrary external fetches or pixel tracking from the operator's browser.
+ * Authorize how an artifact URI is loaded:
+ * - `data-uri`: safe inline synthetic image data URI (`data:image/svg+xml|png|webp|jpeg`).
+ * - `cell-media`: normalized cell-scoped path (`/v1/blobs/...` or `/v1/uploads/...`) fetched
+ *   through Studio's scoped host transport into a revocable Blob URL (never raw unauthenticated `<img>`).
+ * - `cell-scan`: object-store URI (`s3://`, `r2://`, `gs://`, `blob://`, `norn-blob://`) exchanged
+ *   through the cell's policy-checked `POST /v1/uploads:read` endpoint.
+ * - `rejected`: arbitrary external `http(s)://` URLs, protocol-relative URLs, or traversal paths.
  */
 export type ArtifactMediaSource =
-  | { readonly kind: "direct"; readonly url: string }
+  | { readonly kind: "data-uri"; readonly url: string }
+  | { readonly kind: "cell-media"; readonly path: string }
   | { readonly kind: "cell-scan"; readonly uri: string }
   | { readonly kind: "rejected"; readonly reason: string }
 
 const SAFE_DATA_IMAGE = /^data:image\/(svg\+xml|png|webp|jpeg)(;charset=[^;,]+)?(;base64)?,/i
-const CELL_MEDIA_PATH = /^\/(api\/host\/)?v1\/(blobs|uploads)\//
 const OBJECT_STORE_URI = /^(s3|r2|gs|blob|norn-blob):\/\//i
+const NORMALIZED_CELL_MEDIA = /^\/(?:api\/host\/)?(v1\/(?:blobs|uploads)\/[^/].*)$/
+
+function hasPathTraversal(rawPath: string): boolean {
+  const pathPart = rawPath.split(/[?#]/, 1)[0] ?? ""
+  if (pathPart.includes("\\") || /%5c/i.test(pathPart) || /%2f/i.test(pathPart)) return true
+  for (const segment of pathPart.split("/")) {
+    let decoded = segment
+    try { decoded = decodeURIComponent(segment) } catch { return true }
+    if (decoded === "." || decoded === ".." || decoded.includes("/") || decoded.includes("\\")) return true
+  }
+  return false
+}
 
 export function resolveArtifactMediaSource(uri: string): ArtifactMediaSource {
   const trimmed = uri.trim()
@@ -383,10 +589,26 @@ export function resolveArtifactMediaSource(uri: string): ArtifactMediaSource {
     return { kind: "rejected", reason: "Artifact carries no media URI." }
   }
   if (SAFE_DATA_IMAGE.test(trimmed)) {
-    return { kind: "direct", url: trimmed }
+    return { kind: "data-uri", url: trimmed }
   }
-  if (CELL_MEDIA_PATH.test(trimmed)) {
-    return { kind: "direct", url: trimmed.startsWith("/api/host/") ? trimmed : `/api/host${trimmed}` }
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
+    if (hasPathTraversal(trimmed)) {
+      return { kind: "rejected", reason: "Artifact media path contains invalid traversal segments." }
+    }
+    let parsed: URL
+    try {
+      parsed = new URL(trimmed, "https://cell.invalid")
+    } catch {
+      return { kind: "rejected", reason: "Artifact media path is malformed." }
+    }
+    if (parsed.origin !== "https://cell.invalid") {
+      return { kind: "rejected", reason: "External artifact URLs are blocked; media must come from a cell-authorized blob or upload read." }
+    }
+    const match = NORMALIZED_CELL_MEDIA.exec(parsed.pathname)
+    if (match !== null) {
+      return { kind: "cell-media", path: `/${match[1]}${parsed.search}` }
+    }
+    return { kind: "rejected", reason: "Artifact media path must target a cell blob or upload endpoint." }
   }
   if (OBJECT_STORE_URI.test(trimmed)) {
     return { kind: "cell-scan", uri: trimmed }
@@ -395,6 +617,16 @@ export function resolveArtifactMediaSource(uri: string): ArtifactMediaSource {
     kind: "rejected",
     reason: "External artifact URLs are blocked; media must come from a cell-authorized blob or upload read.",
   }
+}
+
+/** Fetch a normalized cell-scoped media path through Studio's scoped host transport as a Blob. */
+export async function fetchScopedArtifactBlob(path: string, fetcher: Fetch = (input, init) => fetch(input, init)): Promise<Blob> {
+  const scope = await readStudioScope(fetcher)
+  if (scope === null) throw new CellUnavailable(404, "No data cell scope is active for artifact media.")
+  const call = scopedHostFetch(fetcher, "/api/host", async () => scope)
+  const response = await call(path, { headers: { accept: "image/*,application/octet-stream" } })
+  if (!response.ok) throw new CellUnavailable(response.status, `Artifact media read failed (${response.status}).`)
+  return response.blob()
 }
 
 /** Summary counts across all three steps for progressive go-live badges and step counters. */

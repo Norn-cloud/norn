@@ -1,40 +1,21 @@
 import { Archive, ArrowRight, CheckCircle2, Clock, GitCompareArrows, ShieldAlert } from "lucide-react"
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { Chip } from "@/components/chip"
 import { CopyId } from "@/components/copy-id"
 import { FactStatusBadge } from "@/components/fact-status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { newIdempotencyKey } from "@/lib/actions"
 import { readableTime } from "@/lib/format"
 import {
-  commitSupersessionDecision,
   formatConfidence,
+  initialSupersessionDraft,
+  supersessionFactStatus,
   timeDeltaLabel,
   type SupersessionChoice,
   type SupersessionConflict,
-  type SupersessionResolution,
-  type TriageActions,
+  type SupersessionDraftState,
 } from "@/lib/import-triage"
 import { cn } from "@/lib/utils"
-
-export interface SupersessionDraftState {
-  readonly choice: SupersessionChoice
-  readonly note: string
-  readonly idempotencyKey: string
-  readonly pending: boolean
-  readonly notice: { readonly kind: "pending" | "error"; readonly message: string } | null
-}
-
-export function initialSupersessionDraft(conflict: SupersessionConflict): SupersessionDraftState {
-  return {
-    choice: conflict.defaultChoice,
-    note: "",
-    idempotencyKey: newIdempotencyKey(),
-    pending: false,
-    notice: null,
-  }
-}
 
 const CHOICES: readonly {
   readonly value: SupersessionChoice
@@ -62,24 +43,22 @@ const CHOICES: readonly {
  * Step 3 — Supersession Diff Card (`FEED-CONFLICT`).
  * Groups two immutable artifacts for the same window, displays changed cells and capture
  * timestamps, and defaults to accepting the newer artifact while preserving the earlier artifact
- * as immutable historical evidence.
+ * as immutable historical evidence. All locks and stable idempotency keys live in `ImportTriagePage`.
  */
 export function SupersessionDiffList({
   batchId,
   conflicts,
-  actions,
   lowConfidenceThresholdBps,
   drafts,
   onPatchDraft,
-  onResolved,
+  onCommitSupersession,
 }: {
   readonly batchId: string
   readonly conflicts: readonly SupersessionConflict[]
-  readonly actions: TriageActions
   readonly lowConfidenceThresholdBps: number
   readonly drafts: Readonly<Record<string, SupersessionDraftState>>
-  readonly onPatchDraft: (batchId: string, conflict: SupersessionConflict, update: Partial<SupersessionDraftState>, rotateKey?: boolean) => void
-  readonly onResolved: (batchId: string, conflictId: string, resolution: SupersessionResolution) => void
+  readonly onPatchDraft: (batchId: string, conflict: SupersessionConflict, update: Partial<SupersessionDraftState>) => void
+  readonly onCommitSupersession: (batchId: string, conflict: SupersessionConflict) => Promise<void>
 }) {
   if (conflicts.length === 0) {
     return (
@@ -96,11 +75,10 @@ export function SupersessionDiffList({
           key={conflict.id}
           batchId={batchId}
           conflict={conflict}
-          actionId={actions.resolveSupersession}
           lowConfidenceThresholdBps={lowConfidenceThresholdBps}
           draft={drafts[conflict.id] ?? initialSupersessionDraft(conflict)}
-          onPatchDraft={(update, rotateKey) => onPatchDraft(batchId, conflict, update, rotateKey)}
-          onResolved={onResolved}
+          onPatchDraft={(update) => onPatchDraft(batchId, conflict, update)}
+          onCommit={() => onCommitSupersession(batchId, conflict)}
         />
       ))}
     </div>
@@ -108,72 +86,26 @@ export function SupersessionDiffList({
 }
 
 function SupersessionDiffCard({
-  batchId,
   conflict,
-  actionId,
   lowConfidenceThresholdBps,
   draft,
   onPatchDraft,
-  onResolved,
+  onCommit,
 }: {
   readonly batchId: string
   readonly conflict: SupersessionConflict
-  readonly actionId: string
   readonly lowConfidenceThresholdBps: number
   readonly draft: SupersessionDraftState
-  readonly onPatchDraft: (update: Partial<SupersessionDraftState>, rotateKey?: boolean) => void
-  readonly onResolved: (batchId: string, conflictId: string, resolution: SupersessionResolution) => void
+  readonly onPatchDraft: (update: Partial<SupersessionDraftState>) => void
+  readonly onCommit: () => Promise<void>
 }) {
   const [changedOnly, setChangedOnly] = useState(true)
-  const inFlightRef = useRef(false)
 
   const changedCells = conflict.cells.filter((cell) => cell.changed)
   const shownCells = changedOnly ? changedCells : conflict.cells
   const resolved = conflict.resolution
   const delta = timeDeltaLabel(conflict.earlier.observedAt, conflict.newer.observedAt)
-
-  const submit = async () => {
-    if (inFlightRef.current) return
-    inFlightRef.current = true
-    const requestBatchId = batchId
-    onPatchDraft({ pending: true, notice: null })
-    try {
-      const trimmed = draft.note.trim()
-      const result = await commitSupersessionDecision(actionId, {
-        batchId: requestBatchId,
-        conflictId: conflict.id,
-        choice: draft.choice,
-        earlierArtifactId: conflict.earlier.artifactId,
-        earlierBlobDigest: conflict.earlier.blobDigest,
-        newerArtifactId: conflict.newer.artifactId,
-        newerBlobDigest: conflict.newer.blobDigest,
-        preserveEarlierEvidence: true,
-        ...trimmed !== "" ? { note: trimmed } : {},
-      }, draft.idempotencyKey)
-      if (result.kind === "receipt") {
-        onPatchDraft({ pending: false, notice: null })
-        onResolved(requestBatchId, conflict.id, {
-          choice: draft.choice,
-          ...trimmed !== "" ? { note: trimmed } : {},
-          preservedHistoricalArtifactId: draft.choice === "keep_earlier" ? conflict.newer.artifactId : conflict.earlier.artifactId,
-          receipt: result.receipt,
-        })
-      } else if (result.kind === "refused") {
-        onPatchDraft({ pending: false, notice: { kind: "error", message: `${result.code}: ${result.message}` } })
-      } else if (result.kind === "pending") {
-        onPatchDraft({ pending: false, notice: { kind: "pending", message: `Pending approval decision (${result.decision.id}).` } })
-      } else {
-        onPatchDraft({ pending: false, notice: { kind: "error", message: "The cell could not commit this supersession resolution right now." } })
-      }
-    } catch (err) {
-      onPatchDraft({
-        pending: false,
-        notice: { kind: "error", message: err instanceof Error ? err.message : "The cell did not respond. Retry reuses the same idempotency key." },
-      })
-    } finally {
-      inFlightRef.current = false
-    }
-  }
+  const factStatus = supersessionFactStatus(conflict)
 
   return (
     <article
@@ -188,9 +120,13 @@ function SupersessionDiffCard({
             Window <bdi>{conflict.windowLabel}</bdi>
           </h2>
           <Chip tone="red" icon={ShieldAlert} mono>{conflict.findingCode}</Chip>
-          <FactStatusBadge
-            status={resolved === null || resolved.choice === "keep_disputed" ? "quarantined" : "verified_fact"}
-          />
+          {factStatus !== null ? (
+            <FactStatusBadge status={factStatus} />
+          ) : (
+            <Chip tone="gray" icon={CheckCircle2} data-supersession-status="resolved" title="Conflict resolved through a governed action; affected rows remain subject to cell verification.">
+              Conflict resolved
+            </Chip>
+          )}
           <span className="font-mono text-xs text-muted-foreground"><bdi>{conflict.scopeKey}</bdi></span>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
@@ -356,7 +292,10 @@ function SupersessionDiffCard({
                       value={option.value}
                       checked={selected}
                       disabled={draft.pending}
-                      onChange={() => onPatchDraft({ choice: option.value, notice: null }, true)}
+                      onChange={() => {
+                        if (draft.choice === option.value) return
+                        onPatchDraft({ choice: option.value, notice: null })
+                      }}
                       className="mt-0.5 size-3.5 accent-[var(--primary)]"
                     />
                     <span className="space-y-0.5">
@@ -375,14 +314,14 @@ function SupersessionDiffCard({
                 placeholder="Rationale note (optional, stored with the governed receipt)"
                 value={draft.note}
                 disabled={draft.pending}
-                onChange={(event) => onPatchDraft({ note: event.target.value, notice: null }, true)}
+                onChange={(event) => onPatchDraft({ note: event.target.value, notice: null })}
                 className="h-8 min-w-56 flex-1 bg-background text-xs shadow-none"
               />
               <Button
                 type="button"
                 size="sm"
                 disabled={draft.pending}
-                onClick={() => void submit()}
+                onClick={() => void onCommit()}
                 className="h-8 shrink-0 px-3 text-xs"
               >
                 {draft.pending ? "Committing…" : "Resolve supersession"}
@@ -397,17 +336,30 @@ function SupersessionDiffCard({
             </p>
 
             {draft.notice !== null && (
-              <p
-                role={draft.notice.kind === "error" ? "alert" : "status"}
+              <div
+                role={draft.notice.kind === "pending" ? "status" : "alert"}
+                data-supersession-notice={draft.notice.kind}
                 className={cn(
-                  "rounded border px-2.5 py-1.5 text-xs",
+                  "flex flex-wrap items-center gap-2 rounded border px-2.5 py-1.5 text-xs",
                   draft.notice.kind === "pending"
                     ? "border-tone-amber/40 bg-tone-amber/8 text-tone-amber"
                     : "border-destructive/30 bg-destructive/5 text-destructive",
                 )}
               >
-                {draft.notice.message}
-              </p>
+                <span className="min-w-0 flex-1">{draft.notice.message}</span>
+                {draft.notice.kind === "error" && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={draft.pending}
+                    onClick={() => void onCommit()}
+                    className="h-6 shrink-0 border-border bg-background px-2 text-xs text-foreground shadow-none"
+                  >
+                    Retry
+                  </Button>
+                )}
+              </div>
             )}
           </>
         )}

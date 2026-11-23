@@ -24,11 +24,9 @@ import { CopyId } from "@/components/copy-id"
 import { FactStatusBadge } from "@/components/fact-status-badge"
 import { Button } from "@/components/ui/button"
 import { readScan } from "@/evidence/review"
-import { newIdempotencyKey, type ActionReceipt } from "@/lib/actions"
 import {
-  commitRowPromotion,
   effectiveRowStatus,
-  extractEditableValues,
+  fetchScopedArtifactBlob,
   formatConfidence,
   formatTemporal,
   hasOpenLawViolation,
@@ -40,11 +38,11 @@ import {
   resolveArtifactMediaSource,
   resolveRowEntity,
   type AliasResolution,
+  type BatchRunReport,
   type CandidateRow,
   type ExtractedField,
   type RowActionOutcome,
   type StagedArtifact,
-  type TriageActions,
 } from "@/lib/import-triage"
 import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
@@ -60,28 +58,48 @@ const pct = (fraction: string) => `${Number(fraction) * 100}%`
 
 /**
  * Load source artifact media strictly through cell-authorized paths:
- * - cell-scoped `/api/host/v1/(blobs|uploads)/...` paths or safe inline synthetic image data URIs
- * - object-store URIs exchanged through the cell's policy-checked `/v1/uploads:read` endpoint
- * - arbitrary external `http(s)` URLs are rejected before any browser image request is issued.
+ * - safe inline synthetic image data URIs load directly
+ * - normalized `/v1/(blobs|uploads)/...` paths fetch through Studio's scoped host transport into
+ *   a revocable Blob URL (never raw unauthenticated `<img src="/v1/...">`)
+ * - object-store URIs (`s3://`, `r2://`, `blob://`, ...) exchange via `/v1/uploads:read`
+ * - arbitrary external `http(s)` URLs and traversal paths are rejected before any request runs.
  */
 function useArtifactImage(uri: string | undefined) {
   const source = useMemo(() => (uri === undefined ? null : resolveArtifactMediaSource(uri)), [uri])
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const query = useQuery({
     queryKey: ["triage-artifact-scan", uri],
-    queryFn: async () => {
+    queryFn: async (): Promise<{ readonly kind: "url"; readonly url: string } | { readonly kind: "blob"; readonly blob: Blob }> => {
       if (source === null || source.kind === "rejected") {
         throw new Error(source?.reason ?? "Artifact media unavailable.")
       }
-      if (source.kind === "direct") {
-        return { document: { getUrl: source.url, expiresAt: "" } }
+      if (source.kind === "data-uri") {
+        return { kind: "url", url: source.url }
       }
-      return readScan(source.uri)
+      if (source.kind === "cell-media") {
+        const blob = await fetchScopedArtifactBlob(source.path)
+        return { kind: "blob", blob }
+      }
+      const read = await readScan(source.uri)
+      return { kind: "url", url: read.document.getUrl }
     },
     enabled: source !== null && source.kind !== "rejected",
     retry: false,
     staleTime: 4 * 60_000,
   })
-  return { source, query }
+
+  useEffect(() => {
+    if (query.data?.kind !== "blob") {
+      setBlobUrl(null)
+      return
+    }
+    const created = URL.createObjectURL(query.data.blob)
+    setBlobUrl(created)
+    return () => { URL.revokeObjectURL(created) }
+  }, [query.data])
+
+  const imageUrl = query.data?.kind === "url" ? query.data.url : blobUrl
+  return { source, query, imageUrl }
 }
 
 interface OverlayBox {
@@ -99,38 +117,43 @@ interface OverlayBox {
  * Right pane: editable extracted candidate rows (amber = low-confidence extraction,
  * red = law/contract violation, green = verified fact, withheld fields read-only) + one-click
  * batch governed promotion of clean rows while keeping conflicts/breaches quarantined.
+ *
+ * All in-flight / queued locks and batch queue execution live in `ImportTriagePage` keyed by
+ * `batchId`, so switching between steps never drops promotion locks or unlocks queued rows.
  */
 export function SplitPaneReview({
   batchId,
   artifacts,
   rows,
   lowConfidenceThresholdBps,
-  actions,
   resolvedAliases,
   edits,
-  rowKeys,
   rowOutcomes,
+  busyRowIds,
+  queuedRowIds,
+  batchRunning,
+  batchReport,
   onSetFieldValue,
   onResetFieldValue,
-  onEnsureRowKey,
-  onRowPromoted,
-  onRowOutcome,
+  onPromoteRow,
+  onPromoteCleanBatch,
   onJumpToAliases,
 }: {
   readonly batchId: string
   readonly artifacts: readonly StagedArtifact[]
   readonly rows: readonly CandidateRow[]
   readonly lowConfidenceThresholdBps: number
-  readonly actions: TriageActions
   readonly resolvedAliases: ReadonlyMap<string, AliasResolution>
   readonly edits: Readonly<Record<string, string>>
-  readonly rowKeys: Readonly<Record<string, string>>
   readonly rowOutcomes: Readonly<Record<string, RowActionOutcome>>
-  readonly onSetFieldValue: (batchId: string, rowId: string, fieldName: string, next: string) => void
+  readonly busyRowIds: ReadonlySet<string>
+  readonly queuedRowIds: ReadonlySet<string>
+  readonly batchRunning: boolean
+  readonly batchReport: BatchRunReport | null
+  readonly onSetFieldValue: (batchId: string, rowId: string, fieldName: string, currentValue: string, next: string) => void
   readonly onResetFieldValue: (batchId: string, rowId: string, fieldName: string) => void
-  readonly onEnsureRowKey: (batchId: string, rowId: string) => string
-  readonly onRowPromoted: (batchId: string, rowId: string, values: Readonly<Record<string, string>>, receipt: ActionReceipt) => void
-  readonly onRowOutcome: (batchId: string, rowId: string, outcome: RowActionOutcome | null) => void
+  readonly onPromoteRow: (batchId: string, row: CandidateRow, artifact: StagedArtifact) => Promise<void>
+  readonly onPromoteCleanBatch: (batchId: string, eligibleRows: readonly CandidateRow[], keptQuarantined: number) => Promise<void>
   readonly onJumpToAliases: () => void
 }) {
   const { view } = useView()
@@ -140,6 +163,7 @@ export function SplitPaneReview({
   const [zoom, setZoom] = useState(100)
   const [pan, setPan] = useState<{ readonly x: number; readonly y: number }>({ x: 0, y: 0 })
   const [showBoxes, setShowBoxes] = useState(true)
+  const [imgError, setImgError] = useState(false)
   const dragOrigin = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
 
   const [focusedRowId, setFocusedRowId] = useState<string | null>(() => rows[0]?.id ?? null)
@@ -147,20 +171,11 @@ export function SplitPaneReview({
   const [pendingScrollTarget, setPendingScrollTarget] = useState<{ readonly rowId: string; readonly fieldId: string } | null>(null)
   const [filter, setFilter] = useState<RowFilter>("all")
 
-  // Synchronous in-flight guard prevents duplicate submissions even on rapid double-clicks.
-  const inFlightRef = useRef<Set<string>>(new Set())
-  const [rowBusy, setRowBusy] = useState<ReadonlySet<string>>(new Set())
-  const [batchRunning, setBatchRunning] = useState(false)
-  const [batchQueuedIds, setBatchQueuedIds] = useState<ReadonlySet<string>>(new Set())
-  const [batchReport, setBatchReport] = useState<{
-    readonly promoted: number
-    readonly refused: number
-    readonly pendingApproval: number
-    readonly failed: number
-    readonly keptQuarantined: number
-  } | null>(null)
+  const { source: mediaSource, query: scan, imageUrl } = useArtifactImage(activeArtifact?.documentUri)
 
-  const { source: mediaSource, query: scan } = useArtifactImage(activeArtifact?.documentUri)
+  useEffect(() => {
+    setImgError(false)
+  }, [activeArtifact?.id, imageUrl])
 
   const artifactRows = useMemo(
     () => activeArtifact ? rows.filter((row) => row.artifactId === activeArtifact.id) : rows,
@@ -185,9 +200,15 @@ export function SplitPaneReview({
     return list
   }, [artifactRows, lowConfidenceThresholdBps])
 
+  const lockedRowIds = useMemo(() => {
+    const combined = new Set<string>(busyRowIds)
+    for (const id of queuedRowIds) combined.add(id)
+    return combined
+  }, [busyRowIds, queuedRowIds])
+
   const partition = useMemo(
-    () => partitionPromotionBatch(artifactRows, resolvedAliases, rowBusy),
-    [artifactRows, resolvedAliases, rowBusy],
+    () => partitionPromotionBatch(artifactRows, resolvedAliases, lockedRowIds),
+    [artifactRows, resolvedAliases, lockedRowIds],
   )
 
   const filteredRows = useMemo(() => {
@@ -218,119 +239,10 @@ export function SplitPaneReview({
   const activateBoundingBox = (overlay: OverlayBox) => {
     setFocusedRowId(overlay.rowId)
     setFocusedFieldId(overlay.fieldId)
-    // If the active filter hides the target row, switch back to "all" so it becomes visible immediately.
     if (!filteredRows.some((candidate) => candidate.id === overlay.rowId)) {
       setFilter("all")
     }
     setPendingScrollTarget({ rowId: overlay.rowId, fieldId: overlay.fieldId })
-  }
-
-  const promoteOne = async (
-    row: CandidateRow,
-    snapshotValues?: Readonly<Record<string, string>>,
-  ): Promise<"promoted" | "refused" | "pending" | "error" | "skipped"> => {
-    if (inFlightRef.current.has(row.id)) return "skipped"
-    const artifact = artifacts.find((item) => item.id === row.artifactId) ?? activeArtifact
-    const resolved = resolveRowEntity(row, resolvedAliases)
-    if (!artifact || resolved.kind !== "resolved" || effectiveRowStatus(row) !== "imported_unverified") {
-      return "skipped"
-    }
-    const requestBatchId = batchId
-    const values = snapshotValues ?? extractEditableValues(row, edits)
-    // Reuse the draft's persisted idempotency key so retries never duplicate a governed commit.
-    const key = rowKeys[row.id] ?? onEnsureRowKey(requestBatchId, row.id) ?? newIdempotencyKey()
-    inFlightRef.current.add(row.id)
-    setRowBusy((current) => new Set(current).add(row.id))
-    onRowOutcome(requestBatchId, row.id, null)
-    try {
-      const result = await commitRowPromotion(actions.promoteRow, {
-        batchId: requestBatchId,
-        rowId: row.id,
-        artifactId: artifact.id,
-        blobDigest: artifact.blobDigest,
-        functionReceiptDigest: artifact.functionReceiptDigest,
-        targetRecordId: resolved.targetId,
-        effectiveAt: row.effectiveAt,
-        observedAt: row.observedAt,
-        values,
-      }, key)
-      if (result.kind === "receipt") {
-        onRowPromoted(requestBatchId, row.id, values, result.receipt)
-        return "promoted"
-      }
-      if (result.kind === "pending") {
-        onRowOutcome(requestBatchId, row.id, {
-          kind: "pending",
-          decisionId: result.decision.id,
-          expiresAtMs: result.decision.expiresAtMs,
-        })
-        return "pending"
-      }
-      if (result.kind === "refused") {
-        onRowOutcome(requestBatchId, row.id, {
-          kind: "refused",
-          code: result.code,
-          message: result.message,
-        })
-        return "refused"
-      }
-      onRowOutcome(requestBatchId, row.id, {
-        kind: "error",
-        message: "The cell could not evaluate this promotion right now. Retry reuses the same idempotency key.",
-      })
-      return "error"
-    } catch (error) {
-      onRowOutcome(requestBatchId, row.id, {
-        kind: "error",
-        message: error instanceof Error ? error.message : "The cell did not respond. Retry reuses the same idempotency key.",
-      })
-      return "error"
-    } finally {
-      inFlightRef.current.delete(row.id)
-      setRowBusy((current) => {
-        const next = new Set(current)
-        next.delete(row.id)
-        return next
-      })
-      setBatchQueuedIds((current) => {
-        if (!current.has(row.id)) return current
-        const next = new Set(current)
-        next.delete(row.id)
-        return next
-      })
-    }
-  }
-
-  const promoteCleanBatch = async () => {
-    if (partition.eligible.length === 0 || batchRunning || inFlightRef.current.size > 0) return
-    // Snapshot queued rows and their exact draft values so inputs stay frozen while the batch runs.
-    const queue = partition.eligible.map((row) => ({
-      row,
-      values: extractEditableValues(row, edits),
-    }))
-    setBatchRunning(true)
-    setBatchQueuedIds(new Set(queue.map(({ row }) => row.id)))
-    setBatchReport(null)
-    let promoted = 0
-    let refused = 0
-    let pendingApproval = 0
-    let failed = 0
-    for (const item of queue) {
-      const outcome = await promoteOne(item.row, item.values)
-      if (outcome === "promoted") promoted += 1
-      else if (outcome === "refused") refused += 1
-      else if (outcome === "pending") pendingApproval += 1
-      else if (outcome === "error") failed += 1
-    }
-    setBatchReport({
-      promoted,
-      refused,
-      pendingApproval,
-      failed,
-      keptQuarantined: partition.quarantined.length,
-    })
-    setBatchQueuedIds(new Set())
-    setBatchRunning(false)
   }
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -378,7 +290,7 @@ export function SplitPaneReview({
   const lowConfidenceCount = artifactRows.filter((row) =>
     row.fields.some((field) => isLowConfidence(field.confidenceBps, lowConfidenceThresholdBps))).length
 
-  const batchDisabled = partition.eligible.length === 0 || batchRunning || rowBusy.size > 0
+  const batchDisabled = partition.eligible.length === 0 || batchRunning || busyRowIds.size > 0 || queuedRowIds.size > 0
 
   return (
     <section
@@ -517,13 +429,14 @@ export function SplitPaneReview({
               Loading source artifact…
             </div>
           )}
-          {mediaSource?.kind !== "rejected" && scan.isError && (
-            <div className="flex h-64 flex-col items-center justify-center gap-1.5 text-xs text-muted-foreground">
+          {mediaSource?.kind !== "rejected" && (scan.isError || imgError) && (
+            <div role="alert" data-media-error="" className="flex h-64 flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-muted-foreground">
               <FileSearch aria-hidden className="size-5" />
-              <span>Source artifact image could not be read from the cell.</span>
+              <span className="font-medium text-foreground">Source artifact image could not be loaded</span>
+              <span>Bounding-box overlays are hidden until the artifact image loads cleanly.</span>
             </div>
           )}
-          {mediaSource?.kind !== "rejected" && scan.data && activeArtifact && (
+          {mediaSource?.kind !== "rejected" && !scan.isError && !imgError && imageUrl !== null && activeArtifact && (
             <div
               data-pan-offset={`${pan.x},${pan.y}`}
               className="relative mx-auto origin-top-left transition-transform duration-150"
@@ -532,12 +445,14 @@ export function SplitPaneReview({
               }}
             >
               <img
-                src={scan.data.document.getUrl}
+                src={imageUrl}
                 alt={`Captured source artifact ${activeArtifact.label}`}
                 draggable={false}
+                onError={() => setImgError(true)}
+                onLoad={() => setImgError(false)}
                 className="block w-full rounded border border-border bg-white"
               />
-              {showBoxes && overlays.map((overlay) => {
+              {showBoxes && !imgError && overlays.map((overlay) => {
                 const active = focusedFieldId === overlay.fieldId || (focusedFieldId === null && focusedRowId === overlay.rowId)
                 const boxStyle = overlay.status === "violation"
                   ? "border-tone-red bg-tone-red/12"
@@ -663,11 +578,12 @@ export function SplitPaneReview({
               const violating = rowStatus === "quarantined"
               const withheldRow = rowStatus === "withheld"
               const verified = rowStatus === "verified_fact"
-              const busy = rowBusy.has(row.id)
-              const queued = batchQueuedIds.has(row.id)
+              const busy = busyRowIds.has(row.id)
+              const queued = queuedRowIds.has(row.id)
               const locked = busy || queued
               const outcome = rowOutcomes[row.id] ?? null
-              const canPromote = rowStatus === "imported_unverified" && entity.kind === "resolved" && !locked && !batchRunning
+              const rowArtifact = artifacts.find((item) => item.id === row.artifactId) ?? activeArtifact
+              const canPromote = rowStatus === "imported_unverified" && entity.kind === "resolved" && !locked && !batchRunning && rowArtifact !== undefined
 
               return (
                 <article
@@ -744,8 +660,9 @@ export function SplitPaneReview({
                         )
                       }
 
-                      const current = edits[`${row.id}:${field.name}`] ?? field.value
-                      const edited = current !== field.extractedValue
+                      // Verified rows ALWAYS show the authoritative cell value, never stale local drafts.
+                      const current = verified ? field.value : (edits[`${row.id}:${field.name}`] ?? field.value)
+                      const edited = !verified && current !== field.extractedValue
                       const hasAmber = !hasRed && lowConf
 
                       return (
@@ -803,7 +720,7 @@ export function SplitPaneReview({
                               readOnly={verified}
                               disabled={locked}
                               onFocus={() => { setFocusedRowId(row.id); setFocusedFieldId(field.id) }}
-                              onChange={(event) => onSetFieldValue(batchId, row.id, field.name, event.target.value)}
+                              onChange={(event) => onSetFieldValue(batchId, row.id, field.name, current, event.target.value)}
                               aria-invalid={hasRed || undefined}
                               className={cn(
                                 "h-7 min-w-0 flex-1 rounded border bg-background px-2 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -811,7 +728,7 @@ export function SplitPaneReview({
                                 (verified || locked) && "cursor-default bg-muted/40 text-foreground/85",
                               )}
                             />
-                            {edited && !verified && (
+                            {edited && (
                               <button
                                 type="button"
                                 disabled={locked}
@@ -854,7 +771,7 @@ export function SplitPaneReview({
                   )}
 
                   {/* Distinct request outcome banner (never fabricated into a cell quarantine finding) */}
-                  {outcome !== null && (
+                  {outcome !== null && !verified && (
                     <div
                       role={outcome.kind === "pending" ? "status" : "alert"}
                       data-row-outcome={outcome.kind}
@@ -890,7 +807,7 @@ export function SplitPaneReview({
                             size="sm"
                             variant="outline"
                             disabled={!canPromote}
-                            onClick={(event) => { event.stopPropagation(); void promoteOne(row) }}
+                            onClick={(event) => { event.stopPropagation(); if (rowArtifact) void onPromoteRow(batchId, row, rowArtifact) }}
                             className="h-7 shrink-0 border-border bg-background px-2 text-xs text-foreground shadow-none"
                           >
                             Retry
@@ -922,7 +839,7 @@ export function SplitPaneReview({
                         size="sm"
                         variant="outline"
                         disabled={!canPromote}
-                        onClick={(event) => { event.stopPropagation(); void promoteOne(row) }}
+                        onClick={(event) => { event.stopPropagation(); if (rowArtifact) void onPromoteRow(batchId, row, rowArtifact) }}
                         className="h-7 rounded border-border bg-background px-2.5 text-xs shadow-none"
                       >
                         {busy ? "Promoting…" : queued ? "Queued…" : "Promote row"}
@@ -977,7 +894,7 @@ export function SplitPaneReview({
               type="button"
               size="sm"
               disabled={batchDisabled}
-              onClick={() => void promoteCleanBatch()}
+              onClick={() => void onPromoteCleanBatch(batchId, partition.eligible, partition.quarantined.length)}
               className="h-8 shrink-0 gap-1.5 px-3 text-xs"
             >
               <CheckCheck aria-hidden className="size-3.5" />

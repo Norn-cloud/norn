@@ -5,8 +5,10 @@ import { session } from "./object-cell.ts"
 // End-to-end verification for the domain-agnostic Split-Pane Import Triage surface (#1594):
 // Step 1 (Match aliases / entities + combobox keyboard navigation + neutral Ignored badge),
 // Step 2 (Split-pane artifact triage + keyboard pan/zoom + bbox filter reveal + withheld fields +
-//   idempotency key reuse on retry + batch input locking + distinct non-fabricated request outcomes),
-// Step 3 (Supersession diff card FEED-CONFLICT), and 404 route.not_found / no-cell states.
+//   scoped blob media + image error state + locks surviving step switches + batch switch abort +
+//   authoritative verified values + structured 500 retry reusing idempotency key + disputed row hold),
+// Step 3 (Supersession diff card FEED-CONFLICT + default retry key stability + honest status badge +
+//   releasing disputed row for promotion), and 404 route.not_found / no-cell states.
 // SHOTS=<dir> captures light and dark screenshots of all three triage steps.
 
 const shots = process.env.SHOTS
@@ -76,12 +78,12 @@ test("step 1 (aliases): keyboard combobox, Suggested — you decide, + Create, a
   ])
 })
 
-test("step 2 (split-pane review): keyboard zoom/pan, bbox clears hiding filter, draft persists across steps, and batch promotion locks inputs", async ({ page }) => {
+test("step 2 (split-pane review): locks persist across step navigation, disputed FEED-CONFLICT row stays held until Step 3 resolves it", async ({ page }) => {
   await session(page)
   const cell = await importTriageCell(page)
   await page.goto("/imports?step=aliases")
 
-  // Bind alias so both clean rows are eligible for batch promotion.
+  // Bind alias so both non-disputed clean rows are eligible for batch promotion.
   const northRow = page.locator('[data-alias-row="alias-north-1"]')
   await northRow.getByRole("button", { name: "Select suggestion" }).click()
   await northRow.getByRole("button", { name: "Bind alias" }).click()
@@ -102,7 +104,6 @@ test("step 2 (split-pane review): keyboard zoom/pan, bbox clears hiding filter, 
   await expect(page.locator("[data-zoom-level]")).toHaveText("100%")
   await expect(page.locator("[data-pan-offset]")).toHaveAttribute("data-pan-offset", "0,0")
 
-  // Verify amber low-confidence field and red law violations (with verbatim invalid date).
   const row1 = page.locator('[data-candidate-row="row-w47-1"]')
   const lowConfField = row1.locator('[data-field-name="duration_hours"]')
   await expect(lowConfField).toHaveAttribute("data-field-tone", "amber")
@@ -117,13 +118,17 @@ test("step 2 (split-pane review): keyboard zoom/pan, bbox clears hiding filter, 
   await expect(invalidDateRow).toContainText("InvalidTemporalObservation")
   await expect(invalidDateRow).toContainText("effective 2026-02-31")
 
-  // Switch filter to Violations (hiding row 1), then click row 1's bounding box -> clears filter and focuses row 1!
-  await page.getByRole("button", { name: "Violations (2)" }).click()
+  const disputedRow = page.locator('[data-candidate-row="row-w47-5"]')
+  await expect(disputedRow.locator('[data-fact-status="quarantined"]')).toHaveText("Quarantined")
+  await expect(disputedRow).toContainText("FEED-CONFLICT")
+
+  // Switch filter to Violations (hiding row 1), then click row 1's bounding box -> clears filter and reveals row 1.
+  await page.getByRole("button", { name: "Violations (3)" }).click()
   await expect(row1).toHaveCount(0)
   await page.locator('[data-bbox-field="f-1-hours"]').click()
   await expect(row1).toBeVisible()
 
-  // Edit low-confidence field, switch to Step 1 and back to Step 2 -> unsent draft is preserved!
+  // Edit low-confidence field, switch to Step 1 and back to Step 2 -> unsent draft persists.
   await lowConfField.locator("input").fill("8.50")
   await expect(lowConfField).toContainText("Extracted: 8.00")
   await page.locator('[data-triage-step="aliases"]').click()
@@ -132,81 +137,172 @@ test("step 2 (split-pane review): keyboard zoom/pan, bbox clears hiding filter, 
 
   await shoot(page, "step2-review")
 
-  // Hold row 1 promotion while batch starts to verify queued row inputs are locked mid-batch.
+  // Hold row 1 promotion in flight, switch Step 2 -> Step 1 -> Step 2, and assert locks STILL hold!
   const releaseRow1 = cell.holdNextPromote("row-w47-1")
-  const promoteBtn = page.getByRole("button", { name: "Promote 2 clean rows" })
-  await promoteBtn.click()
+  await page.getByRole("button", { name: "Promote 2 clean rows" }).click()
   await expect(row1.locator('[data-field-name="duration_hours"] input')).toBeDisabled()
   await expect(page.locator('[data-candidate-row="row-w47-2"] [data-field-name="duration_hours"] input')).toBeDisabled()
+
+  await page.locator('[data-triage-step="aliases"]').click()
+  await page.locator('[data-triage-step="review"]').click()
+  await expect(row1.locator('[data-field-name="duration_hours"] input')).toBeDisabled()
+  await expect(page.locator('[data-candidate-row="row-w47-2"] [data-field-name="duration_hours"] input')).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Promoting clean rows…" })).toBeDisabled()
   releaseRow1()
 
   await expect(row1.locator('[data-fact-status="verified_fact"]')).toHaveText("Verified fact")
   await expect(page.locator('[data-candidate-row="row-w47-2"]').locator('[data-fact-status="verified_fact"]')).toHaveText("Verified fact")
+  // All 3 quarantined rows (OBS-BAD, InvalidTemporalObservation, FEED-CONFLICT disputed) stay held!
   await expect(violatingRow.locator('[data-fact-status="quarantined"]')).toHaveText("Quarantined")
   await expect(invalidDateRow.locator('[data-fact-status="quarantined"]')).toHaveText("Quarantined")
+  await expect(disputedRow.locator('[data-fact-status="quarantined"]')).toHaveText("Quarantined")
 
   const promoteCalls = cell.calls.filter((c) => c.actionId === "canon.import.promote_row")
   expect(promoteCalls.map((c) => c.input.rowId)).toEqual(["row-w47-1", "row-w47-2"])
   expect((promoteCalls[0]!.input.values as Record<string, string>).duration_hours).toBe("8.50")
+
+  // Resolve the FEED-CONFLICT in Step 3 -> returns disputed row to Imported (unverified) for governed promotion.
+  await page.locator('[data-triage-step="supersession"]').click()
+  const card = page.locator('[data-supersession-card="conflict-w47-south"]')
+  await card.getByRole("button", { name: "Resolve supersession" }).click()
+  await expect(card.locator('[data-supersession-resolved="accept_newer"]')).toBeVisible()
+  // Step 3 must reflect authoritative cell status ("Imported (unverified)"), never fabricating "Verified fact".
+  await expect(card.locator('[data-fact-status="imported_unverified"]')).toHaveText("Imported (unverified)")
+  await expect(card.locator('[data-fact-status="verified_fact"]')).toHaveCount(0)
+
+  // Return to Step 2 -> disputed row is now released with Capture B's values and can be promoted!
+  await page.locator('[data-triage-step="review"]').click()
+  await expect(disputedRow.locator('[data-fact-status="imported_unverified"]')).toHaveText("Imported (unverified)")
+  await expect(disputedRow.locator('[data-field-name="duration_hours"] input')).toHaveValue("8.50")
+  await disputedRow.getByRole("button", { name: "Promote row" }).click()
+  await expect(disputedRow.locator('[data-fact-status="verified_fact"]')).toHaveText("Verified fact")
 })
 
-test("step 2 (honest outcomes & idempotency): error retry reuses same key, edit rotates key, pending/refused never fabricate quarantine findings", async ({ page }) => {
+test("step 2 (batch switch mid-queue & stale local draft vs authoritative verified value)", async ({ page }) => {
+  await session(page)
+  const cell = await importTriageCell(page)
+  await page.goto("/imports?step=aliases")
+  const northRow = page.locator('[data-alias-row="alias-north-1"]')
+  await northRow.getByRole("button", { name: "Select suggestion" }).click()
+  await northRow.getByRole("button", { name: "Bind alias" }).click()
+  await expect(northRow.locator('[data-alias-resolved="bound"]')).toBeVisible()
+
+  await page.locator('[data-triage-step="review"]').click()
+  const row1 = page.locator('[data-candidate-row="row-w47-1"]')
+
+  // 1) Stale local edit is replaced by authoritative committed value when another operator verifies the row.
+  await row1.locator('[data-field-name="duration_hours"] input').fill("9.99")
+  await expect(row1.locator('[data-field-name="duration_hours"] input')).toHaveValue("9.99")
+  cell.commitRowElsewhere("row-w47-1", { duration_hours: "8.25" })
+  await page.getByRole("button", { name: "Refresh" }).click()
+  await expect(row1.locator('[data-fact-status="verified_fact"]')).toHaveText("Verified fact")
+  await expect(row1.locator('[data-field-name="duration_hours"] input')).toHaveValue("8.25")
+
+  // 2) Switch active batch mid-queue: hold row 2, switch to batch-w48-sync, release -> zero extra old-batch dispatches.
+  cell.switchBatch("batch-w48-sync")
+  await page.getByRole("button", { name: "Refresh" }).click()
+  await expect(page.locator('[data-triage-batch="batch-w48-sync"]')).toBeVisible()
+  await expect(row1.locator('[data-fact-status="imported_unverified"]')).toHaveText("Imported (unverified)")
+
+  // Bind alias in batch-w48-sync so 2 clean rows exist, then hold row 1 and switch to batch-w49-sync mid-queue.
+  await page.locator('[data-triage-step="aliases"]').click()
+  await northRow.getByRole("button", { name: "Select suggestion" }).click()
+  await northRow.getByRole("button", { name: "Bind alias" }).click()
+  await expect(northRow.locator('[data-alias-resolved="bound"]')).toBeVisible()
+  await page.locator('[data-triage-step="review"]').click()
+
+  const release = cell.holdNextPromote("row-w47-1")
+  await page.getByRole("button", { name: "Promote 2 clean rows" }).click()
+  await expect.poll(() => cell.calls.filter((c) => c.actionId === "canon.import.promote_row").length).toBe(1)
+
+  cell.switchBatch("batch-w49-sync")
+  await page.getByRole("button", { name: "Refresh" }).click()
+  await expect(page.locator('[data-triage-batch="batch-w49-sync"]')).toBeVisible()
+  release()
+  await page.waitForTimeout(300)
+
+  // Row 2 of batch-w48-sync must NEVER have been dispatched after switching to batch-w49-sync!
+  const w48Promotes = cell.calls.filter((c) => c.actionId === "canon.import.promote_row" && c.input.batchId === "batch-w48-sync")
+  expect(w48Promotes.map((c) => c.input.rowId)).toEqual(["row-w47-1"])
+})
+
+test("step 2 (structured 500 retry, pending approval, and 422 refusal): exact key reuse and zero fabricated findings", async ({ page }) => {
   await session(page)
   const cell = await importTriageCell(page)
   await page.goto("/imports?step=review")
 
   const row1 = page.locator('[data-candidate-row="row-w47-1"]')
 
-  // 1) Transport failure (500): shows error outcome banner, does NOT flip status to quarantined, retry reuses exact same key.
+  // Structured JSON HTTP 500 -> retryable error banner (NOT non-retryable refusal), no fabricated finding.
   cell.failNextPromote("row-w47-1")
   await row1.getByRole("button", { name: "Promote row" }).click()
-  await expect(row1.locator('[data-row-outcome="error"]')).toBeVisible()
+  await expect(row1.locator('[data-row-outcome="error"]')).toContainText("internal.storage_busy")
   await expect(row1).toHaveAttribute("data-row-status", "imported_unverified")
   await expect(row1.locator("[data-cell-findings]")).toHaveCount(0)
 
-  // Retry without editing -> must reuse exact same idempotencyKey; inject a 202 pending approval on this retry.
+  // Retry reuses exact same idempotencyKey; cell returns 202 pending approval.
   cell.pendingNextPromote("row-w47-1", "dec_approval_99")
   await row1.locator('[data-row-outcome="error"]').getByRole("button", { name: "Retry" }).click()
   await expect(row1.locator('[data-row-outcome="pending"]')).toContainText("dec_approval_99")
   await expect(row1).toHaveAttribute("data-row-status", "imported_unverified")
   await expect(row1.locator("[data-cell-findings]")).toHaveCount(0)
 
-  // 2) Edit field -> rotates idempotency key; inject 422 refusal -> distinct refusal banner, no fabricated cell finding.
+  // Edit field -> rotates idempotency key; 422 refusal -> distinct refusal banner without Retry or fabricated findings.
   await row1.locator('[data-field-name="duration_hours"] input').fill("9.00")
   cell.refuseNextPromote("row-w47-1", "law.boundary_cap", "Cell law refused duration 9.00.")
   await row1.getByRole("button", { name: "Promote row" }).click()
   await expect(row1.locator('[data-row-outcome="refused"]')).toContainText("law.boundary_cap")
+  await expect(row1.locator('[data-row-outcome="refused"]').getByRole("button", { name: "Retry" })).toHaveCount(0)
   await expect(row1).toHaveAttribute("data-row-status", "imported_unverified")
   await expect(row1.locator("[data-cell-findings]")).toHaveCount(0)
 
   const keys = cell.calls.map((c) => c.idempotencyKey)
   expect(keys).toHaveLength(3)
-  expect(keys[0]).toBe(keys[1]) // retry reused the exact same key
-  expect(keys[2]).not.toBe(keys[1]) // edit rotated to a fresh key
+  expect(keys[0]).toBe(keys[1])
+  expect(keys[2]).not.toBe(keys[1])
 })
 
-test("step 2 (withheld fields & external artifact rejection): redacted fields stay read-only and external HTTP URLs are blocked", async ({ page }) => {
+test("step 2 (scoped blob media, broken image error state, withheld fields, and external URL rejection)", async ({ page }) => {
+  // 1) Cell-scoped blob path loads via scoped /api/host/v1/blobs/... fetch into a blob: URL.
   await session(page)
-  await importTriageCell(page, { includeWithheldRow: true, externalArtifactUri: true })
+  const blobCell = await importTriageCell(page, { includeWithheldRow: true, artifactMediaMode: "cell-blob" })
   await page.goto("/imports?step=review")
+  const img = page.locator('[data-pane="artifact"] img')
+  await expect(img).toBeVisible()
+  await expect(img).toHaveAttribute("src", /^blob:/)
+  expect(blobCell.blobRequests[0]).toContain("/api/host/v1/blobs/capture-w47-a")
+  expect(blobCell.blobRequests[0]).toContain("orgId=org_demo")
+  expect(blobCell.blobRequests[0]).toContain("environmentId=analytics")
 
-  // Arbitrary external https:// artifact URI is rejected cleanly before loading.
-  await expect(page.locator("[data-media-rejected]")).toContainText("External artifact URLs are blocked")
-
-  // Withheld row shows Withheld status badge and read-only masked field (no editable input).
+  // Withheld row stays read-only with no editable input.
   const withheldRow = page.locator('[data-candidate-row="row-w47-withheld"]')
   await expect(withheldRow.locator('[data-fact-status="withheld"]')).toHaveText("Withheld")
   const redactedField = withheldRow.locator('[data-field-withheld="redacted"]')
   await expect(redactedField).toContainText("Redacted from your role")
   await expect(redactedField.locator("input")).toHaveCount(0)
+
+  // 2) Broken image bytes trigger onError -> shows [data-media-error] and hides bounding-box overlays.
+  await page.unrouteAll({ behavior: "ignoreErrors" })
+  await session(page)
+  await importTriageCell(page, { artifactMediaMode: "broken-blob" })
+  await page.goto("/imports?step=review")
+  await expect(page.locator("[data-media-error]")).toContainText("Source artifact image could not be loaded")
+  await expect(page.locator("[data-bbox-field]")).toHaveCount(0)
+
+  // 3) Arbitrary external https:// artifact URL is rejected before any browser request.
+  await page.unrouteAll({ behavior: "ignoreErrors" })
+  await session(page)
+  await importTriageCell(page, { artifactMediaMode: "external" })
+  await page.goto("/imports?step=review")
+  await expect(page.locator("[data-media-rejected]")).toContainText("External artifact URLs are blocked")
 })
 
-test("step 3 (supersession diff): FEED-CONFLICT groups both immutable artifacts, shows changed cells, defaults to accepting newer while preserving earlier evidence", async ({ page }) => {
+test("step 3 (supersession diff): default submit structured 500 retry reuses exact idempotency key and preserves earlier evidence", async ({ page }) => {
   await session(page)
   const cell = await importTriageCell(page)
   await page.goto("/imports?step=supersession")
 
-  const card = page.locator('[data-supersession-card="conflict-w47-north"]')
+  const card = page.locator('[data-supersession-card="conflict-w47-south"]')
   await expect(card).toBeVisible()
   await expect(card).toContainText("FEED-CONFLICT")
   await expect(card).toContainText("+2h 15m later")
@@ -217,22 +313,24 @@ test("step 3 (supersession diff): FEED-CONFLICT groups both immutable artifacts,
   await expect(card.locator("tbody tr")).toHaveCount(3)
   await card.getByRole("button", { name: "Changed only (2)" }).click()
   await expect(card.locator("tbody tr")).toHaveCount(2)
-
   await expect(card.getByRole("radio", { name: /Accept newer artifact/ })).toBeChecked()
 
   await shoot(page, "step3-supersession")
 
-  await card.getByLabel(/Supersession rationale/).fill("Verified against revised capture.")
+  // Submit default supersession with an injected structured 500 -> Retry reuses the EXACT same idempotencyKey!
+  cell.failNextSupersession("conflict-w47-south")
   await card.getByRole("button", { name: "Resolve supersession" }).click()
+  await expect(card.locator('[data-supersession-notice="error"]')).toContainText("internal.storage_busy")
+  await card.locator('[data-supersession-notice="error"]').getByRole("button", { name: "Retry" }).click()
 
   await expect(card.locator('[data-supersession-resolved="accept_newer"]')).toContainText("Accepted newer artifact as superseding correction")
   await expect(card.locator('[data-supersession-resolved="accept_newer"]')).toContainText("art-w47-a")
-  await expect(card.locator('[data-fact-status="verified_fact"]')).toHaveText("Verified fact")
+  await expect(card.locator('[data-fact-status="imported_unverified"]')).toHaveText("Imported (unverified)")
 
-  expect(cell.calls).toHaveLength(1)
-  expect(cell.calls[0]!.actionId).toBe("canon.import.resolve_supersession")
-  expect(cell.calls[0]!.input).toMatchObject({
-    conflictId: "conflict-w47-north",
+  expect(cell.calls).toHaveLength(2)
+  expect(cell.calls[0]!.idempotencyKey).toBe(cell.calls[1]!.idempotencyKey)
+  expect(cell.calls[1]!.input).toMatchObject({
+    conflictId: "conflict-w47-south",
     choice: "accept_newer",
     preserveEarlierEvidence: true,
     earlierArtifactId: "art-w47-a",

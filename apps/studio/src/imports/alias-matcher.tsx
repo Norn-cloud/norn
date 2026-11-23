@@ -6,47 +6,15 @@ import { FactStatusBadge } from "@/components/fact-status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { newIdempotencyKey, type ActionReceipt } from "@/lib/actions"
 import { readableTime } from "@/lib/format"
 import {
-  commitAliasBinding,
-  commitAliasIgnore,
-  commitEntityCreateAndBind,
   formatConfidence,
+  initialAliasDraft,
   type AliasCandidate,
-  type AliasResolution,
+  type AliasDraftState,
   type TargetEntity,
-  type TriageActions,
 } from "@/lib/import-triage"
 import { cn } from "@/lib/utils"
-
-export type AliasDecisionMode = "match" | "create" | "ignore"
-
-export interface AliasDraftState {
-  readonly mode: AliasDecisionMode
-  readonly selectedTargetId: string
-  readonly createLabel: string
-  readonly createExternalKey: string
-  readonly ignoreNote: string
-  /** Reused across retries of the same draft; rotated only when the operator edits the draft. */
-  readonly idempotencyKey: string
-  readonly pending: boolean
-  readonly notice: { readonly kind: "pending" | "error"; readonly message: string } | null
-}
-
-export function initialAliasDraft(alias: AliasCandidate): AliasDraftState {
-  return {
-    mode: "match",
-    // Strictly never pre-commit or auto-select a fuzzy ML guess: the operator picks explicitly.
-    selectedTargetId: "",
-    createLabel: alias.externalHandle.replace(/^@/, ""),
-    createExternalKey: alias.externalHandle,
-    ignoreNote: "",
-    idempotencyKey: newIdempotencyKey(),
-    pending: false,
-    notice: null,
-  }
-}
 
 /**
  * Searchable record picker with full keyboard navigation (ArrowDown / ArrowUp / Enter / Escape)
@@ -210,32 +178,30 @@ function SearchableRecordPicker({
  * Step 1 — Match Aliases / Entities Screen.
  * Maps recurring external handles/nicknames from external feeds/captures to canonical records via
  * searchable picker, Create, or Ignore. Advisory ML suggestions are explicitly badged
- * "Suggested — you decide" and never auto-linked.
+ * "Suggested — you decide" and never auto-linked. All async locks and idempotency keys live in
+ * `ImportTriagePage` so switching steps never drops in-flight locks or rotates unchanged keys.
  */
 export function AliasMatcher({
   batchId,
   aliases,
   entities,
-  actions,
   drafts,
   onPatchDraft,
-  onResolved,
+  onCommitAlias,
 }: {
   readonly batchId: string
   readonly aliases: readonly AliasCandidate[]
   readonly entities: readonly TargetEntity[]
-  readonly actions: TriageActions
   readonly drafts: Readonly<Record<string, AliasDraftState>>
-  readonly onPatchDraft: (batchId: string, alias: AliasCandidate, update: Partial<AliasDraftState>, rotateKey?: boolean) => void
-  readonly onResolved: (batchId: string, aliasId: string, resolution: AliasResolution, createdEntity?: TargetEntity) => void
+  readonly onPatchDraft: (batchId: string, alias: AliasCandidate, update: Partial<AliasDraftState>) => void
+  readonly onCommitAlias: (batchId: string, alias: AliasCandidate) => Promise<void>
 }) {
   const [filter, setFilter] = useState("")
   const [statusFilter, setStatusFilter] = useState<"all" | "unresolved" | "resolved">("all")
-  const inFlightRef = useRef<Set<string>>(new Set())
 
   const stateOf = (alias: AliasCandidate): AliasDraftState => drafts[alias.id] ?? initialAliasDraft(alias)
-  const patch = (alias: AliasCandidate, update: Partial<AliasDraftState>, rotateKey = false) =>
-    onPatchDraft(batchId, alias, update, rotateKey)
+  const patch = (alias: AliasCandidate, update: Partial<AliasDraftState>) =>
+    onPatchDraft(batchId, alias, update)
 
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase()
@@ -251,87 +217,6 @@ export function AliasMatcher({
   }, [aliases, filter, statusFilter])
 
   const unresolvedCount = aliases.filter((alias) => alias.resolution === null).length
-
-  const commit = async (alias: AliasCandidate) => {
-    if (inFlightRef.current.has(alias.id)) return
-    const state = stateOf(alias)
-    const requestBatchId = batchId
-    const key = state.idempotencyKey
-    inFlightRef.current.add(alias.id)
-    patch(alias, { pending: true, notice: null })
-    try {
-      if (state.mode === "match") {
-        const target = entities.find((entity) => entity.id === state.selectedTargetId)
-        if (!target) {
-          patch(alias, { pending: false, notice: { kind: "error", message: "Select a canonical record before binding this alias." } })
-          return
-        }
-        const result = await commitAliasBinding(actions.bindAlias, {
-          batchId: requestBatchId,
-          aliasId: alias.id,
-          externalHandle: alias.externalHandle,
-          targetRecordId: target.id,
-        }, key)
-        handleCallResult(requestBatchId, alias, result, (receipt) => {
-          onResolved(requestBatchId, alias.id, { kind: "bound", targetId: target.id, targetLabel: target.label, receipt })
-        })
-      } else if (state.mode === "create") {
-        const label = state.createLabel.trim()
-        if (label === "") {
-          patch(alias, { pending: false, notice: { kind: "error", message: "Enter a record label before creating and binding." } })
-          return
-        }
-        const externalKey = state.createExternalKey.trim()
-        const result = await commitEntityCreateAndBind(actions.createEntity, {
-          batchId: requestBatchId,
-          aliasId: alias.id,
-          externalHandle: alias.externalHandle,
-          label,
-          ...externalKey !== "" ? { externalKey } : {},
-        }, key)
-        handleCallResult(requestBatchId, alias, result, (receipt) => {
-          const created: TargetEntity = { id: receipt.objectId, label, subtitle: externalKey || undefined }
-          onResolved(requestBatchId, alias.id, { kind: "created", targetId: receipt.objectId, targetLabel: label, receipt }, created)
-        })
-      } else {
-        const note = state.ignoreNote.trim()
-        const result = await commitAliasIgnore(actions.ignoreAlias, {
-          batchId: requestBatchId,
-          aliasId: alias.id,
-          externalHandle: alias.externalHandle,
-          ...note !== "" ? { note } : {},
-        }, key)
-        handleCallResult(requestBatchId, alias, result, (receipt) => {
-          onResolved(requestBatchId, alias.id, { kind: "ignored", ...note !== "" ? { note } : {}, receipt })
-        })
-      }
-    } catch (error) {
-      onPatchDraft(requestBatchId, alias, {
-        pending: false,
-        notice: { kind: "error", message: error instanceof Error ? error.message : "The cell did not respond. Retry reuses the same idempotency key." },
-      })
-    } finally {
-      inFlightRef.current.delete(alias.id)
-    }
-  }
-
-  const handleCallResult = (
-    requestBatchId: string,
-    alias: AliasCandidate,
-    result: Awaited<ReturnType<typeof commitAliasBinding>>,
-    onCommitted: (receipt: ActionReceipt) => void,
-  ) => {
-    if (result.kind === "receipt") {
-      onPatchDraft(requestBatchId, alias, { pending: false, notice: null })
-      onCommitted(result.receipt)
-    } else if (result.kind === "refused") {
-      onPatchDraft(requestBatchId, alias, { pending: false, notice: { kind: "error", message: `${result.code}: ${result.message}` } })
-    } else if (result.kind === "pending") {
-      onPatchDraft(requestBatchId, alias, { pending: false, notice: { kind: "pending", message: `Pending approval decision (${result.decision.id}).` } })
-    } else {
-      onPatchDraft(requestBatchId, alias, { pending: false, notice: { kind: "error", message: "The cell could not commit this alias action right now." } })
-    }
-  }
 
   return (
     <section aria-label="Match aliases and entities" className="overflow-hidden rounded-lg border border-border bg-background">
@@ -432,7 +317,7 @@ export function AliasMatcher({
                       {state.mode === "match" && state.selectedTargetId !== alias.suggestedTargetId && (
                         <button
                           type="button"
-                          onClick={() => patch(alias, { selectedTargetId: alias.suggestedTargetId ?? "", notice: null }, true)}
+                          onClick={() => patch(alias, { selectedTargetId: alias.suggestedTargetId ?? "", notice: null })}
                           className="text-xs font-medium underline decoration-border underline-offset-4 hover:decoration-foreground"
                         >
                           Select suggestion
@@ -499,7 +384,10 @@ export function AliasMatcher({
                             type="button"
                             aria-pressed={state.mode === mode}
                             disabled={state.pending}
-                            onClick={() => patch(alias, { mode, notice: null }, true)}
+                            onClick={() => {
+                              if (state.mode === mode) return
+                              patch(alias, { mode, notice: null })
+                            }}
                             className={cn(
                               "inline-flex h-7 items-center gap-1 rounded border px-2 text-xs font-medium transition-colors",
                               state.mode === mode
@@ -522,14 +410,14 @@ export function AliasMatcher({
                               suggestedId={alias.suggestedTargetId}
                               disabled={state.pending}
                               ariaLabel={`Pick canonical record for ${alias.externalHandle}`}
-                              onSelect={(id) => patch(alias, { selectedTargetId: id, notice: null }, true)}
+                              onSelect={(id) => patch(alias, { selectedTargetId: id, notice: null })}
                             />
                           </div>
                           <Button
                             type="button"
                             size="sm"
                             disabled={state.pending || state.selectedTargetId === ""}
-                            onClick={() => void commit(alias)}
+                            onClick={() => void onCommitAlias(batchId, alias)}
                             className="h-8 shrink-0 px-3 text-xs"
                           >
                             {state.pending ? "Binding…" : "Bind alias"}
@@ -546,7 +434,7 @@ export function AliasMatcher({
                               placeholder="Canonical record label"
                               value={state.createLabel}
                               disabled={state.pending}
-                              onChange={(event) => patch(alias, { createLabel: event.target.value, notice: null }, true)}
+                              onChange={(event) => patch(alias, { createLabel: event.target.value, notice: null })}
                               className="h-8 bg-background text-xs shadow-none"
                             />
                             <Input
@@ -555,7 +443,7 @@ export function AliasMatcher({
                               placeholder="External key (optional)"
                               value={state.createExternalKey}
                               disabled={state.pending}
-                              onChange={(event) => patch(alias, { createExternalKey: event.target.value, notice: null }, true)}
+                              onChange={(event) => patch(alias, { createExternalKey: event.target.value, notice: null })}
                               className="h-8 bg-background font-mono text-xs shadow-none"
                             />
                           </div>
@@ -564,7 +452,7 @@ export function AliasMatcher({
                               type="button"
                               size="sm"
                               disabled={state.pending || state.createLabel.trim() === ""}
-                              onClick={() => void commit(alias)}
+                              onClick={() => void onCommitAlias(batchId, alias)}
                               className="h-8 px-3 text-xs"
                             >
                               {state.pending ? "Creating…" : "Create & bind"}
@@ -581,7 +469,7 @@ export function AliasMatcher({
                             placeholder="Reason (optional, recorded in receipt)"
                             value={state.ignoreNote}
                             disabled={state.pending}
-                            onChange={(event) => patch(alias, { ignoreNote: event.target.value, notice: null }, true)}
+                            onChange={(event) => patch(alias, { ignoreNote: event.target.value, notice: null })}
                             className="h-8 flex-1 bg-background text-xs shadow-none"
                           />
                           <Button
@@ -589,7 +477,7 @@ export function AliasMatcher({
                             size="sm"
                             variant="outline"
                             disabled={state.pending}
-                            onClick={() => void commit(alias)}
+                            onClick={() => void onCommitAlias(batchId, alias)}
                             className="h-8 shrink-0 px-3 text-xs"
                           >
                             {state.pending ? "Saving…" : "Confirm ignore"}
@@ -598,17 +486,30 @@ export function AliasMatcher({
                       )}
 
                       {state.notice !== null && (
-                        <p
-                          role={state.notice.kind === "error" ? "alert" : "status"}
+                        <div
+                          role={state.notice.kind === "pending" ? "status" : "alert"}
+                          data-alias-notice={state.notice.kind}
                           className={cn(
-                            "rounded border px-2 py-1 text-xs",
+                            "flex flex-wrap items-center gap-2 rounded border px-2 py-1 text-xs",
                             state.notice.kind === "pending"
                               ? "border-tone-amber/40 bg-tone-amber/8 text-tone-amber"
                               : "border-destructive/30 bg-destructive/5 text-destructive",
                           )}
                         >
-                          {state.notice.message}
-                        </p>
+                          <span className="min-w-0 flex-1">{state.notice.message}</span>
+                          {state.notice.kind === "error" && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={state.pending}
+                              onClick={() => void onCommitAlias(batchId, alias)}
+                              className="h-6 shrink-0 border-border bg-background px-2 text-xs text-foreground shadow-none"
+                            >
+                              Retry
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
