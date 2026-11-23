@@ -56,7 +56,7 @@ export function Chip({ tone = "gray", icon: Icon, dot = false, pulse = false, mo
 /** A neutral chip for a fact: a muted label and a value, like "commit 2983" or "DuckDB". */
 export function FactChip({ icon: Icon, label, children, className, ...props }: { icon?: LucideIcon; label?: ReactNode; children: ReactNode } & Omit<ComponentProps<"span">, "children">) {
   return (
-    <span data-slot="fact-chip" className={cn("inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-border/80 bg-card px-2 text-meta whitespace-nowrap tabular-nums", className)} {...props}>
+    <span data-slot="fact-chip" className={cn("inline-flex h-6 max-w-full items-center gap-1 text-meta whitespace-nowrap tabular-nums", className)} {...props}>
       {Icon && <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
       {label !== undefined && <span className="text-muted-foreground">{label}</span>}
       <span className="min-w-0 truncate text-foreground">{children}</span>

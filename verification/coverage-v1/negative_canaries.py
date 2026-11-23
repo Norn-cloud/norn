@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
@@ -133,10 +134,13 @@ def condition_value(expression: str, names: dict | None = None):
             left = value(node.left)
             for operator, right in zip(node.ops, node.comparators):
                 right = value(right)
+                # Actions compares strings ignoring case: 'BoAt' == 'boat' is true.
+                same = (left.casefold() == right.casefold() if isinstance(left, str) and isinstance(right, str)
+                        else left == right)
                 if isinstance(operator, ast.Eq):
-                    ok = left == right
+                    ok = same
                 elif isinstance(operator, ast.NotEq):
-                    ok = left != right
+                    ok = not same
                 else:
                     raise AssertionError(f"unsupported comparison in {expression!r}")
                 if not ok:
@@ -630,12 +634,8 @@ def workflow_verdict_canaries(source: str) -> None:
                                          cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
     full_plan.update(base_sha="base", head_sha="head")
     affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": []}
-    def packed(plan: dict[str, Any]) -> dict[str, Any]:
-        return json.loads(subprocess.run(["bash", "scripts/ci/core.sh", "bundle-plan", json.dumps(plan)],
-                                        cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
-    full_plan = packed(full_plan)
-    affected = packed(affected)
-    passed = dict.fromkeys(("CORE", "TEST"), "success")
+    affected["bundle"] = [{"id": "b0", "tasks": ["test/rest-1"]}]
+    passed = dict.fromkeys(("PLANNER", "CORE", "TEST"), "success")
     cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
     cases.append(("pull_request", affected, passed, True))
     cases.extend((event, affected, passed, False)
@@ -643,11 +643,15 @@ def workflow_verdict_canaries(source: str) -> None:
     cases.extend(("merge_group", full_plan, {**passed, key: result}, False)
                  for key in passed for result in ("failure", "cancelled", "skipped"))
     cases.append(("pull_request", affected, {**passed, "TEST": "skipped"}, False))
-    # Affected merge groups pass only while the always-run phases stay in the plan.
+    # The merge queue runs the full suite: an affected merge-group plan fails, even one that keeps
+    # the always-run phases (#1348).
     merge_affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy"]}
-    merge_affected = packed(merge_affected)
-    cases.append(("merge_group", merge_affected, passed, True))
-    cases.append(("merge_group", packed({**merge_affected, "phase": ["guards", "provenance"]}), passed, False))
+    merge_affected["bundle"] = [{"id": "b0", "tasks": ["test/rest-1", "phase/guards", "phase/provenance", "phase/clippy"]}]
+    cases.append(("merge_group", merge_affected, passed, False))
+    missing_phase = copy.deepcopy(merge_affected)
+    missing_phase["phase"].remove("clippy")
+    missing_phase["bundle"][0]["tasks"].remove("phase/clippy")
+    cases.append(("merge_group", missing_phase, passed, False))
     extra = copy.deepcopy(merge_affected)
     extra["phase"] = ["guards", "provenance", "clippy-extra"]
     for bundle in extra["bundle"]:
@@ -686,20 +690,29 @@ def workflow_verdict_canaries(source: str) -> None:
 
 
 def rust_parity_evidence_canaries() -> None:
-    """The cheap phase requires the two Rust parity tests to have run and passed (nextest JUnit)."""
+    """The cheap phase requires the Rust concurrency and bundle tests to have run and passed (nextest JUnit)."""
     validator = load_module("norn_rust_parity_evidence_canaries", VALIDATOR)
     core = validator.CORE_RUNNER.read_text(encoding="utf-8")
     first = "ci::tests::the_parity_fixture_keeps_every_gate_pinned_case"
     second = "ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture"
-    call = f"      require_passed \"$parity_report\" norn-skeleton-guard {first} {second}\n"
-    run = f"      \"${{nextest[@]}}\" run --locked --ignore-default-filter \"${{guard[@]}}\" --lib -E 'test(={first}) | test(={second})'\n"
+    bundle_tests = (
+        'ci::bundle::tests::matches_python_on_real_plans',
+        'ci::bundle::tests::refuses_wrong_inventories_and_ids',
+        'ci::bundle::tests::groups_shared_builds_and_prunes_every_other_boundary',
+        'ci::bundle::tests::prunes_only_workspace_cargo_outputs',
+    )
+    bundle_selector = " | ".join(f"test(={name})" for name in bundle_tests)
+    bundle_names = " ".join(bundle_tests)
+    call = f'      require_passed "$parity_report" norn-skeleton-guard {first} {second} {bundle_names}\n'
+    run = f"""      "${{nextest[@]}}" run --locked --ignore-default-filter "${{guard[@]}}" --lib -E 'test(={first}) | test(={second}) | {bundle_selector}'\n"""
     with tempfile.TemporaryDirectory() as directory:
         mutated = Path(directory) / "core.sh"
         for label, before, after in (
                 ("the parity tests are not run", run, ""),
                 ("their run is not required", call, ""),
                 ("a parity test renamed", call, call.replace(f" {first} ", " ci::tests::renamed ")),
-                ("only one parity test required", call, call.replace(f" {second}", "")),
+                ("one parity test missing", call, call.replace(f" {second}", "")),
+                ("a bundle test missing", call, call.replace(f" {bundle_tests[-1]}", "")),
                 ("a skipped test counts as passed", '"failure", "error", "skipped", ', '"failure", "error", '),
                 ("the default filter decides", 'run --locked --ignore-default-filter "${guard[@]}" --lib', 'run --locked "${guard[@]}" --lib')):
             if core.count(before) != 1:
@@ -709,7 +722,7 @@ def rust_parity_evidence_canaries() -> None:
             try:
                 validator.validate_workflow_integrity([])
             except validator.InvalidCoverage as error:
-                if "cheap phase must require the two Rust concurrency parity tests" in str(error):
+                if "cheap phase must require the Rust concurrency and bundle tests" in str(error):
                     continue
                 raise AssertionError(f"Rust parity evidence mutation ({label}) refused for another reason: {error}")
             finally:
@@ -752,7 +765,7 @@ def studio_browser_pin_canaries() -> None:
                 ("all skipped passes", "        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\\n' >&2; exit 1; }\n", ""),
                 ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
                 ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
-                ("not in the plan", " integration browser formal ", " integration formal "),
+                ("not in the plan", " integration-clients browser formal ", " integration-clients formal "),
                 ("no checker-admission test", "        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\\n' \"$decision\"; exit 1; }\n", ""),
                 ("no named-case check", "        grep -qxE '\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]' <<< \"$decision\" || { printf 'browser: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
                 ("named case matched as a substring", "grep -qxE '\\(pass\\) the checker admits", "grep -qE '\\(pass\\) the checker admits"),
@@ -770,6 +783,75 @@ def studio_browser_pin_canaries() -> None:
             finally:
                 validator.CORE_RUNNER = ROOT / "scripts/ci/core.sh"
             raise AssertionError(f"browser phase mutation passed: {label}")
+
+
+def integration_partition_canaries() -> None:
+    validator = load_module("norn_integration_canaries", VALIDATOR)
+    core = validator.CORE_RUNNER.read_text(encoding="utf-8")
+    command = '      bash sdks/python/run-demo.sh "$upstream/python-client"\n'
+    with tempfile.TemporaryDirectory() as directory:
+        validator.CORE_RUNNER = Path(directory) / "core.sh"
+        for mutated, diagnostic in (
+                (core.replace(" integration-wasm ", " "), "integration phases must each be registered once"),
+                (core.replace(command, ""), "integration check must run exactly once"),
+                (core.replace(command, command * 2), "integration check must run exactly once"),
+                (core.replace("--shard=2/2", "--shard=1/2"),
+                 "authoring shards must execute and check coverage exactly once"),
+                (core.replace('  (( status == 0 )) || exit "$status"\n', ""),
+                 "authoring shards must execute and check coverage exactly once"),
+                (core.replace("if not expected or actual != expected:", "if False:"),
+                 "authoring shards must execute and check coverage exactly once"),
+                (core.replace("if idle:", "if False:"),
+                 "authoring shards must execute and check coverage exactly once")):
+            validator.CORE_RUNNER.write_text(mutated, encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([])
+            except validator.InvalidCoverage as error:
+                if diagnostic in str(error):
+                    continue
+                raise
+            raise AssertionError(f"integration partition mutation passed: {diagnostic}")
+        # A skip-allowed marker on a second file is refused by the validator's pinned set.
+        lines = (ROOT / "scripts/ci/authoring-test-files.txt").read_text(encoding="utf-8").splitlines()
+        other = next(i for i, line in enumerate(lines) if len(line.split()) == 1)
+        marked = lines[:other] + [lines[other] + " skip-allowed"] + lines[other + 1:]
+        validator.AUTHORING_INVENTORY = Path(directory) / "authoring-test-files.txt"
+        validator.AUTHORING_INVENTORY.write_text("\n".join(marked) + "\n", encoding="utf-8")
+        validator.CORE_RUNNER.write_text(core, encoding="utf-8")
+        try:
+            validator.validate_workflow_integrity([])
+        except validator.InvalidCoverage as error:
+            if "only test/engine-alpha.test.ts may be skip-allowed" not in str(error):
+                raise
+        else:
+            raise AssertionError("a second skip-allowed authoring file passed")
+
+        inventory = ROOT / "scripts/ci/authoring-test-files.txt"
+        files = [line.split()[0] for line in inventory.read_text(encoding="utf-8").splitlines()]
+        allowed = {line.split()[0] for line in inventory.read_text(encoding="utf-8").splitlines() if len(line.split()) == 2}
+        # A file outside skip-allowed whose suite has only skipped cases is not coverage.
+        idle = next(file for file in files[2:] if file not in allowed)
+        checker = core.split("<<'PYTHON'\n", 1)[1].split("\nPYTHON\n", 1)[0]
+        reports = [Path(directory) / f"authoring-{shard}.xml" for shard in (1, 2)]
+        for label, first_files, first_case, skipped, diagnostic in (
+                ("complete reports", files[:2], True, allowed, ""),
+                ("silent deletion", files[:1], True, allowed, f"missing={[files[1]]}"),
+                ("empty shard with suite headers", files[:2], False, allowed, "no authoring tests executed"),
+                ("skipped-only file", files[:2], True, allowed | {idle}, f"no executed test: {[idle]}")):
+            for report, shard_files, has_cases in zip(reports, (first_files, files[2:]), (first_case, True)):
+                root = ET.Element("testsuites")
+                for file in shard_files:
+                    suite = ET.SubElement(root, "testsuite", file=file)
+                    if has_cases:
+                        # Like Bun's report: a describe block nests its cases in an inner suite.
+                        case = ET.SubElement(ET.SubElement(suite, "testsuite", name="block"), "testcase", name="example")
+                        if file in skipped:
+                            ET.SubElement(case, "skipped")
+                ET.ElementTree(root).write(report, encoding="utf-8")
+            result = subprocess.run([sys.executable, "-c", checker, str(inventory), *map(str, reports)],
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode != bool(diagnostic) or diagnostic not in result.stderr:
+                raise AssertionError(f"authoring shard coverage drift ({label}): {result.returncode} {result.stderr}")
 
 
 def workflow_cleanup_canaries(source: str) -> None:
@@ -813,7 +895,7 @@ def studio_browser_phase_canaries() -> None:
         tools = {
             "cargo": "exit 0",
             "bun": 'if [ "$1" = test ]; then printf "%s\\n" "$BUN_TEST_OUTPUT"; exit "$BUN_TEST_STATUS"; fi; exit 0',
-            "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.98.0"; fi',
+            "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.100.0"; fi',
             "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
                     'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
                     'exit "$RUN_STATUS"',
@@ -822,7 +904,12 @@ def studio_browser_phase_canaries() -> None:
             (bin_dir / name).write_text("#!/bin/sh\n" + body + "\n")
             (bin_dir / name).chmod(0o755)
         build = tree / "crates/norn-checker-wasm/scripts/build-pkg.sh"
-        build.write_text("#!/bin/sh\nmkdir -p \"$1\"\n")
+        build.write_text(
+            '#!/bin/sh\nmkdir -p "$1"\n'
+            'if [ "${NORN_WASM_ENGINE:-0}" = 1 ]; then name=norn_engine_wasm; '
+            'else name=norn_checker_wasm; fi\n'
+            'touch "$1/${name}_bg.wasm" "$1/package.json" "$1/SIZE.txt"\n'
+        )
         build.chmod(0o755)
         config, e2e = tree / "apps/studio/playwright.config.ts", tree / "apps/studio/e2e"
         wasm_libdir = Path(directory) / "wasm32-lib"
@@ -1139,82 +1226,6 @@ def workflow_sccache_canaries(source: str) -> None:
                 raise AssertionError(f"{name}: shared cache enabled without the bucket's keys")
 
 
-def bundle_prune_drift(function: str) -> str | None:
-    """Run a `prune_target` definition against every CARGO_TARGET_DIR case; describe any drift.
-
-    Only the workspace's own target dir is touched, and inside it only Cargo build outputs
-    (profile and target-triple trees, `doc`); target/verification-* evidence and tools,
-    other content and symlinks survive.
-    """
-    with tempfile.TemporaryDirectory() as directory:
-        top = Path(directory).resolve()
-        home, workspace = top / "home", top / "home" / "work" / "norn"
-        outside = top / "outside"
-        target = workspace / "target"
-        cargo = [target / "debug", target / "wasm32-unknown-unknown", target / "doc"]
-        kept = [workspace, workspace / "src", home, home / ".cargo", outside, target,
-                target / "verification-results", target / "verification-tools", target / "norn-checker-wasm",
-                outside / ".fingerprint"]
-        for path in (workspace / "src", home / ".cargo", outside / ".fingerprint"):
-            path.mkdir(parents=True, exist_ok=True)
-        (workspace / "escape").symlink_to(outside)
-        (workspace / "target-link").symlink_to(outside)
-        cases = {
-            None: True, "": True, "target": True, "target/": True, str(target): True,
-            "target/../target": True,
-            "/": False, str(home): False, str(workspace): False, str(workspace.parent): False, ".": False, "..": False,
-            "../sibling": False, str(outside): False, "escape": False, "target-link": False, "target/debug": False,
-            "src/../../norn": False,
-        }
-        for value, deletes in cases.items():
-            for path in (target / "debug" / ".fingerprint", target / "wasm32-unknown-unknown" / "debug" / ".fingerprint",
-                         # Verification tools may be Cargo-built in place: still never pruned.
-                         target / "doc", target / "verification-results", target / "verification-tools" / "release" / ".fingerprint",
-                         target / "norn-checker-wasm" / "pkg"):
-                path.mkdir(parents=True, exist_ok=True)
-            # A symlinked profile-looking tree out of target must never be followed.
-            link = target / "linked"
-            if not link.is_symlink():
-                link.symlink_to(outside)
-            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home)}
-            if value is not None:
-                env["CARGO_TARGET_DIR"] = value
-            result = subprocess.run(["bash", "-c", function + "prune_target"], cwd=workspace, env=env,
-                                    capture_output=True, text=True, timeout=30)
-            if result.returncode:
-                return f"{value!r}: exit {result.returncode} {result.stderr!r}"
-            lost = [str(path) for path in kept + [link] if not (path.exists() or path.is_symlink())]
-            if lost:
-                return f"{value!r}: removed {lost}"
-            remaining = [path.exists() for path in cargo]
-            if remaining != [not deletes] * len(cargo):
-                return f"{value!r}: Cargo outputs {remaining}, expected {'pruned' if deletes else 'kept'}"
-            if not deletes and "refusing to prune" not in result.stdout:
-                return f"{value!r}: refused silently"
-    return None
-
-
-def bundle_prune_containment_canaries() -> None:
-    """The bundle prune deletes only Cargo build outputs in the workspace's own target dir."""
-    core = (ROOT / "scripts/ci/core.sh").read_text(encoding="utf-8")
-    start = core.index("prune_target() {\n")
-    function = core[start:core.index("\n}\n", start) + 3]
-    drift = bundle_prune_drift(function)
-    if drift is not None:
-        raise AssertionError(f"bundle prune containment drift: {drift}")
-    # Pruning all of target, or every directory in it, takes verification evidence and tools.
-    for label, before, after in (
-            ("whole target", 'rm -rf -- "$entry"', 'rm -rf -- "$target"'),
-            ("verification evidence", ' && $name != verification-*', ''),
-            ("any directory", 'if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then',
-             "if true; then"),
-            ("followed symlinks", ' && ! -L $entry', '')):
-        if function.count(before) != 1:
-            raise AssertionError(f"bundle prune containment canary target drifted: {label}")
-        if bundle_prune_drift(function.replace(before, after)) is None:
-            raise AssertionError(f"bundle prune mutation passed: {label}")
-
-
 def workflow_trusted_policy_canaries(source: str) -> None:
     job = yaml.safe_load(source)["jobs"]["trusted-policy"]
     expression = " ".join(job["if"].split())
@@ -1436,6 +1447,12 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["run-name"] = "${{ github.event.pull_request.title }}"
         rejected("forged READY attribution", document)
+        document = copy.deepcopy(workflow)
+        document["permissions"]["id-token"] = "write"
+        rejected("workflow-wide OIDC grant inherited by the planner", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["plan"]["permissions"] = {"contents": "read", "id-token": "write"}
+        rejected("planner OIDC grant", document)
         for name in ("core", "full", "trusted-policy"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
@@ -1463,7 +1480,7 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"][-1]["shell"] = "/usr/bin/true {0}"
             rejected(f"{name} shell override", document)
-        for key in ("DRAFT", "BASE", "HEAD_SHA", "CORE", "TEST"):
+        for key in ("DRAFT", "BASE", "HEAD_SHA", "PLAN", "PLANNER", "CORE", "TEST"):
             document = copy.deepcopy(workflow)
             document["jobs"]["full"]["steps"][0]["env"][key] = "forged"
             rejected(f"forged verdict input {key}", document)
@@ -1473,16 +1490,23 @@ def workflow_context_canaries(source: str) -> None:
             rejected(f"{name} cancellation/admission mutation", document)
         # A draft head runs core only: bundles admitted for drafts are rejected.
         document = copy.deepcopy(workflow)
-        document["jobs"]["test"]["if"] = "fromJSON(needs.core.outputs.plan).bundle[0] != null"
+        document["jobs"]["test"]["if"] = "fromJSON(needs.plan.outputs.plan).bundle[0] != null"
         rejected("bundles admitted for draft heads", document)
-        # The gate plan is core's step before cheap: it must exist once, unconditional, fail
-        # closed, bound to the event base and head, and published as core's only output.
-        planner = next(i for i, step in enumerate(workflow["jobs"]["core"]["steps"]) if step.get("id") == "plan")
+        # The gate plan is the plan job's step after the candidate checkout: it must exist once,
+        # unconditional, fail closed, bound to the event base and head, and published as the plan
+        # job's only output. The job stays hosted, outside the cache-writer environment, and runs
+        # nothing else.
+        planner = next(i for i, step in enumerate(workflow["jobs"]["plan"]["steps"]) if step.get("id") == "plan")
         for label, mutate in (
                 ("removed", lambda job: job["steps"].pop(planner)),
                 ("conditional", lambda job: job["steps"][planner].__setitem__("if", "false")),
                 ("tolerated", lambda job: job["steps"][planner].__setitem__("continue-on-error", True)),
-                ("after cheap", lambda job: job["steps"].append(job["steps"].pop(planner))),
+                ("before the checkout", lambda job: job["steps"].insert(0, job["steps"].pop(planner))),
+                ("with an extra step", lambda job: job["steps"].append({"run": "cargo build --workspace"})),
+                ("on Boat", lambda job: job.__setitem__("runs-on", workflow["jobs"]["core"]["runs-on"])),
+                ("in the cache-writer environment",
+                 lambda job: job.__setitem__("environment", workflow["jobs"]["core"]["environment"])),
+                ("run for trusted events", lambda job: job.__setitem__("if", "always()")),
                 ("unbound base", lambda job: job["steps"][planner]["env"].__setitem__("BASE", "")),
                 ("forged head", lambda job: job["steps"][planner]["env"].__setitem__("HEAD_SHA", "HEAD")),
                 ("unbound output", lambda job: job["outputs"].__setitem__("plan", "{}")),
@@ -1491,11 +1515,16 @@ def workflow_context_canaries(source: str) -> None:
                 ("renamed", lambda job: job["steps"][planner].__setitem__("id", "planned")),
                 ("duplicated", lambda job: job["steps"].insert(planner, copy.deepcopy(job["steps"][planner])))):
             document = copy.deepcopy(workflow)
-            mutate(document["jobs"]["core"])
-            rejected(f"core gate plan {label}", document)
+            mutate(document["jobs"]["plan"])
+            rejected(f"gate plan {label}", document)
+        # Core and the bundles never publish or recompute a plan of their own.
+        for name in ("core", "test"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["outputs"] = {"plan": "{}"}
+            rejected(f"{name} publishes a gate plan", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["plan"] = copy.deepcopy(document["jobs"]["full"])
-        rejected("a separate plan job (an extra Boat start)", document)
+        document["jobs"]["test"]["needs"] = ["core"]
+        rejected("bundles bound to a plan that is not the plan job's", document)
         document = copy.deepcopy(workflow)
         document["on"]["pull_request"]["types"].remove("ready_for_review")
         rejected("missing READY activity", document)
@@ -1564,7 +1593,14 @@ def workflow_context_canaries(source: str) -> None:
                     ("post-job stats re-enabled", lambda job: next(step for step in job["steps"]
                         if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].__setitem__(
                         "disable_annotations", False)),
-                    ("cache writer for every event", lambda job: job.__setitem__("environment", "ci-cache-writer")),
+                    ("cache writer for every event", lambda job: job.__setitem__("environment", "ci-cache-writer-boat")),
+                    ("retired cache-writer environment", lambda job: job.__setitem__("environment",
+                        job["environment"].replace("'ci-cache-writer-boat'", "'ci-cache-writer'"))),
+                    # A human's push or re-run of main runs hosted: it must not receive the key.
+                    ("cache writer for human pushes", lambda job: job.__setitem__("environment",
+                        job["environment"].replace(" && github.actor == 'github-merge-queue[bot]'", ""))),
+                    ("cache writer for human re-runs", lambda job: job.__setitem__("environment",
+                        job["environment"].replace(" && github.triggering_actor == 'github-merge-queue[bot]'", ""))),
                     ("cache writer for pull requests", lambda job: job.__setitem__("environment",
                         job["environment"].replace("github.event_name == 'push' && github.ref == 'refs/heads/main'",
                                                    "(github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request')"))),
@@ -1573,6 +1609,9 @@ def workflow_context_canaries(source: str) -> None:
                                                    "(github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group')"))),
                     ("cache writer for every push", lambda job: job.__setitem__("environment",
                         job["environment"].replace(" && github.ref == 'refs/heads/main'", ""))),
+                    # A hosted main push uses the Actions cache: it never receives the writable key (#1369).
+                    ("cache writer for hosted main pushes", lambda job: job.__setitem__("environment",
+                        job["environment"].replace(" && vars.NORN_MAIN_RUNNER == 'boat'", ""))),
                     ("merge groups write the shared cache", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
@@ -1594,34 +1633,51 @@ def workflow_context_canaries(source: str) -> None:
                     ("cache keys outside the start step", lambda job: next(step for step in job["steps"]
                         if step.get("uses", "").startswith("Swatinem/rust-cache@")).__setitem__("env",
                         {"NORN_SCCACHE_SECRET": "${{ secrets.NORN_SCCACHE_SECRET }}"})),
+                    # The keys come from Infisical over OIDC, never from GitHub secrets again.
+                    ("cache keys back in GitHub secrets", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("env",
+                        {"NORN_SCCACHE_%s" % name: "${{ secrets.NORN_SCCACHE_%s }}" % name
+                         for name in ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")})),
+                    ("cache-key step on hosted runners", lambda job: next(step for step in job["steps"]
+                        if step.get("id") == "sccache-keys").pop("if")),
+                    ("cache-key step without its OIDC token", lambda job: job.pop("permissions")),
+                    ("job-wide write permissions for the cache", lambda job: job.__setitem__("permissions", "write-all")),
                     ("fatal start", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):
                 document = copy.deepcopy(workflow)
                 change(document["jobs"][name])
                 rejected(f"{name} sccache {label}", document)
-        # The bundle may drop only the cargo target dir, between tasks that share no build.
+        document = copy.deepcopy(workflow)
+        document["jobs"]["core"]["permissions"].pop("actions")
+        rejected("core secret inventory without environment read permission", document)
+        document = copy.deepcopy(workflow)
+        step = next(step for step in document["jobs"]["core"]["steps"]
+                    if step.get("name") == "Audit Actions secret inventory")
+        step["continue-on-error"] = True
+        rejected("core secret inventory failure ignored", document)
+        # Outside core and test no job mints an OIDC token, `write-all` included.
+        for name in ("full", "trusted-policy"):
+            for label, permissions in (("write-all", "write-all"), ("id-token", {"id-token": "write"})):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["permissions"] = permissions
+                rejected(f"{name} OIDC token by {label}", document)
+        # The Rust guard exercises the bundle and prune behavior. Pin the shell handoff.
         source_runner = validator.CORE_RUNNER
         core = source_runner.read_text(encoding="utf-8")
         try:
-            for label, before, after in (
-                    ("broad", 'rm -rf -- "$entry"', 'rm -rf -- "$root"'),
-                    ("whole target", 'rm -rf -- "$entry"', 'rm -rf -- "$target"'),
-                    ("verification evidence", ' && $name != verification-*', ''),
-                    ("uncontained", 'if [[ $target != "$root/target" ]]; then', "if false; then"),
-                    ("uncanonical", 'target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}")', 'target=${CARGO_TARGET_DIR:-$PWD/target}'),
-                    ("unconditional", "if [[ -n $pruned ]] && ! {", "if true || [[ -n $pruned ]] && ! {"),
-                    ("first task", "      pruned=1 previous=$task\n", ""),
-                    ("every task shares a build", "shares_build() { [[ $1 == test/* ||", "shares_build() { [[ $1 == * ||"),
-                    ("shared build pruned", ' && ! { shares_build "$previous" && shares_build "$task"; }', ""),
-                    ("extra deletion", "        prune_target\n", '        prune_target; rm -rf -- "$HOME/.cargo"\n')):
+            for label, replacement in (
+                    ("skipped executor", "true"),
+                    ("dropped arguments", "exec cargo xtask ci bundle"),
+                    ("swallowed failure", 'cargo xtask ci "$@" || true'),
+                    ("extra deletion", 'rm -rf -- "$HOME/.cargo"; exec cargo xtask ci "$@"')):
+                before = 'exec cargo xtask ci "$@"'
                 if core.count(before) != 1:
-                    raise AssertionError(f"bundle prune canary target drifted: {label}")
+                    raise AssertionError(f"bundle dispatch canary target drifted: {label}")
                 mutated = Path(directory) / "core.sh"
-                mutated.write_text(core.replace(before, after), encoding="utf-8")
+                mutated.write_text(core.replace(before, replacement), encoding="utf-8")
                 validator.CORE_RUNNER = mutated
-                document = copy.deepcopy(workflow)
-                rejected(f"{label} bundle prune", document)
+                rejected(label, copy.deepcopy(workflow))
         finally:
             validator.CORE_RUNNER = source_runner
         for name in ("core", "test"):
@@ -1655,34 +1711,50 @@ def workflow_context_canaries(source: str) -> None:
             return next(step for step in document["jobs"][job]["steps"]
                         if step.get("uses", "").startswith(action + "@"))
 
-        runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+        runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+        # The runner before main pushes could reach Boat (#1369): superseded.
+        before_main = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
         merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
         same_repo = "github.event.pull_request.head.repo.full_name == github.repository && "
         legacy = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
-        expression = runner.removeprefix("${{ ").removesuffix(" }}")
-        boat_users = ("Youssef-Tarek-Ali-26", "dependabot[bot]", "other-maintainer")
+        boat_users = ("Youssef-Tarek-Ali-26", "github-merge-queue[bot]", "dependabot[bot]")
         for event in ("merge_group", "pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
-            # Boat CI runs public-repository jobs only for its allowlisted user: any
-            # other PR author, actor or re-runner (Dependabot included) stays hosted.
-            for merge_variable, pr_variable, head_repository, author, actor, rerunner in itertools.product(
-                    ("", "boat", "self-hosted", "other"), ("", "boat", "self-hosted", "other"),
-                    ("Norn-cloud/norn", "attacker/norn", ""), *[boat_users] * 3):
-                concrete = (expression.replace("github.event_name", repr(event))
+            # Boat CI runs public-repository jobs only for its allowlisted users: any other
+            # PR author, actor or re-runner (Dependabot included) stays hosted, and a main push
+            # reaches Boat only when the merge queue made and started it (#1369).
+            for merge_variable, pr_variable, main_variable, ref, head_repository, author, actor, rerunner in itertools.product(
+                    ("", "boat", "BoAt", "other"), ("", "boat", "BoAt", "other"), ("", "boat", "BoAt", "other"),
+                    ("refs/heads/main", "refs/heads/demo/robin"),
+                    ("Norn-cloud/norn", "attacker/norn"), *[boat_users] * 3):
+                def concrete(text: str) -> str:
+                    return (text.removeprefix("${{ ").removesuffix(" }}")
+                            .replace("github.event_name", repr(event))
                             .replace("vars.NORN_MERGE_RUNNER", repr(merge_variable))
                             .replace("vars.NORN_PR_RUNNER", repr(pr_variable))
+                            .replace("vars.NORN_MAIN_RUNNER", repr(main_variable))
+                            .replace("github.ref", repr(ref))
                             .replace("github.event.pull_request.head.repo.full_name", repr(head_repository))
                             .replace("github.event.pull_request.user.login", repr(author))
                             .replace("github.triggering_actor", repr(rerunner))
                             .replace("github.actor", repr(actor))
                             .replace("github.repository", repr("Norn-cloud/norn"))
                             .replace("&&", " and ").replace("||", " or "))
-                expected = ("boat" if (event == "merge_group" and merge_variable == "boat")
-                            or (event == "pull_request" and pr_variable == "boat"
+                main_push = (event == "push" and ref == "refs/heads/main" and main_variable.casefold() == "boat"
+                             and actor == rerunner == "github-merge-queue[bot]")
+                expected = ("boat" if (event == "merge_group" and merge_variable.casefold() == "boat")
+                            or (event == "pull_request" and pr_variable.casefold() == "boat"
                                 and head_repository == "Norn-cloud/norn"
-                                and author == actor == rerunner == "Youssef-Tarek-Ali-26") else "ubuntu-24.04")
-                if condition_value(concrete) != expected:
-                    raise AssertionError("Boat runner evaluation drift: " + "/".join(
-                        (event, merge_variable, pr_variable, head_repository, author, actor, rerunner)))
+                                and author == actor == rerunner == "Youssef-Tarek-Ali-26")
+                            or main_push else "ubuntu-24.04")
+                case = "/".join((event, merge_variable, pr_variable, main_variable, ref, head_repository, author, actor, rerunner))
+                if condition_value(concrete(runner)) != expected:
+                    raise AssertionError("Boat runner evaluation drift: " + case)
+                # The writable cache key goes exactly to the runs the main-push arm sends to Boat:
+                # never a hosted run (a human's push or re-run), a pull request or a merge group.
+                for job in ("core", "test"):
+                    environment = condition_value(concrete(workflow["jobs"][job]["environment"]))
+                    if environment != ("ci-cache-writer-boat" if main_push else ""):
+                        raise AssertionError(f"{job} cache-writer environment drift: " + case)
         for name in ("core", "test", "full", "trusted-policy"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
@@ -1705,7 +1777,18 @@ def workflow_context_canaries(source: str) -> None:
                                      "github.event.pull_request.user.type != 'Bot'"),
                       runner.replace("'Youssef-Tarek-Ali-26'", "'dependabot[bot]'"),
                       runner.replace("== 'boat'", "== 'self-hosted'"),
-                      runner.replace("|| 'ubuntu-24.04'", "|| 'boat'")]
+                      runner.replace("|| 'ubuntu-24.04'", "|| 'boat'"),
+                      before_main,
+                      # A main push reaches Boat only from the merge queue, on main, by opt-in.
+                      runner.replace("github.event_name == 'push' && ", ""),
+                      runner.replace(" && github.ref == 'refs/heads/main'", ""),
+                      runner.replace("github.ref == 'refs/heads/main'", "github.ref != ''"),
+                      runner.replace(" && github.actor == 'github-merge-queue[bot]'", ""),
+                      runner.replace(" && github.triggering_actor == 'github-merge-queue[bot]'", ""),
+                      runner.replace("'github-merge-queue[bot]'", "'dependabot[bot]'"),
+                      runner.replace(" && vars.NORN_MAIN_RUNNER == 'boat'", ""),
+                      runner.replace("vars.NORN_MAIN_RUNNER", "vars.NORN_PR_RUNNER"),
+                      runner.replace("'push'", "'workflow_dispatch'")]
             for event in ("pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
             for event in ("pull_request_target", "issue_comment", "push", "workflow_dispatch"):
@@ -1798,20 +1881,23 @@ def workflow_canaries() -> None:
     mutations = [
         ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
         ("missing bundle executor", 'run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"', "run: echo skipped"),
-        ("missing bundle matrix", "bundle: ${{ fromJSON(needs.core.outputs.plan).bundle }}", "bundle: []"),
-        ("missing full verdict dependency", "needs: [core, test]", "needs: [core]"),
-        ("disabled planned bundles", "if: fromJSON(needs.core.outputs.plan).bundle[0] != null", "if: false"),
+        ("missing bundle matrix", "bundle: ${{ fromJSON(needs.plan.outputs.plan).bundle }}", "bundle: []"),
+        ("missing full verdict dependency", "needs: [plan, core, test]", "needs: [plan, core]"),
+        ("verdict without the core gate", "needs: [plan, core, test]", "needs: [plan, test]"),
+        ("disabled planned bundles", "if: fromJSON(needs.plan.outputs.plan).bundle[0] != null", "if: false"),
         ("wrong affected base", "github.event_name == 'pull_request' && github.event.pull_request.base.sha", "github.event_name == 'pull_request' && github.sha"),
-        ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.core.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
-        ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.core.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
+        ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
+        ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
         ("more bundles than the start budget", "length <= 3 and all(.[];", "length <= 6 and all(.[];"),
         ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
         ("forged core verdict", "CORE: ${{ needs.core.result }}", "CORE: success"),
+        ("forged planner verdict", "PLANNER: ${{ needs.plan.result }}", "PLANNER: success"),
+        ("missing planner verdict", '[ "$PLANNER" = success ]', 'true'),
         ("missing full-plan assertion", '[ "$mode" = full ]', 'true'),
         ("planned skipped job accepted", '[ "$2" -eq 0 ]', 'true'),
         ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)", "!cancelled()"),
         ("floating action", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4"),
-        ("floating Rust toolchain", "toolchain: 1.98.0", "toolchain: stable"),
+        ("floating Rust toolchain", "toolchain: 1.100.0", "toolchain: stable"),
         ("insufficient proof timeout", "timeout-minutes: 110", "timeout-minutes: 20"),
     ]
     mutations.extend((f"missing {trigger} trigger", f"  {trigger}:\n", "") for trigger in ("pull_request", "pull_request_target", "push", "merge_group"))
@@ -1822,8 +1908,8 @@ def workflow_canaries() -> None:
                 raise AssertionError(f"workflow canary target drifted: {label}")
             candidate.write_text(source.replace(original, replacement, 1), encoding="utf-8")
             expect_coverage_validator_rejection(label, formal_workflow_path=candidate)
-        decoy = source.replace("toolchain: 1.98.0", "toolchain: stable", 1).replace(
-            "name: Public core\n", "name: Public core\nenv:\n  toolchain: 1.98.0\n", 1)
+        decoy = source.replace("toolchain: 1.100.0", "toolchain: stable", 1).replace(
+            "name: Public core\n", "name: Public core\nenv:\n  toolchain: 1.100.0\n", 1)
         candidate.write_text(decoy, encoding="utf-8")
         expect_coverage_validator_rejection("decoy toolchain key", formal_workflow_path=candidate)
         command = 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"'
@@ -2482,10 +2568,10 @@ def main() -> int:
         workflow_cleanup_canaries(source)
         workflow_concurrency_canaries()
         workflow_concurrency_parity()
-        bundle_prune_containment_canaries()
         workflow_sccache_canaries(source)
         studio_browser_phase_canaries()
         studio_browser_pin_canaries()
+        integration_partition_canaries()
         rust_parity_evidence_canaries()
         workflow_trusted_policy_canaries(source)
         workflow_expression_cap_canaries()

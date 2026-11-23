@@ -44,6 +44,13 @@
 //! Stability: the `--json` events and the `.norn/dev.json` descriptor
 //! (`norn-dev/1`) are experimental, not a frozen contract (D84). The
 //! descriptor and the `ready` event say so with `"stability": "experimental"`.
+use clap::Parser;
+use norn_api::host::DevHost;
+use norn_api::scope::CellScope;
+use norn_cell::engine::NativeEngine;
+use norn_cell::{CellStore, InstalledDefinitionSet};
+use serde::Deserialize;
+use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
@@ -55,15 +62,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use clap::Parser;
-use norn_api::host::DevHost;
-use norn_api::scope::CellScope;
-use norn_cell::engine::NativeEngine;
-use norn_cell::{CellStore, InstalledDefinitionSet, StoreOptions};
-use serde::Deserialize;
-use serde_json::{Value, json};
-
 mod admit;
+mod checkpoint_key;
 mod definitions;
 mod http;
 mod load;
@@ -71,34 +71,6 @@ mod policy;
 mod timers;
 
 use policy::{DevMetrics, DevPrincipals, LocalDeveloper};
-
-/// OPEN-CHECKPOINT-1 (#1551): the dev host authenticates its cell's open
-/// checkpoint with a random key it keeps beside the cell, outside the cell
-/// file: `.norn/checkpoint.key`, owner-only, made on first use. A deployed
-/// host takes its key from its secret store. Without a readable key the
-/// cell opens from genesis.
-fn dev_store_options(cell_path: &Path) -> StoreOptions {
-    StoreOptions {
-        checkpoint_key: dev_checkpoint_key(&cell_path.with_file_name("checkpoint.key")),
-        ..StoreOptions::default()
-    }
-}
-
-fn dev_checkpoint_key(path: &Path) -> Option<norn_cell::CheckpointKey> {
-    if let Ok(text) = std::fs::read_to_string(path) {
-        return norn_cell::CheckpointKey::from_hex(&text).ok();
-    }
-    let mut key = [0_u8; 32];
-    getrandom::fill(&mut key).ok()?;
-    let text = key
-        .iter()
-        .fold(String::with_capacity(65), |mut text, byte| {
-            let _written = write!(text, "{byte:02x}");
-            text
-        });
-    write_private(path, &format!("{text}\n")).ok()?;
-    Some(norn_cell::CheckpointKey::from_bytes(key))
-}
 
 /// `norn-dev-host` options. The compile worker command follows `--`; the
 /// authoring CLI's `norn dev` supplies it.
@@ -178,7 +150,6 @@ impl Failure {
 }
 
 /// Run the loop until the worker exits or the process is stopped.
-#[must_use]
 pub fn execute(args: &DevArgs) -> ExitCode {
     let mut out = Events { json: args.json };
     match run(args, &mut out) {
@@ -863,7 +834,7 @@ impl Session<'_> {
                 diagnostics,
             })?
         };
-        let engine = NativeEngine::open(cell_path, dev_store_options(cell_path))
+        let engine = NativeEngine::open(cell_path, checkpoint_key::dev_store_options(cell_path))
             .map_err(|error| refused(error.to_string()))?;
         let store = CellStore::provision_definitions_riding(
             engine,
@@ -936,7 +907,7 @@ fn reopen(
     if !path.exists() {
         return Ok((None, None));
     }
-    let engine = NativeEngine::open(path, dev_store_options(path))
+    let engine = NativeEngine::open(path, checkpoint_key::dev_store_options(path))
         .map_err(|error| unreadable(error.to_string()))?;
     let Some(active) = CellStore::read_active_definitions(&engine)
         .map_err(|error| unreadable(error.to_string()))?
@@ -982,14 +953,13 @@ fn lock(state: &Path) -> Result<File, Failure> {
             let running = std::fs::read_to_string(state.join("dev.json"))
                 .ok()
                 .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                .map(|session| {
+                .map_or_default(|session| {
                     format!(
                         " (pid {}, {})",
                         session.get("pid").and_then(Value::as_u64).unwrap_or(0),
                         session.get("url").and_then(Value::as_str).unwrap_or("?")
                     )
-                })
-                .unwrap_or_default();
+                });
             Err(Failure::setup(
                 "norn.cell.locked",
                 format!("norn dev is already running for this project{running}; stop it first"),
@@ -1312,6 +1282,6 @@ mod tests {
             newest(&receive, &mut pending),
             Some(json!({ "event": "compiled", "gen": 2 }))
         );
-        assert!(pending.is_empty());
+        assert_eq!(pending.len(), 0);
     }
 }

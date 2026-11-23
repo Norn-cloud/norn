@@ -231,8 +231,9 @@ fn the_synthetic_snapshots_land_whole_on_a_hosted_style_tenant() {
             start += count;
         }
     }
-    assert!(
-        quarantined.is_empty(),
+    assert_eq!(
+        quarantined.len(),
+        0,
         "{landed} of {total} rows landed; quarantined: {quarantined:#?}"
     );
     // Every snapshot row is a distinct source event: each lands, once.

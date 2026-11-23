@@ -9,27 +9,22 @@
 //! checkpoint at the head; a checkpoint never advances over a record it has
 //! not verified; and an old receipt changed in place is never served.
 #![cfg(feature = "native")]
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    missing_docs,
-    reason = "integration-test crate"
-)]
 
 #[path = "support/engine_fixture.rs"]
 mod engine_fixture;
 #[path = "quantity_support/mod.rs"]
 mod quantity_support;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
+use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
+use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
-    CellError, CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, ScrubStatus, StoreOptions,
+    CellError, CellStore, CheckpointKey, CommitBatch, FactWriteRow, KnowledgeCutoff, MAIN_WORLD,
+    ScrubStatus, StoreOptions,
 };
 use norn_ir::quantity_ledger::QuantityRequest;
 use norn_ir::{RuntimeValue, runtime_object};
@@ -79,11 +74,11 @@ fn put(n: u64) -> CommitBatch {
     CommitBatch {
         world: MAIN_WORLD.to_owned(),
         scope: engine_fixture::SCOPE.to_owned(),
-        logical_time: 10_000 + n,
+        logical_time: 10_000_u64.saturating_add(n),
         idempotency_key: Some(format!("put-{n}")),
         writes: vec![FactWriteRow::Put {
             object_type: "fixture.Item".to_owned(),
-            key: format!("c{}", n % 7),
+            key: format!("c{}", n.rem_euclid(7)),
             values: BTreeMap::from([(
                 "qty".to_owned(),
                 RuntimeValue::from(i64::try_from(n).expect("qty")),
@@ -149,15 +144,23 @@ fn refused(path: &Path) -> String {
 fn every_hundred_twenty_eighth_commit_records_the_verified_head() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY - 1);
+    cell(&path, EVERY.saturating_sub(1));
     assert_eq!(
         checkpoint(&path),
         None,
         "no checkpoint before {EVERY} commits"
     );
-    cell_more(&path, EVERY - 1, 2 * EVERY + 3);
+    cell_more(
+        &path,
+        EVERY.saturating_sub(1),
+        EVERY.saturating_mul(2).saturating_add(3),
+    );
     let (commits, seq, hash, _root) = checkpoint(&path).expect("a checkpoint");
-    assert_eq!(commits, 2 * EVERY, "the last multiple of {EVERY}");
+    assert_eq!(
+        commits,
+        EVERY.saturating_mul(2),
+        "the last multiple of {EVERY}"
+    );
     let store = open(&path).expect("open from the checkpoint");
     assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
     let entry = store
@@ -170,7 +173,7 @@ fn every_hundred_twenty_eighth_commit_records_the_verified_head() {
     );
     assert_eq!(
         store.read().verify_ledger().expect("ledger").commits,
-        2 * EVERY + 3
+        EVERY.saturating_mul(2).saturating_add(3)
     );
 }
 
@@ -187,7 +190,7 @@ fn cell_more(path: &Path, from: u64, to: u64) {
 fn an_open_from_the_checkpoint_admits_the_same_cell_a_genesis_open_admits() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    cell(&path, EVERY.saturating_add(10));
     assert!(checkpoint(&path).is_some());
     let from_checkpoint = open(&path).expect("open").verified_head().expect("head");
     execute(&path, "DELETE FROM _norn_open_checkpoint");
@@ -203,7 +206,7 @@ fn an_open_from_the_checkpoint_admits_the_same_cell_a_genesis_open_admits() {
 fn a_checkpoint_row_changed_without_the_key_opens_from_genesis() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    cell(&path, EVERY.saturating_add(10));
     execute(
         &path,
         "UPDATE _norn_open_checkpoint SET hash = '0000000000000000000000000000000000000000000000000000000000000000'",
@@ -220,7 +223,7 @@ fn a_checkpoint_row_changed_without_the_key_opens_from_genesis() {
 fn a_replaced_receipt_the_checkpoint_covers_refuses_the_open() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    cell(&path, EVERY.saturating_add(10));
     // Commit 2's receipt digest, replaced as if rewritten with its own hash.
     execute(
         &path,
@@ -233,15 +236,15 @@ fn a_replaced_receipt_the_checkpoint_covers_refuses_the_open() {
 fn any_change_after_the_checkpoint_refuses_the_open() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    cell(&path, EVERY.saturating_add(10));
     let fresh = dir.path().join("fresh.sqlite");
     std::fs::copy(&path, &fresh).expect("copy");
+    let suffix = EVERY.saturating_add(5);
     // A ledger event after the checkpoint.
     execute(
         &path,
         &format!(
-            "UPDATE _norn_ledger SET hash = 'ff' || substr(hash, 3) WHERE commit_seq = {}",
-            EVERY + 5
+            "UPDATE _norn_ledger SET hash = 'ff' || substr(hash, 3) WHERE commit_seq = {suffix}"
         ),
     );
     refused(&path);
@@ -251,8 +254,7 @@ fn any_change_after_the_checkpoint_refuses_the_open() {
     execute(
         &receipt,
         &format!(
-            "UPDATE _norn_receipt SET receipt_hash = 'ff' || substr(receipt_hash, 3) WHERE commit_seq = {}",
-            EVERY + 5
+            "UPDATE _norn_receipt SET receipt_hash = 'ff' || substr(receipt_hash, 3) WHERE commit_seq = {suffix}"
         ),
     );
     refused(&receipt);
@@ -260,8 +262,7 @@ fn any_change_after_the_checkpoint_refuses_the_open() {
     execute(
         &fresh,
         &format!(
-            "UPDATE _norn_fact_values SET hash = 'ff' || substr(hash, 3) WHERE commit_seq = {}",
-            EVERY + 5
+            "UPDATE _norn_fact_values SET hash = 'ff' || substr(hash, 3) WHERE commit_seq = {suffix}"
         ),
     );
     refused(&fresh);
@@ -271,7 +272,7 @@ fn any_change_after_the_checkpoint_refuses_the_open() {
 fn an_old_row_changed_in_place_is_refused_when_read_and_from_genesis() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    cell(&path, EVERY.saturating_add(10));
     let row = raw(&path)
         .query(
             "SELECT world, object_type, id, version FROM _norn_fact_values WHERE commit_seq = 7",
@@ -320,7 +321,7 @@ fn commit_quantity(store: &mut CellStore<NativeEngine>, n: u64, request: &Quanti
         .commit(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: engine_fixture::SCOPE.to_owned(),
-            logical_time: 10_000 + n,
+            logical_time: 10_000_u64.saturating_add(n),
             idempotency_key: Some(format!("quantity-{n}")),
             quantity: Some(request.into()),
             ..CommitBatch::default()
@@ -342,7 +343,7 @@ fn quantity_cell(path: &Path) {
     let mut n = engine_fixture::COMMITS;
     for request in &requests {
         commit_quantity(&mut store, n, request);
-        n += 1;
+        n = n.saturating_add(1);
     }
     for n in n..EVERY {
         store.commit(&put(n)).expect("commit");
@@ -433,12 +434,14 @@ fn a_changed_cell_identity_refuses_an_open_from_a_head_checkpoint() {
 fn a_checkpoint_never_advances_over_a_record_it_has_not_verified() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    let first_open = EVERY.saturating_add(10);
+    let tampered = EVERY.saturating_mul(2).saturating_sub(3);
+    cell(&path, first_open);
     let mut store = open(&path).expect("open");
     // The scrub verifies the history and seeds the checkpoint at the open's
     // head; commits advance it from there.
     assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
-    for n in EVERY + 10..2 * EVERY - 3 {
+    for n in first_open..tampered {
         store.commit(&put(n)).expect("commit");
     }
     // A value version this handle wrote after its open, changed before the
@@ -446,17 +449,16 @@ fn a_checkpoint_never_advances_over_a_record_it_has_not_verified() {
     execute(
         &path,
         &format!(
-            "UPDATE _norn_fact_values SET hash = 'ff' || substr(hash, 3) WHERE commit_seq = {}",
-            2 * EVERY - 3
+            "UPDATE _norn_fact_values SET hash = 'ff' || substr(hash, 3) WHERE commit_seq = {tampered}"
         ),
     );
-    for n in 2 * EVERY - 3..2 * EVERY + 2 {
+    for n in tampered..EVERY.saturating_mul(2).saturating_add(2) {
         store.commit(&put(n)).expect("commit");
     }
     drop(store);
     assert_eq!(
         checkpoint(&path).map(|(commits, ..)| commits),
-        Some(EVERY + 10),
+        Some(first_open),
         "the checkpoint stays before the unverified record"
     );
     refused(&path);
@@ -466,7 +468,7 @@ fn a_checkpoint_never_advances_over_a_record_it_has_not_verified() {
 fn an_old_receipt_changed_in_place_is_never_served() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    cell(&path, EVERY.saturating_add(10));
     // A field no lookup column mirrors, its stored digest kept.
     execute(
         &path,
@@ -529,8 +531,8 @@ fn rewrite_receipt(path: &Path, commit: u64, change: impl FnOnce(&mut serde_json
 fn a_suffix_receipt_whose_time_goes_back_refuses_an_open_from_the_checkpoint() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
-    rewrite_receipt(&path, EVERY + 5, |body| {
+    cell(&path, EVERY.saturating_add(10));
+    rewrite_receipt(&path, EVERY.saturating_add(5), |body| {
         body["logicalTime"] = serde_json::json!(1);
     });
     assert!(
@@ -551,7 +553,7 @@ fn a_changed_identity_and_its_last_covered_export_record_refuse_an_open() {
     let path = dir.path().join("cell.sqlite");
     cell(&path, EVERY);
     assert_eq!(checkpoint(&path).map(|(commits, ..)| commits), Some(EVERY));
-    let mut record = open(&path)
+    let mut record = open_unkeyed(&path)
         .expect("open")
         .export_record(EVERY)
         .expect("record")
@@ -595,7 +597,8 @@ fn a_changed_identity_and_its_last_covered_export_record_refuse_an_open() {
 fn a_checkpoint_never_advances_over_an_event_changed_before_the_handle_opened_past_it() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 12);
+    let head_commits = EVERY.saturating_add(12);
+    cell(&path, head_commits);
     assert_eq!(checkpoint(&path).map(|(commits, ..)| commits), Some(EVERY));
     let mut store = open(&path).expect("open at commit 140");
     // A generic event before the handle's head, after the durable
@@ -604,16 +607,16 @@ fn a_checkpoint_never_advances_over_an_event_changed_before_the_handle_opened_pa
         &path,
         &format!(
             "UPDATE _norn_ledger SET event = replace(event, 'fixture.put', 'fixture.pux') WHERE commit_seq = {}",
-            EVERY + 7
+            EVERY.saturating_add(7)
         ),
     );
     assert!(matches!(
-        store.commit(&put(EVERY + 12)),
+        store.commit(&put(head_commits)),
         Err(CellError::Verifying(_))
     ));
     assert!(matches!(store.scrub_to_end(), ScrubStatus::Fenced { .. }));
     assert!(matches!(
-        store.commit(&put(EVERY + 12)),
+        store.commit(&put(head_commits)),
         Err(CellError::Fenced(_))
     ));
     drop(store);
@@ -628,7 +631,7 @@ fn a_checkpoint_never_advances_over_an_event_changed_before_the_handle_opened_pa
 fn an_idempotency_lookup_never_trusts_a_changed_selector_column() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    cell(&path, EVERY.saturating_add(10));
     execute(
         &path,
         "UPDATE _norn_receipt SET world = 'shadow' WHERE commit_seq = 7",
@@ -673,16 +676,17 @@ fn a_changed_active_definition_set_refuses_an_open_from_the_checkpoint() {
         )
         .expect("install");
     let installed = store.read().verify_ledger().expect("ledger").commits;
-    for n in installed..EVERY + 10 {
+    for n in installed..EVERY.saturating_add(10) {
         store.commit(&put(n)).expect("commit");
     }
     drop(store);
     assert_eq!(checkpoint(&path).map(|(commits, ..)| commits), Some(EVERY));
     open(&path).expect("the untouched cell opens from its checkpoint");
-    raw(&path)
+    rusqlite::Connection::open(&path)
+        .expect("sqlite")
         .execute(
             "UPDATE _norn_definition_version SET canonical_set = ?1 WHERE version = 1",
-            &[SqlValue::Text(install_input(&model, "0.2.0").canonical_set)],
+            rusqlite::params![install_input(&model, "0.2.0").canonical_set],
         )
         .expect("tamper");
     assert!(
@@ -743,7 +747,7 @@ fn install_input(model: &norn_cell::Model, version: &str) -> norn_cell::Installe
 fn an_old_ledger_event_changed_in_place_is_never_served() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    cell(&path, EVERY.saturating_add(10));
     let seq: i64 = raw(&path)
         .query_row(
             "SELECT seq FROM _norn_ledger WHERE commit_seq = 7 ORDER BY seq LIMIT 1",
@@ -757,7 +761,7 @@ fn an_old_ledger_event_changed_in_place_is_never_served() {
     );
     {
         let store = open(&path).expect("the open verifies from the checkpoint");
-        let after = u64::try_from(seq - 1).expect("seq");
+        let after = u64::try_from(seq.saturating_sub(1)).expect("seq");
         assert!(
             store.read().ledger_page(after, 1).is_err(),
             "ledger_page served the changed event"
@@ -789,16 +793,17 @@ fn a_changed_superseded_definition_set_refuses_an_open_from_the_checkpoint() {
             .expect("install");
     }
     let installed = store.read().verify_ledger().expect("ledger").commits;
-    for n in installed..EVERY + 10 {
+    for n in installed..EVERY.saturating_add(10) {
         store.commit(&put(n)).expect("commit");
     }
     drop(store);
     assert_eq!(checkpoint(&path).map(|(commits, ..)| commits), Some(EVERY));
     open(&path).expect("the untouched cell opens from its checkpoint");
-    raw(&path)
+    rusqlite::Connection::open(&path)
+        .expect("sqlite")
         .execute(
             "UPDATE _norn_definition_version SET canonical_set = ?1 WHERE version = 1",
-            &[SqlValue::Text(install_input(&model, "0.2.0").canonical_set)],
+            rusqlite::params![install_input(&model, "0.2.0").canonical_set],
         )
         .expect("tamper");
     assert!(
@@ -817,7 +822,7 @@ fn a_changed_superseded_definition_set_refuses_an_open_from_the_checkpoint() {
 // ---------------------------------------------------------------------------
 
 /// Whether history reads are served (a genesis open, or a finished scrub).
-fn history_ready(store: &CellStore<NativeEngine>) -> bool {
+fn history_ready<E: SqlEngine>(store: &CellStore<E>) -> bool {
     match store.scrub_status() {
         ScrubStatus::Idle => true,
         ScrubStatus::Verifying { history_ready, .. } => history_ready,
@@ -861,7 +866,7 @@ fn receipts_root_at(path: &Path, commits: u64) -> String {
 fn a_checkpoint_rewritten_with_the_history_it_covers_is_never_trusted() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    cell(&path, EVERY.saturating_add(10));
     rewrite_receipt(&path, 7, |body| {
         body["logicalTime"] = serde_json::json!(1);
     });
@@ -889,9 +894,10 @@ fn a_checkpoint_row_from_another_cell_is_never_trusted() {
     const OTHER: &str = "0123456789abcdef0123456789abcdef";
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    let total = EVERY.saturating_add(10);
+    cell(&path, total);
     let store = open_unkeyed(&path).expect("open");
-    let records: Vec<_> = (1..=EVERY + 10)
+    let records: Vec<_> = (1..=total)
         .filter_map(|commit| {
             store
                 .export_record(commit)
@@ -940,21 +946,21 @@ fn a_checkpoint_row_from_another_cell_is_never_trusted() {
 fn a_hidden_idempotency_key_is_never_committed_twice() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    cell(&path, EVERY.saturating_add(10));
     // put(n) is commit n + 1; this one is covered by the checkpoint at EVERY.
-    let n = EVERY - 20;
+    let n = EVERY.saturating_sub(20);
     execute(
         &path,
         &format!(
             "UPDATE _norn_receipt SET idempotency_key = 'hidden' WHERE commit_seq = {}",
-            n + 1
+            n.saturating_add(1)
         ),
     );
     let mut store = open(&path).expect("the open verifies from the checkpoint");
     assert!(!history_ready(&store));
     // The client's retry, stamped with the host's current time.
     let retry = CommitBatch {
-        logical_time: 10_000 + EVERY + 20,
+        logical_time: 10_000_u64.saturating_add(EVERY).saturating_add(20),
         ..put(n)
     };
     assert!(
@@ -979,8 +985,8 @@ fn a_hidden_idempotency_key_is_never_committed_twice() {
 fn an_as_of_read_waits_for_the_scrub_over_a_deleted_version() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
-    let commit = EVERY - 30;
+    cell(&path, EVERY.saturating_add(10));
+    let commit = EVERY.saturating_sub(30);
     let row = raw(&path)
         .query(
             &format!("SELECT object_type, id FROM _norn_fact_values WHERE commit_seq = {commit}"),
@@ -1021,8 +1027,8 @@ fn an_as_of_read_waits_for_the_scrub_over_a_deleted_version() {
 fn a_rehashed_ledger_event_is_never_served_before_the_scrub() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
-    let commit = EVERY - 40;
+    cell(&path, EVERY.saturating_add(10));
+    let commit = EVERY.saturating_sub(40);
     let engine = raw(&path);
     let row = engine
         .query(
@@ -1061,7 +1067,7 @@ fn a_rehashed_ledger_event_is_never_served_before_the_scrub() {
         )
         .expect("rehash");
     drop(engine);
-    let after = u64::try_from(seq - 1).expect("seq");
+    let after = u64::try_from(seq.saturating_sub(1)).expect("seq");
     let store = open(&path).expect("the open verifies from the checkpoint");
     assert!(
         matches!(
@@ -1082,7 +1088,8 @@ fn a_rehashed_ledger_event_is_never_served_before_the_scrub() {
 fn the_scrub_of_an_untampered_cell_reseeds_the_checkpoint_at_the_open_head() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    cell(&path, EVERY + 10);
+    let total = EVERY.saturating_add(10);
+    cell(&path, total);
     let store = open(&path).expect("open");
     assert!(!history_ready(&store));
     assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
@@ -1094,7 +1101,7 @@ fn the_scrub_of_an_untampered_cell_reseeds_the_checkpoint_at_the_open_head() {
     drop(store);
     assert_eq!(
         checkpoint(&path).map(|(commits, ..)| commits),
-        Some(EVERY + 10),
+        Some(total),
         "seeded at the open's head"
     );
 }
@@ -1108,9 +1115,12 @@ fn a_trimmed_restore_reseeds_the_checkpoint_through_the_scrub() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
     let restored = dir.path().join("restored.sqlite");
-    cell(&path, 2 * EVERY + 72);
+    let cut = EVERY.saturating_mul(2).saturating_add(72);
+    let end = EVERY.saturating_mul(4).saturating_add(2);
+    let next_cp = EVERY.saturating_mul(3);
+    cell(&path, cut);
     std::fs::copy(&path, &restored).expect("snapshot at 328");
-    cell_more(&path, 2 * EVERY + 72, 4 * EVERY + 2);
+    cell_more(&path, cut, end);
     let row = raw(&path)
         .query("SELECT * FROM _norn_open_checkpoint", &[])
         .expect("the later row")
@@ -1131,16 +1141,483 @@ fn a_trimmed_restore_reseeds_the_checkpoint_through_the_scrub() {
     assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
     assert_eq!(
         checkpoint(&restored).map(|(commits, ..)| commits),
-        Some(2 * EVERY + 72),
+        Some(cut),
         "re-seeded at the restored head"
     );
-    for n in (2 * EVERY + 72)..=(3 * EVERY) {
+    for n in cut..=next_cp {
         store.commit(&put(n)).expect("commit");
     }
     drop(store);
     assert_eq!(
         checkpoint(&restored).map(|(commits, ..)| commits),
-        Some(3 * EVERY),
+        Some(next_cp),
         "advanced from the re-seeded checkpoint"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #1551 parked round-4 blockers and shoulds (S2, S4, S7, S8, S10, S11, S12, S13)
+// ---------------------------------------------------------------------------
+
+/// S2: a malformed or unparseable checkpoint row (wrong column type,
+/// half-null export pair, invalid MAC hex) falls back cleanly to a genesis
+/// open rather than failing or trusting partial fields; tampered history
+/// under a malformed row is still refused by the genesis open.
+#[test]
+fn malformed_checkpoint_row_opens_from_genesis() {
+    let dir = tempfile::tempdir().expect("directory");
+    let base = dir.path().join("base.sqlite");
+    cell(&base, EVERY.saturating_add(10));
+    for (name, sql) in [
+        (
+            "non-integer commits",
+            "UPDATE _norn_open_checkpoint SET commits = 'corrupt'",
+        ),
+        (
+            "half-null export pair",
+            "UPDATE _norn_open_checkpoint SET export_seq = 1, export_hash = NULL",
+        ),
+        (
+            "invalid mac hex",
+            "UPDATE _norn_open_checkpoint SET mac = 'not-hex-zz'",
+        ),
+    ] {
+        let copy = dir
+            .path()
+            .join(format!("{}.sqlite", name.replace(' ', "_")));
+        std::fs::copy(&base, &copy).expect("copy");
+        execute(&copy, sql);
+        let store = open(&copy).expect("malformed row falls back to genesis open");
+        assert!(
+            history_ready(&store),
+            "{name}: malformed row should open from genesis, got {:?}",
+            store.scrub_status()
+        );
+    }
+    // Tampered history beneath a malformed checkpoint row is refused by genesis open.
+    let tampered = dir.path().join("tampered.sqlite");
+    std::fs::copy(&base, &tampered).expect("copy");
+    execute(
+        &tampered,
+        "UPDATE _norn_open_checkpoint SET commits = 'corrupt'",
+    );
+    execute(
+        &tampered,
+        "UPDATE _norn_fact_values SET hash = 'ff' || substr(hash, 3) WHERE commit_seq = 7",
+    );
+    assert!(
+        open(&tampered).is_err(),
+        "tampered history under a malformed checkpoint must still refuse"
+    );
+}
+
+/// S4: `StoreReader::receipt_by_idempotency_key` refuses a miss with
+/// `CellError::Verifying` until the receipts scrub finishes, while hits in
+/// the verified suffix are served immediately.
+#[test]
+fn idempotency_lookup_miss_is_gated_until_receipts_scrub_finishes() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY.saturating_add(10));
+    let store = open(&path).expect("checkpointed open");
+    assert!(!history_ready(&store));
+    assert!(
+        matches!(
+            store
+                .read()
+                .receipt_by_idempotency_key(MAIN_WORLD, "never-committed"),
+            Err(CellError::Verifying(_))
+        ),
+        "idempotency lookup miss must be gated until receipts scrub finishes"
+    );
+    let suffix_key = format!("put-{}", EVERY.saturating_add(5));
+    assert!(
+        matches!(
+            store
+                .read()
+                .receipt_by_idempotency_key(MAIN_WORLD, &suffix_key),
+            Ok(Some(_))
+        ),
+        "a hit in the verified suffix must be served"
+    );
+    // Advance until receipts phase finishes (before history completes or at Idle).
+    loop {
+        match store.scrub_step() {
+            ScrubStatus::Verifying {
+                phase: "receipts", ..
+            } => {}
+            ScrubStatus::Verifying { .. } | ScrubStatus::Idle => break,
+            ScrubStatus::Fenced { finding } => panic!("unexpected fence: {finding}"),
+        }
+    }
+    assert_eq!(
+        store
+            .read()
+            .receipt_by_idempotency_key(MAIN_WORLD, "never-committed")
+            .expect("miss allowed once receipts scrub finishes"),
+        None
+    );
+}
+
+/// S7: historical frames and knowledge-cutoff evidence are gated BEFORE
+/// frontier lookup or population selection, even when covered history rows
+/// have been deleted (empty population).
+#[test]
+fn historical_frames_are_gated_before_population_selection() {
+    let dir = tempfile::tempdir().expect("directory");
+    let clean = dir.path().join("clean.sqlite");
+    cell(&clean, EVERY.saturating_add(10));
+    let cutoff = KnowledgeCutoff {
+        recorded_at: norn_kernel::LogicalTime::from_millis(10_000_000),
+        frontier: 10,
+    };
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+
+    // Untampered: refused while scrubbing, served after scrub completes.
+    {
+        let store = open(&clean).expect("open");
+        let mut budget = DecodeBudget::new(&limits);
+        assert!(matches!(
+            store
+                .read()
+                .historical_revision_with_budget(cutoff, &mut budget),
+            Err(CellError::Verifying(_))
+        ));
+        assert!(matches!(
+            store.read().fact_evidence_known_at_with_budget(
+                MAIN_WORLD,
+                "fixture.Item",
+                "c1",
+                cutoff,
+                &mut budget
+            ),
+            Err(CellError::Verifying(_))
+        ));
+        assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
+        let mut budget = DecodeBudget::new(&limits);
+        assert!(
+            store
+                .read()
+                .historical_revision_with_budget(cutoff, &mut budget)
+                .expect("revision after scrub")
+                .is_some()
+        );
+    }
+
+    // Tampered: delete ALL covered fact values so population selection would be empty.
+    let emptied = dir.path().join("emptied.sqlite");
+    std::fs::copy(&clean, &emptied).expect("copy");
+    execute(
+        &emptied,
+        &format!("DELETE FROM _norn_fact_values WHERE commit_seq <= {EVERY}"),
+    );
+    let store = open(&emptied).expect("checkpointed open");
+    let mut budget = DecodeBudget::new(&limits);
+    assert!(
+        matches!(
+            store
+                .read()
+                .historical_revision_with_budget(cutoff, &mut budget),
+            Err(CellError::Verifying(_))
+        ),
+        "historical_revision_with_budget must refuse before population selection"
+    );
+    assert!(
+        matches!(
+            store.read().fact_evidence_known_at_with_budget(
+                MAIN_WORLD,
+                "fixture.Item",
+                "c1",
+                cutoff,
+                &mut budget
+            ),
+            Err(CellError::Verifying(_))
+        ),
+        "fact_evidence_known_at_with_budget must refuse before population selection"
+    );
+    assert!(matches!(store.scrub_to_end(), ScrubStatus::Fenced { .. }));
+    assert!(matches!(
+        store
+            .read()
+            .historical_revision_with_budget(cutoff, &mut budget),
+        Err(CellError::Fenced(_))
+    ));
+}
+
+/// S8: `ledger()`, `export_commit_count()`, `export_record()`, and
+/// transparency proof reads are all gated until the history scrub finishes.
+#[test]
+fn ledger_export_and_transparency_reads_are_gated_until_scrub_ends() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY.saturating_add(10));
+    let (_, covered_seq, ..) = checkpoint(&path).expect("checkpoint");
+    let store = open(&path).expect("checkpointed open");
+    assert!(matches!(
+        store.read().ledger(0),
+        Err(CellError::Verifying(_))
+    ));
+    assert!(matches!(
+        store.export_commit_count(),
+        Err(CellError::Verifying(_))
+    ));
+    assert!(matches!(
+        store.export_record(1),
+        Err(CellError::Verifying(_))
+    ));
+    assert!(matches!(
+        store.transparency_checkpoint(),
+        Err(CellError::Verifying(_))
+    ));
+    assert!(matches!(
+        store.transparency_inclusion(0),
+        Err(CellError::Verifying(_))
+    ));
+    assert!(matches!(
+        store.transparency_consistency(1),
+        Err(CellError::Verifying(_))
+    ));
+    // Verified suffix remains readable.
+    assert!(store.read().ledger_page(covered_seq, 1).is_ok());
+
+    assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
+    assert!(
+        store.read().ledger(0).expect("ledger after scrub").len()
+            >= usize::try_from(EVERY).expect("count")
+    );
+    assert_eq!(
+        store.export_commit_count().expect("export count"),
+        EVERY.saturating_add(10)
+    );
+    assert!(store.export_record(1).expect("export record").is_some());
+    assert!(store.transparency_checkpoint().is_ok());
+    assert!(
+        store
+            .transparency_inclusion(0)
+            .expect("inclusion")
+            .is_some()
+    );
+    assert!(
+        store
+            .transparency_consistency(1)
+            .expect("consistency")
+            .is_some()
+    );
+}
+
+/// S10: a seed step never regresses a newer authentic checkpoint written by
+/// a concurrent handle inside the checkpoint transaction.
+#[test]
+fn checkpoint_seed_does_not_regress_newer_concurrent_checkpoint() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let first_open = EVERY.saturating_add(10);
+    let advanced = EVERY.saturating_mul(2);
+    cell(&path, first_open);
+
+    // Handle A opens at `first_open` with a pending scrub that targets `first_open`.
+    let handle_a = open(&path).expect("handle A");
+    assert!(!history_ready(&handle_a));
+
+    // Handle B opens, scrubs to Idle, and commits up to `2 * EVERY` so the
+    // durable checkpoint advances to `2 * EVERY`.
+    let mut handle_b = open(&path).expect("handle B");
+    assert_eq!(handle_b.scrub_to_end(), ScrubStatus::Idle);
+    for n in first_open..advanced {
+        handle_b.commit(&put(n)).expect("commit on handle B");
+    }
+    drop(handle_b);
+    assert_eq!(
+        checkpoint(&path).map(|(commits, ..)| commits),
+        Some(advanced)
+    );
+
+    // Handle A finishes its scrub; its Seed step must NOT overwrite the newer
+    // authentic checkpoint at `2 * EVERY` with `first_open`.
+    assert_eq!(handle_a.scrub_to_end(), ScrubStatus::Idle);
+    drop(handle_a);
+    assert_eq!(
+        checkpoint(&path).map(|(commits, ..)| commits),
+        Some(advanced),
+        "Seed must not regress a newer authentic checkpoint"
+    );
+}
+
+/// Wraps a `NativeEngine` and injects a single transient I/O error on the
+/// next transaction when `fail_next` is armed.
+struct OneShotIoFault {
+    inner: NativeEngine,
+    fail_next: std::rc::Rc<Cell<bool>>,
+}
+
+impl SqlEngine for OneShotIoFault {
+    fn read_isolation(&self) -> ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn checkpoint_key(&self) -> Option<CheckpointKey> {
+        self.inner.checkpoint_key()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.inner.execute(sql, params)
+    }
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        if self.fail_next.replace(false) {
+            return Err(CellError::Engine("transient sqlite io fault".to_owned()).into());
+        }
+        self.inner.transaction(f)
+    }
+}
+
+/// S11: staged scrub progress applies to `Run` only after each step
+/// transaction commits, so transient SQLite I/O faults during receipts and
+/// history phases retry cleanly without corrupting accumulated state.
+#[test]
+fn staged_scrub_survives_transient_engine_io_fault() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let total = EVERY.saturating_add(10);
+    cell(&path, total);
+
+    let fail_next = std::rc::Rc::new(Cell::new(false));
+    let engine = OneShotIoFault {
+        inner: NativeEngine::open(&path, keyed()).expect("native engine"),
+        fail_next: std::rc::Rc::clone(&fail_next),
+    };
+    let store = CellStore::from_engine(engine, engine_fixture::model()).expect("open");
+    assert!(!history_ready(&store));
+
+    // Inject transient I/O error during Receipts phase.
+    fail_next.set(true);
+    let status = store.scrub_step();
+    assert!(
+        matches!(
+            status,
+            ScrubStatus::Verifying {
+                phase: "receipts",
+                ..
+            }
+        ),
+        "transient receipts fault should retry, got {status:?}"
+    );
+
+    // Advance into History phase.
+    loop {
+        let status = store.scrub_step();
+        if let ScrubStatus::Verifying { phase, .. } = status {
+            if phase == "history" {
+                break;
+            }
+            assert_eq!(phase, "receipts", "expected receipts or history phase");
+        } else {
+            panic!("expected history phase, got {status:?}");
+        }
+    }
+
+    // Inject transient I/O error during History phase.
+    fail_next.set(true);
+    let status = store.scrub_step();
+    assert!(
+        matches!(
+            status,
+            ScrubStatus::Verifying {
+                phase: "history",
+                ..
+            }
+        ),
+        "transient history fault should retry, got {status:?}"
+    );
+
+    // Scrub finishes cleanly without corrupted walk/quantity/tree state.
+    assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
+    assert!(history_ready(&store));
+    drop(store);
+    assert_eq!(
+        checkpoint(&path).map(|(commits, ..)| commits),
+        Some(total),
+        "staged scrub seeded the exact open head after transient retries"
+    );
+}
+
+/// S12: when scrub detects a defect it drops `_norn_open_checkpoint` AND
+/// persists `_norn_meta` key `open_checkpoint:fenced`, so sibling handles
+/// and subsequent reopens (keyed or unkeyed) fail closed with `Fenced`.
+#[test]
+fn durable_fence_persists_across_reopen_and_blocks_sibling_handles() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let total = EVERY.saturating_add(10);
+    cell(&path, total);
+    execute(&path, "DELETE FROM _norn_fact_values WHERE commit_seq = 10");
+
+    let handle_a = open(&path).expect("handle A");
+    let mut handle_b = open(&path).expect("handle B");
+
+    assert!(matches!(
+        handle_a.scrub_to_end(),
+        ScrubStatus::Fenced { .. }
+    ));
+    assert!(
+        matches!(
+            handle_b.commit(&put(total.saturating_add(1))),
+            Err(CellError::Fenced(_))
+        ),
+        "sibling handle must fail closed on durable fence"
+    );
+    drop(handle_a);
+    drop(handle_b);
+
+    assert_eq!(checkpoint(&path), None, "fence dropped checkpoint");
+    assert!(
+        matches!(open(&path), Err(CellError::Fenced(_))),
+        "keyed reopen must fail closed with Fenced"
+    );
+    assert!(
+        matches!(open_unkeyed(&path), Err(CellError::Fenced(_))),
+        "unkeyed reopen must also fail closed with Fenced"
+    );
+}
+
+/// S13: `CellStore::fork` refuses with `Verifying` while the history scrub
+/// is incomplete, refuses with `Fenced` when fenced, and succeeds once the
+/// scrub reaches `Idle`.
+#[test]
+fn fork_is_refused_while_scrub_is_incomplete_or_fenced() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY.saturating_add(10));
+
+    let store = open(&path).expect("checkpointed open");
+    let head = store.verified_head().expect("head");
+    assert!(
+        matches!(store.fork("what-if", &head), Err(CellError::Verifying(_))),
+        "fork must refuse while scrub is incomplete"
+    );
+    assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
+    assert!(
+        store.fork("what-if", &head).is_ok(),
+        "fork succeeds once scrub completes"
+    );
+    drop(store);
+
+    // Fenced cell refuses fork with Fenced.
+    execute(&path, "DELETE FROM _norn_fact_values WHERE commit_seq = 10");
+    let fenced = open(&path).expect("open before scrub");
+    let head = fenced.verified_head().expect("head");
+    assert!(matches!(fenced.scrub_to_end(), ScrubStatus::Fenced { .. }));
+    assert!(
+        matches!(fenced.fork("what-if", &head), Err(CellError::Fenced(_))),
+        "fork must refuse on a fenced cell"
     );
 }

@@ -103,7 +103,7 @@ pub(crate) fn check_conformance<I: SchemaImporter>(
         .iter()
         .filter(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
         .collect();
-    assert!(errors.is_empty(), "importer errors: {errors:#?}");
+    assert_eq!(errors.len(), 0, "importer errors: {errors:#?}");
 
     // 4. Loss report: zero findings, zero unexplained, closed drop reasons,
     //    and it round-trips through its typed form.
@@ -114,8 +114,9 @@ pub(crate) fn check_conformance<I: SchemaImporter>(
             .loss_report
             .validate(&first.layers, first.source_schema.as_ref()),
     );
-    assert!(
-        findings.is_empty(),
+    assert_eq!(
+        findings.len(),
+        0,
         "loss report findings:\n{}",
         findings.join("\n")
     );
@@ -152,12 +153,9 @@ pub(crate) fn check_conformance<I: SchemaImporter>(
     }
 
     // 5. Pins: every input pinned; tables pinned when evaluated.
-    assert!(!first.provenance.inputs.is_empty());
+    assert_ne!(first.provenance.inputs, []);
     if first.provenance.evaluator.is_some() {
-        assert!(
-            !first.provenance.tables.is_empty(),
-            "evaluator without table pins"
-        );
+        assert_ne!(first.provenance.tables, [], "evaluator without table pins");
     }
 
     // 6. Artifact-set checker: zero findings per layer.
@@ -187,8 +185,9 @@ pub(crate) fn check_conformance<I: SchemaImporter>(
             artifacts.push(schema.clone());
         }
         let diagnostics = check_artifact_set(&artifacts, &context);
-        assert!(
-            diagnostics.is_empty(),
+        assert_eq!(
+            diagnostics,
+            [],
             "layer {} checker findings: {diagnostics:#?}",
             layer.name,
         );

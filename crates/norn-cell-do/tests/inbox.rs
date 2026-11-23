@@ -306,7 +306,7 @@ fn held_back_records_are_grouped_by_law_with_the_fix_only_for_who_may_make_it() 
     let others = disputed["otherFindings"]
         .as_array()
         .expect("the laws that disagree");
-    assert!(!others.is_empty(), "{disputed}");
+    assert_ne!(others.len(), 0, "{disputed}");
     // INV-1042's fix keeps every other law it takes, so it is still offered (above).
     let held = section(&inbox, "held_back");
     assert!(held["count"].as_u64().unwrap() >= 2, "{held}");

@@ -68,7 +68,7 @@ fn nullable_stored_snapshot_members_pass_schema_admission_and_entity_binding() {
     ]));
     assert!(effective.properties[0].nullable);
     let schema = snapshot(json!({"type": ["string", "null"]}));
-    assert!(admission_findings(&schema).is_empty());
+    assert_eq!(admission_findings(&schema), []);
     assert_eq!(snapshot_values_schema_error(&schema, &effective), None);
     let required_non_null = snapshot(json!({"type": "string"}));
     assert!(snapshot_values_schema_error(&required_non_null, &effective).is_some());
@@ -113,7 +113,7 @@ fn enum_snapshot_schemas_cover_effective_enum_values_including_lifecycle_states(
         json!({"type": "string", "enum": ["draft", "submitted", "cancelled"]}),
     ] {
         let schema = snapshot(member);
-        assert!(admission_findings(&schema).is_empty());
+        assert_eq!(admission_findings(&schema), []);
         assert_eq!(snapshot_values_schema_error(&schema, &effective), None);
     }
     let broad_string = snapshot(json!({"type": "string"}));
@@ -138,7 +138,7 @@ fn nullable_enum_snapshots_use_a_broad_nullable_schema() {
         "constraints": {"nullable": true}
     }]));
     let broad = snapshot(json!({"type": ["string", "null"]}));
-    assert!(admission_findings(&broad).is_empty());
+    assert_eq!(admission_findings(&broad), []);
     assert_eq!(snapshot_values_schema_error(&broad, &effective), None);
     let runtime_schema = norn_expr::schema::Schema::parse(&broad, "snapshot")
         .expect("broad nullable schema is admitted at runtime");
@@ -156,13 +156,13 @@ fn nullable_enum_snapshots_use_a_broad_nullable_schema() {
         "type": ["string", "null"],
         "enum": ["draft", "submitted"]
     }));
-    assert!(admission_findings(&restricted_without_null).is_empty());
+    assert_eq!(admission_findings(&restricted_without_null), []);
     assert!(snapshot_values_schema_error(&restricted_without_null, &effective).is_some());
     let restricted_with_null = snapshot(json!({
         "type": ["string", "null"],
         "enum": ["draft", "submitted", null]
     }));
-    assert!(!admission_findings(&restricted_with_null).is_empty());
+    assert_ne!(admission_findings(&restricted_with_null), []);
     assert!(snapshot_values_schema_error(&restricted_with_null, &effective).is_some());
 }
 
@@ -175,7 +175,7 @@ fn unbounded_text_snapshot_schema_cannot_add_an_enum_restriction() {
         None
     );
     let restricted = snapshot(json!({"type": "string", "enum": ["draft"]}));
-    assert!(admission_findings(&restricted).is_empty());
+    assert_eq!(admission_findings(&restricted), []);
     assert!(snapshot_values_schema_error(&restricted, &effective).is_some());
 }
 
@@ -183,10 +183,10 @@ fn unbounded_text_snapshot_schema_cannot_add_an_enum_restriction() {
 fn boolean_snapshot_values_use_broad_boolean_schema_without_enum() {
     let effective = effective(json!([{"id": "value", "type": {"kind": "boolean"}}]));
     let broad = snapshot(json!({"type": "boolean"}));
-    assert!(admission_findings(&broad).is_empty());
+    assert_eq!(admission_findings(&broad), []);
     assert_eq!(snapshot_values_schema_error(&broad, &effective), None);
     let restricted = snapshot(json!({"type": "boolean", "enum": [true]}));
-    assert!(!admission_findings(&restricted).is_empty());
+    assert_ne!(admission_findings(&restricted), []);
     assert!(snapshot_values_schema_error(&restricted, &effective).is_some());
 }
 
@@ -236,13 +236,13 @@ fn nullable_rule_schema_admission_refuses_arbitrary_unions_and_open_records() {
         json!({"type": ["object", "null"], "properties": {}, "additionalProperties": true}),
         json!({"type": ["array", "null"]}),
     ] {
-        assert!(!admission_findings(&snapshot(member)).is_empty());
+        assert_ne!(admission_findings(&snapshot(member)), []);
     }
     let root: JsonValue = serde_json::from_value(json!({
         "type": ["object", "null"], "properties": {}, "additionalProperties": false
     }))
     .expect("root schema");
-    assert!(!admission_findings(&root).is_empty());
+    assert_ne!(admission_findings(&root), []);
 }
 
 fn json_contract() -> Value {
@@ -258,7 +258,7 @@ fn json_extension_snapshots_require_the_actual_declared_closed_contract() {
         {"id": "value", "type": {"kind": "json-ext", "schema": json_contract()}}
     ]));
     let schema = snapshot(json_contract());
-    assert!(admission_findings(&schema).is_empty());
+    assert_eq!(admission_findings(&schema), []);
     assert_eq!(snapshot_values_schema_error(&schema, &effective), None);
     let scalar = snapshot(json!({"type": "boolean"}));
     assert!(snapshot_values_schema_error(&scalar, &effective).is_some());
@@ -282,7 +282,7 @@ fn nullable_json_extension_snapshots_keep_the_closed_non_null_shape() {
     let mut nullable = json_contract();
     nullable["type"] = json!(["null", "object"]);
     let schema = snapshot(nullable);
-    assert!(admission_findings(&schema).is_empty());
+    assert_eq!(admission_findings(&schema), []);
     assert_eq!(snapshot_values_schema_error(&schema, &effective), None);
     assert!(snapshot_values_schema_error(&snapshot(json_contract()), &effective).is_some());
 }
@@ -321,7 +321,7 @@ fn bounded_object_triggers_survive_lenient_ir_round_trips_and_checker_admission(
             let payload = trigger_payload(trigger);
             let mut diagnostics = Vec::new();
             validate_rule_bindings(&payload, &mut diagnostics, None);
-            assert!(diagnostics.is_empty(), "{on}/{depth}: {diagnostics:?}");
+            assert_eq!(diagnostics, [], "{on}/{depth}: {diagnostics:?}");
             let root: norn_ir::rule::RuleRoot =
                 serde_json::from_value(serde_json::to_value(&payload).expect("IR round trip"))
                     .expect("typed root after binary64 IR serialization");
@@ -361,7 +361,7 @@ fn omitted_trigger_depth_remains_optional_and_null_property_filters_remain_inval
     let payload = trigger_payload(json!({"on": "modified", "objectType": "commerce.SalesOrder"}));
     let mut diagnostics = Vec::new();
     validate_rule_bindings(&payload, &mut diagnostics, None);
-    assert!(diagnostics.is_empty());
+    assert_eq!(diagnostics, []);
     let root: norn_ir::rule::RuleRoot =
         serde_json::from_value(serde_json::to_value(&payload).expect("IR round trip"))
             .expect("omitted depth");

@@ -227,6 +227,13 @@ impl<S: SqlEngine> SqlEngine for CommitsAfterFault<S> {
         self.inner.read_cache_revision()
     }
 
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }
@@ -291,6 +298,13 @@ impl SqlEngine for RestrictedEngine {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.native.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.native.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         validate_do_sql(sql, params)?;
         self.native.execute(sql, params)
@@ -377,6 +391,13 @@ impl<S: SqlEngine> SqlEngine for DoSubset<S> {
 
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
         self.0.read_cache_revision()
+    }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
     }
 
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
@@ -503,6 +524,13 @@ impl DoStorage for HidesFailedCommit {
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.0.exec_batch(sql)
     }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
+    }
 }
 
 impl Transact for MisreadsRollback {
@@ -577,6 +605,13 @@ impl DoStorage for MisreadsRollback {
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.0.exec_batch(sql)
     }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
+    }
 }
 
 impl DoStorage for CommitsOnRollback {
@@ -586,6 +621,13 @@ impl DoStorage for CommitsOnRollback {
 
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.0.exec_batch(sql)
+    }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
     }
 }
 
@@ -2145,8 +2187,8 @@ fn reopen_recovers_the_ledger_hash_chain_identically_and_runs_are_deterministic(
             values: Some(order("paid")),
         }
     );
-    assert!(a.pending_commands().expect("outbox").is_empty());
-    assert!(a.pending_timers().expect("timers").is_empty());
+    assert_eq!(a.pending_commands().expect("outbox"), []);
+    assert_eq!(a.pending_timers().expect("timers"), []);
 }
 
 fn open_hierarchy(path: &Path) -> OrderCell {
@@ -2530,7 +2572,7 @@ fn bounded_link_reads_refuse_phantoms_and_version_changes() {
         .read_link_targets(&source, "rel", 8, 1024)
         .expect("reads bounded adjacency")
         .expect("host supports bounded adjacency");
-    assert!(empty.is_empty());
+    assert_eq!(empty, []);
     let link = LinkKey::new(source.clone(), "rel", target);
     let add = |expected| LinkWrite {
         key: link.clone(),
@@ -3263,7 +3305,7 @@ fn predicate_reads_conflict_when_a_member_leaves_or_changes_version() {
         "a member deleted"
     );
     let members = read_members(&cell, &predicate);
-    assert!(members.is_empty(), "{members:?}");
+    assert_eq!(members, [], "{members:?}");
     assert_eq!(commit_read(&mut cell, &predicate, &members), Ok(()));
 }
 

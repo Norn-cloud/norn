@@ -16,16 +16,21 @@ use std::time::Instant;
 
 use duckdb::types::Value as Sql;
 use duckdb::{Connection, params_from_iter};
+use serde_json::value::RawValue;
 use transparency_sha2::{Digest as _, Sha256};
 
 use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
-    FrontierResponse, GroupKey, Literal, LoadRequest, LoadResponse, Lowered, MemberRow,
+    FrontierResponse, GroupKey, LandRequest, LandResponse, LandedFile, LineageRequest,
+    LineageResponse, Literal, LoadRequest, LoadResponse, Lowered, MAX_PREDICATE_SCALE, MemberRow,
     MembersRequest, MembersResponse, MirrorRow, PageClause, PageOp, PageOperand, PageRequest,
-    PageResponse, PageRow, ProfileRequest, ProfileResponse, Source, SyncRequest, TIME_LINK_COLUMN,
-    TableSchema, TenantId, Test, TimeLink, Value, hex,
+    PageResponse, PageRow, PredicateKind, ProfileRequest, ProfileResponse, ResidueRow, RowFinding,
+    RowPredicate, RuleCheck, RuleCount, SettleRequest, Source, StoreRequest, SyncRequest,
+    TIME_LINK_COLUMN, TableSchema, TenantId, Test, TimeLink, ValidRange, Value, dataset_cache_id,
+    hex,
 };
+use super::{MAX_RESIDUE_PAGES, RESIDUE_EXCEEDED, RESIDUE_PAGE_BYTES, RESIDUE_PAGE_ROWS, row_fuel};
 
 /// An engine outcome: a typed refusal the cell maps to its own answer.
 pub type Outcome<T> = Result<T, EngineRefusal>;
@@ -66,6 +71,288 @@ pub struct Settings {
 pub struct Engine {
     settings: Settings,
     tenants: Mutex<BTreeMap<TenantId, Arc<Mutex<Connection>>>>,
+    /// OLAP-02: the landing attempts this engine minted and still holds, by
+    /// tenant and token. An attempt exists from the moment its directory is
+    /// created until its one owner removes it; while an operation holds it
+    /// (`leased`) no other operation may touch it.
+    attempts: Mutex<BTreeMap<(TenantId, String), Held>>,
+}
+
+/// OLAP-02: one held landing attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Held {
+    /// An operation (the landing's download and load, a settle or a store)
+    /// holds it.
+    leased: bool,
+    /// The landing contract it landed and the step it is at, once landed;
+    /// only a settle (residue left) or a store (files written) of exactly
+    /// that contract may take it.
+    landed: Option<Landed>,
+}
+
+/// OLAP-02 (Sol r4): the landing contract of an attempt, recorded by the
+/// engine at land time: the request it landed (by [`contract`]: landing
+/// identity, load identity, table, file, binding, pins and rules) and its
+/// latest answer. A later step must name exactly this request, and a store
+/// exactly this answer; nothing a caller echoes replaces what the engine
+/// recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Landed {
+    request: LandRequest,
+    answer: LandResponse,
+}
+
+impl Landed {
+    fn phase(&self) -> Phase {
+        Phase::of(&self.answer)
+    }
+}
+
+/// The immutable part of a landing request: all of it, with the attempt the
+/// engine minted, but the presigned GET URL, which is minted per call.
+fn contract(request: &LandRequest) -> LandRequest {
+    let mut request = request.clone();
+    request.load.file.url.clear();
+    request
+}
+
+/// The immutable part of a store request: its landing's [`contract`], the
+/// answer it stores and its objects' URIs, but the presigned PUT URLs,
+/// which are minted per call.
+fn store_contract(request: &StoreRequest) -> StoreRequest {
+    let mut request = request.clone();
+    request.land = contract(&request.land);
+    request.data.url.clear();
+    request.held.url.clear();
+    request
+}
+
+/// OLAP-02 (Sol r4): the receipt of a store, kept by tenant and attempt: the
+/// immutable request it was made by ([`store_contract`]) and the answer it
+/// gave. A replay answers this answer, and only for this request.
+#[derive(serde::Serialize)]
+struct StoreReceipt {
+    version: u8,
+    request: StoreRequest,
+    response: LandResponse,
+}
+
+const STORE_RECEIPT_VERSION: u8 = 1;
+
+#[derive(Default, serde::Deserialize)]
+#[serde(try_from = "u8")]
+enum StoreReceiptVersion {
+    #[default]
+    Unversioned,
+    Current,
+}
+
+impl TryFrom<u8> for StoreReceiptVersion {
+    type Error = &'static str;
+
+    fn try_from(version: u8) -> Result<Self, Self::Error> {
+        if version == STORE_RECEIPT_VERSION {
+            Ok(Self::Current)
+        } else {
+            Err("unknown store receipt version")
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordedStore {
+    // Unversioned receipts are from before the introduction of row laws.
+    #[serde(default)]
+    version: StoreReceiptVersion,
+    request: Box<RawValue>,
+    response: Box<RawValue>,
+}
+
+/// A store body from either the current cell or a cell replaying a
+/// pre-law store. Legacy bodies can only replay a legacy receipt.
+#[derive(serde::Deserialize)]
+#[serde(try_from = "Box<RawValue>")]
+pub struct StoreBody {
+    request: StoreRequest,
+    legacy: bool,
+}
+
+impl StoreBody {
+    /// The decoded request, including the scope and object digests.
+    #[must_use]
+    pub fn request(&self) -> &StoreRequest {
+        &self.request
+    }
+}
+
+impl TryFrom<Box<RawValue>> for StoreBody {
+    type Error = serde_json::Error;
+
+    fn try_from(body: Box<RawValue>) -> Result<Self, Self::Error> {
+        match serde_json::from_str(body.get()) {
+            Ok(request) => Ok(Self {
+                request,
+                legacy: false,
+            }),
+            Err(error) => legacy_store_request(&body)
+                .map(|request| Self {
+                    request,
+                    legacy: true,
+                })
+                .map_err(|_old_shape_error| error),
+        }
+    }
+}
+
+// This is the original receipt contract. A versioned receipt is decoded
+// directly into the current types, with all its required fields intact.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyLanding {
+    load: LoadRequest,
+    pins: crate::dataset_manifest::ManifestPins,
+    #[serde(default)]
+    landing: String,
+    #[serde(default)]
+    attempt: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyLandingAnswer {
+    landing: String,
+    attempt: String,
+    load: LoadResponse,
+    data: LandedFile,
+    held: LandedFile,
+    valid_time: Vec<ValidRange>,
+    stored: Option<String>,
+}
+
+impl From<LegacyLandingAnswer> for LandResponse {
+    fn from(old: LegacyLandingAnswer) -> Self {
+        Self {
+            landing: old.landing,
+            attempt: old.attempt,
+            load: old.load,
+            data: Some(old.data),
+            held: Some(old.held),
+            valid_time: old.valid_time,
+            stored: old.stored,
+            findings: BTreeMap::new(),
+            held_by_rules: 0,
+            residue_total: 0,
+            residue: Vec::new(),
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyStore {
+    land: LegacyLanding,
+    landed: LegacyLandingAnswer,
+    data: super::StoredObject,
+    held: super::StoredObject,
+}
+
+fn legacy_store_request(raw: &RawValue) -> serde_json::Result<StoreRequest> {
+    let old: LegacyStore = serde_json::from_str(raw.get())?;
+    Ok(StoreRequest {
+        land: LandRequest {
+            load: old.land.load,
+            pins: old.land.pins,
+            landing: old.land.landing,
+            attempt: old.land.attempt,
+            checks: Vec::new(),
+            residue_page: RESIDUE_PAGE_ROWS,
+        },
+        landed: old.landed.into(),
+        data: old.data,
+        held: old.held,
+    })
+}
+
+struct StoreAnswer {
+    answer: LandResponse,
+    recorded: Option<Box<RawValue>>,
+}
+
+fn json_text(value: &impl serde::Serialize) -> Outcome<String> {
+    serde_json::to_string(value).map_err(|error| refusal("analytics.engine", error.to_string()))
+}
+
+fn receipt_key(attempt: &str) -> String {
+    format!("store:{attempt}")
+}
+
+/// How far a landed attempt is: which next step may take it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Residue rows remain for the per-row evaluator: a settle's.
+    Staged,
+    /// The data and held-set files are written: a store's.
+    Written,
+}
+
+impl Phase {
+    fn of(response: &LandResponse) -> Self {
+        if response.data.is_some() && response.held.is_some() {
+            Self::Written
+        } else {
+            Self::Staged
+        }
+    }
+}
+
+/// A refusal of a landing attempt this engine does not hold (never minted,
+/// or already removed by its owner).
+pub const ATTEMPT_UNKNOWN: &str = "bulk.attempt_unknown";
+/// A refusal of a landing attempt another operation holds: its download or
+/// load is still running, or another settle or store of it is.
+pub const ATTEMPT_BUSY: &str = "bulk.attempt_busy";
+
+/// OLAP-02: exclusive use of one landing attempt, minted by the engine
+/// ([`Engine::land`]) or taken by a settle or a store of its landing. The lease is the
+/// attempt's one cleanup owner: dropped, it removes the attempt's directory
+/// and forgets the attempt, unless it was released as landed. Nothing else
+/// removes an attempt, and nothing names one but its engine-minted token.
+struct Lease<'e> {
+    engine: &'e Engine,
+    tenant: TenantId,
+    token: String,
+    dir: PathBuf,
+    /// Set when the attempt landed (or settled): the lease then releases
+    /// it, kept, for the next step of exactly this contract.
+    landed: Option<Landed>,
+}
+
+impl Lease<'_> {
+    fn files(&self) -> (PathBuf, PathBuf) {
+        (self.dir.join("data.parquet"), self.dir.join("held.parquet"))
+    }
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        let key = (self.tenant.clone(), std::mem::take(&mut self.token));
+        if let Some(landed) = self.landed.take() {
+            let mut attempts = self.engine.attempts();
+            attempts.insert(
+                key,
+                Held {
+                    leased: false,
+                    landed: Some(landed),
+                },
+            );
+            return;
+        }
+        // Held by this lease alone, so no other operation can be using the
+        // directory, and its token is never minted again.
+        let _removed = std::fs::remove_dir_all(&self.dir);
+        self.engine.attempts().remove(&key);
+    }
 }
 
 fn ident(name: &str) -> String {
@@ -87,6 +374,11 @@ fn dataset_table(name: &str) -> String {
 /// The mirrored edges of one link table (METRIC-GRAIN-LINK-1).
 fn link_table(name: &str) -> String {
     ident(&format!("k:{name}"))
+}
+
+/// The residue rows of a landing: left to the per-row evaluator.
+fn residue_table(name: &str) -> String {
+    ident(&format!("r:{name}"))
 }
 
 fn quarantine_table(name: &str) -> String {
@@ -150,6 +442,7 @@ impl Engine {
         Ok(Self {
             settings,
             tenants: Mutex::new(BTreeMap::new()),
+            attempts: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -181,10 +474,14 @@ impl Engine {
             .map_err(|error| refusal("analytics.engine", error.to_string()))?;
         let conn = db(Connection::open(&path))?;
         let scratch = scratch.to_string_lossy().replace('\'', "''");
+        // MANIFEST-02: the tenant's private directory is its own; no other
+        // tenant's connection names it.
+        let private = self.private(tenant)?;
+        let private = private.to_string_lossy().replace('\'', "''");
         db(conn.execute_batch(&format!(
             "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; \
-             SET memory_limit='{}'; SET threads={}; SET temp_directory='{scratch}'; \
-             SET preserve_insertion_order=true; SET allowed_directories=['{scratch}/']; \
+             SET memory_limit='{}'; SET threads={}; SET temp_directory='{private}/spill'; \
+             SET preserve_insertion_order=true; SET allowed_directories=['{scratch}/', '{private}/']; \
              SET enable_external_access=false; \
              CREATE TABLE IF NOT EXISTS \":meta\" (key VARCHAR PRIMARY KEY, value VARCHAR NOT NULL);",
             self.settings.memory_limit.replace('\'', ""),
@@ -193,6 +490,136 @@ impl Engine {
         let conn = Arc::new(Mutex::new(conn));
         tenants.insert(tenant.clone(), Arc::clone(&conn));
         Ok(conn)
+    }
+
+    /// MANIFEST-02: the tenant's private directory, `<root>/t/<tenant>`,
+    /// readable and writable by this process alone. It holds one directory
+    /// per landing attempt (`scratch/<attempt>/`) and the landed files by
+    /// digest (`objects/`).
+    fn private(&self, tenant: &TenantId) -> Outcome<PathBuf> {
+        let dir = self.settings.root.join("t").join(tenant.as_str());
+        for sub in ["scratch", "objects", "spill"] {
+            private_dir(&dir.join(sub))?;
+        }
+        private_dir(&dir)?;
+        Ok(dir)
+    }
+
+    fn attempts(&self) -> std::sync::MutexGuard<'_, BTreeMap<(TenantId, String), Held>> {
+        self.attempts.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// OLAP-02 / MANIFEST-02: mint a landing attempt of `tenant`, held by
+    /// the returned lease: a fresh token no caller chose, its directory
+    /// created exclusively under the tenant's private scratch, and its
+    /// source file, created empty for the download.
+    fn begin_attempt(&self, tenant: &TenantId) -> Outcome<(Lease<'_>, std::fs::File)> {
+        let failed = |error: std::io::Error| refusal("analytics.engine", error.to_string());
+        let scratch = self.private(tenant)?.join("scratch");
+        // Created exclusively under a random name (retried on a clash), so
+        // the token names no directory that existed before, even one a
+        // previous process left.
+        let dir = tempfile::Builder::new()
+            .prefix("a")
+            .rand_bytes(31)
+            .tempdir_in(&scratch)
+            .map_err(failed)?
+            .keep();
+        let token = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        let key = (tenant.clone(), token);
+        let mut attempts = self.attempts();
+        if attempts.contains_key(&key) {
+            // The directory is new, so this cannot happen; if it did, the
+            // entry is another lease's and only the new directory goes.
+            drop(attempts);
+            let _removed = std::fs::remove_dir_all(&dir);
+            return Err(refusal("analytics.engine", "a landing token was reused"));
+        }
+        attempts.insert(
+            key.clone(),
+            Held {
+                leased: true,
+                landed: None,
+            },
+        );
+        drop(attempts);
+        let lease = Lease {
+            engine: self,
+            tenant: key.0,
+            token: key.1,
+            dir,
+            landed: None,
+        };
+        private_dir(&lease.dir)?;
+        let file = create_new(&lease.dir.join("source"))?;
+        Ok((lease, file))
+    }
+
+    /// OLAP-02: take the landed attempt `request.attempt` of its tenant for
+    /// the step `phase` of `request`, with the answer its last step gave.
+    /// An attempt this engine does not hold is [`ATTEMPT_UNKNOWN`]; one
+    /// another operation holds (its download, its load, or another settle
+    /// or store is still running) is [`ATTEMPT_BUSY`]; one landed by any
+    /// other request (Sol r4: another landing, load, table, file, binding,
+    /// pins or rules), or not at that step, or (for a store, `answer`)
+    /// whose last answer is not `answer`, is stale; so is (for a settle,
+    /// `through`) one whose last answer's residue page does not end at
+    /// `through` (S5: a settle covers exactly the page the engine answered,
+    /// never rows it has not shown). Every check is made before the attempt
+    /// is taken, so a refusal touches nothing: the attempt, its staging and
+    /// its files stay as they were.
+    fn lease_attempt(
+        &self,
+        request: &LandRequest,
+        phase: Phase,
+        answer: Option<&LandResponse>,
+        through: Option<u64>,
+    ) -> Outcome<(Lease<'_>, LandResponse)> {
+        let tenant = &request.load.tenant;
+        let token = &request.attempt;
+        let dir = self.private(tenant)?.join("scratch").join(token);
+        let mut attempts = self.attempts();
+        let Some(held) = attempts.get_mut(&(tenant.clone(), token.clone())) else {
+            return Err(refusal(ATTEMPT_UNKNOWN, "the landing attempt is not held"));
+        };
+        if held.leased {
+            return Err(refusal(ATTEMPT_BUSY, "the landing attempt is in use"));
+        }
+        let Some(landed) = held.landed.as_ref().filter(|landed| {
+            landed.request == contract(request)
+                && landed.phase() == phase
+                && answer.is_none_or(|answer| *answer == landed.answer)
+        }) else {
+            return Err(refusal(
+                STALE,
+                "the landing attempt is another landing's or another step's",
+            ));
+        };
+        if let Some(through) = through
+            && landed.answer.residue.last().map(|row| row.row) != Some(through)
+        {
+            return Err(refusal(
+                STALE,
+                "the settle does not end at the residue page the engine answered",
+            ));
+        }
+        let answer = landed.answer.clone();
+        held.leased = true;
+        drop(attempts);
+        Ok((
+            Lease {
+                engine: self,
+                tenant: tenant.clone(),
+                token: token.clone(),
+                dir,
+                landed: None,
+            },
+            answer,
+        ))
     }
 
     fn with<T>(&self, tenant: &TenantId, f: impl FnOnce(&Connection) -> Outcome<T>) -> Outcome<T> {
@@ -368,27 +795,501 @@ impl Engine {
             ));
         }
         self.with(&request.tenant, |conn| {
-            db(conn.execute_batch("BEGIN TRANSACTION"))?;
-            let loaded = load_file(conn, request, file);
-            match loaded {
-                Ok((rows, reasons)) => {
-                    db(conn.execute_batch("COMMIT"))?;
-                    let rejected = reasons.values().sum();
-                    Ok(LoadResponse {
-                        load: request.load.clone(),
-                        rows,
-                        rejected,
-                        reasons,
-                        bytes,
-                        millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                    })
-                }
-                Err(error) => {
+            load_locked(conn, request, file, bytes, started, Lineage::Write)
+        })
+    }
+
+    /// MANIFEST-LAND-1 / MANIFEST-LAWS-1: land `request` in a fresh attempt.
+    /// The engine mints the attempt (OLAP-02: a token no caller chooses, so
+    /// `request.attempt` must be empty) and `fetch` writes the source object
+    /// into the attempt's own source file. The file is loaded under staging
+    /// tables of the attempt alone (`<type>#<attempt>`), then every rule is
+    /// checked set-based over the typed rows. A rule the engine cannot
+    /// decide exactly for a row is left as that row's residue for the
+    /// per-row evaluator ([`Self::settle`]); every other decision stands
+    /// (LAW-04). With no residue the attempt's two Parquet files are written
+    /// (`Self::landing`).
+    ///
+    /// LAW-01: nothing a reader sees changes. Staging is the attempt's own,
+    /// a retry is another attempt, and a dataset is read only at a stored
+    /// cache identity a committed manifest names. A refused step drops the
+    /// attempt's staging.
+    ///
+    /// MANIFEST-02: every file is made read-only before it is hashed, in a
+    /// directory only this process writes, so the bytes hashed are the bytes
+    /// read and sent.
+    ///
+    /// The answer names the attempt; it stays held, for a settle of its
+    /// residue or a store of its files. Until then the landing holds it, so
+    /// no settle or store, replayed or not, can remove it while `fetch` is
+    /// still writing; a failed landing removes it, and nothing else does.
+    ///
+    /// # Errors
+    /// `analytics.invalid` for a caller-named attempt, what `fetch` refuses,
+    /// as [`Self::load`], `bulk.unsupported_law` for a rule the engine does
+    /// not type, `bulk.unsupported_encoding` for a column the file cannot
+    /// carry exactly, [`RESIDUE_EXCEEDED`] for residue past
+    /// [`MAX_RESIDUE_PAGES`] pages (S1: refused before any answer, its
+    /// staging dropped), or the files cannot be written or read back.
+    pub fn land(
+        &self,
+        request: &LandRequest,
+        fetch: impl FnOnce(std::fs::File) -> Outcome<()>,
+    ) -> Outcome<LandResponse> {
+        if !request.attempt.is_empty() {
+            return Err(refusal(
+                "analytics.invalid",
+                "the engine names a landing's attempt; send none",
+            ));
+        }
+        let (mut lease, source) = self.begin_attempt(&request.load.tenant)?;
+        fetch(source)?;
+        let request = &LandRequest {
+            attempt: lease.token.clone(),
+            ..request.clone()
+        };
+        let started = Instant::now();
+        let load_request = &request.load;
+        let file = lease.dir.join("source");
+        seal(&file)?;
+        let (digest, bytes) =
+            sha256_file(&file).map_err(|error| refusal("bulk.unreadable", error.to_string()))?;
+        if digest != load_request.file.sha256 {
+            return Err(refusal(
+                "bulk.digest_mismatch",
+                "the file is not the recorded upload",
+            ));
+        }
+        let staged_table = staged(&load_request.table, &request.attempt);
+        let staged_load = LoadRequest {
+            table: staged_table.clone(),
+            ..load_request.clone()
+        };
+        let landed = self.with(&load_request.tenant, |conn| {
+            let landed = (|| {
+                let load = load_locked(conn, &staged_load, &file, bytes, started, Lineage::Skip)?;
+                db(conn.execute_batch("BEGIN TRANSACTION"))?;
+                let checked = check_rules(conn, &staged_table, request);
+                if checked.is_err() {
                     let _rolled_back = conn.execute_batch("ROLLBACK");
-                    Err(error)
+                }
+                checked?;
+                db(conn.execute_batch("COMMIT"))?;
+                residue_fits(conn, &staged_table, request.residue_page)?;
+                set_meta(
+                    conn,
+                    &format!("counts:{}", staged_table.name),
+                    &counts_text(&load)?,
+                )?;
+                Self::landing(conn, &lease.dir, request, load)
+            })();
+            if landed.is_err() {
+                drop_staged(conn, &staged_table)?;
+            }
+            landed
+        });
+        let _source = std::fs::remove_file(&file);
+        let landed = landed?;
+        lease.landed = Some(Landed {
+            request: contract(request),
+            answer: landed.clone(),
+        });
+        Ok(landed)
+    }
+
+    /// MANIFEST-LAWS-1: record the per-row evaluator's findings for the
+    /// residue rows up to `through`, then answer as [`Self::land`] does:
+    /// the next residue rows, or the landed files once none remains. A
+    /// finding of a rule the engine did not leave to that row refuses, and
+    /// so does a step of an attempt that is not staged (another attempt's
+    /// retry never resets this one's findings, LAW-01).
+    ///
+    /// OLAP-02: the settle takes the attempt by its engine-minted token,
+    /// only while it has residue, for exactly the request it landed (Sol r4:
+    /// the landing contract recorded at land time, so a settle that echoes
+    /// the landing but changes the load is refused before the attempt is
+    /// taken), and while nothing else holds it; a refusal to take it touches
+    /// nothing. Once taken, a refused settle drops the attempt's staging and
+    /// removes it; it is the one owner.
+    ///
+    /// # Errors
+    /// [`ATTEMPT_UNKNOWN`], [`ATTEMPT_BUSY`], `core.compute.stale_input`
+    /// for an attempt that is not staged or a `through` that is not the
+    /// last row of the page the engine answered (S5, before the attempt is
+    /// taken), `bulk.invalid_finding`, or an engine failure.
+    pub fn settle(&self, request: &SettleRequest) -> Outcome<LandResponse> {
+        let land = &request.land;
+        let (mut lease, _answer) =
+            self.lease_attempt(land, Phase::Staged, None, Some(request.through))?;
+        let staged_table = staged(&land.load.table, &land.attempt);
+        let settled = self.with(&land.load.tenant, |conn| {
+            // Taken: from here every refusal drops the staging with the
+            // attempt, so nothing of it is left behind.
+            let settled = (|| {
+                if meta(conn, &format!("load:{}", staged_table.name))?.as_deref()
+                    != Some(land.load.load.as_str())
+                {
+                    return Err(refusal(STALE, "the landing attempt is not staged"));
+                }
+                let load: LoadResponse = serde_json::from_str(
+                    &meta(conn, &format!("counts:{}", staged_table.name))?
+                        .ok_or_else(|| refusal(STALE, "the landing attempt is unknown"))?,
+                )
+                .map_err(|e| refusal("analytics.engine", e.to_string()))?;
+                db(conn.execute_batch("BEGIN TRANSACTION"))?;
+                let settled = settle_rows(conn, &staged_table, request);
+                if settled.is_err() {
+                    let _rolled_back = conn.execute_batch("ROLLBACK");
+                }
+                settled?;
+                db(conn.execute_batch("COMMIT"))?;
+                Self::landing(conn, &lease.dir, land, load)
+            })();
+            if settled.is_err() {
+                drop_staged(conn, &staged_table)?;
+            }
+            settled
+        })?;
+        lease.landed = Some(Landed {
+            request: contract(land),
+            answer: settled.clone(),
+        });
+        Ok(settled)
+    }
+
+    /// The answer to a landing step: the next residue rows, or (none left)
+    /// the attempt's written files (in `dir`, the attempt's directory) and
+    /// the findings by rule, after which the attempt's staging is dropped.
+    ///
+    /// LAW-02: the data file holds exactly the typed rows no rule holds
+    /// back, and its valid time spans only them; the held-set file holds
+    /// every row that could not be typed and every finding.
+    fn landing(
+        conn: &Connection,
+        dir: &Path,
+        request: &LandRequest,
+        load: LoadResponse,
+    ) -> Outcome<LandResponse> {
+        let table = staged(&request.load.table, &request.attempt);
+        let residue_total = query_u64(
+            conn,
+            &Frag::raw(format!(
+                "SELECT count(DISTINCT \":row\") FROM {}",
+                residue_table(&table.name)
+            )),
+        )?;
+        let (findings, held_by_rules) = rule_counts(conn, &table)?;
+        let mut response = LandResponse {
+            landing: request.landing.clone(),
+            attempt: request.attempt.clone(),
+            load,
+            data: None,
+            held: None,
+            valid_time: Vec::new(),
+            findings,
+            held_by_rules,
+            residue_total,
+            residue: Vec::new(),
+            stored: None,
+        };
+        if residue_total > 0 {
+            response.residue = residue_page(conn, &table, 0, request.residue_page)?;
+            return Ok(response);
+        }
+        let (data, held) = (dir.join("data.parquet"), dir.join("held.parquet"));
+        let trusted = trusted_rows(&table);
+        copy_parquet(
+            conn,
+            &format!(
+                "SELECT {} FROM {} WHERE {trusted} ORDER BY \":row\"",
+                data_columns(&table).join(", "),
+                dataset_table(&table.name)
+            ),
+            &data,
+        )?;
+        copy_parquet(
+            conn,
+            &format!(
+                "SELECT {} FROM {} ORDER BY \":row\", \":rule\" NULLS FIRST, \":reason\"",
+                held_columns(&table).join(", "),
+                quarantine_table(&table.name)
+            ),
+            &held,
+        )?;
+        let data_rows = query_u64(
+            conn,
+            &Frag::raw(format!(
+                "SELECT count(*) FROM {} WHERE {trusted}",
+                dataset_table(&table.name)
+            )),
+        )?;
+        let held_rows = query_u64(
+            conn,
+            &Frag::raw(format!(
+                "SELECT count(*) FROM {}",
+                quarantine_table(&table.name)
+            )),
+        )?;
+        response.valid_time = valid_ranges(conn, &table, &trusted)?;
+        drop_staged(conn, &table)?;
+        let landed = |path: &Path, rows: u64| -> Outcome<LandedFile> {
+            seal(path)?;
+            let (sha256, bytes) = sha256_file(path)
+                .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+            Ok(LandedFile {
+                sha256,
+                rows,
+                bytes,
+            })
+        };
+        response.data = Some(landed(&data, data_rows)?);
+        response.held = Some(landed(&held, held_rows)?);
+        Ok(response)
+    }
+
+    /// MANIFEST-CACHE-1: keep an attempt's files, which the caller has sent
+    /// to their objects, as the files of the cache identity
+    /// [`dataset_cache_id`] names. Each file must still be the digest its
+    /// landing answered; it moves into the tenant's object directory under
+    /// that digest (an object already there must be the same digest).
+    /// `send` sends the two files (data, held) to their objects first.
+    ///
+    /// OLAP-02: the store takes the attempt by its engine-minted token, and
+    /// only once its files are written, for exactly the request it landed
+    /// and the answer it gave (Sol r4: the answer stored is the engine's own
+    /// record, never the caller's), and while nothing else holds it; it is
+    /// then the attempt's one owner and removes it, stored or not. A store
+    /// of an attempt still landing or settling is [`ATTEMPT_BUSY`] and
+    /// touches nothing. A store keeps its receipt by tenant and attempt; a
+    /// replay of an attempt already stored must be that receipt's request
+    /// (only the presigned URLs may differ) and answers the receipt's
+    /// answer, removing nothing; any other body is stale.
+    ///
+    /// # Errors
+    /// [`ATTEMPT_UNKNOWN`], [`ATTEMPT_BUSY`], `core.compute.stale_input`,
+    /// `bulk.digest_mismatch`, what `send` refuses, or an I/O or engine
+    /// failure.
+    pub fn store(
+        &self,
+        request: &StoreRequest,
+        send: impl FnOnce(&Path, &Path) -> Outcome<()>,
+    ) -> Outcome<LandResponse> {
+        self.store_answer(request, send).map(|result| result.answer)
+    }
+
+    /// Store a call's landed files or return the exact recorded JSON body.
+    ///
+    /// # Errors
+    /// The same refusals as [`Self::store`], a legacy body with no matching
+    /// legacy receipt, or a response serialization failure.
+    pub fn store_json(
+        &self,
+        body: &StoreBody,
+        send: impl FnOnce(&Path, &Path) -> Outcome<()>,
+    ) -> Outcome<Box<RawValue>> {
+        let result = if body.legacy {
+            self.replayed(&body.request, true)?
+                .ok_or_else(|| refusal(ATTEMPT_UNKNOWN, "the legacy receipt does not exist"))?
+        } else {
+            self.store_answer(&body.request, send)?
+        };
+        result.recorded.map_or_else(
+            || {
+                serde_json::value::to_raw_value(&result.answer)
+                    .map_err(|error| refusal("analytics.engine", error.to_string()))
+            },
+            Ok,
+        )
+    }
+
+    fn store_answer(
+        &self,
+        request: &StoreRequest,
+        send: impl FnOnce(&Path, &Path) -> Outcome<()>,
+    ) -> Outcome<StoreAnswer> {
+        let land = &request.land;
+        let tenant = &land.load.tenant;
+        let table = &land.load.table;
+        if request.landed.landing != land.landing || request.landed.attempt != land.attempt {
+            return Err(refusal(STALE, "the answer is not this landing's"));
+        }
+        if request.landed.data.is_none() || request.landed.held.is_none() {
+            return Err(refusal(
+                "analytics.invalid",
+                "the landing has residue to settle",
+            ));
+        }
+        let leased = self.lease_attempt(land, Phase::Written, Some(&request.landed), None);
+        let (lease, answer) = match leased {
+            Ok(leased) => leased,
+            Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
+                return self.replayed(request, false)?.ok_or(unknown);
+            }
+            Err(refused) => return Err(refused),
+        };
+        let (Some(data_file), Some(held_file)) = (&answer.data, &answer.held) else {
+            return Err(refusal(
+                "analytics.engine",
+                "a written attempt names its files",
+            ));
+        };
+        let (data, held) = lease.files();
+        send(&data, &held)?;
+        let objects = self.private(tenant)?.join("objects");
+        let mut kept = Vec::new();
+        for (path, file) in [(&data, data_file), (&held, held_file)] {
+            let target = objects.join(format!("{}.parquet", file.sha256));
+            verify_object(path, &file.sha256)?;
+            if target.exists() {
+                verify_object(&target, &file.sha256)?;
+            } else {
+                std::fs::rename(path, &target)
+                    .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+            }
+            kept.push(target);
+        }
+        let cache = dataset_cache_id(table, &data_file.sha256, &held_file.sha256);
+        let record = KeptLanding {
+            table: table.clone(),
+            data: KeptFile {
+                path: kept.first().cloned().unwrap_or_default(),
+                sha256: data_file.sha256.clone(),
+                uri: request.data.uri.clone(),
+            },
+            held: KeptFile {
+                path: kept.get(1).cloned().unwrap_or_default(),
+                sha256: held_file.sha256.clone(),
+                uri: request.held.uri.clone(),
+            },
+        };
+        let record = json_text(&record)?;
+        let response = LandResponse {
+            stored: Some(cache.clone()),
+            ..answer
+        };
+        let receipt = json_text(&StoreReceipt {
+            version: STORE_RECEIPT_VERSION,
+            request: store_contract(request),
+            response: response.clone(),
+        })?;
+        // The kept record, the receipt and the load's lineage commit
+        // together, before the lease is released: a replay that finds the
+        // attempt gone finds its receipt. Sol r3 S8: lineage is written only
+        // here, once residue has settled and both files are sent, so a
+        // landing refused before its store leaves none behind.
+        self.with(tenant, |conn| {
+            db(conn.execute_batch("BEGIN TRANSACTION"))?;
+            let written = set_meta(conn, &format!("landing:{cache}"), &record)
+                .and_then(|()| set_meta(conn, &receipt_key(&land.attempt), &receipt))
+                .and_then(|()| set_lineage(conn, &land.load));
+            if written.is_err() {
+                let _rolled_back = conn.execute_batch("ROLLBACK");
+                return written;
+            }
+            db(conn.execute_batch("COMMIT"))
+        })?;
+        drop(lease);
+        Ok(StoreAnswer {
+            answer: response,
+            recorded: None,
+        })
+    }
+
+    /// MANIFEST-LINEAGE-1: what the landing holds for one source row:
+    /// whether it was admitted, why it was refused, and every rule it fails.
+    /// Held-back rows are answered too: lineage reaches every source row.
+    ///
+    /// # Errors
+    /// `analytics.dataset_cold` if the kept files are absent,
+    /// `core.compute.stale_input` for another landing, or an engine failure.
+    pub fn lineage(&self, request: &LineageRequest) -> Outcome<LineageResponse> {
+        self.with(&request.tenant, |conn| {
+            let table = &request.table;
+            if meta(conn, &format!("load:{table}"))?.as_deref() != Some(request.load.as_str()) {
+                // MANIFEST-CACHE-1: a cache miss rebuilds the dataset
+                // from the files of exactly its cache identity.
+                hydrate(conn, table, &request.load)?;
+            }
+            let admitted = query_u64(
+                conn,
+                &Frag::fmt(
+                    &format!(
+                        "SELECT count(*) FROM {} WHERE \":row\" = {{}}",
+                        dataset_table(table)
+                    ),
+                    &[&Frag::bind("?", Sql::UBigInt(request.row))],
+                ),
+            )? == 1;
+            let mut statement = db(conn.prepare(&format!(
+                "SELECT \":reason\", \":rule\", \":holds\" FROM {} WHERE \":row\" = ? \
+                 ORDER BY \":rule\" NULLS FIRST, \":reason\"",
+                quarantine_table(table)
+            )))?;
+            let held: Vec<(String, Option<String>, bool)> = db(db(statement
+                .query_map(params_from_iter([Sql::UBigInt(request.row)]), |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                }))?
+            .collect::<Result<_, _>>())?;
+            let mut response = LineageResponse {
+                admitted,
+                refused: None,
+                findings: Vec::new(),
+            };
+            for (reason, rule, holds) in held {
+                match rule {
+                    Some(rule) => response.findings.push(RowFinding {
+                        row: request.row,
+                        rule,
+                        label: reason,
+                        holds,
+                    }),
+                    None => response.refused = Some(reason),
                 }
             }
+            Ok(response)
         })
+    }
+
+    /// OLAP-02 (Sol r4): the answer of a store of `request` that already
+    /// happened, from the receipt kept for its tenant and attempt. Reads
+    /// only. `None` when no store of the attempt happened; stale when one
+    /// did, of any other request than this one ([`store_contract`]).
+    fn replayed(&self, request: &StoreRequest, legacy: bool) -> Outcome<Option<StoreAnswer>> {
+        let land = &request.land;
+        let Some(text) = self.with(&land.load.tenant, |conn| {
+            meta(conn, &receipt_key(&land.attempt))
+        })?
+        else {
+            return Ok(None);
+        };
+        let decode_error =
+            |error: serde_json::Error| refusal("analytics.engine", error.to_string());
+        let receipt: RecordedStore = serde_json::from_str(&text).map_err(decode_error)?;
+        let recorded_request: StoreRequest = match receipt.version {
+            StoreReceiptVersion::Unversioned => {
+                legacy_store_request(&receipt.request).map_err(decode_error)?
+            }
+            StoreReceiptVersion::Current if !legacy => {
+                serde_json::from_str(receipt.request.get()).map_err(decode_error)?
+            }
+            StoreReceiptVersion::Current => {
+                return Err(refusal(STALE, "the store is another request's"));
+            }
+        };
+        if recorded_request != store_contract(request) {
+            return Err(refusal(STALE, "the store is another request's"));
+        }
+        let answer = if matches!(receipt.version, StoreReceiptVersion::Unversioned) {
+            serde_json::from_str::<LegacyLandingAnswer>(receipt.response.get())
+                .map_err(decode_error)?
+                .into()
+        } else {
+            serde_json::from_str(receipt.response.get()).map_err(decode_error)?
+        };
+        Ok(Some(StoreAnswer {
+            answer,
+            recorded: Some(receipt.response),
+        }))
     }
 
     /// One records page of a source (HOST-READ-3 on the engine): the rows
@@ -959,14 +1860,21 @@ impl Scope {
             }
             Source::Dataset { table, load } => {
                 if meta(conn, &format!("load:{table}"))?.as_deref() != Some(load.as_str()) {
-                    return Err(refusal(STALE, "the dataset was loaded again"));
+                    // MANIFEST-CACHE-1: a cache miss rebuilds the dataset
+                    // from the files of exactly its cache identity.
+                    hydrate(conn, table, load)?;
                 }
                 let schema = schema_of(conn, &format!("dataset:{table}"))?;
+                // DATA-QUARANTINE / MANIFEST-LAWS-1: a row a rule holds back
+                // is in no answer, as a held-back observation is in none.
                 Ok(Self {
                     table: dataset_table(table),
                     columns: schema.columns,
                     all: Frag::raw("TRUE"),
-                    population: Frag::raw("TRUE"),
+                    population: Frag::raw(format!(
+                        "\":row\" NOT IN (SELECT \":row\" FROM {} WHERE \":holds\" AND \":rule\" IS NOT NULL)",
+                        quarantine_table(table)
+                    )),
                     versions: None,
                     excluded: Vec::new(),
                     at: None,
@@ -1854,6 +2762,31 @@ struct Parsed {
 }
 
 #[allow(clippy::too_many_lines, reason = "one arm per column kind")]
+/// MANIFEST-LAWS-1 (S4): a number the per-row decoder cannot hold exactly
+/// (an Integer: a signed 64-bit integer; a Decimal: `norn_ir::Decimal`, a
+/// 96-bit mantissa and at most 28 fractional digits once canonical) is not
+/// typed, whichever rules read it.
+const OUT_OF_RANGE: &str = "bulk.out_of_range";
+
+/// Whether the typed number `v` (a `DECIMAL`) is in the per-row decoder's
+/// exact range: its canonical digits (trailing fractional zeros and the
+/// sign dropped) are at most [`EXACT_MANTISSA`], with at most
+/// [`MAX_PREDICATE_SCALE`] of them fractional.
+fn exact_sql(v: &str) -> String {
+    let unsigned = format!("ltrim(CAST({v} AS VARCHAR), '-')");
+    let canonical = format!(
+        "(CASE WHEN strpos({unsigned}, '.') > 0 THEN rtrim(rtrim({unsigned}, '0'), '.') ELSE {unsigned} END)"
+    );
+    let fraction = format!(
+        "(CASE WHEN strpos({canonical}, '.') > 0 THEN strlen({canonical}) - strpos({canonical}, '.') ELSE 0 END)"
+    );
+    let digits = format!("ltrim(replace({canonical}, '.', ''), '0')");
+    let width = EXACT_MANTISSA.len();
+    format!(
+        "({fraction} <= {MAX_PREDICATE_SCALE} AND (strlen({digits}) < {width} OR (strlen({digits}) = {width} AND {digits} <= '{EXACT_MANTISSA}')))"
+    )
+}
+
 fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
     let c = format!("c{i}");
     let v = format!("v{i}");
@@ -1866,7 +2799,13 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
             columns: vec![format!(
                 "CASE WHEN translate({c}, '0123456789', '') IN ('', '-', '+') THEN TRY_CAST({c} AS DECIMAL(38,0)) END AS {v}"
             )],
-            reason: format!("CASE WHEN {v} IS NULL THEN 'bulk.not_integer' END"),
+            // S4: an Integer is a signed 64-bit integer to the per-row
+            // property codec, not a decimal, so its range is i64's.
+            reason: format!(
+                "CASE WHEN {v} IS NULL THEN 'bulk.not_integer' WHEN NOT ({v} BETWEEN {} AND {}) THEN '{OUT_OF_RANGE}' END",
+                i64::MIN,
+                i64::MAX
+            ),
         },
         ColumnKind::Decimal { scale } => Parsed {
             columns: vec![
@@ -1881,7 +2820,9 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
                 ),
             ],
             reason: format!(
-                "CASE WHEN NOT s{i} THEN 'bulk.not_decimal' WHEN NOT f{i} THEN 'bulk.scale_exceeded' WHEN {v} IS NULL THEN 'bulk.not_decimal' END"
+                "CASE WHEN NOT s{i} THEN 'bulk.not_decimal' WHEN NOT f{i} THEN 'bulk.scale_exceeded' WHEN {v} IS NULL THEN 'bulk.not_decimal' \
+                 WHEN NOT {} THEN '{OUT_OF_RANGE}' END",
+                exact_sql(&v)
             ),
         },
         ColumnKind::Boolean => Parsed {
@@ -2013,8 +2954,11 @@ fn dataset_ddl(table: &TableSchema) -> String {
 
 /// Read the file once into `":file"` (insertion order is the file's), then
 /// in one pass into `":checked"`: per table column `c{i}` its text (found by
-/// header or Parquet field name; an empty or blank field is null), its
-/// parsed value, and `":reason"`, the first refusal in column order.
+/// header or Parquet field name), its parsed value, and `":reason"`, the
+/// first refusal in column order. A CSV field has no null, so an empty or
+/// blank one is null; a Parquet value is null only when the file says so,
+/// and present text, empty or blank, is kept as it is (LAW-02/05: as the
+/// per-row path reads it).
 fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<()> {
     let path = file.to_string_lossy().replace('\'', "''");
     let source = match request.file.format {
@@ -2035,6 +2979,10 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     }))?
     .collect::<Result<_, _>>())?;
+    let nanos = match request.file.format {
+        FileFormat::Parquet => nanosecond_fields(conn, &path)?,
+        FileFormat::Csv => std::collections::BTreeSet::new(),
+    };
     let mut texts = Vec::new();
     let mut parsed = Vec::new();
     let mut reasons = Vec::new();
@@ -2047,16 +2995,44 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
             ));
         };
         let f = ident(name);
+        // LAW-03: an instant is imported exactly or not at all: its every
+        // nanosecond and its instant (never the session's zone), so a rule
+        // decides the value the file holds.
+        let lossy = || {
+            refusal(
+                "bulk.unsupported_encoding",
+                format!("{name} holds instants this load cannot import exactly"),
+            )
+        };
         let text = match (column.kind, data_type.as_str()) {
-            (ColumnKind::Timestamp, kind) if kind.starts_with("TIMESTAMP") => {
+            (ColumnKind::Timestamp, "TIMESTAMP_NS") => {
+                // The second is taken in HUGEINT: near the lower bound of
+                // TIMESTAMP_NS, the nanoseconds less their fraction are
+                // below BIGINT's range though the microseconds are not.
+                let fraction =
+                    format!("(((epoch_ns({f}) % 1000000000) + 1000000000) % 1000000000)");
+                format!(
+                    "strftime(make_timestamp(CAST((CAST(epoch_ns({f}) AS HUGEINT) - {fraction}) // 1000 AS BIGINT)), '%Y-%m-%dT%H:%M:%S') \
+                     || '.' || lpad(CAST({fraction} AS VARCHAR), 9, '0') || 'Z'"
+                )
+            }
+            (ColumnKind::Timestamp, _) if nanos.contains(name) => return Err(lossy()),
+            (ColumnKind::Timestamp, "TIMESTAMP WITH TIME ZONE") => {
+                format!("strftime(make_timestamp(epoch_us({f})), '%Y-%m-%dT%H:%M:%S.%fZ')")
+            }
+            (ColumnKind::Timestamp, "TIMESTAMP" | "TIMESTAMP_MS" | "TIMESTAMP_S") => {
                 format!("strftime(CAST({f} AS TIMESTAMP), '%Y-%m-%dT%H:%M:%S.%fZ')")
             }
+            (ColumnKind::Timestamp, kind) if kind.starts_with("TIMESTAMP") => return Err(lossy()),
             (ColumnKind::Date, "DATE") => format!("strftime({f}, '%Y-%m-%d')"),
             _ => format!("CAST({f} AS VARCHAR)"),
         };
-        texts.push(format!(
-            "CASE WHEN trim({text}) = '' THEN NULL ELSE {text} END AS c{i}"
-        ));
+        texts.push(match request.file.format {
+            FileFormat::Csv => {
+                format!("CASE WHEN trim({text}) = '' THEN NULL ELSE {text} END AS c{i}")
+            }
+            FileFormat::Parquet => format!("{text} AS c{i}"),
+        });
         let Parsed { columns, reason } = parse_sql(column.kind, i);
         parsed.extend(columns);
         let missing = if column.nullable {
@@ -2088,6 +3064,30 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
     Ok(())
 }
 
+/// LAW-03: the Parquet fields that hold nanosecond instants (a `NANOS`
+/// timestamp or a legacy `INT96` one). The engine imports such a field only
+/// as `TIMESTAMP_NS`; read as anything narrower, it is refused.
+fn nanosecond_fields(conn: &Connection, path: &str) -> Outcome<std::collections::BTreeSet<String>> {
+    let mut statement = db(conn.prepare(&format!(
+        "SELECT name, CAST(type AS VARCHAR), coalesce(CAST(logical_type AS VARCHAR), '') FROM parquet_schema('{path}')"
+    )))?;
+    let fields = db(db(statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+            row.get::<_, String>(2)?,
+        ))
+    }))?
+    .collect::<Result<Vec<_>, _>>())?;
+    Ok(fields
+        .into_iter()
+        .filter(|(_, physical, logical)| {
+            physical == "INT96" || logical.contains("NANOS=NanoSeconds")
+        })
+        .map(|(name, _, _)| name)
+        .collect())
+}
+
 fn load_file(
     conn: &Connection,
     request: &LoadRequest,
@@ -2099,14 +3099,9 @@ fn load_file(
     let quarantine = quarantine_table(&table.name);
     db(conn.execute_batch(&format!(
         "DROP TABLE IF EXISTS {dataset}; DROP TABLE IF EXISTS {quarantine}; CREATE TABLE {dataset} ({}); \
-         CREATE TABLE {quarantine} (\":row\" UBIGINT, \":load\" VARCHAR, \":reason\" VARCHAR{});",
+         CREATE TABLE {quarantine} ({});",
         dataset_ddl(table),
-        table.columns.iter().fold(String::new(), |mut out, c| {
-            out.push_str(", ");
-            out.push_str(&ident(&c.id));
-            out.push_str(" VARCHAR");
-            out
-        }),
+        quarantine_ddl(table),
     )))?;
     let mut columns = Vec::new();
     let mut values = Vec::new();
@@ -2131,7 +3126,7 @@ fn load_file(
     ))?;
     db(conn.execute(
         &format!(
-            "INSERT INTO {quarantine} SELECT \":row\", ?, \":reason\"{} FROM \":checked\" WHERE \":reason\" IS NOT NULL ORDER BY \":row\"",
+            "INSERT INTO {quarantine} SELECT \":row\", ?, \":reason\", NULL, TRUE{} FROM \":checked\" WHERE \":reason\" IS NOT NULL ORDER BY \":row\"",
             (0..table.columns.len()).fold(String::new(), |mut out, i| {
                 out.push_str(", c");
                 out.push_str(&i.to_string());
@@ -2159,12 +3154,1138 @@ fn load_file(
         &format!("dataset:{}", table.name),
         &schema_text(table)?,
     )?;
+    Ok((rows, reasons))
+}
+
+/// The lineage record of load `request`: its source file's digest and
+/// object. A direct load writes it in its load transaction; a landing
+/// writes it in its store transaction (Sol r3 S8/S9).
+fn set_lineage(conn: &Connection, request: &LoadRequest) -> Outcome<()> {
     set_meta(
         conn,
         &format!("lineage:{}", request.load),
         &format!("{} {}", request.file.sha256, request.file.uri),
+    )
+}
+
+/// Whether a load step writes its load's lineage in its own transaction:
+/// a direct load does; a landing's staged load does not (its store does).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lineage {
+    Write,
+    Skip,
+}
+
+/// The load step under the tenant's lock, in one transaction (Sol r3 S9:
+/// with a direct load's lineage, so neither commits without the other).
+fn load_locked(
+    conn: &Connection,
+    request: &LoadRequest,
+    file: &Path,
+    bytes: u64,
+    started: Instant,
+    lineage: Lineage,
+) -> Outcome<LoadResponse> {
+    db(conn.execute_batch("BEGIN TRANSACTION"))?;
+    let loaded = load_file(conn, request, file).and_then(|loaded| {
+        if lineage == Lineage::Write {
+            set_lineage(conn, request)?;
+        }
+        Ok(loaded)
+    });
+    match loaded {
+        Ok((rows, reasons)) => {
+            db(conn.execute_batch("COMMIT"))?;
+            let rejected = reasons.values().sum();
+            Ok(LoadResponse {
+                load: request.load.clone(),
+                rows,
+                rejected,
+                reasons,
+                bytes,
+                millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            })
+        }
+        Err(error) => {
+            let _rolled_back = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
+/// The quarantine (held-set) table: each held-back source row with its
+/// reason, the rule that holds it (none for a row that could not be typed),
+/// whether it holds the row back, and the row's text values.
+fn quarantine_ddl(table: &TableSchema) -> String {
+    let mut columns = vec![
+        format!("{} UBIGINT", ident(":row")),
+        format!("{} VARCHAR", ident(":load")),
+        format!("{} VARCHAR", ident(":reason")),
+        format!("{} VARCHAR", ident(":rule")),
+        format!("{} BOOLEAN", ident(":holds")),
+    ];
+    columns.extend(
+        table
+            .columns
+            .iter()
+            .map(|c| format!("{} VARCHAR", ident(&c.id))),
+    );
+    columns.join(", ")
+}
+
+/// The data file's columns: the cache table's, without the landing identity.
+fn data_columns(table: &TableSchema) -> Vec<String> {
+    let mut columns = vec![ident(":id"), ident(":v"), ident(":row")];
+    for column in &table.columns {
+        columns.push(ident(&column.id));
+        if matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+            columns.push(derived(&column.id, "t"));
+            columns.push(derived(&column.id, "n"));
+        }
+    }
+    columns
+}
+
+/// The held-set file's columns: the quarantine table's, without the landing identity.
+fn held_columns(table: &TableSchema) -> Vec<String> {
+    let mut columns = vec![
+        ident(":row"),
+        ident(":reason"),
+        ident(":rule"),
+        ident(":holds"),
+    ];
+    columns.extend(table.columns.iter().map(|c| ident(&c.id)));
+    columns
+}
+
+/// MANIFEST-LAWS-1 (S3): the held-set value columns of a typed staged row
+/// (`d`), as the text the per-row path holds: each value's text, a number
+/// as its canonical decimal (`1.500` is `1.5`).
+fn held_values(table: &TableSchema) -> Vec<String> {
+    table
+        .columns
+        .iter()
+        .map(|column| {
+            let text = format!("CAST(d.{} AS VARCHAR)", ident(&column.id));
+            match column.kind {
+                ColumnKind::Integer | ColumnKind::Decimal { .. } => format!(
+                    "CASE WHEN strpos({text}, '.') > 0 THEN rtrim(rtrim({text}, '0'), '.') ELSE {text} END"
+                ),
+                ColumnKind::Text
+                | ColumnKind::Boolean
+                | ColumnKind::Timestamp
+                | ColumnKind::Date
+                | ColumnKind::Opaque => text,
+            }
+        })
+        .collect()
+}
+
+/// The quarantine's column list for a rule finding: the metadata and every
+/// value column.
+fn finding_columns(table: &TableSchema) -> String {
+    let mut columns = vec![
+        ident(":row"),
+        ident(":load"),
+        ident(":reason"),
+        ident(":rule"),
+        ident(":holds"),
+    ];
+    columns.extend(table.columns.iter().map(|c| ident(&c.id)));
+    columns.join(", ")
+}
+
+/// The values of [`finding_columns`]: the row (`row`), the load, reason,
+/// rule and hold flag bound, and the staged row's values.
+fn finding_values(table: &TableSchema, row: &str) -> String {
+    let mut values = vec![row.to_owned()];
+    values.extend(["?"; 4].map(str::to_owned));
+    values.extend(held_values(table));
+    values.join(", ")
+}
+
+fn quoted_path(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "''"))
+}
+
+/// Write one query's rows as a zstd Parquet file, in the query's order.
+fn copy_parquet(conn: &Connection, query: &str, path: &Path) -> Outcome<()> {
+    db(conn.execute_batch(&format!(
+        "COPY ({query}) TO {} (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 122880)",
+        quoted_path(path)
+    )))
+}
+
+/// Each temporal column's earliest and latest admitted value, by instant.
+fn valid_ranges(conn: &Connection, table: &TableSchema, rows: &str) -> Outcome<Vec<ValidRange>> {
+    let dataset = dataset_table(&table.name);
+    let mut ranges = Vec::new();
+    for column in &table.columns {
+        if !matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+            continue;
+        }
+        let (c, t, n) = (
+            ident(&column.id),
+            derived(&column.id, "t"),
+            derived(&column.id, "n"),
+        );
+        let end = |direction: &str| -> Outcome<Option<String>> {
+            let mut statement = db(conn.prepare(&format!(
+                "SELECT {c} FROM {dataset} WHERE {c} IS NOT NULL AND {rows} ORDER BY {t} {direction}, {n} {direction} LIMIT 1"
+            )))?;
+            let mut found = db(statement.query([]))?;
+            match db(found.next())? {
+                Some(row) => Ok(Some(db(row.get(0))?)),
+                None => Ok(None),
+            }
+        };
+        if let (Some(from), Some(to)) = (end("ASC")?, end("DESC")?) {
+            ranges.push(ValidRange {
+                column: column.id.clone(),
+                from,
+                to,
+            });
+        }
+    }
+    Ok(ranges)
+}
+
+/// LAW-02: the typed rows of a staged table that no rule holds back.
+fn trusted_rows(table: &TableSchema) -> String {
+    format!(
+        "\":row\" NOT IN (SELECT \":row\" FROM {} WHERE \":holds\" AND \":rule\" IS NOT NULL)",
+        quarantine_table(&table.name)
+    )
+}
+
+fn counts_text(load: &LoadResponse) -> Outcome<String> {
+    serde_json::to_string(load).map_err(|e| refusal("analytics.engine", e.to_string()))
+}
+
+/// The largest mantissa the per-row evaluator's decimal holds exactly
+/// (`2^96 - 1`): a value whose scaled magnitude passes it is not computed
+/// set-based.
+const EXACT_MANTISSA: &str = "79228162514264337593543950335";
+
+/// `|x| <= EXACT_MANTISSA / 10^scale`, and false when it cannot be computed.
+fn in_range(value: &Frag, scale: u32) -> Outcome<Frag> {
+    let digits = EXACT_MANTISSA.len();
+    let scale_digits = usize::try_from(scale).map_err(|_e| refusal(LAW, "a scale"))?;
+    let bound = if scale_digits == 0 {
+        EXACT_MANTISSA.to_owned()
+    } else {
+        let split = digits
+            .checked_sub(scale_digits)
+            .ok_or_else(|| refusal(LAW, "a scale past the exact range"))?;
+        format!(
+            "{}.{}",
+            EXACT_MANTISSA.get(..split).unwrap_or("0"),
+            EXACT_MANTISSA.get(split..).unwrap_or_default()
+        )
+    };
+    Ok(Frag::fmt(
+        &format!("coalesce(TRY(abs({{}}) <= CAST('{bound}' AS DECIMAL(38,{scale}))), FALSE)"),
+        &[value],
+    ))
+}
+
+const LAW: &str = "bulk.unsupported_law";
+
+/// LAW-05: the per-row evaluator compares text by its NFC form, the engine
+/// by its bytes. They agree exactly where the text is already NFC, so text
+/// that is not is left to the per-row evaluator as residue.
+fn nfc_guard(text: &Frag) -> Frag {
+    Frag::fmt("(nfc_normalize({}) = {})", &[text, text])
+}
+
+/// One lowered predicate: its SQL, null-free over rows whose reads are all
+/// present, and the guards that must all hold for it to be exact.
+struct LoweredRule {
+    sql: Frag,
+    kind: PredicateKind,
+    guards: Vec<Frag>,
+}
+
+/// MANIFEST-LAWS-1: the SQL of `predicate` over `table`, with every value
+/// bound. The predicate is typed again here, by the engine's own schema.
+fn predicate_sql(predicate: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> {
+    if predicate.kind(table).is_none() {
+        return Err(refusal(LAW, "a rule the engine does not type"));
+    }
+    lower_node(predicate, table)
+}
+
+/// A literal or column read: its SQL and the guard a number needs.
+fn lower_leaf(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> {
+    use PredicateKind as K;
+    use RowPredicate as P;
+    Ok(match node {
+        P::Null => return Err(refusal(LAW, "null outside an equality")),
+        P::Bool(flag) => LoweredRule {
+            sql: Frag::raw(if *flag { "TRUE" } else { "FALSE" }),
+            kind: K::Bool,
+            guards: Vec::new(),
+        },
+        P::Number(text) => {
+            let Some(K::Number(scale)) = node.kind(table) else {
+                return Err(refusal(LAW, "a number literal"));
+            };
+            let sql = Frag::bind(
+                &format!("CAST(? AS DECIMAL(38,{scale}))"),
+                Sql::Text(text.clone()),
+            );
+            let guard = in_range(&sql, scale)?;
+            LoweredRule {
+                sql,
+                kind: K::Number(scale),
+                guards: vec![guard],
+            }
+        }
+        P::Text(text) => {
+            let sql = Frag::bind("CAST(? AS VARCHAR)", Sql::Text(text.clone()));
+            let guards = vec![nfc_guard(&sql)];
+            LoweredRule {
+                sql,
+                kind: K::Text,
+                guards,
+            }
+        }
+        P::Column(id) => {
+            let kind = node
+                .kind(table)
+                .ok_or_else(|| refusal(LAW, format!("no typed column {id}")))?;
+            let sql = Frag::raw(ident(id));
+            let guards = match kind {
+                K::Number(scale) => vec![in_range(&sql, scale)?],
+                K::Text => vec![nfc_guard(&sql)],
+                K::Null | K::Bool => Vec::new(),
+            };
+            LoweredRule { sql, kind, guards }
+        }
+        P::Not(_)
+        | P::Negate(_)
+        | P::Add(..)
+        | P::Subtract(..)
+        | P::Multiply(..)
+        | P::Equal(..)
+        | P::NotEqual(..)
+        | P::Less(..)
+        | P::LessOrEqual(..)
+        | P::Greater(..)
+        | P::GreaterOrEqual(..)
+        | P::And(..)
+        | P::Or(..)
+        | P::Conditional(..) => return Err(refusal(LAW, "not a literal or a column")),
+    })
+}
+
+/// `a == b` or `a != b`; against `null` it is a null test.
+fn lower_equality(
+    equal: bool,
+    a: &RowPredicate,
+    b: &RowPredicate,
+    table: &TableSchema,
+) -> Outcome<LoweredRule> {
+    use PredicateKind as K;
+    use RowPredicate as P;
+    Ok(match (a, b) {
+        (P::Null, P::Null) => LoweredRule {
+            sql: Frag::raw(if equal { "TRUE" } else { "FALSE" }),
+            kind: K::Bool,
+            guards: Vec::new(),
+        },
+        (P::Null, value) | (value, P::Null) => {
+            let value = lower_node(value, table)?;
+            let test = if equal { "IS NULL" } else { "IS NOT NULL" };
+            LoweredRule {
+                sql: Frag::fmt(&format!("({{}} {test})"), &[&value.sql]),
+                kind: K::Bool,
+                guards: value.guards,
+            }
+        }
+        (a, b) => {
+            let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
+            let mut guards = a.guards;
+            guards.extend(b.guards);
+            let op = if equal { "=" } else { "<>" };
+            LoweredRule {
+                sql: Frag::fmt(&format!("({{}} {op} {{}})"), &[&a.sql, &b.sql]),
+                kind: K::Bool,
+                guards,
+            }
+        }
+    })
+}
+
+fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> {
+    use PredicateKind as K;
+    use RowPredicate as P;
+    let binary = |op: &str, a: &RowPredicate, b: &RowPredicate, kind: K| -> Outcome<LoweredRule> {
+        let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
+        let mut guards = a.guards;
+        guards.extend(b.guards);
+        Ok(LoweredRule {
+            sql: Frag::fmt(&format!("({{}} {op} {{}})"), &[&a.sql, &b.sql]),
+            kind,
+            guards,
+        })
+    };
+    let number = |a: &RowPredicate, b: &RowPredicate| -> Outcome<(u32, u32)> {
+        match (a.kind(table), b.kind(table)) {
+            (Some(K::Number(x)), Some(K::Number(y))) => Ok((x, y)),
+            _ => Err(refusal(LAW, "arithmetic on a value that is not a number")),
+        }
+    };
+    let arithmetic =
+        |op: &str, a: &RowPredicate, b: &RowPredicate, scale: u32| -> Outcome<LoweredRule> {
+            let mut lowered = binary(op, a, b, K::Number(scale))?;
+            lowered.guards.push(in_range(&lowered.sql, scale)?);
+            Ok(lowered)
+        };
+    Ok(match node {
+        P::Null | P::Bool(_) | P::Number(_) | P::Text(_) | P::Column(_) => lower_leaf(node, table)?,
+        P::Not(inner) => {
+            let inner = lower_node(inner, table)?;
+            LoweredRule {
+                sql: Frag::fmt("(NOT {})", &[&inner.sql]),
+                kind: K::Bool,
+                guards: inner.guards,
+            }
+        }
+        P::Negate(inner) => {
+            let inner = lower_node(inner, table)?;
+            LoweredRule {
+                sql: Frag::fmt("(- {})", &[&inner.sql]),
+                kind: inner.kind,
+                guards: inner.guards,
+            }
+        }
+        P::Add(a, b) => {
+            let (x, y) = number(a, b)?;
+            arithmetic("+", a, b, x.max(y))?
+        }
+        P::Subtract(a, b) => {
+            let (x, y) = number(a, b)?;
+            arithmetic("-", a, b, x.max(y))?
+        }
+        P::Multiply(a, b) => {
+            let (x, y) = number(a, b)?;
+            arithmetic(
+                "*",
+                a,
+                b,
+                x.checked_add(y)
+                    .filter(|s| *s <= MAX_PREDICATE_SCALE)
+                    .ok_or_else(|| refusal(LAW, "a scale past the exact range"))?,
+            )?
+        }
+        P::Equal(a, b) | P::NotEqual(a, b) => {
+            lower_equality(matches!(node, P::Equal(..)), a, b, table)?
+        }
+        P::Less(a, b) => binary("<", a, b, K::Bool)?,
+        P::LessOrEqual(a, b) => binary("<=", a, b, K::Bool)?,
+        P::Greater(a, b) => binary(">", a, b, K::Bool)?,
+        P::GreaterOrEqual(a, b) => binary(">=", a, b, K::Bool)?,
+        P::And(a, b) => binary("AND", a, b, K::Bool)?,
+        P::Or(a, b) => binary("OR", a, b, K::Bool)?,
+        P::Conditional(c, a, b) => {
+            let kind = node
+                .kind(table)
+                .ok_or_else(|| refusal(LAW, "a conditional the engine does not type"))?;
+            let (c, a, b) = (
+                lower_node(c, table)?,
+                lower_node(a, table)?,
+                lower_node(b, table)?,
+            );
+            let mut guards = c.guards;
+            guards.extend(a.guards);
+            guards.extend(b.guards);
+            LoweredRule {
+                sql: Frag::fmt(
+                    "(CASE WHEN {} THEN {} ELSE {} END)",
+                    &[&c.sql, &a.sql, &b.sql],
+                ),
+                kind,
+                guards,
+            }
+        }
+    })
+}
+
+/// MANIFEST-LAWS-1: one check's SQL over the cache table: whether the row is
+/// residue (a read is absent, a guard fails, or the engine cannot compute
+/// the predicate) and, if it is not, whether it fails the rule.
+fn check_sql(check: &RuleCheck, table: &TableSchema) -> Outcome<(Frag, Frag)> {
+    let Some(predicate) = &check.predicate else {
+        // Outside the lowered subset: every row goes to the per-row evaluator.
+        return Ok((Frag::raw("TRUE"), Frag::raw("FALSE")));
+    };
+    let mut reads = predicate.reads();
+    if let Some(condition) = &check.condition {
+        for read in condition.reads() {
+            if !reads.contains(&read) {
+                reads.push(read);
+            }
+        }
+    }
+    let predicate = predicate_sql(predicate, table)?;
+    if predicate.kind != PredicateKind::Bool {
+        return Err(refusal(LAW, "a rule whose predicate is not Boolean"));
+    }
+    let condition = match &check.condition {
+        Some(condition) => {
+            let lowered = predicate_sql(condition, table)?;
+            if lowered.kind != PredicateKind::Bool {
+                return Err(refusal(LAW, "a rule whose condition is not Boolean"));
+            }
+            Some(lowered)
+        }
+        None => None,
+    };
+    let mut residue: Vec<Frag> = reads
+        .iter()
+        .map(|read| Frag::raw(format!("{} IS NULL", ident(read))))
+        .collect();
+    let mut guards = predicate.guards.clone();
+    if let Some(condition) = &condition {
+        guards.extend(condition.guards.clone());
+        residue.push(Frag::fmt("TRY({}) IS NULL", &[&condition.sql]));
+    }
+    residue.extend(guards.iter().map(|guard| Frag::fmt("NOT {}", &[guard])));
+    residue.push(Frag::fmt("TRY({}) IS NULL", &[&predicate.sql]));
+    let residue = Frag::fmt("({})", &[&Frag::join(&residue, " OR ")]);
+    let expect = if check.expect { "TRUE" } else { "FALSE" };
+    let fails = match &condition {
+        Some(condition) => Frag::fmt(
+            &format!("(TRY({{}}) AND TRY({{}}) <> {expect})"),
+            &[&condition.sql, &predicate.sql],
+        ),
+        None => Frag::fmt(&format!("(TRY({{}}) <> {expect})"), &[&predicate.sql]),
+    };
+    Ok((residue, fails))
+}
+
+/// MANIFEST-LAWS-1 (S2): a bound, in SQL over the row, on the fuel the
+/// per-row evaluator charges for `check`: its static part
+/// ([`RuleCheck::fuel`]) and the data its operations read, as ZEN's meter
+/// charges it (an equality, `in` or text `+` its operands' sizes; every
+/// operator is charged so here). A value's size is a text's bytes and 1 for
+/// anything else. `None` for a rule outside the lowered subset.
+fn fuel_sql(check: &RuleCheck, table: &TableSchema) -> Option<String> {
+    let mut parts = vec![check.fuel.to_string()];
+    parts.push(data_fuel(check.predicate.as_ref()?, table));
+    if let Some(condition) = &check.condition {
+        parts.push(data_fuel(condition, table));
+    }
+    Some(format!("CAST({} AS HUGEINT)", parts.join(" + ")))
+}
+
+/// The data-proportional fuel of `node` and everything under it, in SQL.
+fn data_fuel(node: &RowPredicate, table: &TableSchema) -> String {
+    use RowPredicate as P;
+    match node {
+        P::Null | P::Bool(_) | P::Number(_) | P::Text(_) | P::Column(_) => "0".to_owned(),
+        P::Not(inner) | P::Negate(inner) => data_fuel(inner, table),
+        P::Add(a, b)
+        | P::Subtract(a, b)
+        | P::Multiply(a, b)
+        | P::Equal(a, b)
+        | P::NotEqual(a, b)
+        | P::Less(a, b)
+        | P::LessOrEqual(a, b)
+        | P::Greater(a, b)
+        | P::GreaterOrEqual(a, b)
+        | P::And(a, b)
+        | P::Or(a, b) => format!(
+            "{} + {} + {} + {}",
+            data_fuel(a, table),
+            data_fuel(b, table),
+            value_size(a, table),
+            value_size(b, table)
+        ),
+        P::Conditional(c, a, b) => format!(
+            "{} + {} + {}",
+            data_fuel(c, table),
+            data_fuel(a, table),
+            data_fuel(b, table)
+        ),
+    }
+}
+
+/// ZEN's shallow size of `node`'s value, in SQL: a text's bytes, else 1.
+fn value_size(node: &RowPredicate, table: &TableSchema) -> String {
+    use RowPredicate as P;
+    match node {
+        P::Text(text) => text.len().max(1).to_string(),
+        P::Column(id) if node.kind(table) == Some(PredicateKind::Text) => {
+            format!("coalesce(strlen({}), 0)", ident(id))
+        }
+        P::Conditional(_, a, b) => format!(
+            "greatest({}, {})",
+            value_size(a, table),
+            value_size(b, table)
+        ),
+        P::Null
+        | P::Bool(_)
+        | P::Number(_)
+        | P::Column(_)
+        | P::Not(_)
+        | P::Negate(_)
+        | P::Add(..)
+        | P::Subtract(..)
+        | P::Multiply(..)
+        | P::Equal(..)
+        | P::NotEqual(..)
+        | P::Less(..)
+        | P::LessOrEqual(..)
+        | P::Greater(..)
+        | P::GreaterOrEqual(..)
+        | P::And(..)
+        | P::Or(..) => "1".to_owned(),
+    }
+}
+
+/// MANIFEST-LAWS-1 / LAW-04: check every rule over the staged typed rows
+/// in one pass. For each rule, a row it cannot decide exactly is residue
+/// of that rule alone (`(row, rule)`); every row it decides and fails is a
+/// finding, whatever the row's other rules leave.
+fn check_rules(conn: &Connection, table: &TableSchema, request: &LandRequest) -> Outcome<()> {
+    let dataset = dataset_table(&table.name);
+    let quarantine = quarantine_table(&table.name);
+    let residue = residue_table(&table.name);
+    db(conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS {residue}; CREATE TABLE {residue} (\":row\" UBIGINT, \":rule\" VARCHAR, PRIMARY KEY (\":row\", \":rule\"));"
+    )))?;
+    if request.checks.is_empty() {
+        return Ok(());
+    }
+    let mut select = vec![Frag::raw(ident(":row"))];
+    let mut columns = vec![format!("{} UBIGINT", ident(":row"))];
+    // S2: a row whose rules may cost the per-row evaluator more fuel than
+    // it gives a row is left to it for every rule, so the engine never
+    // decides a row the per-row path refuses. A rule outside the lowered
+    // subset already leaves every row to it.
+    let over = request
+        .checks
+        .iter()
+        .map(|check| fuel_sql(check, table))
+        .collect::<Option<Vec<_>>>()
+        .map(|fuel| format!("(({}) > {})", fuel.join(" + "), row_fuel()));
+    for (i, check) in request.checks.iter().enumerate() {
+        let (residue, fails) = check_sql(check, table)?;
+        let residue = match &over {
+            Some(over) => Frag::fmt(&format!("({{}} OR {over})"), &[&residue]),
+            None => residue,
+        };
+        select.push(Frag::fmt(&format!("{{}} AS \"r{i}\""), &[&residue]));
+        select.push(Frag::fmt(&format!("{{}} AS \"f{i}\""), &[&fails]));
+        columns.push(format!("\"r{i}\" BOOLEAN"));
+        columns.push(format!("\"f{i}\" BOOLEAN"));
+    }
+    // Values are bound, so the outcome is inserted rather than created from a query.
+    db(conn.execute_batch(&format!(
+        "CREATE OR REPLACE TEMP TABLE \":outcome\" ({});",
+        columns.join(", ")
+    )))?;
+    let outcome = Frag::fmt(
+        &format!("INSERT INTO \":outcome\" SELECT {{}} FROM {dataset}"),
+        &[&Frag::join(&select, ", ")],
+    );
+    db(conn.execute(&outcome.text, params_from_iter(outcome.params)))?;
+    let held_into = finding_columns(table);
+    let held = finding_values(table, "d.\":row\"");
+    for (i, check) in request.checks.iter().enumerate() {
+        db(conn.execute(
+            &format!("INSERT INTO {residue} SELECT \":row\", ? FROM \":outcome\" WHERE \"r{i}\""),
+            params_from_iter([Sql::Text(check.rule.clone())]),
+        ))?;
+        // S3: a finding carries the row's values, as the per-row path's does.
+        db(conn.execute(
+            &format!(
+                "INSERT INTO {quarantine} ({held_into}) SELECT {held} FROM \":outcome\" AS o \
+                 JOIN {dataset} AS d ON d.\":row\" = o.\":row\" WHERE NOT o.\"r{i}\" AND o.\"f{i}\""
+            ),
+            params_from_iter([
+                Sql::Text(request.load.load.clone()),
+                Sql::Text(check.label.clone()),
+                Sql::Text(check.rule.clone()),
+                Sql::Boolean(check.holds),
+            ]),
+        ))?;
+    }
+    db(conn.execute_batch("DROP TABLE \":outcome\";"))
+}
+
+/// MANIFEST-LAWS-1 / LAW-04: record the per-row findings of the residue
+/// rows up to `through` and remove those rows from the residue. A finding
+/// must name a rule the engine left to that row, once, and match the
+/// metadata the landing pinned for that rule.
+fn settle_rows(conn: &Connection, table: &TableSchema, request: &SettleRequest) -> Outcome<()> {
+    let quarantine = quarantine_table(&table.name);
+    let residue = residue_table(&table.name);
+    let dataset = dataset_table(&table.name);
+    let columns = finding_columns(table);
+    let values = finding_values(table, "?");
+    let mut statement = db(conn.prepare(&format!(
+        "SELECT count(*) FROM {residue} WHERE \":row\" = ? AND \":rule\" = ? AND \":row\" <= ?"
+    )))?;
+    let checks: BTreeMap<_, _> = request
+        .land
+        .checks
+        .iter()
+        .map(|check| (check.rule.as_str(), check))
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    for finding in &request.findings {
+        let Some(check) = checks
+            .get(finding.rule.as_str())
+            .filter(|check| check.label == finding.label && check.holds == finding.holds)
+        else {
+            return Err(refusal(
+                "bulk.invalid_finding",
+                "the finding does not match the landed rule's label and hold",
+            ));
+        };
+        let present: u64 = db(statement.query_row(
+            params_from_iter([
+                Sql::UBigInt(finding.row),
+                Sql::Text(finding.rule.clone()),
+                Sql::UBigInt(request.through),
+            ]),
+            |row| row.get(0),
+        ))?;
+        if present != 1 || !seen.insert((finding.row, finding.rule.clone())) {
+            return Err(refusal(
+                "bulk.invalid_finding",
+                format!(
+                    "row {} is not residue of that rule up to {}",
+                    finding.row, request.through
+                ),
+            ));
+        }
+        // S3: from the staged row, so the finding carries its values.
+        db(conn.execute(
+            &format!(
+                "INSERT INTO {quarantine} ({columns}) SELECT {values} FROM {dataset} AS d WHERE d.\":row\" = ?"
+            ),
+            params_from_iter([
+                Sql::UBigInt(finding.row),
+                Sql::Text(request.land.load.load.clone()),
+                Sql::Text(check.label.clone()),
+                Sql::Text(check.rule.clone()),
+                Sql::Boolean(check.holds),
+                Sql::UBigInt(finding.row),
+            ]),
+        ))?;
+    }
+    db(conn.execute(
+        &format!("DELETE FROM {residue} WHERE \":row\" <= ?"),
+        params_from_iter([Sql::UBigInt(request.through)]),
+    ))?;
+    Ok(())
+}
+
+/// Findings by rule, and how many admitted rows a rule holds back.
+fn rule_counts(
+    conn: &Connection,
+    table: &TableSchema,
+) -> Outcome<(BTreeMap<String, RuleCount>, u64)> {
+    let quarantine = quarantine_table(&table.name);
+    let mut statement = db(conn.prepare(&format!(
+        "SELECT \":rule\", min(\":reason\"), count(*), bool_or(\":holds\") FROM {quarantine} \
+         WHERE \":rule\" IS NOT NULL GROUP BY \":rule\" ORDER BY \":rule\""
+    )))?;
+    let counts = db(db(statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            RuleCount {
+                label: row.get(1)?,
+                rows: row.get(2)?,
+                holds: row.get(3)?,
+            },
+        ))
+    }))?
+    .collect::<Result<BTreeMap<_, _>, _>>())?;
+    let held = query_u64(
+        conn,
+        &Frag::raw(format!(
+            "SELECT count(DISTINCT \":row\") FROM {quarantine} WHERE \":rule\" IS NOT NULL AND \":holds\""
+        )),
     )?;
-    Ok((rows, reasons))
+    Ok((counts, held))
+}
+
+/// MANIFEST-LAWS-1 (S6): the residue page after row `after`: the next
+/// residue rows in row order, at most `limit` of them (clamped to
+/// `1..=RESIDUE_PAGE_ROWS`), with their present values, ending before the
+/// row that would take the page's serialized rows past
+/// [`RESIDUE_PAGE_BYTES`]. A row that alone passes the bound is
+/// [`RESIDUE_EXCEEDED`].
+///
+/// Sol r2 S6: `DuckDB` materializes a query's whole result before its first
+/// row is read, so the wide values are never in the candidate query. It
+/// reads the next row ids, their rules and each row's value bytes (a lower
+/// bound on its serialized size: JSON only adds keys, quotes and escapes).
+/// Only the rows whose value bytes fit the page together are then read with
+/// their values, so a page's read holds at most [`RESIDUE_PAGE_BYTES`] of
+/// values. Their exact serialized size then ends the page.
+fn residue_page(
+    conn: &Connection,
+    table: &TableSchema,
+    after: u64,
+    limit: u32,
+) -> Outcome<Vec<ResidueRow>> {
+    let mut statement = db(conn.prepare(&residue_candidates_sql(table)))?;
+    let candidates = db(db(statement.query_map(
+        params_from_iter([
+            Sql::UBigInt(after),
+            Sql::UInt(limit.clamp(1, RESIDUE_PAGE_ROWS)),
+        ]),
+        |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+            ))
+        },
+    ))?
+    .collect::<Result<Vec<_>, _>>())?;
+    // S7: a page's JSON is its rows, a comma between each two, and its two
+    // brackets: the count starts at one bracket and each row adds itself
+    // and one separator (the last one's is the closing bracket).
+    let mut lower = 1usize;
+    let mut fits = 0usize;
+    for (_, _, bytes) in &candidates {
+        lower = lower.saturating_add(
+            usize::try_from(*bytes)
+                .unwrap_or(usize::MAX)
+                .saturating_add(1),
+        );
+        if lower > RESIDUE_PAGE_BYTES {
+            break;
+        }
+        fits = fits.saturating_add(1);
+    }
+    let mut page = Vec::new();
+    let mut bytes = 1usize;
+    if let (true, Some((first, ..)), Some((last, ..))) = (
+        fits > 0,
+        candidates.first(),
+        candidates.get(fits.saturating_sub(1)),
+    ) {
+        let mut statement = db(conn.prepare(&residue_values_sql(table)))?;
+        let mut rows = db(statement.query(params_from_iter([
+            Sql::UBigInt(*first),
+            Sql::UBigInt(*last),
+        ])))?;
+        let mut taken = candidates.iter();
+        while let Some(row) = db(rows.next())? {
+            let id: u64 = db(row.get(0))?;
+            let Some((candidate, rules, _)) = taken.next().filter(|(at, ..)| *at == id) else {
+                return Err(refusal(
+                    "analytics.engine",
+                    "a residue page read other rows than its candidates",
+                ));
+            };
+            let mut values = BTreeMap::new();
+            for (i, column) in table.columns.iter().enumerate() {
+                let at = i.saturating_mul(3).saturating_add(1);
+                if let Some(value) = present(
+                    column.kind,
+                    db(row.get(at))?,
+                    db(row.get(at.saturating_add(1)))?,
+                    db(row.get(at.saturating_add(2)))?,
+                ) {
+                    values.insert(column.id.clone(), value);
+                }
+            }
+            let residue = ResidueRow {
+                row: *candidate,
+                values,
+                rules: rules.split('\n').map(str::to_owned).collect(),
+            };
+            // The row's JSON and the separator after it.
+            let size = serde_json::to_string(&residue)
+                .map_err(|e| refusal("analytics.engine", e.to_string()))?
+                .len()
+                .saturating_add(1);
+            if size.saturating_add(1) > RESIDUE_PAGE_BYTES {
+                return Err(too_wide(residue.row));
+            }
+            bytes = bytes.saturating_add(size);
+            if bytes > RESIDUE_PAGE_BYTES {
+                return Ok(page);
+            }
+            page.push(residue);
+        }
+    }
+    // Every candidate read fits: the first one left unread starts the next
+    // page, unless its value bytes alone already pass a page.
+    match candidates.get(fits) {
+        Some((row, _, value_bytes))
+            if usize::try_from(*value_bytes)
+                .unwrap_or(usize::MAX)
+                .saturating_add(2)
+                > RESIDUE_PAGE_BYTES =>
+        {
+            Err(too_wide(*row))
+        }
+        _ => Ok(page),
+    }
+}
+
+/// S6: the residue page's candidates after `?`, at most `?` rows: each
+/// row's id, its rules and its text values' bytes. It reads no value
+/// itself, so the result `DuckDB` materializes holds no wide value.
+fn residue_candidates_sql(table: &TableSchema) -> String {
+    // Only text is wide, and its JSON holds every byte of it; a number's or
+    // a Boolean's text is short, and its canonical form may be shorter.
+    let mut value_bytes = vec!["0".to_owned()];
+    for column in &table.columns {
+        if matches!(
+            column.kind,
+            ColumnKind::Text | ColumnKind::Opaque | ColumnKind::Timestamp | ColumnKind::Date
+        ) {
+            value_bytes.push(format!(
+                "coalesce(strlen(CAST(d.{} AS VARCHAR)), 0)",
+                ident(&column.id)
+            ));
+        }
+    }
+    let residue = residue_table(&table.name);
+    format!(
+        "WITH ids AS (SELECT DISTINCT \":row\" FROM {residue} WHERE \":row\" > ? ORDER BY \":row\" LIMIT ?), \
+         r AS (SELECT \":row\", string_agg(\":rule\", chr(10) ORDER BY \":rule\") AS \":rules\" FROM {residue} \
+         WHERE \":row\" IN (SELECT \":row\" FROM ids) GROUP BY \":row\") \
+         SELECT r.\":row\", r.\":rules\", CAST({} AS UBIGINT) FROM {} AS d JOIN r ON d.\":row\" = r.\":row\" \
+         ORDER BY r.\":row\"",
+        value_bytes.join(" + "),
+        dataset_table(&table.name),
+    )
+}
+
+/// S6: the values of the residue rows from `?` through `?`, the candidates
+/// whose value bytes fit one page together: the id, then for each column
+/// its text and, for an instant, its ordering key.
+fn residue_values_sql(table: &TableSchema) -> String {
+    let mut select = vec![format!("d.{}", ident(":row"))];
+    for column in &table.columns {
+        select.push(format!("CAST(d.{} AS VARCHAR)", ident(&column.id)));
+        if matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+            select.push(format!("d.{}", derived(&column.id, "t")));
+            select.push(format!("d.{}", derived(&column.id, "n")));
+        } else {
+            select.push("CAST(NULL AS BIGINT)".to_owned());
+            select.push("CAST(NULL AS INTEGER)".to_owned());
+        }
+    }
+    format!(
+        "SELECT {} FROM {} AS d WHERE d.\":row\" BETWEEN ? AND ? \
+         AND d.\":row\" IN (SELECT \":row\" FROM {}) ORDER BY d.\":row\"",
+        select.join(", "),
+        dataset_table(&table.name),
+        residue_table(&table.name),
+    )
+}
+
+/// [`RESIDUE_EXCEEDED`] for residue row `row`, larger than a page alone.
+fn too_wide(row: u64) -> EngineRefusal {
+    refusal(
+        RESIDUE_EXCEEDED,
+        format!("residue row {row} is larger than a residue page ({RESIDUE_PAGE_BYTES} bytes)"),
+    )
+}
+
+/// MANIFEST-LAWS-1 (S1): refuse a landing whose residue takes more than
+/// [`MAX_RESIDUE_PAGES`] pages of `limit` rows (or holds a row larger than a
+/// page), so every host settles it within [`super::MAX_ENGINE_STEPS`] calls.
+/// Pages are counted as [`residue_page`] answers them, each settle ending
+/// at its page's last row (S5), so the count is the settles the landing
+/// takes. Checked before the first answer; the caller drops the staging.
+fn residue_fits(conn: &Connection, table: &TableSchema, limit: u32) -> Outcome<()> {
+    let mut after = 0;
+    for _ in 0..MAX_RESIDUE_PAGES {
+        match residue_page(conn, table, after, limit)?.last() {
+            Some(last) => after = last.row,
+            None => return Ok(()),
+        }
+    }
+    if residue_page(conn, table, after, 1)?.is_empty() {
+        return Ok(());
+    }
+    Err(refusal(
+        RESIDUE_EXCEEDED,
+        format!(
+            "the landing leaves more residue than {MAX_RESIDUE_PAGES} pages of {} rows",
+            limit.clamp(1, RESIDUE_PAGE_ROWS)
+        ),
+    ))
+}
+
+/// MANIFEST-CACHE-1: the files a stored landing is kept as, by cache identity.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct KeptLanding {
+    table: TableSchema,
+    data: KeptFile,
+    held: KeptFile,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct KeptFile {
+    path: PathBuf,
+    sha256: String,
+    uri: String,
+}
+
+/// MANIFEST-CACHE-1: rebuild the dataset `table` at the cache identity
+/// `load` from the files kept for it. Each file must hash to the digest the
+/// identity was made of before any of it is read. The table is replaced in
+/// one transaction, so a reader sees the old dataset or the new one whole.
+fn hydrate(conn: &Connection, table: &str, load: &str) -> Outcome<()> {
+    let cold = || {
+        refusal(
+            DATASET_COLD,
+            "the dataset's files are not kept by this engine",
+        )
+    };
+    let text = meta(conn, &format!("landing:{load}"))?.ok_or_else(cold)?;
+    let kept: KeptLanding = serde_json::from_str(&text)
+        .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+    if kept.table.name != table
+        || dataset_cache_id(&kept.table, &kept.data.sha256, &kept.held.sha256) != load
+    {
+        return Err(refusal(STALE, "the kept landing is not this dataset"));
+    }
+    verify_object(&kept.data.path, &kept.data.sha256)?;
+    verify_object(&kept.held.path, &kept.held.sha256)?;
+    db(conn.execute_batch("BEGIN TRANSACTION"))?;
+    let rebuilt = rebuild(conn, &kept, load);
+    if rebuilt.is_err() {
+        let _rolled_back = conn.execute_batch("ROLLBACK");
+        return rebuilt;
+    }
+    db(conn.execute_batch("COMMIT"))
+}
+
+/// The cache table and quarantine of a kept landing, from its files.
+fn rebuild(conn: &Connection, kept: &KeptLanding, load: &str) -> Outcome<()> {
+    let table = &kept.table;
+    let dataset = dataset_table(&table.name);
+    let quarantine = quarantine_table(&table.name);
+    db(conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS {dataset}; DROP TABLE IF EXISTS {quarantine}; \
+         CREATE TABLE {dataset} ({}); CREATE TABLE {quarantine} ({});",
+        dataset_ddl(table),
+        quarantine_ddl(table),
+    )))?;
+    let insert = |target: &str, columns: &[String], path: &Path| -> Outcome<()> {
+        let mut names = columns.to_vec();
+        names.push(ident(":load"));
+        let mut values = columns.to_vec();
+        values.push("?".to_owned());
+        db(conn.execute(
+            &format!(
+                "INSERT INTO {target} ({}) SELECT {} FROM read_parquet({})",
+                names.join(", "),
+                values.join(", "),
+                quoted_path(path)
+            ),
+            [load],
+        ))?;
+        Ok(())
+    };
+    insert(&dataset, &data_columns(table), &kept.data.path)?;
+    insert(&quarantine, &held_columns(table), &kept.held.path)?;
+    set_meta(conn, &format!("load:{}", table.name), load)?;
+    set_meta(
+        conn,
+        &format!("dataset:{}", table.name),
+        &schema_text(table)?,
+    )?;
+    set_meta(
+        conn,
+        &format!("lineage:{load}"),
+        &format!("{} {}", kept.data.sha256, kept.data.uri),
+    )
+}
+
+/// A refusal of a read whose dataset this engine cannot rebuild: the files
+/// of its committed manifest are not kept here.
+pub const DATASET_COLD: &str = "analytics.dataset_cold";
+
+/// The staging schema of one landing attempt: the type's columns under a
+/// name of the attempt alone (`<type>#<attempt>`), so a reader of the type,
+/// or another attempt, never sees it.
+fn staged(table: &TableSchema, attempt: &str) -> TableSchema {
+    TableSchema {
+        name: format!("{}#{attempt}", table.name),
+        ..table.clone()
+    }
+}
+
+/// Drop an attempt's staging tables and their records.
+fn drop_staged(conn: &Connection, staged: &TableSchema) -> Outcome<()> {
+    db(conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS {}; DROP TABLE IF EXISTS {}; DROP TABLE IF EXISTS {};",
+        dataset_table(&staged.name),
+        quarantine_table(&staged.name),
+        residue_table(&staged.name),
+    )))?;
+    for key in ["load", "dataset", "counts"] {
+        db(conn.execute(
+            "DELETE FROM \":meta\" WHERE key = ?",
+            [format!("{key}:{}", staged.name)],
+        ))?;
+    }
+    Ok(())
+}
+
+/// MANIFEST-02: create `dir` if it is missing and make it this process's alone.
+fn private_dir(dir: &Path) -> Outcome<()> {
+    let failed = |error: std::io::Error| refusal("analytics.engine", error.to_string());
+    std::fs::create_dir_all(dir).map_err(failed)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(failed)?;
+    }
+    Ok(())
+}
+
+/// MANIFEST-02: create `path`, which must not exist, for this process alone.
+fn create_new(path: &Path) -> Outcome<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    options
+        .open(path)
+        .map_err(|error| refusal("analytics.engine", error.to_string()))
+}
+
+/// MANIFEST-02: make a written file read-only before it is hashed.
+fn seal(path: &Path) -> Outcome<()> {
+    let failed = |error: std::io::Error| refusal("bulk.unreadable", error.to_string());
+    let mut permissions = std::fs::metadata(path).map_err(failed)?.permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(path, permissions).map_err(failed)
+}
+
+/// A kept object must hash to its digest before it is read.
+fn verify_object(path: &Path, sha256: &str) -> Outcome<()> {
+    let (digest, _bytes) =
+        sha256_file(path).map_err(|error| refusal("bulk.unreadable", error.to_string()))?;
+    if digest == sha256 {
+        Ok(())
+    } else {
+        Err(refusal(
+            "bulk.digest_mismatch",
+            "a kept dataset file is not the one its manifest records",
+        ))
+    }
 }
 
 fn present(
@@ -2387,4 +4508,152 @@ fn outliers(
         count: total,
         examples,
     }))
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "a test of the residue page's queries")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unversioned_store_receipt_replays_its_original_bytes() {
+        const TENANT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const COUNTS: &str =
+            r#"{"load":"load-1","rows":1,"rejected":0,"reasons":{},"bytes":40,"millis":1}"#;
+        const FILES: &str = concat!(
+            r#""data":{"sha256":"data-digest","rows":1,"bytes":60},"#,
+            r#""held":{"sha256":"held-digest","rows":0,"bytes":20},"validTime":[]"#,
+        );
+        let landed = format!(r#""landing":"landing-1","attempt":"aOld","load":{COUNTS},{FILES}"#);
+        let answer = format!(r#"{{{landed},"stored":"old-cache"}}"#);
+        let original = format!(
+            r#"{{
+                "land":{{"load":{{"tenant":"{TENANT}",
+                    "table":{{"name":"t.Row","columns":[],"pin":"table-pin"}},"load":"load-1",
+                    "file":{{"url":"","uri":"s3://synthetic/source","sha256":"source-digest","format":"csv"}},
+                    "headers":{{}}}},
+                    "pins":{{"definitionsVersion":1,"modelHash":"model","binding":"binding",
+                        "mapping":"mapping","laws":"laws"}},
+                    "landing":"landing-1","attempt":"aOld"}},
+                "landed":{{{landed}}},
+                "data":{{"uri":"s3://synthetic/data","url":""}},
+                "held":{{"uri":"s3://synthetic/held","url":""}}
+            }}"#
+        );
+        let receipt = format!(r#"{{"request":{original},"response":{answer}}}"#);
+        let dir = tempfile::tempdir().expect("engine directory");
+        let settings = || Settings {
+            root: dir.path().to_path_buf(),
+            memory_limit: "128MB".into(),
+            threads: 1,
+        };
+        let tenant = TenantId::try_from(TENANT.to_owned()).expect("tenant");
+        let key = receipt_key("aOld");
+        Engine::new(settings())
+            .expect("old engine")
+            .with(&tenant, |conn| set_meta(conn, &key, &receipt))
+            .expect("stored receipt");
+        let reopened = Engine::new(settings()).expect("reopened engine");
+        let refreshed = original.replace(r#""url":"""#, r#""url":"https://synthetic/refreshed""#);
+        let request: StoreBody = serde_json::from_str(&refreshed).expect("old store request");
+        let replayed = reopened
+            .store_json(&request, |_, _| panic!("a replay sends nothing"))
+            .expect("replayed");
+        assert_eq!(
+            serde_json::to_string(&replayed).expect("wire answer"),
+            answer
+        );
+        assert_eq!(
+            reopened
+                .with(&tenant, |conn| meta(conn, &key))
+                .expect("receipt")
+                .as_deref(),
+            Some(receipt.as_str())
+        );
+        let changed = refreshed.replace("s3://synthetic/data", "s3://synthetic/other");
+        let mismatch: StoreBody = serde_json::from_str(&changed).expect("changed object");
+        assert_eq!(
+            reopened
+                .store_json(&mismatch, |_, _| panic!("a refusal sends nothing"))
+                .expect_err("another store body")
+                .code,
+            STALE
+        );
+        for (attempt, version) in [("aZero", "0"), ("aFuture", "2"), ("aNull", "null")] {
+            let key = receipt_key(attempt);
+            let unsupported = receipt
+                .replacen('{', &format!("{{\"version\":{version},"), 1)
+                .replace("aOld", attempt);
+            reopened
+                .with(&tenant, |conn| set_meta(conn, &key, &unsupported))
+                .expect("stored unsupported receipt");
+            let body: StoreBody =
+                serde_json::from_str(&original.replace("aOld", attempt)).expect("old store body");
+            assert_eq!(
+                reopened
+                    .store_json(&body, |_, _| panic!("a refusal sends nothing"))
+                    .expect_err("explicit unsupported version")
+                    .code,
+                "analytics.engine"
+            );
+        }
+    }
+
+    /// MANIFEST-LAWS-1 (Sol r2 S6): `DuckDB` materializes a query's whole
+    /// result before its first row is read, so the candidate query of a
+    /// residue page carries no value: only each row's id, rules and value
+    /// bytes. Three residue rows of 3 MiB text each: the candidates read
+    /// three narrow rows, and the page reads and answers the one that fits.
+    #[test]
+    fn a_residue_page_materializes_no_value_before_it_fits_the_page() {
+        let table = TableSchema {
+            name: "t.Wide".into(),
+            columns: vec![Column {
+                id: "wide".into(),
+                kind: ColumnKind::Text,
+                nullable: true,
+                laws: Vec::new(),
+            }],
+            pin: String::new(),
+        };
+        let wide = 3usize << 20;
+        let conn = Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(&format!(
+            "CREATE TABLE {dataset} ({}); CREATE TABLE {residue} (\":row\" UBIGINT, \":rule\" VARCHAR); \
+             INSERT INTO {dataset} (\":row\", \"wide\") SELECT i, repeat('w', {wide}) FROM range(1, 4) AS t(i); \
+             INSERT INTO {residue} SELECT i, 'r' FROM range(1, 4) AS t(i);",
+            dataset_ddl(&table),
+            dataset = dataset_table(&table.name),
+            residue = residue_table(&table.name),
+        ))
+        .expect("tables");
+        let mut statement = conn
+            .prepare(&residue_candidates_sql(&table))
+            .expect("candidates");
+        let candidates = statement
+            .query_map(params_from_iter([Sql::UBigInt(0), Sql::UInt(100)]), |row| {
+                Ok((
+                    row.get::<_, u64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
+                ))
+            })
+            .expect("candidates read")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("candidate rows");
+        assert_eq!(statement.column_count(), 3, "no value column is read");
+        let wide_bytes = u64::try_from(wide).expect("bytes");
+        assert_eq!(
+            candidates,
+            (1..=3)
+                .map(|row| (row, "r".to_owned(), wide_bytes))
+                .collect::<Vec<_>>()
+        );
+        let page = residue_page(&conn, &table, 0, 100).expect("page");
+        assert_eq!(page.iter().map(|row| row.row).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(
+            page.first().and_then(|row| row.values.get("wide")),
+            Some(&Value::Text("w".repeat(wide)))
+        );
+    }
 }

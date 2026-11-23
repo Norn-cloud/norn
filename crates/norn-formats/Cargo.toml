@@ -5,9 +5,16 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "format-family readers: source bytes → SourceSchemaIR with a loss report; files only (ring 1; see README.md)"
+# Every integration test is a module of tests/suites.rs, one binary
+# (scripts/codemods/fold_integration_tests.py).
+autotests = false
 
 [lib]
 path = "src/lib.rs"
+
+[[test]]
+name = "suites"
+path = "tests/suites.rs"
 
 [dependencies]
 # Namespace-aware streaming XML reader for the XSD reader; DTDs are rejected.

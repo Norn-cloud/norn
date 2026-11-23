@@ -15,12 +15,9 @@
 //! [`RECEIPT_STEP`] receipts or verifies [`HISTORY_STEP`] commits, so the
 //! longest a commit waits behind it is one step.
 //!
-//! A separate read connection over a WAL snapshot was the alternative. A
-//! Durable Object has one storage connection and no threads, and an
-//! in-memory cell cannot be opened twice, so it would need a second
-//! implementation for those hosts; one stepped scrub serves all of them.
-//! The cost is that a step and a commit never overlap: a step is a pause in
-//! commits, bounded by the step size (measured on #1551).
+//! Each step stages its progress and commits it to the run state only after
+//! its transaction succeeds (S11), so a transient engine failure never loses
+//! or corrupts accumulated scrub state.
 //!
 //! # What it verifies, in order
 //!
@@ -37,31 +34,27 @@
 //!    export record, superseded installs included (S9), and every value
 //!    version against its receipt (S7). The last chunk must end at the
 //!    open's head with its quantity boundary.
-//! 3. **Seed**: the checkpoint at that head, built only from what the scrub
-//!    verified (its rebuilt root, its quantity digest), MAC'd and recorded.
+//! 3. **Seed**: inside its own transaction, verifies the target tail anchor
+//!    and durable fence (S10, S12), verifies the export and definition pins
+//!    still match the verified history, and records the MAC'd checkpoint.
 //!
-//! Until step 2 ends, the history reads a genesis open would have proven
-//! complete are refused as retryable `cell.verifying` ([`Gate`]): as-of
-//! reads and version lists (metric compute over history), and ledger pages
-//! over the covered range. Until step 1 ends, a commit whose idempotency key
-//! finds no receipt is refused the same way (a miss cannot be dated). Live
-//! reads and other writes proceed.
+//! Until step 2 ends, history reads a genesis open would have proven
+//! complete are refused as retryable `cell.verifying` ([`Gate`]): historical
+//! frames and as-of reads (S7), ledger/finding/export/transparency reads
+//! (S8), and forks of the cell (S13). Until step 1 ends, any idempotency
+//! lookup miss is refused the same way (S4). Live reads and unkeyed writes
+//! proceed.
 //!
-//! A defect fences the cell: every commit and gated read is refused as
-//! `cell.fenced`, the finding is logged and kept for the host
-//! ([`ScrubStatus::Fenced`]), and the checkpoint row is dropped, so the next
-//! open verifies from genesis and refuses the same defect.
-//!
-//! The scrub also closes long checkpoint gaps. A commit advances the
-//! checkpoint itself only over [`crate::open_checkpoint::MAX_ADVANCE`]
-//! commits from one this handle validated; a longer gap (a seed recorded
-//! behind a busy head, a trimmed restore, a genesis open) is verified here
-//! instead, from that checkpoint or from genesis, and seeds the next one.
-//! So no commit runs a catch-up (S10).
+//! A defect fences the cell durably (S12): every commit and host read is
+//! refused as `cell.fenced`, the finding is logged and kept for the host
+//! ([`ScrubStatus::Fenced`]), the checkpoint row is dropped, and a durable
+//! fence marker is recorded in `_norn_meta` so sibling handles and reopens
+//! fail closed too.
+
 use crate::engine::SqlEngine;
-use crate::open_checkpoint::{self, OpenCheckpoint};
+use crate::open_checkpoint::verify::DefinitionWalk;
+use crate::open_checkpoint::{self, ExportPin, Loaded, OpenCheckpoint};
 use crate::quantity::FormatBoundary;
-use crate::store::DefinitionWalk;
 use crate::{CellError, CellStore, LedgerHead};
 
 /// The refusal code of a read or write held back by the scrub (retryable).
@@ -86,6 +79,8 @@ pub(crate) struct Gate {
     /// The ledger sequence of the trusted checkpoint, while the history
     /// through it is unverified.
     covered_seq: Option<u64>,
+    /// Whether covered receipt lookup columns have not yet been verified (S4).
+    idempotency_unproven: bool,
     fenced: bool,
 }
 
@@ -93,35 +88,59 @@ impl Gate {
     /// Nothing is held back.
     pub(crate) const OPEN: Self = Self {
         covered_seq: None,
+        idempotency_unproven: false,
         fenced: false,
     };
 
-    /// A read that needs the whole history complete.
+    /// Refuse if the cell has been fenced by the history scrub (S12).
+    ///
+    /// # Errors
+    /// [`CellError::Fenced`] on a fenced cell.
+    pub(crate) fn refuse_fenced(self) -> Result<(), CellError> {
+        if self.fenced {
+            return Err(fenced());
+        }
+        Ok(())
+    }
+
+    /// A read that needs the whole history complete (S7, S8).
     ///
     /// # Errors
     /// [`CellError::Verifying`] while the scrub runs; [`CellError::Fenced`].
     pub(crate) fn history(self, what: &'static str) -> Result<(), CellError> {
-        if self.fenced {
-            return Err(fenced());
-        }
+        self.refuse_fenced()?;
         if self.covered_seq.is_some() {
             return Err(CellError::Verifying(what));
         }
         Ok(())
     }
 
-    /// A ledger page of the entries after `after`.
+    /// A ledger page of the entries after `after` (S8).
     ///
     /// # Errors
     /// [`CellError::Verifying`] when the page reaches an entry the checkpoint
     /// covers and the scrub has not verified; [`CellError::Fenced`].
     pub(crate) fn ledger(self, after: u64) -> Result<(), CellError> {
-        if self.fenced {
-            return Err(fenced());
-        }
+        self.refuse_fenced()?;
         if self.covered_seq.is_some_and(|seq| after < seq) {
             return Err(CellError::Verifying(
                 "ledger pages the open checkpoint covers",
+            ));
+        }
+        Ok(())
+    }
+
+    /// An idempotency lookup missed: refuse until receipt scrub proves every
+    /// covered receipt's lookup columns (S4).
+    ///
+    /// # Errors
+    /// [`CellError::Verifying`] while receipt scrub is incomplete;
+    /// [`CellError::Fenced`] on a fenced cell.
+    pub(crate) fn receipt_miss(self) -> Result<(), CellError> {
+        self.refuse_fenced()?;
+        if self.idempotency_unproven {
+            return Err(CellError::Verifying(
+                "idempotency keys the open checkpoint covers",
             ));
         }
         Ok(())
@@ -198,6 +217,14 @@ enum Phase {
     Seed,
 }
 
+/// Verified pins captured at the end of Phase 2 (`History`) and re-checked
+/// inside Phase 3 (`Seed`)'s transaction before writing the checkpoint (S10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerifiedPins {
+    export: Option<ExportPin>,
+    definitions: String,
+}
+
 /// One scrub run: verify from `start` (genesis with none) to `target`, then
 /// seed the checkpoint at `target`.
 struct Run {
@@ -216,6 +243,7 @@ struct Run {
     ledger: LedgerHead,
     boundary: Option<FormatBoundary>,
     walk: Option<DefinitionWalk>,
+    verified_pins: Option<VerifiedPins>,
 }
 
 impl std::fmt::Debug for Run {
@@ -253,6 +281,7 @@ impl Run {
             phase: Phase::Receipts,
             tree: crate::transparency::ReceiptLog::new(),
             walk: None,
+            verified_pins: None,
         }
     }
 
@@ -283,11 +312,36 @@ impl Run {
         }
         Ok(())
     }
+
+    /// Push `leaves` into the rebuilt tree, checking the anchor root the moment
+    /// the tree reaches `anchor.head.commits`.
+    fn push_leaves(&mut self, leaves: Vec<String>) -> Result<(), CellError> {
+        self.check_anchor()?;
+        for leaf in leaves {
+            self.tree.push(leaf);
+            self.check_anchor()?;
+        }
+        Ok(())
+    }
 }
 
-/// What one step did.
-enum Stepped {
-    Continue,
+/// Staged result of one scrub step transaction (S11): applied to [`Run`] only
+/// after the transaction commits cleanly.
+enum StepOutcome {
+    TreeBatch(Vec<String>),
+    ReceiptsBatch {
+        leaves: Vec<String>,
+        receipts_at: u64,
+        quantity: String,
+        done: bool,
+    },
+    HistoryChunk {
+        head: LedgerHead,
+        boundary: Option<FormatBoundary>,
+        walk: DefinitionWalk,
+        verified_pins: Option<VerifiedPins>,
+        done: bool,
+    },
     Seeded(Option<OpenCheckpoint>),
 }
 
@@ -329,12 +383,12 @@ impl Scrub {
         scrub
     }
 
-    /// A fork's: it holds back what its base holds back and never runs a
-    /// scrub or records a checkpoint of its own.
+    /// A fork's scrub state: only created from an unfenced, scrub-verified
+    /// parent (S13), and never runs a scrub or records a checkpoint of its own.
     pub(crate) fn for_fork(&self) -> Self {
         Self {
-            covered: self.covered.clone(),
-            idempotency_unproven: self.idempotency_unproven,
+            covered: None,
+            idempotency_unproven: false,
             finding: self.finding.clone(),
             fork: true,
             ..Self::default()
@@ -345,6 +399,7 @@ impl Scrub {
     pub(crate) fn gate(&self) -> Gate {
         Gate {
             covered_seq: self.covered.as_ref().map(|head| head.seq),
+            idempotency_unproven: self.idempotency_unproven,
             fenced: self.finding.is_some(),
         }
     }
@@ -355,6 +410,22 @@ impl Scrub {
         self.finding
             .as_ref()
             .map_or(Ok(()), |finding| Err(CellError::Fenced(finding.clone())))
+    }
+
+    /// S13: refuse to fork while a checkpointed cell's history scrub is
+    /// incomplete or the cell is fenced.
+    ///
+    /// # Errors
+    /// [`CellError::Fenced`] on a fenced cell; [`CellError::Verifying`] while
+    /// covered history or receipts remain unverified.
+    pub(crate) fn refuse_fork(&self) -> Result<(), CellError> {
+        self.refuse_fenced()?;
+        if self.covered.is_some() || self.idempotency_unproven {
+            return Err(CellError::Verifying(
+                "forking while the open checkpoint history scrub is incomplete",
+            ));
+        }
+        Ok(())
     }
 
     /// An idempotency lookup missed.
@@ -428,8 +499,9 @@ impl<E: SqlEngine> CellStore<E> {
     }
 
     /// Run one bounded step of the history scrub in its own transaction,
-    /// between commits. A defect fences the cell; the returned status says
-    /// so and carries the finding.
+    /// between commits. Step progress is staged and applied only after the
+    /// transaction commits (S11). A defect fences the cell durably (S12); the
+    /// returned status says so and carries the finding.
     pub fn scrub_step(&self) -> ScrubStatus {
         let Some(mut run) = ({
             let mut scrub = self.scrub.borrow_mut();
@@ -441,17 +513,21 @@ impl<E: SqlEngine> CellStore<E> {
         }) else {
             return self.scrub_status();
         };
-        let stepped = self.conn.transaction(|| self.scrub_run_step(&mut run));
-        let mut scrub = self.scrub.borrow_mut();
-        match stepped {
-            Ok(Stepped::Continue) => {
+        // S11: `scrub_run_step` borrows `&run` immutably; `run` is only
+        // mutated after the transaction commits cleanly.
+        let outcome = self.conn.transaction(|| self.scrub_run_step(&run));
+        let applied = outcome.and_then(|step| apply_step(&mut run, step));
+        match applied {
+            Ok(StepProgress::Continue) => {
+                let mut scrub = self.scrub.borrow_mut();
                 scrub.transient = 0;
                 if run.start.is_none() && run.phase != Phase::Receipts {
                     scrub.idempotency_unproven = false;
                 }
                 scrub.run = Some(run);
             }
-            Ok(Stepped::Seeded(checkpoint)) => {
+            Ok(StepProgress::Done(checkpoint)) => {
+                let mut scrub = self.scrub.borrow_mut();
                 scrub.transient = 0;
                 scrub.covered = None;
                 scrub.idempotency_unproven = false;
@@ -465,29 +541,30 @@ impl<E: SqlEngine> CellStore<E> {
             }
             Err(error)
                 if matches!(error, CellError::Engine(_) | CellError::Sqlite(_))
-                    && scrub.transient < TRANSIENT_RETRIES =>
+                    && self.scrub.borrow().transient < TRANSIENT_RETRIES =>
             {
+                let mut scrub = self.scrub.borrow_mut();
                 scrub.transient = scrub.transient.saturating_add(1);
                 tracing::warn!(%error, "history scrub: step failed; retrying");
                 scrub.run = Some(run);
             }
             Err(error) => {
-                let finding = error.to_string();
-                tracing::error!(%finding, "history scrub: the cell is fenced");
-                scrub.finding = Some(finding);
-                drop(scrub);
-                // The durable half: the next open verifies from genesis.
-                if let Err(error) = self
-                    .conn
-                    .transaction(|| open_checkpoint::drop_row(&self.conn))
-                {
-                    tracing::warn!(%error, "history scrub: the checkpoint row stays");
-                }
-                return self.scrub_status();
+                self.fence_on_defect(&error);
             }
         }
-        drop(scrub);
         self.scrub_status()
+    }
+
+    fn fence_on_defect(&self, error: &CellError) {
+        let finding = error.to_string();
+        tracing::error!(%finding, "history scrub: the cell is fenced");
+        self.scrub.borrow_mut().finding = Some(finding.clone());
+        // S12: drop the checkpoint row and persist the durable fence marker in
+        // one transaction so subsequent calls, sibling handles and reopens fail
+        // closed.
+        if let Err(fence_error) = open_checkpoint::fence_durably(&self.conn, &finding) {
+            tracing::warn!(%fence_error, "history scrub: durable fence write failed");
+        }
     }
 
     /// Run the scrub to its end (tests and tools): every step, back to back.
@@ -500,59 +577,104 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 
-    fn scrub_run_step(&self, run: &mut Run) -> Result<Stepped, CellError> {
+    fn scrub_run_step(&self, run: &Run) -> Result<StepOutcome, CellError> {
+        open_checkpoint::check_fence(&self.conn)?;
         match run.phase {
-            Phase::Receipts => self.scrub_receipts(run).map(|()| Stepped::Continue),
-            Phase::History => self.scrub_history(run).map(|()| Stepped::Continue),
-            Phase::Seed => {
-                let quantity = match run.quantity.clone() {
-                    Some(quantity) => quantity,
-                    None => open_checkpoint::quantity_seed()?,
-                };
-                let checkpoint = self.checkpoint_at(
-                    &run.target,
-                    run.target_boundary,
-                    open_checkpoint::root_hex(run.tree.root().as_bytes()),
-                    quantity,
-                )?;
-                let recorded = open_checkpoint::record(&self.conn, &checkpoint)?;
-                Ok(Stepped::Seeded(recorded.then_some(checkpoint)))
-            }
+            Phase::Receipts => self.scrub_receipts(run),
+            Phase::History => self.scrub_history(run),
+            Phase::Seed => self.scrub_seed(run),
         }
+    }
+
+    /// Phase 3: verify the tail anchor and verified pins inside the seed
+    /// transaction before recording the checkpoint (S10).
+    fn scrub_seed(&self, run: &Run) -> Result<StepOutcome, CellError> {
+        let expected_hash = run
+            .target
+            .commits
+            .checked_sub(1)
+            .and_then(|idx| usize::try_from(idx).ok())
+            .and_then(|idx| run.tree.get(idx))
+            .map(String::as_str);
+        self.verify_target_tail_anchor(&run.target, expected_hash)?;
+        let quantity = match &run.quantity {
+            Some(quantity) => quantity.clone(),
+            None => open_checkpoint::quantity_seed()?,
+        };
+        let checkpoint = self.checkpoint_at(
+            &run.target,
+            run.target_boundary,
+            open_checkpoint::root_hex(run.tree.root().as_bytes()),
+            quantity,
+        )?;
+        if let Some(pins) = &run.verified_pins
+            && (checkpoint.export != pins.export || checkpoint.definitions != pins.definitions)
+        {
+            return Err(defect(
+                run.target.commits,
+                "export or definition pins changed before checkpoint seed",
+            ));
+        }
+        // S10: never regress a newer authentic checkpoint written by another
+        // handle while this scrub ran, while still replacing a stale
+        // checkpoint past the database's end (as after a trimmed restore).
+        let db_commits: i64 = self.conn.query_row(
+            &format!(
+                "SELECT COALESCE(MAX(\"commit_seq\"), 0) FROM \"{}\"",
+                crate::system::RECEIPT
+            ),
+            &[],
+            |row| row.get(0),
+        )?;
+        let db_commits = crate::read::to_u64(db_commits, "receipt head")?;
+        if let Loaded::Authentic(existing) = open_checkpoint::load(&self.conn)?
+            && existing.head.commits <= db_commits
+            && existing.head.commits >= checkpoint.head.commits
+        {
+            return Ok(StepOutcome::Seeded(Some(existing)));
+        }
+        let recorded = open_checkpoint::record(&self.conn, &checkpoint)?;
+        Ok(StepOutcome::Seeded(recorded.then_some(checkpoint)))
     }
 
     /// Phase 1: the receipts after `run.receipts_at`, a page at a time; for
     /// a run from a checkpoint, first the digests it covers, copied from the
-    /// loaded log into the rebuilt tree.
-    fn scrub_receipts(&self, run: &mut Run) -> Result<(), CellError> {
+    /// loaded log into the rebuilt tree. Purely reads and stages the batch.
+    fn scrub_receipts(&self, run: &Run) -> Result<StepOutcome, CellError> {
         let log = self.transparency.borrow();
         let start = run.start.as_ref().map_or(0, |start| start.head.commits);
         if run.tree.len() < start {
             let to = start.min(run.tree.len().saturating_add(TREE_STEP));
-            while run.tree.len() < to {
-                let leaf = usize::try_from(run.tree.len())
+            let count = usize::try_from(to.saturating_sub(run.tree.len()))
+                .map_err(|_range| CellError::OutOfRange("tree step"))?;
+            let mut leaves = Vec::with_capacity(count);
+            let mut pos = run.tree.len();
+            while pos < to {
+                let leaf = usize::try_from(pos)
                     .ok()
                     .and_then(|index| log.get(index))
-                    .ok_or_else(|| defect(run.tree.len(), "the loaded receipt log is short"))?;
-                run.tree.push(leaf.clone());
+                    .ok_or_else(|| defect(pos, "the loaded receipt log is short"))?;
+                leaves.push(leaf.clone());
+                pos = pos.saturating_add(1);
             }
-            return run.check_anchor();
+            return Ok(StepOutcome::TreeBatch(leaves));
         }
-        let mut quantity = match run.quantity.take() {
-            Some(quantity) => quantity,
+        let mut quantity = match &run.quantity {
+            Some(quantity) => quantity.clone(),
             None => open_checkpoint::quantity_seed()?,
         };
         let page = self
             .verifier()
             .receipts_after(run.receipts_at, RECEIPT_STEP)?;
         let read = page.len();
+        let mut receipts_at = run.receipts_at;
+        let mut leaves = Vec::with_capacity(read);
         for receipt in page {
             let commit = receipt.body.commit_seq;
             if commit > run.target.commits {
                 break;
             }
-            let expected = run
-                .receipts_at
+            let expected = receipts_at
                 .checked_add(1)
                 .ok_or(CellError::OutOfRange("commit_seq"))?;
             if commit != expected {
@@ -567,36 +689,34 @@ impl<E: SqlEngine> CellStore<E> {
                     "a stored receipt digest is not the one the open loaded",
                 ));
             }
-            run.tree.push(receipt.hash.clone());
             if receipt.body.quantity.is_some() {
                 quantity = open_checkpoint::quantity_extend(&quantity, commit, &receipt.hash)?;
             }
-            run.receipts_at = commit;
-            run.check_anchor()?;
+            leaves.push(receipt.hash);
+            receipts_at = commit;
         }
-        run.quantity = Some(quantity);
-        if run.receipts_at == run.target.commits {
-            run.phase = if run.history {
-                Phase::History
-            } else {
-                Phase::Seed
-            };
-        } else if read == 0 {
+        let done = receipts_at == run.target.commits;
+        if !done && read == 0 {
             return Err(defect(
-                run.receipts_at,
+                receipts_at,
                 "the history holds fewer receipts than the head the open verified",
             ));
         }
-        Ok(())
+        Ok(StepOutcome::ReceiptsBatch {
+            leaves,
+            receipts_at,
+            quantity,
+            done,
+        })
     }
 
     /// Phase 2: the next [`HISTORY_STEP`] commits, as a genesis open
-    /// verifies them.
-    fn scrub_history(&self, run: &mut Run) -> Result<(), CellError> {
+    /// verifies them. Stages progress into [`StepOutcome::HistoryChunk`].
+    fn scrub_history(&self, run: &Run) -> Result<StepOutcome, CellError> {
         let reader = self.verifier();
         let versions = reader.installed_definition_versions()?;
-        let mut walk = match run.walk.take() {
-            Some(walk) => walk,
+        let mut walk = match &run.walk {
+            Some(walk) => walk.clone(),
             None => match &run.start {
                 // A catch-up from a checkpoint re-runs the pins an open runs
                 // on it (S3): its export record, its definition versions.
@@ -625,10 +745,9 @@ impl<E: SqlEngine> CellStore<E> {
             self.definition_walk_step(&reader, &versions, &mut walk, &receipt)?;
         }
         reader.verify_value_history_range(after, through)?;
-        run.ledger = head;
-        run.boundary = boundary;
-        if through == run.target.commits {
-            if run.ledger != run.target || run.boundary != run.target_boundary {
+        let done = through == run.target.commits;
+        let verified_pins = if done {
+            if head != run.target || boundary != run.target_boundary {
                 return Err(defect(
                     through,
                     "the verified history does not end at the head the open verified",
@@ -644,9 +763,69 @@ impl<E: SqlEngine> CellStore<E> {
                     "the definition history and the receipts disagree",
                 ));
             }
-            run.phase = Phase::Seed;
+            Some(VerifiedPins {
+                export: crate::cell_identity::last_record_through(&self.conn, through)?,
+                definitions: open_checkpoint::definitions_digest(&versions, through)?,
+            })
+        } else {
+            None
+        };
+        Ok(StepOutcome::HistoryChunk {
+            head,
+            boundary,
+            walk,
+            verified_pins,
+            done,
+        })
+    }
+}
+
+enum StepProgress {
+    Continue,
+    Done(Option<OpenCheckpoint>),
+}
+
+/// Apply one committed step's staged progress to `run` (S11).
+fn apply_step(run: &mut Run, step: StepOutcome) -> Result<StepProgress, CellError> {
+    match step {
+        StepOutcome::TreeBatch(leaves) => {
+            run.push_leaves(leaves)?;
+            Ok(StepProgress::Continue)
         }
-        run.walk = Some(walk);
-        Ok(())
+        StepOutcome::ReceiptsBatch {
+            leaves,
+            receipts_at,
+            quantity,
+            done,
+        } => {
+            run.push_leaves(leaves)?;
+            run.receipts_at = receipts_at;
+            run.quantity = Some(quantity);
+            if done {
+                run.phase = if run.history {
+                    Phase::History
+                } else {
+                    Phase::Seed
+                };
+            }
+            Ok(StepProgress::Continue)
+        }
+        StepOutcome::HistoryChunk {
+            head,
+            boundary,
+            walk,
+            verified_pins,
+            done,
+        } => {
+            run.ledger = head;
+            run.boundary = boundary;
+            run.walk = Some(walk);
+            if done {
+                run.verified_pins = verified_pins;
+                run.phase = Phase::Seed;
+            }
+            Ok(StepProgress::Continue)
+        }
+        StepOutcome::Seeded(checkpoint) => Ok(StepProgress::Done(checkpoint)),
     }
 }

@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
 import { parkedOf, type ParkedCall, type Phase } from "../lib/screen/call.ts"
@@ -121,7 +121,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   useEffect(() => { if (parkedNow !== null) onParked?.(parkedNow) }, [parkedNow?.decision.id, parkedNow?.key])
   useEffect(() => {
     if (phase.kind !== "refused" || !wizard) return
-    const first = problemsBySection(sections, phase.diagnostics).findIndex((n) => n > 0)
+    const first = problemsBySection(sections, phase.diagnostics, draft).findIndex((n) => n > 0)
     if (first >= 0) setStep(first)
   }, [phase])
 
@@ -135,7 +135,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
 
   const submit = () => dispatch({ kind: "submit", input: encodeObject(fields, draft as { readonly [name: string]: Draft }) })
 
-  const refusal = phase.kind === "refused" ? <RefusalPanel phase={phase} action={action} technical={technical} request={request} at={refusedAt ?? new Date()} guard={guard} top={unplaced(diagnostics, fields)} atFields={ranApproved === null} onUse={ranApproved !== null ? undefined : (path, text) => edit(`/${path}`, text)} /> : null
+  const top = unplaced(diagnostics, fields, draft)
+  const refusal = phase.kind === "refused" ? <RefusalPanel phase={phase} action={action} technical={technical} request={request} at={refusedAt ?? new Date()} guard={guard} top={top} atFields={ranApproved === null} onUse={ranApproved !== null ? undefined : (path, text) => edit(`/${path}`, text)} /> : null
 
   if (phase.kind === "pending" || (ranApproved !== null && (phase.kind === "sending" || phase.kind === "refused" || phase.kind === "failed"))) {
     return <ParkedCallPanel action={action} decisionId={phase.kind === "pending" ? phase.decision.id : ranApproved!} parkedExpiresAtMs={phase.kind === "pending" ? phase.decision.expiresAtMs : null}
@@ -155,9 +156,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       onAgain={writesWhole(action) && phase.kind !== "undoing" ? () => { setDraft(initial); setStep(0); setReached(0); dispatch({ kind: "again", key: newKey() }) } : undefined} onClose={onClose} />
   }
 
-  const top = unplaced(diagnostics, fields)
   const links = new Map((action.inputLinks ?? []).map(({ field, objectKind }) => [`/${field}`, objectKind] as const))
-  const counts = problemsBySection(sections, diagnostics)
+  const counts = problemsBySection(sections, diagnostics, draft)
   const go = (to: number) => { moved.current = true; setStep(to); setReached((r) => Math.max(r, to)); dispatch({ kind: "back" }) }
   const shown = wizard ? (step < review ? [sections[step]!] : []) : sections
   return (
@@ -294,8 +294,7 @@ function Nullable({ field, value, onEdit, widget }: { readonly field: FormField;
 
 
 /** Fields of a record item re-pointed from the schema's item `0` to the item they edit. */
-const rebase = (fields: readonly FormField[], from: string, to: string): readonly FormField[] =>
-  fields.map((f) => ({ ...f, pointer: to + f.pointer.slice(from.length), spec: f.spec.kind === "object" ? { ...f.spec, fields: rebase(f.spec.fields, from, to) } : f.spec }))
+const rebase = rebaseFields
 
 function Widget({ spec, pointer, label, value, root, diagnostics, onEdit, aria, bare = false }: {
   readonly spec: Spec; readonly pointer: string; readonly label: string; readonly value: Draft; readonly bare?: boolean; readonly root: Draft; readonly diagnostics: readonly Diagnostic[]
@@ -307,6 +306,12 @@ function Widget({ spec, pointer, label, value, root, diagnostics, onEdit, aria, 
     case "text": return picks !== undefined
       ? <RecordPicker objectKind={picks} value={text} onPick={(id) => onEdit(pointer, id)} aria={aria} />
       : <Input {...aria} className="h-9" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
+    case "date":
+      return <Input {...aria} type="date" className="h-9 w-48 tabular-nums" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
+    case "time":
+      return <Input {...aria} type="time" step={1} className="h-9 w-40 tabular-nums" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
+    case "date-time":
+      return <DateTimePicker aria={aria} value={text} onChange={(next) => onEdit(pointer, next)} />
     case "integer":
     case "number":
     case "decimal":
@@ -357,9 +362,53 @@ function Widget({ spec, pointer, label, value, root, diagnostics, onEdit, aria, 
   }
 }
 
-/** How many of the cell's diagnostics land on each section's fields. */
-function problemsBySection(sections: readonly Section[], diagnostics: readonly Diagnostic[]): readonly number[] {
-  return sections.map((section) => section.fields.reduce((n, field) => n + problemsAt(diagnostics, field.pointer).length, 0))
+/** The reader's zone, named: the offset a picked wall time is sent with. */
+const readerZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "your time zone"
+
+/**
+ * An instant: a wall-time picker in the reader's own zone. What is sent is resolved directly from
+ * `value` (`resolveDateTime`), so a prefilled or disambiguated instant preserves its exact offset
+ * (including a fall-back DST repeat like `-05:00`) in both the preview and submission. A
+ * nonexistent local time in a spring-forward DST gap is flagged and never shifted; a fall-back
+ * repeat offers an explicit offset selector between both valid occurrences.
+ */
+function DateTimePicker({ aria, value, onChange }: { readonly aria: Aria; readonly value: string; readonly onChange: (value: string) => void }) {
+  const shown = pickerDateTime(value)
+  const resolved = value.trim() === "" ? null : resolveDateTime(value)
+  const sent = resolved?.kind === "ok" ? resolved.text : null
+  const gap = resolved?.kind === "nonexistent"
+  const alternatives = resolved?.kind === "ok" && resolved.alternatives.length > 1 ? resolved.alternatives : null
+  const zone = readerZone()
+  return (
+    <div className="grid gap-1">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Input {...aria} aria-invalid={gap || aria["aria-invalid"] === true || undefined} type="datetime-local" step={60} className="h-9 w-60 tabular-nums" value={shown} onChange={(e) => onChange(e.target.value)} />
+        {alternatives !== null && (
+          <select aria-label="Time zone offset" className="h-9 rounded-lg border border-node-border bg-background px-2 font-mono text-xs tabular-nums"
+            value={selectedAlternative(sent, alternatives)}
+            onChange={(e) => onChange(e.target.value)}>
+            {alternatives.map((iso, idx) => (
+              <option key={iso} value={iso}>
+                {offsetSuffix(iso)} ({idx === 0 ? "first occurrence" : "second occurrence"})
+              </option>
+            ))}
+          </select>
+        )}
+        <span className="text-meta text-muted-foreground">
+          {zone}{sent !== null && <> · sent as <code className="text-xs">{sent}</code></>}
+        </span>
+      </div>
+      {gap && <p role="alert" className="text-meta text-destructive">This local time doesn't exist in {zone} (clocks spring forward). Pick a valid time.</p>}
+    </div>
+  )
+}
+
+/** How many of the cell's diagnostics actually land on each section's rendered fields. */
+function problemsBySection(sections: readonly Section[], diagnostics: readonly Diagnostic[], draft: Draft): readonly number[] {
+  return sections.map((section) => diagnostics.filter((d) => {
+    const at = inputPointer(d)
+    return at !== null && isDiagnosticPlaced(at, section.fields, draft)
+  }).length)
 }
 
 /**
@@ -416,6 +465,13 @@ function shownValue(field: FormField, value: Draft | undefined): ReactNode {
   if (Array.isArray(value)) return value.length === 0 ? <span className="text-muted-foreground">None</span> : `${value.length} ${value.length === 1 ? "entry" : "entries"}`
   if (typeof value === "object") return <span className="text-muted-foreground">See below</span>
   if (field.spec.kind === "boolean") return value === "true" ? "Yes" : value === "false" ? "No" : String(value)
+  if (field.spec.kind === "date-time") {
+    const resolved = resolveDateTime(String(value))
+    if (resolved.kind === "nonexistent") return String(value)
+    const at = Date.parse(resolved.text)
+    return Number.isNaN(at) ? String(value) : <time dateTime={resolved.text}>{new Date(at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} <span className="text-muted-foreground">({readerZone()})</span></time>
+  }
+  if (field.spec.kind === "date") { const at = /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? new Date(`${String(value)}T00:00:00`) : null; return at === null ? String(value) : <time dateTime={String(value)}>{at.toLocaleDateString(undefined, { dateStyle: "medium" })}</time> }
   if (field.spec.kind === "decimal" && field.spec.unit) return <span className="tabular-nums">{String(value)} {field.spec.unit}</span>
   return String(value)
 }

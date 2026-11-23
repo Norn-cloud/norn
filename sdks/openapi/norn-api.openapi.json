@@ -652,13 +652,110 @@
         ]
       }
     },
+    "/v1/datasets/{type}/rows/{row}:lineage": {
+      "get": {
+        "tags": [
+          "crate::analytics_routes"
+        ],
+        "summary": "MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the\nrecords grid names it, to the manifest that admitted it, the source\nupload and the data file, each by content hash and row offset, with what\nheld it back. Held-back rows are traced too. Requires Population, Values\nand Sources on the type; no value is disclosed.",
+        "description": "# Errors\nA denied gate (one opaque 403), no dataset or no such row (404), or an\nunreachable engine.",
+        "operationId": "dataset_lineage",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The dataset's object type.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "row",
+            "in": "path",
+            "description": "The source row offset.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row's lineage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornDatasetLineage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/datasets:load": {
       "post": {
         "tags": [
           "crate::analytics_routes"
         ],
-        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one; each row\ntraces to `(uri, sha256, row)`. Decided like any upload load\n(`SyncSource(\"upload\")`); the load is reported as a run of the type's\n`upload` connection, as the cell's own observations (SYNC-REPORT-1).",
-        "description": "# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), or an unreachable engine.",
+        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one when its\nmanifest commits; each row traces to `(uri, sha256, row)`. The load is\nreported as a run of the type's `upload` connection, as the cell's own\nobservations (SYNC-REPORT-1).",
+        "description": "MANIFEST-03: a load is decided exactly as an observation load of the\nsame rows: `SyncSource(\"upload\")` and the destination connection's own\ngrant (`SyncSource(\"upload.<type>\")`), an admitted mapping onto the type\nthat the load binds its columns by, and the markings a write of those\nrows would carry. A mapping or marking bulk ingest cannot enforce is\nrefused, never loaded unchecked.\n\n# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), a mapping or marking bulk\ningest cannot enforce (422), stale pins or a reused request key (409), or\nan unreachable engine.",
         "operationId": "load_dataset",
         "parameters": [
           {
@@ -723,6 +820,16 @@
           },
           "404": {
             "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The definitions changed while the dataset landed, or the request key names another request.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5076,6 +5183,10 @@
             "$ref": "#/components/schemas/ActionCommit",
             "description": "The original commit, the same on every replay."
           },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context retained from the original call."
+          },
           "version": {
             "type": "integer",
             "format": "int64",
@@ -5098,6 +5209,10 @@
           },
           "input": {
             "$ref": "#/components/schemas/NornActionInput"
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context persisted on the committed receipt."
           }
         },
         "additionalProperties": false
@@ -5320,9 +5435,23 @@
           "objectType"
         ],
         "properties": {
+          "mapping": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MANIFEST-03: the admitted mapping onto the type the load binds its\ncolumns by; needed only when more than one maps onto it."
+          },
           "objectType": {
             "type": "string",
             "description": "The admitted object type the rows are typed by."
+          },
+          "requestKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MANIFEST-04: the caller's key for this load. A retry with the same\nkey and the same request answers with the first load's receipt; the\nsame key with another request is refused (409\n`dataset.request_conflict`). A load without a key always commits."
           },
           "uploadId": {
             "type": "string",
@@ -5571,6 +5700,10 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context carried by the parked call."
           }
         }
       },
@@ -6540,6 +6673,47 @@
         },
         "additionalProperties": false
       },
+      "NornActionActionParameterPin": {
+        "type": "object",
+        "description": "One effective-dated parameter resolved and pinned during an action commit\n(D07, PARAM-EXACT-1, PARAM-BOUND-1).",
+        "required": [
+          "entry",
+          "settingKey",
+          "effectiveAt",
+          "setting",
+          "version",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "description": "Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's\nexact values at commit time."
+          },
+          "effectiveAt": {
+            "type": "string",
+            "description": "The declared effective timestamp evaluated for this selection."
+          },
+          "entry": {
+            "type": "string",
+            "description": "The declared parameter slice entry name."
+          },
+          "setting": {
+            "$ref": "#/components/schemas/NornActionFactKey",
+            "description": "The selected setting fact's concrete object type and key."
+          },
+          "settingKey": {
+            "type": "string",
+            "description": "The stable parameter key."
+          },
+          "version": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The committed fact version of the selected setting at commit time.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "NornActionActionPreconditionOutcome": {
         "type": "object",
         "description": "The successful outcome of one action precondition.",
@@ -6635,6 +6809,13 @@
             "$ref": "#/components/schemas/NornActionFactKey",
             "description": "The target object."
           },
+          "parameterPins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionActionParameterPin"
+            },
+            "description": "Effective-dated parameter pins resolved by declared parameter slices\n(D07, PARAM-EXACT-1, PARAM-BOUND-1)."
+          },
           "preconditionOutcomes": {
             "type": "array",
             "items": {
@@ -6659,6 +6840,17 @@
           "to": {
             "type": "string",
             "description": "The state it entered."
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornActionTraceContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional provenance trace context supplied by the caller."
           },
           "transition": {
             "type": "string",
@@ -6693,6 +6885,11 @@
             "description": "The callable actions an effect program can run, ordered by identity."
           }
         }
+      },
+      "NornActionDigest": {
+        "type": "string",
+        "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+        "pattern": "^sha256:[0-9a-f]{64}$"
       },
       "NornActionEffect": {
         "type": "string",
@@ -6818,6 +7015,33 @@
             "description": "The effects a caller must handle."
           }
         }
+      },
+      "NornActionTraceContext": {
+        "type": "object",
+        "description": "Optional provenance trace context attached to an action call and persisted\non its committed receipt.\n\nStrictly optional and additive: callers without trace context are unaffected,\nand raw transcript text is never stored (`sessionDigest` admits only a\ncontent-addressed SHA-256 digest).",
+        "required": [
+          "traceId"
+        ],
+        "properties": {
+          "intentRef": {
+            "type": "string",
+            "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
+            "maxLength": 512,
+            "minLength": 1
+          },
+          "sessionDigest": {
+            "type": "string",
+            "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "traceId": {
+            "type": "string",
+            "description": "Opaque correlation identifier tying multi-step causes and effects\ntogether (1 to 256 UTF-8 bytes, no control characters or outer whitespace).",
+            "maxLength": 256,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
       },
       "NornActionUiEffects": {
         "type": "object",
@@ -7976,6 +8200,106 @@
           }
         }
       },
+      "NornDatasetFile": {
+        "type": "object",
+        "description": "One landed dataset file, named by content.",
+        "required": [
+          "uri",
+          "sha256",
+          "rows",
+          "bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes in it.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows in it.",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Its SHA-256."
+          },
+          "uri": {
+            "type": "string",
+            "description": "The object's durable URI."
+          }
+        }
+      },
+      "NornDatasetLineage": {
+        "type": "object",
+        "description": "The outcome of `GET /v1/datasets/{type}/rows/{row}:lineage`.",
+        "required": [
+          "objectType",
+          "row",
+          "manifest",
+          "commitSeq",
+          "source",
+          "findings",
+          "held"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit that admitted it.",
+            "minimum": 0
+          },
+          "data": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornLineageFile",
+                "description": "The data file, at the row; absent when the row was not typed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornRowFinding"
+            },
+            "description": "Every rule the row fails."
+          },
+          "held": {
+            "type": "boolean",
+            "description": "Whether the row is held back (not typed, or failing a rule that holds)."
+          },
+          "manifest": {
+            "type": "string",
+            "description": "The manifest that admitted the dataset."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The dataset's object type."
+          },
+          "refused": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the row was not typed (`bulk.*`), if it was not."
+          },
+          "row": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The source row offset; dataset answers name rows by it.",
+            "minimum": 0
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornLineageFile",
+            "description": "The source upload, at the row."
+          }
+        }
+      },
       "NornDatasetLoad": {
         "type": "object",
         "description": "The outcome of `POST /v1/datasets:load`.",
@@ -7983,11 +8307,18 @@
           "objectType",
           "connectionId",
           "load",
+          "manifest",
+          "receipt",
+          "commitSeq",
           "uri",
           "sha256",
+          "data",
+          "held",
           "rows",
           "rejected",
           "reasons",
+          "findings",
+          "heldByRules",
           "bytes",
           "millis"
         ],
@@ -7995,16 +8326,50 @@
           "bytes": {
             "type": "integer",
             "format": "int64",
-            "description": "File size in bytes.",
+            "description": "Source file size in bytes.",
+            "minimum": 0
+          },
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "That commit's sequence number.",
             "minimum": 0
           },
           "connectionId": {
             "type": "string",
             "description": "The `upload` connection the load is reported under (SYNC-REPORT-1)."
           },
+          "data": {
+            "$ref": "#/components/schemas/NornDatasetFile",
+            "description": "The landed data file: every admitted row, columnar."
+          },
+          "findings": {
+            "type": "object",
+            "description": "MANIFEST-LAWS-1: findings of each law and invariant, by rule.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornRuleFindings"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "held": {
+            "$ref": "#/components/schemas/NornDatasetFile",
+            "description": "The landed held-set file: every held-back row and its reason."
+          },
+          "heldByRules": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Typed rows a law or invariant holds back: in the held-set file, not\namong `rows`.",
+            "minimum": 0
+          },
           "load": {
             "type": "string",
-            "description": "The load identity; answers over the dataset name it."
+            "description": "The landing identity; answers over the dataset name it."
+          },
+          "manifest": {
+            "type": "string",
+            "description": "MANIFEST-1: the committed manifest's identity."
           },
           "millis": {
             "type": "integer",
@@ -8028,25 +8393,29 @@
               "type": "string"
             }
           },
+          "receipt": {
+            "type": "string",
+            "description": "The receipt of the one commit that admitted the manifest."
+          },
           "rejected": {
             "type": "integer",
             "format": "int64",
-            "description": "Rows quarantined.",
+            "description": "Rows quarantined because they could not be typed.",
             "minimum": 0
           },
           "rows": {
             "type": "integer",
             "format": "int64",
-            "description": "Rows admitted.",
+            "description": "Rows admitted as trusted: typed, and held back by no rule (LAW-02).",
             "minimum": 0
           },
           "sha256": {
             "type": "string",
-            "description": "The file's SHA-256, verified by the engine."
+            "description": "The source file's SHA-256, verified by the engine."
           },
           "uri": {
             "type": "string",
-            "description": "The file's durable URI."
+            "description": "The source file's durable URI."
           }
         }
       },
@@ -32511,6 +32880,31 @@
         },
         "additionalProperties": false
       },
+      "NornLineageFile": {
+        "type": "object",
+        "description": "One file a dataset row is traced through, and the row's offset in it.",
+        "required": [
+          "uri",
+          "sha256",
+          "row"
+        ],
+        "properties": {
+          "row": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The row's source offset (1-based, in source file order); the data\nfile carries it as its `:row` column.",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Its SHA-256."
+          },
+          "uri": {
+            "type": "string",
+            "description": "The object's durable URI."
+          }
+        }
+      },
       "NornLinkCount": {
         "type": "object",
         "description": "The visible links of one declared link type in one direction.",
@@ -34270,6 +34664,54 @@
           }
         }
       },
+      "NornRowFinding": {
+        "type": "object",
+        "description": "One law or invariant a dataset row fails.",
+        "required": [
+          "rule",
+          "label",
+          "holds"
+        ],
+        "properties": {
+          "holds": {
+            "type": "boolean",
+            "description": "Whether it holds the row back."
+          },
+          "label": {
+            "type": "string",
+            "description": "The law (`law:<id>`) or invariant (`invariant:<id>`)."
+          },
+          "rule": {
+            "type": "string",
+            "description": "The rule identity (canonical JSON of its reference)."
+          }
+        }
+      },
+      "NornRuleFindings": {
+        "type": "object",
+        "description": "MANIFEST-LAWS-1: one law or invariant's findings over a dataset.",
+        "required": [
+          "label",
+          "rows",
+          "holds"
+        ],
+        "properties": {
+          "holds": {
+            "type": "boolean",
+            "description": "Whether a failing row is held back."
+          },
+          "label": {
+            "type": "string",
+            "description": "The law (`law:<id>`) or invariant (`invariant:<id>`)."
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows that fail it.",
+            "minimum": 0
+          }
+        }
+      },
       "NornSortDirection": {
         "type": "string",
         "description": "A sort direction.",
@@ -34875,6 +35317,10 @@
                 "enum": [
                   "action"
                 ]
+              },
+              "trace": {
+                "$ref": "#/components/schemas/TraceContext",
+                "description": "Optional provenance trace context recorded on the action call."
               }
             }
           },
@@ -35396,6 +35842,10 @@
                 "type": "null"
               }
             ]
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context carried by the parked call."
           }
         }
       },
@@ -35891,6 +36341,33 @@
           "executor",
           "timer"
         ]
+      },
+      "TraceContext": {
+        "type": "object",
+        "description": "Optional provenance trace context attached to an action call and retained\non its committed receipt.",
+        "required": [
+          "traceId"
+        ],
+        "properties": {
+          "intentRef": {
+            "type": "string",
+            "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
+            "maxLength": 512,
+            "minLength": 1
+          },
+          "sessionDigest": {
+            "type": "string",
+            "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "traceId": {
+            "type": "string",
+            "description": "Opaque correlation identifier tying multi-step causes and effects\ntogether (1 to 256 UTF-8 bytes, no control characters or outer whitespace).",
+            "maxLength": 256,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
       }
     },
     "securitySchemes": {

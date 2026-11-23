@@ -47,6 +47,9 @@ mod governed;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey};
 use norn_api::scope::CellScope;
+use norn_cell::dataset_manifest::{
+    DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestSource,
+};
 use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
 use norn_cell::{CellError, CommitBatch, FactWriteRow, MAIN_WORLD};
 use norn_cell_do::analytics::{self, DemoQuestions};
@@ -86,6 +89,13 @@ impl Counting {
 }
 
 impl SqlEngine for Counting {
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.tick();
         self.inner.execute(sql, params)
@@ -632,6 +642,7 @@ fn probes(route: Route, ids: &Ids) -> Vec<Probe> {
         Route::TransformPlan => get(format!("/v1/transforms/{transform}/plan")),
         Route::ObjectExport => get(format!("/v1/objects/{kind}:export")),
         Route::DatasetLoad => post("/v1/datasets:load".into(), json!({"upload": upload})),
+        Route::DatasetLineage => get(format!("/v1/datasets/{kind}/rows/1:lineage")),
         Route::TransformsCompile => post("/v1/transforms:compile".into(), json!({})),
         Route::TransformRefresh => post(format!("/v1/transforms/{transform}:refresh"), json!({})),
         Route::Inbox => get("/v1/inbox".into()),
@@ -742,7 +753,7 @@ fn every_route_has_a_row_that_names_it() {
     let mut covered = BTreeSet::new();
     for route in Route::ALL {
         let rows = probes(*route, &ids);
-        assert!(!rows.is_empty(), "{route:?} has no row");
+        assert_ne!(rows, [], "{route:?} has no row");
         for (method, path, _) in rows {
             assert_eq!(Route::of(&path), Some(*route), "{method} {path}");
             assert_eq!(method, route.signature().0, "{route:?}");
@@ -774,13 +785,13 @@ fn every_mcp_tool_has_a_row() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap().to_owned())
         .collect();
-    assert!(!names.is_empty());
+    assert_ne!(names.len(), 0);
     let rows: BTreeSet<String> = mcp_tools(&ids)
         .into_iter()
         .map(|(name, _)| name.to_owned())
         .collect();
     let missing: Vec<&String> = names.difference(&rows).collect();
-    assert!(missing.is_empty(), "MCP tools without a row: {missing:?}");
+    assert_eq!(missing.len(), 0, "MCP tools without a row: {missing:?}");
 }
 
 // ----------------------------------------------------------------- outsider
@@ -1015,27 +1026,58 @@ fn analytics_b() -> Host {
     let scope = analytics::analytics_scope();
     let calls = Rc::new(Cell::new(0));
     let analytics::Analytics {
-        store,
+        mut store,
         plan,
         definitions,
         catalog,
     } = analytics::provision(Counting::new(&calls), &scope).unwrap();
-    let recorded_at = store.verified_head().unwrap().commits;
+    // A loaded dataset is a committed manifest (#1381 MANIFEST-COMMIT-1).
+    let table = store.analytics_table(analytics::TYPE).unwrap();
+    let binding = BTreeMap::new();
+    let (data, held) = ("ab".repeat(32), "cd".repeat(32));
+    let file = |sha256: &str, rows| ManifestFile {
+        uri: format!("s3://uploads-bucket/uploads/org_demo%2Fanalytics/{sha256}.parquet"),
+        sha256: sha256.to_owned(),
+        rows,
+        bytes: 1,
+    };
+    let manifest = DatasetManifest {
+        version: MANIFEST_VERSION.into(),
+        object_type: analytics::TYPE.into(),
+        load: norn_cell::analytics::dataset_cache_id(&table, &data, &held),
+        source: ManifestSource {
+            uri: "s3://uploads-bucket/uploads/org_demo%2Fanalytics/b-dataset.csv".into(),
+            sha256: "ef".repeat(32),
+            format: norn_cell::analytics::FileFormat::Csv,
+            bytes: 1,
+        },
+        pins: store
+            .dataset_pins(analytics::TYPE, &binding, "b.mapping@1")
+            .unwrap(),
+        binding,
+        table,
+        data: file(&data, 3),
+        held: file(&held, 0),
+        counts: ManifestCounts {
+            source: 3,
+            admitted: 3,
+            held: BTreeMap::new(),
+            findings: BTreeMap::new(),
+            held_by_rules: 0,
+        },
+        valid_time: Vec::new(),
+        markings: BTreeMap::new(),
+    };
     store
-        .record_analytics_dataset(
-            analytics::TYPE,
-            &norn_cell::analytics::DatasetRecord {
-                load: "l-b-dataset-1".into(),
-                uri: "s3://uploads-bucket/uploads/org_demo%2Fanalytics/b-dataset.csv".into(),
-                sha256: "ab".repeat(32),
-                rows: 3,
-                rejected: 0,
-                reasons: BTreeMap::new(),
-                recorded_at,
-            },
+        .commit_dataset_manifest(
+            MAIN_WORLD,
+            &scope.key(),
+            norn_cell::provision::K1_CLOCK,
+            &manifest,
+            None,
         )
         .unwrap();
-    assert!(!definitions.is_empty(), "the fixture publishes metrics");
+    assert_ne!(definitions, [], "the fixture publishes metrics");
     let questions = DemoQuestions::new(plan, scope.clone())
         .try_with_handle_key(Some(&LINEAGE_KEY))
         .unwrap()
@@ -1066,7 +1108,7 @@ fn an_outsider_at_a_cell_with_metrics_and_a_dataset_learns_nothing() {
     );
     assert_eq!(metrics.response.status, 200, "{}", metrics.response.body);
     let listed = json_of(&metrics.response)["metrics"].clone();
-    assert!(!listed.as_array().unwrap().is_empty(), "{listed}");
+    assert_ne!(listed.as_array().unwrap().len(), 0, "{listed}");
     let grid = send(
         &mut b,
         "GET",
@@ -1111,7 +1153,8 @@ fn an_outsider_at_a_cell_with_metrics_and_a_dataset_learns_nothing() {
                 assert_eq!(served, absent, "{method} {path}?{query} as {outsider:?}");
                 assert_eq!(served.calls, 0, "{method} {path}");
                 assert!(!served.engine && !served.continued && !served.scheduled);
-                assert!(!served.response.body.contains("l-b-dataset-1"));
+                assert!(!served.response.body.contains("b-dataset"));
+                assert!(!served.response.body.contains(&"ab".repeat(32)));
                 compared += 1;
             }
         }

@@ -60,15 +60,14 @@ fn artifact(entry: &Value) -> ArtifactEnvelope {
 fn artifacts(case: &Value, key: &str) -> Vec<ArtifactEnvelope> {
     case.get(key)
         .and_then(Value::as_array)
-        .map(|entries| entries.iter().map(artifact).collect())
-        .unwrap_or_default()
+        .map_or_default(|entries| entries.iter().map(artifact).collect())
 }
 
 fn located(finding: norn_checker::Diagnostic) -> Vec<String> {
     vec![
         finding.artifact_id.unwrap_or_default(),
         finding.code.as_str().to_owned(),
-        finding.span.map(|span| span.pointer).unwrap_or_default(),
+        finding.span.map_or_default(|span| span.pointer),
     ]
 }
 
@@ -80,13 +79,12 @@ fn run(case: &Value) -> Vec<Vec<String>> {
     let registry: BTreeSet<PropertyTypeName> = case
         .get("registry")
         .and_then(Value::as_array)
-        .map(|names| {
+        .map_or_default(|names| {
             names
                 .iter()
                 .map(|name| PropertyTypeName(name.as_str().expect("registry name").to_owned()))
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     let tenant = case.get("tenant").map(|tenant| {
         (
             tenant["tenantId"].as_str().expect("tenantId").to_owned(),
@@ -196,7 +194,7 @@ fn a_valid_set_resolves_in_installation_order() {
         );
     }
     assert!(position("retail.reorder.action") < position("retail.pack.core"));
-    assert!(resolved.base_dependencies.is_empty());
+    assert_eq!(resolved.base_dependencies.len(), 0);
 
     // Deterministic regardless of input order.
     let mut reversed = candidates.clone();
@@ -619,7 +617,7 @@ fn pack_pin_1_shared_contract_and_structural_refusals() {
         .pop()
         .expect("leaf");
     retained["base"] = json!([leaf]);
-    assert!(run(&retained).is_empty());
+    assert_eq!(run(&retained).len(), 0);
     let mut self_cycle = valid;
     let node = &mut self_cycle["artifacts"][0]["patch"]["payload"]["instances"][0];
     node["instances"][0]["instanceId"] = node["instanceId"].clone();
@@ -739,7 +737,7 @@ proptest::proptest! {
 }
 
 #[test]
-fn parameter_slice_contract_refuses_unqualified_execution() {
+fn parameter_slice_contract_refuses_undeclared_source_and_effective_at() {
     let mut case = read_json(&fixtures().join("ir/artifact-set/valid-retail-set.case.json"));
     let mut action = read_json(&fixtures().join("ir/retail-reorder.action.json"));
     action["payload"]["slice"] = json!([{"name":"tax", "objectType":"retail.Sku", "key":{"parameter":{"from":"rates","settingKey":"tax","effectiveAt":"effectiveAt","precedence":[{}]}}}]);
@@ -749,5 +747,254 @@ fn parameter_slice_contract_refuses_unqualified_execution() {
         run(&case)
             .iter()
             .any(|finding| finding[1] == "action.validation.invalid_payload")
+    );
+}
+
+fn parameter_slice_entities() -> (Value, Value, Value) {
+    let scope = json!({"orgId": "org_demo", "environmentId": "dev"});
+    let provenance = json!({"source": "authoring_sdk", "sourcePath": "test/parameter.ts"});
+    let setting_entity = json!({
+        "irVersion": "0.1", "artifactId": "billing.NumericSetting.entity",
+        "kind": "entity", "namespace": "billing", "name": "Numeric Setting",
+        "version": "1.0.0", "lifecycle": "draft", "scope": scope,
+        "dependencies": [], "provenance": provenance,
+        "payload": {
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "billing.NumericSetting",
+                "properties": [
+                    {"id": "id", "type": {"kind": "text"}},
+                    {"id": "setting_key", "type": {"kind": "text"}},
+                    {"id": "value", "type": {"kind": "decimal", "scale": 4}},
+                    {"id": "effective_from", "type": {"kind": "timestamp", "timezone": "utc"}},
+                    {"id": "effective_to", "type": {"kind": "timestamp", "timezone": "utc"}, "constraints": {"nullable": true}},
+                    {"id": "review_state", "type": {"kind": "text"}},
+                    {"id": "org_id", "type": {"kind": "text"}, "constraints": {"nullable": true}},
+                    {"id": "tenant_id", "type": {"kind": "text"}, "constraints": {"nullable": true}},
+                    {"id": "workspace_id", "type": {"kind": "text"}, "constraints": {"nullable": true}},
+                    {"id": "environment_id", "type": {"kind": "text"}, "constraints": {"nullable": true}},
+                    {"id": "business_unit_id", "type": {"kind": "text"}, "constraints": {"nullable": true}}
+                ],
+                "identity": [{"name": "primary", "properties": ["id"]}]
+            }
+        }
+    });
+    let registry_entity = json!({
+        "irVersion": "0.1", "artifactId": "billing.SettingRegistry.entity",
+        "kind": "entity", "namespace": "billing", "name": "Setting Registry",
+        "version": "1.0.0", "lifecycle": "draft", "scope": scope,
+        "dependencies": [{"artifactId": "billing.NumericSetting.entity", "kind": "entity", "version": "1.0.0", "required": true}],
+        "provenance": provenance,
+        "payload": {
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "billing.SettingRegistry",
+                "properties": [{"id": "id", "type": {"kind": "text"}}],
+                "identity": [{"name": "primary", "properties": ["id"]}],
+                "links": [{"id": "settings", "target": "billing.NumericSetting", "cardinality": {"to": "many", "from": "many"}}]
+            }
+        }
+    });
+    let invoice_entity = json!({
+        "irVersion": "0.1", "artifactId": "billing.Invoice.entity",
+        "kind": "entity", "namespace": "billing", "name": "Invoice",
+        "version": "1.0.0", "lifecycle": "draft", "scope": scope,
+        "dependencies": [], "provenance": provenance,
+        "payload": {
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "billing.Invoice",
+                "properties": [
+                    {"id": "id", "type": {"kind": "text"}},
+                    {"id": "tax_rate", "type": {"kind": "decimal", "scale": 4}}
+                ],
+                "identity": [{"name": "primary", "properties": ["id"]}]
+            }
+        }
+    });
+    (setting_entity, registry_entity, invoice_entity)
+}
+
+fn parameter_slice_action(slice: &Value) -> Value {
+    json!({
+        "irVersion": "0.1", "artifactId": "billing.invoice.post.action",
+        "kind": "action", "namespace": "billing", "name": "Post Invoice",
+        "version": "1.0.0", "lifecycle": "draft",
+        "scope": {"orgId": "org_demo", "environmentId": "dev"},
+        "dependencies": [
+            {"artifactId": "billing.Invoice.entity", "kind": "entity", "version": "1.0.0", "required": true},
+            {"artifactId": "billing.SettingRegistry.entity", "kind": "entity", "version": "1.0.0", "required": true},
+            {"artifactId": "billing.NumericSetting.entity", "kind": "entity", "version": "1.0.0", "required": true}
+        ],
+        "provenance": {"source": "authoring_sdk", "sourcePath": "test/parameter.ts"},
+        "payload": {
+            "actionId": "billing.invoice.post",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true, "ledgered": true,
+            "inputSchema": {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                    "id": {"type": "string"},
+                    "registry_id": {"type": "string"},
+                    "default_setting_id": {"type": "string"},
+                    "tax_rate": {"type": "number", "nornType": {"kind": "decimal", "scale": 4}},
+                    "effective_at": {"type": "string"}
+                },
+                "required": ["id", "registry_id", "default_setting_id", "tax_rate", "effective_at"]
+            },
+            "outputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+            "slice": slice,
+            "preconditions": ["input.tax_rate == slice.tax.value"],
+            "writes": [{"entityKind": "billing.Invoice", "change": "created"}],
+            "effectProgram": {
+                "kind": "upsert_input_object", "objectKind": "billing.Invoice",
+                "objectIdField": "id", "entityArtifactId": "billing.Invoice.entity",
+                "entityArtifactVersion": "1.0.0", "writeMode": {"kind": "create_only"}
+            }
+        }
+    })
+}
+
+fn check_parameter_docs(docs: Vec<Value>) -> Vec<norn_checker::Diagnostic> {
+    let envelopes: Vec<ArtifactEnvelope> = docs
+        .into_iter()
+        .map(|doc| serde_json::from_value(doc).expect("envelope"))
+        .collect();
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
+        base: &[],
+        tenant: None,
+    };
+    check_artifact_set(&envelopes, &context)
+}
+
+#[test]
+fn parameter_slice_admits_valid_setting_profile_and_refuses_invalid_contracts() {
+    let (setting_entity, registry_entity, invoice_entity) = parameter_slice_entities();
+
+    let valid_slice = json!([
+        {"name": "registry", "objectType": "billing.SettingRegistry", "key": {"property": {"from": "input", "property": "registry_id"}}},
+        {"name": "settings", "objectType": "billing.NumericSetting", "key": {"link": {"from": "registry", "link": "settings"}}},
+        {"name": "fallback", "objectType": "billing.NumericSetting", "key": {"property": {"from": "input", "property": "default_setting_id"}}},
+        {"name": "tax", "objectType": "billing.NumericSetting", "key": {"parameter": {
+            "from": "settings", "settingKey": "billing.vat_rate", "effectiveAt": "effective_at",
+            "precedence": [{"orgId": "org_demo", "environmentId": "dev"}, {"orgId": "org_demo"}, {}],
+            "defaultFrom": "fallback"
+        }}}
+    ]);
+    let diagnostics = check_parameter_docs(vec![
+        setting_entity.clone(),
+        registry_entity.clone(),
+        invoice_entity.clone(),
+        parameter_slice_action(&valid_slice),
+    ]);
+    assert_eq!(diagnostics, [], "valid parameter slice must admit");
+
+    // Non-list `from` refuses.
+    let bad_from = json!([
+        {"name": "registry", "objectType": "billing.SettingRegistry", "key": {"property": {"from": "input", "property": "registry_id"}}},
+        {"name": "tax", "objectType": "billing.NumericSetting", "key": {"parameter": {
+            "from": "registry", "settingKey": "billing.vat_rate", "effectiveAt": "effective_at", "precedence": [{}]
+        }}}
+    ]);
+    let bad_from_diags = check_parameter_docs(vec![
+        setting_entity.clone(),
+        registry_entity.clone(),
+        invoice_entity.clone(),
+        parameter_slice_action(&bad_from),
+    ]);
+    assert!(
+        bad_from_diags
+            .iter()
+            .any(|diag| diag.code == "action.validation.invalid_payload"),
+        "{bad_from_diags:?}"
+    );
+
+    // Duplicate precedence scope refuses.
+    let dup_precedence = json!([
+        {"name": "registry", "objectType": "billing.SettingRegistry", "key": {"property": {"from": "input", "property": "registry_id"}}},
+        {"name": "settings", "objectType": "billing.NumericSetting", "key": {"link": {"from": "registry", "link": "settings"}}},
+        {"name": "tax", "objectType": "billing.NumericSetting", "key": {"parameter": {
+            "from": "settings", "settingKey": "billing.vat_rate", "effectiveAt": "effective_at",
+            "precedence": [{"orgId": "org_demo"}, {"orgId": "org_demo"}]
+        }}}
+    ]);
+    let dup_diags = check_parameter_docs(vec![
+        setting_entity.clone(),
+        registry_entity.clone(),
+        invoice_entity.clone(),
+        parameter_slice_action(&dup_precedence),
+    ]);
+    assert!(
+        dup_diags
+            .iter()
+            .any(|diag| diag.code == "action.validation.invalid_payload"),
+        "{dup_diags:?}"
+    );
+
+    // Setting object type missing a required profile property (`business_unit_id`) refuses.
+    let mut incomplete_setting = setting_entity;
+    incomplete_setting["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .expect("props")
+        .pop();
+    let valid_slice_no_default = json!([
+        {"name": "registry", "objectType": "billing.SettingRegistry", "key": {"property": {"from": "input", "property": "registry_id"}}},
+        {"name": "settings", "objectType": "billing.NumericSetting", "key": {"link": {"from": "registry", "link": "settings"}}},
+        {"name": "tax", "objectType": "billing.NumericSetting", "key": {"parameter": {
+            "from": "settings", "settingKey": "billing.vat_rate", "effectiveAt": "effective_at", "precedence": [{}]
+        }}}
+    ]);
+    let profile_diags = check_parameter_docs(vec![
+        incomplete_setting,
+        registry_entity,
+        invoice_entity,
+        parameter_slice_action(&valid_slice_no_default),
+    ]);
+    assert!(
+        profile_diags.iter().any(|diag| !diag.message.is_empty()),
+        "{profile_diags:?}"
+    );
+}
+
+#[test]
+fn parameter_slice_refuses_computed_setting_profile_property() {
+    let (mut computed_setting, registry_entity, invoice_entity) = parameter_slice_entities();
+    let computed_props = computed_setting["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .expect("props");
+    computed_props.push(json!({"id": "raw_value", "type": {"kind": "decimal", "scale": 4}}));
+    computed_props
+        .iter_mut()
+        .find(|prop| prop["id"] == "value")
+        .expect("value property")
+        .as_object_mut()
+        .expect("value object")
+        .insert("computed".to_owned(), json!("self.raw_value"));
+    assert_eq!(
+        check_parameter_docs(vec![computed_setting.clone()]),
+        [],
+        "computed setting entity itself must be valid before parameter-slice admission"
+    );
+    let valid_slice_no_default = json!([
+        {"name": "registry", "objectType": "billing.SettingRegistry", "key": {"property": {"from": "input", "property": "registry_id"}}},
+        {"name": "settings", "objectType": "billing.NumericSetting", "key": {"link": {"from": "registry", "link": "settings"}}},
+        {"name": "tax", "objectType": "billing.NumericSetting", "key": {"parameter": {
+            "from": "settings", "settingKey": "billing.vat_rate", "effectiveAt": "effective_at", "precedence": [{}]
+        }}}
+    ]);
+    let computed_diags = check_parameter_docs(vec![
+        computed_setting,
+        registry_entity,
+        invoice_entity,
+        parameter_slice_action(&valid_slice_no_default),
+    ]);
+    assert!(
+        computed_diags.iter().any(|diag| {
+            diag.code == "artifact_set.action.invalid_slice"
+                && diag.message.contains("stored property \"value\"")
+        }),
+        "{computed_diags:?}"
     );
 }

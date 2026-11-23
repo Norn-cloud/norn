@@ -1,0 +1,6 @@
+# Rivet's VFS (sqlite-embedded 3.1.1) refuses a SQLite built without these
+# compile options: batch atomic writes, and overflow pages read through the
+# page cache (each page crosses the VFS once). The same flags as Rivet's own
+# workspace (.cargo/config.toml at rivet v3.1.1).
+[env]
+LIBSQLITE3_FLAGS = "SQLITE_ENABLE_BATCH_ATOMIC_WRITE SQLITE_DIRECT_OVERFLOW_READ=0"

@@ -229,7 +229,7 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
     let refusal = json_of(&planned);
     assert_eq!(refusal["code"], "defs.refused");
     let diagnostics = refusal["diagnostics"].as_array().unwrap();
-    assert!(!diagnostics.is_empty(), "{refusal}");
+    assert_ne!(diagnostics.len(), 0, "{refusal}");
     assert!(
         diagnostics.iter().any(|d| d["span"]["pointer"]
             .as_str()

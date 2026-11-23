@@ -1241,7 +1241,7 @@ fn resolve(
                         ask.item,
                         format!(
                             "the member is already {} here, which {} does not narrow",
-                            base.map(|shape| describe(model, shape)).unwrap_or_default(),
+                            base.map_or_default(|shape| describe(model, shape)),
                             describe(model, &ask.shape)
                         ),
                     );

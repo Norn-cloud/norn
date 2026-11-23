@@ -568,7 +568,7 @@ fn the_catalog_lists_each_action_as_a_form_reads_it() {
         Some(OPERATOR),
         &format!("{SCOPE}&objectKind=constitution.Other"),
     );
-    assert!(listed(&other).is_empty());
+    assert_eq!(listed(&other).len(), 0);
     let (_, melts) = catalog(&cell, Some(OPERATOR), &format!("{SCOPE}&objectKind={MELT}"));
     assert_eq!(listed(&melts), [MELT_ACTION]);
 }
@@ -610,7 +610,7 @@ fn the_catalog_is_the_call_gate_and_never_a_grant() {
     };
     let (status, viewer) = catalog(&gated, Some(VIEWER), SCOPE);
     assert_eq!(status, 200);
-    assert!(listed(&viewer).is_empty());
+    assert_eq!(listed(&viewer).len(), 0);
     let (status, refused) = post(
         &gated,
         Some(VIEWER),
@@ -723,4 +723,171 @@ fn an_mcp_action_tool_calls_the_same_governed_service() {
             -32602
         );
     }
+}
+
+fn mcp_rpc(cell: &Cell, auth: &str, message: &Value) -> Value {
+    let (status, body) = send_raw(
+        cell,
+        "POST",
+        "/v1/mcp",
+        SCOPE,
+        Some(auth),
+        &message.to_string(),
+    );
+    assert_eq!(status, 200, "{body}");
+    serde_json::from_str::<Value>(&body).unwrap()
+}
+
+fn melt_mcp_tool_name(cell: &Cell) -> String {
+    mcp_rpc(
+        cell,
+        OPERATOR,
+        &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 100}}),
+    )["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["_meta"]["norn/actionId"] == "constitution.melt.convert")
+        .and_then(|tool| tool["name"].as_str())
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn mcp_action_tools_propagate_trace_context() {
+    let cell = cell();
+    let name = melt_mcp_tool_name(&cell);
+    let digest = format!("sha256:{}", "e".repeat(64));
+    let trace = json!({
+        "traceId": "mcp-trace-1",
+        "intentRef": "goal:mcp-melt-1",
+        "sessionDigest": digest,
+    });
+
+    // Per-action MCP tool carries trace through `_meta["norn/trace"]`.
+    let called = mcp_rpc(
+        &cell,
+        OPERATOR,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": name,
+                "arguments": {"id": "melt-mcp-1", "input_fine_g": "12", "output_fine_g": "10"},
+                "_meta": {
+                    "norn/idempotencyKey": "k-mcp-trace-1",
+                    "norn/trace": trace,
+                }
+            }
+        }),
+    );
+    assert_eq!(called["result"]["isError"], false, "{called}");
+    assert_eq!(called["result"]["structuredContent"]["trace"], trace);
+
+    // Generic `norn_call_action` carries trace through `arguments.trace`.
+    let trace2 = json!({
+        "traceId": "mcp-trace-2",
+        "intentRef": "goal:mcp-melt-2",
+    });
+    let called2 = mcp_rpc(
+        &cell,
+        OPERATOR,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "norn_call_action",
+                "arguments": {
+                    "action": "constitution.melt.convert",
+                    "input": {"id": "melt-mcp-2", "input_fine_g": "12", "output_fine_g": "10"},
+                    "trace": trace2,
+                },
+                "_meta": { "norn/idempotencyKey": "k-mcp-trace-2" }
+            }
+        }),
+    );
+    assert_eq!(called2["result"]["isError"], false, "{called2}");
+    assert_eq!(called2["result"]["structuredContent"]["trace"], trace2);
+}
+
+#[test]
+fn mcp_action_tools_refuse_malformed_or_conflicting_trace() {
+    let cell = cell();
+    let name = melt_mcp_tool_name(&cell);
+    let commits_before = cell.host.verified_head().unwrap().commits;
+
+    // Conflicting trace between arguments and `_meta` refuses fail-closed.
+    let conflict = mcp_rpc(
+        &cell,
+        OPERATOR,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "norn_call_action",
+                "arguments": {
+                    "action": "constitution.melt.convert",
+                    "input": {"id": "melt-mcp-3", "input_fine_g": "12", "output_fine_g": "10"},
+                    "trace": {"traceId": "trace-a"},
+                },
+                "_meta": {
+                    "norn/idempotencyKey": "k-mcp-trace-3",
+                    "norn/trace": {"traceId": "trace-b"},
+                }
+            }
+        }),
+    );
+    assert_eq!(conflict["result"]["isError"], true, "{conflict}");
+    assert_eq!(cell.host.verified_head().unwrap().commits, commits_before);
+
+    // Malformed trace (raw transcript text in sessionDigest) refuses fail-closed.
+    let malformed = mcp_rpc(
+        &cell,
+        OPERATOR,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": name,
+                "arguments": {"id": "melt-mcp-4", "input_fine_g": "12", "output_fine_g": "10"},
+                "_meta": {
+                    "norn/idempotencyKey": "k-mcp-trace-4",
+                    "norn/trace": {"traceId": "t", "sessionDigest": "raw transcript"},
+                }
+            }
+        }),
+    );
+    assert_eq!(malformed["result"]["isError"], true, "{malformed}");
+    assert_eq!(cell.host.verified_head().unwrap().commits, commits_before);
+
+    // Unexpected top-level argument (such as `traceId` instead of `trace`) refuses fail-closed.
+    let unexpected_key = mcp_rpc(
+        &cell,
+        OPERATOR,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+                "name": "norn_call_action",
+                "arguments": {
+                    "action": "constitution.melt.convert",
+                    "input": {"id": "melt-mcp-5", "input_fine_g": "12", "output_fine_g": "10"},
+                    "traceId": "mcp-trace-misplaced",
+                },
+                "_meta": {
+                    "norn/idempotencyKey": "k-mcp-trace-5",
+                }
+            }
+        }),
+    );
+    assert_eq!(
+        unexpected_key["result"]["isError"], true,
+        "{unexpected_key}"
+    );
+    assert_eq!(cell.host.verified_head().unwrap().commits, commits_before);
 }

@@ -111,33 +111,35 @@ fn rejected(error: impl std::fmt::Display) -> JsValue {
 }
 
 /// A finite HTTP reply.
-#[wasm_bindgen(getter_with_clone)]
+#[wasm_bindgen]
 pub struct Reply {
     /// HTTP status.
     pub status: u16,
     /// JSON body.
+    #[wasm_bindgen(getter_with_clone)]
     pub body: String,
     /// The pinned JWKS should be refetched (an unknown key id was seen and the
     /// retry interval has passed); the host refetches, then retries once.
     #[wasm_bindgen(js_name = refreshJwks)]
     pub refresh_jwks: bool,
     /// A sync to run in the background; the host drives it with `syncStep`.
-    #[wasm_bindgen(js_name = startSync)]
+    #[wasm_bindgen(js_name = startSync, getter_with_clone)]
     pub start_sync: Option<String>,
     /// A continuation: the host fetches `thenRequest` exactly as planned and
     /// calls `resume` with this token; that reply replaces this one.
-    #[wasm_bindgen(js_name = thenToken)]
+    #[wasm_bindgen(js_name = thenToken, getter_with_clone)]
     pub then_token: Option<String>,
     /// The request to fetch, as JSON `{method, url, headers, body}`.
-    #[wasm_bindgen(js_name = thenRequest)]
+    #[wasm_bindgen(js_name = thenRequest, getter_with_clone)]
     pub then_request: Option<String>,
     /// D102: the analytics engine call the Worker performs before re-entering
     /// with `resume` (an `EngineCall` as JSON); `status` and `body` are then
     /// not the answer.
+    #[wasm_bindgen(getter_with_clone)]
     pub engine: Option<String>,
     /// Why the stored cell does not open, or why its definitions installed
     /// no action policy: for the operator's log only, never part of the reply.
-    #[wasm_bindgen(js_name = policyError)]
+    #[wasm_bindgen(js_name = policyError, getter_with_clone)]
     pub policy_error: Option<String>,
 }
 
@@ -150,6 +152,15 @@ impl NornCell {
     #[wasm_bindgen(js_name = fixturesEnabled)]
     pub fn fixtures_enabled() -> bool {
         crate::fixtures_enabled()
+    }
+
+    /// D102 / MANIFEST-LAWS-1 (S1): engine calls one request may make, the
+    /// bound every host shares: the Worker stops re-entering past it, and
+    /// the engine refuses a landing whose residue would need more.
+    #[must_use]
+    #[wasm_bindgen(js_name = engineSteps)]
+    pub fn engine_steps() -> u32 {
+        norn_cell::analytics::MAX_ENGINE_STEPS
     }
 
     /// Open the cell for the DO's own scope: a demo scope is seeded on first
@@ -651,7 +662,7 @@ impl NornGate {
 }
 
 /// TIMER-ALARM-1: what an alarm did, and when the next one fires.
-#[wasm_bindgen(getter_with_clone)]
+#[wasm_bindgen]
 #[derive(Debug, Clone)]
 pub struct Due {
     /// The alarm committed something: live subscriptions are answered again.
@@ -661,6 +672,7 @@ pub struct Due {
     pub next: Option<f64>,
     /// Why items that were due could not be handled (they stay due), for
     /// the operator's log only.
+    #[wasm_bindgen(getter_with_clone)]
     pub failed: Option<String>,
 }
 

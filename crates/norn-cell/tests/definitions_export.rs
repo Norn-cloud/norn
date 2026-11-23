@@ -25,8 +25,9 @@ const SCOPE: &str = "org_demo/dev";
 fn pre_open_legacy_definition_history_without_registry_table_reads_empty_registry() {
     let engine = NativeEngine::open_in_memory().expect("engine");
     engine
-        .execute_batch(
-            r#"
+        .definition_writes(|| {
+            engine.execute_batch(
+                r#"
             CREATE TABLE "_norn_definition_version" (
               "version" INTEGER NOT NULL,
               "receipt_sha256" TEXT NOT NULL,
@@ -45,14 +46,15 @@ fn pre_open_legacy_definition_history_without_registry_table_reads_empty_registr
             INSERT INTO "_norn_definition_version" VALUES (1, 'digest', '[]', 'model', 'ddl', 1, 1);
             INSERT INTO "_norn_definition_active" VALUES (1, 1);
             "#,
-        )
+            )
+        })
         .expect("legacy definition tables");
 
     let installed = CellStore::read_active_definitions(&engine)
         .expect("pre-open read")
         .expect("active definitions");
     assert_eq!(installed.version, 1);
-    assert!(installed.registry.is_empty());
+    assert_eq!(installed.registry.len(), 0);
 }
 
 fn definitions(note: bool) -> (Model, String) {

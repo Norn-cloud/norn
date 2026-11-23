@@ -35,6 +35,8 @@ pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
+pub mod dataset_laws;
+pub mod dataset_manifest;
 pub mod decision_ledger;
 pub mod due_retry;
 pub mod engine;

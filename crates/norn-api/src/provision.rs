@@ -10,12 +10,12 @@
 //!   scope ([`authorize`](crate::provision::authorize)). A cell that does not exist yet has no definitions,
 //!   so this one decision cannot come from the cell's own policy.
 //! - **The submission is untrusted** ([`admit_submission`](crate::provision::admit_submission)). It carries no
-//!   artifact in a reserved namespace ([`kernel_set::is_reserved`](crate::kernel_set::is_reserved)): the host
+//!   artifact in a reserved namespace ([`kernel_set::is_reserved`]): the host
 //!   prepends its own base and admits the tenant's artifacts as candidates
 //!   against it, so base membership never depends on a name or on bytes the
 //!   client sent. The submission names the base it was authored against by
 //!   digest; another digest refuses and states the host's.
-//!   [`kernel_set::admit_kernel_set`](crate::kernel_set::admit_kernel_set) trusts reserved names and is for
+//!   [`kernel_set::admit_kernel_set`] trusts reserved names and is for
 //!   compiled-in seeds and the local dev host only; this path never calls it.
 //! - **The write is atomic** ([`provision_cell`](crate::provision::provision_cell)): HOST-PROVISION-ATOMIC,
 //!   `CellStore::provision_definitions`. A failure leaves a fresh engine.

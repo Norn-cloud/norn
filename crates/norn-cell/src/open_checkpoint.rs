@@ -22,9 +22,9 @@
 //!   [`CheckpointKey`]) over every column and the cell's identity, under a
 //!   key the host keeps outside the file. A pin stored in the file cannot
 //!   authenticate itself (round 3, S2); only the MAC makes the pins trusted.
-//! - Missing key, a MAC that does not verify, no identity, or a checkpoint
-//!   past the end of the file (a restore that trimmed history): the open is
-//!   a genesis open, never a refusal.
+//! - Missing key, a malformed row, a MAC that does not verify, no identity,
+//!   or a checkpoint past the end of the file (a restore that trimmed
+//!   history): the open is a genesis open, never a refusal.
 //! - Not claimed: a rollback of the whole file to an older consistent state
 //!   (a genesis open does not detect it either), an adversary holding the
 //!   key, or completeness of history without reading it. A per-row
@@ -41,13 +41,13 @@
 //!
 //! | Genesis open checks | From a checkpoint, at open | Scrub, from genesis |
 //! |---|---|---|
-//! | Ledger chain: sequence, `prev` links, entry hashes, every event in its receipt's commit and world, no orphan event | Suffix (a). Prefix (b): the head's sequence and hash, and the receipt root (which pins every commit's `ledgerHead`). | Full chain (S8). Ledger and finding pages over the prefix wait for it. |
+//! | Ledger chain: sequence, `prev` links, entry hashes, every event in its receipt's commit and world, no orphan event | Suffix (a). Prefix (b): the head's sequence and hash, and the receipt root (which pins every commit's `ledgerHead`). | Full chain (S8). Ledger, finding and export reads wait for it. |
 //! | Logical time never goes back | Suffix (a), from the anchor receipt's time (S1). | Full. |
-//! | Receipts: body hash, lookup columns, commit tiling, quantity provenance | Suffix (a). Prefix (b) by the root; every receipt read checks body and columns (S4). | Every receipt, columns included, and the rebuilt root against the row's. A commit whose idempotency key misses waits for it (S4). |
+//! | Receipts: body hash, lookup columns, commit tiling, quantity provenance | Suffix (a). Prefix (b) by the root; every receipt read checks body and columns (S4). | Every receipt, columns included, and the rebuilt root against the row's. An idempotency miss waits for it (S4). |
 //! | Transparency log | (a) rebuilt; (b) the covered digests rebuild the root. | Rebuilt again from the bodies it verified; it seeds the next root. |
 //! | Cell identity: every export record names the live binding | Suffix (a). Prefix (b): the last covered record, pinned by commit and digest, names the live binding (S2). | Every record. |
 //! | Definition history: order, each install's typed proof, the active pointer | Suffix (a). Prefix: order (a); the active version's proof (a, S6); every covered version (b) by the `definitions` digest. The pointer (a). | Every install, superseded ones included (S9). |
-//! | Value history: each version against its receipt's digest | Suffix (a). Prefix (c): exact-version reads prove their version. | Every version (S7). As-of reads and version lists wait for it. |
+//! | Value history: each version against its receipt's digest | Suffix (a). Prefix (c): exact-version reads prove their version. | Every version (S7). Historical frames, as-of reads and version lists wait for it. |
 //! | Quantity projections and the cell clock | (a): replayed from every quantity receipt; (b) the `quantity_receipts` digest names them; a qualified load (S5). | The digest is re-folded from the verified receipts for the seed. |
 //! | Quantity boundary | (b) recorded; (a) against the pointer and the suffix. | Re-derived from the markers; must equal the open's. |
 //! | Object identities | (a) over current state. | Live: not repeated. |
@@ -58,20 +58,30 @@
 //! A checkpoint advances or is re-seeded only from scrub-verified state.
 //! A commit advances it every [`EVERY`] commits, from the row this handle
 //! validated, once its scrub has ended. It re-runs the open's pin checks on
-//! that row (S3) and verifies at most [`MAX_ADVANCE`] commits. A longer gap
-//! goes to the scrub, off the commit path (S10). The scrub seeds the row at
-//! the head it verified.
+//! that row (S3) and verifies at most [`MAX_ADVANCE`] commits, after
+//! confirming the database tail inside the checkpoint transaction (S10). A
+//! longer gap goes to the scrub, off the commit path (S10). The scrub seeds
+//! the row at the head it verified.
+
+pub(crate) mod verify;
+
 use crate::{
     CellError, LedgerHead,
-    engine::{SqlEngine, SqlRow, params},
+    engine::{MAX_SAFE_INTEGER, SqlEngine, SqlRow, SqlValue, params},
     read::to_i64,
+    system::{GENESIS_HASH, META},
 };
 
 /// The table holding the cell's one open checkpoint.
 pub(crate) const TABLE: &str = "_norn_open_checkpoint";
 
+/// `_norn_meta` key marking a cell durably fenced by the history scrub (S12).
+/// Reopening or writing a cell carrying this marker fails closed with
+/// [`CellError::Fenced`].
+pub(crate) const FENCE_KEY: &str = "open_checkpoint:fenced";
+
 /// Its schema; created by the schema statements of every open (storage
-/// version 5), empty until the first checkpoint.
+/// version 6), empty until the first checkpoint.
 pub(crate) const DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_open_checkpoint" (
       "id" INTEGER NOT NULL PRIMARY KEY CHECK ("id" = 1),
       "commits" INTEGER NOT NULL, "seq" INTEGER NOT NULL, "hash" TEXT NOT NULL,
@@ -195,9 +205,9 @@ pub(crate) enum Loaded {
     Unkeyed,
     /// The cell has no identity binding to authenticate the row with.
     Unbound,
-    /// The row's MAC does not verify under the host's key and this cell's
-    /// identity: a rewritten row, one copied from another cell, or one
-    /// written under another key.
+    /// The row is malformed or its MAC does not verify under the host's key
+    /// and this cell's identity: a rewritten or corrupted row, one copied from
+    /// another cell, or one written under another key.
     Unauthentic,
     /// The row this engine recorded for this cell.
     Authentic(OpenCheckpoint),
@@ -205,14 +215,14 @@ pub(crate) enum Loaded {
 
 /// The HMAC-SHA256, under `key`, of `checkpoint` bound to the cell
 /// identity `cell_id`: a domain tag, the identity and every column, in one
-/// JSON array.
+/// canonical JSON array (RFC 8785 via `norn_ir::canonical::canonical_json_of`).
 fn mac(
     key: &CheckpointKey,
     cell_id: &str,
     checkpoint: &OpenCheckpoint,
 ) -> Result<hmac::Hmac<transparency_sha2::Sha256>, CellError> {
     use hmac::{KeyInit as _, Mac as _};
-    let message = serde_json::to_vec(&(
+    let message = norn_ir::canonical::canonical_json_of(&(
         "norn.open-checkpoint.mac/1",
         cell_id,
         checkpoint.head.commits,
@@ -225,8 +235,7 @@ fn mac(
         &checkpoint.quantity_receipts,
         checkpoint.export.as_ref().map(|pin| (pin.seq, &pin.hash)),
         &checkpoint.definitions,
-    ))
-    .map_err(|error| CellError::Encoding(error.to_string()))?;
+    ))?;
     let mut mac = hmac::Hmac::<transparency_sha2::Sha256>::new_from_slice(&key.0)
         .map_err(|_length| CellError::Encoding("open-checkpoint key length".to_owned()))?;
     mac.update(&message);
@@ -288,11 +297,15 @@ pub(crate) fn definitions_digest(
         )
 }
 
-/// The cell's open checkpoint (#1551 round 4): authentic only when its
-/// MAC verifies under the engine's key and the cell's identity.
+/// The cell's open checkpoint (#1551 round 4): authentic only when the row
+/// decodes cleanly and its MAC verifies under the engine's key and the cell's
+/// identity. Any malformed row (wrong SQLite column types, out-of-range
+/// integers, half-null optional pairs, bad MAC length or encoding) is treated
+/// as [`Loaded::Unauthentic`] so the open falls back to genesis instead of
+/// panicking, refusing a valid cell, or trusting partial fields (S2).
 ///
 /// # Errors
-/// SQL failures, or a checkpoint row of an older layout (S5).
+/// SQL failures, or a checkpoint table of an older layout (S5).
 pub(crate) fn load(engine: &impl SqlEngine) -> Result<Loaded, CellError> {
     use hmac::Mac as _;
     let Some(row) = engine.query(LOAD_SQL, params![])?.into_iter().next() else {
@@ -305,13 +318,11 @@ pub(crate) fn load(engine: &impl SqlEngine) -> Result<Loaded, CellError> {
         return Ok(Loaded::Unbound);
     };
     let row = SqlRow(row);
-    let Some(checkpoint) = decode(&row)? else {
+    let Some((checkpoint, tag)) = decode_with_tag(&row) else {
         return Ok(Loaded::Unauthentic);
     };
-    let tag = decode_hex(&row.get::<String>(10)?);
-    let verified = tag.is_some_and(|tag| {
-        mac(&key, cell_id.as_str(), &checkpoint).is_ok_and(|mac| mac.verify_slice(&tag).is_ok())
-    });
+    let verified =
+        mac(&key, cell_id.as_str(), &checkpoint).is_ok_and(|mac| mac.verify_slice(&tag).is_ok());
     Ok(if verified {
         Loaded::Authentic(checkpoint)
     } else {
@@ -319,43 +330,83 @@ pub(crate) fn load(engine: &impl SqlEngine) -> Result<Loaded, CellError> {
     })
 }
 
-/// The row's fields, or `None` for values out of range (an unauthentic row
-/// is never an error: the open verifies from genesis).
-fn decode(row: &SqlRow) -> Result<Option<OpenCheckpoint>, CellError> {
-    let unsigned = |value: i64| u64::try_from(value).ok();
-    let (Some(commits), Some(seq)) = (unsigned(row.get(0)?), unsigned(row.get(1)?)) else {
-        return Ok(None);
+fn unsigned_column(row: &SqlRow, index: usize) -> Option<u64> {
+    let value = row.get::<i64>(index).ok()?;
+    (0..=MAX_SAFE_INTEGER)
+        .contains(&value)
+        .then(|| u64::try_from(value).ok())
+        .flatten()
+}
+
+enum OptUnsigned {
+    Null,
+    Value(u64),
+    Malformed,
+}
+
+fn opt_unsigned_column(row: &SqlRow, index: usize) -> OptUnsigned {
+    match row.get::<Option<i64>>(index) {
+        Ok(None) => OptUnsigned::Null,
+        Ok(Some(value)) if (0..=MAX_SAFE_INTEGER).contains(&value) => {
+            u64::try_from(value).map_or(OptUnsigned::Malformed, OptUnsigned::Value)
+        }
+        Ok(Some(_)) | Err(_) => OptUnsigned::Malformed,
+    }
+}
+
+/// Decode all 11 checkpoint columns and the 32-byte MAC tag, returning `None`
+/// for any column count, type, range, structural or MAC-encoding defect (S2).
+fn decode_with_tag(row: &SqlRow) -> Option<(OpenCheckpoint, [u8; 32])> {
+    if row.0.len() != 11 {
+        return None;
+    }
+    let commits = unsigned_column(row, 0)?;
+    let seq = unsigned_column(row, 1)?;
+    let hash: String = row.get(2).ok()?;
+    let receipts_root: String = row.get(3).ok()?;
+    if commits == 0 && (seq != 0 || hash != GENESIS_HASH) {
+        return None;
+    }
+    if commits > 0 && seq == 0 {
+        return None;
+    }
+    let boundary = match (opt_unsigned_column(row, 4), opt_unsigned_column(row, 5)) {
+        (OptUnsigned::Null, OptUnsigned::Null) => None,
+        (OptUnsigned::Value(b_seq), OptUnsigned::Value(commit_seq)) => {
+            Some(crate::quantity::FormatBoundary {
+                seq: b_seq,
+                commit_seq,
+            })
+        }
+        _ => return None,
     };
-    let boundary = match (row.get::<Option<i64>>(4)?, row.get::<Option<i64>>(5)?) {
-        (None, None) => None,
-        (Some(seq), Some(commit)) => match (unsigned(seq), unsigned(commit)) {
-            (Some(seq), Some(commit_seq)) => {
-                Some(crate::quantity::FormatBoundary { seq, commit_seq })
-            }
-            _ => return Ok(None),
-        },
-        _ => return Ok(None),
+    let quantity_receipts: String = row.get(6).ok()?;
+    let export = match (
+        opt_unsigned_column(row, 7),
+        row.get::<Option<String>>(8).ok()?,
+    ) {
+        (OptUnsigned::Null, None) => None,
+        (OptUnsigned::Value(export_seq), Some(export_hash)) => Some(ExportPin {
+            seq: export_seq,
+            hash: export_hash,
+        }),
+        _ => return None,
     };
-    let export = match (row.get::<Option<i64>>(7)?, row.get::<Option<String>>(8)?) {
-        (None, None) => None,
-        (Some(seq), Some(hash)) => match unsigned(seq) {
-            Some(seq) => Some(ExportPin { seq, hash }),
-            None => return Ok(None),
+    let definitions: String = row.get(9).ok()?;
+    let mac_text: String = row.get(10).ok()?;
+    let tag_bytes = decode_hex(&mac_text)?;
+    let tag: [u8; 32] = tag_bytes.try_into().ok()?;
+    Some((
+        OpenCheckpoint {
+            head: LedgerHead { seq, hash, commits },
+            receipts_root,
+            boundary,
+            quantity_receipts,
+            export,
+            definitions,
         },
-        _ => return Ok(None),
-    };
-    Ok(Some(OpenCheckpoint {
-        head: LedgerHead {
-            commits,
-            seq,
-            hash: row.get(2)?,
-        },
-        receipts_root: row.get(3)?,
-        boundary,
-        quantity_receipts: row.get(6)?,
-        export,
-        definitions: row.get(9)?,
-    }))
+        tag,
+    ))
 }
 
 /// Record `checkpoint` as the cell's open checkpoint, replacing the last,
@@ -417,13 +468,72 @@ pub(crate) fn record(
     Ok(true)
 }
 
-/// Drop the cell's checkpoint, so its next open verifies from genesis: the
-/// durable half of a fence (#1551 round 4).
+/// Drop the cell's checkpoint, so its next open verifies from genesis.
 ///
 /// # Errors
 /// SQL failures.
 pub(crate) fn drop_row(engine: &impl SqlEngine) -> Result<(), CellError> {
     engine.execute(&format!("DELETE FROM \"{TABLE}\""), params![])
+}
+
+/// Read any durable history-scrub fence recorded in `_norn_meta` (S12).
+/// A non-text value in the fence row fails closed as a fence finding.
+///
+/// # Errors
+/// SQL failures.
+pub(crate) fn read_fence(engine: &impl SqlEngine) -> Result<Option<String>, CellError> {
+    let has_meta = engine
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![META],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    if !has_meta {
+        return Ok(None);
+    }
+    let value = engine.query_optional(
+        &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+        params![FENCE_KEY],
+        |row| row.get_ref(0).cloned(),
+    )?;
+    Ok(value.map(|val| match val {
+        SqlValue::Text(finding) if !finding.is_empty() => finding,
+        SqlValue::Null
+        | SqlValue::Integer(_)
+        | SqlValue::Real(_)
+        | SqlValue::Text(_)
+        | SqlValue::Blob(_) => "corrupt durable history-scrub fence marker".to_owned(),
+    }))
+}
+
+/// Refuse with [`CellError::Fenced`] if the cell carries a durable fence (S12).
+///
+/// # Errors
+/// [`CellError::Fenced`] or SQL failures.
+pub(crate) fn check_fence(engine: &impl SqlEngine) -> Result<(), CellError> {
+    if let Some(finding) = read_fence(engine)? {
+        return Err(CellError::Fenced(finding));
+    }
+    Ok(())
+}
+
+/// Persist the durable fence and drop the checkpoint row in one transaction
+/// so subsequent calls, sibling handles and reopens all fail closed (S12).
+///
+/// # Errors
+/// SQL failures.
+pub(crate) fn fence_durably(engine: &impl SqlEngine, finding: &str) -> Result<(), CellError> {
+    engine.transaction(|| {
+        drop_row(engine)?;
+        engine.execute(
+            &format!(
+                "INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2) \
+                 ON CONFLICT (\"key\") DO UPDATE SET \"value\" = excluded.\"value\""
+            ),
+            params![FENCE_KEY, finding],
+        )
+    })
 }
 
 /// Lowercase hex of a transparency root.
@@ -447,7 +557,8 @@ pub(crate) fn corrupt(commits: u64, reason: &str) -> CellError {
 #[cfg(all(test, feature = "native"))]
 #[allow(clippy::expect_used, reason = "test assertions")]
 mod tests {
-    use super::{CheckpointKey, OpenCheckpoint, mac};
+    use super::{CheckpointKey, Loaded, OpenCheckpoint, load, mac};
+    use crate::engine::{NativeEngine, SqlEngine as _};
     use hmac::Mac as _;
 
     /// 32 random bytes from SQLite's `randomblob`: a key for this test only.
@@ -507,6 +618,54 @@ mod tests {
         assert!(CheckpointKey::from_hex("07").is_err());
         assert!(CheckpointKey::from_hex(&"zz".repeat(32)).is_err());
         assert_eq!(format!("{key:?}"), "CheckpointKey(<redacted>)");
+    }
+
+    /// S2 (#1551): malformed checkpoint rows (wrong SQLite column types,
+    /// negative values, half-null boundary/export pairs, short or non-hex MAC)
+    /// decode as `Loaded::Unauthentic` rather than erroring or panicking.
+    #[test]
+    fn malformed_checkpoint_rows_are_unauthentic() {
+        let key = CheckpointKey::from_bytes(random_bytes());
+        let cases = [
+            // Non-integer commits (SQLite allows text in non-STRICT tables).
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 'bad', 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
+            // Negative commits.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, -5, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
+            // Blob MAC column.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', X'0102')",
+            // Short MAC hex.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', 'abcd')",
+            // Non-hex MAC.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', 'zzzz')",
+            // Half-null boundary.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, 'h', 'r', 5, NULL, 'q', NULL, NULL, 'd', '0000000000000000000000000000000000000000000000000000000000000000')",
+            // Half-null export pin.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, 'h', 'r', NULL, NULL, 'q', 1, NULL, 'd', '0000000000000000000000000000000000000000000000000000000000000000')",
+            // Non-text hash column.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, 42, 'r', NULL, NULL, 'q', NULL, NULL, 'd', '0000000000000000000000000000000000000000000000000000000000000000')",
+            // commits > 0 with seq == 0.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 5, 0, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '0000000000000000000000000000000000000000000000000000000000000000')",
+        ];
+        for sql in cases {
+            let engine = NativeEngine::open_in_memory()
+                .expect("engine")
+                .with_checkpoint_key(Some(key));
+            engine
+                .execute_batch(&format!(
+                    r#"CREATE TABLE "_norn_meta" ("key" TEXT PRIMARY KEY, "value" TEXT NOT NULL);
+                       INSERT INTO "_norn_meta" VALUES ('binding:cell_id', '0123456789abcdef0123456789abcdef');
+                       INSERT INTO "_norn_meta" VALUES ('binding:cell_identity_format', '{}');"#,
+                    crate::cell_identity::FORMAT
+                ))
+                .expect("meta");
+            engine.execute_batch(super::DDL).expect("ddl");
+            engine.execute_batch(sql).expect("insert malformed row");
+            let loaded = load(&engine).expect("malformed row does not error");
+            assert!(
+                matches!(loaded, Loaded::Unauthentic),
+                "expected Unauthentic for `{sql}`, got {loaded:?}"
+            );
+        }
     }
 
     /// S5 (#1551 round 2): a checkpoint table of an older layout, with no

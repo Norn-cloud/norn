@@ -18,9 +18,9 @@
 //!   content-addressed type environment of an `EntityIR` v2 artifact set, with
 //!   the closed [`actor`] operand (T1-EXPR-2, #2419).
 //! - [`check_expression`] type-checks an expression against it under the
-//!   `norn-zen/6` profile: the `norn-expr/4` structural grammar with explicit
-//!   temporal constructors, same-kind ordering and checked arithmetic,
-//!   and bounded string normalization
+//!   `norn-zen/7` profile: the `norn-expr/4` structural grammar with explicit
+//!   temporal constructors, same-kind ordering, checked temporal arithmetic,
+//!   proper-interval and pinned-IANA DST builtins, and bounded string normalization
 //!   ([`check`]). [`check_unary`] checks
 //!   a decision-table [`UnaryTest`] against its column's subject type the same
 //!   way (T1-EXPR-3b, #2521).
@@ -81,7 +81,7 @@ pub use check::{
     StructuralLimits, check_expression, check_expression_under, check_expression_with,
     check_expression_with_root_bounds, check_expression_with_sources, check_unary,
     check_unary_with, condition_null_guards, validate_evaluation_source,
-    validate_unary_evaluation_source,
+    validate_profile_constructs, validate_unary_evaluation_source,
 };
 pub use convert::rescale_decimal;
 pub use env::{

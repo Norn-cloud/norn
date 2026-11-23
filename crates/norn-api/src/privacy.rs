@@ -183,8 +183,43 @@ pub(crate) fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-/// The cell's declared markings, by id.
+/// The cell's declared markings and the kernel's own, by id. Empty exactly
+/// when the cell holds no marking label at all, current or past
+/// (`DevHost::marking_catalog`): then every field is served as itself.
 pub type MarkingCatalog = Arc<BTreeMap<String, MarkingIr>>;
+
+/// The labels the kernel writes without any declaration (no declared id
+/// holds a `-`): `norn.unknown-lineage` marks a value whose lineage the cell
+/// cannot prove, such as a `norn.RuleRun`'s detail, and is withheld (S3,
+/// #1547). They resolve as themselves, never as undeclared.
+fn built_in_markings() -> impl Iterator<Item = (String, MarkingIr)> {
+    [MarkingIr {
+        id: norn_ir::MarkingId("norn.unknown-lineage".to_owned()),
+        label: "Unknown lineage".to_owned(),
+        severity: norn_ir::MarkingSeverity::High,
+        category: "norn.lineage".to_owned(),
+        mask: MaskPolicy::Refuse {},
+    }]
+    .into_iter()
+    .map(|marking| (marking.id.0.clone(), marking))
+}
+
+/// Whether `catalog` holds a marking the cell's definitions declare, not
+/// only the kernel's own.
+pub(crate) fn declares(catalog: &MarkingCatalog) -> bool {
+    catalog
+        .keys()
+        .any(|id| !built_in_markings().any(|(built_in, _)| built_in == *id))
+}
+
+/// The catalog of a cell that declares no marking but holds labels: the
+/// kernel's own, so every privacy path projects and any other label (one
+/// declassified, or whose declaration was removed) withholds its field.
+pub(crate) fn built_in_catalog() -> MarkingCatalog {
+    static BUILT_IN: std::sync::LazyLock<MarkingCatalog> =
+        std::sync::LazyLock::new(|| Arc::new(built_in_markings().collect()));
+    Arc::clone(&BUILT_IN)
+}
 
 /// The marking catalog of the cell's active definitions.
 ///
@@ -202,10 +237,14 @@ pub(crate) fn catalog_of<E: SqlEngine>(
     };
     let artifacts =
         crate::kernel_set::retained_artifacts(&set.canonical_set).map_err(Refusal::host)?;
-    let catalog = norn_checker::marking_catalog_from_artifacts(&artifacts)
-        .into_iter()
-        .map(|(id, marking)| (id.0, marking))
-        .collect();
+    let mut catalog: BTreeMap<String, MarkingIr> =
+        norn_checker::marking_catalog_from_artifacts(&artifacts)
+            .into_iter()
+            .map(|(id, marking)| (id.0, marking))
+            .collect();
+    if !catalog.is_empty() {
+        catalog.extend(built_in_markings());
+    }
     Ok((version, Arc::new(catalog)))
 }
 
@@ -311,8 +350,7 @@ fn text_of(value: &RuntimeValue) -> String {
         || {
             value
                 .canonical_json()
-                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-                .unwrap_or_default()
+                .map_or_default(|bytes| String::from_utf8_lossy(&bytes).into_owned())
         },
         str::to_owned,
     )

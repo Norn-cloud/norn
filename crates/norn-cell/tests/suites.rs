@@ -1,0 +1,68 @@
+//! `norn-cell`'s integration tests, built as one test binary.
+//!
+//! Each `tests/<name>.rs` is the module `<name>` here, so nextest names a test
+//! `binary_id(norn-cell::suites)` and `test(=<name>::<test>)`, and
+//! `cargo test -p norn-cell --test suites <name>::` runs one former binary.
+//! A `#[path]` module owns its directory as a crate root does, so each suite's
+//! own `mod` and `#[path]` helpers resolve as they did when it was a binary.
+//! A new suite is a new module here: `scripts/codemods/fold_integration_tests.py`
+//! keeps this list and every reference to it in step.
+#![allow(
+    dead_code,
+    unreachable_pub,
+    clippy::duplicate_mod,
+    reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
+)]
+
+#[path = "bench_clauses.rs"]
+mod bench_clauses;
+#[path = "bench_import.rs"]
+mod bench_import;
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "bench_manifest.rs"]
+mod bench_manifest;
+#[path = "bench_mapping.rs"]
+mod bench_mapping;
+#[path = "bench_rules.rs"]
+mod bench_rules;
+#[path = "cell_host.rs"]
+mod cell_host;
+#[path = "cell_host_dst.rs"]
+mod cell_host_dst;
+#[path = "commit_path.rs"]
+mod commit_path;
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "dataset_laws.rs"]
+mod dataset_laws;
+#[path = "explorer_documents.rs"]
+mod explorer_documents;
+#[path = "jewelry_pricing.rs"]
+mod jewelry_pricing;
+#[path = "label_identity.rs"]
+mod label_identity;
+#[path = "mapping_links.rs"]
+mod mapping_links;
+#[path = "model_interfaces.rs"]
+mod model_interfaces;
+#[path = "ontology_lending.rs"]
+mod ontology_lending;
+#[path = "parent_rows.rs"]
+mod parent_rows;
+#[path = "query_envelope.rs"]
+mod query_envelope;
+#[path = "query_lineage_sources.rs"]
+mod query_lineage_sources;
+#[path = "rea_inventory.rs"]
+mod rea_inventory;
+#[path = "read_envelope.rs"]
+mod read_envelope;
+#[path = "receipt_consume.rs"]
+mod receipt_consume;
+#[path = "retained_definitions.rs"]
+mod retained_definitions;
+#[path = "source_agreement.rs"]
+mod source_agreement;
+#[path = "stress_purchase.rs"]
+mod stress_purchase;
+#[path = "synchronous_action.rs"]
+mod synchronous_action;

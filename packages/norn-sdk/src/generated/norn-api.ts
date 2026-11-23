@@ -135,6 +135,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/datasets/{type}/rows/{row}:lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the
+         *     records grid names it, to the manifest that admitted it, the source
+         *     upload and the data file, each by content hash and row offset, with what
+         *     held it back. Held-back rows are traced too. Requires Population, Values
+         *     and Sources on the type; no value is disclosed.
+         * @description # Errors
+         *     A denied gate (one opaque 403), no dataset or no such row (404), or an
+         *     unreachable engine.
+         */
+        get: operations["dataset_lineage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/datasets:load": {
         parameters: {
             query?: never;
@@ -149,13 +175,22 @@ export interface paths {
          *     dataset `objectType`, typed by that admitted definition. The engine reads
          *     the object through a presigned URL, verifies its SHA-256, types every row,
          *     and quarantines a row it cannot type (or that misses a required value)
-         *     with its reason. The load becomes the dataset's current one; each row
-         *     traces to `(uri, sha256, row)`. Decided like any upload load
-         *     (`SyncSource("upload")`); the load is reported as a run of the type's
-         *     `upload` connection, as the cell's own observations (SYNC-REPORT-1).
-         * @description # Errors
+         *     with its reason. The load becomes the dataset's current one when its
+         *     manifest commits; each row traces to `(uri, sha256, row)`. The load is
+         *     reported as a run of the type's `upload` connection, as the cell's own
+         *     observations (SYNC-REPORT-1).
+         * @description MANIFEST-03: a load is decided exactly as an observation load of the
+         *     same rows: `SyncSource("upload")` and the destination connection's own
+         *     grant (`SyncSource("upload.<type>")`), an admitted mapping onto the type
+         *     that the load binds its columns by, and the markings a write of those
+         *     rows would carry. A mapping or marking bulk ingest cannot enforce is
+         *     refused, never loaded unchecked.
+         *
+         *     # Errors
          *     A denied caller (one opaque 403), an unknown upload or type (404), a
-         *     changed file (`bulk.digest_mismatch`, 422), or an unreachable engine.
+         *     changed file (`bulk.digest_mismatch`, 422), a mapping or marking bulk
+         *     ingest cannot enforce (422), stale pins or a reused request key (409), or
+         *     an unreachable engine.
          */
         post: operations["load_dataset"];
         delete?: never;
@@ -1094,6 +1129,8 @@ export interface components {
             outcome: components["schemas"]["ActionCallOutcome"];
             /** @description The original commit, the same on every replay. */
             receipt: components["schemas"]["ActionCommit"];
+            /** @description Optional provenance trace context retained from the original call. */
+            trace?: components["schemas"]["TraceContext"];
             /**
              * Format: int64
              * @description The target's version as the original commit wrote it.
@@ -1105,6 +1142,8 @@ export interface components {
             /** @description The caller's retry identity: 1 to 128 characters, at most 256 UTF-8 bytes. */
             idempotencyKey: string;
             input: components["schemas"]["NornActionInput"];
+            /** @description Optional provenance trace context persisted on the committed receipt. */
+            trace?: components["schemas"]["TraceContext"];
         };
         /** @description `POST /v1/questions:trace`: one bucket of an ad-hoc question's answer. */
         AdHocTraceRequest: {
@@ -1204,8 +1243,20 @@ export interface components {
         };
         /** @description `POST /v1/datasets:load` body. */
         DatasetLoadRequest: {
+            /**
+             * @description MANIFEST-03: the admitted mapping onto the type the load binds its
+             *     columns by; needed only when more than one maps onto it.
+             */
+            mapping?: string | null;
             /** @description The admitted object type the rows are typed by. */
             objectType: string;
+            /**
+             * @description MANIFEST-04: the caller's key for this load. A retry with the same
+             *     key and the same request answers with the first load's receipt; the
+             *     same key with another request is refused (409
+             *     `dataset.request_conflict`). A load without a key always commits.
+             */
+            requestKey?: string | null;
             /** @description A completed upload of this cell. */
             uploadId: string;
         };
@@ -1313,6 +1364,8 @@ export interface components {
             input: {
                 [key: string]: unknown;
             };
+            /** @description Optional provenance trace context carried by the parked call. */
+            trace?: components["schemas"]["TraceContext"];
         };
         /** @description What the decision is about. Empty in this version. */
         DecisionContext: {
@@ -1735,6 +1788,30 @@ export interface components {
              */
             value: unknown;
         };
+        /**
+         * @description One effective-dated parameter resolved and pinned during an action commit
+         *     (D07, PARAM-EXACT-1, PARAM-BOUND-1).
+         */
+        NornActionActionParameterPin: {
+            /**
+             * @description Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's
+             *     exact values at commit time.
+             */
+            digest: string;
+            /** @description The declared effective timestamp evaluated for this selection. */
+            effectiveAt: string;
+            /** @description The declared parameter slice entry name. */
+            entry: string;
+            /** @description The selected setting fact's concrete object type and key. */
+            setting: components["schemas"]["NornActionFactKey"];
+            /** @description The stable parameter key. */
+            settingKey: string;
+            /**
+             * Format: uint64
+             * @description The committed fact version of the selected setting at commit time.
+             */
+            version: number;
+        };
         /** @description The successful outcome of one action precondition. */
         NornActionActionPreconditionOutcome: {
             /** @description The expression evaluated. */
@@ -1785,6 +1862,11 @@ export interface components {
             };
             /** @description The target object. */
             object: components["schemas"]["NornActionFactKey"];
+            /**
+             * @description Effective-dated parameter pins resolved by declared parameter slices
+             *     (D07, PARAM-EXACT-1, PARAM-BOUND-1).
+             */
+            parameterPins?: components["schemas"]["NornActionActionParameterPin"][];
             /** @description Successful precondition results, in declaration order. */
             preconditionOutcomes?: components["schemas"]["NornActionActionPreconditionOutcome"][];
             /** @description Normalized row operations committed by a parent-and-rows action. */
@@ -1793,6 +1875,8 @@ export interface components {
             ruleBinding?: string | null;
             /** @description The state it entered. */
             to: string;
+            /** @description Optional provenance trace context supplied by the caller. */
+            trace?: components["schemas"]["NornActionTraceContext"] | null;
             /** @description The fired transition. */
             transition: string;
             /** @description The turn the call committed in. */
@@ -1808,6 +1892,14 @@ export interface components {
             /** @description The callable actions an effect program can run, ordered by identity. */
             items: components["schemas"]["NornActionSummary"][];
         };
+        /**
+         * @description A content digest, `sha256:<64 lower-case hex>`.
+         *
+         *     Decoding accepts any string so that admission can report a mutable
+         *     identity (a tag, URI, or object key) as a finding;
+         *     [`Digest::is_well_formed`] is the rule.
+         */
+        NornActionDigest: string;
         /**
          * @description How an action's admitted effect program changes its target.
          * @enum {string}
@@ -1872,6 +1964,33 @@ export interface components {
             toState?: string | null;
             /** @description The effects a caller must handle. */
             uiEffects: components["schemas"]["NornActionUiEffects"];
+        };
+        /**
+         * @description Optional provenance trace context attached to an action call and persisted
+         *     on its committed receipt.
+         *
+         *     Strictly optional and additive: callers without trace context are unaffected,
+         *     and raw transcript text is never stored (`sessionDigest` admits only a
+         *     content-addressed SHA-256 digest).
+         */
+        NornActionTraceContext: {
+            /**
+             * @description Optional reference to the goal, prompt, commitment, or decision that
+             *     initiated the action (1 to 512 UTF-8 bytes, no control characters or
+             *     outer whitespace).
+             */
+            intentRef?: string;
+            /**
+             * @description Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)
+             *     of an off-ledger agent or user session transcript. Raw transcript text
+             *     is never stored in the ledger.
+             */
+            sessionDigest?: string;
+            /**
+             * @description Opaque correlation identifier tying multi-step causes and effects
+             *     together (1 to 256 UTF-8 bytes, no control characters or outer whitespace).
+             */
+            traceId: string;
         };
         /** @description The effects a form must handle before it calls, from the action's own definition. */
         NornActionUiEffects: {
@@ -2318,17 +2437,81 @@ export interface components {
             diagnostics: components["schemas"]["RefusalDiagnostic"][];
             plan: components["schemas"]["NornTransformPlan"] | null;
         };
+        /** @description One landed dataset file, named by content. */
+        NornDatasetFile: {
+            /**
+             * Format: int64
+             * @description Bytes in it.
+             */
+            bytes: number;
+            /**
+             * Format: int64
+             * @description Rows in it.
+             */
+            rows: number;
+            /** @description Its SHA-256. */
+            sha256: string;
+            /** @description The object's durable URI. */
+            uri: string;
+        };
+        /** @description The outcome of `GET /v1/datasets/{type}/rows/{row}:lineage`. */
+        NornDatasetLineage: {
+            /**
+             * Format: int64
+             * @description The commit that admitted it.
+             */
+            commitSeq: number;
+            data?: components["schemas"]["NornLineageFile"] | null;
+            /** @description Every rule the row fails. */
+            findings: components["schemas"]["NornRowFinding"][];
+            /** @description Whether the row is held back (not typed, or failing a rule that holds). */
+            held: boolean;
+            /** @description The manifest that admitted the dataset. */
+            manifest: string;
+            /** @description The dataset's object type. */
+            objectType: string;
+            /** @description Why the row was not typed (`bulk.*`), if it was not. */
+            refused?: string | null;
+            /**
+             * Format: int64
+             * @description The source row offset; dataset answers name rows by it.
+             */
+            row: number;
+            /** @description The source upload, at the row. */
+            source: components["schemas"]["NornLineageFile"];
+        };
         /** @description The outcome of `POST /v1/datasets:load`. */
         NornDatasetLoad: {
             /**
              * Format: int64
-             * @description File size in bytes.
+             * @description Source file size in bytes.
              */
             bytes: number;
+            /**
+             * Format: int64
+             * @description That commit's sequence number.
+             */
+            commitSeq: number;
             /** @description The `upload` connection the load is reported under (SYNC-REPORT-1). */
             connectionId: string;
-            /** @description The load identity; answers over the dataset name it. */
+            /** @description The landed data file: every admitted row, columnar. */
+            data: components["schemas"]["NornDatasetFile"];
+            /** @description MANIFEST-LAWS-1: findings of each law and invariant, by rule. */
+            findings: {
+                [key: string]: components["schemas"]["NornRuleFindings"];
+            };
+            /** @description The landed held-set file: every held-back row and its reason. */
+            held: components["schemas"]["NornDatasetFile"];
+            /**
+             * Format: int64
+             * @description Typed rows a law or invariant holds back: in the held-set file, not
+             *     among `rows`.
+             */
+            heldByRules: number;
+            /** @description The landing identity; answers over the dataset name it. */
             load: string;
+            /** @description MANIFEST-1: the committed manifest's identity. */
+            manifest: string;
             /**
              * Format: int64
              * @description Load time in milliseconds.
@@ -2340,19 +2523,21 @@ export interface components {
             reasons: {
                 [key: string]: number;
             };
+            /** @description The receipt of the one commit that admitted the manifest. */
+            receipt: string;
             /**
              * Format: int64
-             * @description Rows quarantined.
+             * @description Rows quarantined because they could not be typed.
              */
             rejected: number;
             /**
              * Format: int64
-             * @description Rows admitted.
+             * @description Rows admitted as trusted: typed, and held back by no rule (LAW-02).
              */
             rows: number;
-            /** @description The file's SHA-256, verified by the engine. */
+            /** @description The source file's SHA-256, verified by the engine. */
             sha256: string;
-            /** @description The file's durable URI. */
+            /** @description The source file's durable URI. */
             uri: string;
         };
         /** @description An admitted document; source and receipt travel as exact JSON text. */
@@ -11679,6 +11864,19 @@ export interface components {
              */
             seq: number;
         };
+        /** @description One file a dataset row is traced through, and the row's offset in it. */
+        NornLineageFile: {
+            /**
+             * Format: int64
+             * @description The row's source offset (1-based, in source file order); the data
+             *     file carries it as its `:row` column.
+             */
+            row: number;
+            /** @description Its SHA-256. */
+            sha256: string;
+            /** @description The object's durable URI. */
+            uri: string;
+        };
         /** @description The visible links of one declared link type in one direction. */
         NornLinkCount: {
             /**
@@ -12508,6 +12706,27 @@ export interface components {
             /** @description The stored value, of the property's type; decimals are exact JSON number tokens. */
             value: unknown;
         };
+        /** @description One law or invariant a dataset row fails. */
+        NornRowFinding: {
+            /** @description Whether it holds the row back. */
+            holds: boolean;
+            /** @description The law (`law:<id>`) or invariant (`invariant:<id>`). */
+            label: string;
+            /** @description The rule identity (canonical JSON of its reference). */
+            rule: string;
+        };
+        /** @description MANIFEST-LAWS-1: one law or invariant's findings over a dataset. */
+        NornRuleFindings: {
+            /** @description Whether a failing row is held back. */
+            holds: boolean;
+            /** @description The law (`law:<id>`) or invariant (`invariant:<id>`). */
+            label: string;
+            /**
+             * Format: int64
+             * @description Rows that fail it.
+             */
+            rows: number;
+        };
         /**
          * @description A sort direction.
          * @enum {string}
@@ -12764,6 +12983,8 @@ export interface components {
             };
             /** @enum {string} */
             kind: "action";
+            /** @description Optional provenance trace context recorded on the action call. */
+            trace?: components["schemas"]["TraceContext"];
         } | {
             /** @enum {string} */
             kind: "other";
@@ -12983,6 +13204,8 @@ export interface components {
                 [key: string]: unknown;
             };
             state?: components["schemas"]["DecidedCall"] | null;
+            /** @description Optional provenance trace context carried by the parked call. */
+            trace?: components["schemas"]["TraceContext"];
         };
         /**
          * @description One approval-gated call the caller made, as its requester sees it
@@ -13215,6 +13438,29 @@ export interface components {
          * @enum {string}
          */
         StepWait: "decision" | "executor" | "timer";
+        /**
+         * @description Optional provenance trace context attached to an action call and retained
+         *     on its committed receipt.
+         */
+        TraceContext: {
+            /**
+             * @description Optional reference to the goal, prompt, commitment, or decision that
+             *     initiated the action (1 to 512 UTF-8 bytes, no control characters or
+             *     outer whitespace).
+             */
+            intentRef?: string;
+            /**
+             * @description Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)
+             *     of an off-ledger agent or user session transcript. Raw transcript text
+             *     is never stored in the ledger.
+             */
+            sessionDigest?: string;
+            /**
+             * @description Opaque correlation identifier tying multi-step causes and effects
+             *     together (1 to 256 UTF-8 bytes, no control characters or outer whitespace).
+             */
+            traceId: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -13677,6 +13923,63 @@ export interface operations {
             };
         };
     };
+    dataset_lineage: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The dataset's object type. */
+                type: string;
+                /** @description The source row offset. */
+                row: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The row's lineage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornDatasetLineage"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     load_dataset: {
         parameters: {
             query: {
@@ -13724,6 +14027,15 @@ export interface operations {
             };
             /** @description The request was refused: not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The definitions changed while the dataset landed, or the request key names another request. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

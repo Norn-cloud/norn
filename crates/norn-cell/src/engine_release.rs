@@ -72,12 +72,16 @@ pub const CHANNEL: &[StorageVersion] = &[
     },
     StorageVersion {
         version: 5,
+        change: "#1547 S2: the partial index _norn_marking_version_nonempty, the bounded probe of whether a cell's history holds a marking label; an engine of the storage version before it refuses a marking table with an index it does not know",
+    },
+    StorageVersion {
+        version: 6,
         change: "OPEN-CHECKPOINT-1 (#1533): _norn_open_checkpoint holds the last verified ledger head and its receipt root; an open verifies only the history after it",
     },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 5;
+pub const STORAGE_VERSION: u32 = 6;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -328,11 +332,14 @@ fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
         // from the cell's own approving decisions. No row is rewritten.
         // Version 4 rewrites nothing: a bundle without `derivation` is
         // derivation 1 and still verifies under it (MAP-DERIVATION-1).
-        // Version 5 adds `_norn_open_checkpoint`, created empty by the
-        // schema statements that follow the chain; the upgrading open then
-        // verifies the whole history and records its head there
-        // (OPEN-CHECKPOINT-1). No row is rewritten.
-        2..=5 => Ok(()),
+        // Version 5 (#1547) adds `_norn_marking_version_nonempty`, which the
+        // schema statements that follow the chain create from the rows the
+        // cell holds; no row is rewritten.
+        // Version 6 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`,
+        // created empty by the schema statements that follow the chain; the
+        // upgrading open then verifies the whole history and records its head
+        // there. No row is rewritten.
+        2..=STORAGE_VERSION => Ok(()),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,

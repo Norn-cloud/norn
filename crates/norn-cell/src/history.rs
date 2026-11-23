@@ -227,9 +227,7 @@ fn materialize_historical_values(
     object_type: &norn_ir::ObjectTypeName,
     stored: &BTreeMap<String, Value>,
 ) -> Result<BTreeMap<String, Value>, CellError> {
-    let catalog = norn_kernel::TypeCatalog::new(model.object_types())
-        .with_interfaces(model.interfaces())
-        .with_property_types(model.property_types());
+    let catalog = model.type_catalog();
     let retained = stored
         .iter()
         .filter(|(property, _)| model.column(object_type.as_str(), property).is_ok())
@@ -616,6 +614,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         known_as_of: KnowledgeCutoff,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<HistoricalEvidence, CellError> {
+        // S7 (#1551): gate historical reads before touching frontier receipts or history scans.
+        self.history_gate.history("as-of reads")?;
         let mut history = self.history_read();
         if known_as_of.frontier > 0 && history.receipt(known_as_of.frontier, budget)?.is_none() {
             return Ok(HistoricalEvidence::Exhausted);
@@ -753,6 +753,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         cutoff: KnowledgeCutoff,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<HistoricalFrame>, CellError> {
+        // S7 (#1551): gate historical frames before frontier lookup or population selection.
+        self.history_gate.history("historical frames")?;
         if cutoff.frontier == 0 {
             return Ok(Some(HistoricalFrame {
                 revision: LedgerHead::genesis(),
@@ -791,53 +793,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(self
             .proven_snapshot(world, object_type, key, version)?
             .scope)
-    }
-
-    /// Every value version written after `commits` matches its receipt's
-    /// digest (OPEN-CHECKPOINT-1: `commits` is the open checkpoint's, or 0).
-    pub(crate) fn verify_value_history_after(&self, commits: u64) -> Result<(), CellError> {
-        self.verify_value_history_range(commits, u64::MAX)
-    }
-
-    /// [`Self::verify_value_history_after`] for the commits after `after`
-    /// through `through` only: one chunk of the history scrub.
-    pub(crate) fn verify_value_history_range(
-        &self,
-        after: u64,
-        through: u64,
-    ) -> Result<(), CellError> {
-        for receipt in self.receipt_stream_from(after) {
-            let receipt = receipt?;
-            if receipt.body.commit_seq > through {
-                break;
-            }
-            for row in receipt.body.written {
-                let stored: Option<(String, String, String)> = self.conn.query_optional(
-                    &format!("SELECT root_type,snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND commit_seq=?2 AND object_type=?3 AND id=?4 AND version=?5"),
-                    params![receipt.body.world, to_i64(receipt.body.commit_seq, "fact commit")?, row.object_type, row.key, to_i64(row.version, "fact version")?],
-                    |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
-                )?;
-                let (root, encoded, hash) = stored.ok_or_else(unproven_snapshot)?;
-                let snapshot = decode_snapshot(
-                    &receipt.body.world,
-                    &row.object_type,
-                    &row.key,
-                    row.version,
-                    &encoded,
-                    &hash,
-                )?;
-                if snapshot.root_type != root
-                    || snapshot.object_type != row.object_type
-                    || !crate::receipt_commitment::receipt_digest_matches(
-                        row.snapshot_sha256.as_deref(),
-                        &hash,
-                    )
-                {
-                    return Err(unproven_snapshot());
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Read one exact historical version only after verifying its immutable proof.
@@ -2124,9 +2079,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(values) = snapshot.values else {
             return Ok(None);
         };
-        let catalog = norn_kernel::TypeCatalog::new(model.object_types())
-            .with_interfaces(model.interfaces())
-            .with_property_types(model.property_types())
+        let catalog = model
+            .type_catalog()
             .with_governing_laws(model.law_artifacts());
         let mut links = crate::link_laws::PinnedLinks {
             reader: self,
@@ -2544,7 +2498,7 @@ pub(crate) fn decode_snapshot(
     Ok(snapshot)
 }
 
-fn unproven_snapshot() -> CellError {
+pub(crate) fn unproven_snapshot() -> CellError {
     CellError::HistoricalValueUnproven(
         "historical value commitment is missing or invalid".to_owned(),
     )

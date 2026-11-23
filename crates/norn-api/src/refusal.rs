@@ -497,6 +497,17 @@ impl Refusal {
         )
         .with_cause(finding)
     }
+
+    /// Refuse if the cell's history scrub has fenced it.
+    ///
+    /// # Errors
+    /// [`Self::fenced`] when `status` is [`norn_cell::ScrubStatus::Fenced`].
+    pub fn check_scrub(status: norn_cell::ScrubStatus) -> Result<(), Self> {
+        if let norn_cell::ScrubStatus::Fenced { finding } = status {
+            return Err(Self::fenced(finding));
+        }
+        Ok(())
+    }
 }
 
 fn refusal_reason_schema() -> utoipa::openapi::schema::Schema {

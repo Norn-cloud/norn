@@ -29,9 +29,13 @@
 //! The cell still authorizes every request before it sends it and checks
 //! every answer. The daemon holds no storage credentials; a load reads a
 //! presigned URL the cell minted for that one object. OLAP-02: each tenant
-//! has its own scratch directory (downloads, exports and `DuckDB` spill), and
-//! each load attempt writes a file the daemon names and creates exclusively;
-//! nothing in a request names a path.
+//! has its own scratch directory (exports and `DuckDB` spill), and each
+//! landing attempt downloads into a directory of its own that the engine
+//! creates exclusively (MANIFEST-02); nothing in a request names a path.
+//! The engine mints each attempt's token itself and holds the attempt for
+//! one operation at a time; that operation is its one cleanup owner, so a
+//! store, replayed or not, never removes an attempt still downloading or
+//! one a later landing made.
 
 use std::ffi::OsString;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
@@ -43,10 +47,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use norn_api::clock::Clock;
 use norn_api::olap_credential::{Denied, Keyring, body_digest};
-use norn_cell::analytics::engine::{Engine, Outcome, Settings};
+use norn_cell::analytics::engine::{Engine, Outcome, Settings, StoreBody};
 use norn_cell::analytics::{
-    EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LoadRequest, MembersRequest,
-    PageRequest, ProfileRequest, SyncRequest, TenantId,
+    EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LandRequest, LandResponse,
+    LineageRequest, MembersRequest, PageRequest, ProfileRequest, SettleRequest, SyncRequest,
+    TenantId,
 };
 use norn_kernel::LogicalTime;
 use serde::Serialize;
@@ -222,10 +227,37 @@ pub fn run(config: Config) -> std::io::Result<()> {
 /// # Errors
 /// The engine directory cannot be opened.
 pub fn serve(listener: &TcpListener, config: Config, clock: Arc<dyn Clock>) -> std::io::Result<()> {
+    serve_with(listener, config, clock, Arc::new(NoSeam))
+}
+
+/// Points in a call the daemon announces to a [`Seam`], so a test can run
+/// other calls there and interleave them deterministically.
+pub trait Seam: Send + Sync {
+    /// A `/v1/store` of `tenant` returned from the engine, `stored` or
+    /// refused, and its answer is not yet sent.
+    fn stored(&self, _tenant: &TenantId, _stored: bool) {}
+}
+
+/// The seam of a production daemon: announces nothing.
+pub struct NoSeam;
+
+impl Seam for NoSeam {}
+
+/// [`serve`], announcing each [`Seam`] point to `seam`.
+///
+/// # Errors
+/// The engine directory cannot be opened.
+pub fn serve_with(
+    listener: &TcpListener,
+    config: Config,
+    clock: Arc<dyn Clock>,
+    seam: Arc<dyn Seam>,
+) -> std::io::Result<()> {
     let engine = Arc::new(Engine::new(config.settings)?);
     let gate = Arc::new(Gate {
         keys_file: config.keys_file,
         clock,
+        seam,
     });
     let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
@@ -255,13 +287,40 @@ pub fn serve(listener: &TcpListener, config: Config, clock: Arc<dyn Clock>) -> s
 struct Gate {
     keys_file: PathBuf,
     clock: Arc<dyn Clock>,
+    seam: Arc<dyn Seam>,
 }
 
 /// The one field the scope check reads before the request is routed or
-/// parsed into its type; every other field is left for the typed parse.
+/// parsed into its type; every other field is left for the typed parse. A
+/// landing names its tenant in its load (`load.tenant`), and a settle or a
+/// store in the landing it settles or stores (`land.load.tenant`).
 #[derive(serde::Deserialize)]
 struct Named {
+    tenant: Option<TenantId>,
+    load: Option<NamedLoad>,
+    land: Option<NamedLand>,
+}
+
+#[derive(serde::Deserialize)]
+struct NamedLoad {
     tenant: TenantId,
+}
+
+#[derive(serde::Deserialize)]
+struct NamedLand {
+    load: NamedLoad,
+}
+
+impl Named {
+    /// The tenant the body of operation `op` names, where that operation's
+    /// request names it.
+    fn tenant(self, op: &str) -> Option<TenantId> {
+        match op {
+            "land" => self.load.map(|load| load.tenant),
+            "settle" | "store" => self.land.map(|land| land.load.tenant),
+            _ => self.tenant,
+        }
+    }
 }
 
 impl Gate {
@@ -283,8 +342,11 @@ impl Gate {
             Denied::UnknownKey
         })?;
         let tenant = keyring.verify(credential, op, &digest, self.clock.now().as_millis())?;
-        let named: Named = serde_json::from_slice(&request.body).map_err(|_e| Denied::Unscoped)?;
-        if named.tenant != tenant {
+        let named = serde_json::from_slice::<Named>(&request.body)
+            .ok()
+            .and_then(|named| named.tenant(op))
+            .ok_or(Denied::Unscoped)?;
+        if named != tenant {
             return Err(Denied::OtherTenant);
         }
         Ok(tenant)
@@ -313,9 +375,27 @@ scoped!(
     MembersRequest,
     ProfileRequest,
     PageRequest,
-    LoadRequest,
+    LineageRequest,
     ExportRequest
 );
+
+impl Scoped for LandRequest {
+    fn tenant(&self) -> &TenantId {
+        &self.load.tenant
+    }
+}
+
+impl Scoped for StoreBody {
+    fn tenant(&self) -> &TenantId {
+        &self.request().land.load.tenant
+    }
+}
+
+impl Scoped for SettleRequest {
+    fn tenant(&self) -> &TenantId {
+        &self.land.load.tenant
+    }
+}
 
 struct Request {
     method: String,
@@ -386,7 +466,14 @@ fn connection(stream: &TcpStream, engine: &Engine, gate: &Gate) -> std::io::Resu
         "/v1/members" => call.answer(|r: MembersRequest| engine.members(&r)),
         "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile(&r)),
         "/v1/page" => call.answer(|r: PageRequest| engine.page(&r)),
-        "/v1/load" => call.answer(|r: LoadRequest| load(engine, &r)),
+        "/v1/lineage" => call.answer(|r: LineageRequest| engine.lineage(&r)),
+        "/v1/land" => call.answer(|r: LandRequest| land(engine, &r)),
+        "/v1/settle" => call.answer(|r: SettleRequest| settle(engine, &r)),
+        "/v1/store" => call.answer(|r: StoreBody| {
+            let stored = store(engine, &r);
+            gate.seam.stored(&tenant, stored.is_ok());
+            stored
+        }),
         "/v1/export" => export(&call, engine),
         _ => refuse(
             stream,
@@ -482,17 +569,22 @@ fn refuse(stream: &TcpStream, status: u16, refused: &EngineRefusal) -> std::io::
     respond(stream, status, "application/json", body.as_bytes())
 }
 
-/// Download the presigned object into the engine's scratch directory, then load it.
-fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics::LoadResponse> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
         .http_status_as_error(false)
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(600)))
         .build()
-        .into();
+        .into()
+}
+
+/// MANIFEST-02: download the presigned object into `file`, the attempt's
+/// own source file (created exclusively by the engine), at most
+/// [`MAX_FILE_BYTES`].
+fn download(agent: &ureq::Agent, url: &str, mut file: std::fs::File) -> Outcome<()> {
     let unreadable = |detail: String| refusal("bulk.unreadable", &detail);
     let mut response = agent
-        .get(&request.file.url)
+        .get(url)
         .call()
         .map_err(|e| unreadable(format!("the object could not be read: {e}")))?;
     if response.status() != 200 {
@@ -501,12 +593,6 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
             response.status()
         )));
     }
-    // OLAP-02: the file is the daemon's own: in this tenant's scratch, named
-    // by the daemon, created exclusively, and the only file this attempt removes.
-    let (path, mut file) = engine
-        .scratch(&request.tenant)
-        .and_then(|scratch| exclusive_file(&scratch, "load"))
-        .map_err(|e| refusal("analytics.engine", &format!("no scratch file: {e}")))?;
     let copied = (|| -> std::io::Result<()> {
         let mut reader = response
             .body_mut()
@@ -516,30 +602,113 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
         std::io::copy(&mut reader, &mut file)?;
         file.sync_all()
     })();
-    let loaded = copied
-        .map_err(|e| unreadable(format!("the object could not be read: {e}")))
-        .and_then(|()| engine.load(request, &path));
-    let _removed = std::fs::remove_file(&path);
-    loaded
+    copied.map_err(|e| unreadable(format!("the object could not be read: {e}")))
 }
 
-/// A new file in `directory`, `<prefix>-<128 random bits, hex>`, created
-/// exclusively (`create_new`): an existing file is never opened, truncated or
-/// replaced, whoever made it.
-fn exclusive_file(directory: &Path, prefix: &str) -> std::io::Result<(PathBuf, std::fs::File)> {
-    use std::fmt::Write as _;
-    let mut nonce = [0_u8; 16];
-    getrandom::fill(&mut nonce).map_err(|e| std::io::Error::other(e.to_string()))?;
-    let name = nonce.iter().fold(format!("{prefix}-"), |mut out, byte| {
-        let _infallible = write!(out, "{byte:02x}");
+/// A reader that hashes every byte it hands out.
+struct Hashing<R> {
+    inner: R,
+    hasher: Arc<std::sync::Mutex<sha2::Sha256>>,
+}
+
+impl<R: std::io::Read> std::io::Read for Hashing<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        use sha2::Digest as _;
+        let read = self.inner.read(buf)?;
+        self.hasher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .update(buf.get(..read).unwrap_or_default());
+        Ok(read)
+    }
+}
+
+/// MANIFEST-02: send `path` to the presigned PUT `url`, hashing the bytes as
+/// they are sent: the object is accepted only if what was sent is `sha256`,
+/// the digest the landing answered and the manifest will name.
+fn upload(agent: &ureq::Agent, url: &str, path: &std::path::Path, sha256: &str) -> Outcome<()> {
+    use sha2::Digest as _;
+    let unwritable = |detail: String| refusal("bulk.unwritable", &detail);
+    let file = std::fs::File::open(path)
+        .map_err(|e| unwritable(format!("a landed file could not be read: {e}")))?;
+    let length = file
+        .metadata()
+        .map_err(|e| unwritable(format!("a landed file could not be read: {e}")))?
+        .len();
+    let hasher = Arc::new(std::sync::Mutex::new(sha2::Sha256::new()));
+    let body = Hashing {
+        inner: file,
+        hasher: Arc::clone(&hasher),
+    };
+    let response = agent
+        .put(url)
+        .header("content-type", "application/vnd.apache.parquet")
+        .header("content-length", &length.to_string())
+        .send(ureq::SendBody::from_owned_reader(body))
+        .map_err(|e| unwritable(format!("the object could not be written: {e}")))?;
+    if !response.status().is_success() {
+        return Err(unwritable(format!(
+            "the object store answered {}",
+            response.status()
+        )));
+    }
+    let sent = std::mem::take(
+        &mut *hasher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    )
+    .finalize()
+    .iter()
+    .fold(String::new(), |mut out, b| {
+        use std::fmt::Write as _;
+        let _infallible = write!(out, "{b:02x}");
         out
     });
-    let path = directory.join(name);
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)?;
-    Ok((path, file))
+    if sent == sha256 {
+        Ok(())
+    } else {
+        Err(refusal(
+            "bulk.digest_mismatch",
+            "the bytes sent are not the landed file",
+        ))
+    }
+}
+
+/// MANIFEST-LAND-1: land the presigned source in a fresh attempt the engine
+/// mints, downloading it into the attempt's own source file. The engine
+/// holds the attempt throughout; a failed landing removes it.
+fn land(engine: &Engine, request: &LandRequest) -> Outcome<LandResponse> {
+    engine.land(request, |file| {
+        download(&agent(), &request.load.file.url, file)
+    })
+}
+
+/// MANIFEST-LAWS-1: settle an attempt's residue rows. The engine's settle
+/// takes the attempt by its token and owns its cleanup: a refused settle
+/// removes the attempt it took, and nothing else.
+fn settle(engine: &Engine, request: &SettleRequest) -> Outcome<LandResponse> {
+    engine.settle(request)
+}
+
+/// MANIFEST-LAND-1: send an attempt's landed files to their content-addressed
+/// objects, each only if the bytes sent are its answered digest, then keep
+/// them for the dataset's cache identity. The engine's store owns the
+/// attempt's cleanup; nothing here removes anything.
+fn store(engine: &Engine, body: &StoreBody) -> Outcome<Box<serde_json::value::RawValue>> {
+    let request = body.request();
+    // The engine sends only files whose answer names both digests.
+    let sha256 = |file: Option<&norn_cell::analytics::LandedFile>| {
+        file.map_or_default(|file| file.sha256.clone())
+    };
+    let (data_sha256, held_sha256) = (
+        sha256(request.landed.data.as_ref()),
+        sha256(request.landed.held.as_ref()),
+    );
+    engine.store_json(body, |data, held| {
+        let agent = agent();
+        upload(&agent, &request.data.url, data, &data_sha256)?;
+        upload(&agent, &request.held.url, held, &held_sha256)
+    })
 }
 
 /// Export into a scratch file, stream it as the body, then delete it.

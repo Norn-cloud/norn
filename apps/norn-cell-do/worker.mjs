@@ -44,8 +44,10 @@ let lastJwks = null;
 // A build with the `fixtures` feature accepts fixture bearer tokens; it serves only a stage named
 // here (NORN_STAGE, set by the local smoke), never a deployed one.
 const FIXTURE_STAGES = new Set(["smoke", "test"]);
-// D102: engine steps one request may take (frontier, sync batches, the question).
-const ENGINE_STEPS = 64;
+// D102 / MANIFEST-LAWS-1 (S1): engine steps one request may take (frontier, sync batches, the
+// question; a landing's land, settles and store). The cell owns the bound, so the engine's residue
+// limit and this loop can never disagree.
+const ENGINE_STEPS = NornCell.engineSteps();
 // A hung engine call must not hold the object.
 const ENGINE_TIMEOUT_MS = 120_000;
 // TIMER-ALARM-1: the scope this object serves, kept so an alarm (which carries no request) can open its cell.

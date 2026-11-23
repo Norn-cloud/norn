@@ -171,6 +171,9 @@ impl<E: ForkEngine> CellStore<E> {
     /// head; a storage-version refusal when the copy is not at this engine's
     /// storage version; ledger verification or engine errors otherwise.
     pub fn fork(&self, world: &str, base: &LedgerHead) -> Result<Self, CellError> {
+        // S13 (#1551): refuse forking while a checkpointed cell's history
+        // scrub is incomplete or the cell is fenced.
+        self.scrub.borrow().refuse_fork()?;
         let parent = self
             .fork_pin()
             .map_or(MAIN_WORLD, |pin| pin.world.as_str())
@@ -191,6 +194,8 @@ impl<E: ForkEngine> CellStore<E> {
         // version since this store opened it; the copy is admitted before its
         // head is read or its pin written.
         crate::engine_release::require_current(&engine)?;
+        // S12: refuse copying a cell fenced durably by another handle.
+        crate::open_checkpoint::check_fence(&engine)?;
         // Another handle may commit between the head check and the copy: the
         // copy itself must hold exactly `base`, or the fork refuses.
         let copied = copied_head(&engine, self.model())?;
@@ -349,6 +354,13 @@ mod tests {
     }
 
     impl SqlEngine for Racing {
+        fn definition_writes<T>(
+            &self,
+            f: impl FnOnce() -> Result<T, CellError>,
+        ) -> Result<T, CellError> {
+            self.native.definition_writes(f)
+        }
+
         fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
             self.native.execute(sql, params)
         }

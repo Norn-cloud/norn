@@ -12,7 +12,7 @@ use norn_cell::{
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{Command, FactEvent, ObservationEvent, Observed};
 use std::ops::{Deref, DerefMut};
-use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, atomic::Ordering};
 
 pub(crate) type ActionCell<E> = norn_cell::SqliteCell<FactEvent, RuntimeObject, RuntimeObject, E>;
 /// A single tenant's cell and definition epoch. Unconfigured authorization denies.
@@ -35,9 +35,33 @@ pub struct DevHost<E: SqlEngine> {
     /// PRIVACY-1: the key this cell's pseudonyms are computed under; without
     /// one a pseudonym projection redacts.
     pseudonyms: Option<crate::privacy::PseudonymKey>,
-    /// The marking catalog of the active definitions, by definitions version.
-    markings: Mutex<Option<(Option<u64>, crate::privacy::MarkingCatalog)>>,
+    /// The marking catalog of the active definitions, keyed as
+    /// [`Self::retained`] is: by definitions identity and foreign-write
+    /// revision (S2, #1547).
+    markings: Mutex<Option<CachedCatalog>>,
+    /// ADMIT-CACHE-1 (#1533): the active definitions' verified retained
+    /// actions, keyed by their version and admission receipt digest and by
+    /// the store's foreign-write revision when they were verified. Filled
+    /// only by a verification this process ran ([`RetainedActions::load`]);
+    /// any other identity or revision misses and verifies again, and an
+    /// install clears it.
+    ///
+    /// [`RetainedActions::load`]: crate::action_admission::RetainedActions::load
+    retained: Mutex<Option<CachedRetained>>,
 }
+
+/// One verified retained set ([`DevHost::retained`]): the identity it was
+/// verified under, the foreign-write revision it was read at, and what the
+/// verification admitted.
+type CachedRetained = (
+    (u64, String),
+    u64,
+    std::sync::Arc<crate::action_admission::RetainedActions>,
+);
+
+/// One marking catalog ([`DevHost::marking_catalog`]): the definitions
+/// identity and foreign-write revision it was read at, and the catalog.
+type CachedCatalog = (Option<(u64, String)>, u64, crate::privacy::MarkingCatalog);
 
 /// A read in progress ([`DevHost::reading`]): no load commits until it ends.
 pub struct Reading<'a> {
@@ -195,6 +219,7 @@ impl<E: SqlEngine> DevHost<E> {
             reads: RwLock::new(()),
             pseudonyms: None,
             markings: Mutex::new(None),
+            retained: Mutex::new(None),
         })
     }
     /// Supply the trusted server policy before sharing this host.
@@ -229,21 +254,120 @@ impl<E: SqlEngine> DevHost<E> {
     pub(crate) fn reveals(&self, actor: &str, marking_id: &str) -> bool {
         self.authorizer.reveal(actor, marking_id)
     }
-    /// The marking catalog of the active definitions `reader` sees.
+    /// The marking catalog of the active definitions `reader` sees, with the
+    /// kernel's own markings, reused under the same definitions identity and
+    /// foreign-write revision as [`Self::retained`] (S2, #1547).
+    ///
+    /// Empty only when nothing needs projecting: the definitions declare no
+    /// marking and no object version, current or past, holds a label (one
+    /// bounded probe of each partial index). A cell that declares none but
+    /// holds labels (a `norn.RuleRun`'s kernel label, a declassified field's
+    /// earlier versions) gets the kernel's markings, so every read projects
+    /// and a label the catalog does not resolve withholds its field instead
+    /// of refusing the read (S2, S3, #1547).
+    ///
+    /// # Errors
+    /// A store failure.
     pub(crate) fn marking_catalog(
         &self,
         reader: &norn_cell::StoreReader<'_, E>,
     ) -> Result<crate::privacy::MarkingCatalog, Refusal> {
-        let version = reader.active_definitions_version().map_err(Refusal::host)?;
-        let mut cached = self.markings.lock().map_err(Refusal::host)?;
-        if let Some((at, catalog)) = cached.as_ref()
-            && *at == version
-        {
-            return Ok(std::sync::Arc::clone(catalog));
+        let foreign = reader
+            .database_revision()
+            .map_err(Refusal::host)?
+            .map(|(_local, foreign)| foreign);
+        let identity = reader
+            .active_definitions_identity()
+            .map_err(Refusal::host)?;
+        let catalog = {
+            let mut cached = self.markings.lock().map_err(Refusal::host)?;
+            match (foreign, cached.as_ref()) {
+                (Some(foreign), Some((at, seen, catalog)))
+                    if *at == identity && *seen == foreign =>
+                {
+                    std::sync::Arc::clone(catalog)
+                }
+                _ => {
+                    *cached = None;
+                    let (_version, catalog) = crate::privacy::catalog_of(reader)?;
+                    if let Some(foreign) = foreign {
+                        *cached = Some((identity, foreign, std::sync::Arc::clone(&catalog)));
+                    }
+                    catalog
+                }
+            }
+        };
+        if catalog.is_empty() && reader.stores_markings().map_err(Refusal::host)? {
+            return Ok(crate::privacy::built_in_catalog());
         }
-        let (at, catalog) = crate::privacy::catalog_of(reader)?;
-        *cached = Some((at, std::sync::Arc::clone(&catalog)));
         Ok(catalog)
+    }
+    /// ADMIT-CACHE-1 (#1533): the verified retained actions of the active
+    /// definitions `reader` sees, with their version, or `None` with nothing
+    /// installed. The receipt is verified against the retained set once per
+    /// definitions identity (version and receipt digest) and foreign-write
+    /// revision in this process; a call under the same identity and revision
+    /// reuses that verification, and a refused verification is never kept,
+    /// so the next call verifies again.
+    ///
+    /// The revision is the engine's count of commits by any other connection
+    /// or process (`PRAGMA data_version` on native SQLite; constant on an
+    /// engine that is its database's only writer), read before anything it
+    /// covers. This connection writes the retained tables only by an install,
+    /// which clears the cache ([`Self::model_changed`]). So an in-place edit
+    /// of the retained set or its receipt, with the digest column held
+    /// constant, misses here and is verified, and refused, exactly as a fresh
+    /// host would. An engine that offers no revision (inside a transaction)
+    /// verifies on every call and keeps nothing.
+    /// # Errors
+    /// The retained set does not verify, or a store failure.
+    pub(crate) fn retained(
+        &self,
+        reader: &norn_cell::StoreReader<'_, E>,
+    ) -> Result<
+        Option<(
+            u64,
+            std::sync::Arc<crate::action_admission::RetainedActions>,
+        )>,
+        Refusal,
+    > {
+        // C1 (#1547): read before the identity and the set it covers, so a
+        // foreign commit after this read is seen by the next call.
+        let foreign = reader
+            .database_revision()
+            .map_err(Refusal::host)?
+            .map(|(_local, foreign)| foreign);
+        let Some(identity) = reader
+            .active_definitions_identity()
+            .map_err(Refusal::host)?
+        else {
+            return Ok(None);
+        };
+        let mut cached = self.retained.lock().map_err(Refusal::host)?;
+        if let (Some(foreign), Some((at, seen, actions))) = (foreign, cached.as_ref())
+            && *at == identity
+            && *seen == foreign
+        {
+            return Ok(Some((identity.0, std::sync::Arc::clone(actions))));
+        }
+        // A miss drops what it misses: nothing verified at another identity
+        // or revision is served again.
+        *cached = None;
+        let installed = reader
+            .installed_definitions(Some(identity.0))
+            .map_err(Refusal::host)?
+            .ok_or_else(|| Refusal::host("the active definitions are not retained"))?;
+        if installed.receipt_sha256 != identity.1 {
+            return Err(Refusal::host("the active definitions changed while read"));
+        }
+        let actions = std::sync::Arc::new(crate::action_admission::RetainedActions::load(
+            &installed,
+            self.scope(),
+        )?);
+        if let Some(foreign) = foreign {
+            *cached = Some((identity, foreign, std::sync::Arc::clone(&actions)));
+        }
+        Ok(Some((installed.version, actions)))
     }
     /// Physical scope, never taken from client claims.
     #[must_use]
@@ -311,20 +435,14 @@ impl<E: SqlEngine> DevHost<E> {
         matches && allowed
     }
     pub(crate) fn cell(&self) -> Result<CellGuard<'_, E>, Refusal> {
-        self.waiting
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.waiting.fetch_add(1, Ordering::AcqRel);
         let guard = self.cell.lock();
-        self.waiting
-            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        self.waiting.fetch_sub(1, Ordering::AcqRel);
         let guard = guard.map_err(Refusal::host)?;
-        let Some(cell) = guard.as_ref() else {
-            return Err(Refusal::host("the cell is unavailable"));
-        };
-        // OPEN-CHECKPOINT-1 (#1551): a cell its history scrub fenced serves
-        // nothing, live reads included.
-        if let norn_cell::ScrubStatus::Fenced { finding } = cell.store().scrub_status() {
-            return Err(Refusal::fenced(finding));
-        }
+        let cell = guard
+            .as_ref()
+            .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
+        Refusal::check_scrub(cell.store().scrub_status())?;
         Ok(CellGuard(guard))
     }
 
@@ -787,6 +905,18 @@ impl<E: SqlEngine> DevHost<E> {
             .collect())
     }
 
+    /// The engine table schema of every object type the model holds, as a
+    /// dataset load of it is typed by (MANIFEST-LAND-1). A schema is the
+    /// model's, not data: no row is read, and every read is still authorized.
+    /// # Errors
+    /// Poisoned synchronization or a type the engine cannot lower refuses.
+    pub fn analytics_tables(&self) -> Result<Vec<norn_cell::analytics::TableSchema>, Refusal> {
+        self.cell()?
+            .store()
+            .analytics_tables()
+            .map_err(Refusal::host)
+    }
+
     /// The current revision of the retained definition `id`, if any, read
     /// under the definitions read epoch. The host's own authority checks
     /// (`/v1/access:decide` reads a binding's `runRole`) read it here; no
@@ -944,6 +1074,11 @@ impl<E: SqlEngine> DevHost<E> {
     /// Tell the authorizer the model changed, under the write epoch the
     /// caller holds, with the cell it just installed into.
     pub(crate) fn model_changed(&self, cell: &ActionCell<E>) {
+        // ADMIT-CACHE-1: the next call verifies the new revision.
+        match self.retained.lock() {
+            Ok(mut cached) => *cached = None,
+            Err(poisoned) => *poisoned.into_inner() = None,
+        }
         let types: Vec<norn_ir::ObjectTypeDef> =
             cell.store().model().object_types().cloned().collect();
         self.authorizer.model_changed(&types);

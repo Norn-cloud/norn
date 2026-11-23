@@ -238,6 +238,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// SQL failures while catching up receipts from another store handle.
     pub fn transparency_checkpoint(&self) -> Result<Checkpoint, CellError> {
         self.refuse_fork_evidence()?;
+        self.scrub.borrow().gate().history("transparency reads")?;
         self.refresh_transparency()?;
         Ok(Checkpoint(self.transparency.borrow().root()))
     }
@@ -253,6 +254,7 @@ impl<E: SqlEngine> CellStore<E> {
         index: usize,
     ) -> Result<Option<InclusionProof>, CellError> {
         self.refuse_fork_evidence()?;
+        self.scrub.borrow().gate().history("transparency reads")?;
         self.refresh_transparency()?;
         let log = self.transparency.borrow();
         Ok(log
@@ -273,6 +275,7 @@ impl<E: SqlEngine> CellStore<E> {
         old_size: u64,
     ) -> Result<Option<ConsistencyProof>, CellError> {
         self.refuse_fork_evidence()?;
+        self.scrub.borrow().gate().history("transparency reads")?;
         self.refresh_transparency()?;
         let log = self.transparency.borrow();
         if old_size == 0 || old_size > log.len() {

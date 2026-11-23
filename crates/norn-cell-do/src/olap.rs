@@ -116,6 +116,7 @@ impl Transport for InProcess {
             "members" => Self::run(&call.body, |r| engine.members(r)),
             "profile" => Self::run(&call.body, |r| engine.profile(r)),
             "page" => Self::run(&call.body, |r| engine.page(r)),
+            "lineage" => Self::run(&call.body, |r| engine.lineage(r)),
             _ => (404, String::new()),
         };
         Some(EngineAnswer {
@@ -156,5 +157,8 @@ impl norn_api::analytics_routes::Uploads for crate::connect::Connect {
     }
     fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String> {
         self.signed_get(uri, u32::try_from(seconds).ok()?, now_ms)
+    }
+    fn presigned_put(&self, key: &str, seconds: u64, now_ms: u64) -> Option<(String, String)> {
+        self.signed_put(key, u32::try_from(seconds).ok()?, now_ms)
     }
 }

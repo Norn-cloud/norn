@@ -24,7 +24,7 @@
 //! - `connections` (native only): connector credentials in a per-cell
 //!   vault, OAuth + PKCE, single-flight refresh and the pinned egress client
 //!   (D126).
-//! - `dev` (native only): `norn-dev-host`, the developer loop over a
+//! - `dev` (native, `native` feature): `norn-dev-host`, the developer loop over a
 //!   project's own SQLite cell, serving the same dispatch on loopback (#207).
 //! - [`olap`]: the cell's link to its tenant analytics engine (D102).
 //! - `olapd` (native, `duckdb`): `norn-olapd`, the tenant analytics engine
@@ -36,7 +36,7 @@ pub mod base;
 pub mod connect;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod connections;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub mod dev;
 pub mod incident;
 pub mod mcp;

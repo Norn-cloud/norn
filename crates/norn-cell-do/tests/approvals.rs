@@ -1099,6 +1099,15 @@ impl SqlEngine for Counted {
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, norn_cell::CellError> {
         self.inner.read_cache_revision()
     }
+    fn admitted(&self) -> Result<(), norn_cell::CellError> {
+        self.inner.admitted()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, norn_cell::CellError>,
+    ) -> Result<T, norn_cell::CellError> {
+        self.inner.definition_writes(f)
+    }
 }
 
 /// #1532 S2: another requester's decision id is looked up by the caller's
@@ -1204,4 +1213,110 @@ fn other_requesters_approved_calls_never_hide_yours() {
     assert_eq!(page["items"][0]["id"], json!(id));
     assert_eq!(page["items"][0]["canRun"], json!(true));
     assert_eq!(page.get("totalCapped"), None, "{page}");
+}
+
+/// #1587: an approval-gated action with optional `trace` context parks with
+/// that exact trace visible on pending and requested decision reads, binds the
+/// approval to the trace (omitting or altering `trace` parks a distinct
+/// decision instead of consuming the approval), and commits & replays with the
+/// exact same `trace` on receipts and object history.
+#[test]
+fn an_approved_call_preserves_and_binds_trace_context() {
+    let cell = cell();
+    gate(&cell, None);
+    let trace = json!({
+        "traceId": "trc_approval_e2e_01",
+        "intentRef": "goal:approve-melt-7",
+        "sessionDigest": format!("sha256:{}", "b".repeat(64)),
+    });
+    let traced_body = json!({
+        "input": { "id": "melt-7", "input_fine_g": "12", "output_fine_g": "10" },
+        "idempotencyKey": "operator-traced-1",
+        "trace": trace,
+    })
+    .to_string();
+
+    let (status, parked) = convert(&cell, OPERATOR, &traced_body);
+    assert_eq!(status, 202, "{parked}");
+    assert_eq!(parked["outcome"], json!("pending"));
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(melt_status(&cell), 404);
+
+    // Pending view for approver exposes the parked call's exact trace.
+    let page = pending(&cell, APPROVER);
+    assert_eq!(page["total"], json!(1), "{page}");
+    assert_eq!(page["items"][0]["call"]["trace"], trace, "{page}");
+
+    // Requested view for requester exposes the exact trace.
+    let req_page = requested(&cell, OPERATOR, None);
+    assert_eq!(req_page["items"].as_array().unwrap().len(), 1, "{req_page}");
+    assert_eq!(req_page["items"][0]["call"]["trace"], trace, "{req_page}");
+
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    assert_eq!(melt_status(&cell), 404);
+
+    // Retrying with an altered trace or omitted trace does not consume the
+    // approval: each parks a distinct decision and leaves the melt uncommitted.
+    let other_trace_body = json!({
+        "input": { "id": "melt-7", "input_fine_g": "12", "output_fine_g": "10" },
+        "idempotencyKey": "operator-traced-1",
+        "trace": { "traceId": "trc_approval_e2e_other" },
+    })
+    .to_string();
+    let (status, parked_other) = convert(&cell, OPERATOR, &other_trace_body);
+    assert_eq!(status, 202, "{parked_other}");
+    assert_ne!(parked_other["decision"]["id"], json!(id), "{parked_other}");
+
+    let untrace_body = melt7("operator-traced-1");
+    let (status, parked_untraced) = convert(&cell, OPERATOR, &untrace_body);
+    assert_eq!(status, 202, "{parked_untraced}");
+    assert_ne!(
+        parked_untraced["decision"]["id"],
+        json!(id),
+        "{parked_untraced}"
+    );
+    assert_eq!(melt_status(&cell), 404);
+
+    // Rebuilding the retry directly from GET /v1/decisions:requested commits it.
+    let approved_page = requested(&cell, OPERATOR, Some(&id));
+    let approved_call = &approved_page["items"][0]["call"];
+    assert_eq!(approved_call["trace"], trace, "{approved_page}");
+    let retry = format!(
+        r#"{{"input":{},"idempotencyKey":{},"trace":{}}}"#,
+        approved_call["encodedInput"].as_str().unwrap(),
+        approved_call["idempotencyKey"],
+        approved_call["trace"],
+    );
+    let (status, committed) = convert(&cell, OPERATOR, &retry);
+    assert_eq!(status, 200, "{committed}");
+    assert_eq!(committed["outcome"], json!("committed"), "{committed}");
+    assert_eq!(committed["trace"], trace, "{committed}");
+    assert_eq!(melt_status(&cell), 200);
+
+    // Exact replay returns the same receipt with the same trace.
+    let (status, replayed) = convert(&cell, OPERATOR, &retry);
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
+    assert_eq!(replayed["trace"], trace, "{replayed}");
+
+    // Object version history discloses the action writer with the recorded trace.
+    let (status, history) = call(
+        &cell,
+        "GET",
+        "/v1/objects/constitution.Melt/melt-7/history",
+        OPERATOR,
+        "",
+    );
+    assert_eq!(status, 200, "{history}");
+    assert_eq!(
+        history["versions"][0]["writer"]["kind"],
+        json!("action"),
+        "{history}"
+    );
+    assert_eq!(
+        history["versions"][0]["writer"]["trace"], trace,
+        "{history}"
+    );
 }

@@ -122,7 +122,14 @@ const MARKING_VERSION_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_marking_v
   "markings" TEXT NOT NULL,
   PRIMARY KEY ("world", "object_type", "subject", "property", "version")
 )"#;
+/// The partial index of the current labels that are not empty.
+pub(crate) const MARKING_CURRENT_NONEMPTY: &str = "_norn_marking_current_nonempty";
 const MARKING_NONEMPTY_DDL: &str = r#"CREATE INDEX IF NOT EXISTS "_norn_marking_current_nonempty" ON "_norn_marking_current" ("world", "object_type", "property") WHERE "markings" != '[]'"#;
+/// The partial index of the version labels that are not empty: a cell's
+/// history holds a label exactly when it has a row (a storage version of its
+/// own, #1547).
+pub(crate) const MARKING_VERSION_NONEMPTY: &str = "_norn_marking_version_nonempty";
+const MARKING_VERSION_NONEMPTY_DDL: &str = r#"CREATE INDEX IF NOT EXISTS "_norn_marking_version_nonempty" ON "_norn_marking_version" ("world", "object_type", "property") WHERE "markings" != '[]'"#;
 const MARKING_SUBJECT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_marking_subject" (
   "subject" INTEGER NOT NULL PRIMARY KEY,
   "world" TEXT NOT NULL,
@@ -141,7 +148,8 @@ fn marking_schema_signature(sql: &str) -> String {
         MARKING_VERSION,
         MARKING_SUBJECT,
         "_norn_marking_subject/identity",
-        "_norn_marking_current_nonempty",
+        MARKING_CURRENT_NONEMPTY,
+        MARKING_VERSION_NONEMPTY,
         "world",
         "object_type",
         "id",
@@ -201,12 +209,18 @@ fn validate_marking_subjects<E: SqlEngine>(engine: &E) -> Result<(), CellError> 
     validate_marking_schema(
         engine,
         "index",
-        "_norn_marking_current_nonempty",
+        MARKING_CURRENT_NONEMPTY,
         MARKING_NONEMPTY_DDL,
     )?;
+    validate_marking_schema(
+        engine,
+        "index",
+        MARKING_VERSION_NONEMPTY,
+        MARKING_VERSION_NONEMPTY_DDL,
+    )?;
     let unexpected: Option<i64> = engine.query_optional(
-        "SELECT 1 FROM sqlite_master WHERE tbl_name IN (?1, ?2, ?3) AND (type = 'trigger' OR (type = 'index' AND sql IS NOT NULL AND name NOT IN (?4, ?5))) LIMIT 1",
-        params![MARKING_CURRENT, MARKING_VERSION, MARKING_SUBJECT, "_norn_marking_subject/identity", "_norn_marking_current_nonempty"],
+        "SELECT 1 FROM sqlite_master WHERE tbl_name IN (?1, ?2, ?3) AND (type = 'trigger' OR (type = 'index' AND sql IS NOT NULL AND name NOT IN (?4, ?5, ?6))) LIMIT 1",
+        params![MARKING_CURRENT, MARKING_VERSION, MARKING_SUBJECT, "_norn_marking_subject/identity", MARKING_CURRENT_NONEMPTY, MARKING_VERSION_NONEMPTY],
         |row| row.get(0),
     )?;
     let invalid: Option<i64> = engine.query_optional(
@@ -373,6 +387,7 @@ pub(crate) fn intern_marking_subjects<E: SqlEngine>(engine: &E) -> Result<(), Ce
             "INSERT INTO \"{MARKING_SUBJECT}\" (\"world\", \"object_type\", \"id\") SELECT DISTINCT \"world\", \"object_type\", \"id\" FROM \"{table}\" WHERE 1 ORDER BY \"world\", \"object_type\", \"id\" ON CONFLICT (\"world\", \"object_type\", \"id\") DO NOTHING"
         ))?;
         engine.execute_batch("DROP INDEX IF EXISTS \"_norn_marking_current_nonempty\"")?;
+        engine.execute_batch("DROP INDEX IF EXISTS \"_norn_marking_version_nonempty\"")?;
         let previous = format!("{table}_uninterned");
         engine.execute_batch(&format!("ALTER TABLE \"{table}\" RENAME TO \"{previous}\""))?;
         engine.execute_batch(ddl)?;
@@ -382,7 +397,8 @@ pub(crate) fn intern_marking_subjects<E: SqlEngine>(engine: &E) -> Result<(), Ce
         verify_marking_copy(engine, &previous, table)?;
         engine.execute_batch(&format!("DROP TABLE \"{previous}\""))?;
     }
-    engine.execute_batch(MARKING_NONEMPTY_DDL)
+    engine.execute_batch(MARKING_NONEMPTY_DDL)?;
+    engine.execute_batch(MARKING_VERSION_NONEMPTY_DDL)
 }
 
 /// The system DDL, in application order.
@@ -624,6 +640,7 @@ pub const SYSTEM_DDL: &[&str] = &[
   PRIMARY KEY ("world", "object_type", "id", "version", "is_current")
 )"#,
     MARKING_NONEMPTY_DDL,
-    // OPEN-CHECKPOINT-1 (#1533), storage version 5.
+    MARKING_VERSION_NONEMPTY_DDL,
+    // OPEN-CHECKPOINT-1 (#1533), storage version 6.
     crate::open_checkpoint::DDL,
 ];

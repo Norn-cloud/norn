@@ -21,7 +21,7 @@ use norn_cell::engine::SqlEngine;
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{
     CellCommit, CommandId, Consumed, DecisionTurn, EnvelopeLimits, FactEvent, FactKey, Generation,
-    LogicalTime, TypeCatalog, World,
+    LogicalTime, World,
 };
 
 use norn_cell::flow_run::RunStarter;
@@ -95,9 +95,8 @@ pub(crate) fn result_turn<E: SqlEngine>(
     )
     .map_err(|error| refused(error.code(), "the flow refused the result"))?;
     let model = cell.store().model().clone();
-    let catalog = TypeCatalog::new(model.object_types())
-        .with_property_types(model.property_types())
-        .with_interfaces(model.interfaces())
+    let catalog = model
+        .type_catalog()
         .with_governing_laws(model.law_artifacts());
     let turn = DecisionTurn {
         id: format!(
@@ -496,6 +495,7 @@ fn step_approval<E: SqlEngine>(
             && held.call.idempotency_key == step.call_key
             && held.call.action == action.action
             && held.call.input == action.input
+            && held.call.trace == action.trace
             && held.call.definitions_version.is_none()
             && held.call.requester == *starter;
         if exact {
@@ -659,6 +659,7 @@ pub fn drive_run<E: SqlEngine>(
                 let request = crate::actions::ActionRequest {
                     input: RuntimeValue::Object(action.input),
                     idempotency_key: step.call_key.clone(),
+                    trace: action.trace.map(Into::into),
                 };
                 // S2: the request's own authenticated principal, read before
                 // any recorded authority stands in for it. Only a try run as

@@ -2790,10 +2790,12 @@ fn tampered_definition_history_fails_closed_on_reopen() {
 
     let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine opens");
     tamper
-        .execute(
-            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
-            &[SqlValue::from("[]")],
-        )
+        .definition_writes(|| {
+            tamper.execute(
+                "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
+                &[SqlValue::from("[]")],
+            )
+        })
         .expect("tamper retained artifact bytes");
     drop(tamper);
 
@@ -2990,6 +2992,13 @@ impl SqlEngine for CountedEngine {
         Ok(Some((writes, remote)))
     }
 
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.record_write();
         self.inner.execute(sql, params)
@@ -3055,6 +3064,13 @@ impl SqlEngine for ExplainEngine {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.inner.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }
@@ -4921,10 +4937,7 @@ fn mixed_or_incomplete_property_column_layouts_are_refused_and_left_untouched() 
                 &[],
             )
             .expect("reads meta");
-        assert!(
-            marker.is_empty(),
-            "{case}: the layout marker is not written"
-        );
+        assert_eq!(marker.len(), 0, "{case}: the layout marker is not written");
     }
 }
 
@@ -5131,7 +5144,7 @@ fn governing_law_input(expression: &str, at: u64) -> (Model, InstalledDefinition
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     input.canonical_set = String::from_utf8(
         norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set"),
     )
@@ -5280,7 +5293,7 @@ fn purity_quality_host_with_severity(
             "lawVersion":"0.1", "id":"purity_in_range", "owner":"quality.controls", "severity":severity, "rationale":"Purity must be within zero and one", "provenance":{"source":"authoring_sdk"}, "subject":"quality.Measurement", "scope":{"root":{"kind":"entity", "id":"quality.Measurement"}, "objectTypes":["quality.Measurement"]}, "modality":{"kind":"always"}, "response":{"kind":"predicate", "expression":"self.purity >= 0 and self.purity <= 1"}
         }}
     ])).expect("typed synthetic declarations");
-    assert!(
+    assert_eq!(
         norn_checker::check_artifact_set(
             &artifacts,
             &norn_checker::EntityArtifactSetContext {
@@ -5288,8 +5301,8 @@ fn purity_quality_host_with_severity(
                 base: &[],
                 tenant: None
             }
-        )
-        .is_empty()
+        ),
+        []
     );
     let model =
         Model::from_definitions(&[serde_json::from_value(object).expect("measurement")], &[])
@@ -5812,7 +5825,7 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
             tenant: None,
         },
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     let old_model = cell.store().model().clone();
     drop(cell);
     let mut store = CellStore::open(path, old_model, StoreOptions::default()).expect("store");
@@ -6047,10 +6060,12 @@ fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
     drop(cold);
     let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
     tamper
-        .execute(
-            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1",
-            &[SqlValue::from("[]")],
-        )
+        .definition_writes(|| {
+            tamper.execute(
+                "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1",
+                &[SqlValue::from("[]")],
+            )
+        })
         .expect("tamper retained artifact bytes");
     drop(tamper);
     assert!(
@@ -6144,7 +6159,9 @@ fn mapping_plan_hit_refuses_like_a_fresh_store() {
     for (name, tamper) in cases {
         let (warm, cold) = warm_and_fresh_refusals(|_, engine, version| {
             engine
-                .execute(&tamper.replace("?V", &version.to_string()), &[])
+                .definition_writes(|| {
+                    engine.execute(&tamper.replace("?V", &version.to_string()), &[])
+                })
                 .expect("tamper");
         });
         assert_eq!(warm, cold, "{name}: warm and cold refusals differ");
@@ -6213,8 +6230,8 @@ fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics(
     let bundle: norn_cell::mapping_bundle::MappingBundle =
         norn_ir::runtime::decode(&observed.input).expect("bundle");
     assert_eq!(bundle.raw, raw.input);
-    assert!(bundle.records.is_empty());
-    assert!(!bundle.diagnostics.is_empty());
+    assert_eq!(bundle.records, []);
+    assert_ne!(bundle.diagnostics, []);
     assert!(bundle.diagnostics.iter().all(|d| d.get("code").is_some()
         && d.get("span").is_some()
         && d.get("severity").is_some()));
@@ -6595,6 +6612,13 @@ impl SqlEngine for ProvisionFault {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.inner.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)?;
         self.boundary()
@@ -7467,7 +7491,7 @@ fn source_dispute_index_retries_churn_and_returns_a_distinct_retryable_refusal()
             .read()
             .observation_findings(MAIN_WORLD, "quality.Measurement", "clean");
         if churn < 7 {
-            assert!(result.expect("bounded retry stabilizes").is_empty());
+            assert_eq!(result.expect("bounded retry stabilizes"), []);
         } else {
             assert!(matches!(result, Err(CellError::SourceEvidenceChanged)));
         }
@@ -7779,4 +7803,68 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
         norn_testkit::proptest::prop_assert_eq!(findings[0].severity, norn_ir::DataQualitySeverity::Warning);
     }
+}
+
+/// S1 (#1547): inside its scope an install writes only the tables its own
+/// statements name. Another connection to the cell file (an out-of-process
+/// editor) gives the retained admission receipts a foreign key to the active
+/// definitions pointer, with `ON DELETE CASCADE`. The next install deletes and
+/// re-inserts the pointer row; the cascade would delete the earlier version's
+/// receipt on the install's own commit. The install is refused, and the cell
+/// is left exactly as it was: the same active version, the same receipt, the
+/// same ledger.
+#[test]
+fn an_install_whose_pointer_cascades_into_the_receipts_is_refused_and_writes_nothing() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let original = model(false);
+    let mut store =
+        CellStore::open(&path, original.clone(), StoreOptions::default()).expect("store opens");
+    let (receipt, digest) = admission_receipt("0.1.0", "norn-zen/4");
+    let mut first = install_input("v1", 1, &original);
+    first.receipt_sha256 = digest;
+    first.admission_receipt = Some(receipt.clone());
+    store
+        .install_definitions(original.clone(), first, Some(0), "org_demo/dev")
+        .expect("the first install");
+    rusqlite::Connection::open(&path)
+        .expect("editor connection")
+        .execute_batch(
+            r#"ALTER TABLE "_norn_definition_admission_receipt" ADD COLUMN "editor_pointer" INTEGER REFERENCES "_norn_definition_active" ("id") ON DELETE CASCADE;
+            UPDATE "_norn_definition_admission_receipt" SET "editor_pointer" = 1;"#,
+        )
+        .expect("the editor's cascade");
+    let receipts = |store: &CellStore| -> Vec<String> {
+        store
+            .read()
+            .installed_definitions(Some(1))
+            .expect("version 1")
+            .expect("retained")
+            .admission_receipt
+            .into_iter()
+            .collect()
+    };
+    let before = store.read().verify_ledger().expect("ledger before");
+    assert_eq!(receipts(&store), vec![receipt.clone()]);
+    let (second_receipt, second_digest) = admission_receipt("0.1.0", "norn-zen/6");
+    let mut second = install_input("v2", 2, &original);
+    second.receipt_sha256 = second_digest;
+    second.admission_receipt = Some(second_receipt);
+    assert!(
+        store
+            .install_definitions(original, second, Some(1), "org_demo/dev")
+            .is_err(),
+        "the install's pointer delete would cascade into a retained receipt"
+    );
+    assert_eq!(store.read().verify_ledger().expect("ledger after"), before);
+    assert_eq!(receipts(&store), vec![receipt]);
+    let editor = rusqlite::Connection::open(&path).expect("editor connection");
+    let (active, receipt_rows): (i64, i64) = editor
+        .query_row(
+            r#"SELECT (SELECT "version" FROM "_norn_definition_active" WHERE "id" = 1), (SELECT COUNT(*) FROM "_norn_definition_admission_receipt")"#,
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("the cell as left");
+    assert_eq!((active, receipt_rows), (1, 1));
 }

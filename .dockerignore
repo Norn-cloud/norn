@@ -1,0 +1,26 @@
+# Every Dockerfile here builds from the repository root (`docker build -f <path>/Dockerfile .`),
+# so this file decides what enters every build context. Secrets never do: an operator's
+# apps/norn-cell-rivet/.env, and any other env, key or credential file, stays on the machine.
+**/.env
+**/.env.*
+**/*.env
+!**/env.example
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/id_rsa*
+**/id_ed25519*
+**/.npmrc
+**/.netrc
+**/.pypirc
+**/credentials.json
+**/service-account-key.json
+**/bitwarden*.json
+**/.aws
+**/.docker
+**/.ssh
+# Large and machine-local: history, build output, installed dependencies.
+.git
+**/target
+**/node_modules

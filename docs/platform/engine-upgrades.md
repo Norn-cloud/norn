@@ -35,22 +35,22 @@ A refused or failed open leaves the file byte-identical. Nothing is committed un
 
 - The native engine (`NativeEngine::open`) admits the storage version before it sets the journal mode, which SQLite stores in the file.
 - An open runs the schema step, the migrations, and the verification of the history, the fork pin and an expected cell identity in one transaction. The migrations run before this engine's schema statements, so each step sees the layout it was written for. If any later check fails (a model mismatch, a ledger that does not verify), the upgrade rolls back with it.
-- The history is verified from the cell's open checkpoint (storage version 5, OPEN-CHECKPOINT-1, #1533), or from genesis when it has none. See [Checkpointed open](#checkpointed-open).
+- The history is verified from the cell's open checkpoint (storage version 6, OPEN-CHECKPOINT-1, #1533), or from genesis when it has none. See [Checkpointed open](#checkpointed-open).
 - Provisioning an existing cell admits it again and runs the migrations at the start of its write transaction, before any other statement, so a second opener that changed the version after the first check is caught.
-- A fork admits the copied snapshot and refuses unless it is at this engine's storage version, before it reads the copy's head or writes its pin. A copy is never migrated.
+- A fork admits the copied snapshot and refuses unless it is at this engine's storage version, before it reads the copy's head or writes its pin. A copy is never migrated. A fork is also refused while a checkpointed open's history scrub is incomplete (`cell.verifying`) or while the cell is fenced (`cell.fenced`), so a fork only copies scrub-verified history.
 
 Hosts already turn an open refusal into `cell.unopenable`, and the reason reaches only a definition writer.
 
 ## Checkpointed open
 
-From storage version 5 an open does not re-verify every commit from the first one. `_norn_open_checkpoint` holds one row: a ledger head this engine verified (commit count, last event sequence and hash), the RFC 6962 root of the receipt digests of those commits, the quantity boundary in force at it, a digest of the `(commit, receipt digest)` list of the quantity receipts it covers, the commit and stored digest of the last export record it covers, a digest of every retained definition version it covers, and a MAC. The code is `crates/norn-cell/src/open_checkpoint.rs` (the row, its MAC and the genesis-parity table) and `crates/norn-cell/src/scrub.rs` (the history scrub).
+From storage version 6 an open does not re-verify every commit from the first one. `_norn_open_checkpoint` holds one row: a ledger head this engine verified (commit count, last event sequence and hash), the RFC 6962 root of the receipt digests of those commits, the quantity boundary in force at it, a digest of the `(commit, receipt digest)` list of the quantity receipts it covers, the commit and stored digest of the last export record it covers, a digest of every retained definition version it covers, and a MAC. The code is `crates/norn-cell/src/open_checkpoint.rs` (the row, its MAC, durable fence and the genesis-parity table), `crates/norn-cell/src/open_checkpoint/verify.rs` (verification and checkpoint advancement) and `crates/norn-cell/src/scrub.rs` (the history scrub).
 
 ### Claim and threat model
 
 - **Who we defend against:** anyone who can rewrite the cell file (its rows, digests and the checkpoint row together) but does not hold the host's checkpoint key.
 - **The claim:** a checkpointed cell detects every edit a genesis open detects. Edits to live state are detected at open. Edits to history are detected within one scrub, before any read that depends on that history being complete is served.
-- **Forging a checkpoint needs the key.** The row is authenticated by HMAC-SHA256 under a key held outside the cell file: the host's secret store (Infisical or OpenBao in alpha, `NORN_CHECKPOINT_KEY` on the Durable Object host). The dev host makes a random key on first use and keeps it beside the cell, in `.norn/checkpoint.key` (owner-only), never in the cell file. Tests draw a random key per process. No key is written into the source. The MAC covers every column and the cell's identity binding, so a row copied from another cell does not verify either.
-- **Fail-safe:** a missing key, a cell with no identity, or a row whose MAC does not verify gives a genesis open, never a refusal. The same holds for a checkpoint past the end of the file, as after a restore that trimmed history. A lost or rotated key costs open time, not the cell.
+- **Forging a checkpoint needs the key.** The row is authenticated by HMAC-SHA256 under a key held outside the cell file: the host's secret store (OpenBao or a hosted secret store in alpha, `NORN_CHECKPOINT_KEY` on the Durable Object host). The dev host makes a random key on first use and keeps it beside the cell, in `.norn/checkpoint.key` (owner-only), never in the cell file. Tests draw a random key per process. No key is written into the source. The MAC covers every column and the cell's identity binding, so a row copied from another cell does not verify either.
+- **Fail-safe:** a missing key, a cell with no identity, a malformed or unparseable checkpoint row, or a row whose MAC does not verify gives a genesis open, never a refusal. The same holds for a checkpoint past the end of the file, as after a restore that trimmed history. A lost or rotated key costs open time, not the cell.
 - **Not claimed:** a rollback of the whole file to an older consistent state, which a genesis open does not detect either. An attacker who holds the key. Proving history complete without reading it; a per-row authenticated index (a Merkle index over value versions and selectors) is a post-beta option.
 
 ### What an open checks
@@ -85,14 +85,14 @@ Until the scrub ends, reads that depend on history being complete are refused wi
 
 | Held back until | Reads |
 |---|---|
-| the history phase ends | as-of reads (`version_as_of`, knowledge-cutoff evidence), version lists (object history, as-of metrics and other historical compute), ledger and finding-ledger pages that reach an entry the checkpoint covers |
-| the receipts phase ends | a commit whose idempotency key finds no receipt: the miss cannot be dated, and a changed selector could hide a covered receipt, so the write is refused as retryable rather than committed twice |
+| the history phase ends | as-of reads (`version_as_of`, knowledge-cutoff evidence), historical frames and analytics/compute queries over history (gated before population selection), version lists (object history), `ledger()`, ledger and finding-ledger pages that reach an entry the checkpoint covers, export and transparency reads covering checkpointed history, and `fork()` |
+| the receipts phase ends | a commit or `receipt_by_idempotency_key` lookup whose idempotency key finds no receipt: the miss cannot be dated, and a changed selector could hide a covered receipt, so the miss is refused as retryable rather than treated as absent or committed twice |
 
-A defect fences the cell. Every commit and every request is refused with `cell.fenced`, and the finding is logged and returned by the host's due-work report. The checkpoint row is dropped, so the next open verifies from genesis and refuses the same defect.
+Each scrub step stages its progress and applies it to in-memory state only after its transaction commits, so a transient SQLite failure never loses or corrupts scrub state. A defect (or exhausted transient retries) fences the cell durably: the checkpoint row is dropped and `_norn_meta` records `open_checkpoint:fenced` in one transaction, so every commit, read, fork, sibling handle and subsequent reopen fails closed with `cell.fenced`. The finding is logged and returned by the host's due-work report.
 
 ### When a checkpoint is written
 
-- **By a commit.** After every 128th commit, and only from the checkpoint this handle validated, once the scrub has verified the history it covers. The commit re-runs the pins an open runs on that checkpoint, verifies everything it newly covers, and builds the new root only from digests equal to the ones on disk. A commit verifies at most 256 commits. A longer gap is handed to the scrub, which closes it off the commit path and seeds the next checkpoint. A commit never runs a catch-up from genesis. A history of 256 commits or fewer is checkpointed from genesis by its first due commit.
+- **By a commit.** After every 128th commit, and only from the checkpoint this handle validated, once the scrub has verified the history it covers. Inside the checkpoint's own transaction, the commit re-checks the tail anchor against concurrent writes, re-runs the pins an open runs on that checkpoint, verifies everything it newly covers, and builds the new root only from digests equal to the ones on disk. A commit verifies at most 256 commits. A longer gap is handed to the scrub, which closes it off the commit path and seeds the next checkpoint. A commit never runs a catch-up from genesis. A history of 256 commits or fewer is checkpointed from genesis by its first due commit.
 - **By the scrub.** At the end of every scrub, at the head it verified. That covers after a checkpointed open, after a genesis open of a history over 256 commits (where the scrub only rebuilds what the seed records), and after a restore.
 - **By an upgrading open,** which writes anyway.
 - **Never otherwise.** A same-version open writes nothing. The row is metadata: it is never part of a receipt, a ledger event or an export. A failed write keeps the previous checkpoint.
@@ -122,6 +122,25 @@ The check lives in `norn-cell`, below the host seam. The native host, the Durabl
 4. To retire old steps, raise `UPGRADES_FROM`. A cell older than the new floor must first be opened on a bridge release, one whose floor still admits it.
 
 A step may only rewrite derived or physical state: projections, indexes, metadata. Ledger entries and receipts are evidence, and no step rewrites them. If a change would need to rewrite them, it is a new store format, not a storage version.
+
+## RivetKit upgrades
+
+The Rivet host runs a cell on RivetKit's own SQLite, and RivetKit may commit its internal schema migrations when an actor starts, before `on_start` reads the Norn stamp. A refused cell is then still written if the restart also brings a new RivetKit. RivetKit's public API has no hook that runs before those migrations, so the Rivet host rules out the combination by policy:
+
+1. **A RivetKit version change ships only together with a Norn storage version bump.** The release that moves `rivetkit` also adds a `CHANNEL` entry and raises `STORAGE_VERSION`, even when Norn's own layout is unchanged.
+2. **An engine refuses cells stamped by a different RivetKit version unless that version is in its allowed-upgrade list.** The list is `RIVETKIT_CHANNEL` in `crates/norn-cell-rivet/src/config.rs`: each RivetKit release and the first storage version written under it. A cell written under a newer RivetKit carries a newer storage version, so it refuses `core.engine.downgrade` before any Norn code touches it. The Rivet host admits cells from `ADMISSION_FLOOR`, the lowest `from_storage` of the retained list (or `UPGRADES_FROM`, if higher), up to `STORAGE_VERSION`. Dropping the oldest releases retires them: the floor rises past their storage versions, and a cell stamped below it fails its start with `core.engine.upgrade_unsupported`, even though the shared engine alone would upgrade it.
+3. **Rollback across a RivetKit version is unsupported.** The older RivetKit may already have been run over by the newer one's migrations. The way back is a backup or a point-in-time restore taken before the upgrade, never a re-pin.
+
+Two checks in `scripts/ci/core.sh rivet` enforce this:
+
+- **Against the base:** `scripts/ci/rivetkit_channel.py` (its cases are in `scripts/ci/test_rivetkit_channel.py`) compares the working tree with the merge-base of `NORN_CI_BASE` (default `origin/main`). It fails closed when that base cannot be resolved, and it requires:
+  - exactly one `Cargo.lock` entry each for `rivetkit` and `rivetkit-core`, from the crates.io registry, with a checksum;
+  - a channel that is append-only: the base's, with only its oldest entries dropped and new ones appended;
+  - when either crate's locked version, source or checksum differs from the base's, exactly one new entry for `RIVETKIT_VERSION` at the head's `STORAGE_VERSION`, which must be above the base's;
+  - no new entry when neither crate changed.
+- **In the tree:** the unit test `config::tests::rivetkit_pin_matches_the_lock_and_the_storage_version` fails when `Cargo.lock`'s `rivetkit` or `rivetkit-core` differs from `RIVETKIT_VERSION`, when the last `RIVETKIT_CHANNEL` entry is not that version, and when an entry does not start at a storage version above the previous one.
+
+The real fix, a RivetKit hook that admits the cell before RivetKit's own migrations plus a conformance case with a pending Rivet schema migration, is post-beta work (#1550).
 
 ## Release channel
 

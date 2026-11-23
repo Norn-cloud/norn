@@ -71,6 +71,13 @@
         "$ref": "#/$defs/ActionPreconditionOutcome"
       }
     },
+    "parameterPins": {
+      "description": "Effective-dated parameter pins resolved by declared parameter slices\n(D07, PARAM-EXACT-1, PARAM-BOUND-1).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActionParameterPin"
+      }
+    },
     "actor": {
       "description": "The actor.",
       "type": "string"
@@ -97,6 +104,17 @@
       "items": {
         "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
       }
+    },
+    "trace": {
+      "description": "Optional provenance trace context supplied by the caller.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TraceContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -171,6 +189,78 @@
         "expression",
         "satisfied"
       ]
+    },
+    "ActionParameterPin": {
+      "description": "One effective-dated parameter resolved and pinned during an action commit\n(D07, PARAM-EXACT-1, PARAM-BOUND-1).",
+      "type": "object",
+      "properties": {
+        "entry": {
+          "description": "The declared parameter slice entry name.",
+          "type": "string"
+        },
+        "settingKey": {
+          "description": "The stable parameter key.",
+          "type": "string"
+        },
+        "effectiveAt": {
+          "description": "The declared effective timestamp evaluated for this selection.",
+          "type": "string"
+        },
+        "setting": {
+          "description": "The selected setting fact's concrete object type and key.",
+          "$ref": "#/$defs/FactKey"
+        },
+        "version": {
+          "description": "The committed fact version of the selected setting at commit time.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "digest": {
+          "description": "Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's\nexact values at commit time.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entry",
+        "settingKey",
+        "effectiveAt",
+        "setting",
+        "version",
+        "digest"
+      ]
+    },
+    "TraceContext": {
+      "description": "Optional provenance trace context attached to an action call and persisted\non its committed receipt.\n\nStrictly optional and additive: callers without trace context are unaffected,\nand raw transcript text is never stored (`sessionDigest` admits only a\ncontent-addressed SHA-256 digest).",
+      "type": "object",
+      "properties": {
+        "traceId": {
+          "description": "Opaque correlation identifier tying multi-step causes and effects\ntogether (1 to 256 UTF-8 bytes, no control characters or outer whitespace).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "intentRef": {
+          "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "sessionDigest": {
+          "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "traceId"
+      ]
+    },
+    "Digest": {
+      "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
     }
   }
 }

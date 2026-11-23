@@ -99,6 +99,7 @@ pub(crate) fn foreign_model_deletions<E: SqlEngine>(
     model: &str,
     budget: &DecodeBudget,
 ) -> Result<std::collections::BTreeSet<String>, CellError> {
+    reader.history_gate.history("historical deletions")?;
     let root = reader.root_type(kind)?;
     let cap = budget.remaining_rows();
     let limit = i64::try_from(cap.saturating_add(1))
@@ -125,6 +126,7 @@ pub(super) fn history_ids<E: SqlEngine>(
     max: usize,
     budget: &mut DecodeBudget,
 ) -> Result<(Vec<String>, bool), CellError> {
+    reader.history_gate.history("historical population")?;
     let root = reader.root_type(kind)?;
     let cap = budget.remaining_rows();
     if cap == 0 || budget.remaining_bytes() < 64 {
@@ -188,6 +190,8 @@ pub(crate) fn frame<E: SqlEngine>(
     now: u64,
     budget: &mut DecodeBudget,
 ) -> Result<(crate::LedgerHead, Option<crate::Receipt>), CellError> {
+    // S7 (#1551): check the scrub barrier before reading frontier receipts or population.
+    reader.history_gate.history("historical frames")?;
     if now != cutoff.recorded_at.as_millis() {
         return Err(refused("core.compute.stale_input"));
     }

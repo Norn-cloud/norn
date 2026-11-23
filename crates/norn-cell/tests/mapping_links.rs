@@ -202,7 +202,7 @@ fn obs_link_pending_targets_resolve_without_source_redelivery_and_reopen_is_iden
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");
     capture(&mut cell, "erpnext", &rows[6], "snapshot");
-    assert!(graph(&cell).is_empty());
+    assert_eq!(graph(&cell).len(), 0);
     assert_eq!(
         cell.store()
             .read()
@@ -715,8 +715,9 @@ fn obs_link_target_arrival_resolves_only_the_current_pending_claim() {
     custodian["record"]["provider_ref"] = json!("demo/party/custodian");
     capture(&mut cell, "erpnext", &custodian, "1");
     capture(&mut cell, "erpnext", &rows[0], "snapshot");
-    assert!(
-        provider(&cell).is_empty(),
+    assert_eq!(
+        provider(&cell).len(),
+        0,
         "owner arrival must read the superseding claim, though it names only the custodian"
     );
     capture(&mut cell, "erpnext", &rows[1], "snapshot");
@@ -1007,12 +1008,9 @@ fn obs_page_a_repeated_identity_refuses_the_whole_page_before_capture() {
         cell.inject_mapping_page(&[first, other, again], &input)
             .is_err()
     );
-    assert!(
-        cell.store()
-            .read()
-            .pending_observations()
-            .expect("pending")
-            .is_empty(),
+    assert_eq!(
+        cell.store().read().pending_observations().expect("pending"),
+        [],
         "a refused page captures nothing"
     );
 }
@@ -2112,7 +2110,18 @@ fn retain_as_before_decimal_text(
 /// (`fixtures/mapping-bundle-main-decimal-text.json`) was captured by this
 /// exact sequence on the merged main parent's code.
 fn decimal_text_holding(path: &Path) -> (Cell, Value, String) {
-    let mut cell = setup(path);
+    // The frozen main-era bundle fixture was captured before `core.time` and
+    // `core.TimeInterval` joined `registry/core/artifacts/`; install that exact
+    // historical definition set so the untouched main-era bundle verifies
+    // against the definitions it was captured under.
+    let mut cell = setup_with(path, |artifacts| {
+        artifacts.retain(|artifact| {
+            !matches!(
+                artifact.artifact_id.as_str(),
+                "core.time" | "core.TimeInterval.interface"
+            )
+        });
+    });
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");
     for row in rows

@@ -263,11 +263,11 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         .expect("page");
     assert_eq!(page.len(), 1);
     assert_eq!(page[0].definition.id, "studio.dashboard.b");
-    assert!(
+    assert_eq!(
         reader
             .retained_definitions("agent", true, None, 10)
-            .expect("kind")
-            .is_empty()
+            .expect("kind"),
+        []
     );
 
     // The export journal carries each revision; a restore rebuilds them.
@@ -388,7 +388,7 @@ fn provisioning_reopen_adds_the_retained_table_to_an_older_file() {
     // An older file: the retained table is absent.
     let engine = open();
     engine
-        .execute_batch(r#"DROP TABLE "_norn_retained_definition""#)
+        .definition_writes(|| engine.execute_batch(r#"DROP TABLE "_norn_retained_definition""#))
         .expect("drop retained table");
     drop(engine);
 
@@ -538,6 +538,13 @@ impl norn_cell::engine::SqlEngine for ReadbackFault {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.inner.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[norn_cell::engine::SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }

@@ -23,14 +23,12 @@ use serde::{Deserialize, Serialize};
 use transparency_sha2::{Digest as _, Sha256};
 
 mod assemble;
-mod dataset;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 pub mod engine;
 mod lower;
 mod mirror;
 
 pub use assemble::{Prepared, bucket_value};
-pub use dataset::DatasetRecord;
 pub use lower::{lower, table_schema};
 pub use mirror::MirrorBatch;
 
@@ -629,6 +627,493 @@ pub struct LoadResponse {
     pub bytes: u64,
     /// Wall time of the load, for the record.
     pub millis: u64,
+}
+
+/// MANIFEST-LAWS-1: a row predicate the engine evaluates set-based, lowered
+/// from an admitted ZEN expression (the VIEW-ENGINE-1 row subset). It carries
+/// no SQL: the engine builds its statement from this tree, its own table
+/// schema and bound literals, and refuses a tree its kinds do not type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "op", content = "args")]
+pub enum RowPredicate {
+    /// `null`: only as an operand of `==` or `!=`.
+    Null,
+    /// A Boolean literal.
+    Bool(bool),
+    /// An exact decimal literal, canonical.
+    Number(String),
+    /// A text literal.
+    Text(String),
+    /// `self.<column>`.
+    Column(String),
+    /// `not x`.
+    Not(Box<RowPredicate>),
+    /// `-x`.
+    Negate(Box<RowPredicate>),
+    /// `x + y`.
+    Add(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x - y`.
+    Subtract(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x * y`.
+    Multiply(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x == y`.
+    Equal(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x != y`.
+    NotEqual(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x < y`, on numbers.
+    Less(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x <= y`, on numbers.
+    LessOrEqual(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x > y`, on numbers.
+    Greater(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x >= y`, on numbers.
+    GreaterOrEqual(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x and y`.
+    And(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x or y`.
+    Or(Box<RowPredicate>, Box<RowPredicate>),
+    /// `c ? x : y`.
+    Conditional(Box<RowPredicate>, Box<RowPredicate>, Box<RowPredicate>),
+}
+
+/// The kind of a [`RowPredicate`] node over a table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredicateKind {
+    /// The `null` literal.
+    Null,
+    /// A Boolean.
+    Bool,
+    /// Text.
+    Text,
+    /// An exact decimal with this many fractional digits.
+    Number(u32),
+}
+
+/// The largest scale a lowered number may reach: past it the per-row
+/// evaluator's decimal cannot hold the value exactly.
+pub const MAX_PREDICATE_SCALE: u32 = 28;
+
+impl RowPredicate {
+    /// MANIFEST-LAWS-1: the kind of this node over `table`, when every node is
+    /// typed the way both the per-row evaluator and the engine compute it
+    /// exactly: numbers compare and compute only with numbers, text and
+    /// Booleans only compare for equality, `null` only appears as an
+    /// operand of `==` or `!=`, and no scale passes
+    /// [`MAX_PREDICATE_SCALE`]. `None` for anything else; such a check is
+    /// left to the per-row evaluator.
+    #[must_use]
+    pub fn kind(&self, table: &TableSchema) -> Option<PredicateKind> {
+        self.kind_in(table, false)
+    }
+
+    fn kind_in(&self, table: &TableSchema, null_allowed: bool) -> Option<PredicateKind> {
+        use PredicateKind as K;
+        let number = |a: &Self, b: &Self| match (a.kind_in(table, false)?, b.kind_in(table, false)?)
+        {
+            (K::Number(x), K::Number(y)) => Some((x, y)),
+            _ => None,
+        };
+        let kind = match self {
+            Self::Null => null_allowed.then_some(K::Null)?,
+            Self::Bool(_) => K::Bool,
+            Self::Number(text) => {
+                let exact = norn_ir::Decimal::parse(text).ok()?;
+                if exact.canonical() != *text {
+                    return None;
+                }
+                K::Number(u32::try_from(text.split_once('.').map_or(0, |(_, f)| f.len())).ok()?)
+            }
+            Self::Text(_) => K::Text,
+            Self::Column(id) => match table.columns.iter().find(|c| c.id == *id)?.kind {
+                ColumnKind::Integer => K::Number(0),
+                ColumnKind::Decimal { scale } => K::Number(scale),
+                ColumnKind::Text => K::Text,
+                ColumnKind::Boolean => K::Bool,
+                ColumnKind::Timestamp | ColumnKind::Date | ColumnKind::Opaque => return None,
+            },
+            Self::Not(inner) => (inner.kind_in(table, false)? == K::Bool).then_some(K::Bool)?,
+            Self::Negate(inner) => match inner.kind_in(table, false)? {
+                K::Number(scale) => K::Number(scale),
+                K::Null | K::Bool | K::Text => return None,
+            },
+            Self::Add(a, b) | Self::Subtract(a, b) => {
+                let (x, y) = number(a, b)?;
+                K::Number(x.max(y))
+            }
+            Self::Multiply(a, b) => {
+                let (x, y) = number(a, b)?;
+                K::Number(x.checked_add(y)?)
+            }
+            Self::Equal(a, b) | Self::NotEqual(a, b) => {
+                let (x, y) = (a.kind_in(table, true)?, b.kind_in(table, true)?);
+                let same = match (x, y) {
+                    (K::Number(_), K::Number(_)) | (K::Null, _) | (_, K::Null) => true,
+                    (x, y) => x == y,
+                };
+                same.then_some(K::Bool)?
+            }
+            Self::Less(a, b)
+            | Self::LessOrEqual(a, b)
+            | Self::Greater(a, b)
+            | Self::GreaterOrEqual(a, b) => {
+                number(a, b)?;
+                K::Bool
+            }
+            Self::And(a, b) | Self::Or(a, b) => (a.kind_in(table, false)? == K::Bool
+                && b.kind_in(table, false)? == K::Bool)
+                .then_some(K::Bool)?,
+            Self::Conditional(test, then, otherwise) => {
+                if test.kind_in(table, false)? != K::Bool {
+                    return None;
+                }
+                match (
+                    then.kind_in(table, false)?,
+                    otherwise.kind_in(table, false)?,
+                ) {
+                    (K::Number(left), K::Number(right)) => K::Number(left.max(right)),
+                    (left, right) if left == right => left,
+                    _ => return None,
+                }
+            }
+        };
+        match kind {
+            K::Number(scale) if scale > MAX_PREDICATE_SCALE => None,
+            kind @ (K::Null | K::Bool | K::Text | K::Number(_)) => Some(kind),
+        }
+    }
+
+    /// Every column the predicate reads, in order of first read.
+    #[must_use]
+    pub fn reads(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.collect_reads(&mut out);
+        out
+    }
+
+    fn collect_reads(&self, out: &mut Vec<String>) {
+        match self {
+            Self::Null | Self::Bool(_) | Self::Number(_) | Self::Text(_) => {}
+            Self::Column(id) => {
+                if !out.contains(id) {
+                    out.push(id.clone());
+                }
+            }
+            Self::Not(inner) | Self::Negate(inner) => inner.collect_reads(out),
+            Self::Add(a, b)
+            | Self::Subtract(a, b)
+            | Self::Multiply(a, b)
+            | Self::Equal(a, b)
+            | Self::NotEqual(a, b)
+            | Self::Less(a, b)
+            | Self::LessOrEqual(a, b)
+            | Self::Greater(a, b)
+            | Self::GreaterOrEqual(a, b)
+            | Self::And(a, b)
+            | Self::Or(a, b) => {
+                a.collect_reads(out);
+                b.collect_reads(out);
+            }
+            Self::Conditional(c, a, b) => {
+                c.collect_reads(out);
+                a.collect_reads(out);
+                b.collect_reads(out);
+            }
+        }
+    }
+}
+
+/// MANIFEST-LAWS-1: one law or invariant, as the engine checks it over a
+/// landing. Where the condition holds, the predicate must equal `expect`;
+/// a row where it does not fails the rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuleCheck {
+    /// The rule identity findings carry: canonical JSON of its reference.
+    pub rule: String,
+    /// The law or invariant id, for people.
+    pub label: String,
+    /// DATA-QUARANTINE: whether a failing row is held back.
+    pub holds: bool,
+    /// The activation condition, if the rule has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<RowPredicate>,
+    /// The predicate, or `None` for a rule outside the lowered subset: every
+    /// row is then left to the per-row evaluator.
+    pub predicate: Option<RowPredicate>,
+    /// The value the predicate must have (`always`: true, `never`: false).
+    pub expect: bool,
+    /// MANIFEST-LAWS-1 (S2): a bound on the fuel the per-row evaluator
+    /// charges for the rule's operations, apart from the data they read
+    /// ([`rule_fuel`]). The engine adds what each row's values cost and
+    /// leaves a row whose rules may cost more than [`row_fuel`] to the
+    /// per-row evaluator. A landing's first check also carries the row's
+    /// typed-property charge, paid once per row before any rule.
+    pub fuel: u64,
+}
+
+/// MANIFEST-LAWS-1 (S2): the fuel the per-row evaluator gives one row's
+/// rules: its invariants share one decide budget and its governing laws
+/// another (`snapshot_observe::observation_rule_findings`). The engine
+/// compares the bound of all of a row's rules together against one budget,
+/// so it never decides a row either budget would refuse.
+#[must_use]
+pub fn row_fuel() -> u64 {
+    norn_ir::ResourceLimitProfile::norn_limits_v1()
+        .decide
+        .fuel_units
+}
+
+/// Fuel a rule's evaluation is charged at most beside its nodes: entering
+/// the rule, reading its result, and the checks around it.
+pub const RULE_FUEL: u64 = 64;
+/// Fuel one node of a rule's ZEN source is charged at most beside the data
+/// it reads: every node compiles to a few opcodes of one unit each, and an
+/// exact decimal site to a few more.
+pub const NODE_FUEL: u64 = 16;
+
+/// MANIFEST-LAWS-1 (S2): the static part of a rule's fuel bound: [`RULE_FUEL`]
+/// and [`NODE_FUEL`] for each node of its ZEN sources (the condition's
+/// too), counted before lowering, so a `??` the lowering drops is still
+/// paid for.
+#[must_use]
+pub fn rule_fuel(nodes: u64) -> u64 {
+    RULE_FUEL.saturating_add(NODE_FUEL.saturating_mul(nodes))
+}
+
+/// D102 / MANIFEST-LAWS-1 (S1): engine calls one request may make, on every
+/// host: the Durable Object's Worker takes this bound from the cell, and
+/// the native host's landing loop is bounded by it too.
+pub const MAX_ENGINE_STEPS: u32 = 64;
+/// MANIFEST-LAWS-1 (S1): residue pages one landing may take. A landing is
+/// one land call, a settle per page, and a store, so its calls fit
+/// [`MAX_ENGINE_STEPS`]; the engine refuses a landing whose residue takes
+/// more ([`RESIDUE_EXCEEDED`]) and drops its staging.
+pub const MAX_RESIDUE_PAGES: u32 = MAX_ENGINE_STEPS - 2;
+/// Residue rows one page carries at most.
+pub const RESIDUE_PAGE_ROWS: u32 = 2_000;
+/// MANIFEST-LAWS-1 (S6): serialized bytes one page's residue rows take at
+/// most; a page ends before the row that would pass it.
+pub const RESIDUE_PAGE_BYTES: usize = 4 << 20;
+/// A landing whose residue takes more than [`MAX_RESIDUE_PAGES`] pages, or
+/// holds a row larger than [`RESIDUE_PAGE_BYTES`].
+pub const RESIDUE_EXCEEDED: &str = "bulk.residue_exceeded";
+
+/// One rule a row fails, as the per-row evaluator found it for a residue row.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RowFinding {
+    /// The source row offset.
+    pub row: u64,
+    /// The rule identity.
+    pub rule: String,
+    /// The law or invariant id, for people.
+    pub label: String,
+    /// Whether it holds the row back.
+    pub holds: bool,
+}
+
+/// A row the engine left to the per-row evaluator for some rules: a value
+/// a rule reads is absent, a value is out of the exactly computed range, or
+/// the rule is outside the lowered subset. The engine's own decisions of
+/// the row's other rules stand (LAW-04).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResidueRow {
+    /// The source row offset.
+    pub row: u64,
+    /// Every present value of the row.
+    pub values: BTreeMap<String, Value>,
+    /// The rules the engine did not decide for the row, by identity; the
+    /// per-row evaluator decides these, and only these.
+    pub rules: Vec<String>,
+}
+
+/// Findings of one rule over a landing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuleCount {
+    /// The law or invariant id.
+    pub label: String,
+    /// Rows that fail it.
+    pub rows: u64,
+    /// Whether it holds a failing row back.
+    pub holds: bool,
+}
+
+/// MANIFEST-LAWS-1: settle a landing's residue rows up to `through` with the
+/// findings the per-row evaluator gave them; once no residue remains, the
+/// landing's files are written and sent as [`LandRequest`] says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettleRequest {
+    /// The landing.
+    pub land: LandRequest,
+    /// The last residue row these findings cover.
+    pub through: u64,
+    /// Every finding of the residue rows up to `through`.
+    pub findings: Vec<RowFinding>,
+}
+
+/// MANIFEST-LINEAGE-1: one source row of a landing, by its offset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineageRequest {
+    /// The tenant.
+    pub tenant: TenantId,
+    /// The dataset's table.
+    pub table: String,
+    /// The landing the manifest names.
+    pub load: String,
+    /// The source row offset (1-based, in file order).
+    pub row: u64,
+}
+
+/// What the landing holds for one source row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineageResponse {
+    /// Whether the row was admitted to the data file.
+    pub admitted: bool,
+    /// Why it was not, when it was not typed (`bulk.*`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
+    /// Every rule it fails.
+    pub findings: Vec<RowFinding>,
+}
+
+/// MANIFEST-LAND-1: load a dataset file and land it as columnar files in
+/// the attempt's private directory: the typed rows in the data file and the
+/// held-back rows in the held file. Nothing a reader sees changes: the rows
+/// are staged under the attempt alone, and a dataset is read only at a
+/// committed manifest's cache identity ([`dataset_cache_id`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LandRequest {
+    /// The load: the source file, its typing and its binding (`headers`).
+    pub load: LoadRequest,
+    /// MANIFEST-PIN-1: the pins the cell typed and checks this landing by;
+    /// the manifest commits exactly these, or is refused as stale.
+    pub pins: crate::dataset_manifest::ManifestPins,
+    /// The landing identity: the digest of this request without its
+    /// attempt. Every answer of the landing echoes it.
+    #[serde(default)]
+    pub landing: String,
+    /// The attempt: one landing's own staging and files, never another's.
+    /// OLAP-02: the engine mints it, so a landing sends none (an attempt
+    /// named by the caller refuses); a store names the one its landing's
+    /// answer named.
+    #[serde(default)]
+    pub attempt: String,
+    /// MANIFEST-LAWS-1: every law and invariant that governs the type.
+    #[serde(default)]
+    pub checks: Vec<RuleCheck>,
+    /// Residue rows an answer carries at most (the engine takes at most
+    /// [`RESIDUE_PAGE_ROWS`], and at least one).
+    pub residue_page: u32,
+}
+
+/// MANIFEST-LAND-1 / MANIFEST-CACHE-1: store an attempt's landed files. Each
+/// is sent to its content-addressed object only if its bytes are the digest
+/// the landing answered, then kept by digest in the tenant's private object
+/// directory, which a cache miss rebuilds the dataset from. The answer is
+/// `landed` with its cache identity ([`LandResponse::stored`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoreRequest {
+    /// The landing whose files are stored.
+    pub land: LandRequest,
+    /// The landing's answer: the files and what they hold.
+    pub landed: LandResponse,
+    /// The data file's object.
+    pub data: StoredObject,
+    /// The held-set file's object.
+    pub held: StoredObject,
+}
+
+/// The content-addressed object a landed file is stored at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoredObject {
+    /// The object's durable URI, named by the file's digest.
+    pub uri: String,
+    /// A presigned PUT URL for exactly that object; minted per call and not
+    /// part of the call's identity.
+    #[serde(default)]
+    pub url: String,
+}
+
+/// One landed file: its content identity as the engine wrote it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LandedFile {
+    /// The file's SHA-256.
+    pub sha256: String,
+    /// Rows in the file.
+    pub rows: u64,
+    /// Bytes in the file.
+    pub bytes: u64,
+}
+
+/// The earliest and latest instant of one temporal column of a landing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ValidRange {
+    /// The column (a timestamp or date property).
+    pub column: String,
+    /// The earliest value's text, by its exact instant.
+    pub from: String,
+    /// The latest value's text, by its exact instant.
+    pub to: String,
+}
+
+/// The outcome of a landing step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LandResponse {
+    /// The landing identity the request named.
+    pub landing: String,
+    /// The attempt the engine minted for the landing.
+    pub attempt: String,
+    /// The load's counts, as [`LoadResponse`].
+    pub load: LoadResponse,
+    /// The data file: every typed row no rule holds back, with its source
+    /// row offset; absent while residue remains (LAW-02).
+    pub data: Option<LandedFile>,
+    /// The held-set file: each held-back source row and its reason, and each
+    /// finding; absent while residue remains.
+    pub held: Option<LandedFile>,
+    /// Each temporal column's range over the data file's rows.
+    pub valid_time: Vec<ValidRange>,
+    /// Findings by rule.
+    pub findings: BTreeMap<String, RuleCount>,
+    /// Admitted rows held back by a rule.
+    pub held_by_rules: u64,
+    /// Residue rows left to settle.
+    pub residue_total: u64,
+    /// The next residue rows, in row order.
+    pub residue: Vec<ResidueRow>,
+    /// MANIFEST-CACHE-1: once the files are stored, the cache identity a
+    /// manifest of exactly these files reads them at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored: Option<String>,
+}
+
+/// MANIFEST-CACHE-1: the cache identity of a dataset: its table and the
+/// digests of its data and held-set files, and nothing a load chose. A
+/// manifest records it as its `load`; the engine answers a dataset only at
+/// it, rebuilding the table from the files of exactly those digests.
+#[must_use]
+pub fn dataset_cache_id(table: &TableSchema, data_sha256: &str, held_sha256: &str) -> String {
+    format!(
+        "l{}",
+        hex_digest(
+            format!(
+                "{}\n{}\n{data_sha256}\n{held_sha256}",
+                table.name, table.pin
+            )
+            .as_bytes()
+        )
+    )
 }
 
 /// Profile columns of a source.
