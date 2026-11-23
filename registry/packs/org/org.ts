@@ -41,6 +41,7 @@ export const Post = Norn.type({
   role: "thing",
   title: "Post",
   version: "0.1.0",
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   description: "A budgeted role or position within an organizational unit that can be vacant or filled over time (W3C ORG Post).",
   properties: Schema.Struct({
     id: Schema.String,
