@@ -1,32 +1,53 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { Columns2, GitCompareArrows, Inbox, Link2, RefreshCw, ShieldCheck } from "lucide-react"
-import { useMemo } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Chip } from "@/components/chip"
 import { FactStatusBadge } from "@/components/fact-status-badge"
 import { EmptyState, PageHeader } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { ActionReceipt } from "@/lib/actions"
+import { newIdempotencyKey, type ActionReceipt } from "@/lib/actions"
 import type { CellResult } from "@/lib/cell-read"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import {
   fetchImportTriage,
   IMPORT_TRIAGE_UNAVAILABLE,
+  isFieldWithheld,
   isTriageStep,
   triageSummary,
+  type AliasCandidate,
   type AliasResolution,
   type ImportTriageWorkspace,
+  type RowActionOutcome,
+  type SupersessionConflict,
   type SupersessionResolution,
   type TargetEntity,
   type TriageStep,
 } from "@/lib/import-triage"
 import { cn } from "@/lib/utils"
-import { AliasMatcher } from "./alias-matcher.tsx"
+import { AliasMatcher, initialAliasDraft, type AliasDraftState } from "./alias-matcher.tsx"
 import { SplitPaneReview } from "./split-pane-review.tsx"
-import { SupersessionDiffList } from "./supersession-diff.tsx"
+import { initialSupersessionDraft, SupersessionDiffList, type SupersessionDraftState } from "./supersession-diff.tsx"
 
 const QUERY_KEY = ["imports", "triage"] as const
+
+/** Unsent drafts, persisted idempotency keys, and request outcomes scoped to one `batchId`. */
+interface BatchDraftState {
+  readonly aliases: Readonly<Record<string, AliasDraftState>>
+  readonly reviewEdits: Readonly<Record<string, string>>
+  readonly rowKeys: Readonly<Record<string, string>>
+  readonly rowOutcomes: Readonly<Record<string, RowActionOutcome>>
+  readonly supersessions: Readonly<Record<string, SupersessionDraftState>>
+}
+
+const EMPTY_BATCH_DRAFT: BatchDraftState = {
+  aliases: {},
+  reviewEdits: {},
+  rowKeys: {},
+  rowOutcomes: {},
+  supersessions: {},
+}
 
 /** Sidebar rail badge showing total open triage items awaiting operator review. */
 export function useImportTriageBadge(): number | undefined {
@@ -47,6 +68,9 @@ export function useImportTriageBadge(): number | undefined {
  *   1. Match aliases / entities
  *   2. Split-pane artifact triage & batch governed promotion
  *   3. Supersession diff cards (FEED-CONFLICT)
+ *
+ * Unsent drafts and idempotency keys are scoped by `batchId` so switching between Steps 1/2/3
+ * preserves work within the same batch while preventing stale responses from mutating another batch.
  */
 export function ImportTriagePage() {
   const client = useQueryClient()
@@ -61,6 +85,14 @@ export function ImportTriagePage() {
   })
 
   const workspace = read.data?.kind === "ok" ? read.data.value : undefined
+  const activeBatchIdRef = useRef<string | undefined>(workspace?.batchId)
+  useEffect(() => {
+    activeBatchIdRef.current = workspace?.batchId
+  }, [workspace?.batchId])
+
+  const [draftsByBatch, setDraftsByBatch] = useState<Readonly<Record<string, BatchDraftState>>>({})
+  const batchDraft = workspace ? (draftsByBatch[workspace.batchId] ?? EMPTY_BATCH_DRAFT) : EMPTY_BATCH_DRAFT
+
   const summary = useMemo(() => (workspace ? triageSummary(workspace) : null), [workspace])
 
   const resolvedAliases = useMemo(() => {
@@ -75,15 +107,52 @@ export function ImportTriagePage() {
     void navigate({ to: "/imports", search: { step: next } as never, replace: true })
   }
 
-  const updateWorkspace = (updater: (current: ImportTriageWorkspace) => ImportTriageWorkspace) => {
+  /** Apply a cache update strictly when the active batch still matches `expectedBatchId`. */
+  const updateWorkspace = (expectedBatchId: string, updater: (current: ImportTriageWorkspace) => ImportTriageWorkspace) => {
+    if (activeBatchIdRef.current !== expectedBatchId) return
     client.setQueryData<CellResult<ImportTriageWorkspace>>(QUERY_KEY, (current) => {
-      if (current?.kind !== "ok") return current
+      if (current?.kind !== "ok" || current.value.batchId !== expectedBatchId) return current
       return { ...current, value: updater(current.value) }
     })
   }
 
-  const handleAliasResolved = (aliasId: string, resolution: AliasResolution, createdEntity?: TargetEntity) => {
-    updateWorkspace((current) => ({
+  const patchBatchDraft = (expectedBatchId: string, updater: (current: BatchDraftState) => BatchDraftState) => {
+    if (activeBatchIdRef.current !== expectedBatchId) return
+    setDraftsByBatch((all) => {
+      const current = all[expectedBatchId] ?? EMPTY_BATCH_DRAFT
+      return { ...all, [expectedBatchId]: updater(current) }
+    })
+  }
+
+  const handlePatchAliasDraft = (
+    expectedBatchId: string,
+    alias: AliasCandidate,
+    update: Partial<AliasDraftState>,
+    rotateKey = false,
+  ) => {
+    patchBatchDraft(expectedBatchId, (current) => {
+      const prev = current.aliases[alias.id] ?? initialAliasDraft(alias)
+      return {
+        ...current,
+        aliases: {
+          ...current.aliases,
+          [alias.id]: {
+            ...prev,
+            ...update,
+            ...rotateKey ? { idempotencyKey: newIdempotencyKey() } : {},
+          },
+        },
+      }
+    })
+  }
+
+  const handleAliasResolved = (
+    expectedBatchId: string,
+    aliasId: string,
+    resolution: AliasResolution,
+    createdEntity?: TargetEntity,
+  ) => {
+    updateWorkspace(expectedBatchId, (current) => ({
       ...current,
       availableEntities: createdEntity && !current.availableEntities.some((e) => e.id === createdEntity.id)
         ? [...current.availableEntities, createdEntity]
@@ -97,52 +166,121 @@ export function ImportTriagePage() {
         return row
       }),
     }))
+    // Re-read authoritative batch state from the cell after commit.
+    void client.invalidateQueries({ queryKey: QUERY_KEY })
   }
 
-  const handleRowPromoted = (rowId: string, values: Readonly<Record<string, string>>, receipt: ActionReceipt) => {
+  const handleSetFieldValue = (expectedBatchId: string, rowId: string, fieldName: string, nextValue: string) => {
+    patchBatchDraft(expectedBatchId, (current) => {
+      const nextOutcomes = { ...current.rowOutcomes }
+      delete nextOutcomes[rowId]
+      return {
+        ...current,
+        reviewEdits: { ...current.reviewEdits, [`${rowId}:${fieldName}`]: nextValue },
+        // Rotate the row's idempotency key when the operator changes its draft values.
+        rowKeys: { ...current.rowKeys, [rowId]: newIdempotencyKey() },
+        rowOutcomes: nextOutcomes,
+      }
+    })
+  }
+
+  const handleResetFieldValue = (expectedBatchId: string, rowId: string, fieldName: string) => {
+    patchBatchDraft(expectedBatchId, (current) => {
+      const nextEdits = { ...current.reviewEdits }
+      delete nextEdits[`${rowId}:${fieldName}`]
+      const nextOutcomes = { ...current.rowOutcomes }
+      delete nextOutcomes[rowId]
+      return {
+        ...current,
+        reviewEdits: nextEdits,
+        rowKeys: { ...current.rowKeys, [rowId]: newIdempotencyKey() },
+        rowOutcomes: nextOutcomes,
+      }
+    })
+  }
+
+  const handleEnsureRowKey = (expectedBatchId: string, rowId: string): string => {
+    const existing = draftsByBatch[expectedBatchId]?.rowKeys[rowId]
+    if (existing !== undefined) return existing
+    const fresh = newIdempotencyKey()
+    patchBatchDraft(expectedBatchId, (current) => (
+      current.rowKeys[rowId] !== undefined
+        ? current
+        : { ...current, rowKeys: { ...current.rowKeys, [rowId]: fresh } }
+    ))
+    return fresh
+  }
+
+  const handleRowPromoted = (
+    expectedBatchId: string,
+    rowId: string,
+    values: Readonly<Record<string, string>>,
+    receipt: ActionReceipt,
+  ) => {
     const recordedAt = new Date(receipt.receipt.recordedAtMs).toISOString()
-    updateWorkspace((current) => ({
+    updateWorkspace(expectedBatchId, (current) => ({
       ...current,
       rows: current.rows.map((row) => row.id !== rowId ? row : {
         ...row,
         status: "verified_fact",
         recordedAt,
         receipt,
-        fields: row.fields.map((field) => ({
+        fields: row.fields.map((field) => isFieldWithheld(field) ? field : {
           ...field,
           value: values[field.name] ?? field.value,
-        })),
+        }),
       }),
     }))
+    patchBatchDraft(expectedBatchId, (current) => {
+      const nextOutcomes = { ...current.rowOutcomes }
+      delete nextOutcomes[rowId]
+      return { ...current, rowOutcomes: nextOutcomes }
+    })
+    // Re-read authoritative batch state from the cell after commit.
+    void client.invalidateQueries({ queryKey: QUERY_KEY })
   }
 
-  const handleRowRefused = (rowId: string, code: string, message: string) => {
-    updateWorkspace((current) => ({
-      ...current,
-      rows: current.rows.map((row) => row.id !== rowId ? row : {
-        ...row,
-        status: "quarantined",
-        findings: [
-          ...row.findings,
-          {
-            id: `refusal-${row.id}-${row.findings.length + 1}`,
-            code,
-            ruleId: code,
-            severity: "error",
-            message,
-            fieldName: null,
-            status: "open",
+  const handleRowOutcome = (expectedBatchId: string, rowId: string, outcome: RowActionOutcome | null) => {
+    patchBatchDraft(expectedBatchId, (current) => {
+      const nextOutcomes = { ...current.rowOutcomes }
+      if (outcome === null) delete nextOutcomes[rowId]
+      else nextOutcomes[rowId] = outcome
+      return { ...current, rowOutcomes: nextOutcomes }
+    })
+  }
+
+  const handlePatchSupersessionDraft = (
+    expectedBatchId: string,
+    conflict: SupersessionConflict,
+    update: Partial<SupersessionDraftState>,
+    rotateKey = false,
+  ) => {
+    patchBatchDraft(expectedBatchId, (current) => {
+      const prev = current.supersessions[conflict.id] ?? initialSupersessionDraft(conflict)
+      return {
+        ...current,
+        supersessions: {
+          ...current.supersessions,
+          [conflict.id]: {
+            ...prev,
+            ...update,
+            ...rotateKey ? { idempotencyKey: newIdempotencyKey() } : {},
           },
-        ],
-      }),
-    }))
+        },
+      }
+    })
   }
 
-  const handleSupersessionResolved = (conflictId: string, resolution: SupersessionResolution) => {
-    updateWorkspace((current) => ({
+  const handleSupersessionResolved = (
+    expectedBatchId: string,
+    conflictId: string,
+    resolution: SupersessionResolution,
+  ) => {
+    updateWorkspace(expectedBatchId, (current) => ({
       ...current,
       supersessions: current.supersessions.map((item) => item.id === conflictId ? { ...item, resolution } : item),
     }))
+    void client.invalidateQueries({ queryKey: QUERY_KEY })
   }
 
   const refresh = () => void client.invalidateQueries({ queryKey: QUERY_KEY })
@@ -155,7 +293,7 @@ export function ImportTriagePage() {
         meta={workspace ? (
           <>
             <Chip tone="gray" mono>{workspace.targetObjectType}</Chip>
-            <span className="text-xs text-muted-foreground">{workspace.title}</span>
+            <span className="text-xs text-muted-foreground"><bdi>{workspace.title}</bdi></span>
           </>
         ) : undefined}
         actions={
@@ -222,6 +360,15 @@ export function ImportTriagePage() {
                 <FactStatusBadge status="quarantined" />
                 <span className="font-medium text-foreground">{summary.quarantinedRows}</span>
               </span>
+              {summary.withheldRows > 0 && (
+                <>
+                  <span className="text-border">|</span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <FactStatusBadge status="withheld" />
+                    <span className="font-medium text-foreground">{summary.withheldRows}</span>
+                  </span>
+                </>
+              )}
             </div>
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
               <ShieldCheck aria-hidden className="size-3.5 text-muted-foreground" />
@@ -245,7 +392,7 @@ export function ImportTriagePage() {
                 number: "2",
                 label: "Artifact triage",
                 icon: Columns2,
-                count: summary.unverifiedRows + summary.quarantinedRows,
+                count: summary.unverifiedRows + summary.quarantinedRows + summary.withheldRows,
                 tone: summary.quarantinedRows > 0 ? "red" as const : summary.unverifiedRows > 0 ? "amber" as const : "green" as const,
               },
               {
@@ -290,34 +437,47 @@ export function ImportTriagePage() {
           {/* Active step body */}
           {step === "aliases" && (
             <AliasMatcher
+              key={workspace.batchId}
               batchId={workspace.batchId}
               aliases={workspace.aliases}
               entities={workspace.availableEntities}
               actions={workspace.actions}
+              drafts={batchDraft.aliases}
+              onPatchDraft={handlePatchAliasDraft}
               onResolved={handleAliasResolved}
             />
           )}
 
           {step === "review" && (
             <SplitPaneReview
+              key={workspace.batchId}
               batchId={workspace.batchId}
               artifacts={workspace.artifacts}
               rows={workspace.rows}
               lowConfidenceThresholdBps={workspace.lowConfidenceThresholdBps}
               actions={workspace.actions}
               resolvedAliases={resolvedAliases}
-              onJumpToAliases={() => setStep("aliases")}
+              edits={batchDraft.reviewEdits}
+              rowKeys={batchDraft.rowKeys}
+              rowOutcomes={batchDraft.rowOutcomes}
+              onSetFieldValue={handleSetFieldValue}
+              onResetFieldValue={handleResetFieldValue}
+              onEnsureRowKey={handleEnsureRowKey}
               onRowPromoted={handleRowPromoted}
-              onRowRefused={handleRowRefused}
+              onRowOutcome={handleRowOutcome}
+              onJumpToAliases={() => setStep("aliases")}
             />
           )}
 
           {step === "supersession" && (
             <SupersessionDiffList
+              key={workspace.batchId}
               batchId={workspace.batchId}
               conflicts={workspace.supersessions}
               actions={workspace.actions}
               lowConfidenceThresholdBps={workspace.lowConfidenceThresholdBps}
+              drafts={batchDraft.supersessions}
+              onPatchDraft={handlePatchSupersessionDraft}
               onResolved={handleSupersessionResolved}
             />
           )}

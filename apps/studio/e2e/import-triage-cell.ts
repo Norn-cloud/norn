@@ -66,11 +66,20 @@ export interface ImportTriageCell {
   readonly calls: TriageCall[]
   /** Make the next promotion call for `rowId` refuse with a law violation. */
   refuseNextPromote(rowId: string, code: string, message: string): void
+  /** Make the next promotion call for `rowId` return 202 pending approval. */
+  pendingNextPromote(rowId: string, decisionId: string): void
+  /** Make the next promotion call for `rowId` fail with a 500 transport error. */
+  failNextPromote(rowId: string): void
+  /** Hold the next promotion call for `rowId` until the returned release callback is invoked. */
+  holdNextPromote(rowId: string): () => void
 }
 
 const hash = (seed: number) => `sha256:${seed.toString(16).padStart(64, "b")}`
 
-export function createFixtureWorkspace(): ImportTriageWorkspace {
+export function createFixtureWorkspace(options: {
+  readonly includeWithheldRow?: boolean
+  readonly externalArtifactUri?: boolean
+} = {}): ImportTriageWorkspace {
   const entities: TargetEntity[] = [
     { id: "rec-001", label: "Unit Alpha", subtitle: "Zone North" },
     { id: "rec-002", label: "Unit Beta", subtitle: "Zone North" },
@@ -123,7 +132,7 @@ export function createFixtureWorkspace(): ImportTriageWorkspace {
       label: "Capture A · W47 Grid (09:04)",
       sourceChannel: "feed-ops-north",
       mediaType: "image/svg+xml",
-      documentUri: ARTIFACT_A_URI,
+      documentUri: options.externalArtifactUri ? "https://untrusted.example/capture-a.png" : ARTIFACT_A_URI,
       blobDigest: hash(101),
       functionReceiptDigest: hash(201),
       extractor: "norn.extract.grid",
@@ -358,6 +367,49 @@ export function createFixtureWorkspace(): ImportTriageWorkspace {
     },
   ]
 
+  if (options.includeWithheldRow) {
+    rows.push({
+      id: "row-w47-withheld",
+      artifactId: "art-w47-a",
+      targetObjectType: "canon.Allocation",
+      windowLabel: "2026-W47",
+      entityAliasId: null,
+      entityRecordId: "rec-001",
+      entityLabel: "Unit Alpha",
+      status: "imported_unverified",
+      effectiveAt: "2026-11-18T08:00:00Z",
+      observedAt: "2026-11-16T09:04:00Z",
+      recordedAt: null,
+      fields: [
+        {
+          id: "f-w-slot",
+          name: "slot_code",
+          label: "Window slot",
+          extractedValue: "SLOT-04",
+          value: "SLOT-04",
+          confidenceBps: 9600,
+          box: null,
+          findingIds: [],
+        },
+        {
+          kind: "withheld",
+          id: "f-w-note",
+          name: "contact_note",
+          label: "Contact note",
+          masking: "redacted",
+          displayMask: "Redacted from your role",
+          markings: ["pii.contact"],
+          confidenceBps: null,
+          box: null,
+          findingIds: [],
+        },
+      ],
+      findings: [],
+      ambiguities: [],
+      receipt: null,
+    })
+  }
+
   const supersessions: SupersessionConflict[] = [
     {
       id: "conflict-w47-north",
@@ -440,11 +492,17 @@ export function createFixtureWorkspace(): ImportTriageWorkspace {
   }
 }
 
-export async function importTriageCell(page: Page): Promise<ImportTriageCell> {
-  let workspace = createFixtureWorkspace()
+export async function importTriageCell(
+  page: Page,
+  options: { readonly includeWithheldRow?: boolean; readonly externalArtifactUri?: boolean } = {},
+): Promise<ImportTriageCell> {
+  let workspace = createFixtureWorkspace(options)
   let seq = 500
   const calls: TriageCall[] = []
   const refusals = new Map<string, { code: string; message: string }>()
+  const pendings = new Map<string, string>()
+  const failures = new Set<string>()
+  const holds = new Map<string, Promise<void>>()
 
   const scoped = (url: URL) => url.searchParams.get("orgId") === "org_demo" && url.searchParams.get("environmentId") === "analytics"
   const refuse = (route: Route, status: number, code: string, message: string) =>
@@ -467,6 +525,23 @@ export async function importTriageCell(page: Page): Promise<ImportTriageCell> {
 
     if (actionId === workspace.actions.promoteRow) {
       const rowId = String(input.rowId ?? "")
+      const held = holds.get(rowId)
+      if (held) {
+        holds.delete(rowId)
+        await held
+      }
+      if (failures.has(rowId)) {
+        failures.delete(rowId)
+        return route.fulfill({ status: 500, body: "upstream timeout" })
+      }
+      const pendingDecision = pendings.get(rowId)
+      if (pendingDecision) {
+        pendings.delete(rowId)
+        return route.fulfill({
+          status: 202,
+          json: { outcome: "pending", decision: { id: pendingDecision, expiresAtMs: Date.UTC(2026, 10, 24, 12, 0, 0) } },
+        })
+      }
       const injected = refusals.get(rowId)
       if (injected) {
         refusals.delete(rowId)
@@ -491,7 +566,7 @@ export async function importTriageCell(page: Page): Promise<ImportTriageCell> {
       receipt: { receiptHash: hash(seq).replace("sha256:", ""), commitSeq: seq, recordedAtMs },
     }
 
-    // Keep server-side workspace synchronized if Studio refetches.
+    // Keep server-side workspace synchronized when Studio invalidates and refetches after commits.
     if (actionId === workspace.actions.bindAlias) {
       const aliasId = String(input.aliasId)
       const targetId = String(input.targetRecordId)
@@ -522,13 +597,13 @@ export async function importTriageCell(page: Page): Promise<ImportTriageCell> {
       const values = (input.values ?? {}) as Record<string, string>
       workspace = {
         ...workspace,
-        rows: workspace.rows.map((r) => r.id === rowId ? {
+        rows: workspace.rows.map((r) => r.id !== rowId ? r : {
           ...r,
           status: "verified_fact",
           recordedAt: new Date(recordedAtMs).toISOString(),
           receipt,
-          fields: r.fields.map((f) => ({ ...f, value: values[f.name] ?? f.value })),
-        } : r),
+          fields: r.fields.map((f) => f.kind === "withheld" ? f : { ...f, value: values[f.name] ?? f.value }),
+        }),
       }
     } else if (actionId === workspace.actions.resolveSupersession) {
       const conflictId = String(input.conflictId)
@@ -554,5 +629,12 @@ export async function importTriageCell(page: Page): Promise<ImportTriageCell> {
   return {
     calls,
     refuseNextPromote: (rowId, code, message) => { refusals.set(rowId, { code, message }) },
+    pendingNextPromote: (rowId, decisionId) => { pendings.set(rowId, decisionId) },
+    failNextPromote: (rowId) => { failures.add(rowId) },
+    holdNextPromote: (rowId) => {
+      let release!: () => void
+      holds.set(rowId, new Promise<void>((resolve) => { release = resolve }))
+      return release
+    },
   }
 }

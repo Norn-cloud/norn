@@ -87,6 +87,27 @@ export function ObjectPage() {
   const access = typeAccess.data?.kind === "read" ? typeAccess.data.read.document : undefined
   const sources = access?.capabilities.sources.decision
   const actionTitles = new Map(access?.roles.flatMap(({ actions }) => actions.map(({ actionId, title }) => [actionId, title] as const)) ?? [])
+  const recordMeta = data?.object.document as ({
+    readonly withheld?: boolean
+    readonly withheldProperties?: readonly string[]
+    readonly masked?: Readonly<Record<string, unknown>>
+    readonly verificationStatus?: string
+  } | undefined)
+  const recordWithheld = recordMeta?.withheld === true
+    || (Array.isArray(recordMeta?.withheldProperties) && recordMeta.withheldProperties.length > 0)
+    || (recordMeta?.masked !== undefined && Object.keys(recordMeta.masked).length > 0)
+  // Never infer "Verified fact" from an empty/filtered findings response or an unreadable record.
+  const recordStatus = live && reads.isSuccess && data !== null
+    ? deriveFactStatus({
+      quarantined: heldBack,
+      openFindings: broken.length,
+      withheld: recordWithheld,
+      unverifiedImport: recordMeta?.verificationStatus === "imported_unverified",
+      verified: review.isSuccess && recordMeta?.verificationStatus === "verified_fact",
+    })
+    : live && review.isSuccess && (heldBack || broken.length > 0)
+      ? "quarantined"
+      : null
   return (
     <section className="space-y-6">
       <header className="flex flex-wrap items-start gap-4">
@@ -96,7 +117,7 @@ export function ObjectPage() {
             <h1 className="min-w-0 text-title font-semibold tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             <Chip tone="violet" icon={TypeIcon}>{concept?.title ?? conceptTitle(name)}</Chip>
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
-            {live && review.isSuccess && <FactStatusBadge status={deriveFactStatus({ quarantined: heldBack, openFindings: broken.length })} />}
+            {recordStatus !== null && <FactStatusBadge status={recordStatus} />}
             {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
             {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
             {data?.source?.document && <SourceChip system={data.source.document.sourceRecordRef.system} title="The connected system this record was read from" />}

@@ -1,5 +1,5 @@
 import { Archive, ArrowRight, CheckCircle2, Clock, GitCompareArrows, ShieldAlert } from "lucide-react"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Chip } from "@/components/chip"
 import { CopyId } from "@/components/copy-id"
 import { FactStatusBadge } from "@/components/fact-status-badge"
@@ -17,6 +17,24 @@ import {
   type TriageActions,
 } from "@/lib/import-triage"
 import { cn } from "@/lib/utils"
+
+export interface SupersessionDraftState {
+  readonly choice: SupersessionChoice
+  readonly note: string
+  readonly idempotencyKey: string
+  readonly pending: boolean
+  readonly notice: { readonly kind: "pending" | "error"; readonly message: string } | null
+}
+
+export function initialSupersessionDraft(conflict: SupersessionConflict): SupersessionDraftState {
+  return {
+    choice: conflict.defaultChoice,
+    note: "",
+    idempotencyKey: newIdempotencyKey(),
+    pending: false,
+    notice: null,
+  }
+}
 
 const CHOICES: readonly {
   readonly value: SupersessionChoice
@@ -51,13 +69,17 @@ export function SupersessionDiffList({
   conflicts,
   actions,
   lowConfidenceThresholdBps,
+  drafts,
+  onPatchDraft,
   onResolved,
 }: {
   readonly batchId: string
   readonly conflicts: readonly SupersessionConflict[]
   readonly actions: TriageActions
   readonly lowConfidenceThresholdBps: number
-  readonly onResolved: (conflictId: string, resolution: SupersessionResolution) => void
+  readonly drafts: Readonly<Record<string, SupersessionDraftState>>
+  readonly onPatchDraft: (batchId: string, conflict: SupersessionConflict, update: Partial<SupersessionDraftState>, rotateKey?: boolean) => void
+  readonly onResolved: (batchId: string, conflictId: string, resolution: SupersessionResolution) => void
 }) {
   if (conflicts.length === 0) {
     return (
@@ -76,6 +98,8 @@ export function SupersessionDiffList({
           conflict={conflict}
           actionId={actions.resolveSupersession}
           lowConfidenceThresholdBps={lowConfidenceThresholdBps}
+          draft={drafts[conflict.id] ?? initialSupersessionDraft(conflict)}
+          onPatchDraft={(update, rotateKey) => onPatchDraft(batchId, conflict, update, rotateKey)}
           onResolved={onResolved}
         />
       ))}
@@ -88,19 +112,20 @@ function SupersessionDiffCard({
   conflict,
   actionId,
   lowConfidenceThresholdBps,
+  draft,
+  onPatchDraft,
   onResolved,
 }: {
   readonly batchId: string
   readonly conflict: SupersessionConflict
   readonly actionId: string
   readonly lowConfidenceThresholdBps: number
-  readonly onResolved: (conflictId: string, resolution: SupersessionResolution) => void
+  readonly draft: SupersessionDraftState
+  readonly onPatchDraft: (update: Partial<SupersessionDraftState>, rotateKey?: boolean) => void
+  readonly onResolved: (batchId: string, conflictId: string, resolution: SupersessionResolution) => void
 }) {
   const [changedOnly, setChangedOnly] = useState(true)
-  const [choice, setChoice] = useState<SupersessionChoice>(conflict.defaultChoice)
-  const [note, setNote] = useState("")
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const inFlightRef = useRef(false)
 
   const changedCells = conflict.cells.filter((cell) => cell.changed)
   const shownCells = changedOnly ? changedCells : conflict.cells
@@ -108,39 +133,45 @@ function SupersessionDiffCard({
   const delta = timeDeltaLabel(conflict.earlier.observedAt, conflict.newer.observedAt)
 
   const submit = async () => {
-    setPending(true)
-    setError(null)
+    if (inFlightRef.current) return
+    inFlightRef.current = true
+    const requestBatchId = batchId
+    onPatchDraft({ pending: true, notice: null })
     try {
-      const trimmed = note.trim()
+      const trimmed = draft.note.trim()
       const result = await commitSupersessionDecision(actionId, {
-        batchId,
+        batchId: requestBatchId,
         conflictId: conflict.id,
-        choice,
+        choice: draft.choice,
         earlierArtifactId: conflict.earlier.artifactId,
         earlierBlobDigest: conflict.earlier.blobDigest,
         newerArtifactId: conflict.newer.artifactId,
         newerBlobDigest: conflict.newer.blobDigest,
         preserveEarlierEvidence: true,
         ...trimmed !== "" ? { note: trimmed } : {},
-      }, newIdempotencyKey())
+      }, draft.idempotencyKey)
       if (result.kind === "receipt") {
-        onResolved(conflict.id, {
-          choice,
+        onPatchDraft({ pending: false, notice: null })
+        onResolved(requestBatchId, conflict.id, {
+          choice: draft.choice,
           ...trimmed !== "" ? { note: trimmed } : {},
-          preservedHistoricalArtifactId: choice === "keep_earlier" ? conflict.newer.artifactId : conflict.earlier.artifactId,
+          preservedHistoricalArtifactId: draft.choice === "keep_earlier" ? conflict.newer.artifactId : conflict.earlier.artifactId,
           receipt: result.receipt,
         })
       } else if (result.kind === "refused") {
-        setError(`${result.code}: ${result.message}`)
+        onPatchDraft({ pending: false, notice: { kind: "error", message: `${result.code}: ${result.message}` } })
       } else if (result.kind === "pending") {
-        setError(`Pending approval decision (${result.decision.id}).`)
+        onPatchDraft({ pending: false, notice: { kind: "pending", message: `Pending approval decision (${result.decision.id}).` } })
       } else {
-        setError("The cell could not commit this supersession resolution right now.")
+        onPatchDraft({ pending: false, notice: { kind: "error", message: "The cell could not commit this supersession resolution right now." } })
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "The cell did not respond.")
+      onPatchDraft({
+        pending: false,
+        notice: { kind: "error", message: err instanceof Error ? err.message : "The cell did not respond. Retry reuses the same idempotency key." },
+      })
     } finally {
-      setPending(false)
+      inFlightRef.current = false
     }
   }
 
@@ -154,13 +185,13 @@ function SupersessionDiffCard({
         <div className="flex flex-wrap items-center gap-2">
           <GitCompareArrows aria-hidden className="size-4 text-muted-foreground" />
           <h2 className="text-sm font-medium text-foreground">
-            Window {conflict.windowLabel}
+            Window <bdi>{conflict.windowLabel}</bdi>
           </h2>
           <Chip tone="red" icon={ShieldAlert} mono>{conflict.findingCode}</Chip>
           <FactStatusBadge
             status={resolved === null || resolved.choice === "keep_disputed" ? "quarantined" : "verified_fact"}
           />
-          <span className="font-mono text-xs text-muted-foreground">{conflict.scopeKey}</span>
+          <span className="font-mono text-xs text-muted-foreground"><bdi>{conflict.scopeKey}</bdi></span>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
           <span className="inline-flex items-center gap-1">
@@ -179,7 +210,7 @@ function SupersessionDiffCard({
             <span className="font-medium text-muted-foreground">Earlier artifact (preserved)</span>
             <Chip tone="gray" icon={Archive}>Immutable evidence</Chip>
           </div>
-          <div className="font-medium text-foreground">{conflict.earlier.label}</div>
+          <div className="font-medium text-foreground"><bdi>{conflict.earlier.label}</bdi></div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-muted-foreground tabular-nums">
             <span>Observed {readableTime(conflict.earlier.observedAt)}</span>
             <span className="inline-flex items-center gap-1">Blob <CopyId value={conflict.earlier.blobDigest} short={12} /></span>
@@ -191,7 +222,7 @@ function SupersessionDiffCard({
             <span className="font-medium text-foreground">Newer artifact (superseding)</span>
             <Chip tone="amber">{delta}</Chip>
           </div>
-          <div className="font-medium text-foreground">{conflict.newer.label}</div>
+          <div className="font-medium text-foreground"><bdi>{conflict.newer.label}</bdi></div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-muted-foreground tabular-nums">
             <span>Observed {readableTime(conflict.newer.observedAt)}</span>
             <span className="inline-flex items-center gap-1">Blob <CopyId value={conflict.newer.blobDigest} short={12} /></span>
@@ -245,18 +276,18 @@ function SupersessionDiffCard({
                     data-changed={cell.changed ? "true" : "false"}
                     className={cn(cell.changed && "bg-tone-amber/5")}
                   >
-                    <td className="px-4 py-2 font-medium text-foreground">{cell.entityLabel}</td>
+                    <td className="px-4 py-2 font-medium text-foreground"><bdi>{cell.entityLabel}</bdi></td>
                     <td className="px-4 py-2 text-muted-foreground">{cell.fieldLabel}</td>
                     <td className="px-4 py-2 font-mono">
                       <span className={cn(cell.changed && "text-muted-foreground line-through")}>
-                        {cell.earlierValue}
+                        <bdi>{cell.earlierValue}</bdi>
                       </span>
                     </td>
                     <td className="px-4 py-2 font-mono">
                       <span className="inline-flex items-center gap-1.5">
                         {cell.changed && <ArrowRight aria-hidden className="size-3 text-tone-amber" />}
                         <span className={cn(cell.changed ? "font-semibold text-foreground" : "text-muted-foreground")}>
-                          {cell.newerValue}
+                          <bdi>{cell.newerValue}</bdi>
                         </span>
                         {cell.hasFinding && <Chip tone="red" mono>Finding</Chip>}
                       </span>
@@ -293,8 +324,8 @@ function SupersessionDiffCard({
               </span>
             </div>
             <p className="text-muted-foreground">
-              Historical evidence preserved: immutable artifact <code className="font-mono text-foreground">{resolved.preservedHistoricalArtifactId}</code> remains linked and readable.
-              {resolved.note ? ` Rationale: “${resolved.note}”.` : ""}
+              Historical evidence preserved: immutable artifact <code className="font-mono text-foreground"><bdi>{resolved.preservedHistoricalArtifactId}</bdi></code> remains linked and readable.
+              {resolved.note ? <> Rationale: “<bdi>{resolved.note}</bdi>”.</> : null}
             </p>
             <div className="flex flex-wrap items-center gap-2 text-[0.6875rem] text-muted-foreground tabular-nums">
               <span>commit {resolved.receipt.receipt.commitSeq}</span>
@@ -308,7 +339,7 @@ function SupersessionDiffCard({
             <fieldset className="grid gap-2 sm:grid-cols-3">
               <legend className="mb-1.5 text-xs font-medium text-foreground">Governed supersession decision</legend>
               {CHOICES.map((option) => {
-                const selected = choice === option.value
+                const selected = draft.choice === option.value
                 return (
                   <label
                     key={option.value}
@@ -324,8 +355,8 @@ function SupersessionDiffCard({
                       name={`supersession-${conflict.id}`}
                       value={option.value}
                       checked={selected}
-                      disabled={pending}
-                      onChange={() => setChoice(option.value)}
+                      disabled={draft.pending}
+                      onChange={() => onPatchDraft({ choice: option.value, notice: null }, true)}
                       className="mt-0.5 size-3.5 accent-[var(--primary)]"
                     />
                     <span className="space-y-0.5">
@@ -339,34 +370,43 @@ function SupersessionDiffCard({
 
             <div className="flex flex-wrap items-center gap-2">
               <Input
+                dir="auto"
                 aria-label={`Supersession rationale for ${conflict.windowLabel}`}
                 placeholder="Rationale note (optional, stored with the governed receipt)"
-                value={note}
-                disabled={pending}
-                onChange={(event) => setNote(event.target.value)}
+                value={draft.note}
+                disabled={draft.pending}
+                onChange={(event) => onPatchDraft({ note: event.target.value, notice: null }, true)}
                 className="h-8 min-w-56 flex-1 bg-background text-xs shadow-none"
               />
               <Button
                 type="button"
                 size="sm"
-                disabled={pending}
+                disabled={draft.pending}
                 onClick={() => void submit()}
                 className="h-8 shrink-0 px-3 text-xs"
               >
-                {pending ? "Committing…" : "Resolve supersession"}
+                {draft.pending ? "Committing…" : "Resolve supersession"}
               </Button>
             </div>
 
             <p className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
               <Archive aria-hidden className="size-3.5 shrink-0" />
               <span>
-                Earlier artifact <code className="font-mono">{conflict.earlier.blobDigest.slice(0, 14)}…</code> is never deleted and stays preserved as immutable historical evidence.
+                Earlier artifact <code className="font-mono"><bdi>{conflict.earlier.blobDigest.slice(0, 14)}…</bdi></code> is never deleted and stays preserved as immutable historical evidence.
               </span>
             </p>
 
-            {error !== null && (
-              <p role="alert" className="rounded border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">
-                {error}
+            {draft.notice !== null && (
+              <p
+                role={draft.notice.kind === "error" ? "alert" : "status"}
+                className={cn(
+                  "rounded border px-2.5 py-1.5 text-xs",
+                  draft.notice.kind === "pending"
+                    ? "border-tone-amber/40 bg-tone-amber/8 text-tone-amber"
+                    : "border-destructive/30 bg-destructive/5 text-destructive",
+                )}
+              >
+                {draft.notice.message}
               </p>
             )}
           </>

@@ -6,12 +6,17 @@ import {
   commitAliasBinding,
   commitRowPromotion,
   commitSupersessionDecision,
+  effectiveRowStatus,
+  extractEditableValues,
+  fetchImportTriage,
   formatConfidence,
   formatTemporal,
   hasOpenLawViolation,
   isLowConfidence,
   isRowEligibleForBatchPromotion,
   partitionPromotionBatch,
+  resolveArtifactMediaSource,
+  resolveRowEntity,
   timeDeltaLabel,
   triageSummary,
   type AliasResolution,
@@ -52,7 +57,8 @@ const aliasBlockedRow: CandidateRow = {
   ...cleanRow,
   id: "row-alias",
   entityAliasId: "alias-1",
-  entityRecordId: null,
+  // Even a pre-populated entityRecordId MUST NOT bypass governed alias resolution.
+  entityRecordId: "ent-prepopulated-guess",
   entityLabel: "@handle_north_1",
 }
 
@@ -73,6 +79,16 @@ const violatingRow: CandidateRow = {
   ],
 }
 
+const withheldRow: CandidateRow = {
+  ...cleanRow,
+  id: "row-withheld",
+  status: "verified_fact",
+  fields: [
+    { id: "f1", name: "slot_code", label: "Slot code", extractedValue: "S-01", value: "S-01", confidenceBps: 9900, box: null, findingIds: [] },
+    { kind: "withheld", id: "f-secret", name: "contact_note", label: "Contact note", masking: "redacted", displayMask: "•••", markings: ["pii.contact"], confidenceBps: null, box: null, findingIds: [] },
+  ],
+}
+
 const verifiedRow: CandidateRow = {
   ...cleanRow,
   id: "row-verified",
@@ -81,9 +97,10 @@ const verifiedRow: CandidateRow = {
   receipt: sampleReceipt,
 }
 
-test("FactStatusBadge renders all three honest statuses with distinct data markers and labels", () => {
+test("FactStatusBadge renders all honest statuses with distinct data markers and labels", () => {
   const unverified = renderToStaticMarkup(<FactStatusBadge status="imported_unverified" />)
   const quarantined = renderToStaticMarkup(<FactStatusBadge status="quarantined" />)
+  const withheld = renderToStaticMarkup(<FactStatusBadge status="withheld" />)
   const verified = renderToStaticMarkup(<FactStatusBadge status="verified_fact" />)
 
   expect(unverified).toContain('data-fact-status="imported_unverified"')
@@ -94,19 +111,33 @@ test("FactStatusBadge renders all three honest statuses with distinct data marke
   expect(quarantined).toContain("Quarantined")
   expect(quarantined).toContain('data-tone="red"')
 
+  expect(withheld).toContain('data-fact-status="withheld"')
+  expect(withheld).toContain("Withheld")
+  expect(withheld).toContain('data-tone="gray"')
+
   expect(verified).toContain('data-fact-status="verified_fact"')
   expect(verified).toContain("Verified fact")
   expect(verified).toContain('data-tone="green"')
 })
 
-test("deriveFactStatus prioritizes quarantine/open findings over unverified import and verified", () => {
-  expect(deriveFactStatus({ quarantined: true, unverifiedImport: true })).toBe("quarantined")
-  expect(deriveFactStatus({ openFindings: 1 })).toBe("quarantined")
+test("deriveFactStatus gives Quarantined and Withheld strict precedence and never infers Verified fact from empty findings", () => {
+  expect(deriveFactStatus({ quarantined: true, verified: true })).toBe("quarantined")
+  expect(deriveFactStatus({ openFindings: 1, verified: true })).toBe("quarantined")
+  expect(deriveFactStatus({ withheld: true, verified: true })).toBe("withheld")
   expect(deriveFactStatus({ quarantined: false, openFindings: 0, unverifiedImport: true })).toBe("imported_unverified")
-  expect(deriveFactStatus({ quarantined: false, openFindings: 0, unverifiedImport: false })).toBe("verified_fact")
+  expect(deriveFactStatus({ quarantined: false, openFindings: 0, verified: true })).toBe("verified_fact")
+  // Absence of visible findings alone never implies "Verified fact".
+  expect(deriveFactStatus({ quarantined: false, openFindings: 0 })).toBeNull()
 })
 
-test("confidence and law-violation helpers enforce advisory extraction and quarantine boundaries", () => {
+test("effectiveRowStatus gives Quarantined and Withheld precedence even if raw status claims verified_fact", () => {
+  const contradictory: CandidateRow = { ...violatingRow, status: "verified_fact" }
+  expect(effectiveRowStatus(contradictory)).toBe("quarantined")
+  expect(effectiveRowStatus(withheldRow)).toBe("withheld")
+  expect(effectiveRowStatus(verifiedRow)).toBe("verified_fact")
+})
+
+test("confidence, temporal formatting, and withheld field extraction guards", () => {
   expect(isLowConfidence(8999, 9000)).toBe(true)
   expect(isLowConfidence(9000, 9000)).toBe(false)
   expect(isLowConfidence(null, 9000)).toBe(false)
@@ -117,27 +148,74 @@ test("confidence and law-violation helpers enforce advisory extraction and quara
   expect(formatTemporal("2026-02-31")).toBe("2026-02-31")
   expect(formatTemporal("2026-11-16T08:00:00Z")).toBe("16 Nov 2026, 08:00 UTC")
   expect(timeDeltaLabel("2026-11-16T09:00:00Z", "2026-11-16T11:15:00Z")).toBe("+2h 15m later")
+
+  // Withheld fields are strictly excluded from governed promotion values.
+  expect(extractEditableValues(withheldRow, { "row-withheld:contact_note": "spoofed" })).toEqual({
+    slot_code: "S-01",
+  })
 })
 
-test("batch promotion excludes violating/quarantined rows and unresolved aliases, unblocking once bound", () => {
+test("strict alias gating: pre-populated entityRecordId cannot bypass an unresolved or ignored alias, and busy rows are excluded from batch", () => {
   const unresolved = new Map<string, AliasResolution>()
-  const before = partitionPromotionBatch([cleanRow, aliasBlockedRow, violatingRow, verifiedRow], unresolved)
-  expect(before.eligible.map((r) => r.id)).toEqual(["row-clean"])
-  expect(before.blockedByAlias.map((r) => r.id)).toEqual(["row-alias"])
-  expect(before.quarantined.map((r) => r.id)).toEqual(["row-violation"])
-  expect(before.verified.map((r) => r.id)).toEqual(["row-verified"])
-  expect(isRowEligibleForBatchPromotion(violatingRow, unresolved)).toBe(false)
+  expect(resolveRowEntity(aliasBlockedRow, unresolved).kind).toBe("unresolved")
+  expect(isRowEligibleForBatchPromotion(aliasBlockedRow, unresolved)).toBe(false)
 
-  const resolved = new Map<string, AliasResolution>([
+  const ignored = new Map<string, AliasResolution>([
+    ["alias-1", { kind: "ignored", note: "relay bot", receipt: sampleReceipt }],
+  ])
+  expect(resolveRowEntity(aliasBlockedRow, ignored).kind).toBe("ignored")
+  expect(isRowEligibleForBatchPromotion(aliasBlockedRow, ignored)).toBe(false)
+
+  const bound = new Map<string, AliasResolution>([
     ["alias-1", { kind: "bound", targetId: "ent-002", targetLabel: "Unit Beta", receipt: sampleReceipt }],
   ])
-  const after = partitionPromotionBatch([cleanRow, aliasBlockedRow, violatingRow, verifiedRow], resolved)
-  expect(after.eligible.map((r) => r.id)).toEqual(["row-clean", "row-alias"])
-  expect(after.blockedByAlias).toEqual([])
-  expect(after.quarantined.map((r) => r.id)).toEqual(["row-violation"])
+  expect(resolveRowEntity(aliasBlockedRow, bound)).toEqual({ kind: "resolved", targetId: "ent-002", label: "Unit Beta" })
+
+  const busy = new Set<string>(["row-clean"])
+  const partitioned = partitionPromotionBatch([cleanRow, aliasBlockedRow, violatingRow, withheldRow, verifiedRow], bound, busy)
+  expect(partitioned.inFlight.map((r) => r.id)).toEqual(["row-clean"])
+  expect(partitioned.eligible.map((r) => r.id)).toEqual(["row-alias"])
+  expect(partitioned.quarantined.map((r) => r.id)).toEqual(["row-violation"])
+  expect(partitioned.withheld.map((r) => r.id)).toEqual(["row-withheld"])
+  expect(partitioned.verified.map((r) => r.id)).toEqual(["row-verified"])
 })
 
-test("triageSummary tallies unresolved aliases, unverified/quarantined/verified rows, and open conflicts", () => {
+test("resolveArtifactMediaSource authorizes cell-scoped/data/object-store URIs and rejects external HTTP(S) URLs", () => {
+  expect(resolveArtifactMediaSource("data:image/svg+xml;charset=utf-8,%3Csvg/%3E")).toEqual({
+    kind: "direct",
+    url: "data:image/svg+xml;charset=utf-8,%3Csvg/%3E",
+  })
+  expect(resolveArtifactMediaSource("/v1/blobs/sha256:abc")).toEqual({
+    kind: "direct",
+    url: "/api/host/v1/blobs/sha256:abc",
+  })
+  expect(resolveArtifactMediaSource("s3://bucket/capture-a.png")).toEqual({
+    kind: "cell-scan",
+    uri: "s3://bucket/capture-a.png",
+  })
+  expect(resolveArtifactMediaSource("https://external.example/tracker.png").kind).toBe("rejected")
+  expect(resolveArtifactMediaSource("http://169.254.169.254/latest/meta-data").kind).toBe("rejected")
+})
+
+test("fetchImportTriage treats 404 route.not_found and 503 as unavailable while preserving real 403 refusals", async () => {
+  const makeFetcher = (status: number, body: unknown) => async (input: string): Promise<Response> => {
+    if (input === "/api/me") {
+      return new Response(JSON.stringify({ organization: { id: "org_demo" }, environmentId: "prod" }), { status: 200 })
+    }
+    return new Response(JSON.stringify(body), { status })
+  }
+
+  const notFound = await fetchImportTriage(makeFetcher(404, { code: "route.not_found", message: "No route /v1/imports/triage" }))
+  expect(notFound).toEqual({ kind: "unavailable" })
+
+  const unavailable = await fetchImportTriage(makeFetcher(503, { code: "host.unavailable", message: "Starting" }))
+  expect(unavailable).toEqual({ kind: "unavailable" })
+
+  const forbidden = await fetchImportTriage(makeFetcher(403, { code: "authz.denied", message: "Not permitted." }))
+  expect(forbidden.kind).toBe("refused")
+})
+
+test("triageSummary tallies unresolved aliases, unverified/quarantined/withheld/verified rows, and open conflicts", () => {
   const workspace: ImportTriageWorkspace = {
     batchId: "batch-1",
     title: "Window W47 capture",
@@ -166,7 +244,7 @@ test("triageSummary tallies unresolved aliases, unverified/quarantined/verified 
     ],
     availableEntities: [{ id: "ent-001", label: "Unit Alpha" }],
     artifacts: [],
-    rows: [cleanRow, violatingRow, verifiedRow],
+    rows: [cleanRow, violatingRow, withheldRow, verifiedRow],
     supersessions: [
       {
         id: "sup-1",
@@ -200,10 +278,11 @@ test("triageSummary tallies unresolved aliases, unverified/quarantined/verified 
     resolvedAliases: 0,
     unverifiedRows: 1,
     quarantinedRows: 1,
+    withheldRows: 1,
     verifiedRows: 1,
     openConflicts: 1,
     resolvedConflicts: 0,
-    totalAttention: 4,
+    totalAttention: 5,
   })
 })
 
@@ -247,7 +326,7 @@ test("governed triage commits send scoped POST /v1/actions requests with idempot
     newerArtifactId: "art-2",
     newerBlobDigest: "sha256:" + "3".repeat(64),
     preserveEarlierEvidence: true,
-    note: "Revised schedule snapshot",
+    note: "Revised snapshot",
   }, "key-sup-1", fetcher)
   expect(supersede.kind).toBe("receipt")
 
