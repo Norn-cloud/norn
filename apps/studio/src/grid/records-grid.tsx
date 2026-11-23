@@ -27,7 +27,7 @@ import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
 import { RecordsTimeline } from "./records-timeline.tsx"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { stepAnchor, windowOf, windowQuery, type Zoom } from "../lib/timeline.ts"
+import { TIMELINE_MAX_USER_CLAUSES, stepAnchor, tryWindowQuery, windowOf, type Zoom } from "../lib/timeline.ts"
 
 const ROW = 32
 const DEFAULT_COLUMNS = 8
@@ -114,10 +114,16 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   const [anchor, setAnchor] = useState(() => new Date())
   const shownTimeline = timeline && layout === "timeline"
   const span = useMemo(() => windowOf(zoom, anchor), [zoom, anchor])
-  const windowed = shownTimeline ? windowQuery(span, filter) : null
-  const query: RecordsQuery = { sort: windowed?.sort ?? sort, filter: windowed?.filter ?? filter, limit: shownTimeline ? LIMITS.maxPageSize : limit, ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] } }
+  const windowed = shownTimeline ? tryWindowQuery(span, filter) : null
+  const filterOverflow = windowed?.kind === "too_many" ? windowed.overflow : 0
+  const query: RecordsQuery = {
+    sort: windowed?.kind === "ok" ? windowed.sort : sort,
+    filter: windowed?.kind === "ok" ? windowed.filter : filter,
+    limit: shownTimeline ? LIMITS.maxPageSize : limit,
+    ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] },
+  }
   const key = ["records", name, recordsQueryParams(query).toString()] as const
-  const result = useQuery({ queryKey: key, queryFn: () => read(name, query), placeholderData: keepPreviousData, retry: false })
+  const result = useQuery({ queryKey: key, queryFn: () => read(name, query), placeholderData: keepPreviousData, retry: false, enabled: filterOverflow === 0 })
   const data = result.data
 
   const restart = () => { setCursors([undefined]); setPageIndex(0); setActive(0) }
@@ -246,7 +252,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-[min(44rem,90vw)] rounded-node border-node-border shadow-float">
-                <FilterEditor fields={fields} draft={draft} onDraft={setDraft} onApply={applyFilter} onClear={clearFilter} applied={applied} diagnostics={refused?.diagnostics ?? []} />
+                <FilterEditor fields={fields} draft={draft} onDraft={setDraft} onApply={applyFilter} onClear={clearFilter} applied={applied} diagnostics={refused?.diagnostics ?? []} maxClauses={shownTimeline ? TIMELINE_MAX_USER_CLAUSES : LIMITS.clauses} />
               </PopoverContent>
             </Popover>
             <DropdownMenu>
@@ -288,9 +294,12 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
         )}
 
         {shownTimeline && (
-          <RecordsTimeline concept={concept} rows={rows} window={span} zoom={zoom} pending={result.isPending} fetching={result.isFetching} filter={filter} read={read}
+          <RecordsTimeline concept={concept} rows={result.isPlaceholderData || filterOverflow > 0 ? [] : rows} window={span} zoom={zoom}
+            pending={filterOverflow === 0 && (result.isPending || result.isPlaceholderData)} fetching={result.isFetching} filter={filter}
+            filterOverflow={filterOverflow} read={read}
             onZoom={(next) => { setZoom(next); restart() }} onStep={(by) => { setAnchor((at) => stepAnchor(zoom, at, by)); restart() }}
             onToday={() => { setAnchor(new Date()); restart() }} onJump={(at) => { setAnchor(new Date(at)); restart() }}
+            onOpenFilter={() => setFilterOpen(true)} onClearFilter={clearFilter} onSwitchToTable={() => { setLayout("table"); restart(); setNotice(null) }}
             onOpen={(row) => setOpened(row)} />
         )}
         <div className={cn("relative overflow-hidden rounded-xl border border-node-border bg-card", shownTimeline && "hidden")}>

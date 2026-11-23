@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test"
 import { catalogOf } from "../src/lib/catalog.ts"
 import type { Artifact } from "../src/lib/transport.ts"
-import { descendsFrom, geometry, instantOf, laneLinks, nearestQuery, offersTimeline, stack, stepAnchor, ticksOf, windowOf, windowQuery, zoneOf } from "../src/lib/timeline.ts"
+import {
+  TIMELINE_MAX_USER_CLAUSES, clampFocus, clockText, descendsFrom, formatLocale, geometry, groupLanes, instantOf, laneLinks, nearestQuery, offersTimeline, stack, stepAnchor, ticksOf, timelineFilterOverflow, timeText, tryWindowQuery, windowOf, windowQuery, windowTitle, zoneOf,
+} from "../src/lib/timeline.ts"
 import { INTERVAL_ARTIFACTS } from "../e2e/interval-fixtures.ts"
 
 const catalog = catalogOf(INTERVAL_ARTIFACTS as unknown as readonly Artifact[])
@@ -68,4 +70,79 @@ test("overlapping spans stack into the fewest rows and are marked; touching ends
 test("a bar is clipped to the window and says on which side", () => {
   expect(geometry({ start: -50, end: 50 }, { start: 0, end: 200 })).toEqual({ left: 0, width: 25, clippedStart: true, clippedEnd: false })
   expect(geometry({ start: 100, end: 300 }, { start: 0, end: 200 })).toEqual({ left: 50, width: 50, clippedStart: false, clippedEnd: true })
+})
+
+test("tryWindowQuery enforces the cell's 8-clause cap by reserving 2 clauses for the time window", () => {
+  const window = { start: Date.UTC(2026, 10, 23), end: Date.UTC(2026, 10, 30) }
+  const make = (n: number) => ({ all: Array.from({ length: n }, (_, i) => ({ property: "label", op: "contains" as const, value: `v${i}` })) })
+  expect(TIMELINE_MAX_USER_CLAUSES).toBe(6)
+  expect(timelineFilterOverflow(make(6))).toBe(0)
+  expect(timelineFilterOverflow(make(7))).toBe(1)
+  expect(timelineFilterOverflow(make(8))).toBe(2)
+  const fits = tryWindowQuery(window, make(6))
+  expect(fits.kind).toBe("ok")
+  if (fits.kind === "ok") expect(fits.filter.all).toHaveLength(8)
+  expect(tryWindowQuery(window, make(7))).toEqual({ kind: "too_many", overflow: 1, maxUserClauses: 6, actual: 7 })
+  expect(tryWindowQuery(window, make(8))).toEqual({ kind: "too_many", overflow: 2, maxUserClauses: 6, actual: 8 })
+})
+
+test("groupLanes separates pending, unavailable, and unlinked/hidden buckets and suppresses overlap markers outside resolved targets", () => {
+  const spans = [
+    { item: "a", start: 0, end: 10 },
+    { item: "b", start: 5, end: 15 },
+    { item: "c", start: 0, end: 10 },
+    { item: "d", start: 5, end: 15 },
+    { item: "e", start: 0, end: 10 },
+    { item: "f", start: 5, end: 15 },
+    { item: "g", start: 0, end: 10 },
+    { item: "h", start: 5, end: 15 },
+  ]
+  const lanes = groupLanes(spans, [
+    { kind: "target", id: "equipment/1" },
+    { kind: "target", id: "equipment/1" },
+    { kind: "pending" },
+    { kind: "pending" },
+    { kind: "unavailable" },
+    { kind: "unavailable" },
+    { kind: "none" },
+    { kind: "none" },
+  ], { lane: "equipment", conceptTitle: "Equipment booking", linkName: "equipment" })
+  expect(lanes.map((l) => [l.kind, l.label, l.rows, l.overlapping])).toEqual([
+    ["target", "equipment/1", 2, 2],
+    ["pending", "Reading links…", 2, 0],
+    ["unavailable", "Link unavailable", 2, 0],
+    ["none", "No visible equipment", 2, 0],
+  ])
+  expect(lanes[0]!.placed.every((p) => p.overlaps)).toBe(true)
+  expect(lanes.slice(1).every((l) => l.placed.every((p) => !p.overlaps))).toBe(true)
+})
+
+test("day ticks step in epoch hours so 23-hour spring DST days have no duplicate and 25-hour fall DST days include both occurrences", () => {
+  const HOUR = 3_600_000
+  const start = Date.UTC(2026, 2, 8, 5)
+  const spring = ticksOf("day", { start, end: start + 23 * HOUR }, "en-US")
+  expect(spring).toHaveLength(23)
+  expect(new Set(spring.map((t) => t.at)).size).toBe(23)
+
+  const fallStart = Date.UTC(2026, 10, 1, 4)
+  const fall = ticksOf("day", { start: fallStart, end: fallStart + 25 * HOUR }, "en-US")
+  expect(fall).toHaveLength(25)
+  expect(new Set(fall.map((t) => t.at)).size).toBe(25)
+})
+
+test("roving focus clamps when the bar list shrinks and timeline formatting honours Studio locale (including Arabic)", () => {
+  expect(clampFocus(4, 2)).toBe(1)
+  expect(clampFocus(3, 0)).toBe(0)
+  expect(clampFocus(-1, 3)).toBe(0)
+  expect(formatLocale("ar", "en-GB")).toBe("ar")
+  expect(formatLocale("ar", "ar-EG")).toBe("ar-EG")
+  expect(formatLocale("en", "en-GB")).toBe("en-GB")
+  expect(formatLocale("en", "ar-EG")).toBe("en")
+
+  const win = { start: Date.UTC(2026, 10, 23), end: Date.UTC(2026, 10, 30) }
+  const arTitle = windowTitle("month", win, "ar")
+  const enTitle = windowTitle("month", win, "en-GB")
+  expect(arTitle).not.toBe(enTitle)
+  expect(timeText(Date.UTC(2026, 10, 23, 9), "UTC", "ar")).not.toBe(timeText(Date.UTC(2026, 10, 23, 9), "UTC", "en-GB"))
+  expect(clockText(Date.UTC(2026, 10, 23, 9, 30), "UTC", "ar").length).toBeGreaterThan(0)
 })

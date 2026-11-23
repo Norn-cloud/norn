@@ -11,6 +11,8 @@ import type { Artifact, ObjectPage } from "../src/lib/transport.ts"
 
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
 const { RecordsGrid } = await import("../src/grid/records-grid.tsx")
+const { RecordsTimeline } = await import("../src/grid/records-timeline.tsx")
+const { LocaleProvider } = await import("../src/lib/locale.tsx")
 const { cellText } = await import("../src/grid/cells.tsx")
 const { EMPTY_QUERY, recordsQueryParams, SERVER_QUERY_UNAVAILABLE } = await import("../src/lib/records-query.ts")
 const { blankClause, fromPredicate, sameDraft, settled, toPredicate } = await import("../src/grid/filter-editor.tsx")
@@ -117,4 +119,38 @@ test("'is one of' on a free-form field keeps what was typed, and applying leaves
   // A leftover from an earlier test (extra `values`, untrimmed text) settles the same way.
   const leftover = [{ ...blankClause(name), op: "eq" as const, value: " Gold ", values: ["x"] }]
   expect(settled(leftover, concept.fields)).toEqual([{ property: name.id, op: "eq", value: "Gold", high: "", values: [] }])
+})
+
+test("RecordsTimeline hides stale bars while pending, alerts on filter overflow, and formats headings in Studio's active locale", () => {
+  const client = new QueryClient()
+  const window = { start: Date.UTC(2026, 10, 23), end: Date.UTC(2026, 10, 30) }
+  const row = {
+    record: { objectType: "facilities.EquipmentBooking", id: "booking/1", scope: "s", version: 1, values: { label: "Prototype run", starts_at: "2026-11-23T08:00:00Z", ends_at: "2026-11-23T12:00:00Z" }, withheld: false },
+    at: "/records/0",
+    numbers: new Map(),
+  } as never
+  const noop = () => {}
+  const render = (props: { pending?: boolean; filterOverflow?: number; locale?: "en" | "ar" }) =>
+    renderToStaticMarkup(
+      <LocaleProvider initial={props.locale ?? "en"}>
+        <QueryClientProvider client={client}>
+          <RecordsTimeline concept={concept} rows={[row]} window={window} zoom="week"
+            pending={props.pending ?? false} fetching={props.pending ?? false} filter={null} filterOverflow={props.filterOverflow ?? 0}
+            read={async () => ({ kind: "no-cell" })} onZoom={noop} onStep={noop} onToday={noop} onJump={noop} onOpen={noop} />
+        </QueryClientProvider>
+      </LocaleProvider>,
+    )
+
+  const stalePending = render({ pending: true })
+  expect(stalePending).toContain('aria-label="Reading records"')
+  expect(stalePending).not.toContain("Prototype run")
+
+  const overflow = render({ filterOverflow: 2 })
+  expect(overflow).toContain("Too many filter conditions for Timeline")
+  expect(overflow).toContain("Remove 2 conditions")
+  expect(overflow).not.toContain("Prototype run")
+
+  const arabic = render({ locale: "ar" })
+  expect(arabic).toContain("Prototype run")
+  expect(arabic).toContain("نوفمبر")
 })

@@ -322,15 +322,110 @@ export function offsetText(minutesEast: number): string {
 }
 
 const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
+const RFC3339_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+
+/** Wall-clock parts of a local date-time (`month` is 1..12). */
+export interface WallParts {
+  readonly year: number
+  readonly month: number
+  readonly day: number
+  readonly hour: number
+  readonly minute: number
+  readonly second: number
+}
+
+/**
+ * Resolves a local wall time in one time zone into every valid UTC offset (in minutes east of UTC)
+ * that displays that exact wall time:
+ * - `[]` for a spring-forward DST gap (that wall time does not exist in the zone),
+ * - `[offset]` for an unambiguous wall time,
+ * - `[earlierOffset, laterOffset]` for a fall-back DST repeat (chronological order).
+ */
+export type LocalWallOffsets = (parts: WallParts) => readonly number[]
+
+const sameWall = (at: Date, p: WallParts): boolean =>
+  at.getFullYear() === p.year
+  && at.getMonth() === p.month - 1
+  && at.getDate() === p.day
+  && at.getHours() === p.hour
+  && at.getMinutes() === p.minute
+  && at.getSeconds() === p.second
+
+/** The runtime's local time zone resolver, detecting both spring-forward gaps and fall-back repeats. */
+export function runtimeWallOffsets(parts: WallParts): readonly number[] {
+  const wall = new Date(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second)
+  if (!sameWall(wall, parts)) return []
+  const matches = new Map<number, number>()
+  const add = (at: Date) => {
+    if (!sameWall(at, parts)) return
+    const offset = -at.getTimezoneOffset()
+    if (!matches.has(offset)) matches.set(offset, at.getTime())
+  }
+  add(wall)
+  // Check +/-30m and +/-60m around `wall` to discover the sibling occurrence on a fall-back transition.
+  for (const delta of [-3_600_000, -1_800_000, 1_800_000, 3_600_000]) add(new Date(wall.getTime() + delta))
+  return [...matches.entries()].sort(([, ta], [, tb]) => ta - tb).map(([offset]) => offset)
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0")
+const formatWall = (p: WallParts, offsetMinutes: number) =>
+  `${String(p.year).padStart(4, "0")}-${pad2(p.month)}-${pad2(p.day)}T${pad2(p.hour)}:${pad2(p.minute)}:${pad2(p.second)}${offsetText(offsetMinutes)}`
+
+export type DateTimeResolution =
+  | { readonly kind: "ok"; readonly text: string; readonly alternatives: readonly string[] }
+  | { readonly kind: "nonexistent"; readonly text: string }
+  | { readonly kind: "passthrough"; readonly text: string }
+
+/**
+ * Resolve a draft date-time value to what will be sent, detecting DST gaps and repeats.
+ * - A zoneless picker value (`YYYY-MM-DDTHH:MM[:SS]`): resolves against `wallOffsets` (default:
+ *   the reader's local zone). A spring-forward gap returns `nonexistent` (leaving `text` zoneless
+ *   rather than silently shifting an hour); a fall-back repeat returns both valid RFC 3339 instants
+ *   in `alternatives`.
+ * - Text that already carries an RFC 3339 offset (a prefilled/restored instant, or an explicitly
+ *   disambiguated fall-back instant): preserves its exact offset in `text` and, when its local wall
+ *   time is a fall-back repeat, still exposes both valid `alternatives` so the picker can switch.
+ */
+export function resolveDateTime(value: string, wallOffsets: LocalWallOffsets = runtimeWallOffsets): DateTimeResolution {
+  const trimmed = value.trim()
+  const local = LOCAL_DATE_TIME.exec(trimmed)
+  if (local !== null) {
+    const parts: WallParts = {
+      year: Number(local[1]), month: Number(local[2]), day: Number(local[3]),
+      hour: Number(local[4]), minute: Number(local[5]), second: Number(local[6] ?? "0"),
+    }
+    const offsets = wallOffsets(parts)
+    if (offsets.length === 0) return { kind: "nonexistent", text: value }
+    const alternatives = offsets.map((offset) => formatWall(parts, offset))
+    return { kind: "ok", text: alternatives[0]!, alternatives }
+  }
+  const zoned = RFC3339_OFFSET.exec(trimmed)
+  if (zoned !== null) {
+    const at = Date.parse(trimmed)
+    if (!Number.isNaN(at)) {
+      const asLocal = new Date(at)
+      const parts: WallParts = {
+        year: asLocal.getFullYear(), month: asLocal.getMonth() + 1, day: asLocal.getDate(),
+        hour: asLocal.getHours(), minute: asLocal.getMinutes(), second: asLocal.getSeconds(),
+      }
+      const offsets = wallOffsets(parts)
+      const alternatives = offsets.map((offset) => formatWall(parts, offset))
+      return { kind: "ok", text: trimmed, alternatives }
+    }
+  }
+  return { kind: "passthrough", text: value }
+}
 
 /**
  * The RFC 3339 text for what a date-time picker holds. A picker gives a wall time with no zone
  * (`2026-11-23T09:30`); it is sent with the offset the reader's own zone has at that wall time
- * (`2026-11-23T09:30:00+02:00`), so the instant is the one the reader meant. Text that already
- * carries an offset (a prefilled value) is sent as it is; anything else goes as typed, for the
- * cell to refuse at its pointer. `offsetAt` is the zone's offset east of UTC, in minutes.
+ * (`2026-11-23T09:30:00+02:00`), so the instant is the one the reader meant. A nonexistent local
+ * time in a spring DST gap stays as typed (never shifted to another hour) so the cell refuses it;
+ * text that already carries an offset (a prefilled value) is sent as it is. `offsetAt` is the
+ * zone's offset east of UTC, in minutes (for deterministic tests).
  */
-export function instantText(value: string, offsetAt: (local: Date) => number = (local) => -local.getTimezoneOffset()): string {
+export function instantText(value: string, offsetAt?: (local: Date) => number): string {
+  if (offsetAt === undefined) return resolveDateTime(value).text
   const local = LOCAL_DATE_TIME.exec(value.trim())
   if (local === null) return value
   const [, y, mo, d, h, mi, sec = "00"] = local
@@ -448,14 +543,51 @@ export function inputPointer(diagnostic: Diagnostic): string | null {
 export const problemsAt = (diagnostics: readonly Diagnostic[], pointer: string): readonly Diagnostic[] =>
   diagnostics.filter((d) => { const at = inputPointer(d); return at !== null && (at === pointer || at.startsWith(`${pointer}/`)) })
 
+/** Fields of a record item re-pointed from the schema's item `0` to the item they edit. */
+export const rebaseFields = (fields: readonly FormField[], from: string, to: string): readonly FormField[] =>
+  fields.map((f) => ({ ...f, pointer: to + f.pointer.slice(from.length), spec: f.spec.kind === "object" ? { ...f.spec, fields: rebaseFields(f.spec.fields, from, to) } : f.spec }))
+
+const ARRAY_INDEX = /^(0|[1-9]\d*)$/
+
+/**
+ * Whether an input pointer (`inputPointer(d)`) is actually rendered by a `FieldRow` in `fields`.
+ * Mirrors `FieldRow`: an object (or array of objects) only renders diagnostics at its own exact
+ * pointer, while its declared children render theirs; leaf fields (and arrays of primitives) render
+ * any pointer at or below them. Unmatched nested pointers (e.g. `/location/unknown` or an
+ * out-of-range array element) return `false` so they surface in the form-level refusal alert.
+ */
+export function isDiagnosticPlaced(at: string, fields: readonly FormField[], draft?: Draft): boolean {
+  for (const field of fields) {
+    if (at === field.pointer) return true
+    if (field.spec.kind === "object") {
+      if (at.startsWith(`${field.pointer}/`) && isDiagnosticPlaced(at, field.spec.fields, draft)) return true
+      continue
+    }
+    if (field.spec.kind === "array" && field.spec.item.kind === "object") {
+      if (!at.startsWith(`${field.pointer}/`)) continue
+      const rest = at.slice(field.pointer.length + 1)
+      const slash = rest.indexOf("/")
+      if (slash < 0) continue // array item object itself has no FieldRow; only its child fields do
+      const indexText = rest.slice(0, slash)
+      if (!ARRAY_INDEX.test(indexText)) continue
+      if (draft !== undefined) {
+        const items = draftAt(draft, field.pointer)
+        if (!Array.isArray(items) || Number(indexText) >= items.length) continue
+      }
+      const rebased = rebaseFields(field.spec.item.fields, `${field.pointer}/0`, `${field.pointer}/${indexText}`)
+      if (isDiagnosticPlaced(at, rebased, draft)) return true
+      continue
+    }
+    if (at.startsWith(`${field.pointer}/`)) return true
+  }
+  return false
+}
+
 /** Diagnostics that land on no field the form shows: they read at the top of the form. */
-export function unplaced(diagnostics: readonly Diagnostic[], fields: readonly FormField[]): readonly Diagnostic[] {
-  const pointers: string[] = []
-  const walk = (list: readonly FormField[]) => { for (const f of list) { pointers.push(f.pointer); if (f.spec.kind === "object") walk(f.spec.fields) } }
-  walk(fields)
+export function unplaced(diagnostics: readonly Diagnostic[], fields: readonly FormField[], draft?: Draft): readonly Diagnostic[] {
   return diagnostics.filter((d) => {
     const at = inputPointer(d)
-    return at === null || !pointers.some((p) => at === p || at.startsWith(`${p}/`))
+    return at === null || !isDiagnosticPlaced(at, fields, draft)
   })
 }
 

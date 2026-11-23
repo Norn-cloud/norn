@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { instantText, offsetText, pickerDateTime } from "../src/lib/actions.ts"
+import { instantText, isDiagnosticPlaced, offsetText, pickerDateTime, resolveDateTime, type LocalWallOffsets } from "../src/lib/actions.ts"
 import { BOOK_EQUIPMENT } from "../e2e/interval-fixtures.ts"
 import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
@@ -307,16 +307,74 @@ test("an instant shows in the picker as the reader's wall time; a wall time show
   expect(pickerDateTime("garbage")).toBe("")
 })
 
-test("a refusal's nested pointer lands on the member's row; one at /input itself stays on the form", () => {
+test("a refusal's nested pointer lands on the member's row; unmatched nested pointers stay on the form", () => {
   const fields = fieldsOf(OPEN_HOLDING.inputSchema)
   const diagnostics = [
     { code: "action.input_invalid", message: "Site is unknown.", pointer: "/input/location/site" },
+    { code: "action.input_invalid", message: "Unknown nested key.", pointer: "/input/location/unknown" },
     { code: "request.invalid", message: "input must be a JSON object", pointer: "/input" },
     { code: "core.time.improper_interval", message: "Ends must be after it starts.", pointer: "/input/ends_at" },
   ]
   expect(problemsAt(diagnostics, "/location/site").map((d) => d.message)).toEqual(["Site is unknown."])
-  expect(problemsAt(diagnostics, "/location").map((d) => d.message)).toEqual(["Site is unknown."])
-  expect(inputPointer(diagnostics[1]!)).toBeNull()
-  // `/ends_at` names no field of this form, so it reads at the top with the unpointed one.
-  expect(unplaced(diagnostics, fields).map((d) => d.message)).toEqual(["input must be a JSON object", "Ends must be after it starts."])
+  expect(problemsAt(diagnostics, "/location").map((d) => d.message)).toEqual(["Site is unknown.", "Unknown nested key."])
+  expect(inputPointer(diagnostics[2]!)).toBeNull()
+  // `/location/site` is placed on its leaf FieldRow; `/location/unknown` and `/ends_at` have no FieldRow and stay in `unplaced`.
+  expect(isDiagnosticPlaced("/location/site", fields)).toBe(true)
+  expect(isDiagnosticPlaced("/location", fields)).toBe(true)
+  expect(isDiagnosticPlaced("/location/unknown", fields)).toBe(false)
+  expect(unplaced(diagnostics, fields).map((d) => d.message)).toEqual([
+    "Unknown nested key.",
+    "input must be a JSON object",
+    "Ends must be after it starts.",
+  ])
+
+  // Array of objects: only rendered item indices with declared member fields are placed.
+  const arrayFields = fieldsOf({
+    type: "object",
+    properties: {
+      lines: { type: "array", items: { type: "object", properties: { sku: { type: "string" } } } },
+    },
+  })
+  const draft: Draft = { lines: [{ sku: "A" }] }
+  const arrayDiagnostics = [
+    { code: "a", message: "Bad sku", pointer: "/input/lines/0/sku" },
+    { code: "b", message: "Unknown item field", pointer: "/input/lines/0/unknown" },
+    { code: "c", message: "Out of range item", pointer: "/input/lines/5/sku" },
+    { code: "d", message: "List-level refusal", pointer: "/input/lines" },
+  ]
+  expect(unplaced(arrayDiagnostics, arrayFields, draft).map((d) => d.message)).toEqual([
+    "Unknown item field",
+    "Out of range item",
+  ])
+})
+
+test("DST spring gap is flagged without shifting; fall repeat preserves exact offset and exposes both occurrences", () => {
+  // Simulate America/New_York DST transitions:
+  // - 2026-03-08 02:00..02:59 does not exist (spring forward -05:00 -> -04:00)
+  // - 2026-11-01 01:00..01:59 occurs twice (fall back -04:00 then -05:00)
+  const newYork: LocalWallOffsets = (p) => {
+    if (p.year === 2026 && p.month === 3 && p.day === 8 && p.hour === 2) return []
+    if (p.year === 2026 && p.month === 11 && p.day === 1 && p.hour === 1) return [-240, -300]
+    return [-300]
+  }
+  // Spring gap: flagged nonexistent and never fabricated as `02:30:00-04:00` (which would shift to 01:30 EST).
+  const gap = resolveDateTime("2026-03-08T02:30", newYork)
+  expect(gap).toEqual({ kind: "nonexistent", text: "2026-03-08T02:30" })
+
+  // Fall repeat from picker wall time: offers both occurrences chronologically.
+  const repeat = resolveDateTime("2026-11-01T01:30", newYork)
+  expect(repeat).toEqual({
+    kind: "ok",
+    text: "2026-11-01T01:30:00-04:00",
+    alternatives: ["2026-11-01T01:30:00-04:00", "2026-11-01T01:30:00-05:00"],
+  })
+
+  // Fall repeat already carrying `-05:00` (restored/prefilled): preserves exact `-05:00` in both preview & encoded payload.
+  const restored = resolveDateTime("2026-11-01T01:30:00-05:00", newYork)
+  expect(restored.kind).toBe("ok")
+  expect(restored.text).toBe("2026-11-01T01:30:00-05:00")
+  const fields = fieldsOf(BOOK_EQUIPMENT.inputSchema)
+  expect(JSON.parse(encodeObject(fields, { ...emptyDraft(fields), starts_at: "2026-11-01T01:30:00-05:00" }))).toEqual({
+    starts_at: "2026-11-01T01:30:00-05:00",
+  })
 })

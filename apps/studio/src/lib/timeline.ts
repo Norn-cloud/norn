@@ -1,5 +1,6 @@
 import type { Catalog, Concept, Relationship } from "./catalog.ts"
-import type { Clause, Predicate, SortKey } from "./records-query.ts"
+import type { Locale } from "./locale.tsx"
+import { LIMITS, type Clause, type Predicate, type SortKey } from "./records-query.ts"
 
 /**
  * The Timeline view of an object type's records: each record a bar from its `starts_at` to its
@@ -13,6 +14,23 @@ export const TIME_INTERVAL = "core.TimeInterval"
 export const STARTS_AT = "starts_at"
 export const ENDS_AT = "ends_at"
 export const TIMEZONE = "timezone"
+
+/** The cell caps every filter at `LIMITS.clauses` (8); the Timeline window needs 2 of them. */
+export const TIMELINE_MAX_USER_CLAUSES = LIMITS.clauses - 2
+/** Nearest-record queries add 1 timestamp clause. */
+export const NEAREST_MAX_USER_CLAUSES = LIMITS.clauses - 1
+
+const HOUR_MS = 3_600_000
+
+/**
+ * The BCP 47 tag for `Intl` date/time formatting under Studio's active locale: keeps the browser's
+ * regional variant when its language matches Studio's active language (e.g. `en-GB` for `en`), and
+ * switches to Studio's active tag (`ar` or `en`) when they differ.
+ */
+export function formatLocale(locale: Locale, browserLocale: string | undefined = globalThis.navigator?.language): string {
+  if (browserLocale !== undefined && browserLocale.toLowerCase().split("-")[0] === locale) return browserLocale
+  return locale
+}
 
 /** Whether `name` implements or extends `ancestor`, through any chain of declared parents. */
 export function descendsFrom(catalog: Catalog, name: string, ancestor: string): boolean {
@@ -63,27 +81,51 @@ export function stepAnchor(zoom: Zoom, anchor: Date, by: number): Date {
 /** One axis mark: where it falls, its words, and whether it starts a day. */
 export interface Tick { readonly at: number; readonly label: string; readonly day: boolean }
 
-/** The axis of a window: hours over a day, days over a week or a month, labelled in `locale`. */
+/**
+ * The axis of a window: epoch hours over a day (so a 23-hour spring DST day emits no duplicate
+ * tick and a 25-hour fall DST day includes both occurrences of the repeated hour), and calendar
+ * days over a week or month, labelled in `locale`.
+ */
 export function ticksOf(zoom: Zoom, window: Span, locale?: string): readonly Tick[] {
   const ticks: Tick[] = []
-  const start = new Date(window.start)
   if (zoom === "day") {
-    for (let h = 0; ; h += 1) {
-      const at = new Date(start.getFullYear(), start.getMonth(), start.getDate(), h).getTime()
-      if (at >= window.end) break
-      ticks.push({ at, label: new Date(at).toLocaleTimeString(locale, { hour: "numeric" }), day: h === 0 })
+    for (let at = window.start; at < window.end; at += HOUR_MS) {
+      ticks.push({ at, label: new Date(at).toLocaleTimeString(locale, { hour: "numeric" }), day: at === window.start })
     }
     return ticks
   }
+  const start = new Date(window.start)
   for (let i = 0; ; i += 1) {
     const at = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i).getTime()
     if (at >= window.end) break
+    if (ticks.at(-1)?.at === at) continue
     const label = zoom === "week"
       ? new Date(at).toLocaleDateString(locale, { weekday: "short", day: "numeric" })
       : new Date(at).toLocaleDateString(locale, { day: "numeric" })
     ticks.push({ at, label, day: true })
   }
   return ticks
+}
+
+/** How many clauses `filter` exceeds the Timeline window's user-clause budget by (`0` when it fits). */
+export const timelineFilterOverflow = (filter: Predicate | null): number =>
+  Math.max(0, (filter?.all.length ?? 0) - TIMELINE_MAX_USER_CLAUSES)
+
+export type WindowQueryResult =
+  | { readonly kind: "ok"; readonly filter: Predicate; readonly sort: readonly SortKey[] }
+  | { readonly kind: "too_many"; readonly overflow: number; readonly maxUserClauses: number; readonly actual: number }
+
+/**
+ * The records query for a window, guarded against the cell's `LIMITS.clauses` (8) cap: returns
+ * `{ kind: "too_many" }` when the user filter already has more than 6 clauses, so Studio never
+ * emits an invalid 9+ clause filter or silently drops user conditions.
+ */
+export function tryWindowQuery(window: Span, filter: Predicate | null): WindowQueryResult {
+  const actual = filter?.all.length ?? 0
+  if (actual > TIMELINE_MAX_USER_CLAUSES) {
+    return { kind: "too_many", overflow: actual - TIMELINE_MAX_USER_CLAUSES, maxUserClauses: TIMELINE_MAX_USER_CLAUSES, actual }
+  }
+  return { kind: "ok", ...windowQuery(window, filter) }
 }
 
 /**
@@ -132,6 +174,10 @@ export function zoneOf(values: Readonly<Record<string, unknown>> | null | undefi
 export const timeText = (at: number, zone: string | null, locale?: string): string =>
   new Date(at).toLocaleString(locale, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", ...zone === null ? {} : { timeZone: zone } })
 
+/** "09:00": the clock time of an instant in `zone`, formatted cleanly in any locale (including Arabic). */
+export const clockText = (at: number, zone: string | null, locale?: string): string =>
+  new Date(at).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", ...zone === null ? {} : { timeZone: zone } })
+
 /** A record placed on the timeline: its span, which sub-row of its lane it takes, and whether it shares time with another. */
 export interface Placed<T> {
   readonly item: T
@@ -140,6 +186,76 @@ export interface Placed<T> {
   readonly row: number
   readonly overlaps: boolean
 }
+
+/**
+ * What the cell's link lookup resolved for one record on a chosen lane link:
+ * - `target`: a resolved target id (records sharing this id genuinely share a resource),
+ * - `pending`: the link lookup is still in flight,
+ * - `unavailable`: the link lookup failed or was refused/unserved,
+ * - `none`: the cell returned no visible link (either unlinked, or target hidden by access policy).
+ */
+export type LaneTarget =
+  | { readonly kind: "target"; readonly id: string }
+  | { readonly kind: "pending" }
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "none" }
+
+export type LaneKind = "ungrouped" | "target" | "pending" | "unavailable" | "none"
+
+/** One timeline lane after grouping and interval stacking. */
+export interface TimelineLane<T> {
+  readonly key: string
+  readonly kind: LaneKind
+  readonly label: string
+  readonly rows: number
+  readonly placed: readonly Placed<T>[]
+  /** Count of overlapping bars; always `0` for synthetic buckets (`pending`, `unavailable`, `none`) and ungrouped views. */
+  readonly overlapping: number
+}
+
+/**
+ * Group spans into timeline lanes and stack each lane's spans into non-colliding sub-rows.
+ * Pending, unavailable, and unlinked/hidden records stay in separate buckets (never conflated into
+ * one "No link" lane), and overlap warnings are raised only on resolved `target` lanes.
+ */
+export function groupLanes<T>(
+  spans: readonly { readonly item: T; readonly start: number; readonly end: number }[],
+  targets: readonly LaneTarget[],
+  options: { readonly lane: string | null; readonly conceptTitle: string; readonly linkName?: string },
+): readonly TimelineLane<T>[] {
+  type Bucket = { kind: LaneKind; label: string; spans: { readonly item: T; readonly start: number; readonly end: number }[] }
+  const groups = new Map<string, Bucket>()
+  const linkLabel = (options.linkName ?? options.lane ?? "link").replaceAll("_", " ")
+  spans.forEach((span, index) => {
+    let key = ""
+    let kind: LaneKind = "ungrouped"
+    let label = options.conceptTitle
+    if (options.lane !== null) {
+      const target = targets[index] ?? { kind: "pending" as const }
+      if (target.kind === "pending") { key = "\u00001:reading"; kind = "pending"; label = "Reading links…" }
+      else if (target.kind === "unavailable") { key = "\u00002:unavailable"; kind = "unavailable"; label = "Link unavailable" }
+      else if (target.kind === "none") { key = "\u00003:none"; kind = "none"; label = `No visible ${linkLabel}` }
+      else { key = target.id; kind = "target"; label = target.id }
+    }
+    const group = groups.get(key) ?? { kind, label, spans: [] }
+    groups.set(key, { kind, label, spans: [...group.spans, span] })
+  })
+  return [...groups]
+    .sort(([a], [b]) => (a.startsWith("\u0000") ? 1 : 0) - (b.startsWith("\u0000") ? 1 : 0) || a.localeCompare(b))
+    .map(([key, group]) => {
+      const { placed, rows: height } = stack(group.spans)
+      const markOverlaps = group.kind === "target"
+      const finalPlaced = markOverlaps ? placed : placed.map((entry) => ({ ...entry, overlaps: false }))
+      return {
+        key, kind: group.kind, label: group.label, rows: Math.max(1, height),
+        placed: finalPlaced, overlapping: markOverlaps ? finalPlaced.filter(({ overlaps }) => overlaps).length : 0,
+      }
+    })
+}
+
+/** Clamp a roving-focus index into `[0, length - 1]` (or `0` when empty). */
+export const clampFocus = (focused: number, length: number): number =>
+  length <= 0 ? 0 : Math.max(0, Math.min(length - 1, focused))
 
 /**
  * Stack a lane's spans into the fewest sub-rows where none share time (interval partitioning, in

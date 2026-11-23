@@ -4,12 +4,13 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { catalogOf } from "../src/lib/catalog.ts"
 import type { RecordsRead } from "../src/lib/records-source.ts"
 import type { Artifact } from "../src/lib/transport.ts"
-import { INTERVAL_ARTIFACTS } from "../e2e/interval-fixtures.ts"
+import { BOOK_EQUIPMENT, INTERVAL_ARTIFACTS } from "../e2e/interval-fixtures.ts"
 
 const catalog = catalogOf(INTERVAL_ARTIFACTS as unknown as readonly Artifact[])
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { RecordPicker, pickedTitle, pickerMode, pickerPage, pickerQuery, titleProperty } = await import("../src/actions/record-picker.tsx")
+const { RecordPicker, pickedTitle, pickerMode, pickerPage, pickerQuery, pickerSnapshotMoved, titleProperty } = await import("../src/actions/record-picker.tsx")
+const { ActionForm } = await import("../src/actions/action-form.tsx")
 
 // ACTION-CATALOG-LINKS-1: the picker titles and searches records by the type's declared title property.
 test("a type's title property is its label or display name, else a text field named like a name", () => {
@@ -33,23 +34,51 @@ test("a page lists its readable records by title and drops withheld ones; anythi
     read: { document: { records: [{ id: "equipment/2", values: { label: "Forklift" } }, { id: "equipment/9", withheld: true, values: null }] }, numbers: new Map() },
   } as unknown as RecordsRead
   expect(pickerPage(page, "label")).toEqual({ records: [{ id: "equipment/2", title: "Forklift" }], next: "c2" })
+  expect(pickerPage({ kind: "restart" }, "label")).toEqual({ records: [], next: undefined, snapshotMoved: true })
+  expect(pickerSnapshotMoved([{ records: [{ id: "equipment/2", title: "Forklift" }], next: "c2" }, { records: [], next: undefined, snapshotMoved: true }])).toBe(true)
+  expect(pickerSnapshotMoved([{ records: [{ id: "equipment/2", title: "Forklift" }], next: undefined }])).toBe(false)
   expect(pickerPage({ kind: "no-cell" }, "label")).toBeNull()
   expect(pickerMode({ data: undefined, isError: true })).toBe("type")
   expect(pickerMode({ data: null, isError: false })).toBe("type")
   expect(pickerMode({ data: undefined, isError: false })).toBe("search")
 })
 
-test("readable records make a combobox that shows the chosen record's title and id; unreadable ones a typed id", () => {
-  const seeded = (page: unknown) => {
+test("readable records make a combobox with a clear button only on optional fields; unreadable ones a typed id", () => {
+  const seeded = (page: unknown, aria: Record<string, string | boolean | undefined> = { "aria-label": "Supplier" }) => {
     const client = new QueryClient()
     client.setQueryData(["picker", "purchasing.Supplier", null, ""], { pages: [page], pageParams: [undefined] })
-    return renderToStaticMarkup(<QueryClientProvider client={client}><RecordPicker objectKind="purchasing.Supplier" value="SUP-0001" onPick={() => {}} aria={{ "aria-label": "Supplier" }} /></QueryClientProvider>)
+    return renderToStaticMarkup(<QueryClientProvider client={client}><RecordPicker objectKind="purchasing.Supplier" value="SUP-0001" onPick={() => {}} aria={aria} /></QueryClientProvider>)
   }
-  const html = seeded({ records: [{ id: "SUP-0001", title: "Acme" }], next: undefined })
-  expect(html).toContain('role="combobox"')
-  expect(html).toContain("Acme")
-  expect(html).toContain("SUP-0001")
+  const optionalHtml = seeded({ records: [{ id: "SUP-0001", title: "Acme" }], next: undefined })
+  expect(optionalHtml).toContain('role="combobox"')
+  expect(optionalHtml).toContain("Acme")
+  expect(optionalHtml).toContain("SUP-0001")
+  expect(optionalHtml).toContain('aria-label="Clear selection"')
+  const requiredHtml = seeded({ records: [{ id: "SUP-0001", title: "Acme" }], next: undefined }, { "aria-label": "Supplier", "aria-required": true })
+  expect(requiredHtml).not.toContain('aria-label="Clear selection"')
   const typed = seeded(null)
   expect(typed).not.toContain('role="combobox"')
   expect(typed).toContain('value="SUP-0001"')
+})
+
+test("a snapshot_moved page on Show more stays a combobox (does not collapse to a typed input)", () => {
+  const client = new QueryClient()
+  client.setQueryData(["picker", "purchasing.Supplier", null, ""], {
+    pages: [{ records: [{ id: "SUP-0001", title: "Acme" }], next: "c2" }, { records: [], next: undefined, snapshotMoved: true }],
+    pageParams: [undefined, "c2"],
+  })
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><RecordPicker objectKind="purchasing.Supplier" value="" onPick={() => {}} aria={{ "aria-label": "Supplier" }} /></QueryClientProvider>)
+  expect(html).toContain('role="combobox"')
+})
+
+test("ActionForm DateTimePicker preserves an explicit fall-back offset (-05:00) in its preview", () => {
+  const client = new QueryClient()
+  const html = renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <ActionForm action={BOOK_EQUIPMENT as never} objectTitle="Equipment booking"
+        remembered={{ id: "b/1", label: "Fall back", equipment: "equipment/1", starts_at: "2026-11-01T01:30:00-05:00", ends_at: "2026-11-01T03:00:00-05:00", inspect_on: "", daily_check: "" }} />
+    </QueryClientProvider>,
+  )
+  expect(html).toContain("sent as ")
+  expect(html).toContain("2026-11-01T01:30:00-05:00")
 })
