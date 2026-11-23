@@ -1136,7 +1136,7 @@ fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
         "id": "att_nour_20261123",
         "action": "produce",
         "occurred_at": "2026-11-23T17:05:00Z",
-        "quantity": 8,
+        "quantity": "8",
         "unit": "h",
         "currency": null,
         "clock_in_at": "2026-11-23T09:02:00Z",
