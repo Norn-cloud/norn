@@ -20,6 +20,7 @@ import { SourceConnections } from "./source-connections.tsx"
 import { ModelGraph } from "./model-graph.tsx"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { RecordsGrid } from "./grid/records-grid.tsx"
+import { useCatalog } from "./lib/use-catalog.ts"
 import type { MenuEntry } from "./shell.tsx"
 import { Iso } from "@/components/iso"
 import { directionOf, useLocale } from "@/lib/locale"
@@ -285,7 +286,7 @@ export const menuCount = (total: Total | undefined): number | string | undefined
   total === undefined ? undefined : total.approximate ? `${total.count.toLocaleString("en-US")}+` : total.count
 
 /** The admitted catalog, indexed once per read. */
-export { useCatalog } from "./lib/use-catalog.ts"
+export { useCatalog }
 
 export function SourcesPage() {
   const { read, catalog } = useCatalog()
