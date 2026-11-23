@@ -74,16 +74,26 @@ ensure_nextest() {
   cargo nextest --version 2> /dev/null | grep -qF 'cargo-nextest 0.9.150 ' \
     || CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-nextest --version 0.9.150
 }
+# Cached WASM packages are keyed by the committed tree ($tree_stamp). Any uncommitted edit
+# or untracked file under Rust/WASM build inputs invalidates reuse so local runs never serve
+# stale WASM, while non-Rust generated outputs (e.g. fixtures/ir, apps/studio) do not.
+wasm_sources_clean() {
+  local dirty
+  dirty=$(git status --porcelain -- crates/ vendor/ third_party/ Cargo.toml Cargo.lock .cargo/ rust-toolchain.toml) || return 1
+  [[ -z $dirty ]]
+}
 # Build or reuse the canonical checker/engine WASM package for this tree inside
 # $CARGO_TARGET_DIR/norn-checker-wasm/{pkg,engine}. Inside a bundle, WasmPkg tasks
 # run consecutively without pruning target/, so the first builds once and the rest reuse it.
 ensure_checker_wasm_pkg() {
   local out_dir=${1:-}
   local canonical="$CARGO_TARGET_DIR/norn-checker-wasm/pkg"
-  if [[ ! -f "$canonical/norn_checker_wasm_bg.wasm" || ! -f "$canonical/package.json" || ! -f "$canonical/SIZE.txt" || ! "$canonical/SIZE.txt" -nt "$tree_stamp" ]]; then
+  local clean_stamp="$CARGO_TARGET_DIR/norn-checker-wasm/.pkg-clean"
+  if ! wasm_sources_clean || [[ ! -f "$clean_stamp" || ! -f "$canonical/norn_checker_wasm_bg.wasm" || ! -f "$canonical/package.json" || ! -f "$canonical/SIZE.txt" || ! "$canonical/SIZE.txt" -nt "$tree_stamp" ]]; then
     ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
-    rm -f "$canonical/SIZE.txt"
+    rm -f "$clean_stamp" "$canonical/SIZE.txt"
     crates/norn-checker-wasm/scripts/build-pkg.sh "$canonical"
+    if wasm_sources_clean; then : > "$clean_stamp"; fi
   fi
   if [[ -n $out_dir && $out_dir != "$canonical" ]]; then
     python3 -c 'import pathlib, shutil, sys; src, dst = map(pathlib.Path, sys.argv[1:3]); shutil.rmtree(dst, ignore_errors=True); dst.parent.mkdir(parents=True, exist_ok=True); shutil.copytree(src, dst)' "$canonical" "$out_dir"
@@ -92,10 +102,12 @@ ensure_checker_wasm_pkg() {
 ensure_checker_wasm_engine() {
   local out_dir=${1:-}
   local canonical="$CARGO_TARGET_DIR/norn-checker-wasm/engine"
-  if [[ ! -f "$canonical/norn_engine_wasm_bg.wasm" || ! -f "$canonical/package.json" || ! -f "$canonical/SIZE.txt" || ! "$canonical/SIZE.txt" -nt "$tree_stamp" ]]; then
+  local clean_stamp="$CARGO_TARGET_DIR/norn-checker-wasm/.engine-clean"
+  if ! wasm_sources_clean || [[ ! -f "$clean_stamp" || ! -f "$canonical/norn_engine_wasm_bg.wasm" || ! -f "$canonical/package.json" || ! -f "$canonical/SIZE.txt" || ! "$canonical/SIZE.txt" -nt "$tree_stamp" ]]; then
     ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
-    rm -f "$canonical/SIZE.txt"
+    rm -f "$clean_stamp" "$canonical/SIZE.txt"
     NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh "$canonical"
+    if wasm_sources_clean; then : > "$clean_stamp"; fi
   fi
   if [[ -n $out_dir && $out_dir != "$canonical" ]]; then
     python3 -c 'import pathlib, shutil, sys; src, dst = map(pathlib.Path, sys.argv[1:3]); shutil.rmtree(dst, ignore_errors=True); dst.parent.mkdir(parents=True, exist_ok=True); shutil.copytree(src, dst)' "$canonical" "$out_dir"

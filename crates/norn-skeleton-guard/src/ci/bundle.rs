@@ -571,7 +571,11 @@ fn prune_target(root: &Path, target: &Path) -> io::Result<()> {
             continue;
         }
         let path = entry.path();
-        if name == "doc" || path.join(".fingerprint").is_dir() || has_nested_fingerprint(&path)? {
+        if name == "doc"
+            || name == "norn-checker-wasm"
+            || path.join(".fingerprint").is_dir()
+            || has_nested_fingerprint(&path)?
+        {
             fs::remove_dir_all(path)?;
         }
     }
@@ -719,7 +723,7 @@ mod tests {
             root.join("src"),
             target.join("verification-results"),
             target.join("verification-tools/release/.fingerprint"),
-            target.join("norn-checker-wasm/pkg"),
+            target.join("other-output/pkg"),
             target.join(".hidden/.fingerprint"),
         ];
         for dir in &kept {
@@ -750,11 +754,19 @@ mod tests {
                 "wasm32-unknown-unknown/debug/.fingerprint",
                 "rivet/debug/.fingerprint",
                 "doc",
+                "norn-checker-wasm/pkg",
+                "norn-checker-wasm/engine",
             ] {
                 fs::create_dir_all(target.join(dir)).expect("create Cargo output");
             }
             prune_target(&root, &configured).expect("prune");
-            for dir in ["debug", "wasm32-unknown-unknown", "rivet", "doc"] {
+            for dir in [
+                "debug",
+                "wasm32-unknown-unknown",
+                "rivet",
+                "doc",
+                "norn-checker-wasm",
+            ] {
                 assert_eq!(target.join(dir).exists(), !deletes, "{configured:?}: {dir}");
             }
             assert!(kept.iter().all(|path| path.is_dir()), "{configured:?}");
@@ -766,5 +778,65 @@ mod tests {
         prune_target(&root, &target).expect("refuse symlink");
         assert!(outside.join("doc").is_dir());
         assert!(target.is_symlink());
+    }
+
+    #[test]
+    fn prune_target_clears_wasm_pkg_between_incompatible_groups_only() {
+        let tmp = tempfile::tempdir().expect("scratch workspace");
+        let root = tmp.path();
+        let target = root.join("target");
+        let bundle = Bundle {
+            id: "b0".into(),
+            tasks: [
+                "phase/doc",
+                "phase/browser",
+                "phase/integration-authoring",
+                "phase/integration-wasm",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        };
+        let wasm_pkg = target.join("norn-checker-wasm/pkg");
+        let wasm_engine = target.join("norn-checker-wasm/engine");
+        let mut seen = Vec::new();
+        execute(&bundle, true, |task, prune| {
+            if prune {
+                prune_target(root, &target).expect("prune");
+            }
+            match task.name {
+                "phase/browser" => {
+                    assert!(!wasm_pkg.exists(), "clean before first WasmPkg task");
+                    fs::create_dir_all(&wasm_pkg).expect("create wasm pkg");
+                    fs::create_dir_all(&wasm_engine).expect("create wasm engine");
+                }
+                "phase/integration-authoring" | "phase/integration-wasm" => {
+                    assert!(
+                        wasm_pkg.is_dir() && wasm_engine.is_dir(),
+                        "consecutive WasmPkg task {} must keep cached wasm outputs",
+                        task.name
+                    );
+                }
+                "phase/doc" => {
+                    assert!(
+                        !target.join("norn-checker-wasm").exists(),
+                        "incompatible group must prune target/norn-checker-wasm"
+                    );
+                }
+                other => return Err(format!("unexpected task {other}").into()),
+            }
+            seen.push((task.name, prune));
+            Ok(())
+        })
+        .expect("execute");
+        assert_eq!(
+            seen,
+            [
+                ("phase/browser", false),
+                ("phase/integration-authoring", false),
+                ("phase/integration-wasm", false),
+                ("phase/doc", true),
+            ]
+        );
     }
 }
