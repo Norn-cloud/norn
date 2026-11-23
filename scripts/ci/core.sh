@@ -11,7 +11,7 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # `all` runs every phase, in this order, in one checkout. CI packs its
 # selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
-phases=(cheap test doctest features duckdb wasm clippy doc guards integration-authoring integration-wasm integration-clients browser formal provenance)
+phases=(cheap test doctest features duckdb wasm clippy doc rivet guards integration-authoring integration-wasm integration-clients browser formal rivet-conformance provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
@@ -251,7 +251,7 @@ PYTHON
 )
 
 run_phase() {
-  if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
+  if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && $1 != rivet && $1 != rivet-conformance && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
     cheap)
       bash scripts/ci/secret-scan.sh .
@@ -385,6 +385,25 @@ PY
       RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
       RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps
       ;;
+    rivet)
+      # crates/norn-cell-rivet is its own Cargo workspace (D131): Rivet's SQLite and the native
+      # engine cannot share the root lockfile. Its .cargo/config.toml (the SQLite flags Rivet's VFS
+      # requires) applies only from its own directory, and it builds in its own target subtree.
+      # A RivetKit change ships only with a storage version bump, judged against the base (#1513).
+      python3 scripts/ci/test_rivetkit_channel.py
+      python3 scripts/ci/rivetkit_channel.py --base "${NORN_CI_BASE:-origin/main}" --require-lock
+      (
+        cd crates/norn-cell-rivet
+        export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/rivet"
+        cargo fmt --check
+        cargo clippy --locked --all-targets -- -D warnings
+        cargo clippy --locked --all-targets --features conformance -- -D warnings
+        RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
+        RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features conformance
+        cargo test --locked
+        cargo test --locked --features conformance
+      )
+      ;;
     guards)
       crates/norn-skeleton-guard/scripts/zen-dependency-tree.sh
       crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
@@ -509,6 +528,16 @@ PY
       scripts/bootstrap-rust-extraction-tools.sh
       scripts/verify-promoted-subsystems.sh full
       ;;
+    rivet-conformance)
+      # The host conformance suite on the native Rivet host: Rivet Engine 3.1.1 in Docker (pinned
+      # digest) with two runners of a release `conformance` build, against the native reference.
+      # About 20 minutes on a default VM, past a bundle's 11-minute target, and it needs Docker:
+      # like formal, it is a Boat gate that no CI plan selects.
+      (cd crates/norn-cell-rivet && CARGO_TARGET_DIR="$CARGO_TARGET_DIR/rivet" cargo build --locked --release --features conformance)
+      NORN_CELL_DO_CONFORMANCE_OUT="$upstream/rivet-reference.json" cargo test --locked -p norn-cell-do --test suites conformance_reference::
+      NORN_CELL_RIVET="$CARGO_TARGET_DIR/rivet/release/norn-cell-rivet" python3 apps/norn-cell-do/conformance/conformance.py \
+        --reference "$upstream/rivet-reference.json" --host rivet-native --out "$upstream/rivet-conformance.json"
+      ;;
     provenance)
       export CI=true
       cargo xtask ci provenance
@@ -548,7 +577,7 @@ mode, raw, selected, shards, phases = sys.argv[1:]
 plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
-    if phase not in {"cheap", "test", "formal"}}
+    if phase not in {"cheap", "test", "formal", "rivet-conformance"}}
 # Task seconds on Boat, where merge groups and allowlisted pull requests run (#1348): p50 of
 # green tasks over 287 Boat bundle jobs of 80 green runs (40 merge groups, 40 pull requests,
 # runs 44493680372..44951869655, 2026-11-19..21). A test task's seconds are net of the test
@@ -564,6 +593,8 @@ weights = {
     "test/rest-1": 348, "test/rest-2": 348, "test/rest-3": 348,
     "phase/doctest": 48, "phase/features": 791, "phase/duckdb": 630, "phase/wasm": 239,
     "phase/clippy": 119, "phase/doc": 88, "phase/guards": 532,
+    # Not yet recorded in CI: one Boat run on an empty target (default VM), 2026-11-21.
+    "phase/rivet": 496,
     # Split integration timings from run 45037150223; authoring includes an estimate for two concurrent Bun shards.
     "phase/integration-authoring": 1030, "phase/integration-wasm": 707,
     "phase/integration-clients": 170, "phase/provenance": 13, "phase/test-shards": 14,
@@ -648,10 +679,11 @@ PY
 
 case "${1:-all}" in
   # Pull requests get the dependency closure of their diff. Merge groups, main and manual runs
-  # (no base) and unplannable changes run every shard and phase; formal remains a Boat gate.
+  # (no base) and unplannable changes run every shard and phase; formal and rivet-conformance
+  # remain Boat gates.
   plan)
     others=()
-    for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test || $phase == formal ]] || others+=("$phase"); done
+    for phase in "${phases[@]}"; do [[ $phase == cheap || $phase == test || $phase == formal || $phase == rivet-conformance ]] || others+=("$phase"); done
     case "${2:-}" in
       '') [[ $# -le 1 ]] || run_phase usage; changed='' ;;
       --affected) [[ $# -ge 3 && $# -le 4 && $3 =~ ^[0-9a-f]{40}$ && ${4:-HEAD} =~ ^([0-9a-f]{40}|HEAD)$ ]] || run_phase usage; changed=$(git diff --name-only --no-renames "$3" "${4:-HEAD}" --) || exit 2 ;;
@@ -727,10 +759,12 @@ selected_heavy = [f"heavy-{i}" for i, expression in enumerate(heavy, 1)
 browser = ["browser"] if "norn-checker-wasm" in reached else []
 # The DuckDB backend lives in norn-cell: a change that reaches it builds and tests it (#1206).
 duckdb = ["duckdb"] if "norn-cell" in reached else []
+# The Rivet host's own workspace builds these root crates by path; its own files plan in full.
+rivet = ["rivet"] if reached & {"norn-api", "norn-cell", "norn-cell-do"} else []
 # A plan that reaches no workspace package (Markdown only) runs no test shard: empty packages
 # would not narrow a shard, and the guard's own suite runs in the guards phase (#1270).
 rest_names = [f"rest-{i}" for i in range(1, parts + 1)] if reached else []
-done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + browser + duckdb,
+done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + browser + duckdb + rivet,
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
 PY
 )
