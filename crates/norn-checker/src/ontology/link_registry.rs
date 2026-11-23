@@ -181,12 +181,6 @@ fn validate_link(
     let from = resolve(link, "fromPack", packs, &mut report);
     let to = resolve(link, "toPack", packs, &mut report);
     let ((from, from_id), (to, to_id)) = (from?, to?);
-    let active = |pack: &PackIndex, term: &str| {
-        pack.terms
-            .get(term)
-            .filter(|(status, _)| status == "active")
-            .map(|(_, kind)| kind.clone())
-    };
 
     let mut coverage = LinkCoverage {
         link_id: link_id.to_owned(),
@@ -202,6 +196,37 @@ fn validate_link(
         canon_gaps: BTreeSet::new(),
         non_conforming: BTreeSet::new(),
     };
+    validate_link_correspondences(link, from, to, &mut coverage, &mut report);
+    validate_link_residuals(link, from, &mut coverage, &mut report);
+    for (term, (status, _)) in &from.terms {
+        let accounted = coverage.mapped.contains_key(term)
+            || coverage.residual.contains(term)
+            || coverage.canon_gaps.contains(term)
+            || coverage.non_conforming.contains(term);
+        if status == "active" && !accounted {
+            report(
+                format!("active term '{term}' has neither a correspondence nor a residual"),
+                "payload.correspondences".to_owned(),
+            );
+        }
+    }
+    (diagnostics.len() == before).then_some(coverage)
+}
+
+fn active_term_kind(pack: &PackIndex, term: &str) -> Option<String> {
+    pack.terms
+        .get(term)
+        .filter(|(status, _)| status == "active")
+        .map(|(_, kind)| kind.clone())
+}
+
+fn validate_link_correspondences(
+    link: &BTreeMap<String, JsonValue>,
+    from: &PackIndex,
+    to: &PackIndex,
+    coverage: &mut LinkCoverage,
+    report: &mut impl FnMut(String, String),
+) {
     let correspondences = link
         .get("correspondences")
         .and_then(as_array)
@@ -216,7 +241,7 @@ fn validate_link(
         let Some(from_term) = string_field(item, "fromTermId") else {
             continue;
         };
-        let Some(from_kind) = active(from, from_term) else {
+        let Some(from_kind) = active_term_kind(from, from_term) else {
             report(
                 format!("fromTermId '{from_term}' is not an active term of the from pack"),
                 format!("{path}.fromTermId"),
@@ -232,7 +257,7 @@ fn validate_link(
             .collect();
         for (target_index, target) in targets.iter().enumerate() {
             let target_path = format!("{path}.toTermIds[{target_index}]");
-            match active(to, target) {
+            match active_term_kind(to, target) {
                 None => report(
                     format!("toTermId '{target}' is not an active term of the to pack"),
                     target_path,
@@ -290,6 +315,14 @@ fn validate_link(
             .or_default()
             .push((relation.to_owned(), targets));
     }
+}
+
+fn validate_link_residuals(
+    link: &BTreeMap<String, JsonValue>,
+    from: &PackIndex,
+    coverage: &mut LinkCoverage,
+    report: &mut impl FnMut(String, String),
+) {
     let residuals = link.get("residuals").and_then(as_array).unwrap_or_default();
     for (index, item) in residuals
         .iter()
@@ -299,7 +332,7 @@ fn validate_link(
         let Some(term) = string_field(item, "termId") else {
             continue;
         };
-        if active(from, term).is_none() {
+        if active_term_kind(from, term).is_none() {
             report(
                 format!("residual '{term}' is not an active term of the from pack"),
                 format!("payload.residuals[{index}].termId"),
@@ -312,17 +345,4 @@ fn validate_link(
             coverage.residual.insert(term.to_owned());
         }
     }
-    for (term, (status, _)) in &from.terms {
-        let accounted = coverage.mapped.contains_key(term)
-            || coverage.residual.contains(term)
-            || coverage.canon_gaps.contains(term)
-            || coverage.non_conforming.contains(term);
-        if status == "active" && !accounted {
-            report(
-                format!("active term '{term}' has neither a correspondence nor a residual"),
-                "payload.correspondences".to_owned(),
-            );
-        }
-    }
-    (diagnostics.len() == before).then_some(coverage)
 }

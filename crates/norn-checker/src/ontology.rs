@@ -510,107 +510,117 @@ fn validate_sources(
 
     for (index, source) in sources.iter().enumerate() {
         let path = format!("payload.sources[{index}]");
-        let Some(source) = as_object(source) else {
-            diagnostics.push(diagnostic(
-                PACK_CODE,
-                "source pin must be an object",
-                path,
-                artifact_id,
-            ));
-            continue;
-        };
-        reject_unknown_fields(
-            source,
-            &[
-                "sourceId",
-                "releaseId",
-                "releasedAt",
-                "retrievedAt",
-                "canonicalUrl",
-                "license",
-                "redistribution",
-                "importMode",
-                "importer",
-                "files",
-            ],
-            &path,
-            diagnostics,
-            artifact_id,
-            PACK_CODE,
-        );
-        let source_id = required_string(
-            source,
-            "sourceId",
-            format!("{path}.sourceId"),
-            diagnostics,
-            artifact_id,
-            PACK_CODE,
-        );
-        let import_mode = require_literal(
-            source,
-            "importMode",
-            &IMPORT_MODES,
-            format!("{path}.importMode"),
-            diagnostics,
-            artifact_id,
-            PACK_CODE,
-        );
-        if let Some(source_id) = source_id {
-            if !valid_prefixed_id(&source_id, "source.") {
-                diagnostics.push(diagnostic(
-                    PACK_CODE,
-                    "sourceId must use the lowercase source.* namespace",
-                    format!("{path}.sourceId"),
-                    artifact_id,
-                ));
-            }
-            if ids.insert(source_id, import_mode.clone()).is_some() {
-                diagnostics.push(diagnostic(
-                    PACK_CODE,
-                    "sourceId must be unique within the pack",
-                    format!("{path}.sourceId"),
-                    artifact_id,
-                ));
-            }
-        }
-
-        validate_source_release(source, &path, diagnostics, artifact_id);
-        let license = required_string(
-            source,
-            "license",
-            format!("{path}.license"),
-            diagnostics,
-            artifact_id,
-            PACK_CODE,
-        );
-        let redistribution = require_literal(
-            source,
-            "redistribution",
-            &["reference_only", "vendored"],
-            format!("{path}.redistribution"),
-            diagnostics,
-            artifact_id,
-            PACK_CODE,
-        );
-        validate_source_files(
-            source.get("files"),
-            redistribution.as_deref(),
-            license.as_deref(),
-            &path,
-            diagnostics,
-            artifact_id,
-        );
-        validate_source_use(
-            source,
-            import_mode.as_deref(),
-            license.as_deref(),
-            &path,
-            diagnostics,
-            artifact_id,
-        );
+        validate_source_entry(source, &path, &mut ids, diagnostics, artifact_id);
     }
 
     ids
+}
+
+fn validate_source_entry(
+    source: &JsonValue,
+    path: &str,
+    ids: &mut BTreeMap<String, Option<String>>,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    let Some(source) = as_object(source) else {
+        diagnostics.push(diagnostic(
+            PACK_CODE,
+            "source pin must be an object",
+            path,
+            artifact_id,
+        ));
+        return;
+    };
+    reject_unknown_fields(
+        source,
+        &[
+            "sourceId",
+            "releaseId",
+            "releasedAt",
+            "retrievedAt",
+            "canonicalUrl",
+            "license",
+            "redistribution",
+            "importMode",
+            "importer",
+            "files",
+        ],
+        path,
+        diagnostics,
+        artifact_id,
+        PACK_CODE,
+    );
+    let source_id = required_string(
+        source,
+        "sourceId",
+        format!("{path}.sourceId"),
+        diagnostics,
+        artifact_id,
+        PACK_CODE,
+    );
+    let import_mode = require_literal(
+        source,
+        "importMode",
+        &IMPORT_MODES,
+        format!("{path}.importMode"),
+        diagnostics,
+        artifact_id,
+        PACK_CODE,
+    );
+    if let Some(source_id) = source_id {
+        if !valid_prefixed_id(&source_id, "source.") {
+            diagnostics.push(diagnostic(
+                PACK_CODE,
+                "sourceId must use the lowercase source.* namespace",
+                format!("{path}.sourceId"),
+                artifact_id,
+            ));
+        }
+        if ids.insert(source_id, import_mode.clone()).is_some() {
+            diagnostics.push(diagnostic(
+                PACK_CODE,
+                "sourceId must be unique within the pack",
+                format!("{path}.sourceId"),
+                artifact_id,
+            ));
+        }
+    }
+
+    validate_source_release(source, path, diagnostics, artifact_id);
+    let license = required_string(
+        source,
+        "license",
+        format!("{path}.license"),
+        diagnostics,
+        artifact_id,
+        PACK_CODE,
+    );
+    let redistribution = require_literal(
+        source,
+        "redistribution",
+        &["reference_only", "vendored"],
+        format!("{path}.redistribution"),
+        diagnostics,
+        artifact_id,
+        PACK_CODE,
+    );
+    validate_source_files(
+        source.get("files"),
+        redistribution.as_deref(),
+        license.as_deref(),
+        path,
+        diagnostics,
+        artifact_id,
+    );
+    validate_source_use(
+        source,
+        import_mode.as_deref(),
+        license.as_deref(),
+        path,
+        diagnostics,
+        artifact_id,
+    );
 }
 
 /// The source-manifest rules of an import mode (norn#56): an imported
@@ -721,7 +731,7 @@ fn valid_dotted_name(value: &str) -> bool {
     components.clone().count() >= 2 && components.all(valid)
 }
 
-/// A strict SemVer 2.0.0 version: `MAJOR.MINOR.PATCH` without leading
+/// A strict `SemVer` 2.0.0 version: `MAJOR.MINOR.PATCH` without leading
 /// zeroes, with optional pre-release and build identifiers.
 pub(crate) fn valid_semver(value: &str) -> bool {
     let (rest, build) = match value.split_once('+') {
@@ -970,9 +980,21 @@ fn validate_terms(
         diagnostics,
         artifact_id,
     );
+    validate_term_domains(&domains, &statuses, &kinds, diagnostics, artifact_id);
+
+    PackTerms { statuses, kinds }
+}
+
+fn validate_term_domains(
+    domains: &[(String, String)],
+    statuses: &BTreeMap<String, String>,
+    kinds: &BTreeMap<String, String>,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
     for (domain, path) in domains {
-        if statuses.get(&domain).map(String::as_str) != Some("active")
-            || kinds.get(&domain).map(String::as_str) != Some("class")
+        if statuses.get(domain).map(String::as_str) != Some("active")
+            || kinds.get(domain).map(String::as_str) != Some("class")
         {
             diagnostics.push(diagnostic(
                 PACK_CODE,
@@ -982,8 +1004,6 @@ fn validate_terms(
             ));
         }
     }
-
-    PackTerms { statuses, kinds }
 }
 
 fn compatible_parent_kinds(child: &str, parent: &str) -> bool {

@@ -130,6 +130,13 @@ impl AffineExpression {
 /// digits, lowering rejects rather than rounding or truncating it. This pass
 /// checks its own arithmetic and result-scale normalization; parameter-bound
 /// and unit-precision overflow remain the downstream pack checker's job.
+///
+/// # Errors
+///
+/// Returns a [`LedgerAmountLoweringError`] when the expression version is
+/// unsupported, any scale exceeds `MAX_LEDGER_SCALE`, parameters are invalid
+/// or duplicated, an expression is nonlinear, arithmetic overflows `i128`, or
+/// exact rescaling to `resultScale` would discard precision.
 pub fn lower_ledger_amount_expression(
     source: &LedgerAmountExpressionIr,
     parameters: &[LedgerParameterIr],
