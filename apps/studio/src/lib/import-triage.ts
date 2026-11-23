@@ -10,7 +10,7 @@
 import { deriveFactStatus, type FactStatus } from "../components/fact-status-badge.tsx"
 import { callAction, newIdempotencyKey, type ActionReceipt, type CallResult } from "./actions.ts"
 import { cellCall, type CellResult, type Fetch } from "./cell-read.ts"
-import { requestedWords, type RequestedDecision } from "./decisions.ts"
+import { requestedPath, requestedWords, type RequestedDecision } from "./decisions.ts"
 import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions.ts"
 import { readableTime } from "./format.ts"
 
@@ -361,6 +361,14 @@ export function resolvePayloadIdempotencyKey(
   return nextKey
 }
 
+/** Evict a cached idempotency key after a confirmed terminal approval failure so re-submission mints a fresh key. */
+export function retirePayloadIdempotencyKey(
+  cache: Map<string, PayloadBoundKeyEntry>,
+  scopeKey: string,
+): void {
+  cache.delete(scopeKey)
+}
+
 // ---- Batch queue execution with live-basis, batch-switch & unmount guards ---------------------
 
 /**
@@ -423,26 +431,106 @@ export function readLiveWorkspaceFromCache(
   return fallback
 }
 
+export type RequestedDecisionLookup =
+  | { readonly kind: "found"; readonly decision: RequestedDecision }
+  | { readonly kind: "absent" }
+  | { readonly kind: "malformed" }
+
+const VALID_REQUESTED_STATUSES = new Set(["pending", "approved", "rejected", "expired", "withdrawn"])
+const VALID_DECIDED_CALL_STATES = new Set(["committed", "refused", "not_executed"])
+
 /**
- * Reconcile a row's local `pending` approval outcome against the cell's authoritative
- * `GET /v1/decisions:requested?id=...` status so rejected, expired, or withdrawn approvals unlock
- * the row cleanly rather than stranding it until page remount.
+ * Strictly validate a `GET /v1/decisions:requested?id=...` HTTP 200 payload for approval
+ * reconciliation. Missing/non-array `items`, non-object entries, or an invalid matching entry
+ * return `{ kind: "malformed" }` so reconciliation fails closed and preserves the `pending` lock.
+ */
+export function parseRequestedDecisionLookup(body: unknown, decisionId: string): RequestedDecisionLookup {
+  if (typeof body !== "object" || body === null || !Array.isArray((body as { items?: unknown }).items)) {
+    return { kind: "malformed" }
+  }
+  const items = (body as { items: unknown[] }).items
+  let matchedRaw: Record<string, unknown> | null = null
+  for (const raw of items) {
+    if (typeof raw !== "object" || raw === null) return { kind: "malformed" }
+    const candidate = raw as Record<string, unknown>
+    if (candidate.id === decisionId) {
+      matchedRaw = candidate
+      break
+    }
+  }
+  if (matchedRaw === null) return { kind: "absent" }
+
+  const status = matchedRaw.status
+  const call = matchedRaw.call as Record<string, unknown> | null | undefined
+  if (
+    typeof status !== "string"
+    || !VALID_REQUESTED_STATUSES.has(status)
+    || typeof matchedRaw.canRun !== "boolean"
+    || typeof matchedRaw.expiresAtMs !== "number"
+    || typeof call !== "object"
+    || call === null
+    || typeof call.action !== "string"
+    || typeof call.encodedInput !== "string"
+    || typeof call.idempotencyKey !== "string"
+  ) {
+    return { kind: "malformed" }
+  }
+  if (call.state !== undefined) {
+    const cs = call.state as Record<string, unknown> | null
+    if (
+      typeof cs !== "object"
+      || cs === null
+      || typeof cs.committed !== "boolean"
+      || typeof cs.state !== "string"
+      || !VALID_DECIDED_CALL_STATES.has(cs.state)
+    ) {
+      return { kind: "malformed" }
+    }
+  }
+  return { kind: "found", decision: matchedRaw as unknown as RequestedDecision }
+}
+
+/** Strictly fetch and validate one requested decision for approval reconciliation (fails closed on malformed 200). */
+export async function fetchRequestedDecisionForReconciliation(
+  decisionId: string,
+  fetcher?: Fetch,
+): Promise<RequestedDecisionLookup> {
+  const result = await cellCall<unknown>(requestedPath(decisionId), {}, fetcher)
+  if (result.kind !== "ok") return { kind: "malformed" }
+  return parseRequestedDecisionLookup(result.value, decisionId)
+}
+
+/**
+ * Reconcile a row's local `pending` approval outcome against a strictly validated
+ * `GET /v1/decisions:requested?id=...` lookup:
+ * - `malformed` / inconclusive read: preserve the `pending` lock safely.
+ * - `rejected` | `expired` | `withdrawn` | `approved` with `call.state === "refused"`: unlock row
+ *   and set `retireIdempotencyKey: true` so re-promoting the unchanged row mints a fresh key.
  */
 export function reconcilePendingRowOutcome(
   outcome: Extract<RowActionOutcome, { readonly kind: "pending" }>,
-  decision: RequestedDecision | null,
-): { readonly nextOutcome: RowActionOutcome; readonly shouldRefreshWorkspace: boolean } {
-  if (decision === null) {
+  lookup: RequestedDecisionLookup,
+): {
+  readonly nextOutcome: RowActionOutcome
+  readonly shouldRefreshWorkspace: boolean
+  readonly retireIdempotencyKey: boolean
+} {
+  if (lookup.kind === "malformed") {
+    return { nextOutcome: outcome, shouldRefreshWorkspace: false, retireIdempotencyKey: false }
+  }
+  if (lookup.kind === "absent") {
     return {
       nextOutcome: {
         kind: "stale",
         message: `Approval decision ${outcome.decisionId} is no longer active on the cell — refresh and re-submit if needed.`,
       },
       shouldRefreshWorkspace: true,
+      retireIdempotencyKey: false,
     }
   }
+  const { decision } = lookup
   if (decision.status === "pending") {
-    return { nextOutcome: outcome, shouldRefreshWorkspace: false }
+    return { nextOutcome: outcome, shouldRefreshWorkspace: false, retireIdempotencyKey: false }
   }
   if (decision.status === "rejected" || decision.status === "expired" || decision.status === "withdrawn") {
     return {
@@ -452,6 +540,7 @@ export function reconcilePendingRowOutcome(
         message: requestedWords(decision),
       },
       shouldRefreshWorkspace: false,
+      retireIdempotencyKey: true,
     }
   }
   const callState = decision.call.state
@@ -463,10 +552,11 @@ export function reconcilePendingRowOutcome(
         message: requestedWords(decision),
       },
       shouldRefreshWorkspace: false,
+      retireIdempotencyKey: true,
     }
   }
   if (callState?.state === "committed") {
-    return { nextOutcome: outcome, shouldRefreshWorkspace: true }
+    return { nextOutcome: outcome, shouldRefreshWorkspace: true, retireIdempotencyKey: false }
   }
   return {
     nextOutcome: {
@@ -474,6 +564,7 @@ export function reconcilePendingRowOutcome(
       message: `${requestedWords(decision)} Review and promote again to execute.`,
     },
     shouldRefreshWorkspace: true,
+    retireIdempotencyKey: false,
   }
 }
 

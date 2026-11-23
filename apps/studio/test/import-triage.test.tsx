@@ -12,6 +12,7 @@ import {
   effectiveRowStatus,
   extractEditableValues,
   fetchImportTriage,
+  fetchRequestedDecisionForReconciliation,
   fieldEditKey,
   formatConfidence,
   formatTemporal,
@@ -19,6 +20,7 @@ import {
   isLowConfidence,
   isOutcomeLocked,
   isRowEligibleForBatchPromotion,
+  parseRequestedDecisionLookup,
   partitionPromotionBatch,
   patchAliasDraftState,
   patchSupersessionDraftState,
@@ -27,6 +29,7 @@ import {
   resolveArtifactMediaSource,
   resolvePayloadIdempotencyKey,
   resolveRowEntity,
+  retirePayloadIdempotencyKey,
   rowBasisKey,
   runBatchPromotionQueue,
   snapshotPromotionQueue,
@@ -563,9 +566,12 @@ test("snapshotPromotionQueue captures rendered artifact & alias basis so pre-ren
   expect(verifyQueuedPromotionBasis(liveAliasChanged, "batch-1", renderedQueue[1]!).kind).toBe("stale")
 })
 
-test("reconcilePendingRowOutcome unlocks rows when a pending approval is rejected, expired, or withdrawn", () => {
+test("reconcilePendingRowOutcome retires idempotency key on terminal failures and fails closed on malformed 200 responses", async () => {
   const pending = { kind: "pending" as const, decisionId: "dec_42", expiresAtMs: Date.UTC(2026, 10, 24) }
-  const makeDecision = (status: "pending" | "rejected" | "expired" | "withdrawn" | "approved") => ({
+  const makeDecision = (
+    status: "pending" | "rejected" | "expired" | "withdrawn" | "approved",
+    callState?: { readonly committed: boolean; readonly state: "committed" | "refused" | "not_executed"; readonly code?: string },
+  ) => ({
     id: "dec_42",
     question: "Approve row promotion?",
     risk: "medium" as const,
@@ -578,29 +584,71 @@ test("reconcilePendingRowOutcome unlocks rows when a pending approval is rejecte
       input: {},
       encodedInput: "{}",
       idempotencyKey: "key-1",
+      ...callState ? { state: callState } : {},
     },
     canRun: false,
   })
 
-  // Still pending -> remains locked.
-  const stillPending = reconcilePendingRowOutcome(pending, makeDecision("pending"))
+  // Still pending -> remains locked and keeps key.
+  const stillPending = reconcilePendingRowOutcome(pending, { kind: "found", decision: makeDecision("pending") })
   expect(isOutcomeLocked(stillPending.nextOutcome)).toBe(true)
+  expect(stillPending.retireIdempotencyKey).toBe(false)
 
-  // Rejected, expired, or withdrawn -> unlocks row with clear refusal code and message.
+  // Rejected, expired, withdrawn, and execution-refused -> unlock AND signal idempotency key retirement.
+  const cache = new Map<string, PayloadBoundKeyEntry>()
+  let seq = 0
+  const mint = () => `key-${++seq}`
+  const payload = { batchId: "batch-1", rowId: "row-clean", values: { duration_hours: "8.0" } }
+  const initialKey = resolvePayloadIdempotencyKey(cache, "row:batch-1:row-clean", "canon.import.promote_row", payload, mint)
+  expect(initialKey).toBe("key-1")
+
   for (const terminal of ["rejected", "expired", "withdrawn"] as const) {
-    const res = reconcilePendingRowOutcome(pending, makeDecision(terminal))
+    const res = reconcilePendingRowOutcome(pending, { kind: "found", decision: makeDecision(terminal) })
     expect(isOutcomeLocked(res.nextOutcome)).toBe(false)
+    expect(res.retireIdempotencyKey).toBe(true)
     expect(res.nextOutcome.kind).toBe("refused")
     if (res.nextOutcome.kind === "refused") {
       expect(res.nextOutcome.code).toBe(`decision.${terminal}`)
     }
   }
 
-  // Missing decision -> unlocks row with stale notice and requests refresh.
-  const gone = reconcilePendingRowOutcome(pending, null)
+  const execRefused = reconcilePendingRowOutcome(pending, {
+    kind: "found",
+    decision: makeDecision("approved", { committed: false, state: "refused", code: "law.cap" }),
+  })
+  expect(isOutcomeLocked(execRefused.nextOutcome)).toBe(false)
+  expect(execRefused.retireIdempotencyKey).toBe(true)
+
+  // Retiring the cached key guarantees re-promoting the exact same unchanged payload mints a fresh key.
+  retirePayloadIdempotencyKey(cache, "row:batch-1:row-clean")
+  const freshKey = resolvePayloadIdempotencyKey(cache, "row:batch-1:row-clean", "canon.import.promote_row", payload, mint)
+  expect(freshKey).toBe("key-2")
+
+  // Valid empty items array -> absent, unlocks row with stale notice.
+  expect(parseRequestedDecisionLookup({ items: [], serverNowMs: 1 }, "dec_42")).toEqual({ kind: "absent" })
+  const gone = reconcilePendingRowOutcome(pending, { kind: "absent" })
   expect(isOutcomeLocked(gone.nextOutcome)).toBe(false)
   expect(gone.nextOutcome.kind).toBe("stale")
   expect(gone.shouldRefreshWorkspace).toBe(true)
+
+  // Malformed HTTP 200 (missing items array, non-object item, or invalid matching item shape) -> fails closed & keeps pending lock!
+  expect(parseRequestedDecisionLookup({}, "dec_42")).toEqual({ kind: "malformed" })
+  expect(parseRequestedDecisionLookup({ items: "bad" }, "dec_42")).toEqual({ kind: "malformed" })
+  expect(parseRequestedDecisionLookup({ items: [{ id: "dec_42", status: "rejected" }] }, "dec_42")).toEqual({ kind: "malformed" })
+  expect(parseRequestedDecisionLookup({ items: [{ ...makeDecision("approved"), call: { ...makeDecision("approved").call, state: { invalid: true } } }] }, "dec_42")).toEqual({ kind: "malformed" })
+
+  const malformedFetcher = async (input: string): Promise<Response> => {
+    if (input === "/api/me") {
+      return new Response(JSON.stringify({ organization: { id: "org_demo" }, environmentId: "prod" }), { status: 200 })
+    }
+    return new Response(JSON.stringify({ items: [{ id: "dec_42", status: "rejected" }] }), { status: 200 })
+  }
+  const malformedLookup = await fetchRequestedDecisionForReconciliation("dec_42", malformedFetcher)
+  expect(malformedLookup).toEqual({ kind: "malformed" })
+  const keptLocked = reconcilePendingRowOutcome(pending, malformedLookup)
+  expect(keptLocked.nextOutcome).toBe(pending)
+  expect(isOutcomeLocked(keptLocked.nextOutcome)).toBe(true)
+  expect(keptLocked.retireIdempotencyKey).toBe(false)
 })
 
 test("resolvePayloadIdempotencyKey reuses exact key for identical payloads (and no-op resets) and mints fresh key when payload or cell basis changes", () => {

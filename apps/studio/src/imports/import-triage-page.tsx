@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { type ActionReceipt } from "@/lib/actions"
 import type { CellResult } from "@/lib/cell-read"
-import { listRequested, requestedOne } from "@/lib/decisions"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import {
   batchLockedRowIds,
@@ -22,6 +21,7 @@ import {
   effectiveRowStatus,
   extractEditableValues,
   fetchImportTriage,
+  fetchRequestedDecisionForReconciliation,
   fieldEditKey,
   IMPORT_TRIAGE_UNAVAILABLE,
   initialAliasDraft,
@@ -34,6 +34,7 @@ import {
   reconcilePendingRowOutcome,
   resolvePayloadIdempotencyKey,
   resolveRowEntity,
+  retirePayloadIdempotencyKey,
   rowBasisKey,
   runBatchPromotionQueue,
   triageSummary,
@@ -172,12 +173,16 @@ export function ImportTriagePage() {
     let needsWorkspaceRefresh = false
     await Promise.all(pendingEntries.map(async ([rowId, pendingOutcome]) => {
       try {
-        const result = await listRequested(pendingOutcome.decisionId)
-        if (!mountedRef.current || result.kind !== "ok") return
-        const decision = requestedOne(result.value, pendingOutcome.decisionId)
-        const { nextOutcome, shouldRefreshWorkspace } = reconcilePendingRowOutcome(pendingOutcome, decision)
+        const lookup = await fetchRequestedDecisionForReconciliation(pendingOutcome.decisionId)
+        if (!mountedRef.current || lookup.kind === "malformed") return
+        const { nextOutcome, shouldRefreshWorkspace, retireIdempotencyKey } = reconcilePendingRowOutcome(pendingOutcome, lookup)
         if (shouldRefreshWorkspace) needsWorkspaceRefresh = true
         if (nextOutcome === pendingOutcome) return
+        const currentLive = draftsRef.current[requestBatchId]?.rowOutcomes[rowId]
+        if (currentLive?.kind !== "pending" || currentLive.decisionId !== pendingOutcome.decisionId) return
+        if (retireIdempotencyKey) {
+          retirePayloadIdempotencyKey(payloadKeyCacheRef.current, `row:${requestBatchId}:${rowId}`)
+        }
         patchBatchDraft(requestBatchId, (curr) => {
           const liveOutcome = curr.rowOutcomes[rowId]
           if (liveOutcome?.kind !== "pending" || liveOutcome.decisionId !== pendingOutcome.decisionId) return curr
