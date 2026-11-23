@@ -35,6 +35,15 @@ enum RemoteCommand {
         /// Stable operation identity; reuse only when retrying the same call.
         #[arg(long)]
         idempotency_key: String,
+        /// Optional opaque correlation identifier tying multi-step causes and effects together.
+        #[arg(long)]
+        trace_id: Option<String>,
+        /// Optional reference to the goal, prompt, commitment, or decision that initiated the call.
+        #[arg(long, requires = "trace_id")]
+        intent_ref: Option<String>,
+        /// Optional SHA-256 digest (`sha256:<64 lower-case hex>`) of an off-ledger session transcript.
+        #[arg(long, requires = "trace_id")]
+        session_digest: Option<String>,
     },
 }
 
@@ -47,10 +56,30 @@ fn request(command: &RemoteCommand, input: &str) -> Result<String, String> {
         RemoteCommand::Call {
             name,
             idempotency_key,
+            trace_id,
+            intent_ref,
+            session_digest,
         } => {
             if idempotency_key.trim().is_empty() {
                 return Err("idempotency key must be nonblank".into());
             }
+            let trace = match (trace_id, intent_ref, session_digest) {
+                (None, None, None) => None,
+                (None, Some(_), _) | (None, _, Some(_)) => {
+                    return Err("--intent-ref and --session-digest require --trace-id".into());
+                }
+                (Some(trace_id), intent_ref, session_digest) => {
+                    let context = norn_ir::TraceContext {
+                        trace_id: trace_id.clone(),
+                        intent_ref: intent_ref.clone(),
+                        session_digest: session_digest
+                            .as_ref()
+                            .map(|digest| norn_ir::function::Digest(digest.clone())),
+                    };
+                    context.validate().map_err(|e| e.to_string())?;
+                    Some(context)
+                }
+            };
             let input_value = RuntimeValue::from_json_text(input).map_err(|e| e.to_string())?;
             if input_value.as_object().is_none() {
                 return Err("tool arguments must be a JSON object".into());
@@ -59,8 +88,15 @@ fn request(command: &RemoteCommand, input: &str) -> Result<String, String> {
             // business decimals when compiled without arbitrary_precision.
             let name = serde_json::to_string(name).map_err(|e| e.to_string())?;
             let key = serde_json::to_string(idempotency_key).map_err(|e| e.to_string())?;
+            let meta = match trace {
+                None => format!(r#"{{"norn/idempotencyKey":{key}}}"#),
+                Some(trace) => {
+                    let trace = serde_json::to_string(&trace).map_err(|e| e.to_string())?;
+                    format!(r#"{{"norn/idempotencyKey":{key},"norn/trace":{trace}}}"#)
+                }
+            };
             Ok(format!(
-                r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":{name},"arguments":{input},"_meta":{{"norn/idempotencyKey":{key}}}}}}}"#
+                r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":{name},"arguments":{input},"_meta":{meta}}}}}"#
             ))
         }
     }
@@ -180,6 +216,9 @@ mod tests {
             &RemoteCommand::Call {
                 name: "sales_order.approve".into(),
                 idempotency_key: "operation-1".into(),
+                trace_id: None,
+                intent_ref: None,
+                session_digest: None,
             },
             r#"{"amount":12345678901234567890.123456789}"#,
         )?;
@@ -189,10 +228,64 @@ mod tests {
             value.pointer("/params/_meta/norn~1idempotencyKey"),
             Some(&json!("operation-1"))
         );
+        assert_eq!(value.pointer("/params/_meta/norn~1trace"), None);
         let response =
             r#"{"jsonrpc":"2.0","id":1,"result":{"amount":12345678901234567890.123456789}}"#;
         let stream = format!("event: message\r\ndata: {response}\r\n\r\n");
         assert_eq!(response_text(stream.as_bytes(), true)?, response);
+        Ok(())
+    }
+
+    #[test]
+    fn call_threads_optional_trace_context_and_refuses_malformed_trace() -> Result<(), String> {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let body = request(
+            &RemoteCommand::Call {
+                name: "sales_order.approve".into(),
+                idempotency_key: "operation-2".into(),
+                trace_id: Some("trace-123".into()),
+                intent_ref: Some("decision:dec_abc".into()),
+                session_digest: Some(digest.clone()),
+            },
+            r#"{"id":"SO-1"}"#,
+        )?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+        assert_eq!(
+            value.pointer("/params/_meta/norn~1trace"),
+            Some(&json!({
+                "traceId": "trace-123",
+                "intentRef": "decision:dec_abc",
+                "sessionDigest": digest,
+            }))
+        );
+        // Raw transcript text in session_digest must refuse before sending.
+        assert!(
+            request(
+                &RemoteCommand::Call {
+                    name: "sales_order.approve".into(),
+                    idempotency_key: "operation-3".into(),
+                    trace_id: Some("trace-123".into()),
+                    intent_ref: None,
+                    session_digest: Some("user: please approve this order".into()),
+                },
+                r#"{"id":"SO-1"}"#,
+            )
+            .is_err()
+        );
+        // Blank trace_id must refuse.
+        assert!(
+            request(
+                &RemoteCommand::Call {
+                    name: "sales_order.approve".into(),
+                    idempotency_key: "operation-4".into(),
+                    trace_id: Some("   ".into()),
+                    intent_ref: None,
+                    session_digest: None,
+                },
+                r#"{"id":"SO-1"}"#,
+            )
+            .is_err()
+        );
         Ok(())
     }
 }

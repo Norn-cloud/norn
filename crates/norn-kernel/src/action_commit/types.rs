@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_ir::{ActionRoot, KeyName, ObjectTypeName, RuntimeValue};
+use norn_ir::{ActionRoot, KeyName, ObjectTypeName, RuntimeValue, TraceContext};
 use serde::{Deserialize, Serialize};
 
 use crate::action::ActionCommandRejection;
@@ -74,6 +74,8 @@ pub struct ActionCall<'a> {
     /// The turn the call commits in (identity, logical time, world, and the
     /// consumed delivery, if any).
     pub turn: DecisionTurn,
+    /// Optional provenance trace context supplied by the caller.
+    pub trace: Option<TraceContext>,
 }
 
 /// What the authorizer is asked about one call.
@@ -363,6 +365,9 @@ pub struct ActionCallRecord {
     /// Normalized row operations committed by a parent-and-rows action.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub row_operations: Vec<JsonValue>,
+    /// Optional provenance trace context supplied by the caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<TraceContext>,
 }
 
 impl ActionCallRecord {
@@ -397,6 +402,7 @@ impl ActionCallRecord {
             from: String::new(),
             to: String::new(),
             row_operations: Vec::new(),
+            trace: call.trace.clone(),
         }
     }
 
@@ -406,13 +412,18 @@ impl ActionCallRecord {
 
     const fn call_identity(
         &self,
-    ) -> crate::replay_decision::CallIdentity<&String, &FactKey, &JsonObject, &Option<String>> {
+    ) -> crate::replay_decision::CallIdentity<
+        &String,
+        &FactKey,
+        &JsonObject,
+        (&Option<String>, &Option<TraceContext>),
+    > {
         crate::replay_decision::CallIdentity {
             action: &self.action_id,
             object: &self.object,
             input: &self.input,
             actor: &self.actor,
-            rule_binding: &self.rule_binding,
+            rule_binding: (&self.rule_binding, &self.trace),
         }
     }
 
@@ -422,11 +433,13 @@ impl ActionCallRecord {
         object_type: &ObjectTypeName,
         input: &JsonObject,
         actor: &str,
+        trace: Option<&TraceContext>,
     ) -> bool {
         self.action_id == action_id
             && self.object.object_type == *object_type
             && self.input == *input
             && self.actor == actor
+            && self.trace.as_ref() == trace
     }
 
     pub(super) fn to_values(&self) -> JsonObject {
@@ -503,6 +516,9 @@ impl ActionCallRecord {
         if let Some(effect_kind) = &self.effect_kind {
             values.insert("effectKind".to_owned(), string(effect_kind));
         }
+        if let Some(trace) = &self.trace {
+            values.insert("trace".to_owned(), trace.to_runtime_value());
+        }
         values
     }
 
@@ -557,6 +573,14 @@ impl ActionCallRecord {
             None | Some(JsonValue::Null) => Vec::new(),
             Some(value) => norn_ir::runtime::decode(value).ok()?,
         };
+        let trace = match values.get("trace") {
+            None | Some(JsonValue::Null) => None,
+            Some(value) => {
+                let decoded: TraceContext = norn_ir::runtime::decode(value).ok()?;
+                decoded.validate().ok()?;
+                Some(decoded)
+            }
+        };
         Some(Self {
             action_id: string("actionId")?,
             action_artifact_id,
@@ -578,6 +602,7 @@ impl ActionCallRecord {
             from: string("from")?,
             to: string("to")?,
             row_operations,
+            trace,
         })
     }
 }

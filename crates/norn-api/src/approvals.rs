@@ -135,6 +135,8 @@ pub(crate) struct ParkedCall {
     /// S6b: the flow step attempt waiting on this call when it parked, if
     /// one was. Its approval runs it only while that attempt waits.
     pub(crate) attempt: Option<StepAttempt>,
+    /// Optional provenance trace context carried by the call when it parked.
+    pub(crate) trace: Option<norn_ir::TraceContext>,
 }
 
 /// S6b: one flow step attempt making an action call: its run and its parked
@@ -232,6 +234,14 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
             attempt: match approval.get("attempt") {
                 None => None,
                 Some(attempt) => Some(StepAttempt::decode(attempt)?),
+            },
+            trace: match approval.get("trace") {
+                None => None,
+                Some(trace) => {
+                    let decoded: norn_ir::TraceContext = norn_ir::runtime::decode(trace).ok()?;
+                    decoded.validate().ok()?;
+                    Some(decoded)
+                }
             },
         },
     })
@@ -350,6 +360,7 @@ fn command_id(gate: &Gate, parked_call: &ParkedCall) -> Result<String, Refusal> 
             requester: &parked_call.requester.subject,
             input: &parked_call.input,
             definitions_version: parked_call.definitions_version,
+            trace: parked_call.trace.as_ref(),
         },
     )
 }
@@ -362,6 +373,7 @@ pub(crate) struct CallParts<'a> {
     pub(crate) requester: &'a str,
     pub(crate) input: &'a RuntimeObject,
     pub(crate) definitions_version: Option<u64>,
+    pub(crate) trace: Option<&'a norn_ir::TraceContext>,
 }
 
 /// [`command_id`] from the call's parts: what an approval replay compares.
@@ -377,11 +389,18 @@ pub(crate) fn call_command_id(gate: &Gate, parts: &CallParts<'_>) -> Result<Stri
         parts.requester,
         parts.input,
     );
-    let digest = match parts.definitions_version {
-        None => norn_ir::canonical::domain_hash_hex(b"norn.approval.call/2\0", &call),
-        Some(pin) => {
+    let digest = match (parts.definitions_version, parts.trace) {
+        (None, None) => norn_ir::canonical::domain_hash_hex(b"norn.approval.call/2\0", &call),
+        (Some(pin), None) => {
             norn_ir::canonical::domain_hash_hex(b"norn.approval.pinned-call/2\0", &(call, pin))
         }
+        (None, Some(trace)) => {
+            norn_ir::canonical::domain_hash_hex(b"norn.approval.traced-call/1\0", &(call, trace))
+        }
+        (Some(pin), Some(trace)) => norn_ir::canonical::domain_hash_hex(
+            b"norn.approval.pinned-traced-call/1\0",
+            &(call, pin, trace),
+        ),
     }
     .map_err(Refusal::host)?;
     Ok(format!(
@@ -663,6 +682,9 @@ fn park<E: SqlEngine>(
     if let Some(attempt) = &parked_call.attempt {
         approval.insert("attempt".to_owned(), attempt.encode()?);
     }
+    if let Some(trace) = &parked_call.trace {
+        approval.insert("trace".to_owned(), trace.to_runtime_value());
+    }
     let payload: RuntimeObject = BTreeMap::from([
         ("kind".to_owned(), text("perform")),
         (
@@ -763,12 +785,13 @@ pub(crate) fn approved_state<E: SqlEngine>(
         format!("{}/{}", held.call.action, held.call.idempotency_key),
     );
     let recorded = CellHost::load(cell, &key).map_err(Refusal::host)?;
-    // Exactly the approved call: its action, its requester, its input.
+    // Exactly the approved call: its action, its requester, its input, its trace.
     let exact = recorded.values.as_ref().map(|values| {
         ActionCallRecord::from_values(values).filter(|record| {
             record.action_id == held.call.action
                 && record.actor == held.call.requester.subject
                 && record.input == held.call.input
+                && record.trace == held.call.trace
         })
     });
     let conflict = || CallState::Refused("action.idempotency_conflict".to_owned());

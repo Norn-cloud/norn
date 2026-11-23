@@ -637,3 +637,55 @@ fn composed_link_source_is_optional_closed_and_object_only() {
         .is_err()
     );
 }
+
+#[test]
+fn trace_context_rejects_bidi_controls_line_separators_c1_and_nul() {
+    let valid = norn_ir::TraceContext {
+        trace_id: "trace-ok-1".to_owned(),
+        intent_ref: Some("goal:approve-so-1".to_owned()),
+        session_digest: Some(norn_ir::function::Digest(format!(
+            "sha256:{}",
+            "a".repeat(64)
+        ))),
+    };
+    assert_eq!(valid.validate(), Ok(()));
+
+    // Object-only deserialization refuses JSON arrays.
+    assert!(serde_json::from_value::<norn_ir::TraceContext>(serde_json::json!(["tr-1"])).is_err());
+
+    let forbidden_samples = [
+        ("bidi RLO U+202E", "tr\u{202e}1"),
+        ("bidi LRI U+2066", "tr\u{2066}1"),
+        ("bidi ALM U+061C", "tr\u{061c}1"),
+        ("bidi LRM U+200E", "tr\u{200e}1"),
+        ("bidi RLM U+200F", "tr\u{200f}1"),
+        ("bidi PDI U+2069", "tr\u{2069}1"),
+        ("interior line separator U+2028", "tr\u{2028}1"),
+        ("interior paragraph separator U+2029", "tr\u{2029}1"),
+        ("C1 control NEL U+0085", "tr\u{0085}1"),
+        ("NUL U+0000", "tr\u{0000}1"),
+    ];
+    for (label, sample) in forbidden_samples {
+        let bad_trace_id = norn_ir::TraceContext {
+            trace_id: sample.to_owned(),
+            intent_ref: None,
+            session_digest: None,
+        };
+        assert_eq!(
+            bad_trace_id.validate(),
+            Err(norn_ir::TraceContextError::InvalidTraceId),
+            "trace_id must reject {label}"
+        );
+
+        let bad_intent_ref = norn_ir::TraceContext {
+            trace_id: "trace-ok".to_owned(),
+            intent_ref: Some(sample.to_owned()),
+            session_digest: None,
+        };
+        assert_eq!(
+            bad_intent_ref.validate(),
+            Err(norn_ir::TraceContextError::InvalidIntentRef),
+            "intent_ref must reject {label}"
+        );
+    }
+}
