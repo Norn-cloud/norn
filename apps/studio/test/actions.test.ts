@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { instantText, isDiagnosticPlaced, offsetSuffix, offsetText, pickerDateTime, resolveDateTime, runtimeWallOffsets, selectedAlternative, type LocalWallOffsets } from "../src/lib/actions.ts"
+import { BOOK_EQUIPMENT } from "../e2e/interval-fixtures.ts"
 import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
 
@@ -274,4 +276,173 @@ test("a refusal's request is the input as sent: every member, lists, objects and
   expect(sentMembers("{}")).toEqual([])
   expect(sentMembers(' { "a" : 1 , "b" : [ 1 , 2 ] } ')).toEqual([{ name: "a", text: "1" }, { name: "b", text: "[ 1 , 2 ]" }])
   for (const text of ["", "null", "[1]", "{"]) expect(sentMembers(text)).toBeNull()
+})
+
+test("a string input's format offers a date, time or instant picker; a nullable one keeps its picker behind No value", () => {
+  const fields = fieldsOf(BOOK_EQUIPMENT.inputSchema)
+  expect(fields.map((f) => `${f.name}:${f.spec.kind}${f.nullable ? "?" : ""}`)).toEqual(["id:text", "label:text", "equipment:text", "starts_at:date-time", "ends_at:date-time", "inspect_on:date?", "daily_check:time?"])
+  // A format the dialect doesn't name stays a text input.
+  expect(fieldsOf({ type: "object", properties: { at: { type: "string", format: "duration" } } })[0]?.spec).toEqual({ kind: "text" })
+})
+
+test("pickers send their formats: a date as typed, a time with seconds, a wall time with the reader's offset at it", () => {
+  const fields = fieldsOf(BOOK_EQUIPMENT.inputSchema)
+  const draft = { ...emptyDraft(fields), id: "booking/9", inspect_on: "2026-11-30", daily_check: "07:45", starts_at: "2026-11-27T09:30:00Z" }
+  expect(JSON.parse(encodeObject(fields, draft))).toEqual({ id: "booking/9", inspect_on: "2026-11-30", daily_check: "07:45:00", starts_at: "2026-11-27T09:30:00Z" })
+  // The offset is the reader's zone's at that wall time (DST included), never the offset of today.
+  expect(instantText("2026-11-27T09:30", () => 120)).toBe("2026-11-27T09:30:00+02:00")
+  expect(instantText("2026-07-01T23:05:07", () => -240)).toBe("2026-07-01T23:05:07-04:00")
+  expect(instantText("2026-11-27T09:30", () => 0)).toBe("2026-11-27T09:30:00Z")
+  expect(instantText("2026-11-27T09:30", () => 330)).toBe("2026-11-27T09:30:00+05:30")
+  // Text that is not a picker's wall time goes as typed, for the cell to refuse at its pointer.
+  expect(instantText("next friday")).toBe("next friday")
+  expect(offsetText(-570)).toBe("-09:30")
+})
+
+test("an instant shows in the picker as the reader's wall time; a wall time shows as it is", () => {
+  expect(pickerDateTime("2026-11-27T09:30")).toBe("2026-11-27T09:30")
+  const at = new Date(Date.UTC(2026, 10, 27, 7, 30))
+  const two = (n: number) => String(n).padStart(2, "0")
+  expect(pickerDateTime("2026-11-27T07:30:00Z")).toBe(`${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}T${two(at.getHours())}:${two(at.getMinutes())}`)
+  expect(pickerDateTime("garbage")).toBe("")
+})
+
+test("a refusal's nested pointer lands on the member's row; unmatched nested pointers stay on the form", () => {
+  const fields = fieldsOf(OPEN_HOLDING.inputSchema)
+  const diagnostics = [
+    { code: "action.input_invalid", message: "Site is unknown.", pointer: "/input/location/site" },
+    { code: "action.input_invalid", message: "Unknown nested key.", pointer: "/input/location/unknown" },
+    { code: "request.invalid", message: "input must be a JSON object", pointer: "/input" },
+    { code: "core.time.improper_interval", message: "Ends must be after it starts.", pointer: "/input/ends_at" },
+  ]
+  expect(problemsAt(diagnostics, "/location/site").map((d) => d.message)).toEqual(["Site is unknown."])
+  expect(problemsAt(diagnostics, "/location").map((d) => d.message)).toEqual(["Site is unknown.", "Unknown nested key."])
+  expect(inputPointer(diagnostics[2]!)).toBeNull()
+  // `/location/site` is placed on its leaf FieldRow; `/location/unknown` and `/ends_at` have no FieldRow and stay in `unplaced`.
+  expect(isDiagnosticPlaced("/location/site", fields)).toBe(true)
+  expect(isDiagnosticPlaced("/location", fields)).toBe(true)
+  expect(isDiagnosticPlaced("/location/unknown", fields)).toBe(false)
+  expect(unplaced(diagnostics, fields).map((d) => d.message)).toEqual([
+    "Unknown nested key.",
+    "input must be a JSON object",
+    "Ends must be after it starts.",
+  ])
+
+  // Array of objects: only rendered item indices with declared member fields are placed.
+  const arrayFields = fieldsOf({
+    type: "object",
+    properties: {
+      lines: { type: "array", items: { type: "object", properties: { sku: { type: "string" } } } },
+    },
+  })
+  const draft: Draft = { lines: [{ sku: "A" }] }
+  const arrayDiagnostics = [
+    { code: "a", message: "Bad sku", pointer: "/input/lines/0/sku" },
+    { code: "b", message: "Unknown item field", pointer: "/input/lines/0/unknown" },
+    { code: "c", message: "Out of range item", pointer: "/input/lines/5/sku" },
+    { code: "d", message: "List-level refusal", pointer: "/input/lines" },
+  ]
+  expect(unplaced(arrayDiagnostics, arrayFields, draft).map((d) => d.message)).toEqual([
+    "Unknown item field",
+    "Out of range item",
+  ])
+
+  // Nullable object set to null: child FieldRows are hidden by Nullable, so child pointers must stay in `unplaced`.
+  const nullableObjectFields = fieldsOf({
+    type: "object",
+    properties: {
+      location: { type: ["object", "null"], properties: { site: { type: "string" } } },
+    },
+  })
+  const nullDraft: Draft = { location: null }
+  const presentDraft: Draft = { location: { site: "" } }
+  const nullableDiagnostics = [
+    { code: "e", message: "Site required", pointer: "/input/location/site" },
+    { code: "f", message: "Location required", pointer: "/input/location" },
+  ]
+  expect(isDiagnosticPlaced("/location/site", nullableObjectFields, nullDraft)).toBe(false)
+  expect(isDiagnosticPlaced("/location", nullableObjectFields, nullDraft)).toBe(true)
+  expect(unplaced(nullableDiagnostics, nullableObjectFields, nullDraft).map((d) => d.message)).toEqual(["Site required"])
+  expect(isDiagnosticPlaced("/location/site", nullableObjectFields, presentDraft)).toBe(true)
+  expect(unplaced(nullableDiagnostics, nullableObjectFields, presentDraft)).toEqual([])
+})
+
+test("DST spring gap is flagged without shifting; fall repeat matches by epoch instant and supports 2-hour repeats", () => {
+  // Simulate America/New_York DST transitions:
+  // - 2026-03-08 02:00..02:59 does not exist (spring forward -05:00 -> -04:00)
+  // - 2026-11-01 01:00..01:59 occurs twice (fall back -04:00 then -05:00)
+  const newYork: LocalWallOffsets = (p) => {
+    if (p.year === 2026 && p.month === 3 && p.day === 8 && p.hour === 2) return []
+    if (p.year === 2026 && p.month === 11 && p.day === 1 && p.hour === 1) return [-240, -300]
+    return [-300]
+  }
+  // Spring gap: flagged nonexistent and never fabricated as `02:30:00-04:00` (which would shift to 01:30 EST).
+  const gap = resolveDateTime("2026-03-08T02:30", newYork)
+  expect(gap).toEqual({ kind: "nonexistent", text: "2026-03-08T02:30" })
+
+  // Fall repeat from picker wall time: offers both occurrences chronologically.
+  const repeat = resolveDateTime("2026-11-01T01:30", newYork)
+  expect(repeat).toEqual({
+    kind: "ok",
+    text: "2026-11-01T01:30:00-04:00",
+    alternatives: ["2026-11-01T01:30:00-04:00", "2026-11-01T01:30:00-05:00"],
+  })
+
+  // Fall repeat restored as UTC `Z` (`2026-11-01T06:30:00Z` === `01:30:00-05:00`, the second occurrence):
+  // `selectedAlternative` matches by epoch instant rather than string offset equality.
+  expect(selectedAlternative("2026-11-01T06:30:00Z", repeat.kind === "ok" ? repeat.alternatives : [])).toBe("2026-11-01T01:30:00-05:00")
+  expect(selectedAlternative("2026-11-01T05:30:00Z", repeat.kind === "ok" ? repeat.alternatives : [])).toBe("2026-11-01T01:30:00-04:00")
+
+  // Fractional seconds on DST repeat: preserved in both alternatives, epoch match selects second occurrence, and offsetSuffix stays clean.
+  const fractional = resolveDateTime("2026-11-01T01:30:00.250", newYork)
+  expect(fractional).toEqual({
+    kind: "ok",
+    text: "2026-11-01T01:30:00.250-04:00",
+    alternatives: ["2026-11-01T01:30:00.250-04:00", "2026-11-01T01:30:00.250-05:00"],
+  })
+  expect(selectedAlternative("2026-11-01T06:30:00.250Z", fractional.kind === "ok" ? fractional.alternatives : [])).toBe("2026-11-01T01:30:00.250-05:00")
+  expect(offsetSuffix("2026-11-01T01:30:00.250-05:00")).toBe("-05:00")
+  expect(offsetSuffix("2026-11-01T06:30:00.250Z")).toBe("Z")
+
+  // 2-hour fall-back repeat (Antarctica/Troll: +02:00 -> Z): both occurrences are exposed and matched by instant.
+  const troll: LocalWallOffsets = (p) =>
+    p.year === 2026 && p.month === 10 && p.day === 25 && p.hour === 1 ? [120, 0] : [0]
+  const trollRepeat = resolveDateTime("2026-10-25T01:30", troll)
+  expect(trollRepeat).toEqual({
+    kind: "ok",
+    text: "2026-10-25T01:30:00+02:00",
+    alternatives: ["2026-10-25T01:30:00+02:00", "2026-10-25T01:30:00Z"],
+  })
+  expect(selectedAlternative("2026-10-25T01:30:00+00:00", trollRepeat.kind === "ok" ? trollRepeat.alternatives : [])).toBe("2026-10-25T01:30:00Z")
+  // When running under real TZ=Antarctica/Troll, runtimeWallOffsets also discovers both 2-hour-apart occurrences.
+  if (Intl.DateTimeFormat().resolvedOptions().timeZone === "Antarctica/Troll") {
+    expect(runtimeWallOffsets({ year: 2026, month: 10, day: 25, hour: 1, minute: 30, second: 0 })).toEqual([120, 0])
+  }
+  if (Intl.DateTimeFormat().resolvedOptions().timeZone === "America/New_York") {
+    expect(runtimeWallOffsets({ year: 2026, month: 3, day: 8, hour: 2, minute: 30, second: 0 })).toEqual([])
+    expect(runtimeWallOffsets({ year: 2026, month: 11, day: 1, hour: 1, minute: 30, second: 0 })).toEqual([-240, -300])
+    const utcSecond = resolveDateTime("2026-11-01T06:30:00Z")
+    expect(utcSecond.kind).toBe("ok")
+    if (utcSecond.kind === "ok") {
+      expect(selectedAlternative(utcSecond.text, utcSecond.alternatives)).toBe("2026-11-01T01:30:00-05:00")
+    }
+    const utcFracSecond = resolveDateTime("2026-11-01T06:30:00.250Z")
+    expect(utcFracSecond).toEqual({
+      kind: "ok",
+      text: "2026-11-01T06:30:00.250Z",
+      alternatives: ["2026-11-01T01:30:00.250-04:00", "2026-11-01T01:30:00.250-05:00"],
+    })
+    if (utcFracSecond.kind === "ok") {
+      expect(selectedAlternative(utcFracSecond.text, utcFracSecond.alternatives)).toBe("2026-11-01T01:30:00.250-05:00")
+    }
+  }
+
+  // Fall repeat already carrying `-05:00` (restored/prefilled): preserves exact `-05:00` in both preview & encoded payload.
+  const restored = resolveDateTime("2026-11-01T01:30:00-05:00", newYork)
+  expect(restored.kind).toBe("ok")
+  expect(restored.text).toBe("2026-11-01T01:30:00-05:00")
+  const fields = fieldsOf(BOOK_EQUIPMENT.inputSchema)
+  expect(JSON.parse(encodeObject(fields, { ...emptyDraft(fields), starts_at: "2026-11-01T01:30:00-05:00" }))).toEqual({
+    starts_at: "2026-11-01T01:30:00-05:00",
+  })
 })
