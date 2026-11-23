@@ -257,7 +257,7 @@
         "errors": 0,
         "sha256": "f7ba6f0754c50c99631cc4cdea32ff456852b9f01dcdb57cc3d0fd0deb5f3d13"
       },
-      "exprProfile": "norn-zen/6",
+      "exprProfile": "norn-zen/7",
       "format": "norn-checker/receipt@2",
       "identifierProfile": "norn-identifiers/1",
       "limitProfile": {
@@ -271,7 +271,7 @@
         "version": 2
       }
     },
-    "receiptSha256": "5456d081893d85a05a29dcb09e2b10aa5e7abd224f9119b112fe9cf8581a030c",
+    "receiptSha256": "b827f20aed392bb3a40b0e06f39f81f83f0243af89227fb6ff923c0185b881c7",
     "diagnostics": null,
     "registry": [],
     "baseArtifactIds": [
