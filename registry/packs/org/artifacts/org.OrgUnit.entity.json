@@ -1,0 +1,96 @@
+{
+  "artifactId": "org.OrgUnit.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Organizational unit",
+  "namespace": "org",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A branch, department, workshop, or team within an organization (W3C ORG OrganizationalUnit).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Agent"
+      ],
+      "links": [
+        {
+          "acyclic": true,
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Parent organizational unit (strictly acyclic).",
+          "id": "parent",
+          "target": "org.OrgUnit"
+        }
+      ],
+      "name": "org.OrgUnit",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "default": "organization",
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "person"
+              },
+              {
+                "value": "organization"
+              },
+              {
+                "value": "system"
+              }
+            ]
+          }
+        },
+        {
+          "id": "unit_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "business_unit_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/org/artifacts/org.OrgUnit.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

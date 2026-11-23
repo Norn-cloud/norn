@@ -1,0 +1,19 @@
+{
+  "sha256": "c6c32cbd0b4ff62dbf0775eb73f1a113e39de0d8768abfbcf4b59ad35a7e1396",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/time/calendars.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

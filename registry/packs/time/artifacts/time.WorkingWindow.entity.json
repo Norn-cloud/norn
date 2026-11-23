@@ -1,0 +1,92 @@
+{
+  "artifactId": "time.WorkingWindow.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Working window",
+  "namespace": "time",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Recurring local wall-clock operating window materialized to UTC intervals through checked timezone resolution.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Calendar whose timezone resolves this window.",
+          "id": "calendar",
+          "target": "time.Calendar"
+        }
+      ],
+      "name": "time.WorkingWindow",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "weekday",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "monday"
+              },
+              {
+                "value": "tuesday"
+              },
+              {
+                "value": "wednesday"
+              },
+              {
+                "value": "thursday"
+              },
+              {
+                "value": "friday"
+              },
+              {
+                "value": "saturday"
+              },
+              {
+                "value": "sunday"
+              }
+            ]
+          }
+        },
+        {
+          "id": "start_local",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "end_local",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/time/artifacts/time.WorkingWindow.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

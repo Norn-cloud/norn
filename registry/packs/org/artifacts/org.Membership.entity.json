@@ -1,0 +1,109 @@
+{
+  "artifactId": "org.Membership.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Membership",
+  "namespace": "org",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Time-bounded relationship linking an Agent to an OrgUnit and optional Post (W3C ORG Membership, implements core.AgentRole).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.AgentRole"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "The agent holding this membership.",
+          "id": "agent",
+          "target": "core.Agent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Employer or counterparty organization.",
+          "id": "counterparty",
+          "target": "core.Agent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Organizational unit of the membership.",
+          "id": "unit",
+          "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Specific post fulfilled by this membership, if any.",
+          "id": "post",
+          "target": "org.Post"
+        }
+      ],
+      "name": "org.Membership",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "role",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "valid_from",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.date"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "valid_to",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.date"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/org/artifacts/org.Membership.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
