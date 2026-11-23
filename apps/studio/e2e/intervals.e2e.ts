@@ -41,14 +41,19 @@ test("view: only a core.TimeInterval type offers Timeline; its week shows the re
   await expect(page.getByRole("radio", { name: "Timeline" })).toHaveCount(0)
   await openTimeline(page, "facilities.EquipmentBooking", "Equipment booking")
   await expect(timeline(page, "Equipment booking").getByRole("heading")).toHaveText("23 Nov – 29 Nov 2026")
-  // The window is the cell's query: the overlap test as two timestamp clauses, in start order.
-  const asked = cell.requests.at(-1)!
-  expect(JSON.parse(asked.searchParams.get("filter") ?? "null")).toEqual({ all: [
-    { property: "starts_at", op: "lt", value: "2026-11-30T00:00:00.000Z" },
-    { property: "ends_at", op: "gt", value: "2026-11-23T00:00:00.000Z" },
-  ] })
-  expect(asked.searchParams.get("sort")).toBe("starts_at:asc")
   await expect(bars(page, "Equipment booking")).toHaveCount(4)
+  // The window is the cell's query: the overlap test as two timestamp clauses, in start order.
+  const latestBookingQuery = () => cell.requests.filter((url) => url.pathname.endsWith("/v1/objects/facilities.EquipmentBooking")).at(-1)
+  await expect.poll(() => {
+    const asked = latestBookingQuery()
+    return asked ? { filter: JSON.parse(asked.searchParams.get("filter") ?? "null"), sort: asked.searchParams.get("sort") } : null
+  }).toEqual({
+    filter: { all: [
+      { property: "starts_at", op: "lt", value: "2026-11-30T00:00:00.000Z" },
+      { property: "ends_at", op: "gt", value: "2026-11-23T00:00:00.000Z" },
+    ] },
+    sort: "starts_at:asc",
+  })
   await expect(bars(page, "Equipment booking").filter({ hasText: "December service" })).toHaveCount(0)
   // A booking that began the week before is clipped at the window's start.
   await expect(bars(page, "Equipment booking").filter({ hasText: "Inspection" })).toHaveClass(/rounded-l-none/)
