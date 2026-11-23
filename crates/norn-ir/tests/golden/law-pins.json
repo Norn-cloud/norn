@@ -20,5 +20,11 @@
   "registry/core/artifacts/core.analytics.restatement_policy.law.json#/payload": "sha256:6411cda959ac4fb05c1e95494508beb4a7a2a749cc5518396a04fd2db6410430",
   "registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json#/payload": "sha256:18f52fd6fea89c188a2295a098a01b66e949a90c77ec002447a857351651eada",
   "registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json#/payload": "sha256:73ed6579985cbd585a92a9e80ee0febcd45e9e93836fdad57aa9417b32138eaa",
+  "registry/packs/hr/artifacts/hr.LeaveBalance.non_negative.law.json#/payload": "sha256:da1803ada9a839ca344de22c18297baaefc63e67a4163b3476a8e63ad8453aab",
+  "registry/packs/hr/artifacts/hr.LeaveRequest.positive_days.law.json#/payload": "sha256:d5d5b76453059cbbb219881bab4170526e0adf52e5da33a14d0d072732caa779",
+  "registry/packs/hr/artifacts/hr.PreferenceProfile.valid_bounds.law.json#/payload": "sha256:32d7a4df4c98150d8a60a4cdb8057ee175e5fe635762d9d5978ed2e525f055e5",
+  "registry/packs/hr/artifacts/hr.Roster.published_requires_receipt.law.json#/payload": "sha256:4349d697bed570214d0f29ece4587d34c55e4997632e436eea02870a7bfb91ec",
+  "registry/packs/hr/artifacts/hr.ShiftRequirement.positive_coverage.law.json#/payload": "sha256:81746bde50a857cd7523561fc10594ba0767a6db6cde47a7682e73f18e1905f3",
+  "registry/packs/loc-eg/artifacts/loc_eg.LaborProfile.statutory_floors.law.json#/payload": "sha256:58a85d106392d3c1882b34b37c0e4e31b8fb25c157ea82382bd76ba0962afd00",
   "registry/packs/ml/artifacts/ml.promotion_policy.law.json#/payload": "sha256:28490dcafd59948a98dcb621e09fe8eb69004c9de0f61ac2ce3402364e76803c"
 }
