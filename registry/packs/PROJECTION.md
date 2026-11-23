@@ -90,21 +90,21 @@ None.
 
 ## `norn.link.frappe-hr.canon`
 
-`norn.ontology-pack.frappe-hr` → `norn.ontology-pack.canon`
+`norn.ontology-pack.frappe-hr` → `norn.ontology-pack.workforce`
 
 ### Maps
 
 - `norn.frappe-hr.attendance` subsumed_by `norn.hr.attendance.event`
 - `norn.frappe-hr.department` subsumed_by `norn.org.unit`
 - `norn.frappe-hr.designation` subsumed_by `norn.org.post`
-- `norn.frappe-hr.employee` subsumed_by `norn.core.agent`
+- `norn.frappe-hr.employee` subsumed_by `norn.org.person`
 - `norn.frappe-hr.guard.leave.insufficient.balance` subsumed_by `norn.hr.guard.leave.insufficient.balance`
 - `norn.frappe-hr.guard.leave.overlap` equivalent `norn.hr.guard.leave.overlap`
 - `norn.frappe-hr.guard.shift.overlap` equivalent `norn.hr.guard.shift.overlap`
 - `norn.frappe-hr.holiday.list` subsumed_by `norn.time.calendar`
 - `norn.frappe-hr.holiday.list.holiday` subsumed_by `norn.time.calendar.exception`
 - `norn.frappe-hr.leave.allocation` subsumed_by `norn.hr.leave.balance`
-- `norn.frappe-hr.leave.allocation.new.leaves.allocated` subsumed_by `norn.core.resource.quantity`
+- `norn.frappe-hr.leave.allocation.new.leaves.allocated` subsumed_by `norn.hr.leave.quantity`
 - `norn.frappe-hr.leave.application` equivalent `norn.hr.leave.request`
 - `norn.frappe-hr.leave.application.submit` subsumed_by `norn.hr.leave.request.approve`
 - `norn.frappe-hr.shift.assignment` subsumed_by `norn.hr.shift.commitment`

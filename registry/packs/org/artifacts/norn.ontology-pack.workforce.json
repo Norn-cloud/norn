@@ -1,0 +1,430 @@
+{
+  "artifactId": "norn.ontology-pack.workforce",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Norn workforce canon handles: time, organization, and HR primitives",
+  "namespace": "norn.ontology",
+  "payload": {
+    "mappings": [
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://www.w3.org/TR/vocab-org/"
+        ],
+        "externalIri": "https://www.w3.org/ns/org#OrganizationalUnit",
+        "justification": "W3C ORG OrganizationalUnit models branches and departments.",
+        "mappingId": "map.norn.org.unit.w3c-org",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.w3c-org",
+        "termId": "norn.org.unit"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://www.w3.org/TR/vocab-org/"
+        ],
+        "externalIri": "https://www.w3.org/ns/org#Post",
+        "justification": "W3C ORG Post models budgeted roles that exist independently of holders.",
+        "mappingId": "map.norn.org.post.w3c-org",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.w3c-org",
+        "termId": "norn.org.post"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://www.w3.org/TR/vocab-org/"
+        ],
+        "externalIri": "https://www.w3.org/ns/org#Membership",
+        "justification": "W3C ORG Membership models time-bounded agent-to-unit role assignments.",
+        "mappingId": "map.norn.org.membership.w3c-org",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.w3c-org",
+        "termId": "norn.org.membership"
+      },
+      {
+        "confidenceBasisPoints": 7500,
+        "evidenceRefs": [
+          "https://www.w3.org/TR/owl-time/"
+        ],
+        "externalIri": "https://www.w3.org/2006/time#TRS",
+        "justification": "OWL-Time temporal reference system concept paired with pinned IANA tzdb policy.",
+        "mappingId": "map.norn.time.calendar.w3c-time",
+        "relation": "related_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.w3c-time",
+        "termId": "norn.time.calendar"
+      }
+    ],
+    "packId": "norn.ontology-pack.workforce",
+    "packKind": "ontology",
+    "packVersion": "0.1",
+    "shapes": [
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "code",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.time.calendar",
+        "termId": "norn.time.calendar"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "calendarDate",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.time.calendar.exception",
+        "termId": "norn.time.calendar.exception"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "weekday",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.time.working.window",
+        "termId": "norn.time.working.window"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.org.person",
+        "termId": "norn.org.person"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.org.unit",
+        "termId": "norn.org.unit"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "code",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.org.post",
+        "termId": "norn.org.post"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "person",
+            "maxCount": 1,
+            "minCount": 1,
+            "targetTermId": "norn.org.person",
+            "valueType": "term_ref"
+          }
+        ],
+        "shapeId": "shape.norn.org.membership",
+        "termId": "norn.org.membership"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "person",
+            "maxCount": 1,
+            "minCount": 1,
+            "targetTermId": "norn.org.person",
+            "valueType": "term_ref"
+          }
+        ],
+        "shapeId": "shape.norn.hr.employment",
+        "termId": "norn.hr.employment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "code",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.hr.leave.balance",
+        "termId": "norn.hr.leave.balance"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "days",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.hr.leave.request",
+        "termId": "norn.hr.leave.request"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "person",
+            "maxCount": 1,
+            "minCount": 1,
+            "targetTermId": "norn.org.person",
+            "valueType": "term_ref"
+          }
+        ],
+        "shapeId": "shape.norn.hr.shift.commitment",
+        "termId": "norn.hr.shift.commitment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "occurredAt",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "date_time"
+          }
+        ],
+        "shapeId": "shape.norn.hr.attendance.event",
+        "termId": "norn.hr.attendance.event"
+      }
+    ],
+    "sources": [
+      {
+        "canonicalUrl": "https://www.w3.org/TR/vocab-org/",
+        "files": [
+          {
+            "path": "https://www.w3.org/ns/org.ttl",
+            "sha256": "3e01f89a17475a88f8b1606ca0fae04800d34dbbf93adc6db12dc30929848729"
+          }
+        ],
+        "importMode": "map_only",
+        "license": "W3C-20150513",
+        "redistribution": "reference_only",
+        "releaseId": "w3c-rec-20140116",
+        "releasedAt": "2014-01-16",
+        "retrievedAt": "2026-11-23",
+        "sourceId": "source.w3c-org"
+      },
+      {
+        "canonicalUrl": "https://www.w3.org/TR/owl-time/",
+        "files": [
+          {
+            "path": "https://www.w3.org/2006/time.ttl",
+            "sha256": "251bd6970b0d7a5efa97ff681afe81a297df85deab3d860fa4f8eeba72d8f16c"
+          }
+        ],
+        "importMode": "map_only",
+        "license": "W3C-20150513",
+        "redistribution": "reference_only",
+        "releaseId": "w3c-rec-20171019",
+        "releasedAt": "2017-10-19",
+        "retrievedAt": "2026-11-23",
+        "sourceId": "source.w3c-time"
+      }
+    ],
+    "terms": [
+      {
+        "definition": "A pinned IANA timezone and DST resolution calendar governing local wall-clock schedules.",
+        "label": "Calendar",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.time.calendar",
+        "termKind": "class"
+      },
+      {
+        "definition": "A public holiday, blackout date, or working-day override attached to a calendar.",
+        "label": "Calendar exception",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.time.calendar.exception",
+        "termKind": "class"
+      },
+      {
+        "definition": "A recurring local wall-clock operating window materialized to canonical UTC intervals.",
+        "label": "Working window",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.time.working.window",
+        "termKind": "class"
+      },
+      {
+        "definition": "A natural person participating in organizational memberships and employment relationships (implements core.Agent).",
+        "label": "Person",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.org.person",
+        "termKind": "class"
+      },
+      {
+        "definition": "A branch, department, workshop, or team within an organization (W3C ORG OrganizationalUnit, implements core.Agent).",
+        "label": "Organizational unit",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.org.unit",
+        "termKind": "class"
+      },
+      {
+        "definition": "A budgeted role or position within an organizational unit that can be vacant or filled over time (W3C ORG Post).",
+        "label": "Post",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.org.post",
+        "termKind": "class"
+      },
+      {
+        "definition": "A time-bounded relationship binding a person to an organizational unit and optional post (W3C ORG Membership, implements core.AgentRole).",
+        "label": "Membership",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.org.membership",
+        "termKind": "class"
+      },
+      {
+        "definition": "Effective-dated employment terms governing an agent's work membership with an employer unit.",
+        "label": "Employment",
+        "parentTermId": "norn.org.membership",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.employment",
+        "termKind": "class"
+      },
+      {
+        "definition": "A conserved stock of earned leave entitlement days held for an employee (implements core.Resource).",
+        "label": "Leave balance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.leave.balance",
+        "termKind": "class"
+      },
+      {
+        "definition": "An exact decimal quantity of leave days allocated, reserved, or consumed in UCUM days.",
+        "domainTermId": "norn.hr.leave.balance",
+        "label": "Leave quantity",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.leave.quantity",
+        "termKind": "property"
+      },
+      {
+        "definition": "A governed request by an employee to consume leave over a date interval.",
+        "label": "Leave request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.leave.request",
+        "termKind": "class"
+      },
+      {
+        "definition": "Approve a pending leave request under independent manager authority and debit the conserved leave balance.",
+        "domainTermId": "norn.hr.leave.request",
+        "label": "Approve leave request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.leave.request.approve",
+        "termKind": "action"
+      },
+      {
+        "definition": "A promised labor shift assigned to an employee over a half-open UTC interval (implements core.Commitment).",
+        "label": "Shift commitment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.shift.commitment",
+        "termKind": "class"
+      },
+      {
+        "definition": "An immutable posted work event fulfilling a shift commitment (implements core.EconomicEvent).",
+        "label": "Attendance event",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.attendance.event",
+        "termKind": "class"
+      },
+      {
+        "definition": "A leave request exceeds the employee's remaining available leave balance.",
+        "label": "Insufficient leave balance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.guard.leave.insufficient.balance",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "A leave request overlaps an existing active or approved leave interval for the same employee.",
+        "label": "Overlapping leave request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.guard.leave.overlap",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Two scheduled shifts for the same employee overlap in time.",
+        "label": "Overlapping shift commitment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.guard.shift.overlap",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "The gap between two consecutive shifts for an employee is below the governed statutory rest floor.",
+        "label": "Minimum rest violation",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.guard.shift.rest.violation",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "A requester attempts to approve their own leave or roster exception.",
+        "label": "Self-approval forbidden",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.hr.guard.self.approval",
+        "termKind": "predicate"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/org/artifacts/norn.ontology-pack.workforce.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
