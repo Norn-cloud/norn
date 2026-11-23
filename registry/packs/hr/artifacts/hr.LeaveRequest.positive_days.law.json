@@ -1,0 +1,51 @@
+{
+  "artifactId": "hr.LeaveRequest.positive_days.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.LeaveRequest.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Submitted or approved leave requests consume strictly positive days",
+  "namespace": "hr",
+  "payload": {
+    "condition": "self.status != \"draft\"",
+    "id": "hr.LeaveRequest.positive_days",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/people_leave.ts"
+    },
+    "rationale": "A non-draft leave request must consume positive days in exact decimal units (HR-LV-01).",
+    "response": {
+      "expression": "self.days > 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.LeaveRequest"
+      ],
+      "root": {
+        "id": "hr.LeaveRequest",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.LeaveRequest"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.LeaveRequest.positive_days.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

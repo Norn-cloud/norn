@@ -1,0 +1,50 @@
+{
+  "artifactId": "loc_eg.LaborProfile.statutory_floors.law",
+  "dependencies": [
+    {
+      "artifactId": "loc_eg.LaborProfile.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Egyptian statutory labor-law floors and hour caps",
+  "namespace": "loc_eg",
+  "payload": {
+    "id": "loc_eg.LaborProfile.statutory_floors",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "loc_eg",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/loc-eg/egypt.ts"
+    },
+    "rationale": "Egyptian labor baselines cap regular weekly hours at 48h, daily hours at 10h, enforce >= 11h rest between shifts, and grant >= 21/30 annual leave days.",
+    "response": {
+      "expression": "self.max_regular_weekly_hours <= 48 and self.max_daily_hours <= 10 and self.min_rest_between_shifts_hours >= 11 and self.standard_annual_leave_days >= 21 and self.senior_annual_leave_days >= 30",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "loc_eg.LaborProfile"
+      ],
+      "root": {
+        "id": "loc_eg.LaborProfile",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "loc_eg.LaborProfile"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/loc-eg/artifacts/loc_eg.LaborProfile.statutory_floors.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

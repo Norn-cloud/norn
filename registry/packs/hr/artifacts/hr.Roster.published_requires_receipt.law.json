@@ -1,0 +1,51 @@
+{
+  "artifactId": "hr.Roster.published_requires_receipt.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.Roster.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Published rosters must carry an accepted solver receipt digest",
+  "namespace": "hr",
+  "payload": {
+    "condition": "self.status == \"published\"",
+    "id": "hr.Roster.published_requires_receipt",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/rostering.ts"
+    },
+    "rationale": "No roster may reach published status without an authenticated deterministic solver receipt (HR-SH-01..04).",
+    "response": {
+      "expression": "self.solver_receipt_digest != null",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.Roster"
+      ],
+      "root": {
+        "id": "hr.Roster",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.Roster"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.Roster.published_requires_receipt.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

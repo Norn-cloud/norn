@@ -1,0 +1,132 @@
+{
+  "artifactId": "hr.AttendanceRequest.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Attendance regularization request",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Self-service employee request to regularize missed or remote attendance (covers Frappe HR canon gap).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "approved"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "approved",
+            "rejected"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "submit",
+              "to": "pending"
+            },
+            {
+              "from": [
+                "pending"
+              ],
+              "id": "approve",
+              "to": "approved"
+            },
+            {
+              "from": [
+                "pending"
+              ],
+              "id": "reject",
+              "to": "rejected"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employee requesting attendance regularization.",
+          "id": "person",
+          "target": "hr.Person"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Branch or unit confirming attendance.",
+          "id": "unit",
+          "target": "org.OrgUnit"
+        }
+      ],
+      "name": "hr.AttendanceRequest",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "work_date",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "id": "reason",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "pending"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "rejected"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.AttendanceRequest.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

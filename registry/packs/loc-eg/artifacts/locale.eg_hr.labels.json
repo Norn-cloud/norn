@@ -1,0 +1,1290 @@
+{
+  "artifactId": "locale.eg_hr.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Egyptian Arabic labels for time, org, and HR packs",
+  "namespace": "locale",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "التقويم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "time.Calendar"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.Calendar",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكود"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.Calendar",
+          "property": "code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.Calendar",
+          "property": "label"
+        }
+      },
+      {
+        "label": {
+          "ar": "المنطقة الزمنية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.Calendar",
+          "property": "iana_timezone"
+        }
+      },
+      {
+        "label": {
+          "ar": "سياسة التوقيت الصيفي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.Calendar",
+          "property": "dst_policy"
+        }
+      },
+      {
+        "label": {
+          "ar": "إصدار قاعدة التوقيت"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.Calendar",
+          "property": "tzdb_version"
+        }
+      },
+      {
+        "label": {
+          "ar": "بداية أسبوع العمل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.Calendar",
+          "property": "workweek_start"
+        }
+      },
+      {
+        "label": {
+          "ar": "رفض الغموض"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.Calendar",
+          "property": "dst_policy",
+          "value": "reject"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوقت الأسبق"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.Calendar",
+          "property": "dst_policy",
+          "value": "earlier"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوقت الأحدث"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.Calendar",
+          "property": "dst_policy",
+          "value": "later"
+        }
+      },
+      {
+        "label": {
+          "ar": "الأحد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.Calendar",
+          "property": "workweek_start",
+          "value": "sunday"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاثنين"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.Calendar",
+          "property": "workweek_start",
+          "value": "monday"
+        }
+      },
+      {
+        "label": {
+          "ar": "الثلاثاء"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.Calendar",
+          "property": "workweek_start",
+          "value": "tuesday"
+        }
+      },
+      {
+        "label": {
+          "ar": "الأربعاء"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.Calendar",
+          "property": "workweek_start",
+          "value": "wednesday"
+        }
+      },
+      {
+        "label": {
+          "ar": "الخميس"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.Calendar",
+          "property": "workweek_start",
+          "value": "thursday"
+        }
+      },
+      {
+        "label": {
+          "ar": "الجمعة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.Calendar",
+          "property": "workweek_start",
+          "value": "friday"
+        }
+      },
+      {
+        "label": {
+          "ar": "السبت"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.Calendar",
+          "property": "workweek_start",
+          "value": "saturday"
+        }
+      },
+      {
+        "label": {
+          "ar": "استثناء تقويم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "time.CalendarException"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.CalendarException",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "التاريخ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.CalendarException",
+          "property": "calendar_date"
+        }
+      },
+      {
+        "label": {
+          "ar": "النوع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.CalendarException",
+          "property": "kind"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوصف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "time.CalendarException",
+          "property": "label"
+        }
+      },
+      {
+        "label": {
+          "ar": "إجازة رسمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.CalendarException",
+          "property": "kind",
+          "value": "holiday"
+        }
+      },
+      {
+        "label": {
+          "ar": "يوم عمل استثنائي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.CalendarException",
+          "property": "kind",
+          "value": "working_override"
+        }
+      },
+      {
+        "label": {
+          "ar": "فترة محظورة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "time.CalendarException",
+          "property": "kind",
+          "value": "blackout"
+        }
+      },
+      {
+        "label": {
+          "ar": "وحدة تنظيمية / فرع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "org.OrgUnit"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.OrgUnit",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.OrgUnit",
+          "property": "display_name"
+        }
+      },
+      {
+        "label": {
+          "ar": "النوع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.OrgUnit",
+          "property": "kind"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود الفرع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.OrgUnit",
+          "property": "unit_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "وظيفة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "org.Post"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.Post",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود الوظيفة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.Post",
+          "property": "post_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "المسمى الوظيفي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.Post",
+          "property": "title"
+        }
+      },
+      {
+        "label": {
+          "ar": "الدور"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.Post",
+          "property": "role_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "السعة الوظيفية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.Post",
+          "property": "fte_capacity"
+        }
+      },
+      {
+        "label": {
+          "ar": "تعيين وظيفي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "org.Membership"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.Membership",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الدور"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.Membership",
+          "property": "role"
+        }
+      },
+      {
+        "label": {
+          "ar": "ساري من"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.Membership",
+          "property": "valid_from"
+        }
+      },
+      {
+        "label": {
+          "ar": "ساري حتى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "org.Membership",
+          "property": "valid_to"
+        }
+      },
+      {
+        "label": {
+          "ar": "موظف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.Person"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Person",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Person",
+          "property": "display_name"
+        }
+      },
+      {
+        "label": {
+          "ar": "النوع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Person",
+          "property": "gender"
+        }
+      },
+      {
+        "label": {
+          "ar": "الرقم القومي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Person",
+          "property": "national_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "رقم الهاتف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Person",
+          "property": "phone"
+        }
+      },
+      {
+        "label": {
+          "ar": "المهارة الأساسية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Person",
+          "property": "primary_skill"
+        }
+      },
+      {
+        "label": {
+          "ar": "أنثى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Person",
+          "property": "gender",
+          "value": "female"
+        }
+      },
+      {
+        "label": {
+          "ar": "ذكر"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Person",
+          "property": "gender",
+          "value": "male"
+        }
+      },
+      {
+        "label": {
+          "ar": "غير محدد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Person",
+          "property": "gender",
+          "value": "unspecified"
+        }
+      },
+      {
+        "label": {
+          "ar": "شروط التوظيف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.Employment"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Employment",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ السريان"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Employment",
+          "property": "effective_from"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ الانتهاء"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Employment",
+          "property": "effective_to"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Employment",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "الراتب الأساسي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Employment",
+          "property": "base_salary"
+        }
+      },
+      {
+        "label": {
+          "ar": "أجر الساعة الإضافية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Employment",
+          "property": "hourly_overtime_rate"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحد الأقصى للساعات الأسبوعية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Employment",
+          "property": "max_weekly_hours"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Employment",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "نشط"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Employment",
+          "property": "status",
+          "value": "active"
+        }
+      },
+      {
+        "label": {
+          "ar": "في إجازة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Employment",
+          "property": "status",
+          "value": "on_leave"
+        }
+      },
+      {
+        "label": {
+          "ar": "منتهي الخدمة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Employment",
+          "property": "status",
+          "value": "terminated"
+        }
+      },
+      {
+        "label": {
+          "ar": "طلب إجازة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.LeaveRequest"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveRequest",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "نوع الإجازة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveRequest",
+          "property": "leave_kind"
+        }
+      },
+      {
+        "label": {
+          "ar": "من تاريخ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveRequest",
+          "property": "starts_on"
+        }
+      },
+      {
+        "label": {
+          "ar": "إلى تاريخ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveRequest",
+          "property": "ends_on"
+        }
+      },
+      {
+        "label": {
+          "ar": "عدد الأيام"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveRequest",
+          "property": "days"
+        }
+      },
+      {
+        "label": {
+          "ar": "تقرير طبي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveRequest",
+          "property": "medical_note"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveRequest",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "سنوية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveRequest",
+          "property": "leave_kind",
+          "value": "annual"
+        }
+      },
+      {
+        "label": {
+          "ar": "مرضية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveRequest",
+          "property": "leave_kind",
+          "value": "sick"
+        }
+      },
+      {
+        "label": {
+          "ar": "بدون أجر"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveRequest",
+          "property": "leave_kind",
+          "value": "unpaid"
+        }
+      },
+      {
+        "label": {
+          "ar": "عارضة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveRequest",
+          "property": "leave_kind",
+          "value": "emergency"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveRequest",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "بانتظار الموافقة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveRequest",
+          "property": "status",
+          "value": "pending"
+        }
+      },
+      {
+        "label": {
+          "ar": "موافق عليه"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveRequest",
+          "property": "status",
+          "value": "approved"
+        }
+      },
+      {
+        "label": {
+          "ar": "مرفوض"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveRequest",
+          "property": "status",
+          "value": "rejected"
+        }
+      },
+      {
+        "label": {
+          "ar": "ملغى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveRequest",
+          "property": "status",
+          "value": "cancelled"
+        }
+      },
+      {
+        "label": {
+          "ar": "جدول الورديات"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.Roster"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Roster",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "بداية الفترة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Roster",
+          "property": "period_start"
+        }
+      },
+      {
+        "label": {
+          "ar": "نهاية الفترة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Roster",
+          "property": "period_end"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Roster",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Roster",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "مقترح"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Roster",
+          "property": "status",
+          "value": "proposed"
+        }
+      },
+      {
+        "label": {
+          "ar": "منشور"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Roster",
+          "property": "status",
+          "value": "published"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُستبدَل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Roster",
+          "property": "status",
+          "value": "superseded"
+        }
+      },
+      {
+        "label": {
+          "ar": "وردية مجدولة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.ShiftCommitment"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ShiftCommitment",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "بداية الوردية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ShiftCommitment",
+          "property": "starts_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "نهاية الوردية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ShiftCommitment",
+          "property": "ends_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "الدور"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ShiftCommitment",
+          "property": "role_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ShiftCommitment",
+          "property": "status"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/loc-eg/artifacts/locale.eg_hr.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

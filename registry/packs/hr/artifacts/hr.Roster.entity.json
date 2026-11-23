@@ -1,0 +1,144 @@
+{
+  "artifactId": "hr.Roster.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Shift roster",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Weekly or period shift roster proposed by the deterministic stock solver and published via governed transition.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "superseded"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "superseded"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft",
+                "proposed"
+              ],
+              "id": "propose",
+              "to": "proposed"
+            },
+            {
+              "from": [
+                "proposed"
+              ],
+              "guards": [
+                "self.solver_receipt_digest != null"
+              ],
+              "id": "publish",
+              "to": "published"
+            },
+            {
+              "from": [
+                "published"
+              ],
+              "id": "supersede",
+              "to": "superseded"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Branch covered by this roster.",
+          "id": "unit",
+          "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Business-terms preference profile pinned for this roster.",
+          "id": "preference_profile",
+          "target": "hr.PreferenceProfile"
+        }
+      ],
+      "name": "hr.Roster",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "period_start",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "id": "period_end",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "solver_receipt_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "proposed"
+              },
+              {
+                "value": "published"
+              },
+              {
+                "value": "superseded"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.Roster.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

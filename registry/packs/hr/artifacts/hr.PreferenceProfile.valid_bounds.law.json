@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.PreferenceProfile.valid_bounds.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.PreferenceProfile.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Rostering preference profile bounds are valid and non-negative",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.PreferenceProfile.valid_bounds",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/rostering.ts"
+    },
+    "rationale": "Rest floors, weekly hours, overtime budgets, and consecutive-day caps must stay inside sane operational bounds.",
+    "response": {
+      "expression": "self.min_rest_hours >= 0 and self.max_weekly_hours > 0 and self.max_consecutive_days >= 1 and self.max_consecutive_days <= 6 and self.weekly_overtime_budget >= 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.PreferenceProfile"
+      ],
+      "root": {
+        "id": "hr.PreferenceProfile",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.PreferenceProfile"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.PreferenceProfile.valid_bounds.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

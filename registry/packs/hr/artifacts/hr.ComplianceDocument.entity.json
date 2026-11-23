@@ -1,0 +1,150 @@
+{
+  "artifactId": "hr.ComplianceDocument.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Compliance document",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Tracked ID, visa, contract, or license with explicit expiry date for timer-driven reminders.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "initial": [
+            "valid"
+          ],
+          "property": "status",
+          "terminal": [
+            "renewed"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "valid"
+              ],
+              "id": "mark_expiring",
+              "to": "expiring_soon"
+            },
+            {
+              "from": [
+                "valid",
+                "expiring_soon"
+              ],
+              "id": "mark_expired",
+              "to": "expired"
+            },
+            {
+              "from": [
+                "valid",
+                "expiring_soon",
+                "expired"
+              ],
+              "id": "renew",
+              "to": "renewed"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Document holder.",
+          "id": "person",
+          "target": "hr.Person"
+        }
+      ],
+      "name": "hr.ComplianceDocument",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "doc_type",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "national_id"
+              },
+              {
+                "value": "passport"
+              },
+              {
+                "value": "visa"
+              },
+              {
+                "value": "work_permit"
+              },
+              {
+                "value": "health_cert"
+              },
+              {
+                "value": "license"
+              }
+            ]
+          }
+        },
+        {
+          "id": "document_number",
+          "markings": [
+            "pii.gov_id"
+          ],
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "expires_on",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "default": "valid",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "valid"
+              },
+              {
+                "value": "expiring_soon"
+              },
+              {
+                "value": "expired"
+              },
+              {
+                "value": "renewed"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.ComplianceDocument.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

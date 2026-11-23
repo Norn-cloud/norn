@@ -1,0 +1,140 @@
+{
+  "artifactId": "hr.LeaveBalance.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Leave balance",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Conserved leave entitlement balance (reuses core.Resource stock-flow physics in days).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Resource"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employee who owns this leave balance.",
+          "id": "owner",
+          "target": "hr.Person"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Employer unit administering the balance.",
+          "id": "custodian",
+          "target": "org.OrgUnit"
+        }
+      ],
+      "name": "hr.LeaveBalance",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "resource_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "valuation_method",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "fifo"
+              },
+              {
+                "value": "moving_average"
+              }
+            ]
+          }
+        },
+        {
+          "id": "leave_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "annual"
+              },
+              {
+                "value": "sick"
+              },
+              {
+                "value": "unpaid"
+              },
+              {
+                "value": "emergency"
+              }
+            ]
+          }
+        },
+        {
+          "id": "period_year",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.LeaveBalance.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

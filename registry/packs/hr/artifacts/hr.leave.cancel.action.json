@@ -1,0 +1,80 @@
+{
+  "artifactId": "hr.leave.cancel.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Cancel leave request",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.leave.cancel",
+    "description": "Cancel an unapproved leave request.",
+    "effectProgram": {
+      "entityArtifactId": "hr.LeaveRequest.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "leaveRequestId",
+      "objectKind": "hr.LeaveRequest",
+      "transition": "cancel"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "leaveRequestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "leaveRequestId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "leaveRequestId": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "draft",
+            "pending",
+            "approved",
+            "rejected",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "leaveRequestId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Cancel leave request",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.LeaveRequest"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.leave.cancel.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

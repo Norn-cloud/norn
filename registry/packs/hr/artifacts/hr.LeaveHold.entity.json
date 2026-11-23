@@ -1,0 +1,171 @@
+{
+  "artifactId": "hr.LeaveHold.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Leave hold",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Days reserved against a LeaveBalance while a LeaveRequest awaits approval (implements core.Hold; auto-expires after 7 days).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Hold"
+      ],
+      "lifecycles": [
+        {
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "released",
+            "consumed",
+            "expired"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "id": "consume",
+              "to": "consumed"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "release",
+              "to": "released"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "expire_unapproved",
+              "to": "expired",
+              "trigger": {
+                "kind": "timer",
+                "millis": "604800000"
+              }
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Held leave balance.",
+          "id": "resource",
+          "target": "hr.LeaveBalance"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employee requesting leave.",
+          "id": "holder",
+          "target": "hr.Person"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional commitment secured by this hold.",
+          "id": "secures",
+          "target": "core.Commitment"
+        }
+      ],
+      "name": "hr.LeaveHold",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "open",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "released"
+              },
+              {
+                "value": "consumed"
+              },
+              {
+                "value": "expired"
+              }
+            ]
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "expires_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.LeaveHold.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

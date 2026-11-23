@@ -1,0 +1,94 @@
+{
+  "artifactId": "hr.roster.publish.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Publish shift roster",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.roster.publish",
+    "description": "Publish a proposed shift roster after verifying its accepted deterministic solver receipt.",
+    "effectProgram": {
+      "entityArtifactId": "hr.Roster.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "rosterId",
+      "objectKind": "hr.Roster",
+      "transition": "publish"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "rosterId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rosterId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "rosterId": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "draft",
+            "proposed",
+            "published",
+            "superseded"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "rosterId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.roster.solver_receipt_digest != null"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "rosterId"
+          }
+        },
+        "name": "roster",
+        "objectType": "hr.Roster"
+      }
+    ],
+    "title": "Publish shift roster",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.Roster"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.roster.publish.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

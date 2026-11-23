@@ -1,0 +1,161 @@
+{
+  "artifactId": "hr.AttendanceEvent.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Attendance event",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Immutable posted work event fulfilling a ShiftCommitment (implements core.EconomicEvent; corrections create a linked reversing event per HR-AT-01).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.EconomicEvent"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employee who worked the shift.",
+          "id": "provider",
+          "target": "hr.Person"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Branch or unit where work occurred.",
+          "id": "receiver",
+          "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Associated time/leave resource.",
+          "id": "resource",
+          "target": "hr.LeaveBalance"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "ShiftCommitment fulfilled by this attendance record.",
+          "id": "fulfils",
+          "target": "hr.ShiftCommitment"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "description": "Prior attendance event reversed by this correction.",
+          "id": "reverses",
+          "target": "hr.AttendanceEvent"
+        }
+      ],
+      "name": "hr.AttendanceEvent",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "produce",
+          "id": "action",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "transfer_ownership"
+              },
+              {
+                "value": "transfer_custody"
+              },
+              {
+                "value": "consume"
+              },
+              {
+                "value": "produce"
+              }
+            ]
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "clock_in_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "clock_out_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.AttendanceEvent.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,78 @@
+{
+  "artifactId": "hr.ShiftRequirement.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Shift coverage requirement",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Required staffing count for a role and half-open UTC shift slot at one organizational unit.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Branch or department requiring coverage.",
+          "id": "unit",
+          "target": "org.OrgUnit"
+        }
+      ],
+      "name": "hr.ShiftRequirement",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "role_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "starts_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "ends_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "required_count",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.ShiftRequirement.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

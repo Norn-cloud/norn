@@ -1,0 +1,22 @@
+{
+  "sha256": "362e2853a798a714cf51ebd38ed85033872eeb50bc42e48139c069a377408fc5",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/hr/access.ts",
+    "registry/packs/hr/markings.ts",
+    "registry/packs/hr/people_leave.ts",
+    "registry/packs/hr/rostering.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

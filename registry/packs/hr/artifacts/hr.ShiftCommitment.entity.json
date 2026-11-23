@@ -1,0 +1,162 @@
+{
+  "artifactId": "hr.ShiftCommitment.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Shift commitment",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Scheduled shift assignment (implements core.Commitment; carries half-open UTC [starts_at, ends_at) interval).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Commitment"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employee scheduled to work the shift.",
+          "id": "provider",
+          "target": "hr.Person"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Branch or unit receiving the labor.",
+          "id": "receiver",
+          "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional labor resource classification.",
+          "id": "resource",
+          "target": "hr.LeaveBalance"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Parent roster governing this shift.",
+          "id": "roster",
+          "target": "hr.Roster"
+        }
+      ],
+      "name": "hr.ShiftCommitment",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "promised",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "requested"
+              },
+              {
+                "value": "promised"
+              },
+              {
+                "value": "fulfilled"
+              },
+              {
+                "value": "cancelled"
+              },
+              {
+                "value": "breached"
+              }
+            ]
+          }
+        },
+        {
+          "id": "due_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "starts_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "ends_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "role_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.ShiftCommitment.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

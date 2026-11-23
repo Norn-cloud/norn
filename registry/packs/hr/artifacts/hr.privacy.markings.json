@@ -1,0 +1,66 @@
+{
+  "artifactId": "hr.privacy.markings",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "HR privacy and PII classification markings",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "markings": [
+      {
+        "category": "pii",
+        "id": "pii.demographic",
+        "label": "Demographic PII",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "high"
+      },
+      {
+        "category": "pii",
+        "id": "pii.gov_id",
+        "label": "Government ID",
+        "mask": {
+          "count": 4,
+          "kind": "last-n"
+        },
+        "severity": "critical"
+      },
+      {
+        "category": "pii",
+        "id": "pii.compensation",
+        "label": "Compensation",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "high"
+      },
+      {
+        "category": "pii",
+        "id": "pii.medical",
+        "label": "Medical note",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "critical"
+      },
+      {
+        "category": "pii",
+        "id": "pii.raw_chat_media",
+        "label": "Raw chat or schedule media",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "critical"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.privacy.markings.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

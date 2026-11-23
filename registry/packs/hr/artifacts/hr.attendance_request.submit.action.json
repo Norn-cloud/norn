@@ -1,0 +1,79 @@
+{
+  "artifactId": "hr.attendance_request.submit.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Submit attendance regularization request",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.attendance_request.submit",
+    "description": "Submit a draft attendance regularization request for manager review.",
+    "effectProgram": {
+      "entityArtifactId": "hr.AttendanceRequest.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "requestId",
+      "objectKind": "hr.AttendanceRequest",
+      "transition": "submit"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "draft",
+            "pending",
+            "approved",
+            "rejected"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Submit attendance regularization request",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.AttendanceRequest"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.attendance_request.submit.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

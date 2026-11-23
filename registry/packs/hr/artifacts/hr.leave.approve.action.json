@@ -1,0 +1,109 @@
+{
+  "artifactId": "hr.leave.approve.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Approve leave request",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.leave.approve",
+    "description": "Approve a pending leave request after verifying remaining balance under independent manager authority (HR-LV-04, HR-LV-05).",
+    "effectProgram": {
+      "entityArtifactId": "hr.LeaveRequest.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "leaveRequestId",
+      "objectKind": "hr.LeaveRequest",
+      "transition": "approve"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "balanceId": {
+          "type": "string"
+        },
+        "leaveRequestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "leaveRequestId",
+        "balanceId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "leaveRequestId": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "draft",
+            "pending",
+            "approved",
+            "rejected",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "leaveRequestId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.request.status == \"pending\" and slice.balance.quantity >= slice.request.days"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "leaveRequestId"
+          }
+        },
+        "name": "request",
+        "objectType": "hr.LeaveRequest"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "balanceId"
+          }
+        },
+        "name": "balance",
+        "objectType": "hr.LeaveBalance"
+      }
+    ],
+    "title": "Approve leave request",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.LeaveRequest"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.leave.approve.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

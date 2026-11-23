@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.ShiftRequirement.positive_coverage.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.ShiftRequirement.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Shift coverage requirements ask for at least one staff member",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.ShiftRequirement.positive_coverage",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/rostering.ts"
+    },
+    "rationale": "Zero or negative staffing requirements are malformed solver inputs.",
+    "response": {
+      "expression": "self.required_count >= 1",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.ShiftRequirement"
+      ],
+      "root": {
+        "id": "hr.ShiftRequirement",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.ShiftRequirement"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.ShiftRequirement.positive_coverage.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

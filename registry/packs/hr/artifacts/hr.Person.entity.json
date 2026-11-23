@@ -1,0 +1,121 @@
+{
+  "artifactId": "hr.Person.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Person",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A natural person participating in HR relationships (implements core.Agent; sensitive fields marked).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Agent"
+      ],
+      "name": "hr.Person",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "default": "person",
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "person"
+              },
+              {
+                "value": "organization"
+              },
+              {
+                "value": "system"
+              }
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "gender",
+          "markings": [
+            "pii.demographic"
+          ],
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "female"
+              },
+              {
+                "value": "male"
+              },
+              {
+                "value": "unspecified"
+              }
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "national_id",
+          "markings": [
+            "pii.gov_id"
+          ],
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "phone",
+          "markings": [
+            "pii.demographic"
+          ],
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "primary_skill",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.Person.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

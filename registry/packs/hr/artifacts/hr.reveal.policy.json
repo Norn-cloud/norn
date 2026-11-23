@@ -1,0 +1,85 @@
+{
+  "artifactId": "hr.reveal.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Who may reveal marked HR personal data",
+  "namespace": "hr",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "hr.reveal",
+    "rules": [
+      {
+        "actions": [
+          "norn.reveal"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "hr_admin",
+                "owner"
+              ]
+            }
+          },
+          {
+            "marking": {
+              "anyOf": [
+                "pii.demographic",
+                "pii.gov_id",
+                "pii.medical",
+                "pii.raw_chat_media"
+              ]
+            }
+          }
+        ],
+        "resourceType": "norn.Marking",
+        "ruleId": "hr_admin_reveal_identity_and_medical",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.reveal"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "payroll_officer",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          },
+          {
+            "marking": {
+              "anyOf": [
+                "pii.compensation"
+              ]
+            }
+          }
+        ],
+        "resourceType": "norn.Marking",
+        "ruleId": "payroll_reveal_compensation",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.reveal.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

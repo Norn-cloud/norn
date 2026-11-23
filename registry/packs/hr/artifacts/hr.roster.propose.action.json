@@ -1,0 +1,79 @@
+{
+  "artifactId": "hr.roster.propose.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Propose shift roster",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.roster.propose",
+    "description": "Move a draft roster into proposed status once solver assignments are attached.",
+    "effectProgram": {
+      "entityArtifactId": "hr.Roster.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "rosterId",
+      "objectKind": "hr.Roster",
+      "transition": "propose"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "rosterId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rosterId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "rosterId": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "draft",
+            "proposed",
+            "published",
+            "superseded"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "rosterId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Propose shift roster",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.Roster"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.roster.propose.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

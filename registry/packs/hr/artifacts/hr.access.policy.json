@@ -1,0 +1,201 @@
+{
+  "artifactId": "hr.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "HR action authorization policy",
+  "namespace": "hr",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "hr.access",
+    "rules": [
+      {
+        "actions": [
+          "hr.leave.submit",
+          "hr.leave.cancel"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "employee",
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.LeaveRequest",
+        "ruleId": "submit_or_cancel_leave",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.leave.approve",
+          "hr.leave.reject"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.LeaveRequest",
+        "ruleId": "decide_leave",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.roster.propose"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "hr_solver_worker",
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.Roster",
+        "ruleId": "propose_roster",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.roster.publish"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.Roster",
+        "ruleId": "publish_roster",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.attendance.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.AttendanceEvent",
+        "ruleId": "record_attendance",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.attendance_request.submit"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "employee",
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.AttendanceRequest",
+        "ruleId": "submit_attendance_request",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.attendance_request.approve"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.AttendanceRequest",
+        "ruleId": "approve_attendance_request",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

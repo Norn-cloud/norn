@@ -1,0 +1,152 @@
+{
+  "artifactId": "hr.attendance.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record immutable attendance event",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.attendance.record",
+    "createLinks": [
+      {
+        "link": "provider",
+        "targetIdField": "providerId",
+        "targetType": "hr.Person"
+      },
+      {
+        "link": "receiver",
+        "targetIdField": "receiverId",
+        "targetType": "org.OrgUnit"
+      },
+      {
+        "link": "resource",
+        "targetIdField": "resourceId",
+        "targetType": "hr.LeaveBalance"
+      },
+      {
+        "link": "fulfils",
+        "targetIdField": "shiftCommitmentId",
+        "targetType": "hr.ShiftCommitment"
+      }
+    ],
+    "description": "Post a create-only AttendanceEvent fulfilling a ShiftCommitment (never mutates posted history; HR-AT-01).",
+    "effectProgram": {
+      "entityArtifactId": "hr.AttendanceEvent.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "hr.AttendanceEvent",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "transfer_ownership",
+            "transfer_custody",
+            "consume",
+            "produce"
+          ],
+          "type": "string"
+        },
+        "clock_in_at": {
+          "type": "string"
+        },
+        "clock_out_at": {
+          "type": "string"
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "occurred_at": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "quantity": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "receiverId": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "shiftCommitmentId": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "occurred_at",
+        "quantity",
+        "unit",
+        "currency",
+        "clock_in_at",
+        "clock_out_at",
+        "providerId",
+        "receiverId",
+        "resourceId",
+        "shiftCommitmentId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Record immutable attendance event",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "hr.AttendanceEvent"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.attendance.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
