@@ -634,11 +634,7 @@ def workflow_verdict_canaries(source: str) -> None:
                                          cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
     full_plan.update(base_sha="base", head_sha="head")
     affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": []}
-    def packed(plan: dict[str, Any]) -> dict[str, Any]:
-        return json.loads(subprocess.run(["bash", "scripts/ci/core.sh", "bundle-plan", json.dumps(plan)],
-                                        cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
-    full_plan = packed(full_plan)
-    affected = packed(affected)
+    affected["bundle"] = [{"id": "b0", "tasks": ["test/rest-1"]}]
     passed = dict.fromkeys(("PLANNER", "CORE", "TEST"), "success")
     cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
     cases.append(("pull_request", affected, passed, True))
@@ -650,9 +646,12 @@ def workflow_verdict_canaries(source: str) -> None:
     # The merge queue runs the full suite: an affected merge-group plan fails, even one that keeps
     # the always-run phases (#1348).
     merge_affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy"]}
-    merge_affected = packed(merge_affected)
+    merge_affected["bundle"] = [{"id": "b0", "tasks": ["test/rest-1", "phase/guards", "phase/provenance", "phase/clippy"]}]
     cases.append(("merge_group", merge_affected, passed, False))
-    cases.append(("merge_group", packed({**merge_affected, "phase": ["guards", "provenance"]}), passed, False))
+    missing_phase = copy.deepcopy(merge_affected)
+    missing_phase["phase"].remove("clippy")
+    missing_phase["bundle"][0]["tasks"].remove("phase/clippy")
+    cases.append(("merge_group", missing_phase, passed, False))
     extra = copy.deepcopy(merge_affected)
     extra["phase"] = ["guards", "provenance", "clippy-extra"]
     for bundle in extra["bundle"]:
@@ -1213,82 +1212,6 @@ def workflow_sccache_canaries(source: str) -> None:
                 raise AssertionError(f"{name}: shared cache enabled without the bucket's keys")
 
 
-def bundle_prune_drift(function: str) -> str | None:
-    """Run a `prune_target` definition against every CARGO_TARGET_DIR case; describe any drift.
-
-    Only the workspace's own target dir is touched, and inside it only Cargo build outputs
-    (profile and target-triple trees, `doc`); target/verification-* evidence and tools,
-    other content and symlinks survive.
-    """
-    with tempfile.TemporaryDirectory() as directory:
-        top = Path(directory).resolve()
-        home, workspace = top / "home", top / "home" / "work" / "norn"
-        outside = top / "outside"
-        target = workspace / "target"
-        cargo = [target / "debug", target / "wasm32-unknown-unknown", target / "doc"]
-        kept = [workspace, workspace / "src", home, home / ".cargo", outside, target,
-                target / "verification-results", target / "verification-tools", target / "norn-checker-wasm",
-                outside / ".fingerprint"]
-        for path in (workspace / "src", home / ".cargo", outside / ".fingerprint"):
-            path.mkdir(parents=True, exist_ok=True)
-        (workspace / "escape").symlink_to(outside)
-        (workspace / "target-link").symlink_to(outside)
-        cases = {
-            None: True, "": True, "target": True, "target/": True, str(target): True,
-            "target/../target": True,
-            "/": False, str(home): False, str(workspace): False, str(workspace.parent): False, ".": False, "..": False,
-            "../sibling": False, str(outside): False, "escape": False, "target-link": False, "target/debug": False,
-            "src/../../norn": False,
-        }
-        for value, deletes in cases.items():
-            for path in (target / "debug" / ".fingerprint", target / "wasm32-unknown-unknown" / "debug" / ".fingerprint",
-                         # Verification tools may be Cargo-built in place: still never pruned.
-                         target / "doc", target / "verification-results", target / "verification-tools" / "release" / ".fingerprint",
-                         target / "norn-checker-wasm" / "pkg"):
-                path.mkdir(parents=True, exist_ok=True)
-            # A symlinked profile-looking tree out of target must never be followed.
-            link = target / "linked"
-            if not link.is_symlink():
-                link.symlink_to(outside)
-            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home)}
-            if value is not None:
-                env["CARGO_TARGET_DIR"] = value
-            result = subprocess.run(["bash", "-c", function + "prune_target"], cwd=workspace, env=env,
-                                    capture_output=True, text=True, timeout=30)
-            if result.returncode:
-                return f"{value!r}: exit {result.returncode} {result.stderr!r}"
-            lost = [str(path) for path in kept + [link] if not (path.exists() or path.is_symlink())]
-            if lost:
-                return f"{value!r}: removed {lost}"
-            remaining = [path.exists() for path in cargo]
-            if remaining != [not deletes] * len(cargo):
-                return f"{value!r}: Cargo outputs {remaining}, expected {'pruned' if deletes else 'kept'}"
-            if not deletes and "refusing to prune" not in result.stdout:
-                return f"{value!r}: refused silently"
-    return None
-
-
-def bundle_prune_containment_canaries() -> None:
-    """The bundle prune deletes only Cargo build outputs in the workspace's own target dir."""
-    core = (ROOT / "scripts/ci/core.sh").read_text(encoding="utf-8")
-    start = core.index("prune_target() {\n")
-    function = core[start:core.index("\n}\n", start) + 3]
-    drift = bundle_prune_drift(function)
-    if drift is not None:
-        raise AssertionError(f"bundle prune containment drift: {drift}")
-    # Pruning all of target, or every directory in it, takes verification evidence and tools.
-    for label, before, after in (
-            ("whole target", 'rm -rf -- "$entry"', 'rm -rf -- "$target"'),
-            ("verification evidence", ' && $name != verification-*', ''),
-            ("any directory", 'if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then',
-             "if true; then"),
-            ("followed symlinks", ' && ! -L $entry', '')):
-        if function.count(before) != 1:
-            raise AssertionError(f"bundle prune containment canary target drifted: {label}")
-        if bundle_prune_drift(function.replace(before, after)) is None:
-            raise AssertionError(f"bundle prune mutation passed: {label}")
-
-
 def workflow_trusted_policy_canaries(source: str) -> None:
     job = yaml.safe_load(source)["jobs"]["trusted-policy"]
     expression = " ".join(job["if"].split())
@@ -1725,28 +1648,22 @@ def workflow_context_canaries(source: str) -> None:
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["permissions"] = permissions
                 rejected(f"{name} OIDC token by {label}", document)
-        # The bundle may drop only the cargo target dir, between tasks that share no build.
+        # The Rust guard exercises the bundle and prune behavior. Pin the shell handoff.
         source_runner = validator.CORE_RUNNER
         core = source_runner.read_text(encoding="utf-8")
         try:
-            for label, before, after in (
-                    ("broad", 'rm -rf -- "$entry"', 'rm -rf -- "$root"'),
-                    ("whole target", 'rm -rf -- "$entry"', 'rm -rf -- "$target"'),
-                    ("verification evidence", ' && $name != verification-*', ''),
-                    ("uncontained", 'if [[ $target != "$root/target" ]]; then', "if false; then"),
-                    ("uncanonical", 'target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}")', 'target=${CARGO_TARGET_DIR:-$PWD/target}'),
-                    ("unconditional", "if [[ -n $pruned ]] && ! {", "if true || [[ -n $pruned ]] && ! {"),
-                    ("first task", "      pruned=1 previous=$task\n", ""),
-                    ("every task shares a build", "shares_build() { [[ $1 == test/* ||", "shares_build() { [[ $1 == * ||"),
-                    ("shared build pruned", ' && ! { shares_build "$previous" && shares_build "$task"; }', ""),
-                    ("extra deletion", "        prune_target\n", '        prune_target; rm -rf -- "$HOME/.cargo"\n')):
+            for label, replacement in (
+                    ("skipped executor", "true"),
+                    ("dropped arguments", "exec cargo xtask ci bundle"),
+                    ("swallowed failure", 'cargo xtask ci "$@" || true'),
+                    ("extra deletion", 'rm -rf -- "$HOME/.cargo"; exec cargo xtask ci "$@"')):
+                before = 'exec cargo xtask ci "$@"'
                 if core.count(before) != 1:
-                    raise AssertionError(f"bundle prune canary target drifted: {label}")
+                    raise AssertionError(f"bundle dispatch canary target drifted: {label}")
                 mutated = Path(directory) / "core.sh"
-                mutated.write_text(core.replace(before, after), encoding="utf-8")
+                mutated.write_text(core.replace(before, replacement), encoding="utf-8")
                 validator.CORE_RUNNER = mutated
-                document = copy.deepcopy(workflow)
-                rejected(f"{label} bundle prune", document)
+                rejected(label, copy.deepcopy(workflow))
         finally:
             validator.CORE_RUNNER = source_runner
         for name in ("core", "test"):
@@ -2637,7 +2554,6 @@ def main() -> int:
         workflow_cleanup_canaries(source)
         workflow_concurrency_canaries()
         workflow_concurrency_parity()
-        bundle_prune_containment_canaries()
         workflow_sccache_canaries(source)
         studio_browser_phase_canaries()
         studio_browser_pin_canaries()

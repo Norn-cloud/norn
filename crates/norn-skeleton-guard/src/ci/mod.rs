@@ -1,4 +1,5 @@
 //! Public-core CI: candidate checks and base-owned policy over candidate data.
+pub mod bundle;
 pub mod git;
 pub mod provenance;
 pub mod workflow_lint;

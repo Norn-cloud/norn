@@ -918,13 +918,10 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 and step.get("env") == verdict_env
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = CORE_RUNNER.read_text()
-    # Bundles may drop only Cargo build outputs, between tasks that share no build;
-    # target/verification-* evidence and tools and any other target content stay. Tasks that
-    # share one test build run back to back with no prune between them (#1348 CI2).
-    prune = '    shares_build() { [[ $1 == test/* || ( $1 == phase/test-shards && -z ${NORN_CI_PACKAGES:-} ) ]]; }\n    task_lines=$(while read -r task; do if shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines"\n                 while read -r task; do if ! shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines")\n    pruned=\'\' previous=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Other bundle tasks never share build outputs (the planner packs them freely), so each\n      # drops the previous task\'s target dir and starts as on a fresh VM (#1059). Three bundles\n      # put disk-heavy tasks together: guards after integration ran out of a default VM\'s disk\n      # with more than 40 GiB free at the boundary (#1498), so a free-space threshold is not enough.\n      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; }; then\n        prune_target\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1 previous=$task\n'
-    contained = 'prune_target() {\n  local root target entry name\n  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0\n  if [[ $target != "$root/target" ]]; then\n    printf \'::warning::refusing to prune %s: only %s/target may be pruned\\n\' "$target" "$root"\n    return 0\n  fi\n  for entry in "$target"/*; do\n    name=${entry##*/}\n    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue\n    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then\n      rm -rf -- "$entry"\n    fi\n  done\n}\n'
-    require(runner.count(prune) == 1 and runner.count(contained) == 1 and runner.count("rm -rf") == 2,
-            "bundle may prune only Cargo build outputs, between tasks that share no build")
+    # The Rust guard tests cover packing, task failure and prune boundaries.
+    bundle_dispatch = 'case "${1:-}" in\n  bundle|bundle-plan|bundle-check) exec cargo xtask ci "$@" ;;\nesac\n'
+    require(runner.count(bundle_dispatch) == 1 and runner.count("rm -rf") == 1,
+            "bundle commands must execute xtask directly and leave pruning to it")
     # The integration partition owns each existing check exactly once. The
     # authoring phase keeps Bun's full discovery, including new test files.
     integration_checks = {

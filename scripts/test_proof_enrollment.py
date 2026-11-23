@@ -340,14 +340,21 @@ class AffectedPlanTests(unittest.TestCase):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
         plan = {"mode": "affected", "shard": [], "phase": ["test-shards"]}
         plan = json.loads(subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], text=True))
+        metadata = json.loads(subprocess.check_output([
+            "cargo", "metadata", "--locked", "--no-deps", "--format-version", "1",
+            "--manifest-path", "crates/norn-skeleton-guard/Cargo.toml",
+        ], cwd=ROOT, text=True))
+        xtask = Path(metadata["target_directory"]) / "debug" / "xtask"
         tools = self.root / "cargo-home" / "bin"
         tools.mkdir(parents=True)
         cargo = tools / "cargo"
         cargo.write_text('''#!/usr/bin/env python3
 import json, os, sys
+args = sys.argv[1:]
+if args[:2] == ["xtask", "ci"]:
+    os.execv(os.environ["BUNDLE_CANARY_XTASK"], [os.environ["BUNDLE_CANARY_XTASK"], *args[2:]])
 if os.environ.get("BUNDLE_CANARY_FAIL") == "1":
     sys.exit(23)
-args = sys.argv[1:]
 if args == ["nextest", "--version"]:
     print("cargo-nextest 0.9.150 (synthetic)")
 elif "list" in args:
@@ -360,7 +367,8 @@ else:
         cargo.chmod(0o755)
         for fail in ("0", "1"):
             environment = {**os.environ, "CARGO_HOME": str(tools.parent),
-                           "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "3", "BUNDLE_CANARY_FAIL": fail}
+                           "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "3",
+                           "BUNDLE_CANARY_XTASK": str(xtask), "BUNDLE_CANARY_FAIL": fail}
             result = subprocess.run(command + ["bundle", json.dumps(plan), plan["bundle"][0]["id"]],
                                     env=environment, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 23 if fail == "1" else 0, result.stderr)

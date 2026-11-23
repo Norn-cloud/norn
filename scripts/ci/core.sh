@@ -8,6 +8,10 @@ export PYTHONPYCACHEPREFIX="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/norn-py
 python3 -c 'import sys; sys.exit(0 if sys.flags.safe_path and sys.dont_write_bytecode and sys.pycache_prefix else 1)' || { echo "Python isolation not honoured" >&2; exit 1; }
 set -euo pipefail
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+# Keep the hosted planner independent of a Cargo build.
+case "${1:-}" in
+  bundle|bundle-plan|bundle-check) exec cargo xtask ci "$@" ;;
+esac
 # `all` runs every phase, in this order, in one checkout. CI packs its
 # selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
@@ -516,32 +520,12 @@ PY
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
 }
-# Drops Cargo build outputs between bundle tasks (#1059). Only the workspace's own
-# target dir is touched: CARGO_TARGET_DIR is canonicalized (symlinks and `..` resolved)
-# and anything else (empty, /, $HOME, the workspace or an ancestor, a sibling, a
-# symlink out of the workspace) is refused and left in place. Inside it only Cargo's
-# profile and target-triple trees (each holds a `.fingerprint`) and `doc` go;
-# verification evidence and tools (target/verification-*), symlinks and any other
-# content stay.
-prune_target() {
-  local root target entry name
-  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0
-  if [[ $target != "$root/target" ]]; then
-    printf '::warning::refusing to prune %s: only %s/target may be pruned\n' "$target" "$root"
-    return 0
-  fi
-  for entry in "$target"/*; do
-    name=${entry##*/}
-    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue
-    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then
-      rm -rf -- "$entry"
-    fi
-  done
-}
-bundle_plan() {
-  python3 - "$1" "$2" "${3:-}" "$(list_shards)" "${phases[*]}" <<'PY'
+# The hosted plan job has no prebuilt xtask. Keep its packing model in sync
+# with the Rust runner until the planner can use a cached or prebuilt binary.
+hosted_bundle_plan() {
+  python3 - "$1" "$(list_shards)" "${phases[*]}" <<'PY'
 import json, sys
-mode, raw, selected, shards, phases = sys.argv[1:]
+raw, shards, phases = sys.argv[1:]
 plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
@@ -627,19 +611,8 @@ bins = min(candidates, default=(0, 0, []))[2]
 bundles = [{"id": f"b{index}", "tasks": tasks} for index, tasks in enumerate(bins) if tasks]
 if sorted(task for bundle in bundles for task in bundle["tasks"]) != sorted(tasks):
     raise SystemExit("bundle inventory dropped a planned task")
-if mode == "pack":
-    plan["bundle"] = bundles
-    print(json.dumps(plan))
-elif mode in {"check", "tasks"}:
-    if plan.get("bundle") != bundles:
-        raise SystemExit("bundle inventory differs from the deterministic plan")
-    if mode == "tasks":
-        matching = [bundle for bundle in bundles if bundle["id"] == selected]
-        if len(matching) != 1:
-            raise SystemExit("unknown bundle identity")
-        print("\n".join(matching[0]["tasks"]))
-else:
-    raise SystemExit("unknown bundle operation")
+plan["bundle"] = bundles
+print(json.dumps(plan))
 PY
 }
 
@@ -731,41 +704,7 @@ done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guard
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
 PY
 )
-    bundle_plan pack "$plan"
-    ;;
-  bundle-plan) [[ $# -eq 2 ]] || run_phase usage; bundle_plan pack "$2" ;;
-  bundle-check) [[ $# -eq 2 ]] || run_phase usage; bundle_plan check "$2" ;;
-  bundle)
-    [[ $# -eq 3 ]] || run_phase usage
-    task_lines=$(bundle_plan tasks "$2" "$3")
-    [[ $task_lines == phase/test-shards ]] || prepare_inputs
-    # One test build per bundle (#1348 CI2): every test shard of a plan builds the same test
-    # binaries (same packages, same features), and so does `test-shards` in a plan that
-    # names no packages. Those tasks run first and back to back, and no prune separates
-    # them, so the first builds and the rest reuse it. Same tasks, only their order changes.
-    shares_build() { [[ $1 == test/* || ( $1 == phase/test-shards && -z ${NORN_CI_PACKAGES:-} ) ]]; }
-    task_lines=$(while read -r task; do if shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines"
-                 while read -r task; do if ! shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines")
-    pruned='' previous=''
-    while IFS=/ read -r kind item; do
-      task="$kind/$item"
-      # Other bundle tasks never share build outputs (the planner packs them freely), so each
-      # drops the previous task's target dir and starts as on a fresh VM (#1059). Three bundles
-      # put disk-heavy tasks together: guards after integration ran out of a default VM's disk
-      # with more than 40 GiB free at the boundary (#1498), so a free-space threshold is not enough.
-      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; }; then
-        prune_target
-        printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
-      fi
-      pruned=1 previous=$task
-      printf '::group::%s\n' "$task"
-      (
-        task_start=$SECONDS
-        span_begin "$task"
-        trap 'task_status=$?; span_end "$task_status"; result=failure; [[ $task_status -ne 0 ]] || result=success; printf "::notice::task=%s result=%s seconds=%s\n::endgroup::\n" "$task" "$result" "$((SECONDS-task_start))"; exit "$task_status"' EXIT
-        if [[ $kind == test ]]; then run_phase test "$item"; else run_phase "$item"; fi
-      )
-    done <<<"$task_lines"
+    hosted_bundle_plan "$plan"
     ;;
   all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do timed_phase "$phase"; done ;;
   shards) list_shards ;;
