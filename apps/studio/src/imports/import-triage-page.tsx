@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { type ActionReceipt } from "@/lib/actions"
 import type { CellResult } from "@/lib/cell-read"
+import { listRequested, requestedOne } from "@/lib/decisions"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import {
   batchLockedRowIds,
@@ -30,6 +31,7 @@ import {
   patchAliasDraftState,
   patchSupersessionDraftState,
   readLiveWorkspaceFromCache,
+  reconcilePendingRowOutcome,
   resolvePayloadIdempotencyKey,
   resolveRowEntity,
   rowBasisKey,
@@ -124,12 +126,13 @@ export function ImportTriagePage() {
   const workspaceRef = useRef<ImportTriageWorkspace | undefined>(workspace)
   workspaceRef.current = workspace
 
-  // Read the live TanStack Query cache directly at dispatch time so a refetch that updated the cache
-  // prior to React re-rendering never lets a stale render ref authorize dispatch.
+  // Read the live TanStack Query cache directly at dispatch time and fail closed on thrown refetch
+  // errors so a refetch that updated or errored prior to React re-rendering never authorizes stale dispatch.
   const getLiveWorkspace = () =>
     readLiveWorkspaceFromCache(
       () => client.getQueryData<CellResult<ImportTriageWorkspace>>(QUERY_KEY),
       workspaceRef.current,
+      () => client.getQueryState(QUERY_KEY),
     )
 
   // Flipped on `/imports` unmount so queued batch promotions stop immediately if the operator navigates away.
@@ -157,8 +160,44 @@ export function ImportTriagePage() {
 
   const batchDraft = workspace ? (draftsByBatch[workspace.batchId] ?? EMPTY_BATCH_DRAFT) : EMPTY_BATCH_DRAFT
 
+  /** Reconcile any local `pending` approval outcomes against authoritative `/v1/decisions:requested` state. */
+  const reconcilePendingOutcomes = async (requestBatchId: string) => {
+    const current = draftsRef.current[requestBatchId]
+    if (!current) return
+    const pendingEntries = Object.entries(current.rowOutcomes).filter(
+      (entry): entry is [string, Extract<RowActionOutcome, { readonly kind: "pending" }>] => entry[1].kind === "pending",
+    )
+    if (pendingEntries.length === 0) return
+
+    let needsWorkspaceRefresh = false
+    await Promise.all(pendingEntries.map(async ([rowId, pendingOutcome]) => {
+      try {
+        const result = await listRequested(pendingOutcome.decisionId)
+        if (!mountedRef.current || result.kind !== "ok") return
+        const decision = requestedOne(result.value, pendingOutcome.decisionId)
+        const { nextOutcome, shouldRefreshWorkspace } = reconcilePendingRowOutcome(pendingOutcome, decision)
+        if (shouldRefreshWorkspace) needsWorkspaceRefresh = true
+        if (nextOutcome === pendingOutcome) return
+        patchBatchDraft(requestBatchId, (curr) => {
+          const liveOutcome = curr.rowOutcomes[rowId]
+          if (liveOutcome?.kind !== "pending" || liveOutcome.decisionId !== pendingOutcome.decisionId) return curr
+          return {
+            ...curr,
+            rowOutcomes: { ...curr.rowOutcomes, [rowId]: nextOutcome },
+          }
+        })
+      } catch {
+        // Transient decision lookup failure preserves the pending lock safely.
+      }
+    }))
+
+    if (needsWorkspaceRefresh && mountedRef.current && getLiveWorkspace()?.batchId === requestBatchId) {
+      void client.invalidateQueries({ queryKey: QUERY_KEY })
+    }
+  }
+
   // Prune local edits whenever a row becomes verified or its authoritative basis (capture/digests/baseline) changes,
-  // and clear transient commit banners once the authoritative cell read confirms Verified fact.
+  // clear transient outcomes once Verified fact is confirmed, and reconcile pending approvals on refresh.
   useEffect(() => {
     if (!workspace) return
     const verifiedIds = new Set<string>()
@@ -188,6 +227,7 @@ export function ImportTriagePage() {
       for (const id of staleOutcomeIds) delete (nextOutcomes as Record<string, RowActionOutcome>)[id]
       return { ...all, [workspace.batchId]: { ...current, reviewEdits: nextEdits, rowOutcomes: nextOutcomes } }
     })
+    void reconcilePendingOutcomes(workspace.batchId)
   }, [workspace])
 
   const summary = useMemo(() => (workspace ? triageSummary(workspace) : null), [workspace])
@@ -493,6 +533,7 @@ export function ImportTriagePage() {
     row: CandidateRow,
     artifact: StagedArtifact,
     snapshotValues?: Readonly<Record<string, string>>,
+    expectedTargetRecordId?: string,
   ): Promise<"promoted" | "refused" | "pending" | "error" | "stale" | "skipped"> => {
     if (!mountedRef.current) return "skipped"
     const locks = getLockSet(inFlightRowsRef.current, requestBatchId)
@@ -502,8 +543,8 @@ export function ImportTriagePage() {
     const currentDraft = draftsRef.current[requestBatchId] ?? EMPTY_BATCH_DRAFT
     if (isOutcomeLocked(currentDraft.rowOutcomes[row.id])) return "skipped"
 
-    // Re-read the live row, artifact, and canonical baseline values before dispatch so stale evidence,
-    // drifted baselines, or newly quarantined rows never submit.
+    // Re-read the live row, artifact, entity target, and canonical baseline values before dispatch
+    // so stale evidence, drifted baselines, or newly quarantined rows never submit.
     const liveRow = currentWorkspace.rows.find((candidate) => candidate.id === row.id)
     const liveArtifact = liveRow ? currentWorkspace.artifacts.find((item) => item.id === liveRow.artifactId) : undefined
     const expectedBasisKey = rowBasisKey(row, artifact)
@@ -528,6 +569,16 @@ export function ImportTriagePage() {
       if (alias.resolution !== null) currentAliases.set(alias.id, alias.resolution)
     }
     const resolved = resolveRowEntity(liveRow, currentAliases)
+    if (expectedTargetRecordId !== undefined && (resolved.kind !== "resolved" || resolved.targetId !== expectedTargetRecordId)) {
+      patchBatchDraft(requestBatchId, (curr) => ({
+        ...curr,
+        rowOutcomes: {
+          ...curr.rowOutcomes,
+          [row.id]: { kind: "stale", message: "Row entity resolution changed before dispatch — review and promote again." },
+        },
+      }))
+      return "stale"
+    }
     if (resolved.kind !== "resolved" || effectiveRowStatus(liveRow) !== "imported_unverified") {
       return "skipped"
     }
@@ -635,47 +686,28 @@ export function ImportTriagePage() {
     }
   }
 
-  const handlePromoteRow = async (requestBatchId: string, row: CandidateRow, artifact: StagedArtifact) => {
+  const handlePromoteRow = async (
+    requestBatchId: string,
+    row: CandidateRow,
+    artifact: StagedArtifact,
+    expectedTargetRecordId?: string,
+  ) => {
     if (!mountedRef.current || batchRunningRef.current.has(requestBatchId)) return
-    await dispatchPromoteRow(requestBatchId, row, artifact)
+    await dispatchPromoteRow(requestBatchId, row, artifact, undefined, expectedTargetRecordId)
   }
 
   const handlePromoteCleanBatch = async (
     requestBatchId: string,
-    eligibleRows: readonly CandidateRow[],
+    renderedQueue: readonly QueuedPromotionItem[],
     keptQuarantined: number,
   ) => {
     if (!mountedRef.current) return
     const locks = getLockSet(inFlightRowsRef.current, requestBatchId)
-    if (eligibleRows.length === 0 || batchRunningRef.current.has(requestBatchId) || locks.size > 0) return
-    const currentWorkspace = getLiveWorkspace()
-    if (!currentWorkspace || currentWorkspace.batchId !== requestBatchId) return
-
-    const currentAliases = new Map<string, AliasResolution>()
-    for (const alias of currentWorkspace.aliases) {
-      if (alias.resolution !== null) currentAliases.set(alias.id, alias.resolution)
-    }
+    if (renderedQueue.length === 0 || batchRunningRef.current.has(requestBatchId) || locks.size > 0) return
 
     const currentDraft = draftsRef.current[requestBatchId] ?? EMPTY_BATCH_DRAFT
     const lockedIds = batchLockedRowIds(locks, currentDraft.queuedRowIds, currentDraft.rowOutcomes)
-    const queue: QueuedPromotionItem[] = eligibleRows.flatMap((row) => {
-      if (lockedIds.has(row.id)) return []
-      const artifact = currentWorkspace.artifacts.find((item) => item.id === row.artifactId)
-      const resolved = resolveRowEntity(row, currentAliases)
-      if (!artifact || resolved.kind !== "resolved") return []
-      const basisKey = rowBasisKey(row, artifact)
-      return [{
-        rowId: row.id,
-        basisKey,
-        artifactId: artifact.id,
-        blobDigest: artifact.blobDigest,
-        functionReceiptDigest: artifact.functionReceiptDigest,
-        targetRecordId: resolved.targetId,
-        effectiveAt: row.effectiveAt,
-        observedAt: row.observedAt,
-        values: extractEditableValues(row, currentDraft.reviewEdits, basisKey),
-      }]
-    })
+    const queue = renderedQueue.filter((item) => !lockedIds.has(item.rowId))
     if (queue.length === 0) return
 
     batchRunningRef.current.add(requestBatchId)
@@ -718,7 +750,7 @@ export function ImportTriagePage() {
             })
             return "stale"
           }
-          return dispatchPromoteRow(requestBatchId, basis.row, basis.artifact, item.values)
+          return dispatchPromoteRow(requestBatchId, basis.row, basis.artifact, item.values, basis.targetRecordId)
         },
         () => mountedRef.current,
       )
@@ -871,7 +903,11 @@ export function ImportTriagePage() {
     }
   }
 
-  const refresh = () => void client.invalidateQueries({ queryKey: QUERY_KEY })
+  const refresh = () => {
+    void client.invalidateQueries({ queryKey: QUERY_KEY })
+    const activeBatchId = getLiveWorkspace()?.batchId ?? workspaceRef.current?.batchId
+    if (activeBatchId) void reconcilePendingOutcomes(activeBatchId)
+  }
 
   return (
     <div className="space-y-4">

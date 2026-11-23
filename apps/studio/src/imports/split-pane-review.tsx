@@ -41,10 +41,12 @@ import {
   resolveArtifactMediaSource,
   resolveRowEntity,
   rowBasisKey,
+  snapshotPromotionQueue,
   type AliasResolution,
   type BatchRunReport,
   type CandidateRow,
   type ExtractedField,
+  type QueuedPromotionItem,
   type RowActionOutcome,
   type StagedArtifact,
 } from "@/lib/import-triage"
@@ -156,8 +158,8 @@ export function SplitPaneReview({
   readonly batchReport: BatchRunReport | null
   readonly onSetFieldValue: (batchId: string, rowId: string, basisKey: string, fieldName: string, baselineValue: string, currentValue: string, next: string) => void
   readonly onResetFieldValue: (batchId: string, rowId: string, basisKey: string, fieldName: string, baselineValue: string) => void
-  readonly onPromoteRow: (batchId: string, row: CandidateRow, artifact: StagedArtifact) => Promise<void>
-  readonly onPromoteCleanBatch: (batchId: string, eligibleRows: readonly CandidateRow[], keptQuarantined: number) => Promise<void>
+  readonly onPromoteRow: (batchId: string, row: CandidateRow, artifact: StagedArtifact, expectedTargetRecordId?: string) => Promise<void>
+  readonly onPromoteCleanBatch: (batchId: string, renderedQueue: readonly QueuedPromotionItem[], keptQuarantined: number) => Promise<void>
   readonly onJumpToAliases: () => void
 }) {
   const { view } = useView()
@@ -838,7 +840,7 @@ export function SplitPaneReview({
                             size="sm"
                             variant="outline"
                             disabled={!canPromote}
-                            onClick={(event) => { event.stopPropagation(); if (rowArtifact) void onPromoteRow(batchId, row, rowArtifact) }}
+                            onClick={(event) => { event.stopPropagation(); if (rowArtifact && entity.kind === "resolved") void onPromoteRow(batchId, row, rowArtifact, entity.targetId) }}
                             className="h-7 shrink-0 border-border bg-background px-2 text-xs text-foreground shadow-none"
                           >
                             Retry
@@ -870,7 +872,7 @@ export function SplitPaneReview({
                         size="sm"
                         variant="outline"
                         disabled={!canPromote}
-                        onClick={(event) => { event.stopPropagation(); if (rowArtifact) void onPromoteRow(batchId, row, rowArtifact) }}
+                        onClick={(event) => { event.stopPropagation(); if (rowArtifact && entity.kind === "resolved") void onPromoteRow(batchId, row, rowArtifact, entity.targetId) }}
                         className="h-7 rounded border-border bg-background px-2.5 text-xs shadow-none"
                       >
                         {busy
@@ -934,7 +936,10 @@ export function SplitPaneReview({
               type="button"
               size="sm"
               disabled={batchDisabled}
-              onClick={() => void onPromoteCleanBatch(batchId, partition.eligible, partition.quarantined.length)}
+              onClick={() => {
+                const queue = snapshotPromotionQueue(partition.eligible, artifacts, resolvedAliases, edits, lockedRowIds)
+                void onPromoteCleanBatch(batchId, queue, partition.quarantined.length)
+              }}
               className="h-8 shrink-0 gap-1.5 px-3 text-xs"
             >
               <CheckCheck aria-hidden className="size-3.5" />

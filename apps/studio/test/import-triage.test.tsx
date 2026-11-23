@@ -23,11 +23,13 @@ import {
   patchAliasDraftState,
   patchSupersessionDraftState,
   readLiveWorkspaceFromCache,
+  reconcilePendingRowOutcome,
   resolveArtifactMediaSource,
   resolvePayloadIdempotencyKey,
   resolveRowEntity,
   rowBasisKey,
   runBatchPromotionQueue,
+  snapshotPromotionQueue,
   supersessionFactStatus,
   timeDeltaLabel,
   triageSummary,
@@ -481,6 +483,124 @@ test("readLiveWorkspaceFromCache prefers updated query cache over stale render r
 
   // Non-ok query cache result fails closed rather than falling back to a stale render ref.
   expect(readLiveWorkspaceFromCache(() => ({ kind: "unavailable" }), staleRenderWorkspace)).toBeUndefined()
+
+  // Thrown refetch leaves stale ok data in getQueryData while getQueryState reports error -> fails closed!
+  expect(
+    readLiveWorkspaceFromCache(
+      () => ({ kind: "ok", status: 200, etag: null, value: staleRenderWorkspace }),
+      staleRenderWorkspace,
+      () => ({ status: "error", error: new Error("Network timeout") }),
+    ),
+  ).toBeUndefined()
+  expect(
+    readLiveWorkspaceFromCache(
+      () => ({ kind: "ok", status: 200, etag: null, value: staleRenderWorkspace }),
+      staleRenderWorkspace,
+      () => ({ status: "success", error: new Error("Refetch failed") }),
+    ),
+  ).toBeUndefined()
+})
+
+test("snapshotPromotionQueue captures rendered artifact & alias basis so pre-render cache updates skip queued rows as stale", () => {
+  const renderedArtifact: StagedArtifact = {
+    id: "art-1",
+    label: "Capture A",
+    sourceChannel: "feed-ops",
+    mediaType: "image/svg+xml",
+    documentUri: "data:image/svg+xml;charset=utf-8,%3Csvg/%3E",
+    blobDigest: "sha256:" + "1".repeat(64),
+    functionReceiptDigest: "sha256:" + "2".repeat(64),
+    extractor: "norn.extract.grid",
+    extractorVersion: "1.0.0",
+    observedAt: "2026-11-16T09:15:00Z",
+    windowLabel: "2026-W47",
+    markings: [],
+    contextMessages: [],
+  }
+  const renderedAliases = new Map<string, AliasResolution>([
+    ["alias-1", { kind: "bound", targetId: "ent-002", targetLabel: "Unit Beta", receipt: sampleReceipt }],
+  ])
+
+  const renderedQueue = snapshotPromotionQueue(
+    [cleanRow, aliasBlockedRow],
+    [renderedArtifact],
+    renderedAliases,
+    {},
+    new Set(),
+  )
+  expect(renderedQueue).toHaveLength(2)
+
+  // Case 1: Pre-render cache update swapped artifact blobDigest -> queued row 1 skipped as stale.
+  const liveArtifactChanged: ImportTriageWorkspace = {
+    batchId: "batch-1",
+    title: "Window W47",
+    targetObjectType: "canon.Allocation",
+    lowConfidenceThresholdBps: 9000,
+    actions: {
+      bindAlias: "canon.alias.bind",
+      createEntity: "canon.entity.create_and_bind",
+      ignoreAlias: "canon.alias.ignore",
+      promoteRow: "canon.import.promote_row",
+      resolveSupersession: "canon.import.resolve_supersession",
+    },
+    aliases: [{ ...sampleAlias, resolution: renderedAliases.get("alias-1")! }],
+    availableEntities: [{ id: "ent-001", label: "Unit Alpha" }, { id: "ent-002", label: "Unit Beta" }],
+    artifacts: [{ ...renderedArtifact, blobDigest: "sha256:" + "f".repeat(64) }],
+    rows: [cleanRow, aliasBlockedRow],
+    supersessions: [],
+  }
+  expect(verifyQueuedPromotionBasis(liveArtifactChanged, "batch-1", renderedQueue[0]!).kind).toBe("stale")
+
+  // Case 2: Pre-render cache update rebound alias-1 to a different canonical entity -> queued row 2 skipped as stale.
+  const liveAliasChanged: ImportTriageWorkspace = {
+    ...liveArtifactChanged,
+    artifacts: [renderedArtifact],
+    aliases: [{
+      ...sampleAlias,
+      resolution: { kind: "bound", targetId: "ent-999", targetLabel: "Unit Omega", receipt: sampleReceipt },
+    }],
+  }
+  expect(verifyQueuedPromotionBasis(liveAliasChanged, "batch-1", renderedQueue[1]!).kind).toBe("stale")
+})
+
+test("reconcilePendingRowOutcome unlocks rows when a pending approval is rejected, expired, or withdrawn", () => {
+  const pending = { kind: "pending" as const, decisionId: "dec_42", expiresAtMs: Date.UTC(2026, 10, 24) }
+  const makeDecision = (status: "pending" | "rejected" | "expired" | "withdrawn" | "approved") => ({
+    id: "dec_42",
+    question: "Approve row promotion?",
+    risk: "medium" as const,
+    requestedAtMs: Date.UTC(2026, 10, 23, 12, 0),
+    expiresAtMs: Date.UTC(2026, 10, 24, 12, 0),
+    status,
+    call: {
+      action: "canon.import.promote_row",
+      definition: "canon.Allocation",
+      input: {},
+      encodedInput: "{}",
+      idempotencyKey: "key-1",
+    },
+    canRun: false,
+  })
+
+  // Still pending -> remains locked.
+  const stillPending = reconcilePendingRowOutcome(pending, makeDecision("pending"))
+  expect(isOutcomeLocked(stillPending.nextOutcome)).toBe(true)
+
+  // Rejected, expired, or withdrawn -> unlocks row with clear refusal code and message.
+  for (const terminal of ["rejected", "expired", "withdrawn"] as const) {
+    const res = reconcilePendingRowOutcome(pending, makeDecision(terminal))
+    expect(isOutcomeLocked(res.nextOutcome)).toBe(false)
+    expect(res.nextOutcome.kind).toBe("refused")
+    if (res.nextOutcome.kind === "refused") {
+      expect(res.nextOutcome.code).toBe(`decision.${terminal}`)
+    }
+  }
+
+  // Missing decision -> unlocks row with stale notice and requests refresh.
+  const gone = reconcilePendingRowOutcome(pending, null)
+  expect(isOutcomeLocked(gone.nextOutcome)).toBe(false)
+  expect(gone.nextOutcome.kind).toBe("stale")
+  expect(gone.shouldRefreshWorkspace).toBe(true)
 })
 
 test("resolvePayloadIdempotencyKey reuses exact key for identical payloads (and no-op resets) and mints fresh key when payload or cell basis changes", () => {

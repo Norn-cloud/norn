@@ -10,6 +10,7 @@
 import { deriveFactStatus, type FactStatus } from "../components/fact-status-badge.tsx"
 import { callAction, newIdempotencyKey, type ActionReceipt, type CallResult } from "./actions.ts"
 import { cellCall, type CellResult, type Fetch } from "./cell-read.ts"
+import { requestedWords, type RequestedDecision } from "./decisions.ts"
 import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions.ts"
 import { readableTime } from "./format.ts"
 
@@ -397,18 +398,115 @@ export function isOutcomeLocked(outcome: RowActionOutcome | undefined | null): b
   return outcome?.kind === "committed" || outcome?.kind === "pending"
 }
 
+export interface CachedQueryState {
+  readonly status?: string
+  readonly error?: unknown
+}
+
 /**
  * Read the latest live workspace directly from the query cache at dispatch time, falling back to
- * the render-captured ref only when no cache entry exists yet. A non-`ok` cache entry fails closed
- * (`undefined`) rather than falling back to a stale render value.
+ * the render-captured ref only when no cache entry exists yet. Fails closed (`undefined`) whenever
+ * the cached result is non-`ok` OR the query state reports an error (`status === "error"` or
+ * `error != null`, e.g. after a thrown refetch while TanStack Query retains stale `ok` data).
  */
 export function readLiveWorkspaceFromCache(
   getCached: () => CellResult<ImportTriageWorkspace> | undefined,
   fallback: ImportTriageWorkspace | undefined,
+  getQueryState?: () => CachedQueryState | undefined,
 ): ImportTriageWorkspace | undefined {
+  const state = getQueryState?.()
+  if (state && (state.status === "error" || state.error != null)) {
+    return undefined
+  }
   const cached = getCached()
   if (cached !== undefined) return cached.kind === "ok" ? cached.value : undefined
   return fallback
+}
+
+/**
+ * Reconcile a row's local `pending` approval outcome against the cell's authoritative
+ * `GET /v1/decisions:requested?id=...` status so rejected, expired, or withdrawn approvals unlock
+ * the row cleanly rather than stranding it until page remount.
+ */
+export function reconcilePendingRowOutcome(
+  outcome: Extract<RowActionOutcome, { readonly kind: "pending" }>,
+  decision: RequestedDecision | null,
+): { readonly nextOutcome: RowActionOutcome; readonly shouldRefreshWorkspace: boolean } {
+  if (decision === null) {
+    return {
+      nextOutcome: {
+        kind: "stale",
+        message: `Approval decision ${outcome.decisionId} is no longer active on the cell — refresh and re-submit if needed.`,
+      },
+      shouldRefreshWorkspace: true,
+    }
+  }
+  if (decision.status === "pending") {
+    return { nextOutcome: outcome, shouldRefreshWorkspace: false }
+  }
+  if (decision.status === "rejected" || decision.status === "expired" || decision.status === "withdrawn") {
+    return {
+      nextOutcome: {
+        kind: "refused",
+        code: `decision.${decision.status}`,
+        message: requestedWords(decision),
+      },
+      shouldRefreshWorkspace: false,
+    }
+  }
+  const callState = decision.call.state
+  if (callState?.state === "refused") {
+    return {
+      nextOutcome: {
+        kind: "refused",
+        code: callState.code ?? "decision.call_refused",
+        message: requestedWords(decision),
+      },
+      shouldRefreshWorkspace: false,
+    }
+  }
+  if (callState?.state === "committed") {
+    return { nextOutcome: outcome, shouldRefreshWorkspace: true }
+  }
+  return {
+    nextOutcome: {
+      kind: "stale",
+      message: `${requestedWords(decision)} Review and promote again to execute.`,
+    },
+    shouldRefreshWorkspace: true,
+  }
+}
+
+/**
+ * Snapshot the operator's currently rendered eligible rows against the rendered artifacts,
+ * resolved aliases, and local edits so batch promotion strictly records what the operator saw —
+ * never silently substituting unrendered artifacts or aliases from a newer cache entry.
+ */
+export function snapshotPromotionQueue(
+  eligibleRows: readonly CandidateRow[],
+  renderedArtifacts: readonly StagedArtifact[],
+  renderedAliases: ReadonlyMap<string, AliasResolution>,
+  reviewEdits: Readonly<Record<string, string>>,
+  lockedRowIds: ReadonlySet<string>,
+): readonly QueuedPromotionItem[] {
+  return eligibleRows.flatMap((row) => {
+    if (lockedRowIds.has(row.id)) return []
+    const artifact = renderedArtifacts.find((item) => item.id === row.artifactId)
+    const resolved = resolveRowEntity(row, renderedAliases)
+    if (!artifact || resolved.kind !== "resolved") return []
+    const basisKey = rowBasisKey(row, artifact)
+    return [{
+      rowId: row.id,
+      basisKey,
+      artifactId: artifact.id,
+      blobDigest: artifact.blobDigest,
+      functionReceiptDigest: artifact.functionReceiptDigest,
+      targetRecordId: resolved.targetId,
+      effectiveAt: row.effectiveAt,
+      observedAt: row.observedAt,
+      values: extractEditableValues(row, reviewEdits, basisKey),
+    }]
+  })
 }
 
 /** Rows that must stay excluded from batch promotion (in-flight, queued, committed awaiting read, or pending approval). */
