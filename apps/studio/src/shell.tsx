@@ -20,8 +20,11 @@ import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, directionOf, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
-import { useMode } from "@/lib/live-transport"
-import { useStudioScope } from "@/lib/definitions"
+import { isRetryableModeError, refreshMode, useMode } from "@/lib/live-transport"
+import { lastReachableAt, useStudioScope } from "@/lib/definitions"
+import { CopyId } from "@/components/copy-id"
+import { formatLastReachable } from "@/components/load-state"
+import { explainError } from "@/lib/plain-words"
 import { useAccount, type Account } from "@/lib/session"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
@@ -115,10 +118,15 @@ function useOpenWorkspace() {
   const account = useAccount()
   const live = mode.data?.kind === "live"
   const recorded = WORKSPACES.find(({ recorded }) => recorded)
+  const retrying = !mode.isError && mode.failureCount > 0 && isRetryableModeError(mode.failureReason)
   const open = live
     ? { id: "live", name: account.data?.organization?.name ?? scope.data?.orgId ?? "Connected cell", detail: `Live cell${scope.data ? ` · ${scope.data.orgId}/${scope.data.environmentId}` : ""}` }
     : mode.data?.kind !== "recorded"
-      ? { id: "pending", name: account.data?.organization?.name ?? scope.data?.orgId ?? "Workspace", detail: mode.isError || mode.failureCount > 0 ? "Can't reach the cell · retrying" : "Connecting…" }
+      ? {
+          id: "pending",
+          name: account.data?.organization?.name ?? scope.data?.orgId ?? "Workspace",
+          detail: mode.isError ? "Workspace unavailable" : retrying ? "Reconnecting…" : "Connecting…",
+        }
       : recorded && { id: recorded.id, name: recorded.name, detail: recorded.detail }
   return { live, open }
 }
@@ -566,18 +574,54 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
 }
 
 /**
- * The cell did not answer the mode read (a network error or a 5xx): say so above the page and keep
- * retrying; nothing is shown from the recording meanwhile.
+ * Honest cell connection banner (#1424):
+ * - Brief automatic retry on transient outages (`data-connection="retrying"`): never lingers forever.
+ * - Persistent failure or non-retryable refusal such as `503 cell.unopenable` (`data-connection="unavailable"`):
+ *   never says "Retrying…"; shows "Workspace unavailable", what the server said, incident id when logged,
+ *   when it was last reachable, and an explicit Retry button.
  */
 function ConnectionBanner() {
   const mode = useMode()
+  const { locale } = useLocale()
+  const { view } = useView()
   if (mode.data !== undefined || (mode.failureCount === 0 && !mode.isError)) return null
+  const retrying = !mode.isError && isRetryableModeError(mode.failureReason)
+  const retry = () => { refreshMode(); void mode.refetch() }
+  if (retrying) {
+    return (
+      <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-tone-amber/30 bg-tone-amber/10 px-4 py-2 text-sm text-tone-amber md:px-8">
+        <CloudOff aria-hidden className="size-4 shrink-0" />
+        <span className="font-medium">Couldn't reach the cell.</span>
+        <span className="text-foreground/80">Reconnecting…</span>
+        <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry now</Button>
+      </div>
+    )
+  }
+  const error = mode.error ?? mode.failureReason
+  const info = explainError(error, locale, view)
+  const reachable = lastReachableAt()
+  const reachableLabel = formatLastReachable(reachable)
   return (
-    <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-tone-amber/30 bg-tone-amber/10 px-4 py-2 text-sm text-tone-amber md:px-8">
-      <CloudOff aria-hidden className="size-4 shrink-0" />
-      <span className="font-medium">Couldn't reach the cell.</span>
-      <span className="text-foreground/80">{mode.isError ? "It didn't answer after several tries." : "Retrying…"}</span>
-      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={() => void mode.refetch()}>Retry now</Button>
+    <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm md:px-8">
+      <CloudOff aria-hidden className="size-4 shrink-0 text-destructive" />
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="font-medium text-foreground">Workspace unavailable.</span>
+        <span className="text-foreground/85">{info.headline}</span>
+        {info.detail && <span className="text-meta text-muted-foreground">{info.detail}</span>}
+        {reachable !== null && reachableLabel !== null && (
+          <span className="text-meta text-muted-foreground">
+            · Last reachable <time dateTime={new Date(reachable).toISOString()} title={new Date(reachable).toISOString()}>{reachableLabel}</time>
+          </span>
+        )}
+        {info.incidentId && (
+          <span className="inline-flex items-center gap-1 text-meta text-muted-foreground">· Incident <CopyId value={info.incidentId} /></span>
+        )}
+        {view === "technical" && info.code && (
+          <span className="font-mono text-xs text-muted-foreground">· {info.code}</span>
+        )}
+      </div>
+      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry</Button>
     </div>
   )
 }

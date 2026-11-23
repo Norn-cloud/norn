@@ -2,13 +2,12 @@ import { useQuery } from "@tanstack/react-query"
 import { useRouter } from "@tanstack/react-router"
 import { ChevronRight, CircleAlert, Inbox as InboxIcon, Plug, ShieldAlert, Wand2, type LucideIcon } from "lucide-react"
 import type { MouseEvent, ReactNode } from "react"
-import { EmptyState } from "@/components/panel"
+import { LoadState } from "@/components/load-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Skeleton } from "@/components/ui/skeleton"
 import { conceptTitle } from "./lib/catalog.ts"
-import { cellRead, NotServed, useMode } from "./lib/live-transport.ts"
+import { cellRead, useMode } from "./lib/live-transport.ts"
 import type { Schemas } from "./lib/transport.ts"
 
 type Inbox = Schemas["NornInbox"]
@@ -47,45 +46,58 @@ export function Inbox() {
         <h2 id="needs-attention" className="text-section font-medium">Needs attention</h2>
         {document && total > 0 && <span className="text-meta text-muted-foreground tabular-nums">{total}{document.sections.some((entry) => entry.approximate) ? "+" : ""}</span>}
       </div>
-      {inbox.isPending && <Skeleton className="h-24 rounded-lg" />}
-      {inbox.isError && (inbox.error instanceof NotServed
-        ? <EmptyState icon={InboxIcon} title="Not served yet">This cell does not serve a work queue yet.</EmptyState>
-        : <p role="alert" className="text-sm text-destructive">{inbox.error.message}</p>)}
-      {document && total === 0 && <div className="rounded-lg border"><EmptyState icon={InboxIcon} title="Nothing needs you">No record is held back, no decision waits on you, and every source synced.</EmptyState></div>}
-      {/* One frame, ruled into groups: each group's head names what is wrong, its rows say where. */}
-      {document && total > 0 && (
-        <div className="divide-y overflow-hidden rounded-lg border bg-card">
-          {groups.map((group) => <HeldBack key={`${group.ruleRef.kind}:${group.title}:${group.objectType}`} group={group} />)}
-          {decisions.length > 0 && (
-            <div>
-              <GroupHead icon={CircleAlert} title="Decisions waiting on you" count={section("decision")?.count ?? decisions.length} />
-              <div className="pb-1">
-                {decisions.map(({ decision, target }) => (
-                  <RouteLink key={decision.id} to={target} className={rowLink}>
-                    <span className="min-w-0 flex-1 truncate">{decision.question}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{decision.flow.title ?? decision.step.label ?? ""}</span>
-                    <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-                  </RouteLink>
-                ))}
+      <LoadState
+        status={inbox.status}
+        data={document}
+        error={inbox.error}
+        isFetching={inbox.isFetching}
+        onRetry={() => void inbox.refetch()}
+        skeleton="list"
+        loadingLabel="Reading what needs attention"
+        isEmpty={() => total === 0}
+        empty={{
+          icon: InboxIcon,
+          title: "Nothing needs you",
+          description: "No record is held back, no decision waits on you, and every source synced.",
+          next: <Button asChild size="sm" variant="outline"><RouteLink to="/sources">Browse sources and records</RouteLink></Button>,
+        }}
+        notServed={{ icon: InboxIcon, title: "Not served yet", description: "This cell does not serve a work queue yet." }}
+      >
+        {() => (
+          /* One frame, ruled into groups: each group's head names what is wrong, its rows say where. */
+          <div className="divide-y overflow-hidden rounded-lg border bg-card">
+            {groups.map((group) => <HeldBack key={`${group.ruleRef.kind}:${group.title}:${group.objectType}`} group={group} />)}
+            {decisions.length > 0 && (
+              <div>
+                <GroupHead icon={CircleAlert} title="Decisions waiting on you" count={section("decision")?.count ?? decisions.length} />
+                <div className="pb-1">
+                  {decisions.map(({ decision, target }) => (
+                    <RouteLink key={decision.id} to={target} className={rowLink}>
+                      <span className="min-w-0 flex-1 truncate">{decision.question}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{decision.flow.title ?? decision.step.label ?? ""}</span>
+                      <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                    </RouteLink>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-          {sources.length > 0 && (
-            <div>
-              <GroupHead icon={Plug} title="Sources that did not sync" count={section("source_error")?.count ?? sources.length} />
-              <div className="pb-1">
-                {sources.map((source) => (
-                  <RouteLink key={source.id} to={source.target} className={rowLink}>
-                    <span className="min-w-0 flex-1 truncate">{text(source.values.label) ?? source.id}</span>
-                    <span className="min-w-0 max-w-[50%] truncate text-xs text-muted-foreground">{text(source.values.last_error_message) ?? text(source.values.status) ?? ""}</span>
-                    <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-                  </RouteLink>
-                ))}
+            )}
+            {sources.length > 0 && (
+              <div>
+                <GroupHead icon={Plug} title="Sources that did not sync" count={section("source_error")?.count ?? sources.length} />
+                <div className="pb-1">
+                  {sources.map((source) => (
+                    <RouteLink key={source.id} to={source.target} className={rowLink}>
+                      <span className="min-w-0 flex-1 truncate">{text(source.values.label) ?? source.id}</span>
+                      <span className="min-w-0 max-w-[50%] truncate text-xs text-muted-foreground">{text(source.values.last_error_message) ?? text(source.values.status) ?? ""}</span>
+                      <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                    </RouteLink>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </LoadState>
     </section>
   )
 }

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { Copy, Eye, LayoutDashboard, Pencil, Plus, Sparkles, Trash2, Undo2 } from "lucide-react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
+import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { EmptyState, PageHeader, Panel } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -88,29 +89,49 @@ export function DashboardsPage() {
     <section className="space-y-6">
       <PageHeader title="Dashboards" description="Saved sets of questions. Each is a definition the cell checks before it is kept."
         primary={<Button disabled={!cellAvailable} onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>} />
-      {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
+      {scope.isPending && <LoadState status="pending" skeleton="list" loadingLabel="Connecting to workspace" onRetry={() => void scope.refetch()}>{() => null}</LoadState>}
+      {scope.isSuccess && scope.data === null && <EmptyState icon={LayoutDashboard} title="No data cell">{NO_DATA_CELL}</EmptyState>}
+      {scope.isError && <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />}
       {catalog.data && <DashboardAssistant catalog={catalog.data} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} />} />}
-      {cellAvailable && dashboards.isPending && <p className="text-muted-foreground">Reading dashboards…</p>}
-      {dashboards.isError && <EmptyState icon={LayoutDashboard}>{failure(dashboards.error)}</EmptyState>}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
       {removed && <UndoDelete removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
-      {rows?.length === 0 && <EmptyState icon={LayoutDashboard} title="No dashboards yet"
-        next={cellAvailable && <Button size="sm" variant="outline" onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>}>Save a set of questions as a dashboard; the cell checks it before it is kept.</EmptyState>}
-      {rows?.map((stored) => (
-        <Panel key={stored.id} icon={LayoutDashboard} label={stored.title || "Untitled dashboard"} action={
-          <div className="flex items-center gap-1">
-            <Button asChild variant="ghost" size="sm"><Link to="/dashboards/$id" params={{ id: stored.id }}><Eye />Open</Link></Button>
-            <Button asChild variant="ghost" size="sm"><Link to="/dashboards/$id/edit" params={{ id: stored.id }}><Pencil />Edit</Link></Button>
-            <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(stored)}><Copy />Duplicate</Button>
-            <Button variant="ghost" size="sm" onClick={() => { if (globalThis.confirm(`Delete "${stored.title}"? Its history stays in the cell.`)) remove.mutate(stored) }}><Trash2 />Delete</Button>
-          </div>
-        }>
-          <p className="text-sm text-muted-foreground">Version {stored.version}{stored.updatedAtMs > 0 ? ` · saved ${new Date(stored.updatedAtMs).toLocaleString()}` : ""}</p>
-        </Panel>
-      ))}
-      {dashboards.hasNextPage && <Button variant="outline" size="sm" disabled={dashboards.isFetchingNextPage} onClick={() => void dashboards.fetchNextPage()}>{dashboards.isFetchingNextPage ? "Reading…" : "Show more"}</Button>}
+      {cellAvailable && (
+        <LoadState
+          status={dashboards.status}
+          data={rows}
+          error={dashboards.error}
+          isFetching={dashboards.isFetching}
+          onRetry={() => void dashboards.refetch()}
+          skeleton="list"
+          loadingLabel="Reading dashboards"
+          isEmpty={(items) => items.length === 0}
+          empty={{
+            icon: LayoutDashboard,
+            title: "No dashboards yet",
+            description: "Save a set of questions as a dashboard; the cell checks it before it is kept.",
+            next: <Button size="sm" variant="outline" onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>,
+          }}
+        >
+          {(items) => (
+            <div className="space-y-4">
+              {items.map((stored) => (
+                <Panel key={stored.id} icon={LayoutDashboard} label={stored.title || "Untitled dashboard"} action={
+                  <div className="flex items-center gap-1">
+                    <Button asChild variant="ghost" size="sm"><Link to="/dashboards/$id" params={{ id: stored.id }}><Eye />Open</Link></Button>
+                    <Button asChild variant="ghost" size="sm"><Link to="/dashboards/$id/edit" params={{ id: stored.id }}><Pencil />Edit</Link></Button>
+                    <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(stored)}><Copy />Duplicate</Button>
+                    <Button variant="ghost" size="sm" onClick={() => { if (globalThis.confirm(`Delete "${stored.title}"? Its history stays in the cell.`)) remove.mutate(stored) }}><Trash2 />Delete</Button>
+                  </div>
+                }>
+                  <p className="text-sm text-muted-foreground">Version {stored.version}{stored.updatedAtMs > 0 ? ` · saved ${new Date(stored.updatedAtMs).toLocaleString()}` : ""}</p>
+                </Panel>
+              ))}
+              {dashboards.hasNextPage && <Button variant="outline" size="sm" disabled={dashboards.isFetchingNextPage} onClick={() => void dashboards.fetchNextPage()}>{dashboards.isFetchingNextPage ? "Reading…" : "Show more"}</Button>}
+            </div>
+          )}
+        </LoadState>
+      )}
     </section>
   )
 }
@@ -262,10 +283,12 @@ export function DashboardEditorPage() {
         {id !== undefined && <Button asChild variant="outline" size="sm" className="ms-auto"><Link to="/dashboards/$id" params={{ id }}><Eye />View</Link></Button>}
       </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
-      {(scope.isPending || (cellAvailable && (catalog.isPending || (!fresh && stored.isPending)))) && <p className="text-muted-foreground">Reading the dashboard…</p>}
-      {catalog.isError && <EmptyState icon={LayoutDashboard}>{catalog.error.message}</EmptyState>}
-      {stored.isError && <EmptyState icon={LayoutDashboard}>{failure(stored.error)}</EmptyState>}
+      {scope.isError && <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />}
+      {(scope.isPending || (cellAvailable && (catalog.isPending || (!fresh && stored.isPending)))) && (
+        <LoadState status="pending" skeleton="detail" loadingLabel="Reading dashboard" onRetry={() => { void scope.refetch(); void catalog.refetch(); if (!fresh) void stored.refetch() }}>{() => null}</LoadState>
+      )}
+      {catalog.isError && <LoadState status="error" error={catalog.error} isFetching={catalog.isFetching} onRetry={() => void catalog.refetch()}>{() => null}</LoadState>}
+      {stored.isError && <LoadState status="error" error={stored.error} isFetching={stored.isFetching} onRetry={() => void stored.refetch()}>{() => null}</LoadState>}
       {!fresh && stored.isSuccess && stored.data === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
       {/* The editor opens once the workspace scope is known, so nothing is typed into an editor its scope would then replace. */}
       {!scope.isPending && catalog.data && (fresh || (stored.data && stored.isFetchedAfterMount)) && (
@@ -341,12 +364,14 @@ export function DashboardBoardPage() {
         )}
       </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
+      {scope.isError && <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
-      {(scope.isPending || (cellAvailable && (catalog.isPending || stored.isPending))) && <p className="text-muted-foreground">Reading the dashboard…</p>}
-      {catalog.isError && <EmptyState icon={LayoutDashboard}>{catalog.error.message}</EmptyState>}
-      {stored.isError && <EmptyState icon={LayoutDashboard}>{failure(stored.error)}</EmptyState>}
+      {(scope.isPending || (cellAvailable && (catalog.isPending || stored.isPending))) && (
+        <LoadState status="pending" skeleton="detail" loadingLabel="Reading dashboard" onRetry={() => { void scope.refetch(); void catalog.refetch(); void stored.refetch() }}>{() => null}</LoadState>
+      )}
+      {catalog.isError && <LoadState status="error" error={catalog.error} isFetching={catalog.isFetching} onRetry={() => void catalog.refetch()}>{() => null}</LoadState>}
+      {stored.isError && <LoadState status="error" error={stored.error} isFetching={stored.isFetching} onRetry={() => void stored.refetch()}>{() => null}</LoadState>}
       {removed && <UndoDelete removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
       {removed && <Button asChild variant="ghost" size="sm"><Link to="/dashboards">Back to dashboards</Link></Button>}
       {stored.isSuccess && board === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}

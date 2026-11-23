@@ -218,9 +218,19 @@ fn rollup_words(rollup: &MetricRollup) -> String {
     }
 }
 
-/// A selected metric in words: its label and, where known, how it is
-/// computed and rolled up: `Yield (recovered ÷ input)`, `Input (sum of
-/// input; then the total over time)`.
+/// Capitalize the first character of a plain display name (`completion rate` →
+/// `Completion rate`) so a metric name reads cleanly in a restatement.
+fn sentence_case(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// A selected metric in words: its display name (or declared label when none
+/// is set) and, where known, how it is computed and rolled up: `Yield
+/// (recovered ÷ input)`, `Input (sum of input; then the total over time)`.
 fn measure_words(
     metrics: &[MetricDefinition],
     selection: &QuestionMetric,
@@ -230,7 +240,11 @@ fn measure_words(
     }
     let definition = metric(metrics, &selection.metric)
         .ok_or_else(|| RestateError::UnknownMetric(selection.metric.clone()))?;
-    let label = definition.label.clone();
+    let label = definition
+        .display
+        .as_deref()
+        .filter(|display| !display.trim().is_empty())
+        .map_or_else(|| definition.label.clone(), sentence_case);
     let how = declared_how(metrics, definition)?;
     let rollup = selection.reaggregate.as_ref().map(rollup_words);
     Ok(match (how, rollup) {

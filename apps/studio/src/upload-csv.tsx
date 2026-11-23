@@ -8,7 +8,10 @@ import { Input } from "@/components/ui/input"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { refreshMode } from "@/lib/live-transport"
-import { KINDS, columnId, define, kindOf, loadDataset, loadRecords, upload, type Completed, type DatasetLoaded, type DefineColumn, type Kind } from "@/lib/uploads"
+import { explainError } from "@/lib/plain-words"
+import { useLocale } from "@/lib/locale"
+import { useView } from "@/lib/view"
+import { KINDS, columnId, define, kindOf, loadDataset, loadRecords, upload, type Completed, type DatasetLoaded, type DefineColumn, type Kind, type RecordsLoaded } from "@/lib/uploads"
 
 /** One column's choices: kept or left out, part of the key, its kind, and whether its values add up. */
 interface Choice { readonly include: boolean; readonly key: boolean; readonly type: Kind; readonly measure: boolean }
@@ -18,7 +21,7 @@ const numeric = (type: Kind) => type === "integer" || type === "decimal"
 /** What loading came to: rows in the analytical engine, rows as governed records, or a cell with no engine. */
 type Outcome =
   | { readonly kind: "dataset"; readonly objectType: string; readonly loaded: DatasetLoaded }
-  | { readonly kind: "records"; readonly objectType: string }
+  | { readonly kind: "records"; readonly objectType: string; readonly loaded: RecordsLoaded }
   | { readonly kind: "no-engine"; readonly objectType: string }
 
 /**
@@ -59,11 +62,13 @@ export function UploadCsv() {
     },
     onSuccess: async (result) => { setOutcome(result); await settle() },
   })
+  const { locale } = useLocale()
+  const { view } = useView()
   const asRecords = useMutation({
     mutationFn: async () => {
       if (!sent.data || !completed) throw new Error("Upload a file first.")
-      const { objectType } = await loadRecords(sent.data.uploadId, typeName.trim(), key(), columns(), completed.sha256)
-      return { kind: "records", objectType } as const
+      const loaded = await loadRecords(sent.data.uploadId, typeName.trim(), key(), columns(), completed.sha256)
+      return { kind: "records", objectType: loaded.objectType, loaded } as const
     },
     onSuccess: async (result) => { setOutcome(result); await settle() },
   })
@@ -71,6 +76,8 @@ export function UploadCsv() {
   const reset = () => { setFile(null); setTypeName(""); setChoices({}); setOutcome(null); sent.reset(); asDataset.reset(); asRecords.reset() }
   const busy = asDataset.isPending || asRecords.isPending
   const problem = asDataset.error ?? asRecords.error
+  const explainedUpload = sent.isError ? explainError(sent.error, locale, view) : null
+  const explainedProblem = problem ? explainError(problem, locale, view) : null
   return (
     <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) reset() }}>
       <DialogTrigger asChild><Button type="button" size="sm" variant="outline"><Upload />Upload a CSV</Button></DialogTrigger>
@@ -83,7 +90,13 @@ export function UploadCsv() {
           <div className="space-y-3">
             <Input type="file" accept=".csv,text/csv" aria-label="CSV file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
             <Button type="button" disabled={file === null || sent.isPending} onClick={() => file && sent.mutate(file)}><FileUp />{sent.isPending ? "Uploading…" : "Upload"}</Button>
-            {sent.isError && <p role="alert" className="text-sm text-destructive">{sent.error.message}</p>}
+            {explainedUpload && (
+              <div role="alert" className="space-y-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                <p className="font-medium">{explainedUpload.headline}</p>
+                {explainedUpload.detail && <p className="text-meta text-foreground">{explainedUpload.detail}</p>}
+                {view === "technical" && explainedUpload.code && <p className="font-mono text-xs text-muted-foreground">{explainedUpload.code}</p>}
+              </div>
+            )}
           </div>
         )}
         {completed && outcome === null && (
@@ -122,7 +135,14 @@ export function UploadCsv() {
                 })}
               </TableBody>
             </Table></TableCard>
-            {problem && <p role="alert" className="text-sm text-destructive">{problem.message}</p>}
+            {explainedProblem && (
+              <div role="alert" className="space-y-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                <p className="font-medium">{explainedProblem.headline}</p>
+                {explainedProblem.detail && <p className="text-meta text-foreground">{explainedProblem.detail}</p>}
+                {explainedProblem.incidentId && <p className="font-mono text-xs text-muted-foreground">Incident {explainedProblem.incidentId}</p>}
+                {view === "technical" && explainedProblem.code && <p className="font-mono text-xs text-muted-foreground">{explainedProblem.code}</p>}
+              </div>
+            )}
             <DialogFooter className="flex-wrap gap-2">
               <Button type="button" variant="outline" onClick={reset} disabled={busy}>Start over</Button>
               <Button type="button" variant="outline" disabled={busy} onClick={() => asRecords.mutate()} title="Each row is written through the cell and checked against its laws, one at a time.">
@@ -144,7 +164,31 @@ export function UploadCsv() {
                   : <p className="text-muted-foreground">No row was set aside.</p>}
               </div>
             )}
-            {outcome.kind === "records" && <p role="status" className="rounded-lg border p-4 text-sm">The rows were written as <code className="font-mono">{outcome.objectType}</code> records, each checked by the cell.</p>}
+            {outcome.kind === "records" && (() => {
+              const { rowsRead, rowsLanded, rowsQuarantined, quarantineReasons } = outcome.loaded
+              const reasons = Object.entries(quarantineReasons ?? {}).map(([reason, count]) => `${count} ${reason}`).join(", ")
+              const noneLanded = rowsLanded === 0 && (rowsQuarantined ?? 0) > 0
+              const partial = (rowsLanded ?? 0) > 0 && (rowsQuarantined ?? 0) > 0
+              return (
+                <div role={noneLanded ? "alert" : "status"} className={`space-y-2 rounded-lg border p-4 text-sm ${noneLanded ? "border-destructive/40 bg-destructive/5" : ""}`}>
+                  {noneLanded ? (
+                    <>
+                      <p className="font-medium text-destructive">No rows landed in <code className="font-mono">{outcome.objectType}</code>: {rowsQuarantined} of {rowsRead ?? rowsQuarantined} {rowsQuarantined === 1 ? "row was" : "rows were"} held back for review.</p>
+                      {reasons && <p className="text-muted-foreground">Reasons: {reasons}.</p>}
+                    </>
+                  ) : partial ? (
+                    <>
+                      <p className="font-medium">{rowsLanded} of {rowsRead ?? ((rowsLanded ?? 0) + (rowsQuarantined ?? 0))} rows landed in <code className="font-mono">{outcome.objectType}</code>; {rowsQuarantined} held back for review.</p>
+                      {reasons && <p className="text-muted-foreground">Reasons: {reasons}.</p>}
+                    </>
+                  ) : rowsLanded !== undefined ? (
+                    <p className="font-medium">{rowsLanded} {rowsLanded === 1 ? "row was" : "rows were"} written as <code className="font-mono">{outcome.objectType}</code> records, each checked by the cell.</p>
+                  ) : (
+                    <p>The rows were sent to <code className="font-mono">{outcome.objectType}</code>.</p>
+                  )}
+                </div>
+              )
+            })()}
             {outcome.kind === "no-engine" && (
               <div role="status" className="space-y-2 rounded-lg border p-4 text-sm">
                 <p>The cell admitted <code className="font-mono">{outcome.objectType}</code>, but it has no analytical engine to load the rows into.</p>

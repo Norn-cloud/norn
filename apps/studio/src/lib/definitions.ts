@@ -95,12 +95,101 @@ export const NO_DATA_CELL = "This workspace has no data cell yet."
 export class StudioScopeError extends Error {}
 const accountScope = z.object({ organization: z.object({ id: z.string().min(1) }).nullable(), environmentId: z.string().min(1).nullable() })
 
+/** Structured refusal metadata preserved when a cell answers with `norn/refusal@2` or times out. */
+export interface UnavailableDetail {
+  readonly code?: string
+  readonly retryable?: boolean
+  readonly explanation?: string
+  readonly incidentId?: string
+  readonly category?: string
+  readonly timedOut?: boolean
+  readonly decidedAt?: string
+}
+
+/** Parse structured fields from a `norn/refusal@2` (or Worker error) JSON object. */
+export function parseUnavailableDetail(body: unknown): UnavailableDetail {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return {}
+  const record = body as Record<string, unknown>
+  const explanation = typeof record.explanation === "string" && record.explanation !== ""
+    ? record.explanation
+    : typeof record.error === "string" && record.error !== "" ? record.error : undefined
+  return {
+    ...(typeof record.code === "string" ? { code: record.code } : {}),
+    ...(typeof record.retryable === "boolean" ? { retryable: record.retryable } : {}),
+    ...(explanation !== undefined ? { explanation } : {}),
+    ...(typeof record.incidentId === "string" && record.incidentId !== "" ? { incidentId: record.incidentId } : {}),
+    ...(typeof record.category === "string" ? { category: record.category } : {}),
+    ...(typeof record.decidedAt === "string" && record.decidedAt !== "" ? { decidedAt: record.decidedAt } : {}),
+  }
+}
+
+const REACHABLE_KEY = "norn.cell.lastReachableAt"
+let reachableAt: number | null = null
+
+/** Record that the workspace cell answered cleanly at `at` (Unix ms). */
+export function recordCellReachable(at = Date.now()): void {
+  reachableAt = at
+  try { globalThis.sessionStorage?.setItem(REACHABLE_KEY, String(at)) } catch { /* storage blocked or SSR */ }
+}
+
+/** The last instant (Unix ms) the workspace cell answered cleanly in this session, if any. */
+export function lastReachableAt(): number | null {
+  if (reachableAt !== null) return reachableAt
+  try {
+    const stored = globalThis.sessionStorage?.getItem(REACHABLE_KEY)
+    if (stored) {
+      const parsed = Number(stored)
+      if (Number.isFinite(parsed) && parsed > 0) { reachableAt = parsed; return parsed }
+    }
+  } catch { /* storage blocked or SSR */ }
+  return null
+}
+
+/** Reset remembered reachability (for tests). */
+export function resetCellReachable(): void {
+  reachableAt = null
+  try { globalThis.sessionStorage?.removeItem(REACHABLE_KEY) } catch { /* ignore */ }
+}
+
+/** Default per-request deadline (ms) so a hung host never spins a surface forever. */
+export const CELL_FETCH_TIMEOUT_MS = 15_000
+
+/** Bound one fetch call with a timeout, preserving any caller-supplied AbortSignal. */
+export async function fetchWithTimeout(fetcher: Fetch, input: string, init?: RequestInit, timeoutMs = CELL_FETCH_TIMEOUT_MS): Promise<Response> {
+  if (init?.signal?.aborted) throw new CellUnavailable(0)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(new DOMException("Timed out", "TimeoutError")), timeoutMs)
+  const onCallerAbort = () => controller.abort(init?.signal?.reason)
+  init?.signal?.addEventListener("abort", onCallerAbort, { once: true })
+  try {
+    return await fetcher(input, { ...init, signal: controller.signal })
+  } catch (error) {
+    if (init?.signal?.aborted) throw error
+    const timedOut = controller.signal.aborted
+      || (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
+      || (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"))
+    if (timedOut) {
+      throw new CellUnavailable(0, "The workspace did not answer in time.", { timedOut: true, retryable: true, code: "cell.timeout" })
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+    init?.signal?.removeEventListener("abort", onCallerAbort)
+  }
+}
+
 /** Read the active workspace and its cell from the signed-in server session. */
 export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<StudioScope | null> {
   let response: Response
-  try { response = await fetcher("/api/me", { headers: { accept: "application/json" } }) }
-  catch { throw new CellUnavailable(0) }
-  if (!response.ok) throw new CellUnavailable(response.status)
+  try { response = await fetchWithTimeout(fetcher, "/api/me", { headers: { accept: "application/json" } }) }
+  catch (error) {
+    if (error instanceof CellUnavailable) throw error
+    throw new CellUnavailable(0)
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new CellUnavailable(response.status, typeof (body as { message?: unknown } | null)?.message === "string" ? (body as { message: string }).message : undefined, parseUnavailableDetail(body))
+  }
   const parsed = accountScope.safeParse(await response.json().catch(() => null))
   if (!parsed.success) throw new StudioScopeError("The server did not report the active workspace scope.")
   const { organization, environmentId } = parsed.data
@@ -120,7 +209,9 @@ export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: Scope
     const query = new URLSearchParams(search)
     query.set("orgId", active.orgId)
     query.set("environmentId", active.environmentId)
-    return fetcher(`${base}${pathname}?${query}`, init)
+    const response = await fetchWithTimeout(fetcher, `${base}${pathname}?${query}`, init)
+    if (response.ok) recordCellReachable()
+    return response
   }
 }
 const findingsOf = (body: unknown): readonly Finding[] => {
@@ -130,9 +221,24 @@ const findingsOf = (body: unknown): readonly Finding[] => {
 
 /** Thrown when the cell answered with neither a decision nor a refusal it documents: nothing was saved. */
 export class CellUnavailable extends Error {
-  constructor(readonly status: number, message?: string) {
+  readonly code: string | undefined
+  readonly retryable: boolean | undefined
+  readonly explanation: string | undefined
+  readonly incidentId: string | undefined
+  readonly category: string | undefined
+  readonly timedOut: boolean | undefined
+  readonly decidedAt: string | undefined
+
+  constructor(readonly status: number, message?: string, detail: UnavailableDetail = {}) {
     // A 404 is a cell without the definition route yet; anything else is a cell that did not answer. Neither saved nor read anything.
     super(message ?? (status === 401 ? "Sign in again." : status === 403 ? "Your role may not read or change these definitions." : status === 404 ? "The cell's definition route isn't connected yet; nothing was read or saved." : `The cell did not answer (${status || "network"}); nothing was read or saved.`))
+    this.code = detail.code
+    this.retryable = detail.retryable
+    this.explanation = detail.explanation
+    this.incidentId = detail.incidentId
+    this.category = detail.category
+    this.timedOut = detail.timedOut
+    this.decidedAt = detail.decidedAt
   }
 }
 
@@ -173,16 +279,20 @@ export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host", scop
     if (status === 422 && b?.code === "definition.refused") return { installed: false, findings: findingsOf(b) }
     if (status === 409 && b?.code === "definition.version_conflict") return { installed: false, conflict: true }
     if (status === 404) throw new NotConnected()
-    throw new CellUnavailable(status)
+    const detail = parseUnavailableDetail(body)
+    const message = typeof (body as { message?: unknown } | null)?.message === "string" ? (body as { message: string }).message : undefined
+    throw new CellUnavailable(status, message, detail)
   }
   return {
     list: async (cursor) => {
       // A custom method: GET /v1/definitions is the catalog read. The cursor is bound to kind (and include).
       const query = new URLSearchParams({ kind: KIND, limit: "50", ...cursor ? { cursor } : {} })
       const { status, body } = await read(`/v1/definitions:list?${query}`)
-      const b = body as { items?: unknown; definitions?: unknown; cursor?: unknown } | null
+      const b = body as { items?: unknown; definitions?: unknown; cursor?: unknown; message?: unknown } | null
       const rows = Array.isArray(b?.items) ? b.items : Array.isArray(b?.definitions) ? b.definitions : undefined
-      if (status !== 200 || rows === undefined) throw new CellUnavailable(status, status === 404 ? "Dashboards can't be listed yet: the cell has no route to read them back." : undefined)
+      if (status !== 200 || rows === undefined) {
+        throw new CellUnavailable(status, status === 404 ? "Dashboards can't be listed yet: the cell has no route to read them back." : typeof b?.message === "string" ? b.message : undefined, parseUnavailableDetail(body))
+      }
       return {
         items: rows.map((row: { id: string; title?: string; version: number; lifecycle?: string; updatedAtMs?: number }) => ({ id: row.id, title: row.title ?? "", version: row.version, lifecycle: row.lifecycle ?? "", updatedAtMs: row.updatedAtMs ?? 0 })),
         cursor: typeof b?.cursor === "string" ? b.cursor : null,
@@ -190,16 +300,18 @@ export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host", scop
     },
     get: async (id) => {
       const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`)
-      const b = body as { id?: unknown; kind?: unknown; version?: unknown; payload?: unknown; code?: unknown } | null
+      const b = body as { id?: unknown; kind?: unknown; version?: unknown; payload?: unknown; code?: unknown; message?: unknown } | null
       if (status === 404 && b?.code === "definition.not_found") return undefined
-      if (status !== 200 || typeof b?.version !== "number" || !isDashboard(b.payload)) throw new CellUnavailable(status, status === 404 ? "Dashboards can't be reopened yet: the cell has no route to read them back." : undefined)
+      if (status !== 200 || typeof b?.version !== "number" || !isDashboard(b.payload)) {
+        throw new CellUnavailable(status, status === 404 ? "Dashboards can't be reopened yet: the cell has no route to read them back." : typeof b?.message === "string" ? b.message : undefined, parseUnavailableDetail(body))
+      }
       return { id: String(b.id ?? id), version: b.version, dashboard: b.payload }
     },
     admit: async (id, dashboard) => {
       const { status, body } = await post("/v1/definitions:admit", { kind: KIND, id, payload: dashboard })
-      const b = body as { admitted?: unknown } | null
+      const b = body as { admitted?: unknown; message?: unknown } | null
       if (status === 404) throw new NotConnected()
-      if (status !== 200 || typeof b?.admitted !== "boolean") throw new CellUnavailable(status)
+      if (status !== 200 || typeof b?.admitted !== "boolean") throw new CellUnavailable(status, typeof b?.message === "string" ? b.message : undefined, parseUnavailableDetail(body))
       return b.admitted ? { admitted: true } : { admitted: false, findings: findingsOf(b) }
     },
     install: async (id, dashboard, expectedVersion) => installed(await post("/v1/definitions:install", { kind: KIND, id, payload: dashboard, ...expectedVersion === undefined ? {} : { expectedVersion } })),

@@ -50,6 +50,19 @@ test("markings: a marked value shows the server's projection, tagged hidden from
   await expect(name.locator('[data-masked="pseudonym"]')).toBeVisible()
   await expect(name.locator('[data-marking="pii.contact"]')).toBeVisible()
   await expect(name.locator("[data-reveal]")).toHaveCount(0)
+  // #1520: pseudonym chip and its projection hint never truncate on desktop or narrow viewports.
+  for (const width of [1440, 768]) {
+    await page.setViewportSize({ width, height: 1000 })
+    const overflow = await name.evaluate((row) => {
+      const checks = Array.from(row.querySelectorAll<HTMLElement>('[data-masked="pseudonym"], [data-mask-hint]'))
+      return checks.map((el) => ({ text: el.textContent ?? "", scrollW: el.scrollWidth, clientW: el.clientWidth }))
+    })
+    expect(overflow.length).toBeGreaterThanOrEqual(2)
+    for (const item of overflow) {
+      expect(item.scrollW, `truncated at ${width}px: ${item.text}`).toBeLessThanOrEqual(item.clientW + 1)
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 })
   await shoot(page, "party-member")
 })
 

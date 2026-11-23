@@ -50,6 +50,11 @@ export interface SheetDocument {
   readonly payload: { readonly ux: { readonly pages: readonly { readonly root: WidgetNodeDoc; readonly machine: Machine }[] } }
 }
 
+export interface SheetLawInfo {
+  readonly name?: string
+  readonly rationale?: string
+}
+
 export interface SheetOptions {
   readonly document: SheetDocument
   readonly decision: SheetDecision
@@ -62,6 +67,12 @@ export interface SheetOptions {
   readonly locale?: Locale
   /** The cell's clock now (for the countdown); the host keeps it current with `setNow`. */
   readonly now?: number
+  /** Show technical identifiers (refusal code, subject, law pin) on refusal panels. */
+  readonly technical?: boolean
+  /** The verified caller, as the cell named them (`GET /v1/access`); defaults to "You". */
+  readonly caller?: string
+  /** Optional catalog metadata for disclosed law pins (never read on redacted refusals). */
+  readonly laws?: Readonly<Record<string, SheetLawInfo>>
   /** The machine reached a terminal state. */
   readonly onSettled?: (state: string) => void
   /** The person is done with the sheet (Back to inbox, or the machine closed). */
@@ -91,6 +102,14 @@ const WORDS = {
     leaveBody: "Nothing has been sent. Your choice and note will be cleared; the decision stays in your inbox.", left: "{0} left", lapsed: "Expired",
     "call.committed": "The approved call committed.", "call.refused": "The approved call was refused ({0}); this approval never runs it again.",
     "call.not_executed": "Approved; waiting for the requester to run it.",
+    refusedBadge: "Refused", refusedDisclosedHead: "This choice breaks a rule, so nothing was decided.", refusedRedactedHead: "Refused by a rule. Nothing was decided.",
+    stepRequest: "The request", stepCheck: "The check", stepResult: "The result",
+    reqDecision: "Decision", reqChoice: "Choice", reqNote: "Note",
+    resWho: "Who", resDecidedAt: "Decided at", resReceivedAt: "Received at", resWhy: "Why", resKept: "Kept",
+    you: "You", fails: "Fails", refusedRedactedCheck: "It does not say which rule, or which values, to your role.",
+    refusedRedactedWhy: "A rule this choice would break. Your role is not told which.",
+    refusedKept: "Nothing was decided. The cell keeps no receipt of a refused call.",
+    checkedValues: "The values it checked",
   },
   ar: {
     "risk.low": "مخاطرة منخفضة", "risk.medium": "مخاطرة متوسطة", "risk.high": "مخاطرة عالية", suggested: "مقترح", suggestedTitle: "توصية الوكيل؛ والقرار لك.",
@@ -110,6 +129,14 @@ const WORDS = {
     leaveBody: "لم يُرسل شيء. سيُمسح اختيارك وملاحظتك؛ ويبقى القرار في صندوقك.", left: "متبقٍ {0}", lapsed: "انتهت المهلة",
     "call.committed": "نُفّذ الإجراء الموافق عليه.", "call.refused": "رُفض الإجراء الموافق عليه ({0})؛ ولن تنفّذه هذه الموافقة مرة أخرى.",
     "call.not_executed": "تمت الموافقة ولم يُنفّذ بعد: يُنفّذ عندما يعيد مقدّم الطلب المحاولة.",
+    refusedBadge: "مرفوض", refusedDisclosedHead: "هذا الاختيار يخالف قاعدة، لذلك لم يُتخذ قرار.", refusedRedactedHead: "مرفوض بموجب قاعدة. لم يُتخذ قرار.",
+    stepRequest: "الطلب", stepCheck: "الفحص", stepResult: "النتيجة",
+    reqDecision: "القرار", reqChoice: "الاختيار", reqNote: "الملاحظة",
+    resWho: "من", resDecidedAt: "وقت القرار", resReceivedAt: "وقت الاستلام", resWhy: "السبب", resKept: "المحفوظ",
+    you: "أنت", fails: "فشل", refusedRedactedCheck: "لا تذكر الخلية القاعدة أو القيم لدورك.",
+    refusedRedactedWhy: "قاعدة يخالفها هذا الاختيار. لا يُكشف لدورك أي قاعدة.",
+    refusedKept: "لم يُتخذ أي قرار. لا تحتفظ الخلية بإيصال لطلب مرفوض.",
+    checkedValues: "القيم التي فُحصت",
   },
 } as const satisfies Record<Locale, Record<string, string>>
 
@@ -187,15 +214,17 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
   const options = decision.options
     .map(
       (option) => `
-      <label class="norn-option" data-slot="label" data-option="${escape(option.id)}">
-        <ui-radio value="${escape(option.id)}" aria-label="${escape(option.label)}"><ui-radio-indicator></ui-radio-indicator></ui-radio>
-        <span class="norn-option-text">
-          <span class="norn-option-label">${escape(option.label)}${option.id === decision.agentPick ? ` <span class="norn-chip" data-tone="agent" title="${escape(w.suggestedTitle)}">${escape(w.suggested)}</span>` : ""}</span>
-          ${scopes.size > 1 ? `<span class="norn-meta">${escape(option.scope)}</span>` : ""}
-          <span class="norn-meta">${escape("action" in option.effect ? w.starts : w.records)}</span>
-          <span class="norn-note" role="status" data-refusal hidden></span>
-        </span>
-      </label>`,
+      <div class="norn-option" data-option="${escape(option.id)}">
+        <label class="norn-option-row" data-slot="label">
+          <ui-radio value="${escape(option.id)}" aria-label="${escape(option.label)}"><ui-radio-indicator></ui-radio-indicator></ui-radio>
+          <span class="norn-option-text">
+            <span class="norn-option-label">${escape(option.label)}${option.id === decision.agentPick ? ` <span class="norn-chip" data-tone="agent" title="${escape(w.suggestedTitle)}">${escape(w.suggested)}</span>` : ""}</span>
+            ${scopes.size > 1 ? `<span class="norn-meta">${escape(option.scope)}</span>` : ""}
+            <span class="norn-meta">${escape("action" in option.effect ? w.starts : w.records)}</span>
+          </span>
+        </label>
+        <div class="norn-refusal-slot" role="status" data-refusal hidden></div>
+      </div>`,
     )
     .join("")
   return `
@@ -271,6 +300,123 @@ function problems(body: unknown): readonly Problem[] {
   })
 }
 
+const UNPROVEN_DETAIL = "diagnostic detail is unavailable under the caller's disclosure authority"
+const GENERIC_LAW_MESSAGE = new Set(["a declared precondition does not hold", "the decider law is not satisfied"])
+
+function refusalPanelMarkup(
+  body: unknown,
+  context: {
+    readonly decision: SheetDecision
+    readonly choiceLabel: string
+    readonly note: string
+    readonly locale: Locale
+    readonly technical: boolean
+    readonly caller: string | undefined
+    readonly laws: Readonly<Record<string, SheetLawInfo>> | undefined
+    readonly receivedAt: Date
+  },
+): { readonly html: string; readonly variant: "" | "disclosed" | "redacted" } {
+  const w = WORDS[context.locale]
+  const top = record(body)
+  const code = text(top.code) ?? ""
+  const message = text(top.message) ?? ""
+  const explanation = text(top.explanation) ?? ""
+  const decidedAt = text(top.decidedAt)
+  const rawReason = record(top.reason)
+  const law = text(rawReason.law)
+  const disclosed = law !== null && law !== ""
+  const isLaw = disclosed || code === "core.laws.violated" || code === "decision.law_not_satisfied"
+  if (!isLaw) {
+    const plain = [message, explanation].filter(Boolean).join(" ")
+    return { html: plain === "" ? "" : `<span class="norn-note">${escape(plain)}</span>`, variant: "" }
+  }
+  const variant: "disclosed" | "redacted" = disclosed ? "disclosed" : "redacted"
+  const pin = record(rawReason.pin)
+  const pinArtifact = text(pin.artifactId)
+  const pinVersion = text(pin.version)
+  const subject = text(rawReason.subject) ?? ""
+  const values = record(rawReason.values)
+  const valueEntries = Object.entries(values)
+  // Catalog metadata is read ONLY when the server disclosed the law reason; never on a redacted refusal.
+  const lawInfo = disclosed ? (context.laws?.[pinArtifact ?? ""] ?? context.laws?.[law]) : undefined
+
+  const cellTime = decidedAt !== null && !Number.isNaN(Date.parse(decidedAt)) ? new Date(decidedAt) : null
+  const shownTime = cellTime ?? context.receivedAt
+  const timeIso = cellTime !== null ? decidedAt! : shownTime.toISOString()
+  const timeLabel = cellTime !== null ? w.resDecidedAt : w.resReceivedAt
+  const formattedTime = shownTime.toLocaleString(context.locale, { dateStyle: "medium", timeStyle: "short" })
+
+  const reqRows: [string, string][] = [
+    [w.reqDecision, context.decision.question],
+    [w.reqChoice, context.choiceLabel],
+    ...(context.note.trim() !== "" ? [[w.reqNote, context.note] as [string, string]] : []),
+  ]
+  const checkBody = disclosed
+    ? (() => {
+        const lead = lawInfo?.rationale ?? (message || law)
+        const chips = valueEntries.length > 0
+          ? `<div class="norn-checked-list" aria-label="${escape(w.checkedValues)}">${valueEntries.map(([k, v]) =>
+            `<span class="norn-checked-chip" data-checked="${escape(k)}"><span class="norn-checked-key">${escape(k.replaceAll(".", " ").replaceAll("_", " "))}</span><span class="norn-checked-val">${escape(typeof v === "string" ? v : JSON.stringify(v))}</span></span>`).join("")}</div>`
+          : ""
+        const extraNote = explanation !== "" && explanation !== lead && explanation !== message && explanation !== UNPROVEN_DETAIL
+          ? `<p class="norn-meta">${escape(explanation)}</p>` : ""
+        const tech = context.technical
+          ? `<div class="norn-refusal-tech"><span>${escape([code, subject].filter(Boolean).join(" · "))}</span>${pinArtifact ? `<span>${escape(`${pinArtifact}@${pinVersion ?? "?"}`)}</span>` : ""}${explanation ? `<span>${escape(explanation)}</span>` : ""}</div>`
+          : ""
+        return `<p class="norn-refusal-check-lead"><span>${escape(lead)}</span><span class="norn-chip" data-tone="risk-high" data-verdict="fails">${escape(w.fails)}</span></p>${chips}${extraNote}${tech}`
+      })()
+    : (() => {
+        const parts: string[] = []
+        if (message !== "") parts.push(`<p class="norn-refusal-check-msg">${escape(message)}</p>`)
+        if (explanation !== "" && explanation !== UNPROVEN_DETAIL && explanation !== message) {
+          parts.push(`<p class="norn-meta">${escape(explanation)}</p>`)
+        }
+        if (explanation === "" || explanation === UNPROVEN_DETAIL) {
+          parts.push(`<p class="norn-meta">${escape(w.refusedRedactedCheck)}</p>`)
+        }
+        const tech = context.technical && code !== "" ? `<div class="norn-refusal-tech"><span>${escape(code)}</span></div>` : ""
+        return `${parts.join("")}${tech}`
+      })()
+
+  const whyText = disclosed
+    ? (lawInfo?.name ?? lawInfo?.rationale ?? (message || explanation || law))
+    : (message !== "" && !GENERIC_LAW_MESSAGE.has(message) ? message : w.refusedRedactedWhy)
+
+  const html = `
+    <div class="norn-refusal-card">
+      <div class="norn-refusal-header">
+        <span class="norn-chip" data-tone="risk-high">${escape(w.refusedBadge)}</span>
+        <span class="norn-refusal-head">${escape(disclosed ? w.refusedDisclosedHead : w.refusedRedactedHead)}</span>
+      </div>
+      <ol class="norn-refusal-steps">
+        <li class="norn-refusal-step">
+          <section aria-label="${escape(w.stepRequest)}">
+            <h4>${escape(w.stepRequest)}</h4>
+            <dl class="norn-refusal-dl">${reqRows.map(([k, v]) => `<dt>${escape(k)}</dt><dd>${escape(v)}</dd>`).join("")}</dl>
+          </section>
+        </li>
+        <li class="norn-refusal-step">
+          <section aria-label="${escape(w.stepCheck)}">
+            <h4>${escape(w.stepCheck)}</h4>
+            ${checkBody}
+          </section>
+        </li>
+        <li class="norn-refusal-step">
+          <section aria-label="${escape(w.stepResult)}">
+            <h4>${escape(w.stepResult)}</h4>
+            <dl class="norn-refusal-dl">
+              <dt>${escape(w.resWho)}</dt><dd>${escape(context.caller ?? w.you)}</dd>
+              <dt>${escape(timeLabel)}</dt><dd><time datetime="${escape(timeIso)}" title="${escape(timeIso)}">${escape(formattedTime)}</time></dd>
+              <dt>${escape(w.resWhy)}</dt><dd>${escape(whyText)}</dd>
+              <dt>${escape(w.resKept)}</dt><dd>${escape(w.refusedKept)}</dd>
+            </dl>
+          </section>
+        </li>
+      </ol>
+    </div>`
+  return { html, variant }
+}
+
 /**
  * Mount one decision into `root` and run its machine. Returns the driver so a host can dispose it.
  * Every control's presence and enabled state comes from the machine via `enabled`.
@@ -292,13 +438,20 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
   adoptSheetStyles(root.ownerDocument)
   root.innerHTML = sheetMarkup(document, decision, locale)
   let lastBody: unknown
-  // The server's words for the refused choice, kept from the refusal that refused it.
-  let refusedWhy = ""
+  let lastRefusedAt: Date = new Date()
+  let lastSentNote = ""
+  // The server's refusal panel for the refused choice, kept from the refusal that refused it.
+  let refusedPanel: { readonly html: string; readonly variant: "" | "disclosed" | "redacted" } = { html: "", variant: "" }
   let now = options.now
+  let technical = options.technical === true
+  let caller = options.caller
+  let laws = options.laws
   const transport: Transport = {
     async call(call, input, callOptions) {
+      lastSentNote = typeof input.note === "string" ? input.note : ""
       const classified = await options.transport.call(call, input, callOptions)
       lastBody = classified.body
+      if (classified.outcome === "refused") lastRefusedAt = new Date()
       return classified
     },
   }
@@ -446,17 +599,35 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
       problem.hidden = words === ""
     }
     // A choice the cell refused by law or permission stays refused: its radio is disabled and the
-    // server's reason and next step read under it, while the other options stay open.
+    // server's structured request/check/result refusal panel reads under it, while other options stay open.
     const refusedChoice = typeof snapshot.fields.refusedChoice === "string" ? snapshot.fields.refusedChoice : null
-    if (state === "refused" && refusedChoice !== null) refusedWhy = [text(top.message), text(top.explanation)].filter(Boolean).join(" ")
+    if (state === "refused" && refusedChoice !== null) {
+      refusedPanel = refusalPanelMarkup(lastBody, {
+        decision,
+        choiceLabel: optionLabel(refusedChoice),
+        note: lastSentNote,
+        locale,
+        technical,
+        caller,
+        laws,
+        receivedAt: lastRefusedAt,
+      })
+    }
     for (const option of root.querySelectorAll<HTMLElement>("[data-option]")) {
       const refused = option.dataset.option === refusedChoice
       option.toggleAttribute("data-refused", refused)
       option.querySelector("ui-radio")?.toggleAttribute("disabled", refused)
       const why = option.querySelector<HTMLElement>("[data-refusal]")
       if (why) {
-        why.textContent = refused ? refusedWhy : ""
-        why.hidden = !refused
+        if (refused) {
+          why.setAttribute("data-refusal", refusedPanel.variant)
+          why.innerHTML = refusedPanel.html
+          why.hidden = refusedPanel.html === ""
+        } else {
+          why.setAttribute("data-refusal", "")
+          why.innerHTML = ""
+          why.hidden = true
+        }
       }
     }
     // The radio group shows the machine's choice: a refusal that clears it unchecks the option.
@@ -542,6 +713,12 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     now = ms
     paint(driver.snapshot())
   }
+  ;(root as HTMLElement & { setContext?: (next: { readonly technical?: boolean; readonly caller?: string; readonly laws?: Readonly<Record<string, SheetLawInfo>> }) => void }).setContext = (next) => {
+    technical = next.technical === true
+    caller = next.caller
+    laws = next.laws
+    paint(driver.snapshot())
+  }
   paint(driver.snapshot())
   if (engine === null) {
     void Promise.resolve(options.evaluate).then(
@@ -571,6 +748,8 @@ export interface NornDecisionSheet extends HTMLElement {
   choose(optionId: string): boolean
   /** Repaint the countdown at the cell's clock `ms`; there once the sheet has mounted. */
   readonly setNow?: (ms: number) => void
+  /** Update view/caller/law display context without resetting the sheet's machine. */
+  readonly setContext?: (next: { readonly technical?: boolean; readonly caller?: string; readonly laws?: Readonly<Record<string, SheetLawInfo>> }) => void
 }
 
 /**

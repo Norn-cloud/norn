@@ -3,7 +3,8 @@ import { useState } from "react"
 import { Link, useRouterState } from "@tanstack/react-router"
 import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale, ShieldCheck } from "lucide-react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
+import { PageHeader, Panel, Well } from "@/components/panel"
 import { useMode } from "@/lib/live-transport"
 import { TableCard } from "@/components/table-card"
 import { Badge } from "@/components/ui/badge"
@@ -201,20 +202,33 @@ export function useGuaranteesMenu(): readonly MenuEntry[] | undefined {
 /** A connected cell's laws, every type's together: what each must keep and how the cell holds it. */
 function LiveLaws() {
   const { read, catalog } = useCatalog()
-  if (read.isPending) return <p className="text-muted-foreground">Reading definitions…</p>
-  if (read.isError) return <p className="text-destructive">{read.error.message}</p>
-  const governed = catalog?.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type") ?? []
   return (
-    <div className="space-y-5">
-      {governed.length === 0 && <EmptyState icon={Scale}>No admitted law governs a type in this cell.</EmptyState>}
-      {governed.length > 0 && <StatStrip>
-        <KpiTile icon={Scale} label="Laws in force" value={governed.reduce((sum, { laws, rules }) => sum + laws.length + rules.filter((rule) => !laws.some(({ rationale }) => rationale === rule)).length, 0)} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
-        <KpiTile icon={ShieldCheck} label="Refuse a breaking write" value={governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "error").length, 0)} sub="checked on every write" />
-      </StatStrip>}
-      <p className="flex items-start gap-2 text-meta text-muted-foreground"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />{ENFORCED}</p>
-      {governed.map((concept) => <LawsPanel key={concept.name} concept={concept} enforced={false}
-        label={<Link to="/sources/$concept" params={{ concept: concept.name }} className="underline-offset-4 hover:underline">{concept.title}</Link>} />)}
-    </div>
+    <LoadState
+      status={read.status}
+      data={catalog}
+      error={read.error}
+      isFetching={read.isFetching}
+      onRetry={() => void read.refetch()}
+      skeleton="cards"
+      loadingLabel="Reading guarantees"
+      isEmpty={(data) => data.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type").length === 0}
+      empty={{ icon: Scale, title: "No laws declared", description: "No admitted law governs a type in this cell." }}
+    >
+      {(data) => {
+        const governed = data.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type")
+        return (
+          <div className="space-y-5">
+            <StatStrip>
+              <KpiTile icon={Scale} label="Laws in force" value={governed.reduce((sum, { laws, rules }) => sum + laws.length + rules.filter((rule) => !laws.some(({ rationale }) => rationale === rule)).length, 0)} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
+              <KpiTile icon={ShieldCheck} label="Refuse a breaking write" value={governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "error").length, 0)} sub="checked on every write" />
+            </StatStrip>
+            <p className="flex items-start gap-2 text-meta text-muted-foreground"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />{ENFORCED}</p>
+            {governed.map((concept) => <LawsPanel key={concept.name} concept={concept} enforced={false}
+              label={<Link to="/sources/$concept" params={{ concept: concept.name }} className="underline-offset-4 hover:underline">{concept.title}</Link>} />)}
+          </div>
+        )
+      }}
+    </LoadState>
   )
 }
 
@@ -227,7 +241,11 @@ export function GuaranteesPage() {
     </section>
   )
   // The recording shows only once Studio has decided there is no cell: never while it is still connecting.
-  if (mode.data?.kind !== "recorded") return mode.isError ? <p role="alert" className="text-destructive">{mode.error.message}</p> : <p className="text-muted-foreground">Connecting to the cell…</p>
+  if (mode.data?.kind !== "recorded") {
+    return mode.isError
+      ? <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={() => void mode.refetch()} />
+      : <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void mode.refetch()}>{() => null}</LoadState>
+  }
   return <RecordedGuarantees />
 }
 
@@ -250,8 +268,8 @@ function RecordedGuarantees() {
         <h1 className="text-title font-semibold tracking-tight">Guarantees</h1>
         <p className="max-w-2xl text-muted-foreground">The recorded law, and how strongly it is checked. The model checker explores every case within stated bounds; a broken copy of the definition shows it catches a real mistake.</p>
       </div>
-      {read.isPending && <p className="text-muted-foreground">Reading guarantees…</p>}
-      {read.isError && <p className="text-destructive">{read.error.message}</p>}
+      {read.isPending && <LoadState status="pending" skeleton="cards" loadingLabel="Reading guarantees" onRetry={() => void read.refetch()}>{() => null}</LoadState>}
+      {read.isError && <LoadState status="error" error={read.error} isFetching={read.isFetching} onRetry={() => void read.refetch()}>{() => null}</LoadState>}
       {declared && <Hero declared={declared} broken={document("mutant")} />}
       {read.data && (
         <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="group/details">

@@ -23,9 +23,13 @@ test("the declared additivity wins over the label, and each reduction reads in w
 test("a metric that says nothing about how it combines is never called a total", () => {
   expect(additivityOf({ label: "Quantity" })).toBeUndefined()
   expect(metricHeading({ kind: "simple", expression: "quantity", label: "Quantity" })).toBe("Quantity")
-  // A ratio keeps the deriver's label; it is not a sum of sums.
+  // A ratio reads in plain words in Business view (preferring server `display` over parsed formula)
+  // and keeps the deriver's raw formula label in Technical view.
   expect(additivityOf(RATIO)).toBeUndefined()
-  expect(metricHeading(RATIO)).toBe(RATIO.label)
+  expect(metricHeading(RATIO)).toBe("Output fine g ÷ input fine g")
+  expect(metricHeading(RATIO, "period", "technical")).toBe(RATIO.label)
+  expect(metricHeading({ ...RATIO, display: "fine yield" })).toBe("Fine yield")
+  expect(metricHeading({ ...RATIO, display: "fine yield" }, "period", "technical")).toBe(RATIO.label)
 })
 
 test("the assistant's suggested requests read a type's id in a metric label as its title, never the raw id", async () => {

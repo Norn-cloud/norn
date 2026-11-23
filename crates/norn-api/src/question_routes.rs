@@ -1001,6 +1001,10 @@ pub struct NornMetricSummary {
     pub name: String,
     /// Its label.
     pub label: String,
+    /// Plain-word display name for business views, when declared or derived.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(required = false, nullable = false)]
+    pub display: Option<String>,
     /// `simple`, `ratio`, `cumulative`, `derived` or `conversion`.
     pub kind: String,
     /// The concept it aggregates, for a simple metric.
@@ -1049,6 +1053,7 @@ pub fn metric_summary(
     NornMetricSummary {
         name: definition.name.clone(),
         label: definition.label.clone(),
+        display: definition.display.clone(),
         kind: serde_json::to_value(definition.metric_type)
             .ok()
             .and_then(|kind| kind.as_str().map(str::to_owned))

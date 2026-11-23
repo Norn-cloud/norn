@@ -4,7 +4,7 @@
  * apart from transport.ts, which finds recordings with Vite's import.meta.glob.
  */
 import { useQuery } from "@tanstack/react-query"
-import { CellUnavailable, StudioScopeError, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, parseUnavailableDetail, readStudioScope, recordCellReachable, scopedHostFetch, type StudioScope, type UnavailableDetail } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
@@ -79,9 +79,14 @@ export async function readMode(fetcher: Fetch): Promise<Mode> {
   if (response.status === 404 || (response.status === 503 && (() => { try { return (JSON.parse(text) as { error?: unknown }).error === NO_HOST } catch { return false } })())) return { kind: "recorded" }
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { return { kind: "recorded" } }
-  if (!response.ok) throw new CellUnavailable(response.status, (parsed as { message?: unknown } | null)?.message as string | undefined)
+  if (!response.ok) {
+    const raw = parsed as { message?: unknown } | null
+    const message = typeof raw?.message === "string" && raw.message !== "" ? raw.message : undefined
+    throw new CellUnavailable(response.status, message, parseUnavailableDetail(parsed))
+  }
   const artifacts = (parsed as { artifacts?: unknown } | null)?.artifacts
   if (!Array.isArray(artifacts)) throw new CellUnavailable(response.status, "The cell's definitions read carried no artifacts.")
+  recordCellReachable()
   const read = readDocument<{ readonly artifacts: readonly Artifact[] }>(text, "live")
   return { kind: "live", catalog: subRead(read, "/artifacts", read.document.artifacts), counts: countsOf(read.document) }
 }
@@ -95,9 +100,10 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
     const text = await response.text()
     if (response.status === 404) return null
     if (!response.ok) {
-      let message: string | undefined
-      try { message = (JSON.parse(text) as { message?: string }).message } catch { /* not a refusal document */ }
-      throw new CellUnavailable(response.status, message)
+      let parsed: unknown = null
+      try { parsed = JSON.parse(text) } catch { /* not a refusal document */ }
+      const message = typeof (parsed as { message?: unknown } | null)?.message === "string" ? (parsed as { message: string }).message : undefined
+      throw new CellUnavailable(response.status, message, parseUnavailableDetail(parsed))
     }
     return readDocument<T>(text, "live")
   }
@@ -133,31 +139,78 @@ export function currentMode(fetcher: Fetch = browserFetch): Promise<Mode> {
   return mode
 }
 
-/** A refusal the cell sent for a read: its code and message, shown as they are. */
+/** A refusal the cell sent for a read: its code, message, and structured detail, shown honestly. */
 export class CellRefusal extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) { super(message) }
+  readonly explanation: string | undefined
+  readonly retryable: boolean | undefined
+  readonly incidentId: string | undefined
+  readonly category: string | undefined
+  readonly decidedAt: string | undefined
+
+  constructor(readonly status: number, readonly code: string, message: string, detail: UnavailableDetail = {}) {
+    super(message)
+    this.explanation = detail.explanation
+    this.retryable = detail.retryable
+    this.incidentId = detail.incidentId
+    this.category = detail.category
+    this.decidedAt = detail.decidedAt
+  }
 }
 
 /**
  * One scoped read of a cell route, with every number's exact text. A route this cell does not
- * serve (a 404 `route.not_found`, or a 503) is {@link NotServed} under `what`; any other refusal
- * is the cell's {@link CellRefusal}.
+ * serve (a 404 `route.not_found`, or a deployment with no host configured) is {@link NotServed}
+ * under `what`; a cell-level 503 refusal (such as `cell.unopenable`) preserves its code,
+ * explanation, `retryable`, and `incidentId` as {@link CellUnavailable}; any other Norn refusal is
+ * {@link CellRefusal}.
  */
 export async function cellRead<T>(path: string, what: string, init: RequestInit = {}, fetcher: Fetch = browserFetch): Promise<Read<T>> {
   const call = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
   const response = await call(path, { ...init, headers: { accept: "application/json", ...init.body === undefined ? {} : { "content-type": "application/json" }, ...init.headers } })
   const text = await response.text()
   if (response.ok) return readDocument<T>(text, "live")
-  let refusal: { code?: unknown; message?: unknown } | null = null
-  try { refusal = JSON.parse(text) as { code?: unknown; message?: unknown } } catch { /* not a refusal document */ }
-  if (response.status === 503 || (response.status === 404 && (refusal?.code === "route.not_found" || refusal?.code === undefined))) throw new NotServed(what)
-  if (typeof refusal?.code === "string") throw new CellRefusal(response.status, refusal.code, typeof refusal.message === "string" ? refusal.message : refusal.code)
-  throw new CellUnavailable(response.status)
+  let refusal: { code?: unknown; message?: unknown; error?: unknown } | null = null
+  try { refusal = JSON.parse(text) as { code?: unknown; message?: unknown; error?: unknown } } catch { /* not a refusal document */ }
+  const detail = parseUnavailableDetail(refusal)
+  if (response.status === 404 && (refusal?.code === "route.not_found" || refusal?.code === undefined)) throw new NotServed(what)
+  if (response.status === 503 && refusal?.error === NO_HOST) throw new NotServed(what)
+  if (response.status === 503) {
+    const message = typeof refusal?.message === "string" && refusal.message !== "" ? refusal.message : undefined
+    throw new CellUnavailable(response.status, message, detail)
+  }
+  if (typeof refusal?.code === "string") {
+    throw new CellRefusal(response.status, refusal.code, typeof refusal.message === "string" ? refusal.message : refusal.code, detail)
+  }
+  throw new CellUnavailable(response.status, typeof refusal?.message === "string" ? refusal.message : undefined, detail)
 }
 
+/**
+ * Whether a mode-read error is transient and worth a brief automatic retry. A refusal with
+ * `retryable: false` (such as `503 cell.unopenable`) and non-transient 4xx answers are never
+ * retried automatically, so Studio settles immediately into an honest unavailable state.
+ */
+export function isRetryableModeError(error: unknown): boolean {
+  if (!(error instanceof CellUnavailable)) return false
+  if (error.retryable === false) return false
+  if (error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) return false
+  return true
+}
+
+/**
+ * Brief, bounded automatic retries for transient outages (~5.6 s total) before settling into a
+ * persistent Workspace unavailable state. Non-retryable refusals (`retryable: false`) settle
+ * immediately without ever rendering "Retrying…".
+ */
+export const MODE_AUTO_RETRIES = 3
+
 /** Where this page load reads from, for a page that shows something only a connected cell has. */
-/** The mode, retried while the session server or the cell does not answer (backing off to 8 s); its error is shown, never replaced by the recording. */
-export const useMode = () => useQuery({ queryKey: ["studio-mode"], queryFn: () => currentMode(), retry: 6, retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000), staleTime: Infinity })
+export const useMode = () => useQuery({
+  queryKey: ["studio-mode"],
+  queryFn: () => currentMode(),
+  retry: (failureCount, error) => isRetryableModeError(error) && failureCount < MODE_AUTO_RETRIES,
+  retryDelay: (attempt) => Math.min(800 * 2 ** attempt, 3200),
+  staleTime: Infinity,
+})
 
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type). */
 export function refreshMode(): void { mode = undefined }

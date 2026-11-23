@@ -38,7 +38,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::approvals::{CallState, HeldCall};
-use crate::authz::{AccessRequest, Operation, ReadCapability, ReadRequest};
+use crate::authz::{
+    AccessRequest, Operation, ReadCapability, ReadRequest, RefusalDetailRequest,
+};
 use crate::flow_definitions::DECISION_FUNCTION;
 use crate::flow_driver::{AsStarter, Delivery, result_turn};
 use crate::host::{ActionCell, DevHost};
@@ -56,6 +58,11 @@ pub const MAX_DECISION_PAGE: u32 = 200;
 
 /// The longest idempotency key, in bytes.
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 128;
+
+/// Governed action id passed to the refusal-detail PDP when a decision refusal
+/// has no callable governed action of its own (a binding choice or a decider
+/// law).
+pub const DECISION_REFUSAL_ACTION: &str = "norn.decision.decide";
 
 /// Stable `decision.*` refusal codes.
 pub mod decision_codes {
@@ -1351,9 +1358,10 @@ fn decide_held<E: SqlEngine>(
             "its deadline passed before anyone decided",
         )));
     }
-    check_answer(&decision, body)?;
+    let revealable = disclose_decision_refusal(host, actor, &decision, body);
+    check_answer(&cell, &decision, body, revealable)?;
     let recorded = match &decision.call {
-        None => record(&mut cell, &decision, body, actor, now)?,
+        None => record(&mut cell, &decision, body, actor, now, revealable)?,
         Some(held) => record_call(&mut cell, &decision, held, body, actor)?,
     };
     if !recorded {
@@ -1468,17 +1476,84 @@ pub struct DecideCall<'a> {
     pub now: LogicalTime,
 }
 
+/// Whether `actor` holds explicit refusal-detail disclosure authority for this
+/// decision (DIAG-DISCLOSE-1): asks the host authorizer for the chosen
+/// option's governed action (or the parked call's action), falling back to
+/// [`DECISION_REFUSAL_ACTION`] when the choice names no callable action.
+fn disclose_decision_refusal<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
+    decision: &OpenDecision,
+    body: &DecideRequest,
+) -> bool {
+    let check = |action_id: &str| {
+        host.authorizer
+            .disclose_refusal_detail(&RefusalDetailRequest {
+                scope: host.scope(),
+                actor,
+                action_id,
+            })
+    };
+    let option_action = decision
+        .request
+        .options
+        .iter()
+        .find(|option| option.id == body.choice)
+        .and_then(|option| option.effect.action.as_deref());
+    let held_action = decision
+        .call
+        .as_ref()
+        .map(|held| held.call.action.as_str());
+    option_action.is_some_and(check)
+        || held_action.is_some_and(check)
+        || check(DECISION_REFUSAL_ACTION)
+}
+
+/// Pin `law_id` to its installed law artifact when present in the cell's model.
+fn law_pin<E: SqlEngine>(cell: &ActionCell<E>, law_id: &str) -> Option<norn_ir::DataQualityRuleRef> {
+    cell.store()
+        .model()
+        .law_artifacts()
+        .iter()
+        .find_map(|artifact| {
+            let norn_ir::ArtifactPayload::Law(law) = &artifact.payload else {
+                return None;
+            };
+            (law.id == law_id).then(|| norn_ir::DataQualityRuleRef::Law {
+                artifact_id: artifact.artifact_id.clone(),
+                law_id: law.id.clone(),
+                version: artifact.version.clone(),
+            })
+        })
+}
+
 /// The answer's own refusals, in the contract's order: an unevaluable
 /// decider law, an unknown choice, a long note, a bad idempotency key.
-fn check_answer(decision: &OpenDecision, body: &DecideRequest) -> Result<(), Refusal> {
-    if decision.request.decider.law.is_some() {
-        // No decider law is evaluated on this host yet: fail closed.
-        return Err(Refusal::new(
+fn check_answer<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    decision: &OpenDecision,
+    body: &DecideRequest,
+    revealable: bool,
+) -> Result<(), Refusal> {
+    if let Some(law_id) = &decision.request.decider.law {
+        // No decider law is evaluated on this host yet: fail closed, carrying
+        // the law reason under the caller's disclosure authority (DIAG-DISCLOSE-1).
+        let mut refusal = Refusal::new(
             StatusCode::FORBIDDEN,
             decision_codes::LAW_NOT_SATISFIED,
             "the decider law is not satisfied",
             "this decision names a law the cell cannot evaluate for the caller",
-        ));
+        );
+        refusal.reason = Some(Box::new(norn_ir::RefusalReason {
+            law: law_id.clone(),
+            subject: format!("decision/{}", decision.id),
+            values: BTreeMap::from([(
+                "choice".to_owned(),
+                RuntimeValue::String(body.choice.clone()),
+            )]),
+            pin: law_pin(cell, law_id),
+        }));
+        return Err(refusal.project_detail(revealable));
     }
     if !decision
         .request
@@ -1525,6 +1600,7 @@ fn record<E: SqlEngine>(
     body: &DecideRequest,
     actor: &str,
     now: LogicalTime,
+    revealable: bool,
 ) -> Result<bool, Refusal> {
     let row = cell
         .store()
@@ -1554,6 +1630,7 @@ fn record<E: SqlEngine>(
         &flow,
         delivery(StepOutcome::Output(output.clone())),
         now,
+        revealable,
     )?;
     if cell
         .complete_parked(&decision.command, decision.generation, output.clone())
@@ -1562,7 +1639,13 @@ fn record<E: SqlEngine>(
     {
         return Ok(false);
     }
-    let commit = result_turn(cell, &flow, delivery(StepOutcome::Output(output)), now)?;
+    let commit = result_turn(
+        cell,
+        &flow,
+        delivery(StepOutcome::Output(output)),
+        now,
+        revealable,
+    )?;
     let resolved = DecisionResolved {
         decision_id: decision.id.clone(),
         command_id: decision.command.0.clone(),
@@ -1722,6 +1805,7 @@ pub(crate) fn expire<E: SqlEngine>(
         &flow,
         delivery(StepOutcome::Failure(failure.clone())),
         now,
+        false,
     )?;
     // An expiry recorded earlier whose resolving commit never landed is
     // resumed with exactly that recorded result; anything else recorded
@@ -1734,7 +1818,13 @@ pub(crate) fn expire<E: SqlEngine>(
     {
         return Ok(());
     }
-    let commit = result_turn(cell, &flow, delivery(StepOutcome::Failure(failure)), now)?;
+    let commit = result_turn(
+        cell,
+        &flow,
+        delivery(StepOutcome::Failure(failure)),
+        now,
+        false,
+    )?;
     let resolved = DecisionResolved {
         decision_id: decision.id.clone(),
         command_id: decision.command.0.clone(),

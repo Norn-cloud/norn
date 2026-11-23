@@ -25,8 +25,16 @@ export interface DatasetLoaded {
   readonly bytes: number
   readonly millis: number
 }
-/** L-connect's row-by-row load. */
-export interface RecordsLoaded { readonly connectionId: string; readonly objectType: string; readonly definitionsVersion: number }
+/** L-connect's row-by-row load: includes landed and quarantined row counts when served. */
+export interface RecordsLoaded {
+  readonly connectionId: string
+  readonly objectType: string
+  readonly definitionsVersion: number
+  readonly rowsRead?: number
+  readonly rowsLanded?: number
+  readonly rowsQuarantined?: number
+  readonly quarantineReasons?: Readonly<Record<string, number>>
+}
 
 type Put = (url: string, init: RequestInit) => Promise<Response>
 

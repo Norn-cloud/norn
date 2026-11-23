@@ -781,8 +781,13 @@ impl ReadPolicy {
         request: &RefusalDetailRequest<'_>,
     ) -> Option<(Pdp, authz::AccessRequest)> {
         let caller = self.member(request.actor)?;
-        self.action_policy()
-            .filter(|policy| policy.callable(request.action_id))?;
+        let allowed_target = request.action_id == norn_api::decisions::DECISION_REFUSAL_ACTION
+            || self
+                .action_policy()
+                .is_some_and(|policy| policy.callable(request.action_id));
+        if !allowed_target {
+            return None;
+        }
         let actor_kind = match caller.actor_kind {
             "user" => ActorKind::User,
             "service" => ActorKind::Service,

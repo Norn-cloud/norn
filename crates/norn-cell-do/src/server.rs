@@ -617,21 +617,27 @@ pub fn handle_all<E: SqlEngine>(
     // APPROVAL-1: a call an approval holds answers 202, so an action call
     // keeps its status.
     if let Some(action) = action_path(request.path) {
-        return respond_with(governed_call(
+        return respond_with_at(
+            governed_call(
+                Some(host),
+                questions,
+                actor.as_deref(),
+                (request.method, action, request.query, request.body),
+                request.now,
+            ),
+            request.now,
+        );
+    }
+    respond_at(
+        route(
             Some(host),
             questions,
+            kinds,
             actor.as_deref(),
-            (request.method, action, request.query, request.body),
-            request.now,
-        ));
-    }
-    respond(route(
-        Some(host),
-        questions,
-        kinds,
-        actor.as_deref(),
-        request,
-    ))
+            request,
+        ),
+        request.now,
+    )
 }
 
 /// What a caller nobody verified gets from a scope that has no cell: exactly
@@ -654,21 +660,22 @@ pub fn outside_with<E: SqlEngine>(
     kinds: &DefinitionKinds,
     request: &Request<'_>,
 ) -> Response {
-    respond(route::<E>(None, questions, kinds, None, request))
+    respond_at(route::<E>(None, questions, kinds, None, request), request.now)
 }
 
-pub(crate) fn respond(result: Result<String, Refusal>) -> Response {
-    respond_with(result.map(|body| (StatusCode::OK, body)))
+pub(crate) fn respond_at(result: Result<String, Refusal>, now: u64) -> Response {
+    respond_with_at(result.map(|body| (StatusCode::OK, body)), now)
 }
 
-/// A route's answer with its status, or its refusal, as the response.
-fn respond_with(result: Result<(StatusCode, String), Refusal>) -> Response {
+/// A route's answer with its status, or its refusal stamped with the request's
+/// host clock (`decidedAt`).
+fn respond_with_at(result: Result<(StatusCode, String), Refusal>, now: u64) -> Response {
     match result {
         Ok((status, body)) => Response {
             status: status.as_u16(),
             body,
         },
-        Err(refused) => crate::incident::respond(refused),
+        Err(refused) => crate::incident::respond_at(refused, now),
     }
 }
 
@@ -1746,13 +1753,16 @@ pub fn analytics<E: SqlEngine>(
     if let Some(kind) = records {
         let _request = RequestScope::new(principals);
         let actor = principals.resolve(request.authorization, request.now);
-        return Some(respond(engine_records(
-            host,
-            actor.as_deref(),
-            transport,
-            kind,
-            request.query,
-        )));
+        return Some(respond_at(
+            engine_records(
+                host,
+                actor.as_deref(),
+                transport,
+                kind,
+                request.query,
+            ),
+            request.now,
+        ));
     }
     // One dataset row by identity; a row's links, history and findings stay
     // the cell's, which has none for it.
@@ -1784,7 +1794,7 @@ pub fn analytics<E: SqlEngine>(
                 transport,
             )?)
         });
-        return Some(respond(answer));
+        return Some(respond_at(answer, request.now));
     }
     if let Some(answered) = dataset_lineage(host, principals, transport, request) {
         return Some(answered);
@@ -1819,7 +1829,7 @@ pub fn analytics<E: SqlEngine>(
             "a profile or an export takes GET; a load takes POST",
         )),
     };
-    Some(respond(result))
+    Some(respond_at(result, request.now))
 }
 
 /// The `(type, row)` segments of `/v1/datasets/{type}/rows/{row}:lineage`.
@@ -1858,7 +1868,7 @@ fn dataset_lineage<E: SqlEngine>(
             transport,
         )?)
     });
-    Some(respond(answer))
+    Some(respond_at(answer, request.now))
 }
 
 fn decoded(kind: &str) -> Result<String, Refusal> {
@@ -2140,14 +2150,17 @@ pub fn access<E: SqlEngine>(
     explainer: &RoleExplainer<'_>,
     request: &Request<'_>,
 ) -> Response {
-    respond(access_document(
-        Some(host),
-        principals,
-        caller,
-        object_types,
-        Some(explainer),
-        request,
-    ))
+    respond_at(
+        access_document(
+            Some(host),
+            principals,
+            caller,
+            object_types,
+            Some(explainer),
+            request,
+        ),
+        request.now,
+    )
 }
 
 /// `GET /v1/access` on a scope that has no cell, for a caller nobody
@@ -2157,14 +2170,17 @@ pub fn access_outside<E: SqlEngine>(
     principals: &dyn PrincipalResolver,
     request: &Request<'_>,
 ) -> Response {
-    respond(access_document::<E>(
-        None,
-        principals,
-        &CallerSlot::default(),
-        &[],
-        None,
-        request,
-    ))
+    respond_at(
+        access_document::<E>(
+            None,
+            principals,
+            &CallerSlot::default(),
+            &[],
+            None,
+            request,
+        ),
+        request.now,
+    )
 }
 
 /// The capabilities in the order `/v1/access` answers them, with their names.

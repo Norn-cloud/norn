@@ -10,6 +10,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { useView } from "@/lib/view"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -25,7 +26,7 @@ import { RestatementCard } from "./restatement.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
 import { AnswerView, AskedAnswer, RefusedNote } from "./answer-view.tsx"
-import { NotServed, useMode } from "./lib/live-transport.ts"
+import { useMode } from "./lib/live-transport.ts"
 import { metricHeading, metricQuestion, readMetrics, recentWindow, timeLabel, windowOf, type Condition, type MetricSummary } from "./lib/metrics.ts"
 import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
 import { evaluateQuestion } from "./lib/evaluate.ts"
@@ -80,7 +81,7 @@ function MetricCard({ metric, turn, onSettled }: {
   // The answer is read with the type's own declaration, as the cell admitted it.
   const objectType = typeNamed(metric.objectType)
   const declared = { metrics: readDocument<readonly Metric[]>("[]", "live"), objectType: readDocument<ObjectType>(JSON.stringify(objectType ?? { name: metric.objectType, properties: [] }), "live") }
-  const what = metricHeading(metric, window?.grain)
+  const what = metricHeading(metric, window?.grain, view)
   const sources = metric.unitPartition ?? []
   const change = (next: readonly Condition[]) => { setConditions(next); setPicked(null) }
   // Nothing to ask (no records, a refused profile, no window): this question is settled and the next may go.
@@ -94,8 +95,10 @@ function MetricCard({ metric, turn, onSettled }: {
         {view === "technical" && <span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span>}
       </header>
       <div className="space-y-4">
-        {profile.isPending && <p className="text-sm text-muted-foreground">{!seen ? "Waits until you scroll to it." : !turn ? "Waits for the questions above it." : `Reading ${conceptTitle(metric.objectType).toLowerCase()} records…`}</p>}
-        {profile.isError && !late && <p className="text-sm text-muted-foreground">{profile.error.message || "The cell did not say what it holds for this type."}</p>}
+        {profile.isPending && (!seen || !turn
+          ? <p className="text-sm text-muted-foreground">{!seen ? "Waits until you scroll to it." : "Waits for the questions above it."}</p>
+          : <LoadState status="pending" skeleton="panel" loadingLabel={`Reading ${conceptTitle(metric.objectType).toLowerCase()} records`} onRetry={() => void profile.refetch()}>{() => null}</LoadState>)}
+        {profile.isError && !late && <LoadState status="error" error={profile.error} isFetching={profile.isFetching} onRetry={() => void profile.refetch()}>{() => null}</LoadState>}
         {profile.data && profile.data.document.rows === 0 && (
           <EmptyState icon={Sigma} title={profile.data.document.withheldRows + profile.data.document.quarantinedRows === 0 ? "No records yet" : "No records to add up"}
             next={profile.data.document.withheldRows + profile.data.document.quarantinedRows === 0 && <Button asChild size="sm" variant="outline"><Link to="/sources"><Database />Load data or connect a source</Link></Button>}>
@@ -144,8 +147,8 @@ export function UnitGroups({ asked, grain, sources, title, declared, picked, onP
   // Settled once the totals are back, unless one group opens its answer per period (that answer settles it).
   const single = result?.kind === "answer" && unitGroups(sources, buckets({ question: totals, metrics: [], objectType: declared.objectType.document }, { answer: result.read.document, numbers: result.read.numbers, at: "" })).length === 1
   useEffect(() => { if (!run.isPending && !single) onSettled() }, [run.isPending, single, onSettled])
-  if (run.isPending) return <p className="text-sm text-muted-foreground">Asking the cell…</p>
-  if (run.isError || result === undefined) return <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : "no answer"}</p>
+  if (run.isPending) return <LoadState status="pending" skeleton="panel" loadingLabel="Reading metric totals" onRetry={() => void run.refetch()}>{() => null}</LoadState>
+  if (run.isError || result === undefined) return <LoadState status="error" error={run.error ?? new Error("The cell did not answer.")} isFetching={run.isFetching} onRetry={() => void run.refetch()}>{() => null}</LoadState>
   if (result.kind === "refused") return <RefusedNote refusal={result.refusal} />
   if (result.kind !== "answer") return <p role="status" className="text-sm text-muted-foreground">{result.kind === "not-a-question" ? result.findings.map(({ message }) => message).join(" ") : result.kind === "too-large" || result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>
   const rows = buckets({ question: totals, metrics: [], objectType: declared.objectType.document }, { answer: result.read.document, numbers: result.read.numbers, at: "" })
@@ -220,14 +223,31 @@ function Conditions({ fields, conditions, onChange }: { readonly fields: readonl
 /** The questions a connected cell can answer: the metrics it derives from its admitted types, grouped by type. */
 function LiveQuestionsBoard() {
   const metrics = useQuery({ queryKey: ["metrics"], queryFn: readMetrics, retry: false })
-  if (metrics.isPending) return <p className="text-muted-foreground">Reading what the cell can answer…</p>
-  if (metrics.isError) return metrics.error instanceof NotServed
-    ? <EmptyState icon={ChartLine} title="Not served">{metrics.error.message}</EmptyState>
-    : <p role="alert" className="text-destructive">{metrics.error.message}</p>
-  const list = metrics.data.document.metrics
-  if (list.length === 0) return <EmptyState icon={ChartLine}>No admitted type declares an additive measure yet, so there is nothing to add up.</EmptyState>
-  const types = [...new Set(list.map(({ objectType }) => objectType))]
-  return <TypeSections types={types} list={list} />
+  return (
+    <LoadState
+      status={metrics.status}
+      data={metrics.data}
+      error={metrics.error}
+      isFetching={metrics.isFetching}
+      onRetry={() => void metrics.refetch()}
+      skeleton="cards"
+      loadingLabel="Reading metrics"
+      notServed={{ icon: ChartLine, title: "Not served" }}
+      isEmpty={(data) => data.document.metrics.length === 0}
+      empty={{
+        icon: ChartLine,
+        title: "No metrics yet",
+        description: "No admitted type declares an additive measure yet, so there is nothing to add up.",
+        next: <Button asChild size="sm" variant="outline"><Link to="/sources"><Database />Open Sources</Link></Button>,
+      }}
+    >
+      {(data) => {
+        const list = data.document.metrics
+        const types = [...new Set(list.map(({ objectType }) => objectType))]
+        return <TypeSections types={types} list={list} />
+      }}
+    </LoadState>
+  )
 }
 
 /**
@@ -235,6 +255,7 @@ function LiveQuestionsBoard() {
  * metric: its metrics are listed together, compactly, after the types that have records.
  */
 function TypeSections({ types, list }: { readonly types: readonly string[]; readonly list: readonly MetricSummary[] }) {
+  const { view } = useView()
   // The profiles each card reads as it comes into view (one analytics read at a time): read here, never asked here.
   const profiles = useQueries({ queries: types.map((type) => ({ queryKey: ["profile", type], queryFn: () => readProfile(type), retry: false, enabled: false })) })
   const empty = (index: number) => profiles[index]?.data?.document.rows === 0
@@ -259,7 +280,7 @@ function TypeSections({ types, list }: { readonly types: readonly string[]; read
             {without.map((type) => (
               <li key={type} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-2.5 py-2 text-sm">
                 <Link to="/objects/$type" params={{ type }} className="font-medium underline-offset-4 hover:underline">{conceptTitle(type)}</Link>
-                <span className="min-w-0 text-meta text-muted-foreground">{list.filter(({ objectType }) => objectType === type).map((metric) => metricHeading(metric)).join(" · ")}</span>
+                <span className="min-w-0 text-meta text-muted-foreground">{list.filter(({ objectType }) => objectType === type).map((metric) => metricHeading(metric, "period", view)).join(" · ")}</span>
                 {(() => {
                   const profile = profiles[types.indexOf(type)]?.data?.document
                   const hidden = (profile?.withheldRows ?? 0) + (profile?.quarantinedRows ?? 0)
@@ -306,13 +327,23 @@ const subject = ({ objectType }: QuestionAnswer) => conceptTitle(objectType.docu
 export function QuestionPage() {
   const { name } = useParams({ from: "/metrics/$name" })
   const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard })
-  const read = board.data?.find(({ question }) => question.document.name === name)
   return (
-    <>
-      {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
-      {board.isError && <p className="text-destructive">{board.error.message}</p>}
-      {board.data && (read ? <QuestionCard read={read} heading="h1" /> : <EmptyState icon={ChartLine}>No metric named {name} is on the board.</EmptyState>)}
-    </>
+    <LoadState
+      status={board.status}
+      data={board.data}
+      error={board.error}
+      isFetching={board.isFetching}
+      onRetry={() => void board.refetch()}
+      skeleton="detail"
+      loadingLabel="Reading metric"
+    >
+      {(rows) => {
+        const read = rows.find(({ question }) => question.document.name === name)
+        return read
+          ? <QuestionCard read={read} heading="h1" />
+          : <EmptyState icon={ChartLine} title="Metric not found" next={<Button asChild size="sm" variant="outline"><Link to="/metrics">All metrics</Link></Button>}>No metric named {name} is on the board.</EmptyState>
+      }}
+    </LoadState>
   )
 }
 
@@ -325,13 +356,31 @@ export function QuestionsPage() {
       <PageHeader title="Metrics" description="The numbers your records add up to, answered exactly by the cell. Every number opens to the records behind it."
         primary={<Button asChild><Link to="/metrics/new"><Plus />Explore a metric</Link></Button>}
         secondary={[{ label: "Build step by step", icon: ListTree, to: "/metrics/build" }]} />
-      {mode.isError && <p className="text-destructive">{mode.error.message}</p>}
-      {live ? <LiveQuestionsBoard /> : mode.data && <>
-        {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
-        {board.isError && <p className="text-destructive">{board.error.message}</p>}
-        {board.data?.map((read) => <QuestionCard key={read.question.document.name} read={read} />)}
-        <RestatementCard />
-      </>}
+      {mode.isPending && <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void mode.refetch()}>{() => null}</LoadState>}
+      {mode.isError && <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={() => void mode.refetch()} />}
+      {live ? <LiveQuestionsBoard /> : mode.data && (
+        <LoadState
+          status={board.status}
+          data={board.data}
+          error={board.error}
+          isFetching={board.isFetching}
+          onRetry={() => void board.refetch()}
+          skeleton="cards"
+          loadingLabel="Reading metrics"
+          isEmpty={(rows) => rows.length === 0}
+          empty={{
+            icon: ChartLine,
+            title: "No metrics yet",
+            description: "Explore a metric or load records to see answers here.",
+            next: <Button asChild size="sm" variant="outline"><Link to="/metrics/new"><Plus />Explore a metric</Link></Button>,
+          }}
+        >
+          {(rows) => <>
+            {rows.map((read) => <QuestionCard key={read.question.document.name} read={read} />)}
+            <RestatementCard />
+          </>}
+        </LoadState>
+      )}
     </section>
   )
 }

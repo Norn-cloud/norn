@@ -20,7 +20,9 @@ import { chartEmpty, chartFrame } from "./lib/chart.ts"
 import { FRESHNESS, groupDigits, headline, period, scope, stamp } from "./lib/format.ts"
 import { amountTexts, liveTrace, type LiveRead, type Refusal, type Trace } from "./lib/live.ts"
 import { CodedMessage } from "@/components/coded-message"
+import { LoadState } from "@/components/load-state"
 import { useLocale } from "@/lib/locale"
+import { useView } from "@/lib/view"
 import { plainWords } from "./lib/plain-words.ts"
 import type { Read } from "./lib/exact.ts"
 import type { Question, QuestionAnswer } from "./lib/transport.ts"
@@ -69,8 +71,9 @@ const MOVED = new Set(["core.projection.answer_moved", "core.projection.lineage_
 export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale, compact = false }: { readonly question: string; readonly lineageRef: string; readonly bucket: Bucket; readonly fetchTrace?: FetchTrace; readonly onStale?: () => void; readonly compact?: boolean }) {
   const trace = useQuery({ queryKey: ["live-trace", question, lineageRef, bucket.key], queryFn: () => fetchTrace ? fetchTrace(lineageRef, bucket.key) : liveTrace(question, lineageRef, bucket.key), retry: false })
   const data = trace.data
-  if (trace.isPending) return <p className="text-sm text-muted-foreground">Reading the records…</p>
-  if (trace.isError || data === undefined || data.kind === "unavailable") return <p className="text-sm text-muted-foreground">{data?.kind === "unavailable" && data.reason === "no-cell" ? NO_DATA_CELL : "The live records could not be read."}</p>
+  if (trace.isPending) return <LoadState status="pending" skeleton={compact ? "list" : "table"} loadingLabel="Reading records" onRetry={() => void trace.refetch()}>{() => null}</LoadState>
+  if (trace.isError) return <LoadState status="error" error={trace.error} isFetching={trace.isFetching} onRetry={() => void trace.refetch()}>{() => null}</LoadState>
+  if (data === undefined || data.kind === "unavailable") return <p className="text-sm text-muted-foreground">{data?.kind === "unavailable" && data.reason === "no-cell" ? NO_DATA_CELL : "The live records could not be read."}</p>
   if (data.kind === "refused" && MOVED.has(data.refusal.code)) return (
     <div role="status" className="space-y-2 rounded-md border p-3 text-sm">
       <p><span className="font-medium">The data changed since this answer.</span> The cell committed new records, so this number may no longer be the current one and its records can't be traced as they were.</p>
@@ -138,13 +141,14 @@ const LATEST = 8
  */
 export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
   const { locale } = useLocale()
+  const { view } = useView()
   const plain = plainWords(refusal.code, locale)
   return (
     <div role="status" className="grid gap-1.5 rounded-md border border-node-border bg-muted/40 p-3 text-sm">
       <p><span className="font-medium">{locale === "ar" ? "لا يمكن الإجابة: " : "Can't answer this: "}</span>{plain ?? <CodedMessage code={refusal.code} message={refusal.message} />}</p>
       {/* The law or rule that refused, as the server states it: the reason stays in view, not only under Technical. */}
       {refusal.explanation && <p className="text-meta text-muted-foreground [overflow-wrap:anywhere]" dir="auto">{refusal.explanation}</p>}
-      <details className="text-meta text-muted-foreground">
+      <details open={view === "technical"} className="text-meta text-muted-foreground">
         <summary className="cursor-pointer select-none">{locale === "ar" ? "تقني" : "Technical"}</summary>
         <div className="mt-1 grid gap-0.5 font-mono [overflow-wrap:anywhere]" dir="ltr">
           <span>{refusal.code}</span>
@@ -429,8 +433,16 @@ export function AskedAnswer({ question, title, unit, declared, heading = "h3", t
   const run = useQuery({ queryKey: ["asked", JSON.stringify(question)], queryFn: () => evaluateQuestion(question), retry: false, staleTime: 30_000 })
   useEffect(() => { if (!run.isPending) onSettled?.() }, [run.isPending, onSettled])
   const result = run.data
-  if (run.isPending) return placeholder ?? <p className="text-sm text-muted-foreground">Asking the cell…</p>
-  if (run.isError || result === undefined) return <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : "no answer"}</p>
+  if (run.isPending) {
+    return placeholder ?? (
+      <LoadState status="pending" skeleton="panel" loadingLabel="Answering question" onRetry={() => void run.refetch()}>
+        {() => null}
+      </LoadState>
+    )
+  }
+  if (run.isError || result === undefined) {
+    return <LoadState status="error" error={run.error ?? new Error("The cell did not answer.")} isFetching={run.isFetching} onRetry={() => void run.refetch()}>{() => null}</LoadState>
+  }
   if (result.kind === "refused") return <RefusedNote refusal={result.refusal} />
   if (result.kind === "not-a-question") return <div role="status" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{result.findings.map(({ code, message }) => <div key={`${code}:${message}`}><span className="font-medium">{message}</span> <span className="font-mono text-xs text-muted-foreground">{code}</span></div>)}</div>
   if (result.kind !== "answer") return <p role="status" className="text-sm text-muted-foreground">{result.kind === "too-large" ? result.message : result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>

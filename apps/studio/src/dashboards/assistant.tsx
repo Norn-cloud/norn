@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { dashboardField, type Dashboard } from "@/lib/definitions"
+import { plainRestatement } from "@/lib/plain-words"
+import { useView } from "@/lib/view"
 import { SafePrompt, type GuardDocument } from "@/components/safe-prompt"
 import type { QuestionCatalog } from "../builder.tsx"
 import { conceptTitle } from "../lib/catalog.ts"
@@ -71,15 +73,24 @@ export function examples(catalog: QuestionCatalog): readonly string[] {
 }
 
 function Verdict({ proposal }: { readonly proposal: Proposal }) {
+  const { view } = useView()
   const { verdict } = proposal
   if (!verdict.admitted) return <ValidationPanel title="The cell's checker refused this proposal" issues={verdict.findings.map(({ code, message, pointer }) => ({ code, message, field: dashboardField(pointer) }))} />
+  const raw = verdict.restatement
+  const shown = raw ? (view === "technical" ? raw : plainRestatement(raw)) : null
   return (
     <div className="space-y-2 rounded-lg border bg-card p-3 text-sm shadow-elevation">
       <div className="flex items-center gap-2 font-medium"><CircleCheck className="size-4 text-success" />The cell's checker admitted this dashboard</div>
-      {verdict.restatement && (
+      {shown && (
         <>
           <p className="text-meta text-muted-foreground">In the checker's own words{proposal.state === "pending" ? "; accepting signs exactly these words" : ""}:</p>
-          <Well className="px-3 py-2"><pre className="text-meta leading-relaxed whitespace-pre-wrap" data-restatement>{verdict.restatement}</pre></Well>
+          <Well className="px-3 py-2"><pre className="font-sans text-meta leading-relaxed whitespace-pre-wrap" data-restatement>{shown}</pre></Well>
+          {view === "business" && raw && shown !== raw && (
+            <details className="text-meta text-muted-foreground">
+              <summary className="cursor-pointer select-none">Technical wording</summary>
+              <pre className="mt-1 font-mono text-xs leading-relaxed whitespace-pre-wrap">{raw}</pre>
+            </details>
+          )}
         </>
       )}
     </div>

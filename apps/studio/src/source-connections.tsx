@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Cable, RefreshCw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { LoadState } from "@/components/load-state"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -87,7 +88,11 @@ export function SourceConnections() {
   return (
     <Panel icon={Cable} label="Connections" action={<UploadCsv />}>
       {installed === false && <Well><EmptyState icon={Cable} title="No connections yet" next={<UploadCsv />}>No system is connected to this cell yet. Upload a CSV to start, or ask an admin to connect a system.</EmptyState></Well>}
-      {(installed === undefined || (installed && connections.isPending)) && <p className="px-4 py-3 text-sm text-muted-foreground">Reading connections…</p>}
+      {(installed === undefined || (installed && connections.isPending)) && (
+        <div className="p-3">
+          <LoadState status="pending" skeleton="list" loadingLabel="Reading connections" onRetry={() => void connections.refetch()}>{() => null}</LoadState>
+        </div>
+      )}
       {connections.isError && (connections.error instanceof NotServed || notInstalled
         ? <Well className="flex items-center gap-3 px-4 py-3 text-sm"><span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-subtle"><Cable aria-hidden className="size-4 text-muted-foreground" /></span><span className="min-w-0"><span className="block font-medium">No connections</span><span className="block text-meta text-muted-foreground">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</span></span></Well>
         : (

@@ -398,7 +398,7 @@ impl Outside<'_> {
                 return self
                     .provisioner(subject.as_deref(), request)
                     .map(|()| Admitted::Provisioner)
-                    .map_err(|refusal| server::respond(Err(refusal)));
+                    .map_err(|refusal| server::respond_at(Err(refusal), request.now));
             }
         }
         Err(self.answer::<E>(principals, request))
@@ -434,7 +434,7 @@ impl Outside<'_> {
             server::access_outside::<E>(principals, request)
         } else if request.path == ACCESS_DECIDE_PATH {
             // The shared refusal: a caller outside the cell is denied everything.
-            server::respond(Err(norn_api::authz::read_denied()))
+            server::respond_at(Err(norn_api::authz::read_denied()), request.now)
         } else {
             // Served with what a provisioned cell of this host is served
             // with (its receipt handles, its kinds), so no route branches
@@ -805,7 +805,7 @@ impl<E: SqlEngine> Tenant<E> {
         member: Option<crate::policy::Caller>,
     ) -> Response {
         if request.path == PROVISION_PATH {
-            return server::respond(self.provision(principals, request));
+            return server::respond_at(self.provision(principals, request), request.now);
         }
         // A caller who is not a verified member of the organization never
         // gets here (the gate answers them as a scope with no cell answers,
@@ -813,7 +813,7 @@ impl<E: SqlEngine> Tenant<E> {
         // #1297 r1 B1, TENANT-ISOLATION-1). Only a provisioner is admitted
         // without membership, and only to provision.
         let Some(caller) = member else {
-            return server::respond(Err(norn_api::authz::read_denied()));
+            return server::respond_at(Err(norn_api::authz::read_denied()), request.now);
         };
         if let State::Serving(serving) = &mut self.state {
             serving.refresh_definitions();
@@ -910,15 +910,18 @@ impl<E: SqlEngine> Tenant<E> {
     ) -> Response {
         const MAX_CHECKS: usize = 32;
         if request.method != "POST" {
-            return server::respond(Err(Refusal::new(
-                StatusCode::METHOD_NOT_ALLOWED,
-                "route.method_not_allowed",
-                "the route does not accept this method",
-                "permission checks are asked with POST",
-            )));
+            return server::respond_at(
+                Err(Refusal::new(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "route.method_not_allowed",
+                    "the route does not accept this method",
+                    "permission checks are asked with POST",
+                )),
+                request.now,
+            );
         }
         if !self.names_this_scope(request.query) {
-            return server::respond(Err(norn_api::authz::read_denied()));
+            return server::respond_at(Err(norn_api::authz::read_denied()), request.now);
         }
         let checks = match serde_json::from_str::<serde_json::Value>(request.body) {
             Ok(body) => body
@@ -928,9 +931,12 @@ impl<E: SqlEngine> Tenant<E> {
             Err(_) => None,
         };
         let Some(checks) = checks.filter(|checks| checks.len() <= MAX_CHECKS) else {
-            return server::respond(Err(Refusal::invalid(format!(
-                "a permission check is {{\"checks\": [{{\"action\", \"resource\": {{\"type\", \"id\"}}}}]}}, at most {MAX_CHECKS}"
-            ))));
+            return server::respond_at(
+                Err(Refusal::invalid(format!(
+                    "a permission check is {{\"checks\": [{{\"action\", \"resource\": {{\"type\", \"id\"}}}}]}}, at most {MAX_CHECKS}"
+                ))),
+                request.now,
+            );
         };
         let mut decisions = Vec::with_capacity(checks.len());
         for check in &checks {
@@ -961,7 +967,7 @@ impl<E: SqlEngine> Tenant<E> {
                                 .and_then(serde_json::Value::as_str)
                                 .map(str::to_owned)
                         }),
-                    Err(refusal) => return server::respond(Err(refusal)),
+                    Err(refusal) => return server::respond_at(Err(refusal), request.now),
                 }
             } else {
                 None
@@ -976,7 +982,10 @@ impl<E: SqlEngine> Tenant<E> {
                 "rule": rule,
             }));
         }
-        server::respond(Ok(serde_json::json!({ "decisions": decisions }).to_string()))
+        server::respond_at(
+            Ok(serde_json::json!({ "decisions": decisions }).to_string()),
+            request.now,
+        )
     }
 
     /// The request's verified principal, when the declared table grants it
@@ -1018,7 +1027,7 @@ impl<E: SqlEngine> Tenant<E> {
                 )
                 .with_cause(reason),
             };
-            server::respond(Err(refusal))
+            server::respond_at(Err(refusal), request.now)
         } else {
             // Another scope named: answered as a scope with no cell answers
             // anyone (the source and upload routes answered before this).

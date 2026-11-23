@@ -335,4 +335,91 @@ fn an_expired_decision_is_gone() {
         later,
     );
     assert_eq!(listed["total"], json!(0));
+    assert_eq!(expired["decidedAt"], json!("2027-01-17T08:00:00Z"));
+}
+
+/// #1520: a decision refused by a decider law carries its structured `reason`
+/// for a role with refusal-detail disclosure (`admin`) and redacts it for a
+/// role without (`member`), while stamping `decidedAt` from the host clock.
+#[test]
+fn decision_law_refusal_discloses_reason_by_policy_and_stamps_decided_at() {
+    let cell = cell();
+    // Install a flow whose ask decision declares a decider law and admits both
+    // `admin` and `member` as deciders so both reach the law check.
+    let mut artifacts: Vec<Value> = serde_json::from_str(LOWERED).unwrap();
+    for artifact in &mut artifacts {
+        artifact["scope"] = json!({ "orgId": "org_demo", "environmentId": "analytics" });
+        if artifact["artifactId"] == json!("ops.approve_refund.flow.rule") {
+            let text = serde_json::to_string(artifact).unwrap();
+            let patched = text.replace(
+                "\"roles\":[\"admin\",\"owner\"]",
+                "\"roles\":[\"admin\",\"member\",\"owner\"],\"law\":\"ops.refund.finance_limit\"",
+            );
+            *artifact = serde_json::from_str(&patched).unwrap();
+        }
+    }
+    let mut body = json!({
+        "kind": "flow",
+        "id": "ops.approve_refund_law",
+        "payload": {
+            "flow": {
+                "id": "ops.approve_refund_law",
+                "version": "1.0.0",
+                "title": "Approve a refund with law",
+                "steps": [{ "id": "ask_review", "label": "Review the refund" }]
+            },
+            "artifacts": artifacts
+        }
+    });
+    // Rewrite artifact ids & rule ids so the second flow installs alongside the first.
+    let rewritten = body
+        .to_string()
+        .replace("ops.approve_refund", "ops.approve_refund_law");
+    body = serde_json::from_str(&rewritten).unwrap();
+    let (_, admitted) = post(&cell, "/v1/definitions:admit", ADMIN, &body);
+    body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    let (status, installed) = post(&cell, "/v1/definitions:install", ADMIN, &body);
+    assert_eq!(status, 200, "{installed}");
+
+    let (status, _) = post(
+        &cell,
+        "/v1/runs",
+        MEMBER,
+        &json!({ "flow": "ops.approve_refund_law", "runId": "refund-law-1" }),
+    );
+    assert_eq!(status, 201);
+    let (_, page) = get(&cell, "/v1/decisions", "&state=pending", ADMIN);
+    let id = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["run"]["id"] == json!("refund-law-1"))
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let answer = json!({ "choice": "approve", "idempotencyKey": "k-law-1" });
+    // Admin holds refusal-detail disclosure: gets structured `reason` and `decidedAt`.
+    let (status, admin_refusal) = decide(&cell, &id, ADMIN, &answer, NOW);
+    assert_eq!(status, 403, "{admin_refusal}");
+    assert_eq!(admin_refusal["code"], json!("decision.law_not_satisfied"));
+    assert_eq!(admin_refusal["decidedAt"], json!("2027-01-15T08:00:00Z"));
+    assert_eq!(
+        admin_refusal["reason"]["law"],
+        json!("ops.refund.finance_limit")
+    );
+    assert_eq!(
+        admin_refusal["reason"]["subject"],
+        json!(format!("decision/{id}"))
+    );
+    assert_eq!(admin_refusal["reason"]["values"]["choice"], json!("approve"));
+
+    // Member lacks refusal-detail disclosure: `reason` is redacted (`null`),
+    // `decidedAt` is still present.
+    let (status, member_refusal) = decide(&cell, &id, MEMBER, &answer, NOW);
+    assert_eq!(status, 403, "{member_refusal}");
+    assert_eq!(member_refusal["code"], json!("decision.law_not_satisfied"));
+    assert_eq!(member_refusal["decidedAt"], json!("2027-01-15T08:00:00Z"));
+    assert_eq!(member_refusal["reason"], Value::Null);
 }
