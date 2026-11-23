@@ -1,0 +1,11 @@
+{
+  "name": "norn-cell-rivet",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-api",
+    "norn-cell",
+    "norn-cell-do"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}
