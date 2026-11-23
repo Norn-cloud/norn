@@ -1,3 +1,4 @@
+import { refusalOf, type Diagnostic } from "./cell-read.ts"
 import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { nextCursor, recordsPath, servedQuery, snapshotMoved, totalOf, type RecordsQuery, type Served, type Total } from "./records-query.ts"
@@ -5,7 +6,7 @@ import { currentMode } from "./live-transport.ts"
 import { transport, type ObjectPage } from "./transport.ts"
 
 /** One diagnostic of a refusal, its pointer into the request (`/sort/0`, `/filter/all/1/value`, `/after`). */
-export interface QueryDiagnostic { readonly code: string; readonly message: string; readonly pointer: string | null }
+export type QueryDiagnostic = Diagnostic
 
 /** What one page read came back as. Each kind is a state the grid shows; none is guessed. */
 export type RecordsRead =
@@ -44,14 +45,6 @@ function recordedPage(read: Read<ObjectPage> | null): RecordsRead {
   return { kind: "page", read, origin: "recorded", served: null, next: nextCursor(read.document), total: null }
 }
 
-function diagnosticsOf(body: unknown): readonly QueryDiagnostic[] {
-  const list = (body as { diagnostics?: unknown } | null)?.diagnostics
-  if (!Array.isArray(list)) return []
-  return list.map((d: { code?: unknown; message?: unknown; pointer?: unknown }) => ({
-    code: String(d.code ?? ""), message: String(d.message ?? ""), pointer: typeof d.pointer === "string" ? d.pointer : null,
-  }))
-}
-
 /**
  * Read one page of `objectType` records for `query` from the cell, as the signed-in actor.
  *
@@ -74,22 +67,20 @@ export async function readRecords(objectType: string, query: RecordsQuery, deps:
   const active = scope
   const response = await scopedHostFetch(deps.fetcher, "/api/host", async () => active)(recordsPath(objectType, query), { headers: { accept: "application/json" } })
   const text = await response.text()
-  let body: unknown = null
-  try { body = JSON.parse(text) } catch { /* not JSON: handled by status below */ }
   if (response.ok) {
     const read = readDocument<ObjectPage>(text, "live")
     return { kind: "page", read, origin: "live", served: servedQuery(read.document), next: nextCursor(read.document), total: totalOf(read.document) }
   }
-  const code = (body as { code?: unknown } | null)?.code
-  if (snapshotMoved(response.status, typeof code === "string" ? code : undefined)) return { kind: "restart" }
-  // Any 404 or 503, whatever its body (the cell's carries `route.not_found`), is a route this cell does not serve.
-  if (response.status !== 404 && response.status !== 503 && typeof code === "string") {
-    const message = (body as { message?: unknown }).message
-    return { kind: "refused", status: response.status, code, message: typeof message === "string" ? message : code, diagnostics: diagnosticsOf(body) }
-  }
+  // A 404 or 503 falls back before decoding the body, which may come from the proxy.
   if (response.status === 404 || response.status === 503) {
     if (query.sort.length > 0 || query.filter !== null) return { kind: "refused", status: response.status, code: "studio.query_unavailable", message: "This cell can't sort or filter records yet.", diagnostics: [] }
     return recordedPage(await deps.recorded(objectType, query.after))
+  }
+  const refusal = refusalOf(response.status, text)
+  if (snapshotMoved(response.status, refusal?.code)) return { kind: "restart" }
+  if (refusal !== null) {
+    const { status, code, message, diagnostics } = refusal
+    return { kind: "refused", status, code, message, diagnostics }
   }
   throw new CellUnavailable(response.status)
 }

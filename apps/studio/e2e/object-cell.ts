@@ -2,9 +2,8 @@ import { readFileSync } from "node:fs"
 import type { Page, Route } from "@playwright/test"
 
 /**
- * A stand-in for CELL-DO's `GET /v1/objects/{type}` that implements the relayed query contract
- * (apps/studio/src/lib/records-query.ts) exactly, over an in-memory canon.Holding population.
- * It exists so the grid's rows run before the cell deploys the route; it is not a client policy.
+ * A stand-in for CELL-DO's object queries over an in-memory canon.Holding population.
+ * Invalid requests use the responses pinned by the cell's route test.
  */
 
 export interface Holding { readonly id: string; readonly withheld: boolean; readonly withheldProperties: readonly string[]; readonly values: Readonly<Record<string, string>>; readonly version?: number }
@@ -57,7 +56,30 @@ function compareDecimal(a: string, b: string): number {
 const compare = (kind: string, a: string, b: string) => kind === "decimal" ? compareDecimal(a, b) : a < b ? -1 : a > b ? 1 : 0
 
 interface Clause { property: string; op: string; value?: unknown }
-interface Problem { code: string; message: string; pointer: string }
+// The DO dispatch pins the status and full refusal JSON in tests/server.rs.
+const SERVED: typeof import("../test/fixtures/object-query.json") = JSON.parse(
+  readFileSync(new URL("../test/fixtures/object-query.json", import.meta.url), "utf8"),
+)
+type Finding = (typeof SERVED.decimal.json.diagnostics)[number]
+type QueryCase = Exclude<keyof typeof SERVED, "denied" | "unknownType" | "cursorInvalid" | "snapshotMoved">
+
+function finding(name: QueryCase, pointer?: string, argument?: { sample: string; value: string }): Finding {
+  const [example] = SERVED[name].json.diagnostics
+  if (!example) throw new Error(`Missing served diagnostic for ${name}`)
+  if (argument !== undefined && !example.message.includes(argument.sample)) {
+    throw new Error(`Served diagnostic for ${name} does not contain ${argument.sample}`)
+  }
+  return {
+    ...example,
+    message: argument === undefined ? example.message : example.message.replace(argument.sample, argument.value),
+    span: pointer === undefined ? example.span : { ...example.span, pointer },
+  }
+}
+
+function refuseQuery(route: Route, diagnostics: Finding[], facets = false) {
+  const { status, json } = facets ? SERVED.facetsDecimal : SERVED.decimal
+  return route.fulfill({ status, json: { ...json, diagnostics } })
+}
 
 function matches(row: Holding, clause: Clause): boolean {
   if (row.withheld) return false // A withheld value never matches, not even empty or present.
@@ -82,36 +104,91 @@ function matches(row: Holding, clause: Clause): boolean {
   }
 }
 
-function validate(url: URL): { sort: { property: string; direction: string }[]; filter: { all: Clause[] } | null; limit: number; problems: Problem[] } {
-  const problems: Problem[] = []
-  const limitText = url.searchParams.get("limit") ?? "50"
+function object(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+const OPERATORS = new Set(Object.values(OPS).flat())
+
+function validate(url: URL, facets = false) {
+  const problems: Finding[] = []
+  const add = (name: QueryCase, pointer?: string, argument?: { sample: string; value: string }) =>
+    problems.push(finding(name, pointer, argument))
+  const limitText = facets ? "50" : url.searchParams.get("limit") ?? "50"
   const limit = Number(limitText)
-  if (!Number.isInteger(limit) || limit < 1 || limit > 200) problems.push({ code: "query.limit_invalid", message: "A page holds 1 to 200 records.", pointer: "/limit" })
-  const sort = (url.searchParams.get("sort") ?? "").split(",").filter(Boolean).map((key, index) => {
-    const [property = "", direction = ""] = key.split(":")
-    if (!PROPERTY.test(property) || !(property in KINDS)) problems.push({ code: "query.property_unknown", message: `Holdings have no property ${property}.`, pointer: `/sort/${index}` })
-    if (direction !== "asc" && direction !== "desc") problems.push({ code: "query.sort_invalid", message: "Sort direction is asc or desc.", pointer: `/sort/${index}` })
-    return { property, direction }
-  })
-  if (sort.length > 3) problems.push({ code: "query.too_many", message: "Sort by at most 3 properties.", pointer: "/sort/3" })
+  if (!/^\d+$/.test(limitText) || limit < 1 || limit > 200) add("limit")
+
+  const sort: { property: string; direction: string }[] = []
+  const sortText = facets ? null : url.searchParams.get("sort")
+  const keys = sortText === null ? [] : sortText.split(",")
+  if (keys.length > 3) add("sortCount")
+  for (const [index, key] of keys.entries()) {
+    const at = `/sort/${index}`
+    const split = key.indexOf(":")
+    if (split === -1) { add("sortSyntax", at); continue }
+    const property = key.slice(0, split)
+    const direction = key.slice(split + 1)
+    if (direction !== "asc" && direction !== "desc") { add("sortDirection", at); continue }
+    if (!PROPERTY.test(property)) { add("sortName", at); continue }
+    if (!Object.hasOwn(KINDS, property)) { add("sortUnknown", at, { sample: "missing", value: property }); continue }
+    if (sort.some((entry) => entry.property === property)) { add("sortDuplicate", at, { sample: "quantity", value: property }); continue }
+    sort.push({ property, direction })
+  }
+
   let filter: { all: Clause[] } | null = null
   const raw = url.searchParams.get("filter")
   if (raw !== null) {
-    try { filter = JSON.parse(raw) as { all: Clause[] } } catch { problems.push({ code: "query.value_invalid", message: "The filter is not JSON.", pointer: "/filter" }) }
-    filter?.all.forEach((clause, index) => {
-      const at = `/filter/all/${index}`
-      const kind = KINDS[clause.property]
-      if (kind === undefined) return void problems.push({ code: "query.property_unknown", message: `Holdings have no property ${clause.property}.`, pointer: `${at}/property` })
-      if (!(OPS[kind] ?? []).includes(clause.op)) return void problems.push({ code: "query.op_invalid", message: `${clause.property.replaceAll("_", " ")} can't be tested with ${clause.op}.`, pointer: `${at}/op` })
-      const values = clause.op === "empty" || clause.op === "present" ? [] : Array.isArray(clause.value) ? clause.value : [clause.value]
-      for (const value of values) {
-        if (typeof value !== "string" || value === "") problems.push({ code: "query.value_invalid", message: "Enter a value.", pointer: `${at}/value` })
-        else if (kind === "decimal" && !DECIMAL.test(value)) problems.push({ code: "query.value_invalid", message: `${value} is not an exact decimal number, like 12.500.`, pointer: `${at}/value` })
-        else if (kind === "enum" && !(ENUMS[clause.property] ?? []).includes(value)) problems.push({ code: "query.value_invalid", message: `${value} is not a declared value.`, pointer: `${at}/value` })
+    let parsed: unknown
+    try { parsed = JSON.parse(raw) } catch { /* The served grammar refuses below. */ }
+    if (!object(parsed)) add("filterJson")
+    else {
+      if (Object.keys(parsed).some((key) => key !== "all")) add("filterMembers")
+      if (!Array.isArray(parsed.all)) add("filterArray")
+      else {
+        if (parsed.all.length === 0) add("filterEmpty")
+        if (parsed.all.length > 8) add("filterCount")
+        filter = { all: [] }
+        for (const [index, clause] of parsed.all.entries()) {
+          const at = `/filter/all/${index}`
+          if (!object(clause)) { add("clauseObject", at); continue }
+          if (Object.keys(clause).some((key) => !["property", "op", "value"].includes(key))) add("clauseMembers", at)
+          const { property, op, value } = clause
+          if (typeof property !== "string" || !PROPERTY.test(property)) { add("propertyName", `${at}/property`); continue }
+          const kind = Object.hasOwn(KINDS, property) ? KINDS[property] : undefined
+          if (kind === undefined) { add("propertyUnknown", `${at}/property`, { sample: "missing", value: property }); continue }
+          if (typeof op !== "string" || !OPERATORS.has(op)) { add("opUnknown", `${at}/op`); continue }
+          if (!(OPS[kind] ?? []).includes(op)) { add("opKind", `${at}/op`, { sample: "quantity", value: property }); continue }
+          const pointer = `${at}/value`
+          const scalar = (operand: unknown, path: string): operand is string => {
+            if (typeof operand !== "string") { add("scalarType", path); return false }
+            if (kind === "decimal" && !DECIMAL.test(operand)) { add("decimal", path); return false }
+            if (kind === "enum" && !(ENUMS[property] ?? []).includes(operand)) { add("enumValue", path); return false }
+            return true
+          }
+          if (op === "empty" || op === "present") {
+            if (Object.hasOwn(clause, "value")) add("presenceValue", pointer)
+          } else if (op === "in") {
+            if (!Array.isArray(value)) add("inArray", pointer)
+            else if (value.length === 0) add("inEmpty", pointer)
+            else if (value.length > 50) add("inCount", pointer)
+            else value.forEach((item, i) => scalar(item, `${pointer}/${i}`))
+          } else if (op === "between") {
+            if (!Array.isArray(value) || value.length !== 2) add("rangeArray", pointer)
+            else {
+              const [lo, hi] = value
+              const validLo = scalar(lo, `${pointer}/0`)
+              const validHi = scalar(hi, `${pointer}/1`)
+              if (validLo && validHi && compare(kind, lo, hi) > 0) add("rangeOrder", pointer)
+            }
+          } else if (value === undefined) add("missingValue", pointer)
+          else scalar(value, pointer)
+          filter.all.push({ property, op, value })
+        }
       }
-    })
-    if ((filter?.all.length ?? 0) > 8) problems.push({ code: "query.too_many", message: "A filter has at most 8 conditions.", pointer: "/filter/all/8" })
+    }
   }
+  const after = facets ? null : url.searchParams.get("after")
+  if (after === "") add("cursorEmpty")
   return { sort, filter, limit, problems }
 }
 
@@ -137,11 +214,11 @@ export async function objectCell(page: Page, initial: readonly Holding[]): Promi
     requests.push(url)
     // The outage hits the next page read; a facets read in flight (a refresh after a commit) does not take it.
     if (fail && !url.pathname.endsWith(":facets")) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
-    if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return route.fulfill({ status: 403, json: { code: "scope.denied", message: "Not your workspace." } })
+    if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return route.fulfill(SERVED.denied)
     // HOST-READ-7: exact value counts of the categorical properties over the rows the filter keeps.
     if (url.pathname.endsWith("/v1/objects/canon.Holding:facets")) {
-      const { filter, problems } = validate(url)
-      if (problems.length > 0) return route.fulfill({ status: 400, json: { code: "query.invalid", message: "The cell refused this query.", diagnostics: problems } })
+      const { filter, problems } = validate(url, true)
+      if (problems.length > 0) return refuseQuery(route, problems, true)
       const asked = url.searchParams.get("properties")?.split(",") ?? Object.keys(KINDS).filter((property) => KINDS[property] !== "decimal")
       const counted = rows.filter((row) => !row.withheld && (filter?.all ?? []).every((clause) => matches(row, clause)))
       const facets = asked.map((property) => {
@@ -157,17 +234,19 @@ export async function objectCell(page: Page, initial: readonly Holding[]): Promi
       })
       return route.fulfill({ json: { objectType: "canon.Holding", rows: counted.length, withheldRows: rows.filter((row) => row.withheld).length, quarantinedRows: 0, lowerBound: false, scanLimit: 10000, facets } })
     }
-    if (!url.pathname.endsWith("/v1/objects/canon.Holding")) return route.fulfill({ status: 404, json: { code: "object.type_unknown", message: "No such object type." } })
+    if (!url.pathname.endsWith("/v1/objects/canon.Holding")) return route.fulfill(SERVED.unknownType)
     const { sort, filter, limit, problems } = validate(url)
-    if (problems.length > 0) return route.fulfill({ status: 400, json: { code: "query.invalid", message: "The cell refused this query.", diagnostics: problems } })
-    const shape = JSON.stringify({ sort, filter, limit })
+    if (problems.length > 0) return refuseQuery(route, problems)
+    const shape = JSON.stringify({ sort, filter })
     let offset = 0
     const after = url.searchParams.get("after")
     if (after !== null) {
-      let cursor: { offset: number; shape: string; snapshot: number }
-      try { cursor = JSON.parse(atob(after)) as typeof cursor } catch { return route.fulfill({ status: 400, json: { code: "query.cursor_invalid", message: "That page link isn't valid.", diagnostics: [{ code: "query.cursor_invalid", message: "Unknown cursor.", pointer: "/after" }] } }) }
-      if (cursor.shape !== shape) return route.fulfill({ status: 400, json: { code: "query.cursor_invalid", message: "That page link belongs to another query.", diagnostics: [{ code: "query.cursor_invalid", message: "Cursor and query differ.", pointer: "/after" }] } })
-      if (cursor.snapshot !== snapshot) return route.fulfill({ status: 409, json: { code: "object.snapshot_moved", message: "The records changed since this page was read." } })
+      let cursor: unknown
+      try { cursor = JSON.parse(atob(after)) } catch { return route.fulfill(SERVED.cursorInvalid) }
+      if (!object(cursor) || cursor.shape !== shape || typeof cursor.offset !== "number" || typeof cursor.snapshot !== "number") {
+        return route.fulfill(SERVED.cursorInvalid)
+      }
+      if (cursor.snapshot !== snapshot) return route.fulfill(SERVED.snapshotMoved)
       offset = cursor.offset
     }
     const kept = rows.filter((row) => (filter?.all ?? []).every((clause) => matches(row, clause)))

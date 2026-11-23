@@ -1,0 +1,169 @@
+{
+  "denied": {
+    "status": 403,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "authz.denied", "category": "permission", "message": "the read request is not authorized", "explanation": "access to the requested read is denied"}
+  },
+  "unknownType": {
+    "status": 403,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "authz.denied", "category": "permission", "message": "the read request is not authorized", "explanation": "access to the requested read is denied"}
+  },
+  "limit": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.limit_invalid", "severity": "error", "message": "limit must be 1..=200", "span": {"pointer": "/limit"}}]}
+  },
+  "sortSyntax": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.sort_invalid", "severity": "error", "message": "each sort key is prop:asc or prop:desc", "span": {"pointer": "/sort/0"}}]}
+  },
+  "sortDirection": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.sort_invalid", "severity": "error", "message": "the direction is asc or desc", "span": {"pointer": "/sort/0"}}]}
+  },
+  "sortName": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.sort_invalid", "severity": "error", "message": "a property name matches [a-z][a-z0-9_]*", "span": {"pointer": "/sort/0"}}]}
+  },
+  "sortUnknown": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.property_unknown", "severity": "error", "message": "missing is not a property of this type", "span": {"pointer": "/sort/0"}}]}
+  },
+  "sortDuplicate": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.sort_invalid", "severity": "error", "message": "quantity is already a sort key", "span": {"pointer": "/sort/1"}}]}
+  },
+  "sortCount": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.too_many", "severity": "error", "message": "at most 3 sort keys", "span": {"pointer": "/sort"}}]}
+  },
+  "filterJson": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "filter is a JSON object {\"all\": [...]}", "span": {"pointer": "/filter"}}]}
+  },
+  "filterMembers": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "filter has one member, all", "span": {"pointer": "/filter"}}]}
+  },
+  "filterArray": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "filter.all is an array of clauses", "span": {"pointer": "/filter/all"}}]}
+  },
+  "filterEmpty": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "filter.all holds 1 to 8 clauses", "span": {"pointer": "/filter/all"}}]}
+  },
+  "filterCount": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.too_many", "severity": "error", "message": "at most 8 clauses", "span": {"pointer": "/filter/all"}}]}
+  },
+  "clauseObject": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "a clause is an object {property, op, value?}", "span": {"pointer": "/filter/all/0"}}]}
+  },
+  "clauseMembers": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "a clause has only property, op and value", "span": {"pointer": "/filter/all/0"}}]}
+  },
+  "propertyName": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.property_unknown", "severity": "error", "message": "property names a property", "span": {"pointer": "/filter/all/0/property"}}]}
+  },
+  "propertyUnknown": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.property_unknown", "severity": "error", "message": "missing is not a property of this type", "span": {"pointer": "/filter/all/0/property"}}]}
+  },
+  "opUnknown": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.op_invalid", "severity": "error", "message": "op is one of the grammar's operators", "span": {"pointer": "/filter/all/0/op"}}]}
+  },
+  "opKind": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.op_invalid", "severity": "error", "message": "this operator does not apply to quantity", "span": {"pointer": "/filter/all/0/op"}}]}
+  },
+  "presenceValue": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "empty and present take no value", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "missingValue": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "this operator takes a value", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "scalarType": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "values are JSON strings, except booleans", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "decimal": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "a decimal value is exact decimal text", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "enumValue": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "an enum value is one of the declared values", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "inArray": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "in takes an array of 1 to 50 values", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "inEmpty": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "in takes 1 to 50 values", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "inCount": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.too_many", "severity": "error", "message": "in takes 1 to 50 values", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "rangeArray": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "between takes [lo, hi]", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "rangeOrder": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "between's lo is at most its hi", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "facetsDecimal": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "a decimal value is exact decimal text", "span": {"pointer": "/filter/all/0/value"}}]}
+  },
+  "cursorEmpty": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.cursor_invalid", "severity": "error", "message": "the cursor is not one this host issued", "span": {"pointer": "/after"}}]}
+  },
+  "cursorInvalid": {
+    "status": 400,
+    "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [{"code": "query.cursor_invalid", "severity": "error", "message": "the cursor does not continue this query for this caller", "span": {"pointer": "/after"}}]}
+  },
+  "snapshotMoved": {
+    "status": 409,
+    "json": {"format": "norn/refusal@2", "retryable": true, "reason": null, "code": "object.snapshot_moved", "category": "conflict", "message": "the cell changed while the page was read", "explanation": "repeat the read; a page is never assembled from two snapshots"}
+  }
+}

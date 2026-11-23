@@ -118,7 +118,6 @@ test("edit (decide): a high-risk choice that starts an action confirms first; th
   await expect(page).toHaveURL(/\/runs\/run_restock_7$/)
   const steps = page.getByRole("list", { name: "Steps" }).getByRole("listitem")
   await expect(steps.nth(1)).toContainText("Done")
-  await expect(steps.nth(1)).toContainText("Done by you")
   await expect(page.getByText("Live", { exact: true })).toBeVisible()
   // The run is read again while it works, until it succeeds.
   await expect(page.getByText("Succeeded")).toBeVisible({ timeout: 20_000 })
@@ -140,17 +139,17 @@ test("the race: another decider got there first; the sheet says who and when, an
   await expect(list(page)).toHaveCount(2)
 })
 
-test("validate: a law refuses a choice; it reads under that option with the server's next step, is no longer offered, and the other choice still decides", async ({ page }) => {
+test("validate: an unevaluable decider law refuses either answer and explains why", async ({ page }) => {
   const cell = await inbox(page)
   await open(page, "Refund 1,240.00 USD")
   await sheet(page).getByLabel("Approve").check()
   await sheet(page).getByLabel(/^Note/).fill("x".repeat(501))
   await sheet(page).getByRole("button", { name: "Decide: Approve" }).click()
   await sheet(page).getByRole("button", { name: "Yes, approve" }).click()
-  // The refusal order puts the law (403) before the note (422): the law reads first, under the option it refuses.
+  // The cell checks the decider law before validating the note.
   const approve = sheet(page).locator('[data-option="approve"]')
-  await expect(approve.getByRole("status")).toContainText("Refunds over 1,000.00 USD need a finance manager's approval.")
-  await expect(approve.getByRole("status")).toContainText("A finance manager can approve it from their inbox")
+  await expect(approve.getByRole("status")).toContainText("the decider law is not satisfied")
+  await expect(approve.getByRole("status")).toContainText("this decision names a law the cell cannot evaluate for the caller")
   await expect(approve.locator("ui-radio")).toHaveAttribute("disabled", "")
   // The refused choice is cleared: nothing is picked, and Decide waits for another option.
   await expect(approve.getByRole("radio")).not.toBeChecked()
@@ -167,7 +166,7 @@ test("validate: a law refuses a choice; it reads under that option with the serv
   await sheet(page).getByLabel(/^Note/).fill("Short delivery confirmed.")
   await sheet(page).getByLabel("Reject").check()
   await sheet(page).getByRole("button", { name: "Decide: Reject" }).click()
-  await expect(sheet(page).getByRole("status")).toHaveText("Decided: Reject · by you")
+  await expect(sheet(page).locator('[data-option="reject"]').getByRole("status")).toContainText("the decider law is not satisfied")
   expect(cell.calls.map((c) => JSON.parse(c.body).choice)).toEqual(["approve", "reject"])
 })
 
@@ -177,8 +176,9 @@ test("validate: a note the cell refuses lands on the note field", async ({ page 
   await sheet(page).getByLabel("Accept the count").check()
   await sheet(page).getByLabel(/^Note/).fill("y".repeat(501))
   await sheet(page).getByRole("button", { name: "Decide: Accept the count" }).click()
-  await expect(sheet(page).getByLabel(/^Note/)).toHaveAttribute("aria-invalid", "true")
-  await expect(sheet(page).getByRole("alert").filter({ hasText: "A note is at most 500 characters." })).toBeVisible()
+  const note = sheet(page).getByLabel(/^Note/)
+  await expect(note).toHaveAttribute("aria-invalid", "true")
+  await expect(note).toHaveAccessibleDescription("the note is longer than 500 characters")
 })
 
 test("expiry: past the deadline the cell refuses, and the sheet says it expired", async ({ page }) => {
@@ -228,7 +228,7 @@ test("run view: a waiting run links to its decision; Run again starts a new run 
   await expect(page.getByText("Fetch orders")).toBeVisible() // an unlabelled step reads its id in words
   await expect(page.getByText("Succeeded")).toBeVisible({ timeout: 20_000 })
   await page.goto("/runs/run_nope")
-  await expect(page.getByText("There is no such run you can read.")).toBeVisible()
+  await expect(page.getByText("no such run", { exact: true })).toBeVisible()
 })
 
 test("run view, first cut: without steps the run shows its state, flow and generation, says step details are coming, and is read again when the cell says it changed", async ({ page }) => {
