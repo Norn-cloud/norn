@@ -303,21 +303,27 @@ test("step 2 (structured 500 retry, pending approval, and 422 refusal): exact ke
   await expect(resetHoursBtn).toHaveCount(0)
   await expect(hoursInput).toHaveValue("8.00")
 
-  // Re-submitting unchanged payload reuses exact same idempotencyKey; cell returns 202 pending approval.
-  cell.pendingNextPromote("row-w47-1", "dec_approval_99")
-  await row1.getByRole("button", { name: "Promote row" }).click()
-  await expect(row1.locator('[data-row-outcome="pending"]')).toContainText("dec_approval_99")
-  await expect(row1).toHaveAttribute("data-row-status", "imported_unverified")
-  await expect(row1.locator("[data-cell-findings]")).toHaveCount(0)
-
-  // Edit field -> rotates idempotency key; 422 refusal -> distinct refusal banner without Retry or fabricated findings.
-  await hoursInput.fill("9.00")
-  cell.refuseNextPromote("row-w47-1", "law.boundary_cap", "Cell law refused duration 9.00.")
+  // Re-submitting unchanged payload reuses exact same idempotencyKey; 422 refusal -> distinct refusal banner without Retry or fabricated findings.
+  cell.refuseNextPromote("row-w47-1", "law.boundary_cap", "Cell law refused duration 8.00.")
   await row1.getByRole("button", { name: "Promote row" }).click()
   await expect(row1.locator('[data-row-outcome="refused"]')).toContainText("law.boundary_cap")
   await expect(row1.locator('[data-row-outcome="refused"]').getByRole("button", { name: "Retry" })).toHaveCount(0)
   await expect(row1).toHaveAttribute("data-row-status", "imported_unverified")
   await expect(row1.locator("[data-cell-findings]")).toHaveCount(0)
+
+  // Edit field -> rotates idempotency key; cell returns 202 pending approval, which completely locks
+  // inputs, Reset, single-row Promote, and batch promotion so nothing can re-submit while awaiting approval.
+  await hoursInput.fill("9.00")
+  await expect(resetHoursBtn).toBeVisible()
+  cell.pendingNextPromote("row-w47-1", "dec_approval_99")
+  await row1.getByRole("button", { name: "Promote row" }).click()
+  await expect(row1.locator('[data-row-outcome="pending"]')).toContainText("dec_approval_99")
+  await expect(row1).toHaveAttribute("data-row-status", "imported_unverified")
+  await expect(row1.locator("[data-cell-findings]")).toHaveCount(0)
+  await expect(hoursInput).toBeDisabled()
+  await expect(resetHoursBtn).toBeDisabled()
+  await expect(row1.getByRole("button", { name: "Pending approval…" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Promote 0 clean rows" })).toBeDisabled()
 
   const keys = cell.calls.map((c) => c.idempotencyKey)
   expect(keys).toHaveLength(4)

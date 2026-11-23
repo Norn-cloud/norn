@@ -17,10 +17,12 @@ import {
   formatTemporal,
   hasOpenLawViolation,
   isLowConfidence,
+  isOutcomeLocked,
   isRowEligibleForBatchPromotion,
   partitionPromotionBatch,
   patchAliasDraftState,
   patchSupersessionDraftState,
+  readLiveWorkspaceFromCache,
   resolveArtifactMediaSource,
   resolvePayloadIdempotencyKey,
   resolveRowEntity,
@@ -389,7 +391,14 @@ test("verifyQueuedPromotionBasis skips queued rows whose live status, entity, or
   expect(extractEditableValues(supersededRow, editsUnderA, basisKeyB).duration_hours).toBe("8.50")
 })
 
-test("batchLockedRowIds excludes committed-awaiting-read and pending-approval rows from batch promotion", () => {
+test("batchLockedRowIds and isOutcomeLocked lock both committed-awaiting-read and pending-approval rows across edits, single-row, and batch", () => {
+  expect(isOutcomeLocked({ kind: "committed", receipt: sampleReceipt })).toBe(true)
+  expect(isOutcomeLocked({ kind: "pending", decisionId: "dec_1", expiresAtMs: Date.UTC(2026, 10, 24) })).toBe(true)
+  expect(isOutcomeLocked({ kind: "error", message: "timeout" })).toBe(false)
+  expect(isOutcomeLocked({ kind: "refused", code: "law.cap", message: "refused" })).toBe(false)
+  expect(isOutcomeLocked({ kind: "stale", message: "basis changed" })).toBe(false)
+  expect(isOutcomeLocked(null)).toBe(false)
+
   const locked = batchLockedRowIds(
     new Set(),
     new Set(),
@@ -404,6 +413,74 @@ test("batchLockedRowIds excludes committed-awaiting-read and pending-approval ro
   const partition = partitionPromotionBatch([cleanRow, aliasBlockedRow], bound, locked)
   expect(partition.eligible).toHaveLength(0)
   expect(partition.inFlight.map((r) => r.id)).toEqual(["row-clean", "row-alias"])
+})
+
+test("readLiveWorkspaceFromCache prefers updated query cache over stale render ref and fails closed on non-ok cache entries", () => {
+  const artifactA: StagedArtifact = {
+    id: "art-1",
+    label: "Capture A",
+    sourceChannel: "feed-ops",
+    mediaType: "image/svg+xml",
+    documentUri: "data:image/svg+xml;charset=utf-8,%3Csvg/%3E",
+    blobDigest: "sha256:" + "1".repeat(64),
+    functionReceiptDigest: "sha256:" + "2".repeat(64),
+    extractor: "norn.extract.grid",
+    extractorVersion: "1.0.0",
+    observedAt: "2026-11-16T09:15:00Z",
+    windowLabel: "2026-W47",
+    markings: [],
+    contextMessages: [],
+  }
+  const staleRenderWorkspace: ImportTriageWorkspace = {
+    batchId: "batch-1",
+    title: "Window W47",
+    targetObjectType: "canon.Allocation",
+    lowConfidenceThresholdBps: 9000,
+    actions: {
+      bindAlias: "canon.alias.bind",
+      createEntity: "canon.entity.create_and_bind",
+      ignoreAlias: "canon.alias.ignore",
+      promoteRow: "canon.import.promote_row",
+      resolveSupersession: "canon.import.resolve_supersession",
+    },
+    aliases: [],
+    availableEntities: [{ id: "ent-001", label: "Unit Alpha" }],
+    artifacts: [artifactA],
+    rows: [cleanRow],
+    supersessions: [],
+  }
+  const freshCacheWorkspace: ImportTriageWorkspace = {
+    ...staleRenderWorkspace,
+    rows: [{
+      ...cleanRow,
+      fields: cleanRow.fields.map((f) => f.kind !== "withheld" && f.name === "duration_hours" ? { ...f, value: "8.25" } : f),
+    }],
+  }
+  const queuedItem: QueuedPromotionItem = {
+    rowId: cleanRow.id,
+    basisKey: rowBasisKey(cleanRow, artifactA),
+    artifactId: artifactA.id,
+    blobDigest: artifactA.blobDigest,
+    functionReceiptDigest: artifactA.functionReceiptDigest,
+    targetRecordId: "ent-001",
+    effectiveAt: cleanRow.effectiveAt,
+    observedAt: cleanRow.observedAt,
+    values: { slot_code: "S-01", duration_hours: "8.0" },
+  }
+
+  // Falls back to render ref only when cache is empty (undefined).
+  expect(readLiveWorkspaceFromCache(() => undefined, staleRenderWorkspace)).toBe(staleRenderWorkspace)
+
+  // Prefers fresh query cache even before React re-renders -> basis drift immediately caught!
+  const live = readLiveWorkspaceFromCache(
+    () => ({ kind: "ok", status: 200, etag: null, value: freshCacheWorkspace }),
+    staleRenderWorkspace,
+  )
+  expect(live).toBe(freshCacheWorkspace)
+  expect(verifyQueuedPromotionBasis(live, "batch-1", queuedItem).kind).toBe("stale")
+
+  // Non-ok query cache result fails closed rather than falling back to a stale render ref.
+  expect(readLiveWorkspaceFromCache(() => ({ kind: "unavailable" }), staleRenderWorkspace)).toBeUndefined()
 })
 
 test("resolvePayloadIdempotencyKey reuses exact key for identical payloads (and no-op resets) and mints fresh key when payload or cell basis changes", () => {

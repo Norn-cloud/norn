@@ -25,9 +25,11 @@ import {
   IMPORT_TRIAGE_UNAVAILABLE,
   initialAliasDraft,
   initialSupersessionDraft,
+  isOutcomeLocked,
   isTriageStep,
   patchAliasDraftState,
   patchSupersessionDraftState,
+  readLiveWorkspaceFromCache,
   resolvePayloadIdempotencyKey,
   resolveRowEntity,
   rowBasisKey,
@@ -119,10 +121,16 @@ export function ImportTriagePage() {
   })
 
   const workspace = read.data?.kind === "ok" ? read.data.value : undefined
-  const activeBatchIdRef = useRef<string | undefined>(workspace?.batchId)
   const workspaceRef = useRef<ImportTriageWorkspace | undefined>(workspace)
-  activeBatchIdRef.current = workspace?.batchId
   workspaceRef.current = workspace
+
+  // Read the live TanStack Query cache directly at dispatch time so a refetch that updated the cache
+  // prior to React re-rendering never lets a stale render ref authorize dispatch.
+  const getLiveWorkspace = () =>
+    readLiveWorkspaceFromCache(
+      () => client.getQueryData<CellResult<ImportTriageWorkspace>>(QUERY_KEY),
+      workspaceRef.current,
+    )
 
   // Flipped on `/imports` unmount so queued batch promotions stop immediately if the operator navigates away.
   const mountedRef = useRef(true)
@@ -198,7 +206,7 @@ export function ImportTriagePage() {
 
   /** Apply a cache update strictly while mounted and the active batch still matches `expectedBatchId`. */
   const updateWorkspace = (expectedBatchId: string, updater: (current: ImportTriageWorkspace) => ImportTriageWorkspace) => {
-    if (!mountedRef.current || activeBatchIdRef.current !== expectedBatchId) return
+    if (!mountedRef.current || getLiveWorkspace()?.batchId !== expectedBatchId) return
     client.setQueryData<CellResult<ImportTriageWorkspace>>(QUERY_KEY, (current) => {
       if (current?.kind !== "ok" || current.value.batchId !== expectedBatchId) return current
       return { ...current, value: updater(current.value) }
@@ -228,7 +236,7 @@ export function ImportTriagePage() {
     alias: AliasCandidate,
     update: Partial<AliasDraftState>,
   ) => {
-    if (!mountedRef.current || activeBatchIdRef.current !== expectedBatchId) return
+    if (!mountedRef.current || getLiveWorkspace()?.batchId !== expectedBatchId) return
     patchBatchDraft(expectedBatchId, (current) => {
       const nextDraft = patchAliasDraftState(current.aliases[alias.id], alias, update)
       return { ...current, aliases: { ...current.aliases, [alias.id]: nextDraft } }
@@ -239,7 +247,7 @@ export function ImportTriagePage() {
     if (!mountedRef.current) return
     const locks = getLockSet(inFlightAliasesRef.current, requestBatchId)
     if (locks.has(alias.id)) return
-    const currentWorkspace = workspaceRef.current
+    const currentWorkspace = getLiveWorkspace()
     if (!currentWorkspace || currentWorkspace.batchId !== requestBatchId) return
 
     const currentDraft = draftsRef.current[requestBatchId]?.aliases[alias.id] ?? initialAliasDraft(alias)
@@ -363,7 +371,7 @@ export function ImportTriagePage() {
             return row
           }),
         }))
-        if (mountedRef.current && activeBatchIdRef.current === requestBatchId) {
+        if (mountedRef.current && getLiveWorkspace()?.batchId === requestBatchId) {
           void client.invalidateQueries({ queryKey: QUERY_KEY })
         }
       } else if (classified.kind === "pending") {
@@ -431,10 +439,11 @@ export function ImportTriagePage() {
     currentValue: string,
     nextValue: string,
   ) => {
-    if (!mountedRef.current || activeBatchIdRef.current !== expectedBatchId) return
+    if (!mountedRef.current || getLiveWorkspace()?.batchId !== expectedBatchId) return
     if (currentValue === nextValue) return
     const editKey = fieldEditKey(rowId, basisKey, fieldName)
     patchBatchDraft(expectedBatchId, (current) => {
+      if (isOutcomeLocked(current.rowOutcomes[rowId])) return current
       const nextEdits = { ...current.reviewEdits }
       if (nextValue === baselineValue) {
         delete nextEdits[editKey]
@@ -458,9 +467,10 @@ export function ImportTriagePage() {
     fieldName: string,
     baselineValue: string,
   ) => {
-    if (!mountedRef.current || activeBatchIdRef.current !== expectedBatchId) return
+    if (!mountedRef.current || getLiveWorkspace()?.batchId !== expectedBatchId) return
     const editKey = fieldEditKey(rowId, basisKey, fieldName)
     patchBatchDraft(expectedBatchId, (current) => {
+      if (isOutcomeLocked(current.rowOutcomes[rowId])) return current
       if (!(editKey in current.reviewEdits)) return current
       const previousEdit = current.reviewEdits[editKey]
       const nextEdits = { ...current.reviewEdits }
@@ -487,10 +497,10 @@ export function ImportTriagePage() {
     if (!mountedRef.current) return "skipped"
     const locks = getLockSet(inFlightRowsRef.current, requestBatchId)
     if (locks.has(row.id)) return "skipped"
-    const currentWorkspace = workspaceRef.current
+    const currentWorkspace = getLiveWorkspace()
     if (!currentWorkspace || currentWorkspace.batchId !== requestBatchId) return "skipped"
     const currentDraft = draftsRef.current[requestBatchId] ?? EMPTY_BATCH_DRAFT
-    if (currentDraft.rowOutcomes[row.id]?.kind === "committed") return "skipped"
+    if (isOutcomeLocked(currentDraft.rowOutcomes[row.id])) return "skipped"
 
     // Re-read the live row, artifact, and canonical baseline values before dispatch so stale evidence,
     // drifted baselines, or newly quarantined rows never submit.
@@ -568,7 +578,7 @@ export function ImportTriagePage() {
             [liveRow.id]: { kind: "committed", receipt: classified.receipt },
           },
         }))
-        if (mountedRef.current && activeBatchIdRef.current === requestBatchId) {
+        if (mountedRef.current && getLiveWorkspace()?.batchId === requestBatchId) {
           void client.invalidateQueries({ queryKey: QUERY_KEY })
         }
         return "promoted"
@@ -638,7 +648,7 @@ export function ImportTriagePage() {
     if (!mountedRef.current) return
     const locks = getLockSet(inFlightRowsRef.current, requestBatchId)
     if (eligibleRows.length === 0 || batchRunningRef.current.has(requestBatchId) || locks.size > 0) return
-    const currentWorkspace = workspaceRef.current
+    const currentWorkspace = getLiveWorkspace()
     if (!currentWorkspace || currentWorkspace.batchId !== requestBatchId) return
 
     const currentAliases = new Map<string, AliasResolution>()
@@ -680,11 +690,11 @@ export function ImportTriagePage() {
       const report = await runBatchPromotionQueue(
         requestBatchId,
         queue,
-        () => activeBatchIdRef.current,
+        () => getLiveWorkspace()?.batchId,
         keptQuarantined,
         async (item) => {
           const liveOutcome = draftsRef.current[requestBatchId]?.rowOutcomes[item.rowId]
-          if (liveOutcome?.kind === "committed" || liveOutcome?.kind === "pending") {
+          if (isOutcomeLocked(liveOutcome)) {
             patchBatchDraft(requestBatchId, (curr) => {
               const nextQueued = new Set(curr.queuedRowIds)
               nextQueued.delete(item.rowId)
@@ -692,7 +702,7 @@ export function ImportTriagePage() {
             })
             return "skipped"
           }
-          const basis = verifyQueuedPromotionBasis(workspaceRef.current, requestBatchId, item)
+          const basis = verifyQueuedPromotionBasis(getLiveWorkspace(), requestBatchId, item)
           if (basis.kind === "stale") {
             patchBatchDraft(requestBatchId, (curr) => {
               const nextQueued = new Set(curr.queuedRowIds)
@@ -732,7 +742,7 @@ export function ImportTriagePage() {
     conflict: SupersessionConflict,
     update: Partial<SupersessionDraftState>,
   ) => {
-    if (!mountedRef.current || activeBatchIdRef.current !== expectedBatchId) return
+    if (!mountedRef.current || getLiveWorkspace()?.batchId !== expectedBatchId) return
     patchBatchDraft(expectedBatchId, (current) => {
       const nextDraft = patchSupersessionDraftState(current.supersessions[conflict.id], conflict, update)
       return { ...current, supersessions: { ...current.supersessions, [conflict.id]: nextDraft } }
@@ -743,7 +753,7 @@ export function ImportTriagePage() {
     if (!mountedRef.current) return
     const locks = getLockSet(inFlightSupersessionsRef.current, requestBatchId)
     if (locks.has(conflict.id)) return
-    const currentWorkspace = workspaceRef.current
+    const currentWorkspace = getLiveWorkspace()
     if (!currentWorkspace || currentWorkspace.batchId !== requestBatchId) return
 
     const currentDraft = draftsRef.current[requestBatchId]?.supersessions[conflict.id] ?? initialSupersessionDraft(conflict)
@@ -804,7 +814,7 @@ export function ImportTriagePage() {
           ...curr,
           supersessions: curr.supersessions.map((item) => item.id === conflict.id ? { ...item, resolution } : item),
         }))
-        if (mountedRef.current && activeBatchIdRef.current === requestBatchId) {
+        if (mountedRef.current && getLiveWorkspace()?.batchId === requestBatchId) {
           void client.invalidateQueries({ queryKey: QUERY_KEY })
         }
       } else if (classified.kind === "pending") {

@@ -392,6 +392,25 @@ export function fieldEditKey(rowId: string, basisKey: string, fieldName: string)
   return `${rowId}\u0000${basisKey}\u0000${fieldName}`
 }
 
+/** Whether a row outcome represents a submitted decision awaiting cell resolution (`committed` or `pending`). */
+export function isOutcomeLocked(outcome: RowActionOutcome | undefined | null): boolean {
+  return outcome?.kind === "committed" || outcome?.kind === "pending"
+}
+
+/**
+ * Read the latest live workspace directly from the query cache at dispatch time, falling back to
+ * the render-captured ref only when no cache entry exists yet. A non-`ok` cache entry fails closed
+ * (`undefined`) rather than falling back to a stale render value.
+ */
+export function readLiveWorkspaceFromCache(
+  getCached: () => CellResult<ImportTriageWorkspace> | undefined,
+  fallback: ImportTriageWorkspace | undefined,
+): ImportTriageWorkspace | undefined {
+  const cached = getCached()
+  if (cached !== undefined) return cached.kind === "ok" ? cached.value : undefined
+  return fallback
+}
+
 /** Rows that must stay excluded from batch promotion (in-flight, queued, committed awaiting read, or pending approval). */
 export function batchLockedRowIds(
   busyRowIds: ReadonlySet<string>,
@@ -401,7 +420,7 @@ export function batchLockedRowIds(
   const locked = new Set<string>(busyRowIds)
   for (const id of queuedRowIds) locked.add(id)
   for (const [rowId, outcome] of Object.entries(rowOutcomes)) {
-    if (outcome.kind === "committed" || outcome.kind === "pending") {
+    if (isOutcomeLocked(outcome)) {
       locked.add(rowId)
     }
   }

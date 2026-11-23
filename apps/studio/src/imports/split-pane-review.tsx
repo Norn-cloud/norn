@@ -35,6 +35,7 @@ import {
   hasResolvedEntity,
   isFieldWithheld,
   isLowConfidence,
+  isOutcomeLocked,
   openFindingsOf,
   partitionPromotionBatch,
   resolveArtifactMediaSource,
@@ -584,14 +585,14 @@ export function SplitPaneReview({
               const queued = queuedRowIds.has(row.id)
               const locked = busy || queued
               const outcome = rowOutcomes[row.id] ?? null
-              const committedAwaitingRead = outcome?.kind === "committed"
+              const outcomeLocked = isOutcomeLocked(outcome)
               const rowArtifact = artifacts.find((item) => item.id === row.artifactId)
               const basisKey = rowBasisKey(row, rowArtifact)
               const canPromote = rowStatus === "imported_unverified"
                 && entity.kind === "resolved"
                 && !locked
                 && !batchRunning
-                && !committedAwaitingRead
+                && !outcomeLocked
                 && rowArtifact !== undefined
 
               return (
@@ -731,20 +732,20 @@ export function SplitPaneReview({
                               dir="auto"
                               value={current}
                               readOnly={verified}
-                              disabled={locked || committedAwaitingRead}
+                              disabled={locked || outcomeLocked}
                               onFocus={() => { setFocusedRowId(row.id); setFocusedFieldId(field.id) }}
                               onChange={(event) => onSetFieldValue(batchId, row.id, basisKey, field.name, field.value, current, event.target.value)}
                               aria-invalid={hasRed || undefined}
                               className={cn(
                                 "h-7 min-w-0 flex-1 rounded border bg-background px-2 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
                                 hasRed ? "border-tone-red/50" : hasAmber ? "border-tone-amber/50" : "border-border",
-                                (verified || locked || committedAwaitingRead) && "cursor-default bg-muted/40 text-foreground/85",
+                                (verified || locked || outcomeLocked) && "cursor-default bg-muted/40 text-foreground/85",
                               )}
                             />
                             {hasLocalEdit && (
                               <button
                                 type="button"
-                                disabled={locked || committedAwaitingRead}
+                                disabled={locked || outcomeLocked}
                                 aria-label={`Reset ${field.label} edit`}
                                 title={`Row baseline is "${field.value}" — click to undo local edit`}
                                 onClick={(event) => { event.stopPropagation(); onResetFieldValue(batchId, row.id, basisKey, field.name, field.value) }}
@@ -872,7 +873,15 @@ export function SplitPaneReview({
                         onClick={(event) => { event.stopPropagation(); if (rowArtifact) void onPromoteRow(batchId, row, rowArtifact) }}
                         className="h-7 rounded border-border bg-background px-2.5 text-xs shadow-none"
                       >
-                        {busy ? "Promoting…" : queued ? "Queued…" : committedAwaitingRead ? "Committed — syncing…" : "Promote row"}
+                        {busy
+                          ? "Promoting…"
+                          : queued
+                            ? "Queued…"
+                            : outcome?.kind === "committed"
+                              ? "Committed — syncing…"
+                              : outcome?.kind === "pending"
+                                ? "Pending approval…"
+                                : "Promote row"}
                       </Button>
                     )}
                   </div>
