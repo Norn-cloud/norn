@@ -1,7 +1,13 @@
 import { Link } from "@tanstack/react-router"
-import { ArrowRight, Box, Database, Fingerprint, GitBranch, KeyRound, Radio, Shield, SlidersHorizontal, TableProperties, Zap } from "lucide-react"
+import { ArrowRight, Box, Database, Fingerprint, GitBranch, KeyRound, Radio, Shield, TableProperties, Zap } from "lucide-react"
 import { useState } from "react"
 import { Chip } from "@/components/chip"
+import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { Panel, Well } from "@/components/panel"
+import { TableCard } from "@/components/table-card"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { AGGREGATES, AUXILIARY_TYPES, COMMANDS, EVENTS, MACHINES, VALUE_OBJECTS, type ValueObject } from "./behavior.ts"
 import { FinanceStateMachine } from "./behavior-pages.tsx"
@@ -9,7 +15,7 @@ import { MARKS, MODEL_LINKS, TYPES, type FinanceType, type MarkId } from "./data
 import { MARKING_FIELDS, RULES, RuleScope } from "./operations.tsx"
 import { BusinessPolicies } from "./policies.tsx"
 import { RECORDS } from "./records.ts"
-import { Mark, TypeTile, useFinanceMode } from "./workspace.tsx"
+import { Mark, TypeTile } from "./workspace.tsx"
 
 type FieldKind = ValueObject | "Text" | "Date" | "Enum" | "Reference"
 type Property = readonly [key: string, type: FieldKind, presence: "Required" | "Optional"]
@@ -82,7 +88,6 @@ function fieldSources(type: FinanceType, key: string): readonly (readonly [MarkI
   return [...distinct.values()]
 }
 
-/** Consolidated 5 enterprise tabs (Palantir OMA / Snowsight style), with full legacy query-param mapping. */
 export const PRIMARY_TABS = [
   { id: "overview", label: "Overview" },
   { id: "schema", label: "Schema & Links" },
@@ -120,7 +125,6 @@ function valueObject(kind: string): kind is ValueObject {
 }
 
 function Overview({ type }: { readonly type: FinanceType }) {
-  const { mode, setMode } = useFinanceMode()
   const { key, fields } = DEFINITIONS[type]
   const sources = [...new Set(fields.flatMap(([field]) => fieldSources(type, field).map(([source]) => source)))]
   const aggregate = AGGREGATES.find((item) => item.root === type || item.members.some((member) => member === type))
@@ -129,46 +133,28 @@ function Overview({ type }: { readonly type: FinanceType }) {
   const ruleCount = RULES.filter((rule) => rule.reads.includes(type) || Object.values(COMMANDS).some((c) => c.on === type && c.rules.some((id) => id === rule.id))).length
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 divide-y divide-border overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-4 lg:divide-x lg:divide-y-0">
-        <div className="px-4 py-3">
-          <p className="text-[11px] text-muted-foreground">Identifier</p>
-          <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-foreground"><KeyRound className="size-3.5 text-muted-foreground" />{key}</p>
-        </div>
-        <div className="px-4 py-3">
-          <p className="text-[11px] text-muted-foreground">Aggregate role</p>
-          <p className="mt-1 text-sm font-semibold text-foreground">
-            {root ? "Aggregate root" : aggregate ? `${TYPES[aggregate.root].name} entity` : "Reference entity"}
-          </p>
-        </div>
-        <div className="px-4 py-3">
-          <p className="text-[11px] text-muted-foreground">Properties</p>
-          <p className="mt-1 text-sm font-semibold tabular-nums text-foreground">{fields.length} typed fields</p>
-        </div>
-        <div className="px-4 py-3">
-          <p className="text-[11px] text-muted-foreground">Behavior &amp; guardrails</p>
-          <p className="mt-1 text-sm font-semibold tabular-nums text-foreground">{cmdCount} commands · {ruleCount} rules</p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <StatStrip>
+        <KpiTile icon={KeyRound} label="Identifier" value={<span className="text-base font-medium">{key}</span>} />
+        <KpiTile label="Aggregate role" value={<span className="text-base font-medium">{root ? "Aggregate root" : aggregate ? `${TYPES[aggregate.root].name} entity` : "Reference entity"}</span>} />
+        <KpiTile label="Properties" value={fields.length} sub="typed fields" />
+        <KpiTile label="Behavior" value={`${cmdCount} · ${ruleCount}`} sub="commands · guarding rules" />
+      </StatStrip>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="overflow-hidden rounded-lg border border-border bg-background">
-          <header className="flex items-center justify-between border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">
-            <span className="inline-flex items-center gap-1.5"><Box className="size-3.5 text-muted-foreground" />Aggregate boundary</span>
-            <Chip tone={root ? "blue" : "gray"}>{root ? "Aggregate root" : "Entity"}</Chip>
-          </header>
-          <div className="space-y-2.5 p-4 text-xs">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Panel icon={Box} label="Aggregate boundary" action={<Badge variant="secondary" className="font-normal">{root ? "Aggregate root" : "Entity"}</Badge>}>
+          <Well className="space-y-3 p-4 text-meta">
             {root ? (
               <>
-                <p className="text-foreground">{TYPES[type].name} owns transactional consistency for these child entities:</p>
-                <div className="flex flex-wrap gap-1.5">
+                <p className="text-muted-foreground">{TYPES[type].name} owns transactional consistency for these child entities:</p>
+                <div className="flex flex-wrap gap-2">
                   {aggregate.members.map((member) => (
-                    <Link key={member} to="/sources/$concept" params={{ concept: member }} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-subtle px-2 py-1 font-medium hover:border-data-accent hover:text-tone-blue">
+                    <Link key={member} to="/sources/$concept" params={{ concept: member }} className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-1 font-medium text-foreground hover:border-foreground/40">
                       <TypeTile type={member} className="size-5" />{TYPES[member].name}
                     </Link>
                   ))}
                   {aggregate.related.map((member) => (
-                    <Link key={member} to="/policies/$scope" params={{ scope: member }} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-subtle px-2 py-1 font-medium text-muted-foreground hover:border-data-accent hover:text-foreground">
+                    <Link key={member} to="/policies/$scope" params={{ scope: member }} className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-1 text-muted-foreground hover:border-foreground/40 hover:text-foreground">
                       {AUXILIARY_TYPES[member].name}
                     </Link>
                   ))}
@@ -177,107 +163,100 @@ function Overview({ type }: { readonly type: FinanceType }) {
             ) : aggregate ? (
               <p className="text-muted-foreground">
                 Changes are coordinated through the{" "}
-                <Link to="/sources/$concept" params={{ concept: aggregate.root }} className="font-semibold text-tone-blue hover:underline">{TYPES[aggregate.root].name}</Link>{" "}
+                <Link to="/sources/$concept" params={{ concept: aggregate.root }} className="font-medium text-foreground underline underline-offset-4">{TYPES[aggregate.root].name}</Link>{" "}
                 aggregate root.
               </p>
             ) : (
               <p className="text-muted-foreground">Standalone reference entity linked by other aggregates.</p>
             )}
             {type === "client" && (
-              <p className="border-t border-border pt-2.5 text-muted-foreground">
+              <p className="border-t pt-3 text-xs text-muted-foreground">
                 Resolution fallback: when no national ID matches, name and date of birth route probable matches to the identity review queue.
               </p>
             )}
-          </div>
-        </section>
+          </Well>
+        </Panel>
 
-        <section className="overflow-hidden rounded-lg border border-border bg-background">
-          <header className="flex items-center justify-between border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">
-            <span className="inline-flex items-center gap-1.5"><Shield className="size-3.5 text-muted-foreground" />Data contract</span>
-            <Chip tone="amber">Quarantine on failure</Chip>
-          </header>
-          <div className="space-y-3 p-4 text-xs">
+        <Panel icon={Shield} label="Data contract" action={<Chip tone="amber">Quarantine on failure</Chip>}>
+          <Well className="space-y-3 p-4 text-meta">
             <div>
-              <p className="text-[11px] text-muted-foreground">Required properties</p>
-              <p className="mt-1 font-mono text-foreground">
+              <p className="text-xs text-muted-foreground">Required properties</p>
+              <p className="mt-1 font-mono text-xs text-foreground">
                 {fields.filter(([, , presence]) => presence === "Required").map(([k]) => k).join(", ")}
               </p>
             </div>
-            {mode === "data" ? (
-              <div className="border-t border-border pt-2.5">
-                <p className="mb-1.5 text-[11px] text-muted-foreground">Backing source systems</p>
-                <ul className="flex flex-wrap gap-1.5">
-                  {sources.map((id) => (
-                    <li key={id} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-subtle px-2 py-1 text-[11px]">
-                      <Mark id={id} className="size-4" />{MARKS[id].name}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between border-t border-border pt-2.5 text-muted-foreground">
-                <span>Normalized from {sources.length} backing {sources.length === 1 ? "system" : "systems"} · 212 rows quarantined workspace-wide</span>
-                <Link to="/examples/$scene" params={{ scene: "dataset" }} onClick={() => setMode("data")} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
-                  Mapping<ArrowRight className="size-3" />
-                </Link>
-              </div>
-            )}
-          </div>
-        </section>
+            <div className="border-t pt-3">
+              <p className="mb-2 text-xs text-muted-foreground">Backing systems ({sources.length})</p>
+              <ul className="flex flex-wrap gap-1.5">
+                {sources.map((id) => (
+                  <li key={id} className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-1 text-xs text-muted-foreground">
+                    <Mark id={id} className="size-4 border-0 bg-transparent" />{MARKS[id].name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
+              <span>212 rows quarantined workspace-wide</span>
+              <Link to="/examples/$scene" params={{ scene: "dataset" }} className="inline-flex items-center gap-1 font-medium text-foreground hover:underline underline-offset-4">
+                Dataset mapping<ArrowRight className="size-3 text-muted-foreground" />
+              </Link>
+            </div>
+          </Well>
+        </Panel>
       </div>
     </div>
   )
 }
 
 function SchemaAndLinks({ type }: { readonly type: FinanceType }) {
-  const { mode, setMode } = useFinanceMode()
+  const [showRaw, setShowRaw] = useState(false)
   const { fields } = DEFINITIONS[type]
   const objects = [...new Set(fields.map(([, kind]) => kind).filter(valueObject))]
   const links = MODEL_LINKS.filter(([from, , to]) => type === from || type === to)
   const aggregate = AGGREGATES.find((item) => item.root === type)
 
   return (
-    <div className="space-y-4">
-      <section className="overflow-hidden rounded-lg border border-border bg-background">
-        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-2">
-          <span className="inline-flex items-center gap-1.5 text-xs font-semibold"><TableProperties className="size-3.5 text-muted-foreground" />Properties ({fields.length})</span>
-          {mode === "domain" && (
-            <button type="button" onClick={() => setMode("data")} className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-tone-blue">
-              <Database className="size-3" />Show raw source columns (Data Engineering)
-            </button>
-          )}
-        </header>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-120 text-start text-xs">
-            <thead>
-              <tr className="border-b border-border bg-surface-subtle/40 text-muted-foreground">
-                <th scope="col" className="px-4 py-2 text-start font-medium">Property</th>
-                <th scope="col" className="px-3 py-2 text-start font-medium">Value type</th>
-                <th scope="col" className="px-3 py-2 text-start font-medium">Presence</th>
-                <th scope="col" className="px-4 py-2 text-start font-medium">{mode === "data" ? "Source columns" : "Classification"}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
+    <div className="space-y-6">
+      <Panel
+        icon={TableProperties}
+        label={`Properties (${fields.length})`}
+        action={
+          <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowRaw((v) => !v)}>
+            <Database className="size-3.5" />{showRaw ? "Hide raw source columns" : "Show raw source columns"}
+          </Button>
+        }
+      >
+        <TableCard>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Property</TableHead>
+                <TableHead>Value type</TableHead>
+                <TableHead>Presence</TableHead>
+                <TableHead>{showRaw ? "Source columns" : "Classification"}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {fields.map(([key, kind, presence]) => {
                 const restricted = MARKING_FIELDS.some(({ field, type: owner }) => owner === type && field.endsWith(`.${key}`))
                 return (
-                  <tr key={key} className="hover:bg-surface-subtle/60">
-                    <th scope="row" className="px-4 py-2.5 text-start font-mono font-medium text-foreground">{key}</th>
-                    <td className="px-3 py-2.5">
+                  <TableRow key={key}>
+                    <TableCell className="font-mono font-medium text-foreground">{key}</TableCell>
+                    <TableCell>
                       {valueObject(kind) ? (
-                        <a href={`#${kind}`} className="font-mono font-medium text-tone-blue hover:underline">{kind}</a>
+                        <a href={`#${kind}`} className="font-mono font-medium text-foreground underline underline-offset-4">{kind}</a>
                       ) : (
                         <span className="text-muted-foreground">{kind}</span>
                       )}
-                    </td>
-                    <td className="px-3 py-2.5 text-muted-foreground">{presence}</td>
-                    <td className="px-4 py-2.5">
-                      {mode === "data" ? (
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{presence}</TableCell>
+                    <TableCell>
+                      {showRaw ? (
                         <div className="space-y-1">
                           {fieldSources(type, key).map(([source, path]) => (
                             <div key={path} className="flex items-center gap-1.5">
                               <Mark id={source} className="size-4 rounded-xs text-[7px]" />
-                              <code className="text-[11px] text-muted-foreground">{path}</code>
+                              <code className="text-xs text-muted-foreground">{path}</code>
                             </div>
                           ))}
                         </div>
@@ -286,60 +265,58 @@ function SchemaAndLinks({ type }: { readonly type: FinanceType }) {
                       ) : (
                         <span className="text-muted-foreground">Standard</span>
                       )}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 )
               })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+            </TableBody>
+          </Table>
+        </TableCard>
+      </Panel>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="overflow-hidden rounded-lg border border-border bg-background">
-          <header className="border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">
-            <span className="inline-flex items-center gap-1.5"><GitBranch className="size-3.5 text-muted-foreground" />Relationships ({links.length + (aggregate?.related.length ?? 0)})</span>
-          </header>
-          <ul className="divide-y divide-border px-4">
-            {links.map(([from, forward, to, inverse, outgoing, incoming]) => {
-              const [other, relation, reverse, count, reverseCount] = type === from ? [to, forward, inverse, outgoing, incoming] : [from, inverse, forward, incoming, outgoing]
-              return (
-                <li key={from + forward + to} className="flex flex-wrap items-center gap-2 py-2.5 text-xs">
-                  <span className="font-medium text-foreground">{relation}</span>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Panel icon={GitBranch} label={`Relationships (${links.length + (aggregate?.related.length ?? 0)})`}>
+          <Well>
+            <ul className="divide-y px-4">
+              {links.map(([from, forward, to, inverse, outgoing, incoming]) => {
+                const [other, relation, reverse, count, reverseCount] = type === from ? [to, forward, inverse, outgoing, incoming] : [from, inverse, forward, incoming, outgoing]
+                return (
+                  <li key={from + forward + to} className="flex flex-wrap items-center gap-2 py-2.5 text-meta">
+                    <span className="font-medium text-foreground">{relation}</span>
+                    <ArrowRight className="size-3 text-muted-foreground" />
+                    <Link to="/sources/$concept" params={{ concept: other }} className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline underline-offset-4">
+                      <TypeTile type={other} className="size-5" />{TYPES[other].name}
+                    </Link>
+                    <code className="rounded-sm bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{count}</code>
+                    <span className="ms-auto text-xs text-muted-foreground">inverse: {reverse} ({reverseCount})</span>
+                  </li>
+                )
+              })}
+              {aggregate?.related.map((member) => (
+                <li key={member} className="flex flex-wrap items-center gap-2 py-2.5 text-meta">
+                  <span className="font-medium text-foreground">owns</span>
                   <ArrowRight className="size-3 text-muted-foreground" />
-                  <Link to="/sources/$concept" params={{ concept: other }} className="inline-flex items-center gap-1.5 font-medium text-tone-blue hover:underline">
-                    <TypeTile type={other} className="size-5" />{TYPES[other].name}
-                  </Link>
-                  <code className="rounded-xs bg-muted px-1 text-[10px] text-muted-foreground">{count}</code>
-                  <span className="ms-auto text-[11px] text-muted-foreground">inverse: {reverse} ({reverseCount})</span>
+                  <Link to="/policies/$scope" params={{ scope: member }} className="font-medium text-foreground hover:underline underline-offset-4">{AUXILIARY_TYPES[member].name}</Link>
+                  <code className="rounded-sm bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">0..*</code>
                 </li>
-              )
-            })}
-            {aggregate?.related.map((member) => (
-              <li key={member} className="flex flex-wrap items-center gap-2 py-2.5 text-xs">
-                <span className="font-medium text-foreground">owns</span>
-                <ArrowRight className="size-3 text-muted-foreground" />
-                <Link to="/policies/$scope" params={{ scope: member }} className="font-medium text-tone-blue hover:underline">{AUXILIARY_TYPES[member].name}</Link>
-                <code className="rounded-xs bg-muted px-1 text-[10px] text-muted-foreground">0..*</code>
-              </li>
-            ))}
-          </ul>
-        </section>
+              ))}
+            </ul>
+          </Well>
+        </Panel>
 
         {objects.length > 0 && (
-          <section className="overflow-hidden rounded-lg border border-border bg-background">
-            <header className="border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">
-              <span className="inline-flex items-center gap-1.5"><Box className="size-3.5 text-muted-foreground" />Value objects</span>
-            </header>
-            <dl className="divide-y divide-border px-4">
-              {objects.map((kind) => (
-                <div key={kind} id={kind} className="py-2.5 text-xs">
-                  <dt className="font-mono font-semibold text-foreground">{kind}</dt>
-                  <dd className="mt-0.5 text-muted-foreground">{VALUE_OBJECTS[kind]}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
+          <Panel icon={Box} label="Value objects">
+            <Well>
+              <dl className="divide-y px-4">
+                {objects.map((kind) => (
+                  <div key={kind} id={kind} className="py-2.5 text-meta">
+                    <dt className="font-mono font-medium text-foreground">{kind}</dt>
+                    <dd className="mt-0.5 text-xs text-muted-foreground">{VALUE_OBJECTS[kind]}</dd>
+                  </div>
+                ))}
+              </dl>
+            </Well>
+          </Panel>
         )}
       </div>
     </div>
@@ -350,69 +327,73 @@ function CommandsMasterDetail({ type }: { readonly type: FinanceType }) {
   const commands = Object.entries(COMMANDS).filter(([, command]) => command.on === type)
   const [selectedId, setSelectedId] = useState(commands[0]?.[0])
   if (!commands.length) {
-    return <div className="rounded-lg border border-border bg-background p-6 text-xs text-muted-foreground">This object type has no declared commands in the finance model.</div>
+    return <Panel icon={Zap} label="Commands"><Well className="p-6 text-meta text-muted-foreground">This object type has no declared commands in the finance model.</Well></Panel>
   }
   const [id, command] = commands.find(([k]) => k === selectedId) ?? commands[0]!
   return (
-    <div className="grid overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <div className="overflow-x-auto">
-        <table className="w-full text-start text-xs">
-          <thead>
-            <tr className="border-b border-border bg-surface-subtle text-muted-foreground">
-              <th className="px-4 py-2 text-start font-medium">Command</th>
-              <th className="px-3 py-2 text-start font-medium">Issuer</th>
-              <th className="px-4 py-2 text-end font-medium">Emits</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {commands.map(([key, item]) => {
-              const active = key === id
-              return (
-                <tr key={key} id={key} onClick={() => setSelectedId(key)} className={cn("cursor-pointer hover:bg-surface-subtle", active && "bg-tone-blue/[0.06]")}>
-                  <td className={cn("px-4 py-2.5 font-mono font-semibold text-tone-blue", active && "border-s-2 border-s-data-accent")}>{key}</td>
-                  <td className="px-3 py-2.5 text-muted-foreground">{item.issuer}</td>
-                  <td className="px-4 py-2.5 text-end font-mono text-[11px] text-muted-foreground">{item.emits.join(", ") || "—"}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-      <aside className="space-y-3.5 border-t border-border bg-surface-subtle/35 p-4 text-xs lg:border-s lg:border-t-0">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Command Inspector</p>
-          <code className="mt-0.5 block text-sm font-semibold text-tone-blue">{id}</code>
+    <Panel icon={Zap} label="Commands" action={`${commands.length} declared`}>
+      <Well className="grid lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="overflow-x-auto">
+          <Table className="text-meta tabular-nums">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Command</TableHead>
+                <TableHead>Issuer</TableHead>
+                <TableHead className="text-end">Emits</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {commands.map(([key, item]) => {
+                const active = key === id
+                return (
+                  <TableRow key={key} id={key} onClick={() => setSelectedId(key)} className={cn("cursor-pointer", active && "bg-muted/60")}>
+                    <TableCell className={cn("font-mono font-medium text-foreground", active && "border-s-2 border-s-foreground")}>{key}</TableCell>
+                    <TableCell className="text-muted-foreground">{item.issuer}</TableCell>
+                    <TableCell className="text-end font-mono text-xs text-muted-foreground">{item.emits.join(", ") || "—"}</TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
         </div>
-        <div className="border-t border-border pt-3">
-          <p className="text-[11px] text-muted-foreground">Issued by</p>
-          <p className="mt-0.5 font-medium text-foreground">{command.issuer}</p>
-        </div>
-        <div className="border-t border-border pt-3">
-          <p className="text-[11px] text-muted-foreground">Guards</p>
-          <p className="mt-0.5 leading-relaxed text-foreground">{command.guard}</p>
-          {command.rules.length > 0 && (
-            <div className="mt-2 flex flex-col gap-1">
-              {command.rules.map((ruleId) => (
-                <Link key={ruleId} to="/guarantees" hash={ruleId} className="inline-flex items-center justify-between rounded-md border border-border bg-background px-2.5 py-1.5 font-medium text-tone-blue hover:border-data-accent">
-                  <span>{RULES.find((r) => r.id === ruleId)?.title ?? ruleId}</span><ArrowRight className="size-3" />
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="border-t border-border pt-3">
-          <p className="text-[11px] text-muted-foreground">Emits event</p>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            {command.emits.length > 0 ? command.emits.map((event) => (
-              <Link key={event} to="/sources/$concept" params={{ concept: EVENTS[event].on }} search={{ tab: "events" }} hash={event}
-                className="rounded-sm border border-border bg-background px-2 py-0.5 font-mono text-[11px] font-medium text-tone-blue hover:border-data-accent">
-                {event}
-              </Link>
-            )) : <span className="text-muted-foreground">No public event</span>}
+        <aside className="divide-y border-t bg-surface-subtle/40 px-4 text-meta lg:border-s lg:border-t-0">
+          <div className="py-3">
+            <p className="text-xs text-muted-foreground">Command inspector</p>
+            <code className="mt-1 block text-sm font-medium text-foreground">{id}</code>
           </div>
-        </div>
-      </aside>
-    </div>
+          <div className="py-3">
+            <p className="text-xs text-muted-foreground">Issued by</p>
+            <p className="mt-1 text-foreground">{command.issuer}</p>
+          </div>
+          <div className="space-y-2 py-3">
+            <p className="text-xs text-muted-foreground">Guards</p>
+            <p className="leading-relaxed text-foreground">{command.guard}</p>
+            {command.rules.length > 0 && (
+              <ul className="space-y-1 pt-1">
+                {command.rules.map((ruleId) => (
+                  <li key={ruleId}>
+                    <Link to="/guarantees" hash={ruleId} className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground hover:underline underline-offset-4">
+                      <span>{RULES.find((r) => r.id === ruleId)?.title ?? ruleId}</span><ArrowRight className="size-3 text-muted-foreground" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="py-3">
+            <p className="text-xs text-muted-foreground">Emits event</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {command.emits.length > 0 ? command.emits.map((event) => (
+                <Link key={event} to="/sources/$concept" params={{ concept: EVENTS[event].on }} search={{ tab: "events" }} hash={event}
+                  className="rounded-sm border bg-card px-2 py-0.5 font-mono text-xs text-foreground hover:border-foreground/40">
+                  {event}
+                </Link>
+              )) : <span className="text-xs text-muted-foreground">No public event</span>}
+            </div>
+          </div>
+        </aside>
+      </Well>
+    </Panel>
   )
 }
 
@@ -421,58 +402,60 @@ function EventsMasterDetail({ type }: { readonly type: FinanceType }) {
     (type === "client" && (name === "HardshipOpened" || name === "KycExpired")))
   const [selectedId, setSelectedId] = useState(events[0]?.[0])
   if (!events.length) {
-    return <div className="rounded-lg border border-border bg-background p-6 text-xs text-muted-foreground">This object type emits no public events in the finance model.</div>
+    return <Panel icon={Radio} label="Events"><Well className="p-6 text-meta text-muted-foreground">This object type emits no public events in the finance model.</Well></Panel>
   }
   const [id, event] = events.find(([k]) => k === selectedId) ?? events[0]!
   return (
-    <div className="grid overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <div className="overflow-x-auto">
-        <table className="w-full text-start text-xs">
-          <thead>
-            <tr className="border-b border-border bg-surface-subtle text-muted-foreground">
-              <th className="px-4 py-2 text-start font-medium">Event</th>
-              <th className="px-3 py-2 text-start font-medium">Source object</th>
-              <th className="px-4 py-2 text-end font-medium">Subscribers</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {events.map(([key, item]) => {
-              const active = key === id
-              return (
-                <tr key={key} id={key} onClick={() => setSelectedId(key)} className={cn("cursor-pointer hover:bg-surface-subtle", active && "bg-tone-blue/[0.06]")}>
-                  <td className={cn("px-4 py-2.5 font-mono font-semibold text-foreground", active && "border-s-2 border-s-data-accent text-tone-blue")}>{key}</td>
-                  <td className="px-3 py-2.5 text-muted-foreground">{TYPES[item.on].name}</td>
-                  <td className="px-4 py-2.5 text-end tabular-nums text-muted-foreground">{item.reactions.length}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-      <aside className="space-y-3.5 border-t border-border bg-surface-subtle/35 p-4 text-xs lg:border-s lg:border-t-0">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Event Inspector</p>
-          <code className="mt-0.5 block text-sm font-semibold text-foreground">{id}</code>
+    <Panel icon={Radio} label="Events" action={`${events.length} emitted`}>
+      <Well className="grid lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="overflow-x-auto">
+          <Table className="text-meta tabular-nums">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Event</TableHead>
+                <TableHead>Source object</TableHead>
+                <TableHead className="text-end">Subscribers</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {events.map(([key, item]) => {
+                const active = key === id
+                return (
+                  <TableRow key={key} id={key} onClick={() => setSelectedId(key)} className={cn("cursor-pointer", active && "bg-muted/60")}>
+                    <TableCell className={cn("font-mono font-medium text-foreground", active && "border-s-2 border-s-foreground")}>{key}</TableCell>
+                    <TableCell className="text-muted-foreground">{TYPES[item.on].name}</TableCell>
+                    <TableCell className="text-end text-muted-foreground">{item.reactions.length}</TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
         </div>
-        <div className="border-t border-border pt-3">
-          <p className="mb-1.5 text-[11px] text-muted-foreground">Payload schema</p>
-          <dl className="divide-y divide-border rounded-md border border-border bg-background px-2.5">
-            {event.payload.map(([field, kind]) => (
-              <div key={field} className="flex items-center justify-between gap-2 py-1.5">
-                <dt className="font-mono text-[11px] text-foreground">{field}</dt>
-                <dd className="font-mono text-[10px] text-muted-foreground">{kind}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-        <div className="border-t border-border pt-3">
-          <p className="mb-1 text-[11px] text-muted-foreground">Downstream reactions</p>
-          <ul className="list-disc space-y-1 ps-4 text-foreground/90">
-            {event.reactions.map((r) => <li key={r}>{r}</li>)}
-          </ul>
-        </div>
-      </aside>
-    </div>
+        <aside className="divide-y border-t bg-surface-subtle/40 px-4 text-meta lg:border-s lg:border-t-0">
+          <div className="py-3">
+            <p className="text-xs text-muted-foreground">Event inspector</p>
+            <code className="mt-1 block text-sm font-medium text-foreground">{id}</code>
+          </div>
+          <div className="py-3">
+            <p className="mb-1.5 text-xs text-muted-foreground">Payload schema</p>
+            <dl className="divide-y">
+              {event.payload.map(([field, kind]) => (
+                <div key={field} className="flex items-center justify-between gap-2 py-1.5">
+                  <dt className="font-mono text-xs text-foreground">{field}</dt>
+                  <dd className="font-mono text-xs text-muted-foreground">{kind}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+          <div className="py-3">
+            <p className="mb-1.5 text-xs text-muted-foreground">Downstream reactions</p>
+            <ul className="list-disc space-y-1 ps-4 text-xs text-foreground/90">
+              {event.reactions.map((r) => <li key={r}>{r}</li>)}
+            </ul>
+          </div>
+        </aside>
+      </Well>
+    </Panel>
   )
 }
 
@@ -480,18 +463,21 @@ function BehaviorSection({ type, initial }: { readonly type: FinanceType; readon
   const machine = MACHINES.find((item) => item.type === type)
   const [sub, setSub] = useState<"lifecycle" | "commands" | "events">(initial === "lifecycle" && !machine ? "commands" : initial)
   return (
-    <div className="space-y-3">
-      <div role="group" aria-label="Behavior views" className="inline-flex rounded-md border border-border bg-surface-subtle p-0.5 text-xs">
+    <div className="space-y-4">
+      <div role="group" aria-label="Behavior views" className="inline-flex h-8 items-center rounded-md bg-muted p-0.5 text-xs">
         {machine && (
-          <button type="button" onClick={() => setSub("lifecycle")} className={cn("inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 font-medium", sub === "lifecycle" ? "bg-background text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground")}>
-            <GitBranch className="size-3" />Lifecycle
+          <button type="button" aria-pressed={sub === "lifecycle"} onClick={() => setSub("lifecycle")}
+            className="inline-flex h-7 items-center gap-1.5 rounded-[0.3125rem] px-2.5 text-muted-foreground hover:text-foreground aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent">
+            <GitBranch className="size-3.5" />Lifecycle
           </button>
         )}
-        <button type="button" onClick={() => setSub("commands")} className={cn("inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 font-medium", sub === "commands" ? "bg-background text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground")}>
-          <Zap className="size-3" />Commands
+        <button type="button" aria-pressed={sub === "commands"} onClick={() => setSub("commands")}
+          className="inline-flex h-7 items-center gap-1.5 rounded-[0.3125rem] px-2.5 text-muted-foreground hover:text-foreground aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent">
+          <Zap className="size-3.5" />Commands
         </button>
-        <button type="button" onClick={() => setSub("events")} className={cn("inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 font-medium", sub === "events" ? "bg-background text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground")}>
-          <Radio className="size-3" />Events
+        <button type="button" aria-pressed={sub === "events"} onClick={() => setSub("events")}
+          className="inline-flex h-7 items-center gap-1.5 rounded-[0.3125rem] px-2.5 text-muted-foreground hover:text-foreground aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent">
+          <Radio className="size-3.5" />Events
         </button>
       </div>
       {sub === "lifecycle" && machine ? <FinanceStateMachine key={type} machine={machine} />
@@ -504,27 +490,26 @@ function BehaviorSection({ type, initial }: { readonly type: FinanceType; readon
 function GovernanceSection({ type }: { readonly type: FinanceType }) {
   const rules = RULES.filter((rule) => rule.reads.includes(type) || Object.values(COMMANDS).some((command) => command.on === type && command.rules.some((id) => id === rule.id)))
   return (
-    <div className="space-y-4">
-      <section className="overflow-hidden rounded-lg border border-border bg-background">
-        <header className="flex items-center justify-between border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">
-          <span className="inline-flex items-center gap-1.5"><Shield className="size-3.5 text-muted-foreground" />Guarding invariants ({rules.length})</span>
-        </header>
-        {rules.length === 0 ? (
-          <p className="p-4 text-xs text-muted-foreground">No finance rule directly reads this type.</p>
-        ) : (
-          <div className="divide-y divide-border">
-            {rules.map((rule) => (
-              <div key={rule.id} className="space-y-2 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Link to="/guarantees" hash={rule.id} className="text-xs font-semibold text-foreground hover:text-tone-blue">{rule.title}</Link>
-                  <Chip tone={rule.refusal ? "red" : "green"} dot>{rule.refusal ? "Refusal recorded" : "Check passed"}</Chip>
+    <div className="space-y-6">
+      <Panel icon={Shield} label={`Guarding invariants (${rules.length})`}>
+        <Well>
+          {rules.length === 0 ? (
+            <p className="p-4 text-meta text-muted-foreground">No finance rule directly reads this type.</p>
+          ) : (
+            <div className="divide-y">
+              {rules.map((rule) => (
+                <div key={rule.id} className="space-y-2.5 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Link to="/guarantees" hash={rule.id} className="text-meta font-medium text-foreground hover:underline underline-offset-4">{rule.title}</Link>
+                    <Chip tone={rule.refusal ? "red" : "green"} dot>{rule.refusal ? "Refusal recorded" : "Check passed"}</Chip>
+                  </div>
+                  <RuleScope rule={rule} />
                 </div>
-                <RuleScope rule={rule} />
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+              ))}
+            </div>
+          )}
+        </Well>
+      </Panel>
       <BusinessPolicies type={type} />
     </div>
   )

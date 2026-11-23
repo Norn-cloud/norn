@@ -1088,7 +1088,7 @@ fn bindings_are_admitted_against_their_recomputed_digest_and_declared_roles() {
         "/connector/app".to_owned()
     )));
     // A cell that declares no roles admits no binding.
-    let bare = crate::cell(DefinitionKinds::default());
+    let bare = crate::definitions::cell(DefinitionKinds::default());
     let (status, refused) = install_binding(&bare, "studio.binding.issues", &good, None);
     assert_eq!(status, 422, "{refused}");
 }
@@ -1536,7 +1536,7 @@ fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
     let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
     assert_eq!(status, 422, "{refused}");
     let unknown = pointers(&refused);
-    assert!(!unknown.is_empty(), "{refused}");
+    assert_ne!(unknown, [], "{refused}");
     for (code, pointer) in &unknown {
         assert_eq!(code, "definition.flow_function_unknown");
         assert!(
@@ -1594,7 +1594,7 @@ fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
         .into_iter()
         .filter_map(|perform| perform.name)
         .collect();
-    assert!(!pairs.is_empty());
+    assert_ne!(pairs, []);
     assert!(
         pairs
             .iter()
@@ -2215,7 +2215,7 @@ fn a_flow_is_installed_by_signing_the_servers_words_for_it() {
     assert_eq!(document["signoff"]["signer"], json!("admin@demo"));
 
     // A cell that cannot restate a flow cannot install one: fail closed.
-    let bare = crate::cell(DefinitionKinds::default().with_roles(ROLES));
+    let bare = crate::definitions::cell(DefinitionKinds::default().with_roles(ROLES));
     assert_eq!(
         install_binding(&bare, TOOL, &binding("Intent", "member", &json!({})), None).0,
         200
@@ -2314,7 +2314,7 @@ fn a_population_reader_never_sees_a_definition_receipt_hash() {
     }
 
     // A cell without a question runtime holds no handle key: no receipt hash.
-    let bare = crate::cell(DefinitionKinds::default().with_roles(ROLES));
+    let bare = crate::definitions::cell(DefinitionKinds::default().with_roles(ROLES));
     let good = binding("Open issues", "member", &json!({}));
     let body = json!({ "kind": "binding", "id": "studio.binding.bare", "payload": good });
     for (method, path, auth, body) in [

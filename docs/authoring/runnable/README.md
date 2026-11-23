@@ -4,7 +4,7 @@ This path uses the public toolchain at main `2859d63d435a89ce82dc3902d24924c0882
 It ends with admission and a receipt. For execution, embed `norn-cell`; the public
 CLI currently supplies `check`, `eval`, `openapi`, and `remote`.
 
-Install Rust 1.98.0, Bun 1.3.14, the `wasm32-unknown-unknown` Rust target, and
+Install Rust 1.100.0, Bun 1.3.14, the `wasm32-unknown-unknown` Rust target, and
 `wasm-bindgen-cli` 0.2.129. From the repository root, install authoring dependencies
 with `cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile`, then
 return to the repository root. Build the native binary with

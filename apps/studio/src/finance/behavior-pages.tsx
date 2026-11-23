@@ -3,14 +3,16 @@ import { Background, BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, 
 import "@xyflow/react/dist/style.css"
 import { ArrowRight, GitBranch, RotateCcw, ShieldCheck, SlidersHorizontal, Workflow } from "lucide-react"
 import { useState } from "react"
-import { Chip, type Tone } from "@/components/chip"
+import { type Tone } from "@/components/chip"
+import { PageHeader, Panel, Well } from "@/components/panel"
+import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import type { MenuEntry } from "../shell.tsx"
 import { COMMANDS, MACHINES, PROCESS_MANAGERS, type FinanceMachine, type State, type StatePhase, type StateStep } from "./behavior.ts"
-import { ROW_COUNT, TYPES } from "./data.ts"
+import { TYPES } from "./data.ts"
 import { RULES } from "./operations.tsx"
-import { FinanceHeading, SystemDependencies, TypeTile } from "./workspace.tsx"
+import { SystemDependencies, TypeTile } from "./workspace.tsx"
 
 type Direction = "forward" | "down" | "up" | "return-down" | "return-up"
 
@@ -23,11 +25,10 @@ type TransitionEdge = Edge<{
   readonly choose: (step: StateStep) => void
 }, "transition">
 
-const STATE_TONE: Record<State["kind"], Tone> = { initial: "green", active: "blue", review: "amber", terminal: "gray", refused: "red" }
+const STATE_TONE: Record<State["kind"], Tone> = { initial: "green", active: "gray", review: "amber", terminal: "gray", refused: "red" }
 const STATE_KIND: Record<State["kind"], string> = { initial: "Start", active: "State", review: "Review", terminal: "End", refused: "Refused" }
 const HANDLE = "!opacity-0 !border-0 !bg-transparent"
 
-/** High-level domain parameters a domain expert can tune per transition without touching code. */
 interface StepParam {
   readonly key: string
   readonly label: string
@@ -68,7 +69,7 @@ const STEP_PARAMS: Readonly<Record<string, readonly StepParam[]>> = {
 
 function StateNodeView({ data }: NodeProps<StateNode>) {
   return (
-    <div className="canvas-node flex h-11 w-44 items-center gap-2 rounded-md border border-border bg-background px-2.5 text-foreground">
+    <div className="canvas-node flex h-11 w-44 items-center gap-2 rounded-md border bg-card px-2.5 text-foreground">
       <Handle type="target" position={Position.Left} id="in" className={HANDLE} />
       <Handle type="source" position={Position.Right} id="out" className={HANDLE} />
       <Handle type="target" position={Position.Bottom} id="bottom-in" className={HANDLE} />
@@ -81,7 +82,6 @@ function StateNodeView({ data }: NodeProps<StateNode>) {
   )
 }
 
-/** Compact Retool-style edge pills: command name only on canvas (no multi-line overlap!), full guard in the right inspector. */
 function TransitionView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data }: EdgeProps<TransitionEdge>) {
   if (!data) return null
   const { step, direction, lift, selected, choose } = data
@@ -102,7 +102,7 @@ function TransitionView({ id, sourceX, sourceY, targetX, targetY, sourcePosition
         id={id}
         path={d}
         markerEnd={markerEnd}
-        style={{ stroke: selected ? "var(--data-accent)" : "var(--edge)", strokeWidth: selected ? 2.2 : 1.35, strokeDasharray: reverse ? "4 3" : undefined }}
+        style={{ stroke: selected ? "var(--foreground)" : "var(--edge)", strokeWidth: selected ? 2 : 1.35, strokeDasharray: reverse ? "4 3" : undefined }}
       />
       <EdgeLabelRenderer>
         <button
@@ -113,8 +113,8 @@ function TransitionView({ id, sourceX, sourceY, targetX, targetY, sourcePosition
           className={cn(
             "nodrag nopan pointer-events-auto absolute z-10 rounded-sm border px-1.5 py-0.5 font-mono text-[10px] font-medium whitespace-nowrap transition-colors",
             selected
-              ? "border-data-accent bg-data-accent text-white shadow-xs"
-              : "border-border bg-background text-foreground/85 hover:border-data-accent hover:text-tone-blue",
+              ? "border-foreground bg-foreground text-background"
+              : "border-border bg-card text-foreground/85 hover:border-foreground/45",
           )}
           style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }}
         >
@@ -151,7 +151,7 @@ function BranchGraph({ phase, selected, onSelect }: { readonly phase: StatePhase
       targetHandle,
       data: { step, direction, lift, selected: step === selected, choose: onSelect },
       type: "transition",
-      markerEnd: { type: MarkerType.ArrowClosed, color: step === selected ? "var(--data-accent)" : "var(--edge)", width: 13, height: 13 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: step === selected ? "var(--foreground)" : "var(--edge)", width: 13, height: 13 },
     }]
   })
   const lastRow = Math.max(...Object.values(phase.states).map((state) => state.row))
@@ -194,20 +194,20 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
   const draftCount = Object.keys(drafts).length
 
   return (
-    <div className="grid overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[minmax(0,1fr)_22rem]">
+    <Well className="grid lg:grid-cols-[minmax(0,1fr)_22rem]">
       <div className="min-w-0">
         <BranchGraph phase={phase} selected={selected} onSelect={(step) => { setSelected(step); setInspectorTab("inspector") }} />
       </div>
 
-      <aside aria-label="Transition inspector" className="flex flex-col border-t border-border bg-background lg:h-[34rem] lg:border-s lg:border-t-0">
-        <div className="flex items-center justify-between border-b border-border bg-surface-subtle px-3">
+      <aside aria-label="Transition inspector" className="flex flex-col border-t bg-surface-subtle/40 lg:h-[34rem] lg:border-s lg:border-t-0">
+        <div className="flex items-center justify-between border-b px-3">
           <div role="tablist" className="flex gap-1">
             <button
               type="button"
               role="tab"
               aria-selected={inspectorTab === "inspector"}
               onClick={() => setInspectorTab("inspector")}
-              className={cn("border-b-2 px-2.5 py-2.5 text-xs font-medium", inspectorTab === "inspector" ? "border-data-accent text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+              className={cn("border-b-2 px-2.5 py-2.5 text-xs font-medium", inspectorTab === "inspector" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
             >
               Inspector
             </button>
@@ -216,40 +216,40 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
               role="tab"
               aria-selected={inspectorTab === "list"}
               onClick={() => setInspectorTab("list")}
-              className={cn("border-b-2 px-2.5 py-2.5 text-xs font-medium", inspectorTab === "list" ? "border-data-accent text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+              className={cn("border-b-2 px-2.5 py-2.5 text-xs font-medium", inspectorTab === "list" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
             >
               Transitions ({phase.steps.length})
             </button>
           </div>
           {draftCount > 0 && (
-            <button type="button" onClick={() => setDrafts({})} className="inline-flex items-center gap-1 text-[11px] font-medium text-tone-blue hover:underline">
+            <button type="button" onClick={() => setDrafts({})} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
               <RotateCcw className="size-3" />Reset ({draftCount})
             </button>
           )}
         </div>
 
         {inspectorTab === "inspector" ? (
-          <div className="flex-1 space-y-4 overflow-y-auto p-4 text-xs">
-            <div className="space-y-1">
-              <p className="text-[10px] font-semibold tracking-wider uppercase text-muted-foreground">Selected transition</p>
-              <code className="block text-sm font-semibold text-tone-blue">{selected.declared ?? selected.command}</code>
-              <p className="text-muted-foreground">
+          <div className="flex-1 divide-y overflow-y-auto px-4 text-meta">
+            <div className="space-y-1 py-3.5">
+              <p className="text-xs text-muted-foreground">Selected transition</p>
+              <code className="block text-sm font-medium text-foreground">{selected.declared ?? selected.command}</code>
+              <p className="text-xs text-muted-foreground">
                 <span className="font-medium text-foreground">{phase.states[selected.from]?.name}</span> → <span className="font-medium text-foreground">{phase.states[selected.to]?.name}</span>
               </p>
             </div>
 
-            <div className="space-y-1 border-t border-border pt-3">
-              <p className="text-[11px] font-medium text-muted-foreground">Guard condition</p>
-              <p className="text-xs leading-relaxed text-foreground">{selected.guard}</p>
+            <div className="space-y-1 py-3.5">
+              <p className="text-xs text-muted-foreground">Guard condition</p>
+              <p className="leading-relaxed text-foreground">{selected.guard}</p>
             </div>
 
             {params.length > 0 && (
-              <div className="space-y-2.5 rounded-md border border-border bg-surface-subtle p-3">
+              <div className="space-y-2.5 py-3.5">
                 <div className="flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
                     <SlidersHorizontal className="size-3 text-muted-foreground" />Domain parameters
                   </span>
-                  <span className="text-[10px] text-muted-foreground">No-code draft</span>
+                  <span className="text-[11px] text-muted-foreground">Draft</span>
                 </div>
                 {params.map((param) => {
                   const k = `${selected.command}:${param.key}`
@@ -257,9 +257,9 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
                   const changed = val !== param.value
                   return (
                     <label key={param.key} className="block space-y-1">
-                      <span className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>{param.label}</span>
-                        {changed && <span className="font-medium text-tone-blue">Modified</span>}
+                        {changed && <span className="font-medium text-tone-amber">Modified</span>}
                       </span>
                       <div className="flex items-center gap-2">
                         <Input
@@ -271,15 +271,15 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
                             const next = Number(e.target.value)
                             if (Number.isFinite(next) && next > 0) setDrafts((curr) => ({ ...curr, [k]: next }))
                           }}
-                          className="h-7 bg-background font-mono text-xs"
+                          className="h-7 bg-card font-mono text-xs"
                         />
-                        <span className="shrink-0 text-[11px] text-muted-foreground">{param.unit}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{param.unit}</span>
                       </div>
                     </label>
                   )
                 })}
                 {params.some((p) => drafts[`${selected.command}:${p.key}`] !== undefined && drafts[`${selected.command}:${p.key}`] !== p.value) && (
-                  <p role="status" className="text-[11px] text-tone-blue">
+                  <p role="status" className="text-xs text-tone-amber">
                     Draft threshold active in preview — validated against invariants on publish.
                   </p>
                 )}
@@ -287,32 +287,37 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
             )}
 
             {declaration && declaration.rules.length > 0 && (
-              <div className="space-y-1.5 border-t border-border pt-3">
-                <p className="text-[11px] font-medium text-muted-foreground">Enforced invariants</p>
-                <div className="flex flex-col gap-1.5">
+              <div className="space-y-2 py-3.5">
+                <p className="text-xs text-muted-foreground">Enforced invariants</p>
+                <ul className="space-y-1.5">
                   {declaration.rules.map((rule) => (
-                    <Link key={rule} to="/guarantees" hash={rule} className="flex items-center justify-between rounded-md border border-border bg-surface-subtle px-2.5 py-1.5 font-medium text-foreground hover:border-data-accent hover:text-tone-blue">
-                      <span className="inline-flex items-center gap-1.5"><ShieldCheck className="size-3.5 text-tone-blue" />{RULES.find((item) => item.id === rule)?.title ?? rule}</span>
-                      <ArrowRight className="size-3 text-muted-foreground" />
-                    </Link>
+                    <li key={rule}>
+                      <Link to="/guarantees" hash={rule} className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground hover:underline underline-offset-4">
+                        <ShieldCheck className="size-3.5 text-muted-foreground" />
+                        <span>{RULES.find((item) => item.id === rule)?.title ?? rule}</span>
+                        <ArrowRight className="size-3 text-muted-foreground" />
+                      </Link>
+                    </li>
                   ))}
                   {selected.declared === "Payment.reclassify" && (
-                    <Link to="/metrics" hash="corrections" className="flex items-center justify-between rounded-md border border-border bg-surface-subtle px-2.5 py-1.5 font-medium text-tone-amber hover:border-tone-amber">
-                      <span>View reconciliation correction</span>
-                      <ArrowRight className="size-3" />
-                    </Link>
+                    <li>
+                      <Link to="/metrics" hash="corrections" className="inline-flex items-center gap-1.5 text-xs font-medium text-tone-amber hover:underline underline-offset-4">
+                        <span>View reconciliation correction</span>
+                        <ArrowRight className="size-3" />
+                      </Link>
+                    </li>
                   )}
-                </div>
+                </ul>
               </div>
             )}
 
-            <div className="border-t border-border pt-3">
-              <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">Backing systems</p>
+            <div className="py-3.5">
+              <p className="mb-1.5 text-xs text-muted-foreground">Backing systems</p>
               <SystemDependencies systems={selected.systems} needs={selected.needs} />
             </div>
           </div>
         ) : (
-          <ul className="flex-1 divide-y divide-border overflow-y-auto">
+          <ul className="flex-1 divide-y overflow-y-auto">
             {phase.steps.map((step) => {
               const active = step === selected
               return (
@@ -321,13 +326,13 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
                     type="button"
                     aria-pressed={active}
                     onClick={() => { setSelected(step); setInspectorTab("inspector") }}
-                    className={cn("w-full px-3.5 py-2 text-start transition-colors hover:bg-surface-subtle", active && "border-s-2 border-s-data-accent bg-tone-blue/[0.06]")}
+                    className={cn("w-full px-3.5 py-2 text-start transition-colors hover:bg-muted/40", active && "border-s-2 border-s-foreground bg-muted/60")}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <code className="text-xs font-semibold text-tone-blue">{step.command}</code>
-                      <span className="truncate text-[10px] text-muted-foreground">{phase.states[step.from]?.name} → {phase.states[step.to]?.name}</span>
+                      <code className="text-xs font-medium text-foreground">{step.command}</code>
+                      <span className="truncate text-[11px] text-muted-foreground">{phase.states[step.from]?.name} → {phase.states[step.to]?.name}</span>
                     </div>
-                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{step.guard}</p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{step.guard}</p>
                   </button>
                 </li>
               )
@@ -335,7 +340,7 @@ function PhaseWorkbench({ phase }: { readonly phase: StatePhase }) {
           </ul>
         )}
       </aside>
-    </div>
+    </Well>
   )
 }
 
@@ -343,18 +348,17 @@ export function FinanceStateMachine({ machine }: { readonly machine: FinanceMach
   const [phaseName, setPhaseName] = useState(machine.phases[0].title)
   const phase = machine.phases.find((item) => item.title === phaseName) ?? machine.phases[0]
   return (
-    <section className="space-y-3" aria-label={machine.title}>
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-3.5 py-2">
-        <div className="flex items-center gap-2.5">
+    <Panel
+      label={
+        <span className="inline-flex items-center gap-2">
           <TypeTile type={machine.type} />
-          <div className="flex items-baseline gap-2">
-            <h2 className="text-sm font-semibold">{machine.title}</h2>
-            <code className="text-[11px] text-muted-foreground">{machine.property}</code>
-          </div>
-        </div>
-
+          <span>{machine.title}</span>
+          <code className="text-xs font-normal text-muted-foreground">{machine.property}</code>
+        </span>
+      }
+      action={
         <div className="flex flex-wrap items-center gap-3">
-          <div aria-label="State kinds" className="hidden items-center gap-3 text-[11px] text-muted-foreground md:flex">
+          <div aria-label="State kinds" className="hidden items-center gap-3 text-xs text-muted-foreground md:flex">
             {(["initial", "review", "terminal", "refused"] as const).map((kind) => (
               <span key={kind} className="inline-flex items-center gap-1.5">
                 <span className="size-1.5 rounded-full" style={{ background: `var(--tone-${STATE_TONE[kind]})` }} />
@@ -363,17 +367,14 @@ export function FinanceStateMachine({ machine }: { readonly machine: FinanceMach
             ))}
           </div>
           {machine.phases.length > 1 && (
-            <div role="group" aria-label="Lifecycle phase" className="inline-flex rounded-md border border-border bg-surface-subtle p-0.5 text-xs">
+            <div role="group" aria-label="Lifecycle phase" className="inline-flex h-7 items-center rounded-md bg-muted p-0.5 text-xs">
               {machine.phases.map((item) => (
                 <button
                   key={item.title}
                   type="button"
                   aria-pressed={item === phase}
                   onClick={() => setPhaseName(item.title)}
-                  className={cn(
-                    "rounded-sm px-2.5 py-1 font-medium transition-colors",
-                    item === phase ? "bg-background text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground",
-                  )}
+                  className="rounded-[0.3125rem] px-2.5 py-0.5 text-muted-foreground hover:text-foreground aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent"
                 >
                   {item.title}
                 </button>
@@ -381,10 +382,10 @@ export function FinanceStateMachine({ machine }: { readonly machine: FinanceMach
             </div>
           )}
         </div>
-      </div>
-
+      }
+    >
       <PhaseWorkbench key={phase.title} phase={phase} />
-    </section>
+    </Panel>
   )
 }
 
@@ -393,28 +394,16 @@ export const financeWorkflowMenu = (): readonly MenuEntry[] => [
   ...PROCESS_MANAGERS.map(({ id, title }) => ({ href: `/workflows/${id}`, label: title, group: "Automations" })),
 ]
 
-/** Retool-style horizontal automation rules with live enable/pause toggle and right inspector. */
 function ProcessManager({ manager }: { readonly manager: typeof PROCESS_MANAGERS[number] }) {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [paused, setPaused] = useState<Readonly<Record<string, boolean>>>({})
   const selected = manager.branches[selectedIndex] ?? manager.branches[0]!
 
   return (
-    <div className="grid overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <div className="flex min-w-0 flex-col">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-2.5">
-          <div>
-            <div className="flex items-center gap-2">
-              <Workflow className="size-3.5 text-tone-blue" />
-              <h2 className="text-sm font-semibold text-foreground">{manager.title}</h2>
-              <span className="rounded-sm border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Automation</span>
-            </div>
-            <p className="mt-0.5 text-xs text-muted-foreground">{manager.description}</p>
-          </div>
-          <span className="text-xs text-muted-foreground tabular-nums">{manager.branches.length} rules</span>
-        </div>
-
-        <div className="divide-y divide-border">
+    <Panel icon={Workflow} label={manager.title} action={`${manager.branches.length} automations`}>
+      <Well className="grid lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="min-w-0 divide-y">
+          <p className="px-4 py-2.5 text-xs text-muted-foreground">{manager.description}</p>
           {manager.branches.map((branch, idx) => {
             const active = idx === selectedIndex
             const isPaused = paused[branch.command] === true
@@ -422,72 +411,72 @@ function ProcessManager({ manager }: { readonly manager: typeof PROCESS_MANAGERS
               <div
                 key={branch.command}
                 onClick={() => setSelectedIndex(idx)}
-                className={cn("cursor-pointer space-y-2.5 px-4 py-3.5 transition-colors hover:bg-surface-subtle", active && "border-s-2 border-s-data-accent bg-tone-blue/[0.05]", isPaused && "opacity-65")}
+                className={cn("cursor-pointer space-y-2 px-4 py-3.5 transition-colors hover:bg-muted/40", active && "border-s-2 border-s-foreground bg-muted/60", isPaused && "opacity-65")}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase text-muted-foreground">When</span>
-                    <code className="font-semibold text-foreground">{branch.event}</code>
+                  <div className="flex flex-wrap items-center gap-2 text-meta">
+                    <Badge variant="secondary" className="font-mono text-[10px] uppercase">When</Badge>
+                    <code className="font-medium text-foreground">{branch.event}</code>
                     <ArrowRight className="size-3 text-muted-foreground" />
-                    <span className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase text-muted-foreground">If</span>
-                    <span className="font-medium text-foreground">{branch.when}</span>
+                    <Badge variant="secondary" className="font-mono text-[10px] uppercase">If</Badge>
+                    <span className="text-foreground">{branch.when}</span>
                     <ArrowRight className="size-3 text-muted-foreground" />
-                    <span className="rounded-sm bg-tone-blue/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase text-tone-blue">Then</span>
-                    <code className="font-semibold text-tone-blue">{branch.command}</code>
+                    <Badge variant="secondary" className="font-mono text-[10px] uppercase">Then</Badge>
+                    <code className="font-medium text-foreground">{branch.command}</code>
                   </div>
                   <button
                     type="button"
                     aria-pressed={!isPaused}
                     onClick={(e) => { e.stopPropagation(); setPaused((c) => ({ ...c, [branch.command]: !c[branch.command] })) }}
-                    className={cn("rounded-sm border px-2 py-0.5 text-[11px] font-medium", isPaused ? "border-border bg-surface-subtle text-muted-foreground" : "border-tone-green/30 bg-tone-green/10 text-tone-green")}
+                    className={cn("rounded-sm border px-2 py-0.5 text-xs font-medium", isPaused ? "border-border bg-muted/40 text-muted-foreground" : "border-tone-green/30 bg-tone-green/10 text-tone-green")}
                   >
                     {isPaused ? "Paused (draft)" : "Active"}
                   </button>
                 </div>
-                <p className="text-[11px] text-muted-foreground">Reads: {branch.reads} · Target: {TYPES[branch.target].name} aggregate</p>
+                <p className="text-xs text-muted-foreground">Reads: {branch.reads} · Target: {TYPES[branch.target].name} aggregate</p>
               </div>
             )
           })}
         </div>
-      </div>
 
-      <aside aria-label="Automation inspector" className="flex flex-col border-t border-border bg-surface-subtle/35 lg:border-s lg:border-t-0">
-        <div className="border-b border-border bg-surface-subtle px-4 py-2.5">
-          <p className="text-[10px] font-semibold tracking-wider uppercase text-muted-foreground">Automation Inspector</p>
-          <code className="mt-0.5 block text-sm font-semibold text-tone-blue">{selected.command}</code>
-        </div>
-        <div className="flex-1 space-y-4 p-4 text-xs">
-          <div className="space-y-1">
-            <p className="text-[11px] font-medium text-muted-foreground">Trigger event</p>
-            <Link to="/sources/$concept" params={{ concept: selected.aggregate }} search={{ tab: "events" }} hash={selected.event}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 font-mono font-medium text-foreground hover:border-data-accent hover:text-tone-blue">
-              <GitBranch className="size-3 text-muted-foreground" />{selected.event}
-            </Link>
+        <aside aria-label="Automation inspector" className="flex flex-col border-t bg-surface-subtle/40 lg:border-s lg:border-t-0">
+          <div className="border-b px-4 py-3">
+            <p className="text-xs text-muted-foreground">Automation inspector</p>
+            <code className="mt-0.5 block text-sm font-medium text-foreground">{selected.command}</code>
           </div>
-          <div className="space-y-1 border-t border-border pt-3">
-            <p className="text-[11px] font-medium text-muted-foreground">Condition &amp; context</p>
-            <p className="font-medium text-foreground">{selected.when}</p>
-            <p className="text-muted-foreground">{selected.reads}</p>
+          <div className="flex-1 divide-y px-4 text-meta">
+            <div className="space-y-1.5 py-3.5">
+              <p className="text-xs text-muted-foreground">Trigger event</p>
+              <Link to="/sources/$concept" params={{ concept: selected.aggregate }} search={{ tab: "events" }} hash={selected.event}
+                className="inline-flex items-center gap-1.5 font-mono text-xs font-medium text-foreground hover:underline underline-offset-4">
+                <GitBranch className="size-3 text-muted-foreground" />{selected.event}
+              </Link>
+            </div>
+            <div className="space-y-1 py-3.5">
+              <p className="text-xs text-muted-foreground">Condition &amp; context</p>
+              <p className="font-medium text-foreground">{selected.when}</p>
+              <p className="text-xs text-muted-foreground">{selected.reads}</p>
+            </div>
+            <div className="space-y-2 py-3.5 text-xs">
+              <p className="text-muted-foreground">Dispatches command</p>
+              <Link to="/sources/$concept" params={{ concept: COMMANDS[selected.command].on }} search={{ tab: "commands" }} hash={selected.command}
+                className="flex items-center justify-between py-0.5 font-mono font-medium text-foreground hover:underline underline-offset-4">
+                <span>{selected.command}</span><ArrowRight className="size-3 text-muted-foreground" />
+              </Link>
+              <Link to="/guarantees" hash={selected.rule}
+                className="flex items-center justify-between py-0.5 font-medium text-foreground hover:underline underline-offset-4">
+                <span className="inline-flex items-center gap-1.5"><ShieldCheck className="size-3.5 text-muted-foreground" />Open guarding invariant</span>
+                <ArrowRight className="size-3 text-muted-foreground" />
+              </Link>
+            </div>
+            <div className="py-3.5">
+              <p className="mb-1.5 text-xs text-muted-foreground">Backing systems</p>
+              <SystemDependencies systems={selected.systems} needs={selected.reads} compact />
+            </div>
           </div>
-          <div className="space-y-1.5 border-t border-border pt-3">
-            <p className="text-[11px] font-medium text-muted-foreground">Dispatches command</p>
-            <Link to="/sources/$concept" params={{ concept: COMMANDS[selected.command].on }} search={{ tab: "commands" }} hash={selected.command}
-              className="flex items-center justify-between rounded-md border border-border bg-background px-2.5 py-2 font-mono font-medium text-tone-blue hover:border-data-accent">
-              <span>{selected.command}</span><ArrowRight className="size-3" />
-            </Link>
-            <Link to="/guarantees" hash={selected.rule}
-              className="flex items-center justify-between rounded-md border border-border bg-background px-2.5 py-2 font-medium text-foreground hover:border-data-accent hover:text-tone-blue">
-              <span className="inline-flex items-center gap-1.5"><ShieldCheck className="size-3.5 text-tone-blue" />Open guarding invariant</span>
-              <ArrowRight className="size-3 text-muted-foreground" />
-            </Link>
-          </div>
-          <div className="border-t border-border pt-3">
-            <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">Backing systems</p>
-            <SystemDependencies systems={selected.systems} needs={selected.reads} compact />
-          </div>
-        </div>
-      </aside>
-    </div>
+        </aside>
+      </Well>
+    </Panel>
   )
 }
 
@@ -496,12 +485,13 @@ export function FinanceWorkflows() {
   const manager = PROCESS_MANAGERS.find((item) => item.id === process)
   const machine = MACHINES.find((item) => item.id === process) ?? MACHINES[0]
   return (
-    <section className="space-y-3">
-      <FinanceHeading
-        title="Workflows & Automations"
-        description="Branching object lifecycles and event-driven automations — click any transition to inspect guards or tune parameters."
+    <section className="space-y-6">
+      <PageHeader
+        title="Workflows"
+        meta={`${MACHINES.length} lifecycles · ${PROCESS_MANAGERS.length} automations`}
+        description="Branching object lifecycles and event-driven automations. Select any transition to inspect guards or tune parameters."
         actions={
-          <nav aria-label="Finance workflows" className="inline-flex flex-wrap items-center gap-1 rounded-md border border-border bg-surface-subtle p-0.5 text-xs">
+          <nav aria-label="Finance workflows" className="inline-flex flex-wrap items-center gap-0.5 rounded-md bg-muted p-0.5 text-xs">
             {[...MACHINES, ...PROCESS_MANAGERS].map((item) => {
               const active = item.id === (manager?.id ?? machine.id)
               return (
@@ -511,8 +501,8 @@ export function FinanceWorkflows() {
                   params={{ process: item.id }}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "rounded-sm px-2.5 py-1 font-medium transition-colors",
-                    active ? "bg-background text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground",
+                    "rounded-[0.3125rem] px-2.5 py-1 font-medium transition-colors",
+                    active ? "bg-background text-foreground shadow-xs dark:bg-accent" : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   {"type" in item ? TYPES[item.type].name : item.title}

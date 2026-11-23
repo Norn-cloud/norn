@@ -2,14 +2,18 @@ import { Link, useParams } from "@tanstack/react-router"
 import { ArrowRight, Check, ClipboardList, GitCommitHorizontal, Shield, SlidersHorizontal } from "lucide-react"
 import { useState } from "react"
 import { Chip } from "@/components/chip"
+import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { PageHeader, Panel, Well } from "@/components/panel"
+import { TableCard } from "@/components/table-card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import type { MenuEntry } from "../shell.tsx"
 import { AUXILIARY_TYPES } from "./behavior.ts"
 import { MARKS, ROW_COUNT, TYPES, type FinanceType, type MarkId } from "./data.ts"
 import { egp } from "./records.ts"
-import { FinanceHeading, Mark } from "./workspace.tsx"
+import { Mark } from "./workspace.tsx"
 
 const POLICY_TYPES = {
   "loan-product": "Loan product",
@@ -68,7 +72,7 @@ const POLICIES: readonly BusinessPolicy[] = [
 ]
 
 export const financePolicyMenu = (): readonly MenuEntry[] =>
-  Object.entries(POLICY_TYPES).map(([id, label]) => ({ href: `/policies/${id}`, label, group: "Policy types", kind: "objectType" }))
+  Object.entries(POLICY_TYPES).map(([id, label]) => ({ href: `/policies/${id}`, label, kind: "policy" }))
 
 function showValue(value: PolicyValue) {
   switch (value.kind) {
@@ -84,28 +88,28 @@ function PolicyRow({ policy }: { readonly policy: BusinessPolicy }) {
   const [editing, setEditing] = useState(false)
   const declared = policy.source === "norn" && version.value.kind === "limit" ? version.value : undefined
   return (
-    <article id={policy.id} className="scroll-mt-4 border-t border-border px-4 py-3 first:border-t-0">
+    <article id={policy.id} className="scroll-mt-4 border-t px-4 py-3 first:border-t-0">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h3 className="text-xs font-semibold text-foreground">{policy.name}</h3>
-          <p className="text-base font-semibold tabular-nums text-foreground">{showValue(version.value)}</p>
-          <code className="rounded-xs bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">v{version.number}</code>
+          <h3 className="text-meta font-medium text-foreground">{policy.name}</h3>
+          <p className="text-base font-medium tabular-nums text-foreground">{showValue(version.value)}</p>
+          <code className="rounded-sm bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">v{version.number}</code>
         </div>
         {declared && <Button size="sm" variant="outline" className="h-7 text-xs" aria-expanded={editing} onClick={() => setEditing(!editing)}>Edit policy</Button>}
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span>{policy.scope}</span>
         <span>Effective {version.date}</span>
-        <span className="inline-flex items-center gap-1">
+        <span className="inline-flex flex-wrap items-center gap-1.5">
           Used by:
           {policy.consumers.map(({ to, hash, label }) => (
-            <Link key={label} to={to} hash={hash} className="font-medium text-tone-blue hover:underline">{label}</Link>
+            <Link key={label} to={to} hash={hash} className="font-medium text-foreground underline underline-offset-4">{label}</Link>
           ))}
         </span>
       </div>
       {declared && editing && (
         <form
-          className="mt-3 flex flex-wrap items-end gap-3 rounded-md border border-border bg-surface-subtle p-3"
+          className="mt-3 flex flex-wrap items-end gap-3 border-t pt-3"
           onSubmit={(event) => {
             event.preventDefault()
             const entered = new FormData(event.currentTarget).get("value")
@@ -118,10 +122,10 @@ function PolicyRow({ policy }: { readonly policy: BusinessPolicy }) {
         >
           <label className="block text-xs font-medium">
             New value ({declared.unit})
-            <Input name="value" type="number" min="1" required defaultValue={declared.number} className="mt-1 h-8 w-40 bg-background font-mono text-xs" />
+            <Input name="value" type="number" min="1" required defaultValue={declared.number} className="mt-1 h-8 w-40 font-mono text-xs" />
           </label>
           <Button size="sm" type="submit" className="h-8 text-xs"><GitCommitHorizontal className="size-3.5" />Create preview v{version.number + 1}</Button>
-          <p className="w-full text-[11px] text-muted-foreground">Affects {policy.consumers.map(({ label }) => label).join(", ")}.</p>
+          <p className="w-full text-xs text-muted-foreground">Affects {policy.consumers.map(({ label }) => label).join(", ")}.</p>
         </form>
       )}
       {version.number > 1 && !editing && <p role="status" className="mt-2 text-xs text-tone-green">Preview version v{version.number} created.</p>}
@@ -132,36 +136,32 @@ function PolicyRow({ policy }: { readonly policy: BusinessPolicy }) {
 export function BusinessPolicies({ type }: { readonly type: PolicyType }) {
   const policies = POLICIES.filter((policy) => policy.owner === type)
   return (
-    <section className="overflow-hidden rounded-lg border border-border bg-background">
-      <header className="flex items-center justify-between border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">
-        <span className="inline-flex items-center gap-1.5"><SlidersHorizontal className="size-3.5 text-muted-foreground" />Business policies</span>
-        <span className="font-mono text-[11px] font-normal text-muted-foreground">{policies.length} policies</span>
-      </header>
-      <div>
+    <Panel icon={SlidersHorizontal} label="Business policies" action={`${policies.length} policies`}>
+      <Well>
         {policies.length > 0 ? (
           policies.map((policy) => <PolicyRow key={policy.id} policy={policy} />)
         ) : (
-          <p className="p-4 text-xs text-muted-foreground">This type inherits limits from linked policy types.</p>
+          <p className="p-4 text-meta text-muted-foreground">This type inherits limits from linked policy types.</p>
         )}
         {type === "loan" && (
-          <div className="flex flex-wrap items-center gap-2 border-t border-border bg-surface-subtle/50 px-4 py-2.5 text-xs">
+          <div className="flex flex-wrap items-center gap-3 border-t px-4 py-2.5 text-xs">
             <span className="text-muted-foreground">Linked policy scopes:</span>
             {(["loan-product", "branch", "credit-officer", "portfolio"] as const).map((id) => (
-              <Link key={id} to="/policies/$scope" params={{ scope: id }} className="inline-flex items-center gap-1 rounded-sm border border-border bg-background px-2 py-0.5 font-medium text-tone-blue hover:border-data-accent">
-                {POLICY_TYPES[id]}<ArrowRight className="size-3" />
+              <Link key={id} to="/policies/$scope" params={{ scope: id }} className="inline-flex items-center gap-1 font-medium text-foreground hover:underline underline-offset-4">
+                {POLICY_TYPES[id]}<ArrowRight className="size-3 text-muted-foreground" />
               </Link>
             ))}
           </div>
         )}
         {type === "hardship-case" && (
-          <div className="border-t border-border bg-surface-subtle/50 px-4 py-2.5 text-xs">
-            <Link to="/policies/$scope" params={{ scope: "collections-agent" }} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
-              Collections agent policies<ArrowRight className="size-3" />
+          <div className="border-t px-4 py-2.5 text-xs">
+            <Link to="/policies/$scope" params={{ scope: "collections-agent" }} className="inline-flex items-center gap-1 font-medium text-foreground hover:underline underline-offset-4">
+              Collections agent policies<ArrowRight className="size-3 text-muted-foreground" />
             </Link>
           </div>
         )}
-      </div>
-    </section>
+      </Well>
+    </Panel>
   )
 }
 
@@ -170,19 +170,20 @@ export function FinancePolicyType() {
   const type = (Object.keys(POLICY_TYPES) as (keyof typeof POLICY_TYPES)[]).find((key) => key === scope) ?? "loan-product"
   const auxiliary = type === "relationship-assignment" || type === "holdings" ? AUXILIARY_TYPES[type] : undefined
   return (
-    <section className="space-y-4">
-      <FinanceHeading
+    <section className="space-y-6">
+      <PageHeader
         title={POLICY_TYPES[type]}
+        meta={auxiliary ? "Aggregate entity" : "Policy scope"}
         description={auxiliary ? `Entity in the ${TYPES[auxiliary.parent].name} aggregate.` : "Business limits and operating parameters editable without code."}
       />
-      <nav aria-label="Policy types" className="flex flex-wrap gap-1 border-b border-border">
+      <nav aria-label="Policy types" className="flex flex-wrap gap-1 border-b">
         {financePolicyMenu().map(({ href, label }) => (
           <Link
             key={href}
             to={href}
             className={cn(
-              "border-b-2 border-transparent px-2.5 py-2 text-xs font-medium text-muted-foreground hover:text-foreground",
-              href.endsWith(type) && "border-data-accent text-foreground",
+              "border-b-2 border-transparent px-2.5 py-2 text-meta font-medium text-muted-foreground transition-colors hover:text-foreground",
+              href.endsWith(`/${type}`) && "border-foreground text-foreground",
             )}
           >
             {label}
@@ -190,27 +191,25 @@ export function FinancePolicyType() {
         ))}
       </nav>
       {auxiliary ? (
-        <section className="overflow-hidden rounded-lg border border-border bg-background">
-          <header className="border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">Entity definition</header>
-          <div className="space-y-3 p-4 text-xs">
+        <Panel label="Entity definition">
+          <Well className="space-y-3 p-4 text-meta">
             <div className="flex items-center gap-2"><Mark id={auxiliary.source} />{MARKS[auxiliary.source].name}</div>
-            <ul className="flex flex-wrap gap-1.5">{auxiliary.fields.map((field) => <li key={field}><code className="rounded-sm border border-border bg-surface-subtle px-2 py-0.5 text-[11px]">{field}</code></li>)}</ul>
-            <Link to="/sources/$concept" params={{ concept: auxiliary.parent }} search={{ tab: "links" }} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
-              Open aggregate links<ArrowRight className="size-3.5" />
+            <ul className="flex flex-wrap gap-1.5">{auxiliary.fields.map((field) => <li key={field}><code className="rounded-sm border bg-muted/30 px-2 py-0.5 text-xs">{field}</code></li>)}</ul>
+            <Link to="/sources/$concept" params={{ concept: auxiliary.parent }} search={{ tab: "links" }} className="inline-flex items-center gap-1 text-xs font-medium text-foreground hover:underline underline-offset-4">
+              Open aggregate links<ArrowRight className="size-3.5 text-muted-foreground" />
             </Link>
-          </div>
-        </section>
+          </Well>
+        </Panel>
       ) : type === "lease" || type === "gl-entry" ? (
-        <section className="overflow-hidden rounded-lg border border-border bg-background">
-          <header className="border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">Source object definition</header>
-          <div className="space-y-3 p-4 text-xs">
+        <Panel label="Source object definition">
+          <Well className="space-y-3 p-4 text-meta">
             <div className="flex items-center gap-2"><Mark id={type === "lease" ? "leasing" : "ledger"} />{type === "lease" ? "Leasing ledger" : "General ledger"}</div>
-            <ul className="flex flex-wrap gap-1.5">{SOURCE_FIELDS[type].map((field) => <li key={field}><code className="rounded-sm border border-border bg-surface-subtle px-2 py-0.5 text-[11px]">{field}</code></li>)}</ul>
-            <Link to="/guarantees" hash={type === "lease" ? "exposure" : "reporting"} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
-              View guarding invariant<ArrowRight className="size-3.5" />
+            <ul className="flex flex-wrap gap-1.5">{SOURCE_FIELDS[type].map((field) => <li key={field}><code className="rounded-sm border bg-muted/30 px-2 py-0.5 text-xs">{field}</code></li>)}</ul>
+            <Link to="/guarantees" hash={type === "lease" ? "exposure" : "reporting"} className="inline-flex items-center gap-1 text-xs font-medium text-foreground hover:underline underline-offset-4">
+              View guarding invariant<ArrowRight className="size-3.5 text-muted-foreground" />
             </Link>
-          </div>
-        </section>
+          </Well>
+        </Panel>
       ) : (
         <BusinessPolicies type={type} />
       )}
@@ -242,89 +241,74 @@ export function FinanceOptimisation() {
   const [applied, setApplied] = useState(false)
   const expectedTotal = ASSIGNMENTS.reduce((sum, row) => sum + row.recovery, 0)
   return (
-    <section className="space-y-4">
-      <FinanceHeading
+    <section className="space-y-6">
+      <PageHeader
         title="Collections allocation (next 7 days)"
-        description="23–29 November 2026 · Constraint-checked optimisation preview against current policy limits."
-        actions={
-          <Button type="button" size="sm" className="h-8 text-xs" onClick={() => setApplied(true)} disabled={applied}>
+        meta={<><Chip tone="green" icon={Check}>Verified</Chip><span>Snapshot v412</span></>}
+        description="23–29 November 2026 · Constraint-checked optimisation preview against active policy limits."
+        primary={
+          <Button type="button" size="sm" onClick={() => setApplied(true)} disabled={applied}>
             {applied ? "Applied to preview" : "Apply plan"}
           </Button>
         }
       />
 
-      <div className="grid grid-cols-1 divide-y divide-border overflow-hidden rounded-lg border border-border bg-background md:grid-cols-3 md:divide-x md:divide-y-0">
-        <div className="px-4 py-3">
-          <p className="text-[11px] text-muted-foreground">Expected recovery</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-tone-green">{egp(expectedTotal)}</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">vs. {egp(3_100_000)} under round-robin</p>
-        </div>
-        <div className="px-4 py-3">
-          <p className="text-[11px] text-muted-foreground">Objective &amp; variables</p>
-          <p className="mt-1 text-xs font-medium text-foreground">Maximise expected recovery in EGP</p>
-          <code className="mt-0.5 block text-[11px] text-muted-foreground">x[account, agent, day]</code>
-        </div>
-        <div className="px-4 py-3">
-          <p className="text-[11px] text-muted-foreground">Pre-write verification</p>
-          <p className="mt-1 inline-flex items-center gap-1.5 text-xs font-medium text-foreground"><Chip tone="green" icon={Check}>Verified</Chip>Snapshot v412</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">All 4 policy &amp; invariant constraints checked</p>
-        </div>
-      </div>
+      <StatStrip>
+        <KpiTile label="Expected recovery" value={<span className="text-tone-green">{egp(expectedTotal)}</span>} sub={`vs. ${egp(3_100_000)} under round-robin`} />
+        <KpiTile label="Objective & variables" value={<span className="text-base font-medium">Maximise recovery (EGP)</span>} sub={<code className="font-mono text-xs">x[account, agent, day]</code>} />
+        <KpiTile label="Pre-write verification" value={<span className="text-base font-medium">Snapshot v412</span>} sub="All 4 policy & invariant constraints checked" />
+      </StatStrip>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        <section className="overflow-hidden rounded-lg border border-border bg-background">
-          <header className="flex items-center gap-2 border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">
-            <ClipboardList className="size-3.5 text-muted-foreground" />Solved assignment plan
-          </header>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-120 text-start text-xs">
-              <thead>
-                <tr className="border-b border-border bg-surface-subtle/40 text-muted-foreground">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <Panel icon={ClipboardList} label="Solved assignment plan" action={`${ASSIGNMENTS.length} queues`}>
+          <TableCard>
+            <Table>
+              <TableHeader>
+                <TableRow>
                   {["Day", "Agent", "Queue", "Accounts", "Expected recovery"].map((label) => (
-                    <th key={label} scope="col" className="px-4 py-2 text-start font-medium">{label}</th>
+                    <TableHead key={label} className={label === "Accounts" || label === "Expected recovery" ? "text-end" : undefined}>{label}</TableHead>
                   ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {ASSIGNMENTS.map(({ day, agent, queue, count, recovery }) => (
-                  <tr key={day + agent} className="hover:bg-surface-subtle/60">
-                    <td className="px-4 py-2.5 text-muted-foreground">{day}</td>
-                    <td className="px-4 py-2.5 font-medium text-foreground">{agent}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{queue}</td>
-                    <td className="px-4 py-2.5 tabular-nums">{count}</td>
-                    <td className="px-4 py-2.5 font-medium tabular-nums text-foreground">{egp(recovery)}</td>
-                  </tr>
+                  <TableRow key={day + agent}>
+                    <TableCell className="text-muted-foreground">{day}</TableCell>
+                    <TableCell className="font-medium text-foreground">{agent}</TableCell>
+                    <TableCell className="text-muted-foreground">{queue}</TableCell>
+                    <TableCell className="text-end">{count}</TableCell>
+                    <TableCell className="text-end font-medium text-foreground">{egp(recovery)}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              </TableBody>
+            </Table>
+          </TableCard>
+        </Panel>
 
-        <section className="overflow-hidden rounded-lg border border-border bg-background">
-          <header className="flex items-center gap-2 border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">
-            <Shield className="size-3.5 text-muted-foreground" />Active constraints
-          </header>
-          <ul className="divide-y divide-border px-4">
-            {CONSTRAINTS.map((constraint) => {
-              const { name, reason, to, hash, binding } = constraint
-              return (
-                <li key={name} className="space-y-1 py-2.5 text-xs">
-                  <div className="flex items-start justify-between gap-2">
-                    <Link to={to} hash={hash} search={"search" in constraint ? constraint.search : undefined} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
-                      {name}<ArrowRight className="size-3" />
-                    </Link>
-                    <Chip tone={binding ? "amber" : "gray"}>{binding ? "Binding" : "Slack"}</Chip>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground">{reason}</p>
-                </li>
-              )
-            })}
-          </ul>
-        </section>
+        <Panel icon={Shield} label="Active constraints" action={`${CONSTRAINTS.length} rules`}>
+          <Well>
+            <ul className="divide-y px-4">
+              {CONSTRAINTS.map((constraint) => {
+                const { name, reason, to, hash, binding } = constraint
+                return (
+                  <li key={name} className="space-y-1 py-3 text-meta">
+                    <div className="flex items-start justify-between gap-2">
+                      <Link to={to} hash={hash} search={"search" in constraint ? constraint.search : undefined} className="inline-flex items-center gap-1 font-medium text-foreground hover:underline underline-offset-4">
+                        {name}<ArrowRight className="size-3 text-muted-foreground" />
+                      </Link>
+                      <Chip tone={binding ? "amber" : "gray"}>{binding ? "Binding" : "Slack"}</Chip>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{reason}</p>
+                  </li>
+                )
+              })}
+            </ul>
+          </Well>
+        </Panel>
       </div>
 
       {applied && (
-        <p role="status" className="fixed inset-e-5 bottom-5 z-50 flex items-center gap-2 rounded-md border border-border bg-background px-3.5 py-2.5 text-xs font-medium shadow-md">
+        <p role="status" className="fixed inset-e-5 bottom-5 z-50 flex items-center gap-2 rounded-lg border bg-popover px-3.5 py-2.5 text-meta font-medium text-popover-foreground shadow-elevation">
           <Check className="size-4 text-tone-green" />Collection assignments applied to the synthetic preview.
         </p>
       )}

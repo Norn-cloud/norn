@@ -1,6 +1,6 @@
 import type { CheckResult } from "./diagnostics.ts"
 
-/** The Rust checker compiled to WebAssembly for checking local drafts. */
+/** The Rust checker compiled to WebAssembly. Feedback while editing only: the server re-checks on save and decides. */
 export type Checker = (artifacts: readonly unknown[]) => CheckResult
 
 interface CheckerModule {

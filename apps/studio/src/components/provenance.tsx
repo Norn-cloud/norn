@@ -3,7 +3,6 @@ import { ArrowDown, Clock, GitCommitHorizontal, PencilLine, Waypoints, type Luci
 import { useEffect, useState, type ReactNode, type SyntheticEvent } from "react"
 import { CopyId, DigestId } from "@/components/copy-id"
 import { HiddenWriter } from "@/components/hidden-writer"
-import { SourceChip, SourceTile } from "@/components/source-chip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { systemName } from "@/lib/catalog"
@@ -17,11 +16,11 @@ import { readableTime, words } from "@/lib/format"
 import { readHistory } from "../evidence/review.ts"
 
 /** One link in the chain, in its kind's icon; receipt and time steps have no kind and use their own. */
-function Step({ kind, icon, system, title, children }: { readonly kind?: Kind; readonly icon?: LucideIcon; readonly system?: string; readonly title: ReactNode; readonly children?: ReactNode }) {
+function Step({ kind, icon, title, children }: { readonly kind?: Kind; readonly icon?: LucideIcon; readonly title: ReactNode; readonly children?: ReactNode }) {
   const Icon = icon ?? (kind ? KINDS[kind].icon : GitCommitHorizontal)
   return (
     <li className="flex gap-3">
-      {system ? <SourceTile system={system} /> : <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", kind ? cn(KINDS[kind].fill, KINDS[kind].text) : "bg-muted text-muted-foreground")}><Icon aria-hidden className="size-4" /></span>}
+      <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", kind ? cn(KINDS[kind].fill, KINDS[kind].text) : "bg-muted text-muted-foreground")}><Icon aria-hidden className="size-4" /></span>
       <div className="min-w-0 flex-1 space-y-0.5 text-sm"><div className="font-medium [overflow-wrap:anywhere]">{title}</div>{children}</div>
     </li>
   )
@@ -38,7 +37,7 @@ export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProv
   if (sources.length === 1 && sources[0]?.record !== null) {
     const [source] = sources
     if (source) steps.push(
-      <Step key="source" system={source.system} title={`Source · ${systemName(source.system)}`}>
+      <Step key="source" kind="source" title={`Source · ${systemName(source.system)}`}>
         {source.record !== null && <CopyId value={source.record} />}
         <Line>Fields <span className="font-mono">{source.fields.join(", ") || "—"}</span></Line>
       </Step>,
@@ -46,7 +45,7 @@ export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProv
   } else if (sources.length > 0) {
     steps.push(
       <Step key="source" kind="source" title={sources.length === 1 ? "Source" : `Sources · ${sources.length}`}>
-        {sources.map((source) => <Line key={source.system}><SourceChip system={source.system} />{source.complete === undefined ? "" : source.complete ? " · complete" : " · incomplete"}</Line>)}
+        {sources.map((source) => <Line key={source.system}><span className="font-medium text-foreground">{systemName(source.system)}</span>{source.complete === undefined ? "" : source.complete ? " · complete" : " · incomplete"}</Line>)}
       </Step>,
     )
   }
@@ -244,7 +243,7 @@ export function AnswerProvenance({ label, value, provenance, onTrace, records, v
   readonly children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
-  const trace = onTrace && <button type="button" onClick={() => { setOpen(false); onTrace() }} className="text-sm font-medium underline-offset-4 hover:underline">See the {records} contributing {records === 1 ? "record" : "records"}</button>
+  const trace = onTrace && <button type="button" onClick={() => { setOpen(false); onTrace() }} className="text-sm font-medium underline-offset-4 hover:underline">See the {records} {records === 1 ? "record" : "records"} and their receipts</button>
   return (
     <ProvenancePopover variant={variant} className={className} label={label} open={open} onOpenChange={setOpen} card={<ProvenanceCard label={label} value={value} trace={trace}><ProvenanceSteps provenance={provenance} /></ProvenanceCard>}>
       {children}

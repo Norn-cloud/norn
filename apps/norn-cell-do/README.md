@@ -257,7 +257,7 @@ wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/examples/wor
 cp apps/norn-cell-do/{worker.mjs,subscribe.mjs} "$P/"
 cp apps/norn-cell-do/conformance/worker.mjs "$P/conformance.mjs"
 cp apps/norn-cell-do/conformance/wrangler.json "$P/"
-NORN_CELL_DO_CONFORMANCE_OUT="$P/reference.json" cargo test --locked -p norn-cell-do --test conformance_reference
+NORN_CELL_DO_CONFORMANCE_OUT="$P/reference.json" cargo test --locked -p norn-cell-do --test suites conformance_reference::
 (cd apps/norn-cell-do/conformance && bun install --frozen-lockfile)   # open-orange 1.0.3, test-only; runs on Node 22+
 python3 apps/norn-cell-do/conformance/conformance.py --reference "$P/reference.json" --host rivet --project "$P"
 ```
@@ -273,6 +273,17 @@ pass when the reply came after the work.
 and `bun.lock`, with integrity hashes); `ORANGE` may name another binary, and
 the runner refuses any that is not open-orange 1.0.3. Run it on a Boat VM,
 never a shared host.
+
+`--host rivet-native` runs the native Rivet host (`crates/norn-cell-rivet`,
+D131): Rivet Engine 3.1.1 (`rivetdev/engine`, pinned by digest, in Docker)
+with two `norn-cell-rivet` runners, a `conformance` build named by
+`NORN_CELL_RIVET`. It needs no Worker project:
+
+```sh
+(cd crates/norn-cell-rivet && cargo build --locked --release --features conformance)
+NORN_CELL_RIVET=crates/norn-cell-rivet/target/release/norn-cell-rivet \
+  python3 apps/norn-cell-do/conformance/conformance.py --reference "$P/reference.json" --host rivet-native
+```
 
 `--host url --url <base>` runs the tests that need no host control (kills,
 restarts and backups report **not tested**). Point it only at a fresh,

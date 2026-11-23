@@ -235,7 +235,7 @@ fn pull(
                     mapping: format!("{system}.rest.mapping"),
                     dataset: row.dataset.clone(),
                     connector_instance: "sandbox".into(),
-                    partition: row.dataset.clone(),
+                    partition: row.dataset,
                     recorded_at: norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
                 },
             ));
@@ -253,13 +253,13 @@ fn rest_rows_land_through_the_mapping_path_once() {
     let host = host();
     for system in SYSTEMS {
         let (rows, watermarks) = pull(system, BTreeMap::new());
-        assert!(!rows.is_empty(), "{system} pulled nothing");
+        assert_ne!(rows, [], "{system} pulled nothing");
         let outcomes = host.ingest(&rows).expect("ingested");
         let quarantined: Vec<_> = outcomes
             .iter()
             .filter(|o| matches!(o.outcome, MappingOutcome::Quarantined(_)))
             .collect();
-        assert!(quarantined.is_empty(), "{system}: {quarantined:#?}");
+        assert_eq!(quarantined.len(), 0, "{system}: {quarantined:#?}");
         assert_eq!(
             count(&outcomes, &MappingOutcome::Landed),
             rows.len(),
@@ -344,7 +344,7 @@ fn rest_mappings_pin_their_source_schemas() {
             wrong.push(format!("PIN {stem}.source {pin} {typed}"));
         }
     }
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    assert_eq!(wrong.len(), 0, "{}", wrong.join("\n"));
 }
 
 const CONFIG: &str = r#"[
@@ -882,9 +882,13 @@ impl norn_api::analytics_routes::Transport for ThreeAndOne {
                         bytes: 64,
                         millis: 5,
                     },
-                    data: file(3, "cd"),
-                    held: file(1, "ef"),
+                    data: Some(file(3, "cd")),
+                    held: Some(file(1, "ef")),
                     valid_time: Vec::new(),
+                    findings: BTreeMap::new(),
+                    held_by_rules: 0,
+                    residue_total: 0,
+                    residue: Vec::new(),
                     stored: None,
                 };
                 self.landed.lock().expect("calls").push(request);
@@ -897,8 +901,8 @@ impl norn_api::analytics_routes::Transport for ThreeAndOne {
                 let request: norn_cell::analytics::StoreRequest =
                     serde_json::from_str(&call.body).expect("a store");
                 for (object, file) in [
-                    (&request.data, &request.landed.data),
-                    (&request.held, &request.landed.held),
+                    (&request.data, request.landed.data.as_ref().expect("data")),
+                    (&request.held, request.landed.held.as_ref().expect("held")),
                 ] {
                     assert!(
                         object.uri.ends_with(&format!("/{}.parquet", file.sha256)),
@@ -908,8 +912,8 @@ impl norn_api::analytics_routes::Transport for ThreeAndOne {
                 }
                 let cache = norn_cell::analytics::dataset_cache_id(
                     &request.land.load.table,
-                    &request.landed.data.sha256,
-                    &request.landed.held.sha256,
+                    &request.landed.data.as_ref().expect("data").sha256,
+                    &request.landed.held.as_ref().expect("held").sha256,
                 );
                 let answer = norn_cell::analytics::LandResponse {
                     stored: Some(cache),
@@ -1067,29 +1071,31 @@ fn a_dataset_load_commits_one_manifest_of_its_stored_files() {
     );
 }
 
-/// MANIFEST-01: definitions installed while a landing is in flight refuse
-/// its commit as stale: the pins the rows were typed by are carried from
-/// the landing's first step, never read again at commit.
+/// MANIFEST-01: a law installed while a landing is in flight refuses its
+/// commit as stale: the landing was checked by the laws pinned at its first
+/// step, and the commit takes those pins, never the definitions read again.
 #[test]
-fn definitions_installed_between_landing_and_commit_refuse_the_commit() {
+fn a_law_installed_between_landing_and_commit_refuses_the_commit() {
     use norn_api::analytics_routes::load_dataset;
     let host = std::sync::Arc::new(items_host(false));
     let installer = std::sync::Arc::clone(&host);
     let engine = ThreeAndOne {
         between: Some(Box::new(move || {
-            let table = norn_api::uploads::parse_csv("code\nx\n").expect("csv");
-            let request: norn_api::uploads::LoadRequest =
-                serde_json::from_value(json!({"typeName": "Other"})).expect("request");
-            let generated = norn_api::uploads::generate(
-                &table,
-                &request,
-                "s3://uploads/demo/other.csv",
-                &"aa".repeat(32),
-                RECORDED_AT,
-            )
-            .expect("generated");
-            norn_api::uploads::install(&installer, &generated, EXTRACTED_AT_MS + 1)
-                .expect("installed in flight");
+            let law: ArtifactEnvelope = serde_json::from_value(json!({
+                "artifactId": "upload.items.qty_nonnegative.law", "kind": "law",
+                "dependencies": [{"artifactId": "upload.Items.entity", "kind": "entity", "required": true, "version": "0.1.0"}],
+                "irVersion": "0.1", "lifecycle": "active", "name": "qty_nonnegative", "namespace": "upload",
+                "provenance": {"source": "system"}, "scope": {}, "version": "0.1.0",
+                "payload": {"id": "qty_nonnegative", "lawVersion": "0.1", "modality": {"kind": "always"},
+                    "owner": "upload", "provenance": {"source": "system"}, "rationale": "qty_nonnegative",
+                    "response": {"kind": "predicate", "expression": "self.qty >= 0"},
+                    "scope": {"objectTypes": ["upload.Items"], "root": {"kind": "entity", "id": "upload.Items"}},
+                    "severity": "error", "subject": "upload.Items"}
+            }))
+            .expect("law");
+            installer
+                .install_artifacts(&[law], EXTRACTED_AT_MS + 1)
+                .expect("a law installed in flight");
         })),
         ..ThreeAndOne::default()
     };
@@ -1106,6 +1112,11 @@ fn definitions_installed_between_landing_and_commit_refuse_the_commit() {
     assert_eq!(
         (refused.status, refused.code.as_str()),
         (409, "dataset.stale_pins")
+    );
+    assert_eq!(
+        engine.landed.lock().expect("calls")[0].checks,
+        [],
+        "the landing was checked by no law"
     );
     assert!(
         norn_api::analytics_routes::current_manifest(&host, "upload.Items")
@@ -1243,7 +1254,7 @@ fn mapping_edits_racing_loads_never_commit_a_mixed_snapshot() {
         }
         committed
     });
-    assert!(!committed.is_empty(), "the last load commits");
+    assert_ne!(committed, [], "the last load commits");
     let pins = pins.into_inner().expect("pins");
     for manifest in &committed {
         assert_eq!(
@@ -1330,17 +1341,21 @@ fn an_answer_of_another_landing_is_not_continued() {
             bytes: 1,
             millis: 1,
         },
-        data: norn_cell::analytics::LandedFile {
+        data: Some(norn_cell::analytics::LandedFile {
             sha256: "00".repeat(32),
             rows: 99,
             bytes: 1,
-        },
-        held: norn_cell::analytics::LandedFile {
+        }),
+        held: Some(norn_cell::analytics::LandedFile {
             sha256: "11".repeat(32),
             rows: 0,
             bytes: 1,
-        },
+        }),
         valid_time: Vec::new(),
+        findings: BTreeMap::new(),
+        held_by_rules: 0,
+        residue_total: 0,
+        residue: Vec::new(),
         stored: Some("l-other".into()),
     };
     let engine = Forged(
@@ -1488,7 +1503,7 @@ fn a_dataset_load_is_decided_as_an_observation_load_and_reported_as_its_run() {
         (refused.status, refused.code.as_str()),
         (422, "bulk.unsupported_marking")
     );
-    assert!(engine.landed.lock().expect("calls").is_empty());
+    assert_eq!(engine.landed.lock().expect("calls").len(), 0);
     let loaded = load_dataset(
         &host,
         &scope(),
@@ -1622,8 +1637,9 @@ fn a_forged_upload_record_is_refused_before_any_signing_or_engine_call() {
         (404, "dataset.not_found")
     );
     assert_eq!(*uploads.0.lock().expect("signed"), 0, "nothing was signed");
-    assert!(
-        engine.landed.lock().expect("calls").is_empty(),
+    assert_eq!(
+        engine.landed.lock().expect("calls").len(),
+        0,
         "no engine call"
     );
 }

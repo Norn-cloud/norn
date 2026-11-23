@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { CARD, EDGE_PILL, InspectorHead, InspectorSection, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
+import { SAVE_BLOCKED } from "./canvas.tsx"
 import { automationKinds, branchesOf, formatCondition, inputsOf, lower, parseCondition, setBranches, type Condition } from "./lib/canvas/automation.ts"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
@@ -247,7 +248,7 @@ const stepHeight = (node: g.CanvasNode) => Math.max(cardHeight({ kindLine: node.
 export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.Graph = EXAMPLE): CanvasFrameProps {
   return {
     draftKey: `automation:${META.id}`, label: "Automation", initial, kinds: automationKinds, nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
-    empty: "This automation has no steps. Add one; its start comes with it.",
+    saveBlocked: SAVE_BLOCKED, empty: "This automation has no steps. Add one; its start comes with it.",
     fixed: (node) => node.kind === "start",
     tidy: (graph) => tidy(graph, STEP_SPACING, stepHeight),
     nodeSize: (node) => ({ width: CARD.step, height: stepHeight(node) }),

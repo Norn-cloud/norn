@@ -542,10 +542,7 @@ fn assert_issue(found: &[Diagnostic], pointer_part: &str, message_part: &str) {
 }
 
 fn assert_clean(found: &[Diagnostic]) {
-    assert!(
-        found.is_empty(),
-        "expected a clean artifact set; got {found:#?}"
-    );
+    assert_eq!(found, [], "expected a clean artifact set; got {found:#?}");
 }
 
 /// For fixtures that deliberately strip a widget down to one reference-semantics question (an
@@ -557,8 +554,9 @@ fn assert_contract_clean(found: &[Diagnostic], expected_interaction: &[&str]) {
         .iter()
         .filter(|finding| !expected_interaction.contains(&finding.code.as_str()))
         .collect();
-    assert!(
-        unexpected.is_empty(),
+    assert_eq!(
+        unexpected.len(),
+        0,
         "expected a clean widget contract; got {unexpected:#?}"
     );
 }
@@ -4073,7 +4071,7 @@ fn nullable_clear_findings(value: Value) -> Vec<String> {
 #[test]
 fn a_nullable_form_input_must_stay_clearable() {
     // `comment` is a nullable ActionIR leaf; a free control is clearable to an explicit null.
-    assert!(nullable_clear_findings(with_comment_field(None)).is_empty());
+    assert_eq!(nullable_clear_findings(with_comment_field(None)).len(), 0);
     // Always required: a cleared value could never be submitted, so there is no real clear path.
     let forced = with_comment_field(Some(json!({ "expression": "true", "inputs": {} })));
     let found = nullable_clear_findings(forced);
@@ -4143,7 +4141,7 @@ fn drop_transition(machine: &mut Value, id: &str) {
 #[test]
 fn a_page_machine_that_handles_every_outcome_is_admitted() {
     let found = ui_codes(machine_widget(approve_machine()));
-    assert!(found.is_empty(), "expected no UI findings; got {found:#?}");
+    assert_eq!(found, [], "expected no UI findings; got {found:#?}");
 }
 
 #[test]
@@ -4559,7 +4557,7 @@ fn only_a_catalog_component_may_leave_a_guard_to_its_own_code() {
     });
     let widget = catalog_edit(|ux| ux["catalog"][0]["machine"] = entry_machine);
     let found = ui_codes(widget);
-    assert!(found.is_empty(), "{found:#?}");
+    assert_eq!(found, [], "{found:#?}");
     // On a page machine the same field is refused: a page's guards are ZEN the checker reads.
     catalog_code(
         catalog_edit(|ux| {

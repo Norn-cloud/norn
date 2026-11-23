@@ -234,8 +234,7 @@ fn title_case(kind: &str) -> String {
     let mut chars = lower.chars();
     chars
         .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
+        .map_or_default(|first| first.to_uppercase().chain(chars).collect())
 }
 
 /// A field token's type: the pseudonym subject its marking declares, else

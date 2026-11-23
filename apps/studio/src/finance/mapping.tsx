@@ -2,7 +2,10 @@ import { Link, useLocation } from "@tanstack/react-router"
 import { ArrowRight, Check, Database, GitMerge, KeyRound, Shield, Sparkles } from "lucide-react"
 import { useState, type DragEvent } from "react"
 import { Chip } from "@/components/chip"
+import { PageHeader, Panel, Well } from "@/components/panel"
+import { TableCard } from "@/components/table-card"
 import { Button } from "@/components/ui/button"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { CLIENT, MARKS, SYSTEMS, type MarkId } from "./data.ts"
 import { egp } from "./records.ts"
@@ -87,66 +90,65 @@ function IdentityReview({ decisions, decide }: {
 }) {
   const pending = 32 - Object.keys(decisions).length
   return (
-    <section id="review" className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-subtle px-4 py-2.5">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">Borrower identity review queue</h2>
-          <p className="text-xs text-muted-foreground">{pending} pending review · 4 representative synthetic cases shown</p>
-        </div>
-        <Link to="/examples/$scene" params={{ scene: "dataset" }} className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-tone-blue hover:border-data-accent">
-          Back to field mappings
-        </Link>
-      </div>
-      <div className="grid gap-3 lg:grid-cols-2">
+    <section id="review" className="space-y-6">
+      <PageHeader
+        title="Borrower identity review"
+        meta={<Chip tone="amber" dot>{pending} need review</Chip>}
+        description="Four representative synthetic identity cases flagged across CRM, LMS, and bureau feeds."
+        actions={
+          <Button asChild size="sm" variant="outline">
+            <Link to="/examples/$scene" params={{ scene: "dataset" }}>Back to field mappings</Link>
+          </Button>
+        }
+      />
+
+      <div className="grid gap-6 lg:grid-cols-2">
         {CASES.map(({ id, label, confidence, fields }) => (
-          <article key={id} className="overflow-hidden rounded-lg border border-border bg-background">
-            <header className="flex items-center justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-2.5">
-              <div className="flex items-baseline gap-2">
-                <h3 className="text-xs font-semibold text-foreground">{label}</h3>
-                <code className="text-[11px] text-muted-foreground">{id}</code>
-              </div>
-              <Chip tone="amber">{confidence} match</Chip>
-            </header>
-            <div className="p-4 space-y-3">
-              <table aria-label={label} className="w-full table-fixed text-xs">
-                <thead>
-                  <tr className="border-b border-border text-muted-foreground">
-                    <th scope="col" className="w-24 pb-1.5 text-start font-medium">Field</th>
-                    <th scope="col" className="pb-1.5 text-start font-medium">Source record A</th>
-                    <th scope="col" className="pb-1.5 text-start font-medium">Source record B</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
+          <Panel
+            key={id}
+            label={<span className="inline-flex items-baseline gap-2"><span>{label}</span><code className="text-xs font-normal text-muted-foreground">{id}</code></span>}
+            action={<Chip tone="amber">{confidence} match</Chip>}
+          >
+            <TableCard>
+              <Table aria-label={label} className="table-fixed">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-24">Field</TableHead>
+                    <TableHead>Source record A</TableHead>
+                    <TableHead>Source record B</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {fields.map(([fieldLabel, a, b]) => (
-                    <tr key={fieldLabel}>
-                      <th scope="row" className="py-2 text-start font-medium text-muted-foreground">{fieldLabel}</th>
-                      <td className={cn("overflow-wrap-anywhere pe-2 py-2 text-start", a !== b && "font-medium text-tone-amber")}><bdi>{a}</bdi></td>
-                      <td className={cn("overflow-wrap-anywhere py-2 text-start", a !== b && "font-medium text-tone-amber")}><bdi>{b}</bdi></td>
-                    </tr>
+                    <TableRow key={fieldLabel}>
+                      <TableCell className="font-medium text-muted-foreground">{fieldLabel}</TableCell>
+                      <TableCell className={cn("whitespace-normal [overflow-wrap:anywhere]", a !== b && "font-medium text-tone-amber")}><bdi>{a}</bdi></TableCell>
+                      <TableCell className={cn("whitespace-normal [overflow-wrap:anywhere]", a !== b && "font-medium text-tone-amber")}><bdi>{b}</bdi></TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
-              <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-                {decisions[id] ? (
-                  <Chip tone="green" icon={Check}>{decisions[id]} in preview</Chip>
-                ) : (
-                  <>
-                    <Button size="sm" className="h-7 text-xs" onClick={() => decide(id, "Merged")}>Merge</Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => decide(id, "Kept separate")}>Keep separate</Button>
-                  </>
-                )}
-              </div>
+                </TableBody>
+              </Table>
+            </TableCard>
+            <div className="flex flex-wrap items-center gap-2 border-t px-4 py-2.5">
+              {decisions[id] ? (
+                <Chip tone="green" icon={Check}>{decisions[id]} in preview</Chip>
+              ) : (
+                <>
+                  <Button size="sm" className="h-7 text-xs" onClick={() => decide(id, "Merged")}>Merge</Button>
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => decide(id, "Kept separate")}>Keep separate</Button>
+                </>
+              )}
             </div>
-          </article>
+          </Panel>
         ))}
       </div>
     </section>
   )
 }
 
-const TONES = { Mapped: "blue", Key: "green", Partial: "amber", Conflict: "red", Suggested: "violet", Unmapped: "gray", Ignored: "gray" } as const
+const TONES = { Mapped: "gray", Key: "green", Partial: "amber", Conflict: "red", Suggested: "violet", Unmapped: "gray", Ignored: "gray" } as const
 
-/** Snowflake / Retool 3-pane Field Mapper: Source Schema Tree | Dense Mapping Grid | Docked Field Inspector. */
+/** Calm 2-pane Field Mapper: dense mapping table with inline schema filter + hairline Field Inspector. */
 export function DatasetMapping() {
   const review = useLocation({ select: (location) => location.hash === "review" })
   const [model, setModel] = useState<(typeof MODEL)[number]>(MODEL[0])
@@ -166,6 +168,7 @@ export function DatasetMapping() {
   const partial = rows.filter((row) => row.status === "Partial").length
   const conflicts = new Set(rows.filter((row) => row.status === "Conflict").map((row) => row.target)).size
   const unresolved = properties.length - wired.length
+  const pendingReview = 32 - Object.keys(decisions).length
 
   const update = (row: Field, change: Partial<Pick<Field, "status" | "target">>) => {
     const next = { ...row, ...change }
@@ -190,49 +193,29 @@ export function DatasetMapping() {
   ]
 
   return (
-    <section className="grid overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[12.5rem_minmax(0,1fr)_19rem]">
-      {/* Pane 1: Source Schema Explorer */}
-      <aside aria-label="Source schemas" className="flex flex-col border-b border-border bg-surface-subtle/50 lg:border-e lg:border-b-0">
-        <div className="border-b border-border px-3 py-2.5">
-          <p className="text-[10px] font-semibold tracking-wider uppercase text-muted-foreground">Source schemas</p>
-        </div>
-        <ul className="flex-1 divide-y divide-border/60 overflow-y-auto p-1.5 text-xs">
-          <li>
-            <button
-              type="button"
-              onClick={() => setSourceFilter("all")}
-              className={cn("flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-start font-medium", sourceFilter === "all" ? "bg-background text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground")}
-            >
-              <span className="inline-flex items-center gap-1.5"><Database className="size-3.5" />All schemas</span>
-              <span className="text-[10px] tabular-nums">{schemaTree.length}</span>
-            </button>
-          </li>
-          {schemaTree.map(({ id, name, schema }) => {
-            const active = sourceFilter === id
-            return (
-              <li key={schema} className="pt-0.5">
-                <button
-                  type="button"
-                  onClick={() => setSourceFilter(active ? "all" : id)}
-                  className={cn("flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start transition-colors", active ? "bg-tone-blue/[0.08] text-foreground" : "text-foreground/80 hover:bg-background")}
-                >
-                  <Mark id={id} className="size-5 shrink-0" />
-                  <div className="min-w-0">
-                    <div className="truncate text-[11px] font-medium">{name}</div>
-                    <code className="block truncate text-[10px] text-muted-foreground">{schema}</code>
-                  </div>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      </aside>
+    <section className="space-y-6">
+      <PageHeader
+        title="Dataset mapping"
+        meta={`Key ${CLIENT.nationalId} · 11,872 merged`}
+        description="Map source schemas into the shared financial model, resolve conflicts, and enforce data contracts."
+        actions={
+          <Button asChild size="sm" variant="outline">
+            <Link to="/examples/$scene" params={{ scene: "dataset" }} hash="review">
+              {pendingReview} need review<ArrowRight className="size-3.5" />
+            </Link>
+          </Button>
+        }
+        primary={
+          <Button size="sm" onClick={() => setPublish(true)}>Publish contract</Button>
+        }
+      />
 
-      {/* Pane 2: Dense Mapping Grid */}
-      <div className="flex min-w-0 flex-col">
-        <header className="space-y-2.5 border-b border-border bg-surface-subtle px-4 py-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div role="group" aria-label="Mapping object type" className="inline-flex rounded-md border border-border bg-background p-0.5 text-xs">
+      <Panel
+        icon={Database}
+        label="Field mappings"
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <div role="group" aria-label="Mapping object type" className="inline-flex h-7 items-center rounded-md bg-muted p-0.5 text-xs">
               {MODEL.map((item) => (
                 <button
                   key={item.title}
@@ -244,171 +227,180 @@ export function DatasetMapping() {
                     setSelectedPath(item.rows[0]!.path)
                     setPublish(false)
                   }}
-                  className={cn("rounded-sm px-2.5 py-1 font-medium transition-colors", item === model ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}
+                  className="rounded-[0.3125rem] px-2.5 py-0.5 text-muted-foreground hover:text-foreground aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent"
                 >
                   {item.title}
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-2">
-              <Link to="/examples/$scene" params={{ scene: "dataset" }} hash="review" className="inline-flex h-7 items-center gap-1 rounded-md border border-tone-amber/40 bg-tone-amber/10 px-2.5 text-xs font-medium text-tone-amber hover:bg-tone-amber/15">
-                {32 - Object.keys(decisions).length} need review<ArrowRight className="size-3" />
-              </Link>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setPublish(true)}>Publish contract</Button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
-              <KeyRound className="size-3 text-tone-blue" />
-              <span>Key: <code className="text-foreground">{CLIENT.nationalId}</code> · 11,872 merged</span>
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Shield className="size-3 text-tone-amber" />
-              <span>Required: {model.required} · Quarantine on failure</span>
-            </span>
-          </div>
-
-          <div className="space-y-1">
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full bg-data-accent transition-all" style={{ width: `${(100 * wired.length) / properties.length}%` }} />
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-              <span>{wired.length} of {properties.length} properties mapped · {counted(partial, "partial mapping")} · {counted(conflicts, "conflict")}</span>
-              {publish && <span role="status" className="font-medium text-tone-blue">Preview: {counted(unresolved, "unmapped property", "unmapped properties")}, {counted(partial, "partial mapping")}, {counted(conflicts, "conflict")}.</span>}
-            </div>
-          </div>
-        </header>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-start text-xs" aria-label="Field mappings">
-            <thead>
-              <tr className="border-b border-border bg-surface-subtle/40 text-muted-foreground">
-                <th className="px-3.5 py-2 text-start font-medium">Source column</th>
-                <th className="w-6 py-2 text-center font-medium" aria-label="Maps to" />
-                <th className="px-3 py-2 text-start font-medium">Domain property</th>
-                <th className="px-3 py-2 text-start font-medium">Type</th>
-                <th className="px-3.5 py-2 text-end font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {visibleRows.map((row) => {
-                const active = selected?.path === row.path
-                return (
-                  <tr
-                    key={row.path}
-                    draggable
-                    onDragStart={(event) => event.dataTransfer.setData("text/plain", row.path)}
-                    onDragOver={(event) => { if (row.target) event.preventDefault() }}
-                    onDrop={(event) => { if (row.target) drop(event, row.target) }}
-                    onClick={() => setSelectedPath(row.path)}
-                    className={cn("cursor-pointer transition-colors hover:bg-surface-subtle", active && "bg-tone-blue/[0.06]")}
-                  >
-                    <td className={cn("px-3.5 py-2", active && "border-s-2 border-s-data-accent")}>
-                      <div className="flex items-center gap-2">
-                        <Mark id={row.source} className="size-4 shrink-0 rounded-xs" />
-                        <code className="truncate text-[11px] text-foreground" title={row.path}>{row.path}</code>
-                      </div>
-                    </td>
-                    <td className="py-2 text-center text-muted-foreground">→</td>
-                    <td className="px-3 py-2 font-mono text-[11px] text-foreground">
-                      {row.target || <span className="italic text-muted-foreground">Unassigned</span>}
-                    </td>
-                    <td className="px-3 py-2 text-[11px] text-muted-foreground whitespace-nowrap">{row.format}</td>
-                    <td className="px-3.5 py-2 text-end whitespace-nowrap">
-                      <Chip tone={TONES[row.status]} icon={row.status === "Suggested" ? Sparkles : undefined}>{row.status}</Chip>
-                    </td>
-                  </tr>
-                )
-              })}
-              {model.extra.map((target) => (
-                <tr key={target} onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, target)} className="bg-surface-subtle/30">
-                  <td className="px-3.5 py-2 text-[11px] italic text-muted-foreground">Drop a source column…</td>
-                  <td className="py-2 text-center text-muted-foreground">→</td>
-                  <td className="px-3 py-2 font-mono text-[11px] text-foreground">{target}</td>
-                  <td className="px-3 py-2 text-[11px] text-muted-foreground">missing</td>
-                  <td className="px-3.5 py-2 text-end">
-                    <span className="text-[11px] text-muted-foreground">{wired.includes(target) ? "Mapped" : target.endsWith(".monthlyIncome") ? "Payslip · review" : "Needs source"}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Pane 3: Docked Field Inspector */}
-      <aside aria-label="Selected mapping" className="flex flex-col border-t border-border bg-surface-subtle/35 lg:border-s lg:border-t-0">
-        <div className="border-b border-border bg-surface-subtle px-4 py-2.5">
-          <p className="text-[10px] font-semibold tracking-wider uppercase text-muted-foreground">Field Inspector</p>
-          {selected && <code className="mt-0.5 block truncate text-xs font-semibold text-foreground">{selected.path}</code>}
-        </div>
-        {selected ? (
-          <div className="flex-1 space-y-4 p-4 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                <Mark id={selected.source} className="size-5" />{MARKS[selected.source].name}
-              </span>
-              <Chip tone={TONES[selected.status]}>{selected.status}</Chip>
-            </div>
-
-            <div className="space-y-1 border-t border-border pt-3">
-              <p className="text-[11px] text-muted-foreground">Target property</p>
-              <code className="block rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs text-foreground">
-                {selected.target || "No target assigned"}
-              </code>
-              <p className="text-[11px] text-muted-foreground">Format: {selected.format}</p>
-            </div>
-
-            <div className="space-y-1 border-t border-border pt-3">
-              <p className="text-[11px] text-muted-foreground">Sample value</p>
-              <p className="rounded-md border border-border bg-background px-2.5 py-1.5 font-medium text-foreground">{selected.sample}</p>
-            </div>
-
-            {selected.note && (
-              <div className="space-y-1 border-t border-border pt-3">
-                <p className="text-[11px] text-muted-foreground">Transform &amp; precedence rule</p>
-                <p className="leading-relaxed text-foreground/90">{selected.note}</p>
-              </div>
-            )}
-
-            {selected.status === "Suggested" && (
-              <div className="flex gap-2 border-t border-border pt-3">
-                <Button size="sm" className="h-7 flex-1 text-xs" onClick={() => update(selected, { status: "Mapped" })}>Accept suggestion</Button>
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => update(selected, { status: "Unmapped", target: "" })}>Reject</Button>
-              </div>
-            )}
-
-            {selected.status === "Unmapped" && (
-              <form
-                className="space-y-2 border-t border-border pt-3"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  const target = new FormData(event.currentTarget).get("target")
-                  if (typeof target === "string" && properties.includes(target)) update(selected, { status: "Mapped", target })
-                }}
+            <label className="inline-flex items-center">
+              <span className="sr-only">Filter by source schema</span>
+              <select
+                aria-label="Filter by source schema"
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value as MarkId | "all")}
+                className="h-7 rounded-md border bg-card px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <label className="block space-y-1">
-                  <span className="text-[11px] text-muted-foreground">Assign to domain property</span>
-                  <select name="target" aria-label="Target property" className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs">
-                    {properties.map((target) => <option key={target}>{target}</option>)}
-                  </select>
-                </label>
-                <div className="flex gap-2">
-                  <Button size="sm" className="h-7 flex-1 text-xs">Map field</Button>
-                  <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => update(selected, { status: "Ignored" })}>Ignore</Button>
-                </div>
-              </form>
-            )}
+                <option value="all">All schemas ({schemaTree.length})</option>
+                {schemaTree.map(({ id, name, schema }) => (
+                  <option key={schema} value={id}>{name} ({schema})</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        }
+      >
+        <Well className="grid lg:grid-cols-[minmax(0,1fr)_21rem]">
+          <div className="flex min-w-0 flex-col">
+            <div className="space-y-2 border-b px-4 py-3 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1.5">
+                  <KeyRound className="size-3.5" />
+                  <span>{wired.length} of {properties.length} properties mapped · {counted(partial, "partial mapping")} · {counted(conflicts, "conflict")}</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Shield className="size-3.5" />
+                  <span>Required: {model.required} · Quarantine on failure</span>
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-foreground/75 transition-all" style={{ width: `${(100 * wired.length) / properties.length}%` }} />
+              </div>
+              {publish && (
+                <p role="status" className="font-medium text-foreground">
+                  Preview: {counted(unresolved, "unmapped property", "unmapped properties")}, {counted(partial, "partial mapping")}, {counted(conflicts, "conflict")}. Contract quarantines records on missing required fields.
+                </p>
+              )}
+            </div>
 
-            <div className="border-t border-border pt-3 text-[11px] text-muted-foreground">
-              <p className="inline-flex items-center gap-1.5"><GitMerge className="size-3.5 text-tone-blue" />Identity join key: National ID</p>
+            <div className="overflow-x-auto">
+              <Table aria-label="Field mappings" className="text-meta tabular-nums">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Source column</TableHead>
+                    <TableHead className="w-6 text-center" aria-label="Maps to" />
+                    <TableHead>Domain property</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead className="text-end">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleRows.map((row) => {
+                    const active = selected?.path === row.path
+                    return (
+                      <TableRow
+                        key={row.path}
+                        draggable
+                        onDragStart={(event) => event.dataTransfer.setData("text/plain", row.path)}
+                        onDragOver={(event) => { if (row.target) event.preventDefault() }}
+                        onDrop={(event) => { if (row.target) drop(event, row.target) }}
+                        onClick={() => setSelectedPath(row.path)}
+                        className={cn("cursor-pointer", active && "bg-muted/60")}
+                      >
+                        <TableCell className={cn(active && "border-s-2 border-s-foreground")}>
+                          <div className="flex items-center gap-2">
+                            <Mark id={row.source} className="size-4 shrink-0 rounded-xs" />
+                            <code className="truncate text-xs text-foreground" title={row.path}>{row.path}</code>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center text-muted-foreground">→</TableCell>
+                        <TableCell className="font-mono text-xs text-foreground">
+                          {row.target || <span className="italic text-muted-foreground">Unassigned</span>}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.format}</TableCell>
+                        <TableCell className="whitespace-nowrap text-end">
+                          <Chip tone={TONES[row.status]} icon={row.status === "Suggested" ? Sparkles : undefined}>{row.status}</Chip>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                  {model.extra.map((target) => (
+                    <TableRow key={target} onDragOver={(e) => e.preventDefault()} onDrop={(e) => drop(e, target)} className="bg-muted/20">
+                      <TableCell className="text-xs italic text-muted-foreground">Drop a source column…</TableCell>
+                      <TableCell className="text-center text-muted-foreground">→</TableCell>
+                      <TableCell className="font-mono text-xs text-foreground">{target}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">missing</TableCell>
+                      <TableCell className="text-end text-xs text-muted-foreground">
+                        {wired.includes(target) ? "Mapped" : target.endsWith(".monthlyIncome") ? "Payslip · review" : "Needs source"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           </div>
-        ) : (
-          <p className="p-4 text-xs text-muted-foreground">Select a mapping row to inspect sample data and contract rules.</p>
-        )}
-      </aside>
+
+          <aside aria-label="Selected mapping" className="flex flex-col border-t bg-surface-subtle/40 lg:border-s lg:border-t-0">
+            <div className="border-b px-4 py-3">
+              <p className="text-xs text-muted-foreground">Field inspector</p>
+              {selected && <code className="mt-0.5 block truncate text-xs font-medium text-foreground">{selected.path}</code>}
+            </div>
+            {selected ? (
+              <div className="flex-1 divide-y px-4 text-meta">
+                <div className="flex items-center justify-between py-3">
+                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                    <Mark id={selected.source} className="size-5" />{MARKS[selected.source].name}
+                  </span>
+                  <Chip tone={TONES[selected.status]}>{selected.status}</Chip>
+                </div>
+
+                <div className="space-y-1 py-3">
+                  <p className="text-xs text-muted-foreground">Target property</p>
+                  <code className="block font-mono text-xs text-foreground">{selected.target || "No target assigned"}</code>
+                  <p className="text-xs text-muted-foreground">Format: {selected.format}</p>
+                </div>
+
+                <div className="space-y-1 py-3">
+                  <p className="text-xs text-muted-foreground">Sample value</p>
+                  <p className="font-medium text-foreground">{selected.sample}</p>
+                </div>
+
+                {selected.note && (
+                  <div className="space-y-1 py-3">
+                    <p className="text-xs text-muted-foreground">Transform &amp; precedence rule</p>
+                    <p className="text-xs leading-relaxed text-foreground/90">{selected.note}</p>
+                  </div>
+                )}
+
+                {selected.status === "Suggested" && (
+                  <div className="flex gap-2 py-3">
+                    <Button size="sm" className="h-7 flex-1 text-xs" onClick={() => update(selected, { status: "Mapped" })}>Accept suggestion</Button>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => update(selected, { status: "Unmapped", target: "" })}>Reject</Button>
+                  </div>
+                )}
+
+                {selected.status === "Unmapped" && (
+                  <form
+                    className="space-y-2 py-3"
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      const target = new FormData(event.currentTarget).get("target")
+                      if (typeof target === "string" && properties.includes(target)) update(selected, { status: "Mapped", target })
+                    }}
+                  >
+                    <label className="block space-y-1">
+                      <span className="text-xs text-muted-foreground">Assign to domain property</span>
+                      <select name="target" aria-label="Target property" className="h-8 w-full rounded-md border bg-card px-2 text-xs">
+                        {properties.map((target) => <option key={target}>{target}</option>)}
+                      </select>
+                    </label>
+                    <div className="flex gap-2">
+                      <Button size="sm" className="h-7 flex-1 text-xs">Map field</Button>
+                      <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => update(selected, { status: "Ignored" })}>Ignore</Button>
+                    </div>
+                  </form>
+                )}
+
+                <div className="py-3 text-xs text-muted-foreground">
+                  <p className="inline-flex items-center gap-1.5"><GitMerge className="size-3.5" />Identity join key: National ID</p>
+                </div>
+              </div>
+            ) : (
+              <p className="p-4 text-meta text-muted-foreground">Select a mapping row to inspect sample data and contract rules.</p>
+            )}
+          </aside>
+        </Well>
+      </Panel>
     </section>
   )
 }

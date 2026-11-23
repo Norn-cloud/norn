@@ -78,7 +78,7 @@ fn empty_interfaces_preserve_legacy_snapshot_and_model_hash() {
     });
     let snapshot: ModelDefinitionSnapshot =
         serde_json::from_value(old_snapshot.clone()).expect("legacy snapshot decodes");
-    assert!(snapshot.interfaces.is_empty());
+    assert_eq!(snapshot.interfaces, []);
     assert_eq!(
         serde_json::to_value(&snapshot).expect("snapshot encodes"),
         old_snapshot
@@ -209,7 +209,7 @@ fn binding_indexes_survive_model_snapshot_and_legacy_snapshots_remain_index_free
     });
     let decoded_old: ModelDefinitionSnapshot =
         serde_json::from_value(old_snapshot.clone()).expect("legacy snapshot decodes");
-    assert!(decoded_old.binding_indexes.is_empty());
+    assert_eq!(decoded_old.binding_indexes, []);
     assert_eq!(
         serde_json::to_value(&decoded_old).expect("legacy snapshot encodes"),
         old_snapshot

@@ -108,6 +108,10 @@ pub enum NornVersionWriter {
         /// frozen contract keeps its shape.
         #[schema(schema_with = withheld_input_schema)]
         input: WithheldInput,
+        /// Optional provenance trace context recorded on the action call.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(nullable = false)]
+        trace: Option<crate::actions::TraceContext>,
     },
     /// Another writer (an import, a migration or a kernel rule), or one this
     /// caller is not told: an action whose call record the caller may not
@@ -410,11 +414,29 @@ fn action_writer<E: SqlEngine>(
     let (Some(action_id), Some(actor)) = (text("actionId"), text("actor")) else {
         return Ok(None);
     };
+    let Ok(trace) = decode_writer_trace(&record.values) else {
+        return Ok(None);
+    };
     Ok(Some(NornVersionWriter::Action {
         action_id,
         actor,
         input: WithheldInput,
+        trace,
     }))
+}
+
+fn decode_writer_trace(
+    values: &BTreeMap<String, RuntimeValue>,
+) -> Result<Option<crate::actions::TraceContext>, ()> {
+    match values.get("trace") {
+        None | Some(RuntimeValue::Null) => Ok(None),
+        Some(value) => {
+            let decoded: norn_ir::TraceContext =
+                norn_ir::runtime::decode(value).map_err(|_decode| ())?;
+            decoded.validate().map_err(|_invalid| ())?;
+            Ok(Some(crate::actions::TraceContext::from(decoded)))
+        }
+    }
 }
 
 /// The read decision over one version: the version's own record (the row
@@ -692,4 +714,48 @@ pub fn get_object_lineage_at<E: SqlEngine>(
             .map_err(Refusal::host)?
             .ok_or_else(not_found)
     })
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use super::*;
+
+    #[test]
+    fn decode_writer_trace_fails_closed_on_corrupt_persisted_trace() -> Result<(), String> {
+        let empty = BTreeMap::new();
+        assert_eq!(decode_writer_trace(&empty), Ok(None));
+
+        let explicit_null = BTreeMap::from([("trace".to_owned(), RuntimeValue::Null)]);
+        assert_eq!(decode_writer_trace(&explicit_null), Ok(None));
+
+        let valid_value =
+            RuntimeValue::from_json_text(r#"{"traceId":"tr-1","intentRef":"goal:1"}"#)
+                .map_err(|error| error.to_string())?;
+        let valid = BTreeMap::from([("trace".to_owned(), valid_value)]);
+        assert_eq!(
+            decode_writer_trace(&valid),
+            Ok(Some(crate::actions::TraceContext {
+                trace_id: "tr-1".to_owned(),
+                intent_ref: Some("goal:1".to_owned()),
+                session_digest: None,
+            }))
+        );
+
+        for bad in [
+            r#"["tr-1"]"#,
+            r#"{"traceId":""}"#,
+            r#"{"traceId":"tr\u202e1"}"#,
+            r#"{"traceId":"tr-1","sessionDigest":"raw transcript"}"#,
+            r#"{"traceId":"tr-1","unknown":"x"}"#,
+        ] {
+            let value = RuntimeValue::from_json_text(bad).map_err(|error| error.to_string())?;
+            let map = BTreeMap::from([("trace".to_owned(), value)]);
+            assert_eq!(
+                decode_writer_trace(&map),
+                Err(()),
+                "must fail closed on {bad}"
+            );
+        }
+        Ok(())
+    }
 }

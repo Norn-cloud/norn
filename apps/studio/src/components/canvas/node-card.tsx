@@ -15,8 +15,8 @@ export const NODE_KINDS: Readonly<Record<string, { readonly icon: LucideIcon; re
   agent: { icon: Bot, label: "Agent", tint: "--tint-agent" },
   tool: { icon: Wrench, label: "Tool binding", tint: "--tint-tool" },
   law: { icon: Scale, label: "Law", tint: "--tint-law" },
-  initial: { icon: CirclePlay, label: "Initial", tint: "--tone-green" },
-  terminal: { icon: CircleStop, label: "Terminal", tint: "--tone-gray" },
+  initial: { icon: CirclePlay, label: "Initial", tint: "--tint-outcome" },
+  terminal: { icon: CircleStop, label: "Terminal", tint: "--tint-state" },
   chart: { icon: ChartLine, label: "Chart", tint: "--tint-tool" },
   table: { icon: Table2, label: "Table", tint: "--tint-state" },
 }
@@ -63,7 +63,7 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
   // The kind line names what the card is; it is left out when the title already says it (a start called Start).
   const name = kindLabel ?? NODE_KINDS[kind]?.label ?? kind
   return (
-    <div data-testid={testId} data-node-kind={kind} style={minHeight ? { minHeight } : undefined} className={cn("canvas-node group relative w-[208px] rounded-node border border-node-border bg-card px-3 py-2.5 text-left",
+    <div data-testid={testId} style={minHeight ? { minHeight } : undefined} className={cn("canvas-node group relative w-[208px] rounded-node border border-node-border bg-card px-3 py-2.5 text-left",
       selected && "canvas-node-selected", problems > 0 && "canvas-node-failing", className)}>
       {children}
       <div className="flex items-start gap-2.5">

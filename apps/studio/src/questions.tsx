@@ -1,8 +1,7 @@
-import { financeDemo } from "./lib/finance-demo.ts"
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
-import { CalendarRange, ChartLine, Clock, Database, Plus, Rows3, Sigma, X } from "lucide-react"
+import { CalendarRange, ChartLine, Clock, Database, ListTree, Plus, Rows3, Sigma, X } from "lucide-react"
 import { FactChip } from "@/components/chip"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
@@ -320,21 +319,18 @@ export function QuestionPage() {
 export function QuestionsPage() {
   const mode = useMode()
   const live = mode.data?.kind === "live"
-  const recorded = mode.data?.kind === "recorded"
-  const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard, enabled: recorded })
+  const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard, enabled: mode.data?.kind === "recorded" })
   return (
     <section className="space-y-6">
-      <PageHeader title="Metrics" description={recorded ? (financeDemo ? "Track the share of repayments reconciled each week and see what changed after a source correction." : "See how the cell calculated weekly yield and what changed when a source record was corrected.") : "The numbers your records add up to, answered exactly by the server. Every number opens to the records behind it."}
-        actions={live && <><Button asChild variant="outline" size="sm"><Link to="/metrics/build">Step by step</Link></Button><Button asChild size="sm"><Link to="/metrics/new"><Plus />Explore a metric</Link></Button></>} />
+      <PageHeader title="Metrics" description="The numbers your records add up to, answered exactly by the cell. Every number opens to the records behind it."
+        primary={<Button asChild><Link to="/metrics/new"><Plus />Explore a metric</Link></Button>}
+        secondary={[{ label: "Build step by step", icon: ListTree, to: "/metrics/build" }]} />
       {mode.isError && <p className="text-destructive">{mode.error.message}</p>}
       {live ? <LiveQuestionsBoard /> : mode.data && <>
         {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
         {board.isError && <p className="text-destructive">{board.error.message}</p>}
         {board.data?.map((read) => <QuestionCard key={read.question.document.name} read={read} />)}
         <RestatementCard />
-        <div className="flex justify-end">
-          <Button asChild variant="outline"><Link to="/examples/$scene" params={{ scene: "explorer" }}>Explore sample records</Link></Button>
-        </div>
       </>}
     </section>
   )

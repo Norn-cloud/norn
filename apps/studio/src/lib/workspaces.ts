@@ -22,10 +22,10 @@ const configured: readonly Workspace[] = [
   { id: "bpi-2019", name: "BPI Challenge 2019", group: "Industry benchmarks", detail: NOT_YET, recorded: false },
   // CC BY-NC-SA: nothing derived from it is committed here.
   { id: "olist", name: "Olist e-commerce", group: "Industry benchmarks", detail: "Benchmark run offline (licence NC)", recorded: false, results: "https://github.com/Norn-cloud/norn/issues/531" },
-  // The synthetic recorded world is the jewelry business: gold scrap, its yield and the three systems that feed it.
+  // The synthetic recorded world: one recorded question, its answers and the three systems that feed it (fixtures/demo).
   financeDemo
-    ? { id: "financial-services", name: "Financial services", group: "First-party", detail: "Synthetic example", recorded: true }
-    : { id: "jewelry", name: "Jewelry", group: "First-party", detail: "Recorded · synthetic gold-scrap data", recorded: true },
+    ? { id: "financial-services", name: "Beltone · Financial services", group: "First-party", detail: "Synthetic preview", recorded: true }
+    : { id: "recorded-demo", name: "Recorded demo", group: "First-party", detail: "Recorded · synthetic data", recorded: true },
 ]
 
 export const WORKSPACES = financeDemo ? configured.filter(({ recorded }) => recorded) : configured

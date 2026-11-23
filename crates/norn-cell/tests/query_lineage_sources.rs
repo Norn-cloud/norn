@@ -215,9 +215,9 @@ fn value_derived_source_digests_follow_the_values_grant_not_the_sources_grant() 
             panic!("sources granted")
         };
         assert!(provenance.document_digest.is_none() && provenance.bundle_digest.is_none());
-        assert!(!provenance.document_ref.record.is_empty());
+        assert_ne!(provenance.document_ref.record.len(), 0);
         assert_eq!(provenance.mapping_pin.artifact_id, "demo.scrap.mapping");
-        assert!(!provenance.field_provenance.is_empty());
+        assert_ne!(provenance.field_provenance.len(), 0);
     }
     let wire = serde_json::to_string(&population).expect("wire");
     assert!(!wire.contains("documentDigest") && !wire.contains("bundleDigest"));

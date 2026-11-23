@@ -34,7 +34,7 @@ const OUT_ENV: &str = "NORN_CHECKER_WASM_PARITY_OUT";
 /// `norn-checker`'s pinned hash of the retail registry receipt
 /// (`tests/check_receipt.rs`): the ABI issues the same receipt.
 const RETAIL_RECEIPT_SHA256: &str =
-    "c4f1873c8393a5148cc6b039bcb4e01355345f45e4d921ee55d0d0c8766b803e";
+    "e6a99657a0874af298ade5b697194467a03d57db545719f66ecefa79d4e857e5";
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -85,23 +85,20 @@ fn inline_layout(mut artifact: Value) -> Value {
 
 fn array_text(case: &Value, key: &str) -> String {
     let inline_layout_on = case["inlineLayoutOn"].as_str() == Some(key);
-    let files: Vec<String> = case[key]
-        .as_array()
-        .map(|paths| {
-            paths
-                .iter()
-                .map(|path| {
-                    let source = read(path.as_str().expect("path string"));
-                    if inline_layout_on {
-                        let artifact: Value = serde_json::from_str(&source).expect("fixture JSON");
-                        serde_json::to_string(&inline_layout(artifact)).expect("inline JSON")
-                    } else {
-                        source
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let files: Vec<String> = case[key].as_array().map_or_default(|paths| {
+        paths
+            .iter()
+            .map(|path| {
+                let source = read(path.as_str().expect("path string"));
+                if inline_layout_on {
+                    let artifact: Value = serde_json::from_str(&source).expect("fixture JSON");
+                    serde_json::to_string(&inline_layout(artifact)).expect("inline JSON")
+                } else {
+                    source
+                }
+            })
+            .collect()
+    });
     format!("[{}]", files.join(","))
 }
 
@@ -303,11 +300,12 @@ fn clean_set_emits_v2_and_preserves_the_historical_receipt_pin() {
 fn invalid_sets_report_findings_not_errors() {
     let output = json_of(&output_of("retail-with-unknown-supertype"));
     assert_eq!(output["admitted"], false);
-    assert!(
-        !output["diagnostics"]["diagnostics"]
+    assert_ne!(
+        output["diagnostics"]["diagnostics"]
             .as_array()
             .expect("diagnostics")
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(output["receipt"]["admitted"], false);
 
@@ -431,7 +429,7 @@ fn widget_conditions_evaluate_over_their_explicit_inputs() {
     ] {
         let output = json_of(&output_of(name));
         assert_eq!(output["format"], "norn-checker-abi/evaluation@1");
-        assert_eq!(output["profile"], "norn-zen/6");
+        assert_eq!(output["profile"], "norn-zen/7");
         assert_eq!(output["ok"], true, "{name}: {output}");
         assert_eq!(output["value"], true, "{name}: {output}");
     }
@@ -545,7 +543,7 @@ fn lifecycle_diagrams_match_the_projection() {
 fn expressions_check_in_the_set_environment() {
     let ok = json_of(&output_of("expression-ok"));
     assert_eq!(ok["format"], "norn-checker-abi/expression@1");
-    assert_eq!(ok["profile"], "norn-zen/6");
+    assert_eq!(ok["profile"], "norn-zen/7");
     assert_eq!(ok["ok"], true, "{ok}");
     assert_eq!(ok["inferred"], "bool");
 
@@ -584,7 +582,7 @@ fn version_names_the_formats() {
     assert_eq!(version["abi"], "norn-checker-abi/1");
     assert_eq!(version["diagnosticsFormat"], "norn-checker/diagnostics@1");
     assert_eq!(version["receiptFormat"], "norn-checker/receipt@2");
-    assert_eq!(version["exprProfile"], "norn-zen/6");
+    assert_eq!(version["exprProfile"], "norn-zen/7");
 }
 
 #[test]

@@ -67,7 +67,7 @@ test("markings: the Markings page lists each marking, its projection, its facts 
   await expect(contact).toContainText("admin")
   await expect(contact).toContainText("owner")
   await expect(page.locator('[data-marking-row="pii.identity"]')).toContainText("Never shown")
-  await expect(page.getByRole("toolbar", { name: "Applets" }).getByRole("link", { name: "Markings" })).toBeVisible()
+  await expect(page.getByRole("navigation", { name: "Builder" }).getByRole("link", { name: "Markings" })).toBeVisible()
   await shoot(page, info, "page")
 })
 

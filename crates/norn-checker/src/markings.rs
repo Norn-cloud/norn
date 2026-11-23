@@ -557,10 +557,7 @@ mod tests {
                 tenant: None,
             },
         );
-        assert!(
-            findings.is_empty(),
-            "valid extension was rejected: {findings:?}"
-        );
+        assert_eq!(findings, [], "valid extension was rejected: {findings:?}");
     }
 
     #[test]
@@ -820,7 +817,7 @@ mod tests {
             ])
         );
         assert!(!base.computed, "a generated key stays a stored property");
-        assert!(base.computed_inputs.is_empty(), "no fake computed metadata");
+        assert_eq!(base.computed_inputs.len(), 0, "no fake computed metadata");
 
         let child = effective
             .get(&1)
@@ -838,10 +835,7 @@ mod tests {
             .0
             .property("number")
             .expect("public generated identity property exists");
-        assert!(
-            public.markings.is_empty(),
-            "an unclassified key stays public"
-        );
+        assert_eq!(public.markings, [], "an unclassified key stays public");
     }
 
     fn naming_series_object_types() -> Vec<norn_ir::ObjectTypeDef> {

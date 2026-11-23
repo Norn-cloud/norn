@@ -68,6 +68,8 @@ export interface CanvasFrameProps {
   readonly palette: (editing: Editing) => ReactNode
   readonly inspector: (editing: Editing, issues: readonly Issue[]) => ReactNode
   readonly empty: ReactNode
+  /** Why the server save is not available, until the admission route is live. */
+  readonly saveBlocked: string
   /** Shown under the canvas for the current selection (a decision's preview). */
   readonly below?: (editing: Editing) => ReactNode
   /** Open with these selected (a link to a finding, or a contact-sheet state). */
@@ -178,7 +180,7 @@ function Frame(props: CanvasFrameProps) {
   const saveDraft = () => {
     const at = new Date().toISOString()
     setNotice(writeDraft(draftKey, dirty ? { graph, at } : undefined)
-      ? { tone: "info", text: "Draft saved in this browser." }
+      ? { tone: "info", text: `Draft saved in this browser. ${props.saveBlocked}` }
       : { tone: "refusal", text: "This browser does not allow saving a draft here." })
     if (dirty) setDraftAt(at)
   }
@@ -254,7 +256,7 @@ function Frame(props: CanvasFrameProps) {
     const base = props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph)
     const failing = on("edge", edge.id).length > 0
     const active = selection.edges.includes(edge.id) || selection.nodes.includes(edge.source) || selection.nodes.includes(edge.target)
-    const tone = failing ? "var(--destructive)" : "var(--edge-active)"
+    const tone = failing ? "var(--destructive)" : active ? "var(--edge-active)" : "var(--edge)"
     return { ...base, className: cn(base.className, failing ? "canvas-edge-failing" : active && "canvas-edge-active"), markerEnd: { type: MarkerType.ArrowClosed, color: tone, width: 14, height: 14 } }
   }
   // Focus (selection, and what the pointer is over) dims everything not connected to it. The pointer's part is
@@ -360,6 +362,7 @@ function Frame(props: CanvasFrameProps) {
                   <Sep />
                   <Button size="sm" variant="ghost" title={`Save a draft (${keysText("⌘S")})`} onClick={saveDraft}><Save />Save draft</Button>
                   {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
+                  <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
                 </div>
               </FlowPanel>
             </ReactFlow>}

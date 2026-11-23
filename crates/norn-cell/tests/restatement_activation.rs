@@ -443,6 +443,7 @@ fn governed_on(store: CellStore, model: &Model, transition: &str, key: &str, all
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     };
     commit_action(&mut cell, &catalog, &invocation, &Authority(allow)).is_ok()
 }
@@ -793,7 +794,7 @@ fn generated_restatement_sequence(changes: Vec<(i64, u8, bool, bool, bool)>) {
         let head = store.verified_head().expect("head");
         if redeliver {
             store.commit(&batch).expect("redelivery");
-            assert_eq!(store.verified_head().expect("head"), head.clone());
+            assert_eq!(store.verified_head().expect("head"), head);
         }
         progress(&mut context, at, head.commits);
         let point = cutoff(&store, &context);
@@ -815,7 +816,7 @@ fn generated_restatement_sequence(changes: Vec<(i64, u8, bool, bool, bool)>) {
             drop(build);
             drop(store);
             store = open(&path, &model);
-            assert_eq!(view(&store, &context).generation, old.clone());
+            assert_eq!(view(&store, &context).generation, old);
         }
         let build = store
             .resume_restatement(ID, context.clone())
@@ -897,7 +898,7 @@ fn declared_restatement_law_and_reviewer_actions_are_admitted_together() {
         tenant: None,
     };
     let findings = norn_checker::check_artifact_set(&artifacts, &context);
-    assert!(findings.is_empty(), "{findings:#?}");
+    assert_eq!(findings, [], "{findings:#?}");
 }
 
 #[test]

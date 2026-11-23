@@ -1070,8 +1070,9 @@ mod oauth_tests {
             (status, &parked["code"]),
             (200, &serde_json::json!("connection.oauth_received"))
         );
-        assert!(
-            bodies.lock().unwrap().is_empty(),
+        assert_eq!(
+            bodies.lock().unwrap().len(),
+            0,
             "the redirect alone exchanged the code"
         );
 
@@ -1085,7 +1086,7 @@ mod oauth_tests {
         let guessed = serde_json::json!({ "state": state, "completionKey": "guess" }).to_string();
         let (status, _) = send(port, "POST", &complete, Some(BEARER), &guessed);
         assert_eq!(status, 400);
-        assert!(bodies.lock().unwrap().is_empty());
+        assert_eq!(bodies.lock().unwrap().len(), 0);
 
         // The starting session completes: exchanged once, with the code.
         let (status, connected) = send(port, "POST", &complete, Some(BEARER), &body);
@@ -1286,7 +1287,7 @@ mod keepalive_tests {
             "",
         );
         assert_eq!((status, connection.as_str()), (400, "close"));
-        assert!(rest.is_empty(), "nothing after the refusal");
+        assert_eq!(rest.len(), 0, "nothing after the refusal");
         for bad in ["+2", "2 2", "0x2", ""] {
             let (status, connection, _) =
                 raw(port, &format!("{target}\r\ncontent-length: {bad}"), "");
@@ -1310,7 +1311,7 @@ mod keepalive_tests {
                 (409, "close"),
                 "{connection:?}"
             );
-            assert!(rest.is_empty(), "{connection:?}: the connection ends");
+            assert_eq!(rest.len(), 0, "{connection:?}: the connection ends");
         }
     }
 

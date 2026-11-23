@@ -34,7 +34,7 @@ pub(super) fn authority(source: &DefinitionSource) -> ApprovedContract {
     ApprovedContract::approve(
         source,
         &BTreeSet::new(),
-        json!({"expr":"norn-zen/6"}),
+        json!({"expr":"norn-zen/7"}),
         json!({"store":"empty"}),
         json!({"level":"bounded"}),
     )
@@ -61,7 +61,7 @@ fn constitution_ten_goal_inventory_golden() {
     );
     assert_eq!(
         challenge.sha256(),
-        "891aa8d83690605ec68c1fe54915d784db46db80af4e9b2f861f911a1accb8ff"
+        "ab651635266e3b5bc85ae726e6c7ac3e8e7973afd771f94b2c52a17c40aa4c97"
     );
 }
 
@@ -101,7 +101,7 @@ fn generated_lifecycle_reachability() {
     assert_eq!(goals[3]["goal"]["transition"], "finish");
     for goal in goals {
         assert_eq!(goal["assessment"], "unknown");
-        assert!(!goal["reason"].as_str().expect("reason").is_empty());
+        assert_ne!(goal["reason"].as_str().expect("reason").len(), 0);
         assert_eq!(goal["statement"]["maxSteps"], 3);
         assert_eq!(goal["statement"]["maxObjects"], 1);
         assert_eq!(goal["statement"]["property"], "status");

@@ -3,8 +3,6 @@ import "@xyflow/react/dist/style.css"
 import { useNavigate } from "@tanstack/react-router"
 import { useMemo, type CSSProperties } from "react"
 import type { Catalog, Concept } from "./lib/catalog.ts"
-import { ObjectTile } from "@/components/object-glyph"
-import { SourceChip } from "@/components/source-chip"
 
 type TypeNode = Node<{ concept: Concept }, "type">
 
@@ -18,14 +16,8 @@ function TypeCard({ data: { concept } }: NodeProps<TypeNode>) {
   return (
     <div className="w-[220px] cursor-pointer rounded-xl border bg-card px-3 py-2 shadow-sm transition-shadow hover:shadow-md">
       <Handle type="target" position={Position.Top} className="!opacity-0" />
-      <div className="flex items-center gap-2">
-        <ObjectTile name={concept.name} className="size-7" />
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium" lang={concept.titleLang}>{concept.title}</div>
-          <div className="truncate text-xs text-muted-foreground">{concept.fields.length} facts · {concept.relationships.length} links</div>
-        </div>
-      </div>
-      {systems.length > 0 && <div className="mt-1.5 flex gap-1 overflow-hidden" title={systems.join(", ")}>{systems.map((system) => <SourceChip key={system} system={system} className="h-4.5 text-[10px]" />)}</div>}
+      <div className="truncate text-sm font-medium" lang={concept.titleLang}>{concept.title}</div>
+      <div className="truncate text-xs text-muted-foreground">{concept.fields.length} facts · {concept.relationships.length} links{systems.length > 0 ? ` · ${systems.join(", ")}` : ""}</div>
       <Handle type="source" position={Position.Bottom} className="!opacity-0" />
     </div>
   )
@@ -35,8 +27,8 @@ const NODE_TYPES = { type: TypeCard }
 
 /**
  * Lay the object types out top to bottom by the links they declare: a type sits one row
- * below the farthest type linking to it (cycles stop at the first visit). Types without
- * a graph edge sit beside the linked types so they don't stretch the first row.
+ * below the farthest type linking to it (cycles stop at the first visit), and each row
+ * lines its types up in name order.
  */
 export function layout(concepts: readonly Concept[]): ReadonlyMap<string, { readonly x: number; readonly y: number }> {
   const names = new Set(concepts.map(({ name }) => name))
@@ -48,26 +40,15 @@ export function layout(concepts: readonly Concept[]): ReadonlyMap<string, { read
     for (const { target } of concept?.relationships ?? []) if (names.has(target)) place(target, depth + 1, new Set([...path, name]))
   }
   const targeted = new Set(concepts.flatMap(({ relationships }) => relationships.map(({ target }) => target)))
-  const sorted = [...concepts].sort((a, b) => a.title.localeCompare(b.title))
-  const linked = sorted.filter(({ name, relationships }) => targeted.has(name) || relationships.some(({ target }) => names.has(target)))
-  for (const { name } of linked) if (!targeted.has(name)) place(name, 0, new Set())
-  for (const { name } of linked) if (!column.has(name)) place(name, 0, new Set())
+  for (const { name } of concepts) if (!targeted.has(name)) place(name, 0, new Set())
+  for (const { name } of concepts) if (!column.has(name)) place(name, 0, new Set())
   const rows = new Map<number, number>()
   const positions = new Map<string, { x: number; y: number }>()
-  for (const { name } of linked) {
+  for (const { name } of [...concepts].sort((a, b) => a.title.localeCompare(b.title))) {
     const at = column.get(name) ?? 0
     const row = rows.get(at) ?? 0
     rows.set(at, row + 1)
     positions.set(name, { x: row * (WIDTH + GAP_X), y: at * (HEIGHT + GAP_Y) })
-  }
-  const linkedColumns = Math.max(0, ...rows.values())
-  const isolatedColumns = linkedColumns === 0 ? 3 : 1
-  const isolated = sorted.filter(({ name }) => !positions.has(name))
-  for (const [index, { name }] of isolated.entries()) {
-    positions.set(name, {
-      x: (linkedColumns + index % isolatedColumns) * (WIDTH + GAP_X),
-      y: Math.floor(index / isolatedColumns) * (HEIGHT + GAP_Y),
-    })
   }
   return positions
 }

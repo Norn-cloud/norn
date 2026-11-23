@@ -43,7 +43,7 @@ fn the_promotion_sign_off_is_admitted_on_a_hosted_cell() {
         &roles,
         &BTreeSet::new(),
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn a_cell_without_those_roles_or_that_action_refuses_it() {
         &[],
         &BTreeSet::new(),
     );
-    assert!(!no_roles.is_empty(), "a dev host declares no roles");
+    assert_ne!(no_roles, [], "a dev host declares no roles");
     let roles: Vec<&str> = DEMO_GRANTS.entries.iter().map(|(role, _)| *role).collect();
     let no_action = check(
         &definition["payload"],
@@ -63,5 +63,5 @@ fn a_cell_without_those_roles_or_that_action_refuses_it() {
         &roles,
         &BTreeSet::new(),
     );
-    assert!(!no_action.is_empty(), "the gated action must be admitted");
+    assert_ne!(no_action, [], "the gated action must be admitted");
 }

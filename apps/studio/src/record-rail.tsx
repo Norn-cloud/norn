@@ -72,7 +72,7 @@ export function WhoCanAct({ objectType, live }: { readonly objectType: string; r
   return (
     <Panel icon={Fingerprint} label="Who can see or act" action={data?.kind === "read" ? "Decided by the cell" : undefined}>
       <Well className="px-3.5 pb-3">
-        {!live ? note("This snapshot contains no live access decision.")
+        {!live ? note("The recorded demo has no sign-in, so the cell decided no role's access.")
           : read.isPending ? note("Reading the cell's decisions…")
           : data?.kind === "refused" ? note(data.refusal.message)
           : data?.kind !== "read" ? note("This cell does not publish who may read or act on this type yet.")

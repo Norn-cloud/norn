@@ -9,7 +9,10 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Norn Studio theme, design v2: neutral ramps and type roles follow Polar's open-source Orbit tokens
+ * Norn Studio theme, design v3 (workbench): flat chrome on one neutral ground, as Snowsight and
+ * Retool do it. The rail and sidebar share one quiet tint, the page is the plain background, and
+ * hairlines (not cards or shadows) separate things. Radius 8 for frames and controls, never pills.
+ * Spacing runs on a 4/8 grid. Design v2 notes follow: neutral ramps and type roles follow Polar's open-source Orbit tokens
  * (polarsource/polar, clients/packages/orbit, Apache-2.0), set in Geist; one accent, the knot's violet
  * (--action, --ring). Two-tier density: soft rounded chrome (panels, sheets, KPI cards) around crisp,
  * dense data (13px tabular rows, hairlines, radius 8). Earlier notes, monochrome. Near-black or soft-grey canvas, hairline separators,
@@ -19,11 +22,11 @@
  * and roomy; data (tables, figures) is dense and tabular.
  */
 :root {
-  --radius: 0.75rem;
+  --radius: 0.5rem;
   --canvas: #ffffff;
   --background: #ffffff;
   --foreground: #000000;
-  --card: #fafafa;
+  --card: #ffffff;
   --card-foreground: #000000;
   --popover: #ffffff;
   --popover-foreground: #0a0a0a;
@@ -31,9 +34,9 @@
   --primary-foreground: #ffffff;
   --secondary: #f4f4f4;
   --secondary-foreground: #0a0a0a;
-  --muted: #f4f4f4;
+  --muted: #f5f5f5;
   --muted-foreground: #6b6b6b;
-  --accent: #f4f4f4;
+  --accent: #f0f0f0;
   --accent-foreground: #0a0a0a;
   --surface-subtle: #fafafa;
   /* Muted semantic colours, each AA as text on white and on the canvas. */
@@ -51,7 +54,6 @@
   /* The one restrained colour: the primary add/create action, as a solid round button. */
   --action: #5b52f0;
   --action-foreground: #ffffff;
-  --data-accent: #5b8cff;
   /* Detail colour, never a surface: one hue per kind of artefact for its icons and chips; each ≥ 4.5:1 on white and on the canvas. */
   --kind-source: #0f766e;
   --kind-mapping: #475569;
@@ -67,17 +69,18 @@
   --chart-3: #b45309;
   --chart-4: #a21caf;
   --chart-5: #a3a3a3;
-  --sidebar: #ffffff;
+  --sidebar: #fafafa;
   --sidebar-foreground: #0a0a0a;
   --sidebar-primary: #0a0a0a;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f4f4f4;
+  --sidebar-accent: #efefef;
   --sidebar-accent-foreground: #0a0a0a;
-  --sidebar-border: #e8e8e8;
+  --sidebar-border: #ebebeb;
   --sidebar-ring: #737373;
-  /* The ground the rail and the two cards sit on (app shell). */
-  --shell: #f2f2f2;
-  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.04), 0 12px 32px -18px rgb(0 0 0 / 0.18);
+  /* The ground the rail and the sidebar share: one tint, so the chrome reads as one quiet surface. */
+  --shell: var(--sidebar);
+  /* Soft depth: a contact shadow only, for the few things that sit above the page (menus, sheets). */
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.04);
   /*
    * Depth model for things that float on a canvas (canvas nodes, the question tree, floating toolbars):
    * a tight contact shadow plus a large, very faint ambient one, a hairline border and a top highlight.
@@ -93,7 +96,7 @@
   --canvas-surface: #fafafa;
   --canvas-dot: rgb(15 23 42 / 0.09);
   --edge: #8a929e;
-  --edge-active: var(--data-accent);
+  --edge-active: var(--ring);
   /* One tint per kind of thing on a canvas; chips mix it into a pale fill, so it stays a hint, not a theme. */
   --tint-state: #64748b;
   --tint-tool: #2563eb;
@@ -123,17 +126,17 @@
   --canvas: #090909;
   --background: #090909;
   --foreground: #ffffff;
-  --card: #181818;
+  --card: #111111;
   --card-foreground: #fafafa;
-  --popover: #181818;
+  --popover: #161616;
   --popover-foreground: #fafafa;
   --primary: #ffffff;
   --primary-foreground: #0a0a0a;
   --secondary: #212121;
   --secondary-foreground: #fafafa;
-  --muted: #212121;
+  --muted: #1a1a1a;
   --muted-foreground: #9e9e9e;
-  --accent: #212121;
+  --accent: #1f1f1f;
   --accent-foreground: #fafafa;
   --surface-subtle: #111111;
   --destructive: #e5675e;
@@ -142,8 +145,8 @@
   --destructive-text: #e5675e;
   --success: #52b788;
   --warning: #d4a24c;
-  --border: #212121;
-  --input: #292929;
+  --border: #232323;
+  --input: #2a2a2a;
   --ring: #7c74ff;
   --link: var(--foreground);
   --action: #7c74ff;
@@ -162,16 +165,16 @@
   --chart-3: #fbbf24;
   --chart-4: #f0abfc;
   --chart-5: #757575;
-  --sidebar: #090909;
+  --sidebar: #0f0f0f;
   --sidebar-foreground: #fafafa;
   --sidebar-primary: #fafafa;
   --sidebar-primary-foreground: #0a0a0a;
-  --sidebar-accent: #212121;
+  --sidebar-accent: #1c1c1c;
   --sidebar-accent-foreground: #fafafa;
-  --sidebar-border: #212121;
+  --sidebar-border: #1f1f1f;
   --sidebar-ring: #8a8a8a;
-  --shell: #000000;
-  --elevation-1: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 20px 50px -24px rgb(0 0 0 / 0.8);
+  --shell: var(--sidebar);
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.5);
   --elevation-node: 0 1px 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 14px 32px -10px rgb(0 0 0 / 0.6);
   --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.55), 0 4px 8px rgb(0 0 0 / 0.4), 0 20px 44px -12px rgb(0 0 0 / 0.7);
   --elevation-float: 0 1px 2px rgb(0 0 0 / 0.5), 0 10px 28px -8px rgb(0 0 0 / 0.65);
@@ -181,7 +184,7 @@
   --canvas-surface: #151517;
   --canvas-dot: rgb(255 255 255 / 0.08);
   --edge: #73737d;
-  --edge-active: var(--data-accent);
+  --edge-active: var(--ring);
   --tint-state: #94a3b8;
   --tint-tool: #60a5fa;
   --tint-ask: #fb923c;
@@ -202,18 +205,33 @@
   --tone-orange: #f59e5b;
 }
 
+/*
+ * Density: Workspace reads comfortably, Builder packs rows tighter. The shell sets data-density from
+ * the perspective; tables and lists size their rows from these, so every page follows.
+ */
+:root {
+  --density-row-scan: 2rem;
+  --density-row-read: 1.75rem;
+  --density-cell: 2.25rem;
+}
+[data-density="compact"] {
+  --density-row-scan: 1.75rem;
+  --density-row-read: 1.5rem;
+  --density-cell: 1.875rem;
+}
+
 @theme inline {
+  /* One radius scale: 4 for chips, 6 for small controls, 8 for frames and buttons; nothing rounder than 12. */
   --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: var(--radius);
-  --radius-lg: calc(var(--radius) + 4px);
-  --radius-xl: calc(var(--radius) + 8px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 2px);
   --color-background: var(--background);
   --color-canvas: var(--canvas);
   --color-surface-subtle: var(--surface-subtle);
   --color-link: var(--link);
   --color-action: var(--action);
   --color-action-foreground: var(--action-foreground);
-  --color-data-accent: var(--data-accent);
   --color-success: var(--success);
   --color-kind-source: var(--kind-source);
   --color-kind-mapping: var(--kind-mapping);
@@ -242,14 +260,15 @@
   --color-canvas-surface: var(--canvas-surface);
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   /* Density tiers: scan lists, read key/value rows, the focus inspector. */
-  --spacing-row-scan: 2rem;
-  --spacing-row-read: 1.75rem;
+  --spacing-row-scan: var(--density-row-scan);
+  --spacing-row-read: var(--density-row-read);
+  --spacing-cell: var(--density-cell);
   --spacing-inspector: 20rem;
   --text-meta: 0.8125rem;
-  --text-panel: 0.9375rem;
-  --text-section: 1.0625rem;
-  --text-title: 1.75rem;
-  --text-figure: 2.5rem;
+  --text-panel: 0.875rem;
+  --text-section: 0.9375rem;
+  --text-title: 1.375rem;
+  --text-figure: 1.75rem;
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -286,10 +305,10 @@
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
-  --radius-2xl: calc(var(--radius) + 12px);
-  /* Cards, inputs and badges use the 3xl/4xl steps; flat and modest, never pill-shaped panels. */
-  --radius-3xl: calc(var(--radius) + 4px);
-  --radius-4xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 4px);
+  /* Cards, buttons, inputs and badges use the 3xl/4xl steps: the frame radius, never pills. */
+  --radius-3xl: var(--radius);
+  --radius-4xl: var(--radius);
   --shadow-md: 0 0 #0000;
 }
 
@@ -319,10 +338,6 @@
 .canvas-node-selected:hover { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px var(--node-ring), var(--elevation-node-hover); }
 .canvas-node-failing:hover { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px color-mix(in oklab, var(--destructive) 55%, transparent), var(--elevation-node-hover); }
 .canvas-node.canvas-node-selected.canvas-node-failing { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px var(--node-ring), 0 0 0 6px color-mix(in oklab, var(--destructive) 55%, transparent), var(--elevation-node-hover); }
-.canvas-node[data-node-kind="initial"] { border-color: color-mix(in oklab, var(--tone-green) 35%, var(--node-border)); background: color-mix(in oklab, var(--tone-green) 6%, var(--card)); }
-.canvas-node[data-node-kind="terminal"] { background: color-mix(in oklab, var(--tone-gray) 7%, var(--card)); }
-.canvas-node.canvas-node-failing { border-color: var(--destructive); }
-.canvas-node.canvas-node-failing::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; box-shadow: 0 0 24px color-mix(in oklab, var(--destructive) 34%, transparent); }
 @media (prefers-reduced-motion: reduce) { .canvas-node, .canvas-node:hover { transition: none; transform: none; } }
 /* Canvas edges: thin and muted; the active path in the accent, its direction drawn by a slow dash. */
 .react-flow {
@@ -338,7 +353,6 @@
 }
 .canvas-controls { border-radius: 12px; overflow: hidden; border: 1px solid var(--node-border); }
 .canvas-minimap { border-radius: 12px; overflow: hidden; border: 1px solid var(--node-border); box-shadow: var(--elevation-node); backdrop-filter: blur(6px); }
-[data-canvas-surface] .react-flow { --xy-edge-stroke-default: var(--edge-active); }
 .react-flow__edge-textbg { fill: var(--card); stroke: var(--node-border); stroke-width: 1px; }
 .react-flow__edge-text { fill: var(--muted-foreground); font-size: 11px; font-weight: 500; }
 .react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-text { fill: var(--foreground); }
@@ -348,68 +362,6 @@
 @media (prefers-reduced-motion: reduce) { .react-flow .react-flow__edge, [data-edge-label], [data-exit-label] { transition: none; } }
 .react-flow .react-flow__edge.canvas-edge-failing .react-flow__edge-path { stroke: var(--destructive); stroke-width: 2px; }
 @media (prefers-reduced-motion: reduce) { .react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-path { animation: none; stroke-dasharray: none; } }
-
-/*
- * Finance workbench theme: Snowflake Snowsight / Retool / Palantir OMA density.
- * Flat 1px hairlines, crisp neutral surfaces, zero card-in-card shadows, one blue accent.
- */
-[data-finance-workbench] {
-  --radius: 0.5rem;
-  --shell: #ffffff;
-  --canvas: #ffffff;
-  --background: #ffffff;
-  --card: #ffffff;
-  --surface-subtle: #f8f9fb;
-  --secondary: #f3f4f6;
-  --muted: #f3f4f6;
-  --muted-foreground: #5f6672;
-  --border: #e4e7ec;
-  --input: #d9dee6;
-  --sidebar: #ffffff;
-  --sidebar-accent: #f1f4f9;
-  --sidebar-border: #e4e7ec;
-  --data-accent: #2563eb;
-  --ring: #2563eb;
-  --action: #2563eb;
-  --elevation-1: none;
-  --elevation-node: 0 1px 2px rgb(15 23 42 / 0.06);
-  --elevation-node-hover: 0 2px 6px rgb(15 23 42 / 0.1);
-  --node-radius: 8px;
-  --canvas-surface: #f8f9fb;
-  --canvas-dot: rgb(15 23 42 / 0.11);
-}
-.dark [data-finance-workbench] {
-  --shell: #0c0d10;
-  --canvas: #0c0d10;
-  --background: #0f1115;
-  --card: #13161b;
-  --surface-subtle: #161920;
-  --secondary: #1b1f27;
-  --muted: #1b1f27;
-  --muted-foreground: #969fae;
-  --border: #252a34;
-  --input: #2b313d;
-  --sidebar: #0f1115;
-  --sidebar-accent: #1a1f29;
-  --sidebar-border: #252a34;
-  --elevation-1: none;
-}
-[data-finance-workbench] [data-slot="panel"] {
-  border-radius: 0.5rem;
-  border: 1px solid var(--border);
-  box-shadow: none;
-  --tw-ring-shadow: 0 0 #0000;
-}
-[data-finance-workbench] [data-slot="panel"] > header {
-  min-height: 2.5rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-subtle);
-  padding: 0.5rem 1rem;
-}
-[data-finance-workbench] [data-slot="panel"] > header h2 {
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
 /* Where each source joins a bundle's rail. */
 .canvas-bundle-tick { fill: var(--card); stroke: var(--edge); stroke-width: 1.5px; }
 .react-flow .react-flow__edge.canvas-edge-active .canvas-bundle-tick { stroke: var(--edge-active); }

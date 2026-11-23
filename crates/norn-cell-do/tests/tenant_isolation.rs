@@ -642,6 +642,7 @@ fn probes(route: Route, ids: &Ids) -> Vec<Probe> {
         Route::TransformPlan => get(format!("/v1/transforms/{transform}/plan")),
         Route::ObjectExport => get(format!("/v1/objects/{kind}:export")),
         Route::DatasetLoad => post("/v1/datasets:load".into(), json!({"upload": upload})),
+        Route::DatasetLineage => get(format!("/v1/datasets/{kind}/rows/1:lineage")),
         Route::TransformsCompile => post("/v1/transforms:compile".into(), json!({})),
         Route::TransformRefresh => post(format!("/v1/transforms/{transform}:refresh"), json!({})),
         Route::Inbox => get("/v1/inbox".into()),
@@ -752,7 +753,7 @@ fn every_route_has_a_row_that_names_it() {
     let mut covered = BTreeSet::new();
     for route in Route::ALL {
         let rows = probes(*route, &ids);
-        assert!(!rows.is_empty(), "{route:?} has no row");
+        assert_ne!(rows, [], "{route:?} has no row");
         for (method, path, _) in rows {
             assert_eq!(Route::of(&path), Some(*route), "{method} {path}");
             assert_eq!(method, route.signature().0, "{route:?}");
@@ -784,13 +785,13 @@ fn every_mcp_tool_has_a_row() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap().to_owned())
         .collect();
-    assert!(!names.is_empty());
+    assert_ne!(names.len(), 0);
     let rows: BTreeSet<String> = mcp_tools(&ids)
         .into_iter()
         .map(|(name, _)| name.to_owned())
         .collect();
     let missing: Vec<&String> = names.difference(&rows).collect();
-    assert!(missing.is_empty(), "MCP tools without a row: {missing:?}");
+    assert_eq!(missing.len(), 0, "MCP tools without a row: {missing:?}");
 }
 
 // ----------------------------------------------------------------- outsider
@@ -1061,8 +1062,11 @@ fn analytics_b() -> Host {
             source: 3,
             admitted: 3,
             held: BTreeMap::new(),
+            findings: BTreeMap::new(),
+            held_by_rules: 0,
         },
         valid_time: Vec::new(),
+        markings: BTreeMap::new(),
     };
     store
         .commit_dataset_manifest(
@@ -1073,7 +1077,7 @@ fn analytics_b() -> Host {
             None,
         )
         .unwrap();
-    assert!(!definitions.is_empty(), "the fixture publishes metrics");
+    assert_ne!(definitions, [], "the fixture publishes metrics");
     let questions = DemoQuestions::new(plan, scope.clone())
         .try_with_handle_key(Some(&LINEAGE_KEY))
         .unwrap()
@@ -1104,7 +1108,7 @@ fn an_outsider_at_a_cell_with_metrics_and_a_dataset_learns_nothing() {
     );
     assert_eq!(metrics.response.status, 200, "{}", metrics.response.body);
     let listed = json_of(&metrics.response)["metrics"].clone();
-    assert!(!listed.as_array().unwrap().is_empty(), "{listed}");
+    assert_ne!(listed.as_array().unwrap().len(), 0, "{listed}");
     let grid = send(
         &mut b,
         "GET",

@@ -142,8 +142,8 @@ class EnrollmentTests(unittest.TestCase):
         for mutation in ("ref", "depth", "credentials", "extra-step", "base", "head", "command", "verdict"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
                 candidate = copy.deepcopy(workflow)
-                # The gate plan is core's step before cheap, after core's candidate checkout.
-                steps = candidate["jobs"]["core"]["steps"]
+                # The gate plan is the plan job's step after its candidate checkout.
+                steps = candidate["jobs"]["plan"]["steps"]
                 checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
                 planner = next(step for step in steps if step.get("id") == "plan")
                 if mutation == "ref":
@@ -234,10 +234,13 @@ class AffectedPlanTests(unittest.TestCase):
         self.git("commit", "-qm", "synthetic change")
         return self.git("rev-parse", "HEAD")
 
-    def plan(self, *args):
-        return json.loads(subprocess.check_output(
+    def hosted_plan(self, *args):
+        return subprocess.check_output(
             ["bash", str(ROOT / "scripts/ci/core.sh"), "plan", *args],
-            cwd=self.root, text=True))
+            cwd=self.root, text=True, env={**os.environ, "CARGO_TARGET_DIR": str(self.root / ".git/target")})
+
+    def plan(self, *args):
+        return json.loads(self.hosted_plan(*args))
 
     def test_combined_group_diff_and_explicit_head(self):
         first = self.commit("crates/norn-cell/src/lib.rs")
@@ -249,8 +252,9 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertIn("heavy-3", combined["shard"])
         self.assertEqual(combined["rest_shards"], 3)
         # norn-cell and norn-expr reach norn-checker-wasm, so the Studio browser rows run (#1113).
-        # norn-cell is reached, so the DuckDB backend is built and tested too (#1206).
-        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser", "duckdb"])
+        # norn-cell is reached, so the DuckDB backend is built and tested too (#1206), and so is
+        # the Rivet host's own workspace, which builds norn-cell by path (D131).
+        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser", "duckdb", "rivet"])
         self.assertNotIn("heavy-1", self.plan("--affected", self.base, first)["shard"])
         self.assertEqual(self.plan("--affected", self.base)["mode"], "full")
 
@@ -279,6 +283,21 @@ class AffectedPlanTests(unittest.TestCase):
                 self.assertNotIn("norn-cell", plan["reason"])
                 self.assertEqual("duckdb" in plan["phase"], planned, plan["phase"])
 
+    def test_rivet_runs_when_a_crate_it_builds_is_reached(self):
+        # crates/norn-cell-rivet is its own workspace and builds norn-api, norn-cell and
+        # norn-cell-do by path: a change that reaches one of them plans its phase (norn-kernel
+        # reaches norn-cell), and a Markdown-only change does not.
+        for path, planned in (("crates/norn-api/src/lib.rs", True), ("crates/norn-kernel/src/lib.rs", True), ("docs/synthetic.md", False)):
+            with self.subTest(path=path):
+                base = self.git("rev-parse", "HEAD")
+                self.commit(path)
+                plan = self.plan("--affected", base)
+                self.assertEqual(plan["mode"], "affected")
+                self.assertEqual("rivet" in plan["phase"], planned, plan["phase"])
+        self.assertIn("rivet", self.full["phase"])
+        # Like formal, the Rivet conformance suite is a Boat gate that no CI plan selects.
+        self.assertNotIn("rivet-conformance", self.full["phase"])
+
     def test_an_affected_rust_change_plans_rest_shards(self):
         # Only a plan that reaches no package drops its rest shards; a Rust change keeps them.
         for path in ("crates/norn-ir/src/lib.rs", "crates/norn-cli/src/main.rs"):
@@ -300,6 +319,24 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertEqual(plan["packages"], "")
         self.assertLess(len(plan["bundle"]), len(self.full["bundle"]))
         self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in plan["bundle"]))
+
+    def test_hosted_bundle_packing_matches_xtask(self):
+        command = ["bash", str(ROOT / "scripts/ci/core.sh")]
+        cases = [()]
+        for package in ("norn-api", "norn-cell", "norn-checker"):
+            base = self.git("rev-parse", "HEAD")
+            self.commit(f"crates/{package}/src/lib.rs")
+            cases.append(("--affected", base, self.git("rev-parse", "HEAD")))
+        for args in cases:
+            with self.subTest(args=args):
+                hosted = self.hosted_plan(*args)
+                raw = json.loads(hosted)
+                if args:
+                    self.assertEqual(raw["mode"], "affected")
+                    self.assertTrue(raw["packages"])
+                del raw["bundle"]
+                rust = subprocess.check_output(command + ["bundle-plan", json.dumps(raw)], cwd=ROOT, text=True)
+                self.assertEqual(rust, hosted)
 
     def test_bundle_inventory_is_exact_and_deterministic(self):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
@@ -336,18 +373,162 @@ class AffectedPlanTests(unittest.TestCase):
         result = subprocess.run(command + ["bundle-plan", json.dumps(incomplete)], capture_output=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
 
+    def built_xtask(self):
+        target = os.environ.get("CARGO_TARGET_DIR") or str(ROOT / "target")
+        metadata = json.loads(subprocess.check_output([
+            "cargo", "metadata", "--locked", "--no-deps", "--format-version", "1",
+            "--manifest-path", "crates/norn-skeleton-guard/Cargo.toml",
+        ], cwd=ROOT, env={**os.environ, "CARGO_TARGET_DIR": target}, text=True))
+        return Path(metadata["target_directory"]) / "debug" / "xtask"
+
+    def test_bundle_executor_prunes_only_between_incompatible_builds(self):
+        command = ["bash", str(ROOT / "scripts/ci/core.sh")]
+        task_script = self.root / "scripts/ci/core.sh"
+        task_script.parent.mkdir(parents=True)
+        task_script.write_text(r"""set -eu
+printf '%s\n' "$*" >> calls
+if [[ $(wc -l < calls) -eq 1 ]]; then
+    [[ ! -e target/debug && ! -e target/norn-checker-wasm ]]
+    mkdir -p target/debug/.fingerprint target/norn-checker-wasm/pkg
+else
+    case "$*" in
+        "test rest-1"|browser) [[ -d target/debug/.fingerprint && -d target/norn-checker-wasm/pkg ]] ;;
+        doc) [[ ! -e target/debug && ! -e target/norn-checker-wasm ]] ;;
+        *) exit 24 ;;
+    esac
+fi
+""")
+        environment = {**os.environ, "CARGO_TARGET_DIR": str(self.root / "target"),
+                       "NORN_CI_PACKAGES": ""}
+        for label, plan, expected_calls, shared in (
+            ("incompatible", {"mode": "affected", "shard": ["rest-1"], "phase": ["doc"]}, ["test rest-1", "doc"], False),
+            ("shared-test", {"mode": "affected", "shard": ["rest-1", "rest-2"], "phase": []}, ["test rest-2", "test rest-1"], True),
+            ("shared-wasm-pkg", {"mode": "affected", "shard": [], "phase": ["integration-authoring", "browser"]}, ["integration-authoring", "browser"], True),
+        ):
+            with self.subTest(case=label):
+                shutil.rmtree(self.root / "target", ignore_errors=True)
+                packed = subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], cwd=ROOT, text=True)
+                execute = [str(self.built_xtask()), "ci", "bundle"]
+                calls = self.root / "calls"
+                for flag in ("--help", "-h", "--version"):
+                    for arguments in ([flag, "b0"], [packed, flag]):
+                        result = subprocess.run(execute + arguments, cwd=self.root,
+                                                env=environment, capture_output=True, text=True, timeout=10)
+                        self.assertNotEqual(result.returncode, 0, result.stdout)
+                        self.assertFalse(calls.exists(), result.stdout)
+                result = subprocess.run(execute + [packed, "b0"], cwd=self.root,
+                                        env=environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(calls.read_text().splitlines(), expected_calls)
+                self.assertEqual((self.root / "target/debug").exists(), shared)
+                self.assertEqual((self.root / "target/norn-checker-wasm").exists(), shared)
+                calls.unlink()
+
+    def test_wasm_pkg_cache_reuses_clean_tree_and_rebuilds_when_dirty(self):
+        tools = self.root / "tools/bin"
+        tools.mkdir(parents=True)
+        wasm_bindgen = tools / "wasm-bindgen"
+        wasm_bindgen.write_text("#!/usr/bin/env bash\necho 'wasm-bindgen 0.2.129'\n")
+        wasm_bindgen.chmod(0o755)
+        build_log = self.root / ".git/wasm-build-calls.log"
+        build_script = self.root / "crates/norn-checker-wasm/scripts/build-pkg.sh"
+        build_script.parent.mkdir(parents=True, exist_ok=True)
+        build_script.write_text(f"""#!/usr/bin/env bash
+set -euo pipefail
+out="$1"
+mkdir -p "$out"
+if [[ "${{NORN_WASM_ENGINE:-0}}" == "1" ]]; then
+  printf 'engine\\n' >> "{build_log}"
+  : > "$out/norn_engine_wasm_bg.wasm"
+else
+  printf 'pkg\\n' >> "{build_log}"
+  : > "$out/norn_checker_wasm_bg.wasm"
+fi
+printf '{{}}\\n' > "$out/package.json"
+printf 'ok\\n' > "$out/SIZE.txt"
+""")
+        build_script.chmod(0o755)
+        self.commit("crates/norn-checker/src/lib.rs")
+        target_dir = self.root / ".git/wasm-target"
+        out_pkg = self.root / ".git/out-pkg"
+        out_engine = self.root / ".git/out-engine"
+        env = {
+            **os.environ,
+            "PATH": f"{tools}:{os.environ['PATH']}",
+            "CARGO_TARGET_DIR": str(target_dir),
+        }
+        harness = (
+            'eval "$(sed \'/^case "${1:-all}" in$/,$d\' "$1")"\n'
+            'ensure_checker_wasm_pkg "$2"\n'
+            'ensure_checker_wasm_engine "$3"\n'
+        )
+        def run_ensure():
+            stamp = target_dir / ".norn-built-tree"
+            if stamp.exists():
+                past = stamp.stat().st_mtime - 10
+                os.utime(stamp, (past, past))
+            result = subprocess.run(
+                ["bash", "-c", harness, "_", str(ROOT / "scripts/ci/core.sh"), str(out_pkg), str(out_engine)],
+                cwd=self.root, env=env, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return build_log.read_text().splitlines()
+
+        # Cold clean tree builds both packages once and copies them to out dirs.
+        self.assertEqual(run_ensure(), ["pkg", "engine"])
+        self.assertTrue((out_pkg / "norn_checker_wasm_bg.wasm").is_file())
+        self.assertTrue((out_engine / "norn_engine_wasm_bg.wasm").is_file())
+        # Second run on the same clean tree reuses both cached packages.
+        self.assertEqual(run_ensure(), ["pkg", "engine"])
+        # Untracked files outside Rust/WASM inputs do not invalidate reuse.
+        scratch = self.root / "apps/studio/src/checker/untracked.txt"
+        scratch.parent.mkdir(parents=True, exist_ok=True)
+        scratch.write_text("copied output\n")
+        self.assertEqual(run_ensure(), ["pkg", "engine"])
+        # Uncommitted edit to a tracked file under crates/ invalidates both caches.
+        tracked = self.root / "crates/norn-checker/src/lib.rs"
+        tracked.write_text("// dirty edit\n")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 2)
+        # Reverting back to clean HEAD must NOT reuse the dirty build; it rebuilds clean once,
+        # and then a subsequent clean run reuses the clean cache.
+        self.git("checkout", "--", "crates/norn-checker/src/lib.rs")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 3)
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 3)
+        # Untracked file under crates/ also invalidates both caches.
+        untracked_rs = self.root / "crates/norn-checker/src/new_file.rs"
+        untracked_rs.write_text("pub fn extra() {}\n")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 4)
+        untracked_rs.unlink()
+        # Dirty Cargo.toml also invalidates both caches.
+        manifest = self.root / "Cargo.toml"
+        original_manifest = manifest.read_text()
+        manifest.write_text(original_manifest + "\n# dirty\n")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 5)
+        manifest.write_text(original_manifest)
+
+        # A direct overwrite with a clean tree and fresh SIZE.txt still forces a rebuild.
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 6)
+        canonical = target_dir / "norn-checker-wasm"
+        (canonical / "pkg/norn_checker_wasm_bg.wasm").write_bytes(b"overwritten checker")
+        (canonical / "engine/norn_engine_wasm_bg.wasm").write_bytes(b"overwritten engine")
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 7)
+        self.assertEqual(run_ensure(), ["pkg", "engine"] * 7)
+
     def test_bundle_executor_logs_success_and_propagates_failure(self):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
         plan = {"mode": "affected", "shard": [], "phase": ["test-shards"]}
         plan = json.loads(subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], text=True))
+        xtask = self.built_xtask()
         tools = self.root / "cargo-home" / "bin"
         tools.mkdir(parents=True)
         cargo = tools / "cargo"
         cargo.write_text('''#!/usr/bin/env python3
 import json, os, sys
+args = sys.argv[1:]
+if args[:2] == ["xtask", "ci"]:
+    os.execv(os.environ["BUNDLE_CANARY_XTASK"], [os.environ["BUNDLE_CANARY_XTASK"], *args[1:]])
 if os.environ.get("BUNDLE_CANARY_FAIL") == "1":
     sys.exit(23)
-args = sys.argv[1:]
 if args == ["nextest", "--version"]:
     print("cargo-nextest 0.9.150 (synthetic)")
 elif "list" in args:
@@ -360,7 +541,8 @@ else:
         cargo.chmod(0o755)
         for fail in ("0", "1"):
             environment = {**os.environ, "CARGO_HOME": str(tools.parent),
-                           "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "3", "BUNDLE_CANARY_FAIL": fail}
+                           "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "3",
+                           "BUNDLE_CANARY_XTASK": str(xtask), "BUNDLE_CANARY_FAIL": fail}
             result = subprocess.run(command + ["bundle", json.dumps(plan), plan["bundle"][0]["id"]],
                                     env=environment, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 23 if fail == "1" else 0, result.stderr)

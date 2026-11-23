@@ -15,8 +15,9 @@ path = "src/lib.rs"
 [dependencies]
 cargo_metadata = "0.23.1"
 syn = { version = "2.0.119", default-features = false, features = ["full", "parsing", "visit"] }
-# Tokenizes gated sources (`ci::gate_source_errors`); already in the lock through `syn`.
-proc-macro2 = { version = "1.0.107", default-features = false }
+# Tokenizes gated sources (`ci::gate_source_errors`) and provides line/column
+# spans for `loc_cap`; already in the lock through `syn`.
+proc-macro2 = { version = "1.0.107", default-features = false, features = ["span-locations"] }
 walkdir = "2.5.0"
 serde_json = "1.0.150"
 serde = { version = "1.0.228", features = ["derive"] }

@@ -15,9 +15,13 @@ test("the decision handle restates the norn-builtins contract exactly", async ()
 test("an action step handle restates the norn-builtins contract, with the action's own input", async () => {
   const input = S.record({ orderId: S.text() })
   const handle = actionFn("ops.refund.approve", input)
+  const trace = S.record(
+    { traceId: S.text(), intentRef: S.text(), sessionDigest: S.text() },
+    ["intentRef", "sessionDigest"],
+  )
   expect(handle.id).toBe("norn.action")
   expect(handle.version).toBe("1")
-  expect(handle.input).toEqual(S.record({ action: S.text(["ops.refund.approve"]), input }))
+  expect(handle.input).toEqual(S.record({ action: S.text(["ops.refund.approve"]), input, trace }, ["trace"]))
   expect(handle.output).toEqual(await schema("action.output"))
   const errors = await schema("action.error")
   expect(handle.errors.map((error) => error.tag)).toEqual(errors.properties._tag.enum)

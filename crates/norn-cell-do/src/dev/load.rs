@@ -366,7 +366,7 @@ mod tests {
             let objects = reader
                 .list(norn_cell::MAIN_WORLD, object_type, 100)
                 .unwrap();
-            assert!(!objects.is_empty(), "{object_type} has no records");
+            assert_ne!(objects, [], "{object_type} has no records");
         }
         // The holding's later change is its current state.
         let holdings = reader

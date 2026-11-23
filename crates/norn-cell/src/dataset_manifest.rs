@@ -27,15 +27,15 @@
 //!   table and the two files' digests ([`dataset_cache_id`]); the engine
 //!   rebuilds it from files of exactly those digests on a miss.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::analytics::{FileFormat, TableSchema, ValidRange, dataset_cache_id};
+use crate::analytics::{FileFormat, RuleCount, TableSchema, ValidRange, dataset_cache_id};
 use crate::engine::{SqlEngine, params};
 use crate::system::LEDGER;
-use crate::{CellError, CellStore, CommitBatch, GuardedError, Receipt};
+use crate::{CellError, CellStore, CommitBatch, GuardedError, Receipt, StoreReader};
 
 /// The ledger event type of a committed manifest.
 pub const MANIFEST_EVENT: &str = "dataset.manifest";
@@ -99,10 +99,24 @@ pub struct ManifestPins {
 pub struct ManifestCounts {
     /// Rows the source file holds.
     pub source: u64,
-    /// Rows admitted to the data file.
+    /// Rows in the data file: typed, and held back by no rule (LAW-02).
     pub admitted: u64,
-    /// Rows held back, by reason.
+    /// Rows held back before admission (not typed), by reason.
     pub held: BTreeMap<String, u64>,
+    /// MANIFEST-LAWS-1: findings by rule, over the typed rows.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub findings: BTreeMap<String, RuleCount>,
+    /// Typed rows a rule holds back: in the held-set file, not the data file.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub held_by_rules: u64,
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+const fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// MANIFEST-1: one dataset, governed as a whole.
@@ -133,6 +147,10 @@ pub struct DatasetManifest {
     pub counts: ManifestCounts,
     /// Each temporal column's range over the admitted rows.
     pub valid_time: Vec<ValidRange>,
+    /// MANIFEST-MARK-1: the declared markings of each marked column; every
+    /// read of the dataset projects those columns as the reader's masks say.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub markings: BTreeMap<String, Vec<String>>,
 }
 
 impl DatasetManifest {
@@ -237,6 +255,25 @@ impl<E: SqlEngine> CellStore<E> {
         })
     }
 
+    /// MANIFEST-MARK-1: the declared markings of each marked column of `table`.
+    ///
+    /// # Errors
+    /// An unknown type.
+    pub fn dataset_markings(
+        &self,
+        object_type: &str,
+        table: &TableSchema,
+    ) -> Result<BTreeMap<String, Vec<String>>, CellError> {
+        Ok(self
+            .model()
+            .effective_property_markings(object_type)?
+            .into_iter()
+            .filter(|(column, markings)| {
+                !markings.is_empty() && table.columns.iter().any(|c| c.id == *column)
+            })
+            .collect())
+    }
+
     /// MANIFEST-COMMIT-1: commit `manifest` to `world` as one governed
     /// command and return its identity and receipt. The pins must be the
     /// current ones (MANIFEST-PIN-1); the definitions version is read again
@@ -259,7 +296,21 @@ impl<E: SqlEngine> CellStore<E> {
         if manifest.version != MANIFEST_VERSION
             || manifest.table.name != manifest.object_type
             || manifest.counts.admitted != manifest.data.rows
-            || manifest.counts.held.values().sum::<u64>() != manifest.held.rows
+            || manifest
+                .counts
+                .held
+                .values()
+                .chain(manifest.counts.findings.values().map(|count| &count.rows))
+                .sum::<u64>()
+                != manifest.held.rows
+            // LAW-02: the data file holds exactly the typed rows no rule
+            // holds back; every source row is in it or held.
+            || manifest.counts.source
+                != manifest
+                    .counts
+                    .admitted
+                    .saturating_add(manifest.counts.held_by_rules)
+                    .saturating_add(manifest.counts.held.values().sum::<u64>())
             || manifest.load
                 != dataset_cache_id(
                     &manifest.table,
@@ -279,7 +330,9 @@ impl<E: SqlEngine> CellStore<E> {
             &manifest.binding,
             &manifest.pins.mapping,
         )?;
+        let markings = self.dataset_markings(&manifest.object_type, &manifest.table)?;
         if current_table != manifest.table
+            || markings != manifest.markings
             || current.model_hash != manifest.pins.model_hash
             || current.laws != manifest.pins.laws
         {
@@ -386,6 +439,36 @@ impl<E: SqlEngine> CellStore<E> {
         world: &str,
         object_type: &str,
     ) -> Result<Option<CommittedManifest>, CellError> {
+        self.read().dataset_manifest(world, object_type)
+    }
+
+    /// MANIFEST-MARK-1: the effective markings of every marked column of a
+    /// committed dataset: the monotone union of the markings stamped into its
+    /// manifest at load time and the type's currently declared property
+    /// markings. Adding a marking in a later definitions version immediately
+    /// governs every read of an already-loaded dataset, and removing one never
+    /// unmarks columns already stamped in the manifest.
+    ///
+    /// # Errors
+    /// An unknown type or model error (fails closed).
+    pub fn effective_dataset_markings(
+        &self,
+        manifest: &DatasetManifest,
+    ) -> Result<BTreeMap<String, Vec<String>>, CellError> {
+        self.read().effective_dataset_markings(manifest)
+    }
+}
+
+impl<E: SqlEngine> StoreReader<'_, E> {
+    /// MANIFEST-CURRENT-1: the current dataset of `object_type` in `world`.
+    ///
+    /// # Errors
+    /// A store error or an undecodable manifest event.
+    pub fn dataset_manifest(
+        &self,
+        world: &str,
+        object_type: &str,
+    ) -> Result<Option<CommittedManifest>, CellError> {
         let found = self.conn.query_optional(
             &format!(
                 "SELECT \"event\", \"commit_seq\" FROM \"{LEDGER}\" \
@@ -410,6 +493,40 @@ impl<E: SqlEngine> CellStore<E> {
             hash,
             commit_seq,
         }))
+    }
+
+    /// MANIFEST-MARK-1: the effective markings of every marked column of a
+    /// committed dataset: the monotone union of `manifest.markings` and the
+    /// type's current `effective_property_markings`.
+    ///
+    /// # Errors
+    /// An unknown type or model error (fails closed).
+    pub fn effective_dataset_markings(
+        &self,
+        manifest: &DatasetManifest,
+    ) -> Result<BTreeMap<String, Vec<String>>, CellError> {
+        let mut merged: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for (column, ids) in &manifest.markings {
+            if !ids.is_empty() {
+                merged
+                    .entry(column.clone())
+                    .or_default()
+                    .extend(ids.iter().cloned());
+            }
+        }
+        for (column, ids) in self
+            .model()
+            .effective_property_markings(&manifest.object_type)?
+        {
+            if !ids.is_empty() {
+                merged.entry(column).or_default().extend(ids);
+            }
+        }
+        Ok(merged
+            .into_iter()
+            .filter(|(_, ids)| !ids.is_empty())
+            .map(|(column, ids)| (column, ids.into_iter().collect()))
+            .collect())
     }
 }
 

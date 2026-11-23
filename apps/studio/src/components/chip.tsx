@@ -5,15 +5,6 @@ import { cn } from "@/lib/utils"
 /** The detail colours of design system v1: a chip, a dot or a series takes one; a surface never does. */
 export type Tone = "gray" | "green" | "amber" | "red" | "blue" | "violet" | "teal" | "pink" | "orange"
 
-/** The same tint across tiles and source chips, including the active theme's contrast. */
-export function IconTile({ tone, children, className }: { readonly tone: Tone; readonly children: ReactNode; readonly className?: string }) {
-  return (
-    <span aria-hidden className={cn("inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-[color-mix(in_oklab,currentColor_15%,transparent)] [&_svg]:size-4 [&_img]:size-4", className)} style={{ color: `var(--tone-${tone})` }}>
-      {children}
-    </span>
-  )
-}
-
 const TONE: Readonly<Record<Tone, string>> = {
   gray: "text-tone-gray bg-tone-gray/10 dark:bg-tone-gray/15",
   green: "text-tone-green bg-tone-green/10 dark:bg-tone-green/15",
@@ -65,7 +56,7 @@ export function Chip({ tone = "gray", icon: Icon, dot = false, pulse = false, mo
 /** A neutral chip for a fact: a muted label and a value, like "commit 2983" or "DuckDB". */
 export function FactChip({ icon: Icon, label, children, className, ...props }: { icon?: LucideIcon; label?: ReactNode; children: ReactNode } & Omit<ComponentProps<"span">, "children">) {
   return (
-    <span data-slot="fact-chip" className={cn("inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-border/80 bg-card px-2 text-meta whitespace-nowrap tabular-nums", className)} {...props}>
+    <span data-slot="fact-chip" className={cn("inline-flex h-6 max-w-full items-center gap-1 text-meta whitespace-nowrap tabular-nums", className)} {...props}>
       {Icon && <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
       {label !== undefined && <span className="text-muted-foreground">{label}</span>}
       <span className="min-w-0 truncate text-foreground">{children}</span>

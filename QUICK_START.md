@@ -21,7 +21,7 @@ in [#1451](https://github.com/Norn-cloud/norn/issues/1451).
 
 ## From source (works today)
 
-You need Rust 1.98.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli`
+You need Rust 1.100.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli`
 0.2.129, Bun 1.3.14, Node with `npx` (the checker build runs binaryen's
 `wasm-opt` through `npx`; set `NORN_WASM_OPT=0` to skip that step), and `sha256sum`
 (the checker build prints checksums with it; on macOS it comes with GNU coreutils,
@@ -108,7 +108,7 @@ Run the retained core gates with `bash scripts/ci/core.sh`.
 `norn dev` serves a project's own SQLite cell on loopback. The three-systems
 template gives it the product packs (canon, ERPNext, Shopify, Odoo, sources,
 Arabic locale) exactly as a hosted tenant provisions them, plus their synthetic
-exports. Prerequisites, from this checkout: Rust 1.98.0, Bun 1.3.14 and
+exports. Prerequisites, from this checkout: Rust 1.100.0, Bun 1.3.14 and
 `bun install --frozen-lockfile` in `tools/norn-ts`; Studio also needs the
 checker WASM (`wasm-bindgen-cli` 0.2.129, as above; `build-pkg.sh` runs
 binaryen 132.0.0's `wasm-opt` through `npx`, so it needs the network once, or

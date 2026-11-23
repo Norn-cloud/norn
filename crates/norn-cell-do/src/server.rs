@@ -242,6 +242,9 @@ routes! {
     /// `POST /v1/datasets:load`, served by [`analytics`] on a host with an
     /// analytics engine and an object store (D102).
     DatasetLoad => ("POST", "/v1/datasets:load"),
+    /// `GET /v1/datasets/{type}/rows/{row}:lineage`, served by [`analytics`]
+    /// on a host with an analytics engine (MANIFEST-LINEAGE-1).
+    DatasetLineage => ("GET", "/v1/datasets/{type}/rows/{row}:lineage"),
     /// `POST /v1/transforms:compile`.
     TransformsCompile => ("POST", "/v1/transforms:compile"),
     /// `POST /v1/transforms/{transform}:refresh`.
@@ -364,6 +367,9 @@ impl Route {
                 "define" if !id.is_empty() && !id.contains('/') => Some(Self::UploadDefine),
                 _ => None,
             };
+        }
+        if dataset_lineage_path(path).is_some() {
+            return Some(Self::DatasetLineage);
         }
         if transform_refresh_path(path).is_some() {
             return Some(Self::TransformRefresh);
@@ -707,9 +713,12 @@ fn route<E: SqlEngine>(
             "no such route",
             "the host serves only its declared read routes",
         ))
-    } else if let Some(route) =
-        route_of.filter(|route| matches!(route, Route::ObjectExport | Route::DatasetLoad))
-    {
+    } else if let Some(route) = route_of.filter(|route| {
+        matches!(
+            route,
+            Route::ObjectExport | Route::DatasetLoad | Route::DatasetLineage
+        )
+    }) {
         Err(without_engine(route, method))
     } else if route_of == Some(Route::Provision) {
         provisioned(host, actor, request)
@@ -1694,14 +1703,14 @@ fn without_engine(route: Route, method: &str) -> Refusal {
             StatusCode::NOT_IMPLEMENTED,
             "analytics.unconfigured",
             "this host has no analytics engine",
-            "loads and exports run on the tenant analytics engine",
+            "loads, exports and dataset lineage run on the tenant analytics engine",
         )
     } else {
         Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
             "route.method_not_allowed",
             "the route does not accept this method",
-            "an export takes GET; a load takes POST",
+            "an export or dataset lineage takes GET; a load takes POST",
         )
     }
 }
@@ -1777,6 +1786,9 @@ pub fn analytics<E: SqlEngine>(
         });
         return Some(respond(answer));
     }
+    if let Some(answered) = dataset_lineage(host, principals, transport, request) {
+        return Some(answered);
+    }
     if export.is_none() && profile.is_none() && request.path != "/v1/datasets:load" {
         return None;
     }
@@ -1808,6 +1820,45 @@ pub fn analytics<E: SqlEngine>(
         )),
     };
     Some(respond(result))
+}
+
+/// The `(type, row)` segments of `/v1/datasets/{type}/rows/{row}:lineage`.
+fn dataset_lineage_path(path: &str) -> Option<(&str, &str)> {
+    path.strip_prefix("/v1/datasets/")
+        .and_then(|rest| rest.strip_suffix(":lineage"))
+        .and_then(|rest| rest.split_once("/rows/"))
+        .filter(|(kind, row)| {
+            !kind.is_empty() && !kind.contains('/') && !row.is_empty() && !row.contains('/')
+        })
+}
+
+/// MANIFEST-LINEAGE-1: `GET /v1/datasets/{type}/rows/{row}:lineage`, one
+/// dataset row traced to its manifest and files; `None` for any other request.
+fn dataset_lineage<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    request: &Request<'_>,
+) -> Option<Response> {
+    if request.method != "GET" {
+        return None;
+    }
+    let (kind, row) = dataset_lineage_path(request.path)?;
+    let _request = RequestScope::new(principals);
+    let actor = principals.resolve(request.authorization, request.now);
+    let actor = actor.as_deref()?;
+    let answer = scope_of(request.query).and_then(|scope| {
+        let (kind, row) = (decoded(kind)?, decoded(row)?);
+        document_json(&norn_api::analytics_routes::dataset_lineage(
+            host,
+            &scope,
+            Some(actor),
+            (&kind, &row),
+            &CellObjectAccess,
+            transport,
+        )?)
+    });
+    Some(respond(answer))
 }
 
 fn decoded(kind: &str) -> Result<String, Refusal> {
@@ -2192,8 +2243,7 @@ fn role_access(explainer: &RoleExplainer<'_>, object_type: &str) -> Vec<RoleAcce
                     .collect(),
                 actions: explainer
                     .actions
-                    .map(|policy| policy.role_decisions(role, object_type))
-                    .unwrap_or_default(),
+                    .map_or_default(|policy| policy.role_decisions(role, object_type)),
             }
         })
         .collect()

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Blend, Boxes, ChartLine, Database, FileScan, Fingerprint, GitMerge, House, Inbox, LayoutDashboard, ListChecks, Network, Plug, ShieldCheck, Waypoints, Workflow } from "lucide-react"
+import { Blend, ChartLine, Columns2, Database, FileScan, Fingerprint, House, Inbox, LayoutDashboard, ListChecks, Network, Plug, Rows3, ShieldCheck, SlidersHorizontal, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { endSession, useAccount } from "@/lib/session"
@@ -9,65 +9,61 @@ import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
 import { useDecisionBadge } from "./decisions/inbox.tsx"
 import { useGuaranteesMenu } from "./guarantees.tsx"
+import { useImportTriageBadge } from "./imports/import-triage-page.tsx"
 import { useQuestionsMenu } from "./questions.tsx"
 import { routeTree } from "./routes.tsx"
 import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
 import { Shell, type Section } from "./shell.tsx"
+import { useRecordsMenu, useSourcesMenu } from "./sources.tsx"
+import { useWorkflowsMenu } from "./workflows.tsx"
 import { financeDemo } from "./lib/finance-demo.ts"
-import { financeSourceMenu } from "./finance/record-pages.tsx"
+import { financeRecordsMenu, financeSourceMenu } from "./finance/record-pages.tsx"
 import { financeWorkflowMenu } from "./finance/behavior-pages.tsx"
 import { financeRuleMenu } from "./finance/operations.tsx"
 import { financeMetricMenu } from "./finance/metrics.tsx"
-import { FinanceModeProvider, FinanceModeSwitcher, useFinanceMode } from "./finance/workspace.tsx"
-import { useSourcesMenu } from "./sources.tsx"
-import { useWorkflowsMenu } from "./workflows.tsx"
+import { financePolicyMenu } from "./finance/policies.tsx"
+import { financeExampleMenu } from "./finance/examples.tsx"
 import "./index.css"
 
+/**
+ * Every destination, in the perspective that lists it and the space (sidebar section) it sits under.
+ * Home and Inbox are global: one shared home and one inbox across everything installed.
+ */
 const SECTIONS: readonly Section[] = [
-  { path: "/", label: "Home", icon: House, summary: "What needs you, and the numbers that matter.", group: "Work" },
-  { path: "/decisions", label: "Decisions", icon: Inbox, summary: "Choices your flows wait on you to make, soonest deadline first.", useBadge: useDecisionBadge, group: "Work", paths: ["/episodes"], liveOnly: true },
-  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", kind: "source", useMenu: useSourcesMenu, group: "Model", paths: ["/objects"], action: { label: "Connect a source", to: "/connections", liveOnly: true } },
-  { path: "/transforms", label: "Transforms", icon: Blend, summary: "Derived datasets the cell checks: typed columns, declared joins, every row traced to its records.", kind: "transform", group: "Model", liveOnly: true },
-  { path: "/metrics", label: "Metrics", icon: ChartLine, summary: "The numbers your records add up to, answered exactly, down to the records behind every number.", kind: "question", useMenu: useQuestionsMenu, group: "Model", action: { label: "Explore a metric", to: "/metrics/new", liveOnly: true } },
-  { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, summary: "Saved sets of questions, each a definition the cell checks before it is kept.", group: "Model", action: { label: "New dashboard", to: "/dashboards/new" }, liveOnly: true },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", kind: "workflow", useMenu: useWorkflowsMenu, group: "Rules", paths: ["/runs"], action: { label: "Open the canvas", to: "/canvas" } },
-  { path: "/canvas", label: "Canvas", icon: Network, summary: "Draft and check changes to a process in your browser.", group: "Rules" },
-  { path: "/markings", label: "Markings", icon: Fingerprint, summary: "Personal data: how each marking is shown, the facts that carry it, and who may reveal it.", group: "Rules", liveOnly: true },
-  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", kind: "guarantee", useMenu: useGuaranteesMenu, group: "Rules" },
-  { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "System", liveOnly: true },
+  { path: "/", label: "Home", icon: House, perspective: "global" },
+  { path: "/decisions", label: "Inbox", icon: Inbox, perspective: "global", useBadge: useDecisionBadge, paths: ["/episodes"] },
+  // Workspace: what an operator works with.
+  { path: "/objects", label: "Records", icon: Rows3, perspective: "workspace", group: "Data", kind: "source", useMenu: useRecordsMenu, index: false },
+  { path: "/metrics", label: "Metrics", icon: ChartLine, perspective: "workspace", group: "Analysis", kind: "question", useMenu: useQuestionsMenu },
+  { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, perspective: "workspace", group: "Analysis" },
+  { path: "/workflows", label: "Workflows", icon: Workflow, perspective: "workspace", group: "Operations", kind: "workflow", useMenu: useWorkflowsMenu, paths: ["/runs"] },
+  { path: "/imports", label: "Import triage", icon: Columns2, perspective: "workspace", group: "Operations", useBadge: useImportTriageBadge },
+  // Builder: how the model is made.
+  { path: "/sources", label: "Sources", icon: Database, perspective: "builder", group: "Model", kind: "source", useMenu: useSourcesMenu, paths: ["/objects"] },
+  { path: "/transforms", label: "Transforms", icon: Blend, perspective: "builder", group: "Model", kind: "transform" },
+  { path: "/canvas", label: "Canvas", icon: Network, perspective: "builder", group: "Logic" },
+  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, perspective: "builder", group: "Logic", kind: "guarantee", useMenu: useGuaranteesMenu },
+  { path: "/markings", label: "Markings", icon: Fingerprint, perspective: "builder", group: "Logic" },
+  { path: "/connections", label: "Connections", icon: Plug, perspective: "builder", group: "Settings" },
 ]
 
-const FINANCE_DOMAIN_SECTIONS: readonly Section[] = [
-  { path: "/", label: "Overview", icon: House, summary: "Domain posture, refusals and core objects.", group: "Domain" },
-  { path: "/sources", label: "Objects", icon: Boxes, summary: "Business object types, aggregates and policies.", kind: "objectType", group: "Domain", useMenu: financeSourceMenu, paths: ["/objects", "/policies"] },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "Branching lifecycles and cross-aggregate automations.", kind: "workflow", group: "Domain", useMenu: financeWorkflowMenu },
-  { path: "/guarantees", label: "Rules", icon: ShieldCheck, summary: "Cross-object invariants and refusal evidence.", kind: "guarantee", group: "Domain", useMenu: financeRuleMenu },
-  { path: "/examples/document", label: "DocTypes", icon: FileScan, summary: "Document extraction templates and role redaction.", group: "Operations" },
-  { path: "/metrics", label: "Metrics", icon: ChartLine, summary: "Repayment reconciliation and auditable corrections.", kind: "question", group: "Operations", useMenu: financeMetricMenu },
-  { path: "/optimisations/collections", label: "Optimisation", icon: ListChecks, summary: "7-day collections allocation plan.", group: "Operations" },
-]
+const FINANCE_SPACE = "Beltone · Financial services"
 
-const FINANCE_DATA_SECTIONS: readonly Section[] = [
-  { path: "/sources", label: "Sources & Sync", icon: Database, summary: "Seven connected systems and schema contracts.", kind: "source", group: "Pipelines", useMenu: financeSourceMenu, paths: ["/objects", "/policies"] },
-  { path: "/examples/dataset", label: "Dataset Mapping", icon: GitMerge, summary: "Source-to-domain field mappings, conflicts and identity review.", group: "Pipelines", useBadge: () => 32 },
-  { path: "/examples/explorer", label: "Record Lineage", icon: Waypoints, summary: "Borrower resolution graph and field-level source lineage.", group: "Quality" },
-  { path: "/markings", label: "PII Markings", icon: Fingerprint, summary: "Field sensitivity classifications and role reveal matrix.", group: "Quality" },
+const FINANCE_SECTIONS: readonly Section[] = [
+  { path: "/", label: "Home", icon: House, perspective: "global" },
+  // Workspace: operator views under the Beltone · Financial services space.
+  { path: "/objects", label: "Records", icon: Rows3, perspective: "workspace", group: FINANCE_SPACE, kind: "source", useMenu: financeRecordsMenu, index: false },
+  { path: "/workflows", label: "Workflows", icon: Workflow, perspective: "workspace", group: FINANCE_SPACE, kind: "workflow", useMenu: financeWorkflowMenu },
+  { path: "/metrics", label: "Metrics", icon: ChartLine, perspective: "workspace", group: FINANCE_SPACE, kind: "question", useMenu: financeMetricMenu },
+  { path: "/optimisations/collections", label: "Optimisation", icon: ListChecks, perspective: "workspace", group: FINANCE_SPACE },
+  // Builder: modelling, mappings, rules, policies, markings and examples.
+  { path: "/sources", label: "Sources", icon: Database, perspective: "builder", group: FINANCE_SPACE, kind: "source", useMenu: financeSourceMenu },
+  { path: "/model", label: "Model", icon: Network, perspective: "builder", group: FINANCE_SPACE, kind: "objectType" },
+  { path: "/guarantees", label: "Rules", icon: ShieldCheck, perspective: "builder", group: FINANCE_SPACE, kind: "guarantee", useMenu: financeRuleMenu },
+  { path: "/policies", label: "Policies", icon: SlidersHorizontal, perspective: "builder", group: FINANCE_SPACE, kind: "policy", useMenu: financePolicyMenu },
+  { path: "/markings", label: "Markings", icon: Fingerprint, perspective: "builder", group: FINANCE_SPACE },
+  { path: "/examples", label: "Examples", icon: FileScan, perspective: "builder", group: FINANCE_SPACE, useMenu: financeExampleMenu, index: false },
 ]
-
-function FinanceShellRoot({ account, sidekick, onSignOut }: { readonly account: NonNullable<ReturnType<typeof useAccount>["data"]>; readonly sidekick: boolean; readonly onSignOut: () => void }) {
-  const { mode } = useFinanceMode()
-  const brand = account.previewBrand
-  return (
-    <Shell
-      sections={mode === "data" ? FINANCE_DATA_SECTIONS : FINANCE_DOMAIN_SECTIONS}
-      centerTools={<FinanceModeSwitcher />}
-      assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined}
-      account={account}
-      onSignOut={onSignOut}
-      tools={brand && <span className="me-1 hidden min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface-subtle px-2 py-1 text-[10px] whitespace-nowrap text-muted-foreground md:inline-flex"><span>Prepared for</span><img src={brand.logoUrl} alt={brand.name} referrerPolicy="no-referrer" className="h-4 max-w-16 object-contain" /></span>}
-    />
-  )
-}
 
 /**
  * Signed out (an explicit 401), a visitor sees only the sign-in page; signed in, the Studio.
@@ -84,15 +80,20 @@ function Root() {
       if (usesAccess) window.location.assign("/cdn-cgi/access/logout")
       else void signOut()
     }
-    if (financeDemo) {
-      return (
-        <FinanceModeProvider>
-          <FinanceShellRoot account={account.data} sidekick={sidekick} onSignOut={handleSignOut} />
-        </FinanceModeProvider>
-      )
-    }
-    return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={handleSignOut}
-      tools={brand && <span className="me-1.5 hidden min-w-0 items-center gap-2 rounded-full border bg-card py-1 ps-2.5 pe-2 text-[10px] whitespace-nowrap text-muted-foreground md:inline-flex"><span>Prepared for</span><img src={brand.logoUrl} alt={brand.name} referrerPolicy="no-referrer" className="h-5 max-w-20 object-contain" /></span>} />
+    return (
+      <Shell
+        sections={financeDemo ? FINANCE_SECTIONS : SECTIONS}
+        assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined}
+        account={account.data}
+        onSignOut={handleSignOut}
+        tools={brand && (
+          <span className="me-1 hidden min-w-0 items-center gap-1.5 rounded-md border bg-card px-2 py-1 text-[11px] whitespace-nowrap text-muted-foreground md:inline-flex">
+            <span>Prepared for</span>
+            <img src={brand.logoUrl} alt={brand.name} referrerPolicy="no-referrer" className="h-4 max-w-16 object-contain" />
+          </span>
+        )}
+      />
+    )
   }
   if (account.isPending) return null
   if (account.isError) {

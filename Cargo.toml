@@ -52,8 +52,9 @@ default-members = [
   "vendor/zen/core/expression"
 ]
 # crates/norn-skeleton-guard is its own workspace (D95): the trusted lane builds it from
-# its own gated manifest and lockfile, never from this one.
-exclude = ["crates/norn-skeleton-guard", "third_party/ascent/ascent", "third_party/ascent/ascent_macro"]
+# its own gated manifest and lockfile, never from this one. crates/norn-cell-rivet
+# is its own workspace too: Rivet's SQLite and the native engine cannot share a lockfile.
+exclude = ["crates/norn-cell-rivet", "crates/norn-skeleton-guard", "third_party/ascent/ascent", "third_party/ascent/ascent_macro"]
 resolver = "2"
 
 [workspace.package]

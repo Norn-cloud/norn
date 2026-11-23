@@ -342,10 +342,12 @@ export const cellHost = (target: DeployTarget): string | undefined => CELL_HOSTS
  */
 export async function requireWorkerScript(script: string, credentials: CloudflareCredentials, fetcher: typeof fetch = fetch): Promise<void> {
   // The workers token for the Norn account only (cloudflareCredentials), checked before the request.
-  const { accountId: account, apiToken: token } = credentials
-  const headers: Record<string, string> = { authorization: `Bearer ${token}` }
-  // Bounded: a stalled connection fails the deploy instead of hanging it.
-  const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${script}/settings`, { headers, signal: AbortSignal.timeout(30_000) })
-  if (response.status === 404) throw new Error(`The cell Worker ${script} does not exist on this account; deploy it before binding Studio to it as NORN_HOST`)
-  if (!response.ok) throw new Error(`Could not check the cell Worker ${script}: Cloudflare answered ${response.status}`)
+  // Bounded (30 s, cloudflare-api.ts call): a stalled connection fails the deploy instead of hanging it.
+  // Loaded here, not at the top: celld-deploy-cell imports this module without Studio's packages.
+  const { workerSettingsStatus } = await import("./cloudflare-api.ts")
+  // Decided from the status line alone, as before: a 2xx passes when its headers arrive.
+  const status = await workerSettingsStatus({ credentials, fetch: fetcher }, script)
+  if (status >= 200 && status < 300) return
+  if (status === 404) throw new Error(`The cell Worker ${script} does not exist on this account; deploy it before binding Studio to it as NORN_HOST`)
+  throw new Error(`Could not check the cell Worker ${script}: Cloudflare answered ${status}`)
 }

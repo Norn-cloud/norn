@@ -1,107 +1,18 @@
-import { Link, useLocation, useNavigate, useSearch } from "@tanstack/react-router"
+import { Link, useSearch } from "@tanstack/react-router"
 import { ArrowRight, BadgeCheck, Box, BriefcaseBusiness, Building2, CalendarClock, ClipboardList, CreditCard, Database, FileCheck, Files, Gauge, GitMerge, Landmark, Layers, LifeBuoy, Network, Receipt, Search, UserRound, type LucideIcon } from "lucide-react"
-import { createContext, use, useEffect, useState, type ReactNode } from "react"
+import { useEffect, useState } from "react"
 import { Chip } from "@/components/chip"
+import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { PageHeader, Panel, Well } from "@/components/panel"
+import { TableCard } from "@/components/table-card"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { AGGREGATES, AUXILIARY_TYPES, COMMANDS, type AuxiliaryType } from "./behavior.ts"
-import { isFinanceType, RECORDS } from "./records.ts"
 import { CLIENT_FIELDS, MARKS, MODEL_LINKS, ROW_COUNT, SYSTEMS, TYPES, type FinanceType, type MarkId } from "./data.ts"
-
-export type FinanceMode = "domain" | "data"
-
-const MODE_KEY = "norn.studio.finance.mode"
-const DATA_ONLY_PATHS = ["/examples/dataset", "/examples/explorer", "/markings"]
-const DOMAIN_ONLY_PREFIXES = ["/workflows", "/guarantees", "/metrics", "/optimisations", "/examples/document", "/policies"]
-
-const FinanceModeContext = createContext<{
-  readonly mode: FinanceMode
-  readonly setMode: (next: FinanceMode) => void
-}>({ mode: "domain", setMode: () => {} })
-
-function readStoredMode(): FinanceMode {
-  try {
-    return globalThis.localStorage?.getItem(MODE_KEY) === "data" ? "data" : "domain"
-  } catch {
-    return "domain"
-  }
-}
-
-export function FinanceModeProvider({ children }: { readonly children: ReactNode }) {
-  const pathname = useLocation({ select: (location) => location.pathname })
-  const [mode, setModeState] = useState<FinanceMode>(() => {
-    if (DATA_ONLY_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))) return "data"
-    if (DOMAIN_ONLY_PREFIXES.some((path) => pathname === path || pathname.startsWith(`${path}/`))) return "domain"
-    return readStoredMode()
-  })
-
-  useEffect(() => {
-    if (DATA_ONLY_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
-      setModeState("data")
-    } else if (DOMAIN_ONLY_PREFIXES.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
-      setModeState("domain")
-    }
-  }, [pathname])
-
-  const setMode = (next: FinanceMode) => {
-    setModeState(next)
-    try { globalThis.localStorage?.setItem(MODE_KEY, next) } catch { /* ignore storage restrictions */ }
-  }
-
-  return <FinanceModeContext value={{ mode, setMode }}>{children}</FinanceModeContext>
-}
-
-export const useFinanceMode = () => use(FinanceModeContext)
-
-/** Top-bar Snowflake/Retool persona switcher: separates clean Domain modeling from Data Engineering pipelines. */
-export function FinanceModeSwitcher() {
-  const { mode, setMode } = useFinanceMode()
-  const pathname = useLocation({ select: (location) => location.pathname })
-  const navigate = useNavigate()
-
-  const choose = (next: FinanceMode) => {
-    if (next === mode) return
-    setMode(next)
-    if (next === "domain") {
-      if (DATA_ONLY_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
-        void navigate({ to: "/" })
-      }
-    } else {
-      if (DOMAIN_ONLY_PREFIXES.some((path) => pathname === path || pathname.startsWith(`${path}/`)) || pathname === "/") {
-        void navigate({ to: "/sources", search: { view: undefined, model: undefined } })
-      }
-    }
-  }
-
-  return (
-    <div role="group" aria-label="Workspace perspective" className="inline-flex h-8 items-center rounded-md border border-border bg-surface-subtle p-0.5 text-xs">
-      <button
-        type="button"
-        aria-pressed={mode === "domain"}
-        onClick={() => choose("domain")}
-        className={cn(
-          "inline-flex h-7 items-center gap-1.5 rounded-sm px-2.5 font-medium transition-colors",
-          mode === "domain" ? "bg-background text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        <Layers className="size-3.5" aria-hidden />
-        <span>Domain</span>
-      </button>
-      <button
-        type="button"
-        aria-pressed={mode === "data"}
-        onClick={() => choose("data")}
-        className={cn(
-          "inline-flex h-7 items-center gap-1.5 rounded-sm px-2.5 font-medium transition-colors",
-          mode === "data" ? "bg-background text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        <Database className="size-3.5" aria-hidden />
-        <span>Data Engineering</span>
-      </button>
-    </div>
-  )
-}
+import { isFinanceType, RECORDS } from "./records.ts"
 
 const glyphs: Record<FinanceType, LucideIcon> = {
   client: UserRound, loan: Landmark, installment: CalendarClock, payment: CreditCard,
@@ -109,11 +20,11 @@ const glyphs: Record<FinanceType, LucideIcon> = {
   "hardship-case": LifeBuoy, "brokerage-account": Building2, order: ClipboardList, "regulatory-return": Receipt,
 }
 
-/** Restrained neutral object glyph (Palantir OMA / Snowsight style — color reserved for status and active selection). */
+/** Restrained neutral object glyph: colour stays reserved for semantic status. */
 export function TypeTile({ type, className }: { readonly type: FinanceType; readonly className?: string }) {
   const Icon = glyphs[type]
   return (
-    <span aria-hidden className={cn("inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border bg-surface-subtle text-foreground/75 [&_svg]:size-3.5", className)}>
+    <span aria-hidden className={cn("inline-flex size-6 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground [&_svg]:size-3.5", className)}>
       <Icon />
     </span>
   )
@@ -127,7 +38,7 @@ export function Mark({ id, className }: { readonly id: MarkId; readonly classNam
       title={name}
       aria-label={name}
       role="img"
-      className={cn("relative inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border bg-background text-[8px] font-semibold", className)}
+      className={cn("relative inline-flex size-6 shrink-0 items-center justify-center rounded-md border bg-card text-[8px] font-semibold", className)}
       style={{ color: `var(--tone-${tone})` }}
     >
       <span aria-hidden className={loaded ? "invisible" : undefined}>{letters ?? name.slice(0, 2).toUpperCase()}</span>
@@ -141,27 +52,14 @@ export function SystemDependencies({ systems, needs, compact = false }: { readon
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5" aria-label="Required systems">
         {systems.map((id) => (
-          <span key={id} className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-muted-foreground">
-            <Mark id={id} className="size-4 rounded-xs border-0 text-[7px]" />
+          <span key={id} className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-1.5 py-0.5 text-xs text-muted-foreground">
+            <Mark id={id} className="size-4 rounded-xs border-0 bg-transparent text-[7px]" />
             {MARKS[id].name}
           </span>
         ))}
       </div>
-      {!compact && <p className="text-xs text-muted-foreground"><strong className="font-medium text-foreground">Why joined:</strong> {needs}</p>}
+      {!compact && <p className="text-meta text-muted-foreground"><strong className="font-medium text-foreground">Why joined:</strong> {needs}</p>}
     </div>
-  )
-}
-
-/** Compact enterprise workbench header: flat, crisp, no redundant pills. */
-export function FinanceHeading({ title, description, actions }: { readonly title: string; readonly description: string; readonly actions?: ReactNode }) {
-  return (
-    <header className="flex flex-wrap items-end justify-between gap-3 border-b border-border pb-3">
-      <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight text-foreground">{title}</h1>
-        <p className="mt-0.5 max-w-2xl text-xs text-muted-foreground">{description}</p>
-      </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
-    </header>
   )
 }
 
@@ -183,69 +81,81 @@ const EDGES = [
   { from: [63, 63], to: [71, 88], text: "has", label: [67, 76] },
 ] as const
 
-function ModelGraph({ showRawFields }: { readonly showRawFields: boolean }) {
+function BorrowerGraph({ showRawFields, onToggleRaw }: { readonly showRawFields: boolean; readonly onToggleRaw: () => void }) {
   return (
-    <section aria-label="Lending model graph" className="relative grid gap-3 rounded-lg border border-border bg-surface-subtle p-4 md:block md:h-[30rem] md:bg-[radial-gradient(var(--canvas-dot)_1px,transparent_1px)] md:bg-size-[16px_16px]">
-      <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 hidden size-full md:block">
-        {EDGES.map(({ from: [x, y], to: [a, b], text }) => (
-          <path
-            key={text}
-            d={x === a ? `M ${x} ${y} V ${b}` : `M ${x} ${y} C ${(x + a) / 2} ${y}, ${(x + a) / 2} ${b}, ${a} ${b}`}
-            fill="none"
-            stroke="var(--edge)"
-            strokeOpacity={0.75}
-            strokeWidth="1.25"
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-      </svg>
-      {EDGES.map(({ text, label: [x, y] }) => (
-        <span key={text} className="pointer-events-none absolute z-10 hidden -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-sm border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground md:block" style={{ left: `${x}%`, top: `${y}%` }}>
-          {text}
-        </span>
-      ))}
-      <article className="z-20 space-y-2.5 rounded-lg border border-data-accent bg-background p-3 md:absolute md:top-1/2 md:left-1/2 md:w-[25%] md:-translate-1/2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <TypeTile type="client" className="border-data-accent/40 text-tone-blue" />
-            <h3 className="text-sm font-semibold">
-              <Link to="/sources/$concept" params={{ concept: "client" }} className="hover:text-tone-blue">Client (Borrower)</Link>
-            </h3>
-          </div>
-          <Chip tone="blue" icon={GitMerge}>Resolved</Chip>
-        </div>
-        {showRawFields ? (
-          <ul className="grid gap-1 border-t border-border pt-2">
-            {CLIENT_FIELDS.map(({ mark, field }) => (
-              <li key={field} className="flex items-center gap-1.5">
-                <Mark id={mark} className="size-4 text-[7px]" />
-                <code className="text-[11px] text-muted-foreground">{field}</code>
-              </li>
+    <Panel
+      icon={GitMerge}
+      label="Borrower resolution"
+      action={
+        <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={onToggleRaw}>
+          {showRawFields ? "Hide source columns" : "Show source columns"}
+        </Button>
+      }
+    >
+      <Well>
+        <div aria-label="Lending model graph" className="relative grid gap-3 bg-canvas-surface p-4 md:block md:h-[30rem] md:bg-[radial-gradient(var(--canvas-dot)_1px,transparent_1px)] md:bg-size-[16px_16px]">
+          <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 hidden size-full md:block">
+            {EDGES.map(({ from: [x, y], to: [a, b], text }) => (
+              <path
+                key={text}
+                d={x === a ? `M ${x} ${y} V ${b}` : `M ${x} ${y} C ${(x + a) / 2} ${y}, ${(x + a) / 2} ${b}, ${a} ${b}`}
+                fill="none"
+                stroke="var(--edge)"
+                strokeOpacity={0.65}
+                strokeWidth="1.25"
+                vectorEffect="non-scaling-stroke"
+              />
             ))}
-          </ul>
-        ) : (
-          <p className="border-t border-border pt-2 text-xs text-muted-foreground">
-            Unified client entity resolved on National ID across lending, bureau, KYC and CRM.
-          </p>
-        )}
-        <div className="border-t border-border pt-1.5 text-[11px] text-muted-foreground">Identifier · <span className="font-medium text-foreground">National ID</span></div>
-      </article>
-      {NODES.map(({ type, x, y, field }) => (
-        <article key={type} className="rounded-lg border border-border bg-background p-2.5 hover:border-data-accent md:absolute md:w-[23%] md:-translate-1/2" style={{ left: `${x}%`, top: `${y}%` }}>
-          <div className="flex items-center gap-2">
-            <TypeTile type={type} />
-            <div className="min-w-0">
-              <h3 className="truncate text-xs font-semibold">
-                <Link to="/sources/$concept" params={{ concept: type }} className="hover:text-tone-blue">{TYPES[type].name}</Link>
-              </h3>
-              <p className="truncate text-[10px] text-muted-foreground">
-                {showRawFields ? <code>{field}</code> : `${RECORDS.filter((r) => r.type === type).length} sample records`}
-              </p>
+          </svg>
+          {EDGES.map(({ text, label: [x, y] }) => (
+            <span key={text} className="pointer-events-none absolute z-10 hidden -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-sm border bg-card px-1.5 py-0.5 text-[11px] text-muted-foreground md:block" style={{ left: `${x}%`, top: `${y}%` }}>
+              {text}
+            </span>
+          ))}
+          <article className="z-20 space-y-2.5 rounded-lg border border-foreground/30 bg-card p-3 md:absolute md:top-1/2 md:left-1/2 md:w-[25%] md:-translate-1/2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <TypeTile type="client" className="text-foreground" />
+                <h3 className="text-sm font-medium">
+                  <Link to="/sources/$concept" params={{ concept: "client" }} className="hover:underline underline-offset-4">Client (Borrower)</Link>
+                </h3>
+              </div>
+              <Chip tone="green" dot>Resolved</Chip>
             </div>
-          </div>
-        </article>
-      ))}
-    </section>
+            {showRawFields ? (
+              <ul className="grid gap-1 border-t pt-2">
+                {CLIENT_FIELDS.map(({ mark, field }) => (
+                  <li key={field} className="flex items-center gap-1.5">
+                    <Mark id={mark} className="size-4 text-[7px]" />
+                    <code className="text-xs text-muted-foreground">{field}</code>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="border-t pt-2 text-xs text-muted-foreground">
+                Unified client entity resolved on National ID across lending, bureau, KYC and CRM.
+              </p>
+            )}
+            <div className="border-t pt-1.5 text-xs text-muted-foreground">Matching key · <span className="font-medium text-foreground">National ID</span></div>
+          </article>
+          {NODES.map(({ type, x, y, field }) => (
+            <article key={type} className="rounded-lg border bg-card p-2.5 transition-colors hover:border-foreground/35 md:absolute md:w-[23%] md:-translate-1/2" style={{ left: `${x}%`, top: `${y}%` }}>
+              <div className="flex items-center gap-2">
+                <TypeTile type={type} />
+                <div className="min-w-0">
+                  <h3 className="truncate text-meta font-medium">
+                    <Link to="/sources/$concept" params={{ concept: type }} className="hover:underline underline-offset-4">{TYPES[type].name}</Link>
+                  </h3>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {showRawFields ? <code>{field}</code> : `${RECORDS.filter((r) => r.type === type).length} sample records`}
+                  </p>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </Well>
+    </Panel>
   )
 }
 
@@ -272,72 +182,76 @@ function FullModel({ showAggregates }: { readonly showAggregates: boolean }) {
   const modelPosition = (id: ModelNode) => showAggregates || !isFinanceType(id) ? AGGREGATE_POSITIONS[id] : MODEL_POSITIONS[id]
   const positions = showAggregates ? AGGREGATE_POSITIONS : MODEL_POSITIONS
   return (
-    <div className="space-y-4">
-      <section aria-label={showAggregates ? "Finance aggregate boundaries" : "Full finance model graph"} className="relative grid grid-cols-2 gap-2 rounded-lg border border-border bg-surface-subtle p-4 md:block md:h-[30rem] md:bg-[radial-gradient(var(--canvas-dot)_1px,transparent_1px)] md:bg-size-[16px_16px]">
-        {showAggregates && AGGREGATES.map(({ root }) => (
-          <div key={root} className="absolute top-[4%] bottom-[42%] hidden w-[29%] -translate-x-1/2 rounded-md border border-dashed border-data-accent/60 bg-data-accent/[0.03] md:block" style={{ left: `${AGGREGATE_POSITIONS[root][0]}%` }}>
-            <p className="px-2 pt-1.5 text-center text-[10px] font-semibold tracking-wide uppercase text-tone-blue">{TYPES[root].name} aggregate</p>
+    <div className="space-y-6">
+      <Panel icon={showAggregates ? Box : Network} label={showAggregates ? "Aggregate boundaries" : "Full model graph"} action="Select any type to inspect its definition">
+        <Well>
+          <div aria-label={showAggregates ? "Finance aggregate boundaries" : "Full finance model graph"} className="relative grid grid-cols-2 gap-2 bg-canvas-surface p-4 md:block md:h-[30rem] md:bg-[radial-gradient(var(--canvas-dot)_1px,transparent_1px)] md:bg-size-[16px_16px]">
+            {showAggregates && AGGREGATES.map(({ root }) => (
+              <div key={root} className="absolute top-[4%] bottom-[42%] hidden w-[29%] -translate-x-1/2 rounded-lg border border-dashed border-muted-foreground/40 bg-muted/25 md:block" style={{ left: `${AGGREGATE_POSITIONS[root][0]}%` }}>
+                <p className="px-2 pt-1.5 text-center text-[11px] font-medium tracking-wide uppercase text-muted-foreground">{TYPES[root].name} aggregate</p>
+              </div>
+            ))}
+            <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 hidden size-full md:block">
+              {edges.map(([from, to]) => {
+                const [x, y] = modelPosition(from)
+                const [a, b] = modelPosition(to)
+                const mid = (x + a) / 2
+                return (
+                  <path
+                    key={from + to}
+                    d={x === a ? `M${x} ${y} V${b}` : `M${x} ${y} C${mid} ${y} ${mid} ${b} ${a} ${b}`}
+                    fill="none"
+                    stroke="var(--edge)"
+                    strokeOpacity={0.55}
+                    strokeWidth="1.25"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )
+              })}
+            </svg>
+            {Object.entries(positions).map(([type, [left, top]]) => {
+              const auxiliary = type === "relationship-assignment" || type === "holdings" ? AUXILIARY_TYPES[type] : undefined
+              const core = isFinanceType(type) ? TYPES[type] : undefined
+              if (!auxiliary && !core) return null
+              const root = AGGREGATES.some((group) => group.root === type)
+              return (
+                <Link
+                  key={type}
+                  to={auxiliary ? `/policies/${type}` : `/sources/${type}`}
+                  className={cn(
+                    "z-10 flex items-center gap-2 rounded-md border bg-card px-2.5 py-2 text-meta font-medium transition-colors hover:border-foreground/40 md:absolute md:w-[22%] md:-translate-1/2",
+                    (showAggregates ? root : type === "client") && "border-s-2 border-s-foreground",
+                  )}
+                  style={{ left: `${left}%`, top: `${top}%` }}
+                >
+                  {isFinanceType(type) ? <TypeTile type={type} className={root && showAggregates ? "text-foreground" : undefined} /> : <Box className="size-4 text-muted-foreground" />}
+                  <span className="min-w-0 truncate">
+                    {core?.name ?? auxiliary?.name}
+                    {showAggregates && root && <span className="block text-[11px] font-normal text-muted-foreground">Aggregate root</span>}
+                  </span>
+                </Link>
+              )
+            })}
           </div>
-        ))}
-        <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 hidden size-full md:block">
-          {edges.map(([from, to]) => {
-            const [x, y] = modelPosition(from)
-            const [a, b] = modelPosition(to)
-            const mid = (x + a) / 2
-            return (
-              <path
-                key={from + to}
-                d={x === a ? `M${x} ${y} V${b}` : `M${x} ${y} C${mid} ${y} ${mid} ${b} ${a} ${b}`}
-                fill="none"
-                stroke="var(--edge)"
-                strokeOpacity={0.6}
-                strokeWidth="1.25"
-                vectorEffect="non-scaling-stroke"
-              />
-            )
-          })}
-        </svg>
-        {Object.entries(positions).map(([type, [left, top]]) => {
-          const auxiliary = type === "relationship-assignment" || type === "holdings" ? AUXILIARY_TYPES[type] : undefined
-          const core = isFinanceType(type) ? TYPES[type] : undefined
-          if (!auxiliary && !core) return null
-          const root = AGGREGATES.some((group) => group.root === type)
-          return (
-            <Link
-              key={type}
-              to={auxiliary ? `/policies/${type}` : `/sources/${type}`}
-              className={cn(
-                "z-10 flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-2 text-xs font-medium transition-colors hover:border-data-accent md:absolute md:w-[22%] md:-translate-1/2",
-                (showAggregates ? root : type === "client") && "border-s-2 border-s-data-accent border-data-accent/50",
-              )}
-              style={{ left: `${left}%`, top: `${top}%` }}
-            >
-              {isFinanceType(type) ? <TypeTile type={type} className={root && showAggregates ? "border-data-accent/40 text-tone-blue" : undefined} /> : <Box className="size-4 text-muted-foreground" />}
-              <span className="min-w-0 truncate">
-                {core?.name ?? auxiliary?.name}
-                {showAggregates && root && <span className="block text-[10px] font-normal text-tone-blue">Aggregate root</span>}
-              </span>
-            </Link>
-          )
-        })}
-      </section>
-      <section aria-label="Model relationships" className="overflow-hidden rounded-lg border border-border bg-background">
-        <header className="border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold text-foreground">
-          Relationships &amp; cardinalities
-        </header>
-        <ul className="grid divide-y divide-border md:grid-cols-2 md:divide-y-0">
-          {MODEL_LINKS.map(([from, forward, to, , outgoing, incoming]) => (
-            <li key={from + to} className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-xs md:odd:border-e">
-              <Link to="/sources/$concept" params={{ concept: from }} className="font-medium hover:text-tone-blue">{TYPES[from].name}</Link>
-              <code className="rounded-xs bg-muted px-1 text-[10px] text-muted-foreground">{incoming}</code>
-              <span className="text-muted-foreground">{forward}</span>
-              <ArrowRight className="size-3 text-muted-foreground" />
-              <Link to="/sources/$concept" params={{ concept: to }} className="font-medium hover:text-tone-blue">{TYPES[to].name}</Link>
-              <code className="rounded-xs bg-muted px-1 text-[10px] text-muted-foreground">{outgoing}</code>
-            </li>
-          ))}
-        </ul>
-      </section>
+        </Well>
+      </Panel>
+
+      <Panel icon={Network} label="Relationships and cardinalities" action={`${MODEL_LINKS.length} declared links`}>
+        <Well>
+          <ul aria-label="Model relationships" className="grid divide-y md:grid-cols-2 md:divide-y-0">
+            {MODEL_LINKS.map(([from, forward, to, , outgoing, incoming]) => (
+              <li key={from + to} className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5 text-meta md:odd:border-e">
+                <Link to="/sources/$concept" params={{ concept: from }} className="font-medium hover:underline underline-offset-4">{TYPES[from].name}</Link>
+                <code className="rounded-sm bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{incoming}</code>
+                <span className="text-muted-foreground">{forward}</span>
+                <ArrowRight className="size-3 text-muted-foreground" />
+                <Link to="/sources/$concept" params={{ concept: to }} className="font-medium hover:underline underline-offset-4">{TYPES[to].name}</Link>
+                <code className="rounded-sm bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{outgoing}</code>
+              </li>
+            ))}
+          </ul>
+        </Well>
+      </Panel>
     </div>
   )
 }
@@ -348,27 +262,32 @@ function ObjectCatalog() {
     item.name.toLowerCase().includes(query.trim().toLowerCase()),
   )
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-background">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-2.5">
-        <label className="relative block w-full max-w-xs">
-          <span className="sr-only">Filter object types</span>
-          <Search className="pointer-events-none absolute start-2.5 top-2 size-3.5 text-muted-foreground" />
-          <Input className="h-8 bg-background ps-8 text-xs" placeholder="Filter business objects…" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </label>
-        <span className="text-xs text-muted-foreground tabular-nums">{entries.length} object types</span>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-start text-xs">
-          <thead>
-            <tr className="border-b border-border bg-surface-subtle/60 text-muted-foreground">
-              <th className="px-4 py-2 text-start font-medium">Object type</th>
-              <th className="px-4 py-2 text-start font-medium">Aggregate role</th>
-              <th className="px-4 py-2 text-start font-medium">Commands</th>
-              <th className="px-4 py-2 text-start font-medium">Links</th>
-              <th className="px-4 py-2 text-end font-medium">Sample records</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
+    <Panel
+      icon={Layers}
+      label="Object types"
+      action={
+        <div className="flex items-center gap-3">
+          <label className="relative block w-52">
+            <span className="sr-only">Filter object types</span>
+            <Search className="pointer-events-none absolute start-2.5 top-2 size-3.5 text-muted-foreground" />
+            <Input className="h-7 ps-8 text-xs" placeholder="Filter object types…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          </label>
+          <span className="tabular-nums">{entries.length}</span>
+        </div>
+      }
+    >
+      <TableCard>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Object type</TableHead>
+              <TableHead>Aggregate role</TableHead>
+              <TableHead>Commands</TableHead>
+              <TableHead>Links</TableHead>
+              <TableHead className="text-end">Sample records</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {entries.map(([id, def]) => {
               const agg = AGGREGATES.find((a) => a.root === id || a.members.some((m) => m === id))
               const role = agg?.root === id ? "Aggregate root" : agg ? `${TYPES[agg.root].name} entity` : "Reference entity"
@@ -376,30 +295,30 @@ function ObjectCatalog() {
               const linkCount = MODEL_LINKS.filter(([from, , to]) => from === id || to === id).length
               const recCount = RECORDS.filter((r) => r.type === id).length
               return (
-                <tr key={id} className="transition-colors hover:bg-surface-subtle">
-                  <td className="px-4 py-2.5">
-                    <Link to="/sources/$concept" params={{ concept: id }} className="inline-flex items-center gap-2 font-medium text-foreground hover:text-tone-blue">
+                <TableRow key={id}>
+                  <TableCell>
+                    <Link to="/sources/$concept" params={{ concept: id }} className="inline-flex items-center gap-2 font-medium text-foreground hover:underline underline-offset-4">
                       <TypeTile type={id} />
                       <span>{def.name}</span>
                     </Link>
-                  </td>
-                  <td className="px-4 py-2.5 text-muted-foreground">
-                    {agg?.root === id ? <span className="inline-flex items-center rounded-sm bg-tone-blue/10 px-1.5 py-0.5 text-[11px] font-medium text-tone-blue">{role}</span> : role}
-                  </td>
-                  <td className="px-4 py-2.5 tabular-nums text-muted-foreground">{cmdCount > 0 ? cmdCount : "—"}</td>
-                  <td className="px-4 py-2.5 tabular-nums text-muted-foreground">{linkCount}</td>
-                  <td className="px-4 py-2.5 text-end tabular-nums text-muted-foreground">{recCount}</td>
-                </tr>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {agg?.root === id ? <Badge variant="secondary" className="font-normal">{role}</Badge> : role}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{cmdCount > 0 ? cmdCount : "—"}</TableCell>
+                  <TableCell className="text-muted-foreground">{linkCount}</TableCell>
+                  <TableCell className="text-end text-muted-foreground">{recCount}</TableCell>
+                </TableRow>
               )
             })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+          </TableBody>
+        </Table>
+      </TableCard>
+    </Panel>
   )
 }
 
-/** Snowflake-style Connected Systems table + docked Schema Inspector for Data Engineering mode. */
+/** Flat Snowsight-style connected systems table + hairline Schema Inspector side panel. */
 function DataSourcesWorkbench() {
   const [selectedId, setSelectedId] = useState<string>(SYSTEMS[0]!.id)
   const selected = SYSTEMS.find((s) => s.id === selectedId) ?? SYSTEMS[0]!
@@ -407,168 +326,148 @@ function DataSourcesWorkbench() {
   const totalRows = SYSTEMS.reduce((sum, item) => sum + item.datasets.reduce((s, [, r]) => s + r, 0), 0)
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 divide-y divide-border overflow-hidden rounded-lg border border-border bg-background sm:grid-cols-4 sm:divide-x sm:divide-y-0">
-        <div className="px-4 py-2.5"><p className="text-[11px] text-muted-foreground">Connected systems</p><p className="mt-0.5 text-lg font-semibold tabular-nums">7</p></div>
-        <div className="px-4 py-2.5"><p className="text-[11px] text-muted-foreground">Ingested tables</p><p className="mt-0.5 text-lg font-semibold tabular-nums">{totalDatasets}</p></div>
-        <div className="px-4 py-2.5"><p className="text-[11px] text-muted-foreground">Records synced</p><p className="mt-0.5 text-lg font-semibold tabular-nums">{ROW_COUNT.format(totalRows)}</p></div>
-        <div className="px-4 py-2.5"><p className="text-[11px] text-muted-foreground">Last sync window</p><p className="mt-0.5 inline-flex items-center gap-1.5 text-sm font-medium"><BadgeCheck className="size-3.5 text-tone-green" />22 Nov 2026 · EET</p></div>
-      </div>
+    <div className="space-y-6">
+      <StatStrip>
+        <KpiTile label="Connected systems" value={SYSTEMS.length} sub="Hosted on AWS · Synthetic preview" />
+        <KpiTile label="Ingested tables" value={totalDatasets} sub="Normalized into 11 object types" />
+        <KpiTile label="Records synced" value={ROW_COUNT.format(totalRows)} sub="11,872 clients resolved" />
+        <KpiTile label="Last sync window" value="22 Nov" sub={<span className="inline-flex items-center gap-1 text-tone-green"><BadgeCheck className="size-3.5" />All systems synced · EET</span>} />
+      </StatStrip>
 
-      <div className="grid overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[minmax(0,1fr)_21rem]">
-        <div className="min-w-0 overflow-x-auto">
-          <table className="w-full text-start text-xs" aria-label="Connected source systems">
-            <thead>
-              <tr className="border-b border-border bg-surface-subtle text-muted-foreground">
-                <th className="px-4 py-2.5 text-start font-medium">System</th>
-                <th className="px-4 py-2.5 text-start font-medium">Schema</th>
-                <th className="px-4 py-2.5 text-end font-medium">Datasets</th>
-                <th className="px-4 py-2.5 text-end font-medium">Rows</th>
-                <th className="px-4 py-2.5 text-end font-medium">Last sync</th>
-                <th className="px-4 py-2.5 text-end font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {SYSTEMS.map((system) => {
-                const active = system.id === selected.id
-                const rows = system.datasets.reduce((sum, [, count]) => sum + count, 0)
-                return (
-                  <tr
-                    key={system.id}
-                    onClick={() => setSelectedId(system.id)}
-                    className={cn("cursor-pointer transition-colors hover:bg-surface-subtle", active && "bg-tone-blue/[0.06]")}
-                  >
-                    <td className={cn("px-4 py-2.5", active && "border-s-2 border-s-data-accent")}>
-                      <div className="flex items-center gap-2.5">
-                        <div className="flex -space-x-1">{system.marks.map((mark) => <Mark key={mark} id={mark} />)}</div>
-                        <div>
-                          <div className="font-medium text-foreground">{system.name}</div>
-                          <div className="text-[11px] text-muted-foreground">{system.marks.map((m) => MARKS[m].name).join(" · ")}</div>
+      <Panel icon={Database} label="Connected systems" action="Select a system to inspect its schema">
+        <Well className="grid lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <div className="min-w-0 overflow-x-auto">
+            <Table aria-label="Connected source systems" className="text-meta tabular-nums">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>System</TableHead>
+                  <TableHead>Schema</TableHead>
+                  <TableHead className="text-end">Datasets</TableHead>
+                  <TableHead className="text-end">Rows</TableHead>
+                  <TableHead className="text-end">Last sync</TableHead>
+                  <TableHead className="text-end">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {SYSTEMS.map((system) => {
+                  const active = system.id === selected.id
+                  const rows = system.datasets.reduce((sum, [, count]) => sum + count, 0)
+                  return (
+                    <TableRow
+                      key={system.id}
+                      onClick={() => setSelectedId(system.id)}
+                      className={cn("cursor-pointer", active && "bg-muted/60")}
+                    >
+                      <TableCell className={cn(active && "border-s-2 border-s-foreground")}>
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex -space-x-1">{system.marks.map((mark) => <Mark key={mark} id={mark} />)}</div>
+                          <div>
+                            <div className="font-medium text-foreground">{system.name}</div>
+                            <div className="text-xs text-muted-foreground">{system.marks.map((m) => MARKS[m].name).join(" · ")}</div>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5 font-mono text-[11px] text-muted-foreground">{system.schema}</td>
-                    <td className="px-4 py-2.5 text-end tabular-nums text-muted-foreground">{system.datasets.length}</td>
-                    <td className="px-4 py-2.5 text-end tabular-nums text-foreground">{ROW_COUNT.format(rows)}</td>
-                    <td className="px-4 py-2.5 text-end tabular-nums text-muted-foreground">{system.syncedAt}</td>
-                    <td className="px-4 py-2.5 text-end"><Chip tone="green" dot>Synced</Chip></td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-          <div className="flex items-center justify-between border-t border-border bg-surface-subtle px-4 py-2 text-xs text-muted-foreground">
-            <span className="inline-flex items-center gap-2"><Mark id="aws" className="size-5" />Hosted on AWS · Synthetic presentation data</span>
-            <Link to="/examples/$scene" params={{ scene: "dataset" }} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
-              Open field mappings <ArrowRight className="size-3.5" />
-            </Link>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{system.schema}</TableCell>
+                      <TableCell className="text-end text-muted-foreground">{system.datasets.length}</TableCell>
+                      <TableCell className="text-end text-foreground">{ROW_COUNT.format(rows)}</TableCell>
+                      <TableCell className="text-end text-muted-foreground">{system.syncedAt}</TableCell>
+                      <TableCell className="text-end"><Chip tone="green" dot>Synced</Chip></TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2.5 text-meta text-muted-foreground">
+              <span className="inline-flex items-center gap-2"><Mark id="aws" className="size-5" />Hosted on AWS · Synthetic presentation data</span>
+              <Link to="/examples/$scene" params={{ scene: "dataset" }} className="inline-flex items-center gap-1 font-medium text-foreground hover:underline underline-offset-4">
+                Open field mappings <ArrowRight className="size-3.5 text-muted-foreground" />
+              </Link>
+            </div>
           </div>
-        </div>
 
-        <aside aria-label="Schema inspector" className="flex flex-col border-t border-border bg-surface-subtle/40 lg:border-s lg:border-t-0">
-          <div className="border-b border-border bg-surface-subtle px-4 py-2.5">
-            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Schema Inspector</p>
-            <div className="mt-1 flex items-center gap-2">
-              <div className="flex -space-x-1">{selected.marks.map((m) => <Mark key={m} id={m} className="size-5" />)}</div>
-              <h2 className="text-sm font-semibold text-foreground">{selected.name}</h2>
-            </div>
-          </div>
-          <div className="flex-1 space-y-4 p-4 text-xs">
-            <div>
-              <p className="text-[11px] text-muted-foreground">Schema contract</p>
-              <code className="mt-1 block rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs text-foreground">{selected.schema}</code>
-            </div>
-            <div>
-              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>Datasets ({selected.datasets.length})</span>
-                <span>Synced {selected.syncedAt} EET</span>
+          <aside aria-label="Schema inspector" className="flex flex-col border-t bg-surface-subtle/40 lg:border-s lg:border-t-0">
+            <div className="border-b px-4 py-3">
+              <p className="text-xs text-muted-foreground">Schema inspector</p>
+              <div className="mt-1 flex items-center gap-2">
+                <div className="flex -space-x-1">{selected.marks.map((m) => <Mark key={m} id={m} className="size-5" />)}</div>
+                <h3 className="text-sm font-medium text-foreground">{selected.name}</h3>
               </div>
-              <dl className="mt-1.5 divide-y divide-border rounded-md border border-border bg-background">
-                {selected.datasets.map(([dataset, rows]) => (
-                  <div key={dataset} className="flex items-center justify-between gap-2 px-3 py-2">
-                    <dt className="flex items-center gap-1.5 font-mono text-[11px] text-foreground"><Files className="size-3.5 text-muted-foreground" />{dataset}</dt>
-                    <dd className="tabular-nums text-muted-foreground">{ROW_COUNT.format(rows)}</dd>
-                  </div>
-                ))}
-              </dl>
             </div>
-            <div className="space-y-1.5 border-t border-border pt-3">
-              <Link to="/examples/$scene" params={{ scene: "dataset" }} className="flex w-full items-center justify-between rounded-md border border-border bg-background px-3 py-2 font-medium text-tone-blue hover:border-data-accent">
-                <span>Inspect field mappings</span><ArrowRight className="size-3.5" />
-              </Link>
-              <Link to="/sources" search={{ view: "graph", model: "aggregates" }} className="flex w-full items-center justify-between rounded-md border border-border bg-background px-3 py-2 font-medium text-foreground hover:border-data-accent">
-                <span>View target ontology graph</span><Network className="size-3.5 text-muted-foreground" />
-              </Link>
+            <div className="flex-1 divide-y px-4 text-meta">
+              <div className="py-3">
+                <p className="text-xs text-muted-foreground">Schema contract</p>
+                <code className="mt-1 block font-mono text-xs text-foreground">{selected.schema}</code>
+              </div>
+              <div className="py-3">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Datasets ({selected.datasets.length})</span>
+                  <span>Synced {selected.syncedAt} EET</span>
+                </div>
+                <dl className="mt-2 divide-y">
+                  {selected.datasets.map(([dataset, rows]) => (
+                    <div key={dataset} className="flex items-center justify-between gap-2 py-1.5">
+                      <dt className="flex items-center gap-1.5 font-mono text-xs text-foreground"><Files className="size-3.5 text-muted-foreground" />{dataset}</dt>
+                      <dd className="tabular-nums text-muted-foreground">{ROW_COUNT.format(rows)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+              <div className="space-y-2 py-3 text-xs">
+                <Link to="/examples/$scene" params={{ scene: "dataset" }} className="flex items-center justify-between py-1 font-medium text-foreground hover:underline underline-offset-4">
+                  <span>Inspect field mappings</span><ArrowRight className="size-3.5 text-muted-foreground" />
+                </Link>
+                <Link to="/model" className="flex items-center justify-between py-1 font-medium text-foreground hover:underline underline-offset-4">
+                  <span>View target model graph</span><ArrowRight className="size-3.5 text-muted-foreground" />
+                </Link>
+              </div>
             </div>
-          </div>
-        </aside>
-      </div>
+          </aside>
+        </Well>
+      </Panel>
     </div>
   )
 }
 
-const underlineTab = "inline-flex items-center gap-1.5 border-b-2 border-transparent px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-const underlineTabActive = "border-data-accent text-foreground"
+const tabClass = "inline-flex items-center gap-1.5 border-b-2 border-transparent px-3 py-2 text-meta font-medium text-muted-foreground transition-colors hover:text-foreground"
+const tabActive = "border-foreground text-foreground"
 
-export function FinanceSources() {
-  const { mode } = useFinanceMode()
+export function FinanceModel() {
   const search = useSearch({ strict: false })
-  const explicitGraph = "view" in search && search.view === "graph"
-  const model = "model" in search ? search.model : undefined
-  const [domainView, setDomainView] = useState<"catalog" | "aggregates" | "full" | "borrower">(
-    explicitGraph ? (model === "aggregates" ? "aggregates" : model === "full" ? "full" : "borrower") : "aggregates",
-  )
+  const initialView = "view" in search && (search.view === "catalog" || search.view === "full" || search.view === "borrower" || search.view === "aggregates")
+    ? search.view
+    : "model" in search && search.model === "full"
+      ? "full"
+      : "model" in search && search.model === "aggregates"
+        ? "aggregates"
+        : "aggregates"
+  const [domainView, setDomainView] = useState<"catalog" | "aggregates" | "full" | "borrower">(initialView)
+  const [showRawFields, setShowRawFields] = useState(false)
 
   useEffect(() => {
-    if (explicitGraph) {
-      setDomainView(model === "aggregates" ? "aggregates" : model === "full" ? "full" : "borrower")
-    }
-  }, [explicitGraph, model])
-
-  if (mode === "data" && !explicitGraph) {
-    return (
-      <section className="space-y-4">
-        <FinanceHeading
-          title="Sources & Sync"
-          description="Seven operational systems ingested and normalized into the shared financial ontology."
-          actions={
-            <Link to="/sources" search={{ view: "graph", model: "aggregates" }} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium hover:border-data-accent">
-              <Network className="size-3.5" />Model graph
-            </Link>
-          }
-        />
-        <DataSourcesWorkbench />
-      </section>
-    )
-  }
+    setDomainView(initialView)
+  }, [initialView])
 
   return (
-    <section className="space-y-4">
-      <FinanceHeading
-        title={mode === "data" ? "Sources & Model Graph" : "Business Objects"}
-        description={mode === "data"
-          ? "How the seven source systems map into typed objects and aggregate boundaries."
-          : "Typed financial objects, aggregate boundaries and relationships — clean data assumed."}
-        actions={
-          mode === "data" ? (
-            <Link to="/sources" search={{ view: undefined, model: undefined }} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium hover:border-data-accent">
-              <Database className="size-3.5" />Connected systems
-            </Link>
-          ) : undefined
-        }
+    <section className="space-y-6">
+      <PageHeader
+        title="Model"
+        meta={`${Object.keys(TYPES).length} object types · ${AGGREGATES.length} aggregates`}
+        description="Typed financial objects, aggregate boundaries, and cross-system relationships."
+        primary={<Button asChild size="sm"><Link to="/sources">Connected systems</Link></Button>}
+        secondary={[{ label: "Dataset mapping", icon: GitMerge, to: "/examples/dataset" }]}
       />
 
-      <nav aria-label="Object model views" className="flex flex-wrap gap-1 border-b border-border">
-        <button type="button" onClick={() => setDomainView("aggregates")} className={cn(underlineTab, domainView === "aggregates" && underlineTabActive)}>
+      <nav aria-label="Object model views" className="flex flex-wrap gap-1 border-b">
+        <button type="button" onClick={() => setDomainView("aggregates")} className={cn(tabClass, domainView === "aggregates" && tabActive)}>
           <Box className="size-3.5" />Aggregate boundaries
         </button>
-        <button type="button" onClick={() => setDomainView("catalog")} className={cn(underlineTab, domainView === "catalog" && underlineTabActive)}>
+        <button type="button" onClick={() => setDomainView("catalog")} className={cn(tabClass, domainView === "catalog" && tabActive)}>
           <Layers className="size-3.5" />Object catalog ({Object.keys(TYPES).length})
         </button>
-        <button type="button" onClick={() => setDomainView("full")} className={cn(underlineTab, domainView === "full" && underlineTabActive)}>
+        <button type="button" onClick={() => setDomainView("full")} className={cn(tabClass, domainView === "full" && tabActive)}>
           <Network className="size-3.5" />Full graph
         </button>
-        <button type="button" onClick={() => setDomainView("borrower")} className={cn(underlineTab, domainView === "borrower" && underlineTabActive)}>
+        <button type="button" onClick={() => setDomainView("borrower")} className={cn(tabClass, domainView === "borrower" && tabActive)}>
           <GitMerge className="size-3.5" />Borrower resolution
         </button>
       </nav>
@@ -576,10 +475,28 @@ export function FinanceSources() {
       {domainView === "catalog" ? (
         <ObjectCatalog />
       ) : domainView === "borrower" ? (
-        <ModelGraph showRawFields={mode === "data"} />
+        <BorrowerGraph showRawFields={showRawFields} onToggleRaw={() => setShowRawFields((v) => !v)} />
       ) : (
         <FullModel showAggregates={domainView === "aggregates"} />
       )}
+    </section>
+  )
+}
+
+export function FinanceSources() {
+  const search = useSearch({ strict: false })
+  if ("view" in search && search.view === "graph") return <FinanceModel />
+
+  return (
+    <section className="space-y-6">
+      <PageHeader
+        title="Sources"
+        meta={`${SYSTEMS.length} systems`}
+        description="Seven operational systems ingested and normalized into the shared financial model."
+        primary={<Button asChild size="sm"><Link to="/examples/$scene" params={{ scene: "dataset" }}>Dataset mapping</Link></Button>}
+        secondary={[{ label: "Model & aggregate graph", icon: Network, to: "/model" }]}
+      />
+      <DataSourcesWorkbench />
     </section>
   )
 }

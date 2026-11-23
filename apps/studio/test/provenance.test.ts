@@ -64,10 +64,7 @@ test("an answer's number names the systems it read, its metrics, the ledger head
   expect(metricLabels(declared)).toEqual(["Yield"])
   expect(metricLabels({ ...declared, metrics: [] })).toEqual(["demo.yield"])
   expect(card.transform).toEqual({ kind: "question", metrics: ["Yield"], records: first.members.length, engine: "Computed by the cell's exact engine" })
-  expect(card.receipt).toBeNull()
-  const afterCommit = readDocument<Answer>(demo("answers/scrap-yield.k1-quarantined.answer.json"), "recorded").document
-  expect(bucketProvenance(afterCommit, first, metricLabels(declared), null).receipt)
-    .toEqual({ kind: "head", seq: afterCommit.revision.seq, hash: afterCommit.revision.hash })
+  expect(card.receipt).toEqual({ kind: "head", seq: answer.document.revision.seq, hash: answer.document.revision.hash })
   expect(card.asOf[0]).toEqual({ label: "Known", value: `after ${answer.document.knownAsOf} commit${answer.document.knownAsOf === 1 ? "" : "s"}` })
   expect(card.asOf[1]).toEqual({ label: "Window to", value: answer.document.effectiveAsOf })
 })

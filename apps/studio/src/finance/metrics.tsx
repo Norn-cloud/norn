@@ -1,12 +1,15 @@
 import { Link } from "@tanstack/react-router"
-import { ArrowRight, CalendarDays, Clock3, Waypoints } from "lucide-react"
-import { useState } from "react"
+import { ArrowRight, CalendarDays, ChartLine, Clock3, Waypoints } from "lucide-react"
+import { useEffect, useState } from "react"
 import { Area, AreaChart, CartesianGrid, ReferenceDot, ResponsiveContainer, XAxis, YAxis } from "recharts"
 import { Chip } from "@/components/chip"
+import { PageHeader, Panel, Well } from "@/components/panel"
+import { Button } from "@/components/ui/button"
+import { useInspector } from "@/lib/inspector"
 import { cn } from "@/lib/utils"
 import type { MenuEntry } from "../shell.tsx"
 import { egp } from "./records.ts"
-import { FinanceHeading, Mark } from "./workspace.tsx"
+import { Mark } from "./workspace.tsx"
 
 const headline = "Weekly repayment reconciliation rate (by amount)"
 const settledBatch = { id: "FWR-SET-1027", amount: 150_000, newWeek: "16 Nov 2026", sourcePath: "$.settlement.batch_amount_egp" } as const
@@ -31,114 +34,149 @@ export const financeMetricMenu = (): readonly MenuEntry[] => [
 ]
 
 function Reading({ label, week, description, tone }: {
-  readonly label: string; readonly week: Week; readonly description: string; readonly tone: "blue" | "amber" | "gray"
+  readonly label: string; readonly week: Week; readonly description: string; readonly tone: "gray" | "amber"
 }) {
   return (
-    <div className="space-y-1.5 p-4">
-      <Chip tone={tone} dot={tone !== "gray"}>{label}</Chip>
-      <p className={cn("text-2xl font-semibold tabular-nums", tone === "blue" && "text-tone-blue", tone === "amber" && "text-tone-amber")}>{percent(week)}</p>
-      <p className="text-xs tabular-nums text-foreground/85">{egp(week.reconciled)} / {egp(week.scheduled)}</p>
-      <p className="text-[11px] text-muted-foreground">{description}</p>
+    <div className="space-y-1.5 px-4 py-3.5">
+      <Chip tone={tone} dot={tone === "amber"}>{label}</Chip>
+      <p className={cn("pt-1 text-figure leading-none font-medium tracking-tight tabular-nums", tone === "amber" ? "text-tone-amber" : "text-foreground")}>{percent(week)}</p>
+      <p className="text-meta tabular-nums text-foreground/85">{egp(week.reconciled)} / {egp(week.scheduled)}</p>
+      <p className="text-xs text-muted-foreground">{description}</p>
+    </div>
+  )
+}
+
+function SettlementEvidenceBody() {
+  return (
+    <div aria-label="Fawry settlement evidence" className="divide-y text-meta">
+      <div className="flex items-center gap-2 pb-3">
+        <Mark id="fawry" className="size-5" />
+        <div>
+          <code className="block font-mono text-xs font-medium text-foreground">{settledBatch.id}</code>
+          <span className="text-xs text-muted-foreground">Fawry settlement batch · {egp(settledBatch.amount)}</span>
+        </div>
+      </div>
+      <div className="space-y-1.5 py-3">
+        <p className="text-xs text-muted-foreground">Lineage path</p>
+        <p className="flex flex-wrap items-center gap-1.5 text-xs">
+          <code className="rounded-sm bg-muted px-1.5 py-0.5">{settledBatch.sourcePath}</code>
+          <ArrowRight className="size-3 text-muted-foreground" />
+          <span>Fawry cash collection</span>
+          <ArrowRight className="size-3 text-muted-foreground" />
+          <code className="rounded-sm bg-muted px-1.5 py-0.5">Payment.amount</code>
+        </p>
+      </div>
+      <div className="py-3">
+        <p className="text-xs text-muted-foreground">Impact on week of {released.date}</p>
+        <p className="mt-1 tabular-nums text-foreground">98.00% → 97.50% (−{egp(settledBatch.amount)} moved to {settledBatch.newWeek})</p>
+      </div>
+      <div className="space-y-2.5 pt-3">
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Clock3 className="size-3.5" />Reclassified {corrected.known}</p>
+        <Link to="/sources/$concept/$" params={{ concept: "payment", _splat: settledBatch.id }} className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground underline underline-offset-4">
+          Open payment record <ArrowRight className="size-3.5 text-muted-foreground" />
+        </Link>
+      </div>
     </div>
   )
 }
 
 export function FinanceMetrics() {
   const [selected, setSelected] = useState<(typeof weeks)[number]>(released)
-  const [showEvidence, setShowEvidence] = useState(false)
+  const { inspected, inspect } = useInspector()
   const points = weeks.map((week) => ({ week: week.label, value: rate(week) }))
+
+  useEffect(() => () => inspect(), [inspect])
+
+  const toggleEvidence = () => {
+    if (inspected) inspect()
+    else inspect({ title: `Settlement evidence · ${settledBatch.id}`, body: <SettlementEvidenceBody /> })
+  }
+
   return (
-    <section className="space-y-4">
-      <FinanceHeading title={headline} description="Share of scheduled repayment value matched to settlement evidence, measured in EGP." />
+    <section className="space-y-6">
+      <PageHeader
+        title={headline}
+        meta={<Chip tone="amber" dot>1 correction · 97.50%</Chip>}
+        description="Share of scheduled repayment value matched to settlement evidence, measured in EGP."
+        primary={
+          <Button type="button" size="sm" variant="outline" aria-expanded={inspected !== undefined} onClick={toggleEvidence}>
+            <Waypoints className="size-3.5" />{inspected ? "Hide settlement evidence" : "Open settlement evidence"}
+          </Button>
+        }
+      />
 
-      <section aria-label="Weekly reconciliation trend" className="overflow-hidden rounded-lg border border-border bg-background">
-        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-2.5">
-          <div>
-            <h2 className="text-xs font-semibold text-foreground">Published weekly rate</h2>
-            <p className="text-[11px] text-muted-foreground">Week of {selected.date} · {egp(selected.reconciled)} of {egp(selected.scheduled)}</p>
+      <Panel
+        icon={ChartLine}
+        label="Published weekly rate"
+        action={<span className="text-base font-medium tabular-nums text-foreground">{percent(selected)}</span>}
+      >
+        <Well>
+          <div className="px-4 pt-3 text-xs text-muted-foreground">
+            Week of {selected.date} · {egp(selected.reconciled)} of {egp(selected.scheduled)}
           </div>
-          <p className="text-2xl font-semibold tabular-nums text-tone-blue">{percent(selected)}</p>
-        </header>
-        <div className="p-4">
-          <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={points} margin={{ top: 12, right: 18, left: 0, bottom: 3 }}>
-                <defs>
-                  <linearGradient id="finance-metric-area" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--data-accent)" stopOpacity={0.2} />
-                    <stop offset="100%" stopColor="var(--data-accent)" stopOpacity={0.01} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid vertical={false} stroke="var(--border)" />
-                <XAxis dataKey="week" tickLine={false} axisLine={false} tick={{ fill: "var(--muted-foreground)", fontSize: 10 }} />
-                <YAxis width={35} domain={[95, 99]} ticks={[95, 96, 97, 98, 99]} tickFormatter={(v) => `${v}%`} tickLine={false} axisLine={false} tick={{ fill: "var(--muted-foreground)", fontSize: 10 }} />
-                <Area type="monotone" dataKey="value" stroke="var(--data-accent)" strokeWidth={2} fill="url(#finance-metric-area)" isAnimationActive={false} />
-                <ReferenceDot x={selected.label} y={rate(selected)} r={5} fill="var(--data-accent)" stroke="var(--background)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div aria-label="Weekly reconciliation trend" className="p-4">
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={points} margin={{ top: 12, right: 18, left: 0, bottom: 3 }}>
+                  <defs>
+                    <linearGradient id="finance-metric-area" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.12} />
+                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.01} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="week" tickLine={false} axisLine={false} tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} />
+                  <YAxis width={38} domain={[95, 99]} ticks={[95, 96, 97, 98, 99]} tickFormatter={(v) => `${v}%`} tickLine={false} axisLine={false} tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} />
+                  <Area type="monotone" dataKey="value" stroke="var(--chart-1)" strokeWidth={1.75} fill="url(#finance-metric-area)" isAnimationActive={false} />
+                  <ReferenceDot x={selected.label} y={rate(selected)} r={4.5} fill="var(--chart-1)" stroke="var(--card)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-        </div>
-        <div aria-label="Select week" className="flex flex-wrap gap-1 border-t border-border bg-surface-subtle px-4 py-2">
-          {weeks.map((week) => (
-            <button
-              key={week.label}
-              type="button"
-              aria-pressed={week === selected}
-              onClick={() => setSelected(week)}
-              className={cn(
-                "rounded-sm border px-2.5 py-1 text-xs font-medium transition-colors",
-                week === selected ? "border-data-accent bg-background text-tone-blue" : "border-transparent text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {week.label}
-            </button>
-          ))}
-        </div>
-      </section>
+          <div aria-label="Select week" className="flex flex-wrap gap-1 border-t px-4 py-2">
+            {weeks.map((week) => (
+              <button
+                key={week.label}
+                type="button"
+                aria-pressed={week === selected}
+                onClick={() => setSelected(week)}
+                className={cn(
+                  "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                  week === selected ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {week.label}
+              </button>
+            ))}
+          </div>
+        </Well>
+      </Panel>
 
-      <section id="corrections" aria-labelledby="corrections-title" className="scroll-mt-4 overflow-hidden rounded-lg border border-border bg-background">
-        <header className="border-b border-border bg-surface-subtle px-4 py-2.5">
-          <h2 id="corrections-title" className="flex items-center gap-2 text-xs font-semibold text-foreground">
-            <CalendarDays className="size-3.5 text-tone-blue" />Settlement correction · Week of {released.date}
-          </h2>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">The {egp(settledBatch.amount)} Fawry settlement belongs to the week of {settledBatch.newWeek}.</p>
-        </header>
-        <div className="grid divide-y divide-border md:grid-cols-3 md:divide-x md:divide-y-0">
-          <Reading label="Published" week={released} description={released.known} tone="blue" />
-          <Reading label="Corrected" week={corrected} description={corrected.known} tone="amber" />
-          <Reading label="As known on 16 Nov" week={released} description="Replayed at the original knowledge cutoff." tone="gray" />
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-surface-subtle/60 px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <Mark id="fawry" className="size-5" />
-            <code className="text-xs font-medium">{settledBatch.id}</code>
-            <span className="text-[11px] text-muted-foreground">Fawry settlement batch</span>
+      <Panel
+        id="corrections"
+        icon={CalendarDays}
+        label={`Settlement correction · Week of ${released.date}`}
+        action={`The ${egp(settledBatch.amount)} Fawry settlement belongs to ${settledBatch.newWeek}`}
+        className="scroll-mt-4"
+      >
+        <Well>
+          <div className="grid divide-y md:grid-cols-3 md:divide-x md:divide-y-0">
+            <Reading label="Published" week={released} description={released.known} tone="gray" />
+            <Reading label="Corrected" week={corrected} description={corrected.known} tone="amber" />
+            <Reading label="As known on 16 Nov" week={released} description="Replayed at the original knowledge cutoff." tone="gray" />
           </div>
-          <button
-            type="button"
-            aria-expanded={showEvidence}
-            onClick={() => setShowEvidence(!showEvidence)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-tone-blue hover:border-data-accent"
-          >
-            <Waypoints className="size-3.5" />{showEvidence ? "Hide settlement evidence" : "Open settlement evidence"}
-          </button>
-        </div>
-        {showEvidence && (
-          <div aria-label="Fawry settlement evidence" className="space-y-2 border-t border-border bg-background px-4 py-3 text-xs">
-            <p className="flex flex-wrap items-center gap-1.5">
-              <code className="rounded-xs bg-muted px-1.5 py-0.5">{settledBatch.sourcePath}</code>
-              <ArrowRight className="size-3.5 text-tone-blue" />
-              <span>Fawry cash collection</span>
-              <ArrowRight className="size-3.5 text-tone-blue" />
-              <code className="rounded-xs bg-muted px-1.5 py-0.5">Payment.amount</code>
-            </p>
-            <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><Clock3 className="size-3.5" />Reclassified {corrected.known}</p>
-            <Link to="/sources/$concept/$" params={{ concept: "payment", _splat: settledBatch.id }} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
-              Open payment record <ArrowRight className="size-3.5" />
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2.5 text-meta">
+            <div className="flex items-center gap-2">
+              <Mark id="fawry" className="size-5" />
+              <code className="font-mono text-xs font-medium">{settledBatch.id}</code>
+              <span className="text-xs text-muted-foreground">Fawry settlement batch · {egp(settledBatch.amount)}</span>
+            </div>
+            <Link to="/sources/$concept/$" params={{ concept: "payment", _splat: settledBatch.id }} className="inline-flex items-center gap-1 text-xs font-medium text-foreground hover:underline underline-offset-4">
+              Open payment record <ArrowRight className="size-3.5 text-muted-foreground" />
             </Link>
           </div>
-        )}
-      </section>
+        </Well>
+      </Panel>
     </section>
   )
 }

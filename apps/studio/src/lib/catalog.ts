@@ -1,4 +1,3 @@
-import { financeDemo } from "./finance-demo.ts"
 import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
 import type { Artifact } from "./transport.ts"
 import { labelIndex, pick } from "./labels.ts"
@@ -153,57 +152,7 @@ export interface Catalog {
   readonly byName: ReadonlyMap<string, Concept>
 }
 
-const SYSTEMS = {
-  lms: { name: "Core lending (LMS)", tone: "blue" },
-  "bank-settlement": { name: "Bank settlement", tone: "green" },
-  erpnext: { name: "ERPNext", tone: "blue" },
-  shopify: { name: "Shopify", tone: "green" },
-  odoo: { name: "Odoo", tone: "violet" },
-  excel: { name: "Excel", tone: "teal" },
-  postgresql: { name: "PostgreSQL", tone: "blue" },
-  kafka: { name: "Kafka", tone: "violet" },
-  spark: { name: "Spark", tone: "orange" },
-  iceberg: { name: "Iceberg", tone: "blue" },
-  airflow: { name: "Airflow", tone: "teal" },
-  mlflow: { name: "MLflow", tone: "teal" },
-  "scikit-learn": { name: "scikit-learn", tone: "orange" },
-  gitlab: { name: "GitLab", tone: "orange" },
-  kubernetes: { name: "Kubernetes", tone: "blue" },
-  openshift: { name: "OpenShift", tone: "red" },
-  ollama: { name: "Ollama", tone: "gray" },
-  "power-bi": { name: "Power BI", tone: "amber" },
-  tableau: { name: "Tableau", tone: "blue" },
-  pgvector: { name: "pgvector", tone: "violet" },
-  aws: { name: "AWS", tone: "orange" },
-  python: { name: "Python", tone: "blue" },
-  fastapi: { name: "FastAPI", tone: "teal" },
-  langgraph: { name: "LangGraph", tone: "violet" },
-  grafana: { name: "Grafana", tone: "orange" },
-  salesforce: { name: "Salesforce", tone: "blue" },
-  "i-score": { name: "I-Score", tone: "violet" },
-  instapay: { name: "InstaPay", tone: "violet" },
-  fawry: { name: "Fawry", tone: "amber" },
-  egx: { name: "EGX", tone: "orange" },
-  mcdr: { name: "MCDR", tone: "orange" },
-  fra: { name: "FRA", tone: "green" },
-  scans: { name: "Document scans", tone: "amber" },
-  "norn-connect": { name: "Norn", tone: "violet" },
-} as const
-
-const aliases: Readonly<Record<string, string>> = { erp: "erpnext", postgres: "postgresql", xlsx: "excel", "microsoft excel": "excel" }
-
-export function systemKey(system: string): string {
-  const key = system.replace(/^synthetic-/i, "").toLowerCase()
-  const canonical = Object.hasOwn(aliases, key) ? aliases[key]! : key
-  if (financeDemo && /^(erpnext|odoo|frappe|erp|core lending \(lms\))$/.test(canonical)) return "lms"
-  if (financeDemo && /^(shopify|woocommerce|magento|bigcommerce|prestashop|opencart|bank settlement)$/.test(canonical)) return "bank-settlement"
-  return canonical
-}
-
-const systemStyle = (system: string) => {
-  const key = systemKey(system)
-  return Object.hasOwn(SYSTEMS, key) ? SYSTEMS[key as keyof typeof SYSTEMS] : undefined
-}
+const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo", scans: "Document scans", "norn-connect": "Norn" }
 
 /**
  * Whether the cell itself writes this source: its schema names the instance `cell` (the sync
@@ -214,20 +163,21 @@ export const cellOwned = (system: SourceSystem): boolean => system.schema?.insta
 
 /** `synthetic-erpnext` → `ERPNext`; an unknown system keeps the name the server sent. */
 export function systemName(system: string): string {
-  return systemStyle(system)?.name ?? system.replace(/^synthetic-/i, "")
+  const bare = system.replace(/^synthetic-/, "")
+  return SYSTEM_NAMES[bare] ?? bare
 }
 
-/** Tones for source systems outside the built-in catalog. */
+/** The tones a source system's chip takes: one per system, never the status tones (green, red, gray). */
 const SYSTEM_TONES = ["blue", "teal", "violet", "amber", "pink", "orange"] as const
 
 /**
  * One tone per source system, the same on every page: the known systems in a fixed order, any other
  * by a hash of its name. Display only; it says nothing about the system.
  */
-export function systemTone(system: string): (typeof SYSTEM_TONES)[number] | (typeof SYSTEMS)[keyof typeof SYSTEMS]["tone"] {
-  const known = systemStyle(system)
-  if (known) return known.tone
-  const bare = systemKey(system)
+export function systemTone(system: string): (typeof SYSTEM_TONES)[number] {
+  const bare = system.replace(/^synthetic-/, "")
+  const known = Object.keys(SYSTEM_NAMES).indexOf(bare)
+  if (known >= 0) return SYSTEM_TONES[known % SYSTEM_TONES.length] ?? "blue"
   let hash = 0
   for (const char of bare) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
   return SYSTEM_TONES[hash % SYSTEM_TONES.length] ?? "blue"

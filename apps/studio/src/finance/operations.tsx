@@ -1,15 +1,20 @@
 import { Link, useLocation } from "@tanstack/react-router"
-import { ArrowRight, BadgeCheck, Database, Fingerprint, RotateCcw, Search, Shield, ShieldX, SlidersHorizontal } from "lucide-react"
+import { ArrowRight, BadgeCheck, Database, Fingerprint, Layers, Network, RotateCcw, Search, Shield, ShieldX, SlidersHorizontal } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Chip } from "@/components/chip"
+import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { PageHeader, Panel, Well } from "@/components/panel"
+import { TableCard } from "@/components/table-card"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
-import { AGGREGATES, COMMANDS, isFinanceCommand, type RuleId } from "./behavior.ts"
 import type { MenuEntry } from "../shell.tsx"
+import { AGGREGATES, COMMANDS, isFinanceCommand, type RuleId } from "./behavior.ts"
 import { CLIENT, ROW_COUNT, SYSTEMS, TYPES, type FinanceType, type MarkId } from "./data.ts"
 import { RECORDS } from "./records.ts"
-import { FinanceHeading, SystemDependencies, TypeTile, useFinanceMode } from "./workspace.tsx"
+import { SystemDependencies, TypeTile } from "./workspace.tsx"
 
 type Systems = readonly [MarkId, MarkId, ...MarkId[]]
 
@@ -139,30 +144,30 @@ const objectLabel = (type: RuleObject) => (type === "lease" || type === "gl-entr
 export function RuleScope({ rule }: { readonly rule: Pick<FinanceRule, "guards" | "reads" | "path"> }) {
   const { guards, reads, path } = rule
   return (
-    <dl className="space-y-2.5 text-xs">
+    <dl className="space-y-3 text-meta">
       <div>
-        <dt className="text-[11px] font-medium text-muted-foreground">Guards</dt>
+        <dt className="text-xs text-muted-foreground">Guards</dt>
         <dd className="mt-1 flex flex-wrap gap-1.5">
           {guards.split(", ").map((guard) =>
             isFinanceCommand(guard) ? (
               <Link key={guard} to="/sources/$concept" params={{ concept: COMMANDS[guard].on }} search={{ tab: "commands" }} hash={guard}
-                className="rounded-sm border border-border bg-surface-subtle px-1.5 py-0.5 font-mono text-[11px] font-medium text-tone-blue hover:border-data-accent">
+                className="rounded-sm border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground hover:border-foreground/40">
                 {guard}
               </Link>
             ) : (
-              <code key={guard} className="rounded-sm border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-foreground">{guard}</code>
+              <code key={guard} className="rounded-sm border bg-muted/40 px-1.5 py-0.5 text-xs text-foreground">{guard}</code>
             ),
           )}
         </dd>
       </div>
       <div>
-        <dt className="text-[11px] font-medium text-muted-foreground">Reads ({reads.length} objects)</dt>
-        <dd className="mt-1 flex flex-wrap gap-1">
+        <dt className="text-xs text-muted-foreground">Reads ({reads.length} objects)</dt>
+        <dd className="mt-1 flex flex-wrap gap-1.5">
           {reads.map((type) => {
             const auxiliary = type === "lease" || type === "gl-entry"
             return (
               <Link key={type} to={auxiliary ? `/policies/${type}` : `/sources/${type}`}
-                className="inline-flex items-center rounded-sm border border-border bg-background px-1.5 py-0.5 text-[11px] font-medium text-foreground hover:border-data-accent hover:text-tone-blue">
+                className="inline-flex items-center rounded-sm border bg-card px-1.5 py-0.5 text-xs text-foreground hover:border-foreground/40">
                 {objectLabel(type)}
               </Link>
             )
@@ -170,14 +175,14 @@ export function RuleScope({ rule }: { readonly rule: Pick<FinanceRule, "guards" 
         </dd>
       </div>
       <div>
-        <dt className="text-[11px] font-medium text-muted-foreground">Model path</dt>
-        <dd className="mt-1 rounded-md border border-border bg-surface-subtle px-2.5 py-2 font-mono text-[11px] leading-relaxed text-foreground/85">{path}</dd>
+        <dt className="text-xs text-muted-foreground">Model path</dt>
+        <dd className="mt-1 font-mono text-xs leading-relaxed text-muted-foreground">{path}</dd>
       </div>
     </dl>
   )
 }
 
-/** Snowflake / Retool master-detail Rules workbench: clean scannable table + docked right inspector. */
+/** Flat Snowsight-style master-detail Rules workbench: dense table + hairline side inspector. */
 export function FinanceRules() {
   const hash = useLocation({ select: (location) => location.hash })
   const [filter, setFilter] = useState<"all" | "refused">("all")
@@ -202,164 +207,170 @@ export function FinanceRules() {
   const isDraft = selected.param !== undefined && draftValue !== selected.param.value
 
   return (
-    <section className="space-y-4">
-      <FinanceHeading
+    <section className="space-y-6">
+      <PageHeader
         title="Rules"
-        description="Cross-object invariants enforced before actions commit, with live refusal evidence and draft threshold tuning."
-        actions={
-          <div className="flex items-center gap-2 text-xs">
+        meta={
+          <>
             <Chip tone="green" dot>{RULES.length} active</Chip>
             <Chip tone="red" dot>{refusedCount} refused in sample</Chip>
-          </div>
+          </>
         }
+        description="Cross-object invariants enforced before actions commit, with refusal evidence and draft threshold tuning."
       />
 
-      <div className="grid overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[minmax(0,1fr)_24.5rem]">
-        <div className="flex min-w-0 flex-col">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-subtle px-3.5 py-2">
-            <div role="group" aria-label="Filter rules" className="inline-flex rounded-md border border-border bg-background p-0.5 text-xs">
-              <button type="button" onClick={() => setFilter("all")} className={cn("rounded-sm px-2.5 py-1 font-medium", filter === "all" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>
+      <Panel
+        icon={Shield}
+        label="Cross-object invariants"
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <div role="group" aria-label="Filter rules" className="inline-flex h-7 items-center rounded-md bg-muted p-0.5 text-xs">
+              <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}
+                className="rounded-[0.3125rem] px-2 py-0.5 text-muted-foreground hover:text-foreground aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent">
                 All ({RULES.length})
               </button>
-              <button type="button" onClick={() => setFilter("refused")} className={cn("rounded-sm px-2.5 py-1 font-medium", filter === "refused" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>
+              <button type="button" aria-pressed={filter === "refused"} onClick={() => setFilter("refused")}
+                className="rounded-[0.3125rem] px-2 py-0.5 text-muted-foreground hover:text-foreground aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent">
                 Refusals ({refusedCount})
               </button>
             </div>
-            <label className="relative block w-full max-w-xs sm:w-56">
+            <label className="relative block w-48">
               <span className="sr-only">Search rules</span>
               <Search className="pointer-events-none absolute start-2.5 top-2 size-3.5 text-muted-foreground" />
-              <Input className="h-7 bg-background ps-8 text-xs" placeholder="Filter rules…" value={query} onChange={(e) => setQuery(e.target.value)} />
+              <Input className="h-7 ps-8 text-xs" placeholder="Filter rules…" value={query} onChange={(e) => setQuery(e.target.value)} />
             </label>
           </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-start text-xs" aria-label="Finance rules">
-              <thead>
-                <tr className="border-b border-border bg-surface-subtle/50 text-muted-foreground">
-                  <th className="px-4 py-2 text-start font-medium">Rule</th>
-                  <th className="px-3 py-2 text-start font-medium">Guards</th>
-                  <th className="px-3 py-2 text-start font-medium">Objects</th>
-                  <th className="px-4 py-2 text-end font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
+        }
+      >
+        <Well className="grid lg:grid-cols-[minmax(0,1fr)_23rem]">
+          <div className="min-w-0 overflow-x-auto">
+            <Table aria-label="Finance rules" className="text-meta tabular-nums">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Rule</TableHead>
+                  <TableHead>Guards</TableHead>
+                  <TableHead>Objects</TableHead>
+                  <TableHead className="text-end">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {filtered.map((rule) => {
                   const active = rule.id === selected.id
                   const modified = rule.param !== undefined && draftParams[rule.id] !== undefined && draftParams[rule.id] !== rule.param.value
                   const firstTwo = rule.reads.slice(0, 2).map(objectLabel).join(", ")
                   const extra = rule.reads.length - 2
                   return (
-                    <tr
+                    <TableRow
                       key={rule.id}
                       id={rule.id}
                       onClick={() => setSelectedId(rule.id)}
-                      className={cn("cursor-pointer scroll-mt-4 transition-colors hover:bg-surface-subtle", active && "bg-tone-blue/[0.06]")}
+                      className={cn("cursor-pointer scroll-mt-4", active && "bg-muted/60")}
                     >
-                      <td className={cn("px-4 py-2.5", active && "border-s-2 border-s-data-accent")}>
+                      <TableCell className={cn(active && "border-s-2 border-s-foreground")}>
                         <div className="flex items-center gap-2">
                           <Shield className={cn("size-3.5 shrink-0", rule.refusal ? "text-tone-red" : "text-muted-foreground")} />
                           <span className="font-medium text-foreground">{rule.title}</span>
-                          {modified && <span className="rounded-sm bg-tone-blue/10 px-1.5 py-0.5 text-[10px] font-medium text-tone-blue">Draft</span>}
+                          {modified && <Badge variant="secondary" className="text-[10px]">Draft</Badge>}
                         </div>
-                      </td>
-                      <td className="px-3 py-2.5 font-mono text-[11px] text-muted-foreground">{rule.guards.split(", ")[0]}{rule.guards.includes(",") ? " +1" : ""}</td>
-                      <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">{firstTwo}{extra > 0 ? ` +${extra}` : ""}</td>
-                      <td className="px-4 py-2.5 text-end whitespace-nowrap">
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{rule.guards.split(", ")[0]}{rule.guards.includes(",") ? " +1" : ""}</TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">{firstTwo}{extra > 0 ? ` +${extra}` : ""}</TableCell>
+                      <TableCell className="whitespace-nowrap text-end">
                         {rule.refusal ? <Chip tone="red" dot>1 refused</Chip> : <Chip tone="green" dot>Passed</Chip>}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   )
                 })}
-              </tbody>
-            </table>
-            {filtered.length === 0 && <p className="p-6 text-center text-xs text-muted-foreground">No rules match this filter.</p>}
-          </div>
-        </div>
-
-        <aside aria-label="Rule inspector" className="flex flex-col border-t border-border bg-surface-subtle/35 lg:border-s lg:border-t-0">
-          <div className="flex items-start justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-3">
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold tracking-wider uppercase text-muted-foreground">Rule Inspector</p>
-              <h2 className="mt-0.5 text-sm font-semibold text-foreground">{selected.title}</h2>
-            </div>
-            <Chip tone={selected.refusal ? "red" : "green"} dot>{selected.refusal ? "Refusal recorded" : "Check passed"}</Chip>
+              </TableBody>
+            </Table>
+            {filtered.length === 0 && <p className="p-6 text-center text-meta text-muted-foreground">No rules match this filter.</p>}
           </div>
 
-          <div className="flex-1 space-y-4 p-4">
-            {selected.refusal && (
-              <div className="space-y-1.5 rounded-md border border-tone-red/30 bg-tone-red/[0.04] p-3">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-tone-red">
-                  <ShieldX className="size-3.5 shrink-0" />
-                  <span>{selected.refusal.action}</span>
-                </div>
-                <p className="text-xs font-medium text-foreground">{selected.refusal.reason}</p>
-                <p className="text-[11px] leading-relaxed text-muted-foreground">{selected.refusal.evidence}</p>
-                <Link to={selected.refusal.href} className="inline-flex items-center gap-1 pt-0.5 text-xs font-medium text-tone-blue hover:underline">
-                  Inspect evidence · {selected.refusal.reference}<ArrowRight className="size-3" />
-                </Link>
+          <aside aria-label="Rule inspector" className="flex flex-col border-t bg-surface-subtle/40 lg:border-s lg:border-t-0">
+            <div className="flex items-start justify-between gap-2 border-b px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">Rule inspector</p>
+                <h3 className="mt-0.5 text-sm font-medium text-foreground">{selected.title}</h3>
               </div>
-            )}
-
-            <div className="space-y-1">
-              <p className="text-[11px] font-medium text-muted-foreground">Business invariant</p>
-              <p className="text-xs leading-relaxed text-foreground">{selected.condition}</p>
-              {selected.id === "settlement" && (
-                <Link to="/metrics" hash="corrections" className="inline-flex items-center gap-1 pt-1 text-xs font-medium text-tone-blue hover:underline">
-                  View settlement correction<ArrowRight className="size-3" />
-                </Link>
-              )}
+              <Chip tone={selected.refusal ? "red" : "green"} dot>{selected.refusal ? "Refusal recorded" : "Check passed"}</Chip>
             </div>
 
-            {selected.param && draftValue !== undefined && (
-              <div className="space-y-2 rounded-md border border-border bg-background p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
-                    <SlidersHorizontal className="size-3 text-muted-foreground" />
-                    Rule parameter
-                  </span>
-                  {isDraft && (
-                    <button type="button" onClick={() => setDraftParams((curr) => { const copy = { ...curr }; delete copy[selected.id]; return copy })}
-                      className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
-                      <RotateCcw className="size-3" />Reset
-                    </button>
-                  )}
-                </div>
-                <label className="block space-y-1 text-xs">
-                  <span className="text-muted-foreground">{selected.param.label}</span>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      min={1}
-                      step={selected.param.step ?? 1}
-                      value={draftValue}
-                      onChange={(e) => {
-                        const val = Number(e.target.value)
-                        if (Number.isFinite(val) && val > 0) setDraftParams((curr) => ({ ...curr, [selected.id]: val }))
-                      }}
-                      className="h-8 w-36 font-mono text-xs"
-                    />
-                    <span className="text-xs text-muted-foreground">{selected.param.unit}</span>
+            <div className="flex-1 divide-y px-4 text-meta">
+              {selected.refusal && (
+                <div className="space-y-1.5 py-3.5">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-destructive-text">
+                    <ShieldX className="size-3.5 shrink-0" />
+                    <span>{selected.refusal.action}</span>
                   </div>
-                </label>
-                {isDraft && (
-                  <p role="status" className="text-[11px] text-tone-blue">
-                    Draft preview: {ROW_COUNT.format(draftValue)} {selected.param.unit} (live: {ROW_COUNT.format(selected.param.value)}). Evaluated before publish.
-                  </p>
+                  <p className="font-medium text-foreground">{selected.refusal.reason}</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">{selected.refusal.evidence}</p>
+                  <Link to={selected.refusal.href} className="inline-flex items-center gap-1 pt-0.5 text-xs font-medium text-foreground underline underline-offset-4">
+                    Inspect evidence · {selected.refusal.reference}<ArrowRight className="size-3 text-muted-foreground" />
+                  </Link>
+                </div>
+              )}
+
+              <div className="space-y-1 py-3.5">
+                <p className="text-xs text-muted-foreground">Business invariant</p>
+                <p className="leading-relaxed text-foreground">{selected.condition}</p>
+                {selected.id === "settlement" && (
+                  <Link to="/metrics" hash="corrections" className="inline-flex items-center gap-1 pt-1 text-xs font-medium text-foreground underline underline-offset-4">
+                    View settlement correction<ArrowRight className="size-3 text-muted-foreground" />
+                  </Link>
                 )}
               </div>
-            )}
 
-            <div className="border-t border-border pt-3">
-              <RuleScope rule={selected} />
-            </div>
+              {selected.param && draftValue !== undefined && (
+                <div className="space-y-2 py-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
+                      <SlidersHorizontal className="size-3 text-muted-foreground" />
+                      Rule parameter
+                    </span>
+                    {isDraft && (
+                      <button type="button" onClick={() => setDraftParams((curr) => { const copy = { ...curr }; delete copy[selected.id]; return copy })}
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                        <RotateCcw className="size-3" />Reset
+                      </button>
+                    )}
+                  </div>
+                  <label className="block space-y-1 text-xs">
+                    <span className="text-muted-foreground">{selected.param.label}</span>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        step={selected.param.step ?? 1}
+                        value={draftValue}
+                        onChange={(e) => {
+                          const val = Number(e.target.value)
+                          if (Number.isFinite(val) && val > 0) setDraftParams((curr) => ({ ...curr, [selected.id]: val }))
+                        }}
+                        className="h-8 w-36 font-mono text-xs"
+                      />
+                      <span className="text-xs text-muted-foreground">{selected.param.unit}</span>
+                    </div>
+                  </label>
+                  {isDraft && (
+                    <p role="status" className="text-xs text-tone-amber">
+                      Draft preview: {ROW_COUNT.format(draftValue)} {selected.param.unit} (live: {ROW_COUNT.format(selected.param.value)}). Evaluated before publish.
+                    </p>
+                  )}
+                </div>
+              )}
 
-            <div className="border-t border-border pt-3">
-              <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">Backing systems</p>
-              <SystemDependencies systems={selected.systems} needs={selected.needs} compact />
+              <div className="py-3.5">
+                <RuleScope rule={selected} />
+              </div>
+
+              <div className="py-3.5">
+                <p className="mb-1.5 text-xs text-muted-foreground">Backing systems</p>
+                <SystemDependencies systems={selected.systems} needs={selected.needs} compact />
+              </div>
             </div>
-          </div>
-        </aside>
-      </div>
+          </aside>
+        </Well>
+      </Panel>
     </section>
   )
 }
@@ -377,182 +388,187 @@ export const canRevealSample = (role: MarkingRole) => role === "Auditor"
 
 export function FinanceMarkings() {
   return (
-    <section className="space-y-4">
-      <FinanceHeading
-        title="PII Markings"
+    <section className="space-y-6">
+      <PageHeader
+        title="Markings"
+        meta={<Chip tone="amber" icon={Shield}>Restricted · {MARKING_FIELDS.length} fields</Chip>}
         description="Field-level sensitivity classifications governing what each role can view or reveal across documents and records."
-        actions={
-          <Link to="/examples/$scene" params={{ scene: "document" }} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-tone-blue hover:border-data-accent">
-            Preview in DocTypes<ArrowRight className="size-3.5" />
-          </Link>
+        primary={
+          <Button asChild size="sm">
+            <Link to="/examples/$scene" params={{ scene: "document" }}>Preview in Document mapping</Link>
+          </Button>
         }
       />
-      <div className="overflow-hidden rounded-lg border border-border bg-background">
-        <div className="flex items-center justify-between border-b border-border bg-surface-subtle px-4 py-2.5">
-          <div className="flex items-center gap-2 text-xs font-semibold"><Fingerprint className="size-3.5 text-muted-foreground" />Personally identifiable information</div>
-          <Chip tone="amber" icon={Shield}>Restricted</Chip>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-135 text-start text-xs">
-            <thead>
-              <tr className="border-b border-border bg-surface-subtle/50 text-muted-foreground">
-                <th scope="col" className="px-4 py-2 text-start font-medium">Marked field</th>
-                {MARKING_ROLES.map((role) => <th key={role} scope="col" className="w-[18%] px-4 py-2 text-start font-medium">{role}</th>)}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
+
+      <Panel icon={Fingerprint} label="Personally identifiable information" action="Role reveal policy">
+        <TableCard>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Marked field</TableHead>
+                {MARKING_ROLES.map((role) => <TableHead key={role} className="w-[18%]">{role}</TableHead>)}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {MARKING_FIELDS.map((field) => (
-                <tr key={field.field} className="hover:bg-surface-subtle/60">
-                  <th scope="row" className="px-4 py-2.5 text-start font-medium">
+                <TableRow key={field.field}>
+                  <TableCell>
                     <div className="flex items-center gap-2.5">
                       <TypeTile type={field.type} />
                       <div>
-                        <div className="text-foreground">{field.label}</div>
-                        <code className="text-[11px] font-normal text-muted-foreground">{field.field}</code>
+                        <div className="font-medium text-foreground">{field.label}</div>
+                        <code className="text-xs text-muted-foreground">{field.field}</code>
                       </div>
                     </div>
-                  </th>
+                  </TableCell>
                   {MARKING_ROLES.map((role) => (
-                    <td key={role} className="px-4 py-2.5">
+                    <TableCell key={role}>
                       {canRevealSample(role) ? (
                         <Chip tone="green" icon={BadgeCheck}>Can reveal</Chip>
                       ) : (
                         <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                          <span aria-hidden className="h-2.5 w-6 rounded-xs bg-foreground/85" />Hidden
+                          <span aria-hidden className="h-2.5 w-6 rounded-xs bg-foreground/80" />Hidden
                         </span>
                       )}
-                    </td>
+                    </TableCell>
                   ))}
-                </tr>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            </TableBody>
+          </Table>
+        </TableCard>
+      </Panel>
     </section>
   )
 }
 
 const FEATURED_OBJECTS: readonly FinanceType[] = ["client", "loan", "brokerage-account", "payment", "hardship-case", "regulatory-return"]
 
-/** Clean Palantir OMA + Snowsight Domain Overview: flat KPI strip, refusal table, core object cards, data-eng status bar. */
+/** Calm workbench Home: one StatStrip, refusal table, ruled object directory, quiet data foundation bar. */
 export function FinanceHome() {
-  const { setMode } = useFinanceMode()
   return (
-    <section className="space-y-5">
-      <FinanceHeading
-        title="Overview"
-        description="Lending, payments and brokerage operations as of 22 November 2026 — clean business ontology powered by 7 synced systems."
+    <section className="space-y-6">
+      <PageHeader
+        title="Home"
+        meta="As of 22 Nov 2026"
+        description="Lending, payments, and brokerage operations across 7 connected systems."
+        primary={<Button asChild size="sm"><Link to="/objects/$type" params={{ type: "client" }}>Browse records</Link></Button>}
+        secondary={[
+          { label: "Model & aggregate graph", icon: Network, to: "/model" },
+          { label: "Dataset mapping", icon: Database, to: "/examples/dataset" },
+        ]}
       />
 
-      <div className="grid grid-cols-2 divide-y divide-border overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-4 lg:divide-x lg:divide-y-0">
-        <Link to="/sources" className="block px-4 py-3 transition-colors hover:bg-surface-subtle">
-          <p className="text-[11px] font-medium text-muted-foreground">Business objects</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{Object.keys(TYPES).length}</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">11,872 clients resolved</p>
+      <StatStrip>
+        <Link to="/objects/$type" params={{ type: "client" }} className="block transition-colors hover:bg-muted/40">
+          <KpiTile label="Business objects" value={Object.keys(TYPES).length} sub="11,872 clients resolved" />
         </Link>
-        <Link to="/guarantees" hash="kyc" className="block px-4 py-3 transition-colors hover:bg-surface-subtle">
-          <p className="text-[11px] font-medium text-muted-foreground">Refused actions</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-tone-red">{refusedCount}</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">{RULES.length} active cross-object rules</p>
+        <Link to="/guarantees" hash="kyc" className="block transition-colors hover:bg-muted/40">
+          <KpiTile label="Refused actions" value={<span className="text-destructive-text">{refusedCount}</span>} sub={`${RULES.length} active cross-object rules`} />
         </Link>
-        <Link to="/metrics" hash="corrections" className="block px-4 py-3 transition-colors hover:bg-surface-subtle">
-          <p className="text-[11px] font-medium text-muted-foreground">Weekly reconciliation</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-tone-blue">97.50%</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">1 correction this week (was 98.00%)</p>
+        <Link to="/metrics" hash="corrections" className="block transition-colors hover:bg-muted/40">
+          <KpiTile label="Weekly reconciliation" value="97.50%" sub="1 correction this week (was 98.00%)" />
         </Link>
-        <Link to="/workflows" className="block px-4 py-3 transition-colors hover:bg-surface-subtle">
-          <p className="text-[11px] font-medium text-muted-foreground">Lifecycles &amp; automations</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">5</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">3 state machines · 2 process managers</p>
+        <Link to="/workflows" className="block transition-colors hover:bg-muted/40">
+          <KpiTile label="Lifecycles & automations" value="5" sub="3 state machines · 2 process managers" />
         </Link>
-      </div>
+      </StatStrip>
 
-      <section aria-label="Refused actions" className="overflow-hidden rounded-lg border border-border bg-background">
-        <header className="flex items-center justify-between border-b border-border bg-surface-subtle px-4 py-2.5">
-          <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
-            <ShieldX className="size-3.5 text-tone-red" />Recent guardrail refusals
-          </div>
-          <Link to="/guarantees" className="inline-flex items-center gap-1 text-xs font-medium text-tone-blue hover:underline">
-            All {RULES.length} rules<ArrowRight className="size-3" />
+      <Panel
+        icon={ShieldX}
+        label="Recent guardrail refusals"
+        action={
+          <Link to="/guarantees" className="inline-flex items-center gap-1 font-medium text-foreground hover:underline underline-offset-4">
+            All {RULES.length} rules<ArrowRight className="size-3 text-muted-foreground" />
           </Link>
-        </header>
-        <div className="overflow-x-auto">
-          <table className="w-full text-start text-xs">
-            <thead>
-              <tr className="border-b border-border bg-surface-subtle/40 text-muted-foreground">
-                <th className="px-4 py-2 text-start font-medium">Blocked action</th>
-                <th className="px-4 py-2 text-start font-medium">Invariant</th>
-                <th className="px-4 py-2 text-start font-medium">Reason</th>
-                <th className="px-4 py-2 text-end font-medium">Evidence</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
+        }
+      >
+        <TableCard>
+          <Table aria-label="Refused actions">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Blocked action</TableHead>
+                <TableHead>Invariant</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead className="text-end">Evidence</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {RULES.flatMap((rule) =>
                 rule.refusal ? [
-                  <tr key={rule.id} className="hover:bg-surface-subtle">
-                    <td className="px-4 py-2.5 font-medium text-foreground">{rule.refusal.action}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{rule.title}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{rule.refusal.reason}</td>
-                    <td className="px-4 py-2.5 text-end">
-                      <Link to="/guarantees" hash={rule.id} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
-                        Inspect<ArrowRight className="size-3" />
+                  <TableRow key={rule.id}>
+                    <TableCell className="font-medium text-foreground">{rule.refusal.action}</TableCell>
+                    <TableCell className="text-muted-foreground">{rule.title}</TableCell>
+                    <TableCell className="text-muted-foreground">{rule.refusal.reason}</TableCell>
+                    <TableCell className="text-end">
+                      <Link to="/guarantees" hash={rule.id} className="inline-flex items-center gap-1 font-medium text-foreground hover:underline underline-offset-4">
+                        Inspect<ArrowRight className="size-3 text-muted-foreground" />
                       </Link>
-                    </td>
-                  </tr>,
+                    </TableCell>
+                  </TableRow>,
                 ] : [],
               )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+            </TableBody>
+          </Table>
+        </TableCard>
+      </Panel>
 
-      <section aria-label="Core domain objects" className="space-y-2.5">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Core ontology objects</h2>
-          <Link to="/sources" search={{ view: "graph", model: "aggregates" }} className="inline-flex items-center gap-1 text-xs font-medium text-tone-blue hover:underline">
-            Aggregate boundaries<ArrowRight className="size-3" />
+      <Panel
+        icon={Layers}
+        label="Core objects"
+        action={
+          <Link to="/model" className="inline-flex items-center gap-1 font-medium text-foreground hover:underline underline-offset-4">
+            Aggregate boundaries<ArrowRight className="size-3 text-muted-foreground" />
           </Link>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURED_OBJECTS.map((type) => {
-            const aggRoot = AGGREGATES.some((a) => a.root === type)
-            const recCount = RECORDS.filter((r) => r.type === type).length
-            const ruleCount = RULES.filter((r) => r.reads.includes(type)).length
-            return (
-              <Link key={type} to="/sources/$concept" params={{ concept: type }}
-                className="group flex flex-col justify-between gap-3 rounded-lg border border-border bg-background p-3.5 transition-colors hover:border-data-accent">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <TypeTile type={type} className={aggRoot ? "border-data-accent/40 text-tone-blue" : undefined} />
-                    <div>
-                      <h3 className="text-sm font-semibold text-foreground group-hover:text-tone-blue">{TYPES[type].name}</h3>
-                      <p className="text-[11px] text-muted-foreground">{recCount} sample records</p>
-                    </div>
-                  </div>
-                  {aggRoot && <span className="rounded-sm bg-tone-blue/10 px-1.5 py-0.5 text-[10px] font-medium text-tone-blue">Aggregate root</span>}
-                </div>
-                <div className="flex items-center justify-between border-t border-border pt-2 text-[11px] text-muted-foreground">
-                  <span>{ruleCount} guarding rules</span>
-                  <span className="inline-flex items-center gap-1 font-medium text-foreground/80 group-hover:text-tone-blue">Open<ArrowRight className="size-3" /></span>
-                </div>
-              </Link>
-            )
-          })}
-        </div>
-      </section>
+        }
+      >
+        <TableCard>
+          <Table aria-label="Core domain objects">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Object</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead className="text-end">Guarding rules</TableHead>
+                <TableHead className="text-end">Sample records</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {FEATURED_OBJECTS.map((type) => {
+                const aggRoot = AGGREGATES.some((a) => a.root === type)
+                const recCount = RECORDS.filter((r) => r.type === type).length
+                const ruleCount = RULES.filter((r) => r.reads.includes(type)).length
+                return (
+                  <TableRow key={type}>
+                    <TableCell>
+                      <Link to="/objects/$type" params={{ type }} className="inline-flex items-center gap-2 font-medium text-foreground hover:underline underline-offset-4">
+                        <TypeTile type={type} />
+                        <span>{TYPES[type].plural}</span>
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {aggRoot ? <Badge variant="secondary" className="font-normal">Aggregate root</Badge> : "Entity"}
+                    </TableCell>
+                    <TableCell className="text-end text-muted-foreground">{ruleCount}</TableCell>
+                    <TableCell className="text-end text-muted-foreground">{recCount}</TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </TableCard>
+      </Panel>
 
-      <footer className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-subtle px-4 py-2.5 text-xs">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-meta text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span className="inline-flex items-center gap-1.5 font-medium text-foreground"><Database className="size-3.5 text-muted-foreground" />Data foundation</span>
-          <span><strong className="font-semibold text-foreground">{SYSTEMS.length}</strong> systems synced</span>
-          <span><strong className="font-semibold text-foreground">212</strong> quarantined</span>
-          <Link to="/examples/$scene" params={{ scene: "dataset" }} hash="review" onClick={() => setMode("data")} className="font-medium text-tone-amber hover:underline">
+          <span><strong className="font-medium text-foreground">{SYSTEMS.length}</strong> systems synced</span>
+          <span><strong className="font-medium text-foreground">212</strong> quarantined</span>
+          <Link to="/examples/$scene" params={{ scene: "dataset" }} hash="review" className="font-medium text-tone-amber hover:underline underline-offset-4">
             32 identity reviews pending
           </Link>
         </div>
-        <Link to="/examples/$scene" params={{ scene: "dataset" }} onClick={() => setMode("data")} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
-          Open Data Engineering<ArrowRight className="size-3.5" />
+        <Link to="/sources" className="inline-flex items-center gap-1 font-medium text-foreground hover:underline underline-offset-4">
+          Open Builder sources<ArrowRight className="size-3.5 text-muted-foreground" />
         </Link>
       </footer>
     </section>

@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useCallback, useMemo, useState } from "react"
 import { BaseEdge, EdgeLabelRenderer, Handle, Position, useStore, useStoreApi, type EdgeProps, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import { Network, Trash2 } from "lucide-react"
-import { Chip } from "@/components/chip"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -23,6 +23,8 @@ import { AutomationEditor } from "./automation-canvas.tsx"
 import { words } from "./lib/format.ts"
 import type { Envelope } from "./lib/transport.ts"
 import { EditorShortcuts } from "@/components/keys"
+
+export const SAVE_BLOCKED = "Saving to the server needs its admission and governed-install route, which is not live yet."
 
 type StateNode = Node<{ label: string; flags: string; issues: readonly Issue[] }, "state">
 
@@ -190,7 +192,7 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
     draftKey: `lifecycle:${lifecycle.artifactId}:${lifecycle.index}`,
     label: `${words(lifecycle.objectType)}: ${words(lifecycle.property).toLowerCase()}`,
     // A status canvas opens tidy: the main row straight, side states in a band, the fewest crossings.
-    initial: tidyLifecycle(decompile(envelope, lifecycle), STATE_SPACING), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
+    initial: tidyLifecycle(decompile(envelope, lifecycle), STATE_SPACING), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues, saveBlocked: SAVE_BLOCKED,
     empty: "This lifecycle has no states. Add one to start.",
     nodeSize: () => ({ width: CARD.state, height: cardHeight({}) }),
     tidy: (graph) => tidyLifecycle(graph, STATE_SPACING),
@@ -244,7 +246,7 @@ function Editor({ definitions, envelope, lifecycle }: { readonly definitions: re
     const set = definitions.map((other) => other.artifactId === envelope.artifactId ? compiled.envelope : other)
     const placed = place(checker.data(set).diagnostics.diagnostics, envelope.artifactId, compiled.origins, new Set(graph.nodes.map(({ id }) => id)))
     const found: Issue[] = introduced(placed, baseline).added.map(({ finding: { code, message }, node, edge }) => ({ code, message, ...(node ? { node } : {}), ...(edge ? { edge } : {}) }))
-    return { issues: found, status: found.length === 0 ? <Chip tone="green" dot>Checker: no new findings</Chip> : <Chip tone="red" dot>Checker: {found.length} new {found.length === 1 ? "finding" : "findings"}</Chip> }
+    return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: no new findings</Badge> : <Badge variant="destructive">Checker: {found.length} new {found.length === 1 ? "finding" : "findings"}</Badge> }
   }, [checker.isError, checker.data, baseline, definitions, envelope, lifecycle])
 
   const props = useMemo(() => lifecycleFrame(envelope, lifecycle, issues, baseline?.filter(({ artifactId }) => artifactId === envelope.artifactId) ?? []), [envelope, lifecycle, issues, baseline])
@@ -275,7 +277,7 @@ export function CanvasPageView({ definitions }: { readonly definitions: Definiti
     <section className="space-y-6">
       <div className="space-y-2">
         <h1 className="text-title font-semibold tracking-tight">Canvas</h1>
-        <p className="max-w-2xl text-muted-foreground">Draw how a process moves. The checker validates edits as you make them. Drafts stay in this browser.</p>
+        <p className="max-w-2xl text-muted-foreground">Draw how a process moves. Every change is checked as you make it; saving asks the server, which checks again and decides.</p>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={kind === "lifecycle" && index === chosen ? "default" : "outline"} onClick={() => { setKind("lifecycle"); setChosen(index) }}>{words(ref.objectType)}</Button>)}
