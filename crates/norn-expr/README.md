@@ -16,16 +16,16 @@ The type environment and checker (T1-EXPR-2):
 - Variables: `actor` is always bound to the closed actor operand (#2419): exactly `actorKind`, `subjectId`, `agentSessionId?`, `scope` (`orgId`, optional `tenantId`/`workspaceId`/`environmentId`/`businessUnitId`), `capability`, and the derived `roles` and `authMethod`. A site binds `self` (`bind_self`) and `input` (`bind_input`). Nothing else is ambient.
 - Links expand to `EnvOptions::max_link_depth`, by default the `norn.limits/1` slice relation depth (3); a deeper link is not a member.
 - The environment is content-addressed (Norn1 canonical JSON, SHA-256): `ZenTypeEnv::reference()` is what a checker receipt records. The golden is `tests/golden/retail_env.json`.
-- `check_expression(expr, env, expected)` admits the `norn-expr/4` structural grammar plus the temporal and bounded-string forms in profile `norn-zen/6`, within structural and cost bounds under `norn.limits/1`; `check_expression_with(expr, env, expected, limits)` also returns the expression's static `CostEstimate`. Norn types the admitted grammar itself and then runs zen's strict analysis as a cross-check. Diagnostics carry stable codes (`norn_expr::check::codes::ALL`) and spans. Wire dates and timestamps retain distinct inferred types; parsed temporal Dynamics project to canonical JSON strings. `temporal::validate_date` validates EntityIR dates and `temporal::canonical_timestamp` produces the stored UTC timestamp form.
+- `check_expression(expr, env, expected)` admits the `norn-expr/4` structural grammar plus the temporal, temporal-interval, and bounded-string forms in profile `norn-zen/7`, within structural and cost bounds under `norn.limits/1`; `check_expression_with(expr, env, expected, limits)` also returns the expression's static `CostEstimate`. Norn types the admitted grammar itself and then runs zen's strict analysis as a cross-check. Diagnostics carry stable codes (`norn_expr::check::codes::ALL`) and spans. Wire dates and timestamps retain distinct inferred types; parsed temporal Dynamics project to canonical JSON strings. `temporal::validate_date` validates EntityIR dates and `temporal::canonical_timestamp` produces the stored UTC timestamp form.
 - Unary tests (T1-EXPR-3b): `UnaryTest::compile` compiles a decision-table input cell (the empty cell is the wildcard, which the decision engine skips) and `UnaryTest::evaluate(context, subject, budget)` evaluates it in zen's unary mode with the column value as `$`. `check_unary(test, env, subject_type)` (and `check_unary_with`, which returns the `CostEstimate`) checks it against the column's declared type under the same allowlist; see the unary-test row below.
 
-## Profile `norn-zen/6` (structural grammar `norn-expr/4`)
+## Profile `norn-zen/7` (structural grammar `norn-expr/4`)
 
-The published, versioned profile is the [profile section of this README](#norn-zen-expression--jdm-profile-norn-zen6), between the `profile:start` and `profile:end` markers (`norn-zen/6`, bounded string normalization follow-up to #3116): the structural grammar, engine pin, and error, ordering, numeric, temporal, and string contracts. `CHECKER_PROFILE` is `norn-zen/6`; `tests/profile_conformance.rs` is its conformance suite. The fork enables `deterministic-temporal` and `bounded-strings` alongside the explicit no-default-features profile. The qualified source pin is `norn-v2.0.1-12`; its C12 zip 9 archive-loader update preserves the `norn-zen/6` semantics and explicit features.
+The published, versioned profile is the [profile section of this README](#norn-zen-expression--jdm-profile-norn-zen7), between the `profile:start` and `profile:end` markers (`norn-zen/7`, temporal interval and DST resolution builtins, #1584): the structural grammar, engine pin, and error, ordering, numeric, temporal, and string contracts. `CHECKER_PROFILE` is `norn-zen/7`; `tests/profile_conformance.rs` is its conformance suite. The vendored zen crates carry the pure deterministic Norn profile (`deterministic-temporal`, `bounded-strings`, `metering`, `strict-errors`, `deterministic-maps`, `regex-lite`) plus the pinned IANA timezone database (`jiff-tzdb` 0.1.4, tzdb `2025b`).
 
-Naming-series dates (`naming_series_date_at`) read only IANA tzdb 2025b from the exact-pinned `jiff-tzdb` 0.1.4 (the release `chrono-tz` 0.10.4 had; `NAMING_SERIES_TZDB_VERSION`) through jiff's TZif reader, and accept exactly `chrono-tz` 0.10.4's 597 zone names (`Factory` is refused). After 2099 the zones' DST rules keep applying, where chrono-tz stopped generating transitions.
+Naming-series dates (`naming_series_date_at`) and `resolve_local_timestamp` read only IANA tzdb 2025b from the exact-pinned `jiff-tzdb` 0.1.4 (the release `chrono-tz` 0.10.4 had; `NAMING_SERIES_TZDB_VERSION`) through jiff's TZif reader, and accept exactly `chrono-tz` 0.10.4's 597 zone names (`Factory` is refused). After 2099 the zones' DST rules keep applying, where chrono-tz stopped generating transitions.
 
-### Grammar `norn-expr/4` with the `norn-zen/6` temporal and bounded-string extensions
+### Grammar `norn-expr/4` with the `norn-zen/7` temporal and bounded-string extensions
 
 An allowlist: a small positive grammar in which unsupported nodes and builtins are refused, mostly with `expr.construct.unsupported`. Invalid dynamic temporal text and fractional or overflowing temporal amounts can return typed evaluation errors. Generated soundness tests (`tests/check.rs`) check admitted standard expressions and unary tests against conforming values. `tests/corpus.rs` runs the fork's own zen-expression corpus (`tests/fixtures/zen_corpus.json`): every admitted row must reproduce the corpus output, and the verdict of every row, including the rejection code of every excluded construct, is pinned in `tests/golden/zen_corpus_verdicts.txt` (`NORN_BLESS=1` regenerates it).
 
@@ -40,15 +40,15 @@ An allowlist: a small positive grammar in which unsupported nodes and builtins a
 | comparison | `==`/`!=` on two non-null scalars of one type. Strings and enum values count as one type; same-kind raw temporal properties compare for equality, while parsed temporal values compare semantically. Comparing disjoint literal sets is always-constant and rejected. `< <= > >=` on numbers or same-kind parsed date/timestamp values only |
 | membership | `x in list` / `x not in list` with `x` a non-null bool, number, or string and `list` a non-null list of that scalar kind; disjoint literal sets and `[]` are always-constant (`expr.type.constant_comparison`). `n in [a..b]` (any bracket pair) with numbers `n`, `a`, `b`. A range is admitted only as the right side of `in` |
 | logic | `and`, `or`, `not` on booleans; `c ? a : b` with branches of one type |
-| builtins | `len(string or list)`; `split(string, "")` (Unicode scalars plus empty ends); `lower`/`upper`/`trim(string)`; `contains`/`startsWith`/`endsWith(string, string)`; `tokens(text, 'alnum', maxCount, maxLength)` (integer literals 0..=256); `take(text, maxScalars)` (integer literal 0..=16384); `join(list of strings, separator)` (literal separator ≤256 bytes, output ≤16 KiB); `abs`/`floor`/`ceil(number)`; `round`/`trunc(number[, p])` with `p` an integer literal 0..=28; `sum(list of numbers)`; `date(text)`, `timestamp(text)`, `days_between(date, date)`, `add_days(date, integer)`, `seconds_between(timestamp, timestamp)`, `add_seconds(timestamp, integer)` |
-| closures | `some`/`all`/`none`/`one`/`filter`/`count(list, bool body)`, `map(list, body)` with a non-null body, and `flatMap(list, body)` with a non-null list body (zen splices one level, so the result has the body's element type). Bodies use the same `norn-zen/6` checker profile |
+| builtins | `len(string or list)`; `split(string, "")` (Unicode scalars plus empty ends); `lower`/`upper`/`trim(string)`; `contains`/`startsWith`/`endsWith(string, string)`; `tokens(text, 'alnum', maxCount, maxLength)` (integer literals 0..=256); `take(text, maxScalars)` (integer literal 0..=16384); `join(list of strings, separator)` (literal separator ≤256 bytes, output ≤16 KiB); `abs`/`floor`/`ceil(number)`; `round`/`trunc(number[, p])` with `p` an integer literal 0..=28; `sum(list of numbers)`; `date(text)`, `timestamp(text)`, `days_between(date, date)`, `add_days(date, integer)`, `seconds_between(timestamp, timestamp)`, `add_seconds(timestamp, integer)`, `intervals_overlap(timestamp, timestamp, timestamp, timestamp)`, `interval_gap_seconds(timestamp, timestamp, timestamp, timestamp)`, `interval_intersection_seconds(timestamp, timestamp, timestamp, timestamp)`, `resolve_local_timestamp(localWallTime, ianaTz, dstPolicy)` |
+| closures | `some`/`all`/`none`/`one`/`filter`/`count(list, bool body)`, `map(list, body)` with a non-null body, and `flatMap(list, body)` with a non-null list body (zen splices one level, so the result has the body's element type). Bodies use the same `norn-zen/7` checker profile |
 | unary tests | parts joined by `,` (`or`), `or`, or `and`. zen desugars each part: one starting with a comparison operator compares `$` (`> 5` is `$ > 5`); a list, range, `map`, or `filter` is a membership test (`[1..5]` is `$ in [1..5]`); a boolean-valued part (`$ > 5`, `contains($, 'x')`, `some($, # > 1)`) is used as is; any other value is an equality test (`'gold'` is `$ == 'gold'`). Each desugared part must check as a non-null `bool` under the rules above, so a nullable subject needs `$ == null`, `$ != null`, or `$ ?? fallback`, and a value outside an enum subject is `expr.type.constant_comparison`. Only the empty cell is the wildcard |
 | result | representable as a Norn `Value`: wire temporal values are typed JSON strings; checked temporal Dynamic values project to canonical JSON strings; intervals are not admitted |
 
-Not in `norn-zen/6`:
+Not in `norn-zen/7`:
 - user-defined functions and recursion
 - string templates, slices, indexing other than the in-bounds literal form, dynamic reads
-- ambient clock forms (`d()`, `now`, `today`, `yesterday`), legacy `d(...)` constructors, date methods/ranges, and a range anywhere but the right of `in`
+- ambient clock forms (`d()`, `now`, `today`, `yesterday`), legacy `d(...)` constructors, date methods/ranges, epoch-seconds/millis conversion builtins, and a range anywhere but the right of `in`
 - conversions (`string`/`number`/`bool`)
 - `merge`/`mergeDeep`/`values`/`keys`
 - regex
@@ -81,16 +81,18 @@ Under the placeholder `norn.limits/1` numbers (1,000,000 units for a 256 KiB sli
 
 History: `norn-expr/1` (#2852) was this table without string `+`, `in`/`not in`, ranges under `in`, and literal indexing; T1-EXPR-3a (#2520) added those as `norn-expr/2`. T1-EXPR-3b (#2521) added unary tests (`$`), `one`, and `flatMap`, and made a string key into a list an index read, as `norn-expr/3`. T1-EXPR-4 (#2522) added the structural and cost bounds as `norn-expr/4`; the grammar is unchanged.
 
-The checker, runtime wrapper, static cost estimator, versioned `norn-zen/6` profile, and profile conformance suite are implemented. Compilation alone never implies admission; every typed call site must run the checker for its declared type environment and expected result. Syntax-only JDM admission separately enforces bounded-string literal controls and structural source bounds.
+The checker, runtime wrapper, static cost estimator, versioned `norn-zen/7` profile, and profile conformance suite are implemented. Compilation alone never implies admission; every typed call site must run the checker for its declared type environment and expected result. Syntax-only JDM admission separately enforces bounded-string literal controls and structural source bounds.
 
 Tests: `cargo test -p norn-expr` runs natively. For `wasm32-unknown-unknown`, the CI `wasm32` job builds the crate, and the fork's CI runs the metering unit-count tests on wasm32.
 
 <!-- profile:start -->
-# Norn ZEN Expression / JDM profile `norn-zen/6`
+# Norn ZEN Expression / JDM profile `norn-zen/7`
 
 This is the versioned contract for every ZEN Expression and every JDM decision that Norn admits (T1-EXPR-6, #2766). It is the value of `norn_expr::check::CHECKER_PROFILE`, and `norn-checker` records it in every check receipt (`exprProfile`) beside the type-environment hash. `norn-decisions` records it in each decision's `DecisionBinding`.
 
 **Changing any rule below is a new profile id.** This includes the admitted grammar, a bound, the numeric or error semantics, and any semantic change from an engine update. Qualified compatibility-only source updates retain the profile id and re-pin this document’s hash. `tests/profile_conformance.rs` pins this file's hash together with the id, so a rule change that does not bump the id fails CI.
+
+`norn-zen/7` (2026-11-23, #1584) adds four fail-closed deterministic temporal builtins on top of `norn-zen/6`: half-open proper-interval overlap, gap, and intersection in exact decimal seconds (`intervals_overlap`, `interval_gap_seconds`, `interval_intersection_seconds`), which refuse improper intervals (`start >= end`) with `TemporalError::InvalidInterval`, and `resolve_local_timestamp(localWallTime, ianaTz, dstPolicy)` against the pinned IANA timezone database (`jiff-tzdb` 0.1.4, tzdb `2025b`), refusing nonexistent spring-forward wall times and refusing ambiguous fall-back times under `"reject"`. No epoch-seconds or epoch-milliseconds conversion builtins are admitted.
 
 `norn-zen/6` (2026-10-09, #3116) adds the default-off fork feature `bounded-strings`: bounded ASCII alphanumeric token runs, Unicode-scalar prefixes, and bounded string joins. The syntax-only decision loader enforces all literal controls as well as the typed checker. The S7 release was qualified at `norn-v2.0.1-11`, with native/wasm32 bounded-string and metering parity validated on Boat before publication. The current `norn-v2.0.1-12` source adds C12 zip 9 archive-loader compatibility with no change to this profile’s features or semantics.
 
@@ -111,7 +113,7 @@ Enforcement is Norn's: the `norn-expr` checker (T2 admission), the `norn-checker
 
 ## Grammar and builtins
 
-The admitted grammar is the checker's `norn-zen/6` allowlist (`src/check.rs`, module docs), built on the `norn-expr/4` structural grammar with nullable quotient typing and semantic temporal values. It is a positive grammar; invalid dynamic temporal text and fractional or overflowing temporal amounts can fail with typed evaluation errors. Everything else is `expr.construct.unsupported`.
+The admitted grammar is the checker's `norn-zen/7` allowlist (`src/check.rs`, module docs), built on the `norn-expr/4` structural grammar with nullable quotient typing and semantic temporal values. It is a positive grammar; invalid dynamic temporal text, improper intervals (`start >= end`), unknown IANA zones, nonexistent or rejected-ambiguous DST wall times, and fractional or overflowing temporal amounts can fail with typed evaluation errors. Everything else is `expr.construct.unsupported`.
 
 **Admitted builtins:**
 - `len` (UTF-8 bytes for a string, element count for a list)
@@ -127,11 +129,16 @@ The admitted grammar is the checker's `norn-zen/6` allowlist (`src/check.rs`, mo
 - `date(text)` and `timestamp(text)` (explicitly parse a string or matching typed temporal property)
 - `days_between(date, date)`, `add_days(date, integer)`
 - `seconds_between(timestamp, timestamp)`, `add_seconds(timestamp, integer)`
+- `intervals_overlap(aStart, aEnd, bStart, bEnd)` (half-open `[start, end)` overlap on four parsed timestamps; refuses `start >= end` with `TemporalError::InvalidInterval`)
+- `interval_gap_seconds(aStart, aEnd, bStart, bEnd)` (exact decimal seconds between two proper half-open timestamp intervals; `0` when touching or overlapping; refuses improper intervals)
+- `interval_intersection_seconds(aStart, aEnd, bStart, bEnd)` (exact decimal seconds of overlap between two proper half-open timestamp intervals; `0` when disjoint or touching; refuses improper intervals)
+- `resolve_local_timestamp(localWallTime, ianaTz, dstPolicy)` (resolves an offset-free local wall-clock timestamp `YYYY-MM-DDTHH:MM:SS[.f{1..9}]` against pinned IANA tzdb `2025b` under `"reject"`, `"earlier"`, or `"later"`, returning a parsed UTC timestamp; always refuses nonexistent spring-forward wall times and refuses ambiguous fall-back wall times under `"reject"`)
 - the closures `some`, `all`, `none`, `one`, `filter`, `count`, `map`, `flatMap`
 
 **Never admitted:**
 - `rand`
 - every ambient clock form: `d()`, `now`, `today`, `yesterday`; legacy `d(...)`, date methods, and date ranges
+- epoch-seconds or epoch-milliseconds conversion builtins
 - conversions: `string`, `number`, `bool`
 - `keys`, `values`, `merge`, `mergeDeep`
 - regex: `matches`, `extract`
@@ -167,7 +174,7 @@ Bounded string controls are source literals even at syntax-only JDM sites; dynam
   - Decisions fail with `DecisionError`.
 - **Zero effects:** a failing decision has zero effects.
 - **Strict tables and switches:** a decision-table cell or switch condition that fails, or is not a boolean, aborts the decision (`strict-errors`). It never falls through to another row or branch.
-- **Temporal errors:** invalid dynamic input to `date`/`timestamp`, fractional dynamic arithmetic amounts, integer conversion overflow, checked arithmetic overflow, and result years outside `0001..9999` are typed fatal `ExprError::Evaluation`s. Static invalid temporal literals and fractional literal amounts are refused by the checker. Budget exhaustion remains typed and fatal.
+- **Temporal errors:** invalid dynamic input to `date`/`timestamp`/`resolve_local_timestamp`, improper intervals (`start >= end`) in `intervals_overlap`/`interval_gap_seconds`/`interval_intersection_seconds`, unknown IANA zones, nonexistent DST spring-forward wall times, ambiguous DST fall-back wall times under `"reject"`, fractional dynamic arithmetic amounts, integer conversion overflow, checked arithmetic overflow, and result years outside `0001..9999` are typed fatal `ExprError::Evaluation`s. Static invalid temporal/local-timestamp/timezone/DST-policy literals and fractional literal amounts are refused by the checker. Budget exhaustion remains typed and fatal.
 
 ## Ordering
 
@@ -192,8 +199,8 @@ Bounded string controls are source literals even at syntax-only JDM sites; dynam
 
 ## Temporal validation and fork boundary
 
-- No host clock, host timezone, or zone database is admitted. `date`/`timestamp` parse explicitly using the fork's pure deterministic implementation. Valid entity timestamps are canonicalized before guards run; shared temporal property invariants validate stored values, while invalid observations remain source evidence for findings. Typed entity-expression sites receive invariant-conforming committed JSON strings.
-- Date and timestamp validation uses the exact-pinned `jiff` 0.2.37 crate with default features disabled and `std` only. No clock, locale, or timezone database is consulted.
+- No host clock, host timezone, or host zoneinfo is admitted. `date`/`timestamp` parse explicitly using the vendored engine's pure deterministic implementation, and `resolve_local_timestamp` consults only the exact-pinned IANA timezone database (`jiff-tzdb` 0.1.4, tzdb `2025b`, accepting the 597 canonical zones excluding `Factory`). Valid entity timestamps are canonicalized before guards run; shared temporal property invariants validate stored values, while invalid observations remain source evidence for findings. Typed entity-expression sites receive invariant-conforming committed JSON strings.
+- Date, timestamp, and local wall-time validation uses the exact-pinned `jiff` 0.2.37 crate (`default-features = false`, `features = ["std"]`) and `jiff-tzdb` 0.1.4 (`default-features = false`). No clock, locale, or host zoneinfo is consulted.
 - Both timestamp timezone policies store the same canonical UTC instant. Explicit offsets are required; `-00:00` is rejected because it denotes an unknown offset. Leap seconds and precision beyond nanoseconds are refused rather than discarded. Normalization outside years `0000`–`9999` is rejected.
 - The pinned ZEN fork's S5 `Compare` opcode supports numbers and same-kind Dynamic temporal pairs; ordinary strings are never parsed implicitly. The checker keeps wire and parsed kinds separate, and the public Norn boundary converts only registered `Temporal` Dynamics into canonical strings.
 - `norn-expr` typed entity/invariant sites run this checker and reject raw-wire or mixed temporal ordering at admission. JDM graph expression admission remains syntax-only (T3-DEC-3): malformed temporal operands may therefore fail at S5 runtime with a typed error and zero effects; this adoption does not add JDM graph type-checking.
@@ -209,7 +216,7 @@ Bounded string controls are source literals even at syntax-only JDM sites; dynam
 
 ## Bounds and metering
 
-Structural bounds (`StructuralLimits::NORN_EXPR_4`) and the static cost bound against the decide fuel of `norn.limits/1` are part of the profile (T1-EXPR-4). Evaluation is always metered. Temporal parsing pays the input text's shallow byte length plus the call opcode; each temporal arithmetic builtin pays argument shallow sizes, `cost::TEMPORAL_ARITHMETIC = 8`, and the opcode. Temporal result copy bounds use canonical string lengths (10 bytes for dates and at most 30 for timestamps).
+Structural bounds (`StructuralLimits::NORN_EXPR_4`) and the static cost bound against the decide fuel of `norn.limits/1` are part of the profile (T1-EXPR-4). Evaluation is always metered. Temporal parsing pays the input text's shallow byte length plus the call opcode; each temporal arithmetic or interval builtin pays argument shallow sizes, `cost::TEMPORAL_ARITHMETIC = 8`, and the opcode; `resolve_local_timestamp` pays argument shallow sizes, `cost::TEMPORAL_TZ_RESOLVE = 16`, and the opcode. Temporal result copy bounds use canonical string lengths (10 bytes for dates and at most 30 for timestamps).
 
 ## Conformance
 

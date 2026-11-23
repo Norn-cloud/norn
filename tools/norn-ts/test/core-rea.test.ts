@@ -38,13 +38,14 @@ test("checked-in core physics artifacts are exactly the compiler's output", () =
 // The primitives depend only on the shared value types. The rest of the public
 // registry is not a closed set yet (core.Order names core.Party), so it is not
 // part of this admission.
-const VALUE_TYPES = new Set(["core.value_types.entity", "std.value_types.entity"])
+const VALUE_TYPES = new Set(["core.value_types.entity", "std.value_types.entity", "core.time"])
 
-test.skipIf(!checker)("Rust admits the core physics interfaces over the shared value types", () => {
+test.skipIf(!checker)("Rust admits the core physics and temporal interfaces over the shared value types", () => {
   const compiled = pack()
   const base = compiled.baseArtifacts.filter((artifact) => VALUE_TYPES.has((artifact as { artifactId: string }).artifactId))
   expect(base.length).toBe(VALUE_TYPES.size)
-  const report = checkPack(checker!, JSON.parse(JSON.stringify(fromModule(compiled, "rea.ts"))), JSON.parse(JSON.stringify(base)))
+  const interfaces = [...fromModule(compiled, "rea.ts"), ...fromModule(compiled, "time.ts")]
+  const report = checkPack(checker!, JSON.parse(JSON.stringify(interfaces)), JSON.parse(JSON.stringify(base)))
   expect(report.diagnostics.diagnostics).toEqual([])
   expect(report.admitted).toBe(true)
 })

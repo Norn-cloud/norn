@@ -112,7 +112,7 @@ pub use bounds::StructuralLimits;
 /// The checker profile: the admitted grammar documented in this module, its
 /// structural bounds ([`StructuralLimits::NORN_EXPR_4`]), and the static cost
 /// bound against the limit profile's decide budget.
-pub const CHECKER_PROFILE: &str = "norn-zen/6";
+pub const CHECKER_PROFILE: &str = "norn-zen/7";
 
 /// Stable diagnostic codes of [`check_expression`].
 pub mod codes {
@@ -2016,6 +2016,50 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn local_timestamp_text(&mut self, node: &Node<'_>) -> Option<()> {
+        self.string(node)?;
+        if let Node::String(text) = unparenthesized(node)
+            && crate::temporal::validate_local_timestamp(text).is_err()
+        {
+            return self.report(
+                node,
+                codes::TYPE_ERROR,
+                "`resolve_local_timestamp` needs a valid offset-free local wall timestamp literal YYYY-MM-DDTHH:MM:SS[.f{1..9}] in years 0001..9999".to_owned(),
+            );
+        }
+        Some(())
+    }
+
+    fn iana_timezone_text(&mut self, node: &Node<'_>) -> Option<()> {
+        self.string(node)?;
+        if let Node::String(text) = unparenthesized(node)
+            && crate::temporal::validate_timezone(text).is_err()
+        {
+            return self.report(
+                node,
+                codes::TYPE_ERROR,
+                "`resolve_local_timestamp` needs a canonical IANA timezone in the pinned database"
+                    .to_owned(),
+            );
+        }
+        Some(())
+    }
+
+    fn dst_policy_text(&mut self, node: &Node<'_>) -> Option<()> {
+        self.string(node)?;
+        if let Node::String(text) = unparenthesized(node)
+            && crate::temporal::DstPolicy::parse(text).is_err()
+        {
+            return self.report(
+                node,
+                codes::TYPE_ERROR,
+                "`resolve_local_timestamp` needs DST policy 'reject', 'earlier', or 'later'"
+                    .to_owned(),
+            );
+        }
+        Some(())
+    }
+
     fn boolean(&mut self, node: &Node<'_>) -> Option<()> {
         match self.value(node, Some(&T::Bool))? {
             T::Bool => Some(()),
@@ -2762,6 +2806,39 @@ impl<'a> Checker<'a> {
                 let timestamp = self.parsed_temporal(first?, false);
                 let amount = self.temporal_amount(arguments.get(1)?);
                 timestamp.and(amount).map(|()| T::ParsedTimestamp)
+            }
+            F::IntervalsOverlap => {
+                self.arity(node, arguments, 4)?;
+                let a_start = self.parsed_temporal(first?, false);
+                let a_end = self.parsed_temporal(arguments.get(1)?, false);
+                let b_start = self.parsed_temporal(arguments.get(2)?, false);
+                let b_end = self.parsed_temporal(arguments.get(3)?, false);
+                a_start.and(a_end).and(b_start).and(b_end).map(|()| T::Bool)
+            }
+            F::IntervalGapSeconds | F::IntervalIntersectionSeconds => {
+                self.arity(node, arguments, 4)?;
+                let a_start = self.parsed_temporal(first?, false);
+                let a_end = self.parsed_temporal(arguments.get(1)?, false);
+                let b_start = self.parsed_temporal(arguments.get(2)?, false);
+                let b_end = self.parsed_temporal(arguments.get(3)?, false);
+                a_start
+                    .and(a_end)
+                    .and(b_start)
+                    .and(b_end)
+                    .map(|()| T::Number(Operand::Dimensionless))
+            }
+            F::ResolveLocalTimestamp => {
+                self.arity(node, arguments, 3)?;
+                let local_arg = first?;
+                let tz_arg = arguments.get(1)?;
+                let policy_arg = arguments.get(2)?;
+                let local_ok = self.local_timestamp_text(local_arg);
+                let tz_ok = self.iana_timezone_text(tz_arg);
+                let policy_ok = self.dst_policy_text(policy_arg);
+                local_ok
+                    .and(tz_ok)
+                    .and(policy_ok)
+                    .map(|()| T::ParsedTimestamp)
             }
             F::Len => {
                 self.arity(node, arguments, 1)?;

@@ -1916,6 +1916,69 @@ fn interface_invariants_defer_parent_member_typing_until_artifact_set_admission(
 }
 
 #[test]
+fn interface_invariants_defer_property_ref_typing_locally_and_enforce_with_catalog() {
+    let valid_def: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.Window",
+        "role": "happening",
+        "properties": [
+            {"id": "starts_at", "type": {"kind": "ref", "name": "test.instant"}},
+            {"id": "ends_at", "type": {"kind": "ref", "name": "test.instant"}}
+        ],
+        "invariants": [{
+            "id": "proper",
+            "expression": "timestamp(self.starts_at) < timestamp(self.ends_at)",
+            "message": "starts_at must precede ends_at"
+        }]
+    }))
+    .expect("interface");
+    assert_eq!(norn_checker::check_interface_local(&valid_def), []);
+
+    let invalid_def: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.BadWindow",
+        "role": "happening",
+        "properties": [
+            {"id": "starts_at", "type": {"kind": "ref", "name": "test.instant"}},
+            {"id": "ends_at", "type": {"kind": "ref", "name": "test.instant"}}
+        ],
+        "invariants": [{
+            "id": "raw_order",
+            "expression": "self.starts_at < self.ends_at",
+            "message": "raw timestamp ordering is refused"
+        }]
+    }))
+    .expect("interface");
+    let catalog: Vec<norn_ir::PropertyTypeDef> = serde_json::from_value(serde_json::json!([{
+        "name": "test.instant",
+        "type": {"kind": "timestamp", "timezone": "utc"}
+    }]))
+    .expect("catalog");
+    let registry = std::collections::BTreeSet::new();
+    let context = norn_checker::EntityContext {
+        catalog: &catalog,
+        registry: &registry,
+        base: norn_checker::EntityModel::EMPTY,
+        tenant: None,
+    };
+    let ok_model = norn_checker::EntityModel {
+        interfaces: std::slice::from_ref(&valid_def),
+        ..norn_checker::EntityModel::EMPTY
+    };
+    assert_eq!(norn_checker::check_entity_model(&ok_model, &context), []);
+
+    let bad_model = norn_checker::EntityModel {
+        interfaces: std::slice::from_ref(&invalid_def),
+        ..norn_checker::EntityModel::EMPTY
+    };
+    let bad_findings = norn_checker::check_entity_model(&bad_model, &context);
+    assert!(
+        bad_findings
+            .iter()
+            .any(|f| f.code == codes::INVALID_INVARIANT_EXPRESSION),
+        "expected raw timestamp ordering to fail with catalog; got {bad_findings:?}"
+    );
+}
+
+#[test]
 fn inverse_roles_cannot_shadow_members_of_descendant_interfaces_without_implementers() {
     let model = serde_json::json!({"interfaces":[
         {"name":"test.Parent"},

@@ -109,7 +109,7 @@ const ORDER: &str = "commerce.SalesOrder";
 
 #[test]
 fn profile_and_codes_are_registered() {
-    assert_eq!(CHECKER_PROFILE, "norn-zen/6");
+    assert_eq!(CHECKER_PROFILE, "norn-zen/7");
     let mut unique = codes::ALL.to_vec();
     unique.sort_unstable();
     unique.dedup();

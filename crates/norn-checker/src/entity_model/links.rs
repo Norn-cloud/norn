@@ -36,6 +36,7 @@ use norn_ir::identifier_limits::{MAX_LINK_NAME_BYTES, MAX_OBJECT_TYPE_NAME_BYTES
 use norn_ir::{
     ExtensionNamespace, InterfaceDef, InterfaceLink, InterfaceName, Invariant, Link,
     LinkCardinality, Multiplicity, ObjectTypeDef, ObjectTypeExtension, ObjectTypeName, Property,
+    PropertyType, PropertyTypeDef, PropertyTypeName,
 };
 
 use super::Checker;
@@ -1333,6 +1334,13 @@ impl<'a> Checker<'a, '_> {
         {
             return;
         }
+        // A per-artifact check also has no property-type catalog (`catalog` is
+        // empty), which would turn `ref` properties into opaque `json-ext`
+        // placeholders; defer member typing until the catalog is available
+        // (and genuinely missing refs are already refused as `unknown_ref`).
+        if self.subject_has_unresolved_property_ref(subject) {
+            return;
+        }
         let (detail, cross_object_link) = self.invariant_expression_detail(&expression, subject);
         let Some(detail) = detail else {
             return;
@@ -1353,6 +1361,34 @@ impl<'a> Checker<'a, '_> {
             message,
             span_at(at, &["expression"]),
         ));
+    }
+
+    fn subject_has_unresolved_property_ref(&self, subject: InvariantSubject<'_>) -> bool {
+        let unresolved = |property_type: &PropertyType| {
+            let mut seen = BTreeSet::new();
+            property_type_has_unresolved_ref(
+                property_type,
+                self.context.catalog,
+                self.context.registry,
+                &mut seen,
+            )
+        };
+        match subject {
+            InvariantSubject::Object(name) => self.types.get(name).is_some_and(|entry| {
+                entry
+                    .def
+                    .properties
+                    .iter()
+                    .any(|property| unresolved(&property.property_type))
+            }),
+            InvariantSubject::Interface(name) => self.interfaces.get(name).is_some_and(|entry| {
+                entry
+                    .def
+                    .properties
+                    .iter()
+                    .any(|property| unresolved(&property.property_type))
+            }),
+        }
     }
 
     fn invariant_expression_detail(
@@ -1496,6 +1532,39 @@ impl<'a> Checker<'a, '_> {
             self.context.registry,
             norn_expr::EnvOptions::default(),
         )
+    }
+}
+
+fn property_type_has_unresolved_ref(
+    property_type: &PropertyType,
+    catalog: &[PropertyTypeDef],
+    registry: &BTreeSet<PropertyTypeName>,
+    seen: &mut BTreeSet<String>,
+) -> bool {
+    match property_type {
+        PropertyType::Ref { name, .. } => {
+            if !seen.insert(name.as_str().to_owned()) {
+                return false;
+            }
+            if let Some(def) = catalog.iter().find(|def| &def.name == name) {
+                property_type_has_unresolved_ref(&def.property_type, catalog, registry, seen)
+            } else {
+                !registry.contains(name)
+            }
+        }
+        PropertyType::Record { members } => members.iter().any(|member| {
+            property_type_has_unresolved_ref(&member.property_type, catalog, registry, seen)
+        }),
+        PropertyType::Text { .. }
+        | PropertyType::Integer { .. }
+        | PropertyType::Decimal { .. }
+        | PropertyType::DecimalBinding { .. }
+        | PropertyType::Boolean { .. }
+        | PropertyType::Timestamp { .. }
+        | PropertyType::Date { .. }
+        | PropertyType::Duration { .. }
+        | PropertyType::Enum { .. }
+        | PropertyType::JsonExt { .. } => false,
     }
 }
 

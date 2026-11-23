@@ -12,11 +12,12 @@ use std::fmt;
 use std::ops::Range;
 
 use jiff::civil::{Date, DateTime, Time};
-use jiff::tz::TimeZone;
+use jiff::tz::{AmbiguousOffset, TimeZone};
 use jiff::{Span, Timestamp};
 
 /// IANA timezone database release of the exact-pinned `jiff-tzdb` data (the
-/// only timezone data used here), for naming-series allocation provenance.
+/// only timezone data used here), for naming-series allocation and local
+/// timestamp resolution provenance.
 /// It is the release `chrono-tz` 0.10.4 had; moving it is #1440.
 pub const NAMING_SERIES_TZDB_VERSION: &str = "2025b";
 
@@ -25,6 +26,45 @@ pub const NAMING_SERIES_TZDB_VERSION: &str = "2025b";
 /// `chrono-tz` 0.10.4's 597.
 const NOT_A_CHRONO_TZ_ZONE: &str = "Factory";
 
+/// Explicit disambiguation policy for local wall-clock times during a DST
+/// fall-back fold (`TIME-DST`). Nonexistent spring-forward gaps are always
+/// refused regardless of policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DstPolicy {
+    /// Refuse ambiguous fall-back wall times.
+    Reject,
+    /// Select the earlier UTC instant (pre-transition offset).
+    Earlier,
+    /// Select the later UTC instant (post-transition offset).
+    Later,
+}
+
+impl DstPolicy {
+    /// Parses a wire DST policy identifier (`"reject"`, `"earlier"`, or `"later"`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::InvalidDstPolicy`] for any other spelling.
+    pub fn parse(value: &str) -> Result<Self, TemporalError> {
+        match value {
+            "reject" => Ok(Self::Reject),
+            "earlier" => Ok(Self::Earlier),
+            "later" => Ok(Self::Later),
+            _ => Err(TemporalError::InvalidDstPolicy),
+        }
+    }
+
+    /// Returns the canonical wire spelling of this policy.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Reject => "reject",
+            Self::Earlier => "earlier",
+            Self::Later => "later",
+        }
+    }
+}
+
 /// A temporal value did not satisfy the supported wire representation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TemporalError {
@@ -32,8 +72,17 @@ pub enum TemporalError {
     InvalidDate,
     /// The value is not a supported RFC 3339 timestamp with a known offset.
     InvalidTimestamp,
+    /// The value is not an offset-free local wall-clock timestamp in
+    /// `YYYY-MM-DDTHH:MM:SS[.f{1..9}]` form in years `0001..9999`.
+    InvalidLocalTimestamp,
     /// The supplied timezone is absent from the pinned IANA timezone data.
     InvalidTimezone,
+    /// The supplied DST policy is not `"reject"`, `"earlier"`, or `"later"`.
+    InvalidDstPolicy,
+    /// The local wall time falls in a DST spring-forward gap and does not exist.
+    NonexistentLocalTime,
+    /// The local wall time is ambiguous in a DST fall-back fold under `"reject"`.
+    AmbiguousLocalTime,
     /// The instant does not resolve to a date with a four-digit year.
     InstantOutOfRange,
 }
@@ -45,8 +94,20 @@ impl fmt::Display for TemporalError {
             Self::InvalidTimestamp => f.write_str(
                 "expected an RFC 3339 timestamp with a known explicit offset and at most nanosecond precision",
             ),
+            Self::InvalidLocalTimestamp => f.write_str(
+                "expected an offset-free local wall timestamp YYYY-MM-DDTHH:MM:SS[.f{1..9}] in years 0001..9999",
+            ),
             Self::InvalidTimezone => {
                 f.write_str("expected a timezone in the pinned IANA timezone database")
+            }
+            Self::InvalidDstPolicy => {
+                f.write_str("expected DST policy 'reject', 'earlier', or 'later'")
+            }
+            Self::NonexistentLocalTime => {
+                f.write_str("local wall time does not exist in this timezone (DST spring-forward gap)")
+            }
+            Self::AmbiguousLocalTime => {
+                f.write_str("local wall time is ambiguous in this timezone (DST fall-back fold)")
             }
             Self::InstantOutOfRange => {
                 f.write_str("instant must resolve to a local date with a four-digit year")
@@ -76,6 +137,106 @@ pub struct NamingSeriesDate {
 /// present in that database.
 pub fn validate_timezone(timezone: &str) -> Result<(), TemporalError> {
     pinned_timezone(timezone).map(|_| ())
+}
+
+/// Validates an offset-free local wall-clock timestamp in years `0001..9999`.
+///
+/// # Errors
+///
+/// Returns [`TemporalError::InvalidLocalTimestamp`] when the spelling, date,
+/// clock field, or fractional precision is invalid, or when an offset or `Z`
+/// suffix is present.
+pub fn validate_local_timestamp(value: &str) -> Result<(), TemporalError> {
+    local_wall_datetime(value).map(|_| ())
+}
+
+/// Resolves an offset-free local wall-clock timestamp in a pinned IANA
+/// timezone under an explicit DST policy, returning its canonical UTC RFC 3339
+/// timestamp (`TIME-PIN-1`, `TIME-DST`).
+///
+/// Nonexistent spring-forward wall times are always refused with
+/// [`TemporalError::NonexistentLocalTime`]. Ambiguous fall-back wall times are
+/// refused under [`DstPolicy::Reject`] and disambiguated deterministically
+/// under [`DstPolicy::Earlier`] or [`DstPolicy::Later`].
+///
+/// # Errors
+///
+/// Returns [`TemporalError::InvalidLocalTimestamp`],
+/// [`TemporalError::InvalidTimezone`],
+/// [`TemporalError::NonexistentLocalTime`],
+/// [`TemporalError::AmbiguousLocalTime`], or
+/// [`TemporalError::InstantOutOfRange`].
+pub fn resolve_local_timestamp(
+    local_wall_time: &str,
+    iana_timezone: &str,
+    policy: DstPolicy,
+) -> Result<String, TemporalError> {
+    let local = local_wall_datetime(local_wall_time)?;
+    let timezone = pinned_timezone(iana_timezone)?;
+    let offset = match timezone.to_ambiguous_timestamp(local).offset() {
+        AmbiguousOffset::Unambiguous { offset } => offset,
+        AmbiguousOffset::Gap { .. } => return Err(TemporalError::NonexistentLocalTime),
+        AmbiguousOffset::Fold { before, after } => match policy {
+            DstPolicy::Reject => return Err(TemporalError::AmbiguousLocalTime),
+            DstPolicy::Earlier => before,
+            DstPolicy::Later => after,
+        },
+    };
+    let offset_seconds = i64::from(offset.seconds())
+        .checked_neg()
+        .ok_or(TemporalError::InstantOutOfRange)?;
+    let utc = shift(local, offset_seconds).ok_or(TemporalError::InstantOutOfRange)?;
+    if !(1..=9_999).contains(&utc.year()) {
+        return Err(TemporalError::InstantOutOfRange);
+    }
+    rfc3339_utc(&utc).map_err(|_error| TemporalError::InstantOutOfRange)
+}
+
+fn local_wall_datetime(value: &str) -> Result<DateTime, TemporalError> {
+    const INVALID: TemporalError = TemporalError::InvalidLocalTimestamp;
+    let bytes = value.as_bytes();
+    if !(19..=29).contains(&bytes.len())
+        || !value.is_ascii()
+        || bytes.get(4) != Some(&b'-')
+        || bytes.get(7) != Some(&b'-')
+        || bytes.get(10) != Some(&b'T')
+        || bytes.get(13) != Some(&b':')
+        || bytes.get(16) != Some(&b':')
+    {
+        return Err(INVALID);
+    }
+    let date = calendar_date(bytes).ok_or(INVALID)?;
+    if !(1..=9_999).contains(&date.year()) {
+        return Err(INVALID);
+    }
+    let field = |range: Range<usize>| number(bytes, range).ok_or(INVALID);
+    let (hour, minute, second) = (field(11..13)?, field(14..16)?, field(17..19)?);
+    let nanos = if bytes.len() > 19 {
+        if bytes.get(19) != Some(&b'.') {
+            return Err(INVALID);
+        }
+        let frac_len = bytes.len().checked_sub(20).ok_or(INVALID)?;
+        if !(1..=9).contains(&frac_len) {
+            return Err(INVALID);
+        }
+        let scale = 10_i32
+            .checked_pow(
+                u32::try_from(9_usize.checked_sub(frac_len).ok_or(INVALID)?)
+                    .map_err(|_error| INVALID)?,
+            )
+            .ok_or(INVALID)?;
+        field(20..bytes.len())?.checked_mul(scale).ok_or(INVALID)?
+    } else {
+        0
+    };
+    let time = Time::new(
+        i8::try_from(hour).map_err(|_error| INVALID)?,
+        i8::try_from(minute).map_err(|_error| INVALID)?,
+        i8::try_from(second).map_err(|_error| INVALID)?,
+        nanos,
+    )
+    .map_err(|_error| INVALID)?;
+    Ok(date.to_datetime(time))
 }
 
 /// The pinned database's zone with exactly this identifier. `jiff_tzdb::get`

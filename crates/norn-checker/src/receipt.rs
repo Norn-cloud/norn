@@ -91,6 +91,7 @@ const HISTORIC_ADMISSION_PROFILES: &[(&str, &str)] = &[
     ("0.1.0", "norn-zen/3"),
     ("0.1.0", "norn-zen/4"),
     ("0.1.0", "norn-zen/5"),
+    ("0.2.0", "norn-zen/6"),
 ];
 
 /// Checker 0.1.0 receipts bound complete envelopes, including inline JDM
