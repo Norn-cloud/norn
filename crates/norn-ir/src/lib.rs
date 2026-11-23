@@ -192,8 +192,8 @@ pub use layout::{
 };
 pub use limit_profile::{
     DecideBudget, EnvelopeLimits, HelperLimits, LIMIT_PROFILE_HASH_PROFILE, LimitProfileRef,
-    MemoryLimits, NORN_LIMITS_PROFILE_ID, NORN_LIMITS_V1_SHA256, NORN_LIMITS_V1_VERSION,
-    QuestionLimits, ResourceLimitProfile, SliceLimits, TurnBudget,
+    MAX_SQLITE_COLUMNS_PER_TABLE, MemoryLimits, NORN_LIMITS_PROFILE_ID, NORN_LIMITS_V1_SHA256,
+    NORN_LIMITS_V1_VERSION, QuestionLimits, ResourceLimitProfile, SliceLimits, TurnBudget,
 };
 pub use lineage::{
     DecisionRef, LineageCommit, LineageInput, LineageLink, LineageObject, LineageObservation,
