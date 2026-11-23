@@ -20,7 +20,7 @@
         "reviewedAt": "2026-11-23T00:00:00Z",
         "reviewedBy": "hr-vertical (agent, proposed)",
         "toTermIds": [
-          "norn.core.agent"
+          "norn.org.person"
         ]
       },
       {
@@ -170,7 +170,7 @@
         "reviewedAt": "2026-11-23T00:00:00Z",
         "reviewedBy": "hr-vertical (agent, proposed)",
         "toTermIds": [
-          "norn.core.resource.quantity"
+          "norn.hr.leave.quantity"
         ]
       },
       {
@@ -304,7 +304,7 @@
       }
     ],
     "toPack": {
-      "packId": "norn.ontology-pack.canon",
+      "packId": "norn.ontology-pack.workforce",
       "version": "0.1.0"
     }
   },
