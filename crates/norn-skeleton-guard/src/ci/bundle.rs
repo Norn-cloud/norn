@@ -324,8 +324,7 @@ pub fn run(raw: &str, selected: Option<&str>) -> Result<(), Failure> {
         let root = std::env::current_dir().map_err(|error| error.to_string())?;
         let target = std::env::var_os("CARGO_TARGET_DIR")
             .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| root.join("target"));
+            .map_or_else(|| root.join("target"), PathBuf::from);
         let all_packages =
             std::env::var_os("NORN_CI_PACKAGES").is_none_or(|value| value.is_empty());
         execute(bundle, all_packages, |task, prune| {
@@ -362,6 +361,10 @@ fn execute(
     Ok(())
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the bundle executor dispatches fixed phase arguments"
+)]
 fn run_task(task: Task) -> Result<(), Failure> {
     let mut command = Command::new("bash");
     command.arg("scripts/ci/core.sh");
@@ -402,6 +405,10 @@ fn visible(name: &std::ffi::OsStr) -> bool {
     !name.as_encoded_bytes().starts_with(b".")
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "preserve GNU realpath semantics for missing path components"
+)]
 fn prune_target(root: &Path, target: &Path) -> io::Result<()> {
     let workspace_target = root.canonicalize()?.join("target");
     // Match the shell's realpath -m behavior for missing components as well
@@ -454,10 +461,6 @@ fn has_nested_fingerprint(path: &Path) -> io::Result<bool> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test fixtures and their setup must succeed"
-)]
 mod tests {
     use super::*;
 
