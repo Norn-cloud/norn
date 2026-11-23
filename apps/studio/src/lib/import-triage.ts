@@ -439,53 +439,61 @@ export type RequestedDecisionLookup =
 const VALID_REQUESTED_STATUSES = new Set(["pending", "approved", "rejected", "expired", "withdrawn"])
 const VALID_DECIDED_CALL_STATES = new Set(["committed", "refused", "not_executed"])
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isConsistentDecidedCallState(value: unknown): boolean {
+  if (!isPlainObject(value)) return false
+  if (typeof value.committed !== "boolean" || typeof value.state !== "string") return false
+  if (!VALID_DECIDED_CALL_STATES.has(value.state)) return false
+  if (value.code !== undefined && typeof value.code !== "string") return false
+  // Server invariant (crates/norn-api/src/decisions.rs): committed is true iff state === "committed".
+  return value.committed === (value.state === "committed")
+}
+
 /**
  * Strictly validate a `GET /v1/decisions:requested?id=...` HTTP 200 payload for approval
- * reconciliation. Missing/non-array `items`, non-object entries, or an invalid matching entry
- * return `{ kind: "malformed" }` so reconciliation fails closed and preserves the `pending` lock.
+ * reconciliation. Validates EVERY entry in `items` (plain object with non-empty string `id`)
+ * before returning, and requires `approved` decisions to carry a valid, internally consistent
+ * `call.state`. Any failure returns `{ kind: "malformed" }` so reconciliation fails closed and
+ * preserves the `pending` lock.
  */
 export function parseRequestedDecisionLookup(body: unknown, decisionId: string): RequestedDecisionLookup {
-  if (typeof body !== "object" || body === null || !Array.isArray((body as { items?: unknown }).items)) {
+  if (!isPlainObject(body) || !Array.isArray(body.items)) {
     return { kind: "malformed" }
   }
-  const items = (body as { items: unknown[] }).items
+  const items = body.items as unknown[]
   let matchedRaw: Record<string, unknown> | null = null
   for (const raw of items) {
-    if (typeof raw !== "object" || raw === null) return { kind: "malformed" }
-    const candidate = raw as Record<string, unknown>
-    if (candidate.id === decisionId) {
-      matchedRaw = candidate
-      break
+    if (!isPlainObject(raw)) return { kind: "malformed" }
+    if (typeof raw.id !== "string" || raw.id.trim() === "") return { kind: "malformed" }
+    if (raw.id === decisionId) {
+      if (matchedRaw !== null) return { kind: "malformed" }
+      matchedRaw = raw
     }
   }
   if (matchedRaw === null) return { kind: "absent" }
 
   const status = matchedRaw.status
-  const call = matchedRaw.call as Record<string, unknown> | null | undefined
+  const call = matchedRaw.call
   if (
     typeof status !== "string"
     || !VALID_REQUESTED_STATUSES.has(status)
     || typeof matchedRaw.canRun !== "boolean"
     || typeof matchedRaw.expiresAtMs !== "number"
-    || typeof call !== "object"
-    || call === null
+    || !Number.isFinite(matchedRaw.expiresAtMs)
+    || !isPlainObject(call)
     || typeof call.action !== "string"
     || typeof call.encodedInput !== "string"
     || typeof call.idempotencyKey !== "string"
   ) {
     return { kind: "malformed" }
   }
-  if (call.state !== undefined) {
-    const cs = call.state as Record<string, unknown> | null
-    if (
-      typeof cs !== "object"
-      || cs === null
-      || typeof cs.committed !== "boolean"
-      || typeof cs.state !== "string"
-      || !VALID_DECIDED_CALL_STATES.has(cs.state)
-    ) {
-      return { kind: "malformed" }
-    }
+  if (status === "approved") {
+    if (!isConsistentDecidedCallState(call.state)) return { kind: "malformed" }
+  } else if (call.state !== undefined && !isConsistentDecidedCallState(call.state)) {
+    return { kind: "malformed" }
   }
   return { kind: "found", decision: matchedRaw as unknown as RequestedDecision }
 }
@@ -544,7 +552,11 @@ export function reconcilePendingRowOutcome(
     }
   }
   const callState = decision.call.state
-  if (callState?.state === "refused") {
+  if (!isConsistentDecidedCallState(callState) || callState === undefined) {
+    // Approved decisions must carry a valid, consistent call execution state; fail closed otherwise.
+    return { nextOutcome: outcome, shouldRefreshWorkspace: false, retireIdempotencyKey: false }
+  }
+  if (callState.state === "refused") {
     return {
       nextOutcome: {
         kind: "refused",
@@ -555,7 +567,7 @@ export function reconcilePendingRowOutcome(
       retireIdempotencyKey: true,
     }
   }
-  if (callState?.state === "committed") {
+  if (callState.state === "committed") {
     return { nextOutcome: outcome, shouldRefreshWorkspace: true, retireIdempotencyKey: false }
   }
   return {

@@ -631,10 +631,38 @@ test("reconcilePendingRowOutcome retires idempotency key on terminal failures an
   expect(gone.nextOutcome.kind).toBe("stale")
   expect(gone.shouldRefreshWorkspace).toBe(true)
 
-  // Malformed HTTP 200 (missing items array, non-object item, or invalid matching item shape) -> fails closed & keeps pending lock!
+  // Malformed HTTP 200 cases all fail closed and preserve the pending lock without retiring the key:
+  // - missing/non-array items
   expect(parseRequestedDecisionLookup({}, "dec_42")).toEqual({ kind: "malformed" })
   expect(parseRequestedDecisionLookup({ items: "bad" }, "dec_42")).toEqual({ kind: "malformed" })
+  // - array entry (items: [[]]) or entry missing string decision id
+  expect(parseRequestedDecisionLookup({ items: [[]] }, "dec_42")).toEqual({ kind: "malformed" })
+  expect(parseRequestedDecisionLookup({ items: [{ status: "pending" }] }, "dec_42")).toEqual({ kind: "malformed" })
+  expect(parseRequestedDecisionLookup({ items: [{ id: "", status: "pending" }] }, "dec_42")).toEqual({ kind: "malformed" })
+  // - trailing null / malformed entry after a valid match
+  expect(parseRequestedDecisionLookup({ items: [makeDecision("rejected"), null] }, "dec_42")).toEqual({ kind: "malformed" })
+  expect(parseRequestedDecisionLookup({ items: [makeDecision("rejected"), []] }, "dec_42")).toEqual({ kind: "malformed" })
+  // - invalid matching entry shape
   expect(parseRequestedDecisionLookup({ items: [{ id: "dec_42", status: "rejected" }] }, "dec_42")).toEqual({ kind: "malformed" })
+  // - approved decision missing call.state
+  expect(parseRequestedDecisionLookup({ items: [makeDecision("approved")] }, "dec_42")).toEqual({ kind: "malformed" })
+  const approvedWithoutState = reconcilePendingRowOutcome(pending, { kind: "found", decision: makeDecision("approved") })
+  expect(approvedWithoutState.nextOutcome).toBe(pending)
+  expect(isOutcomeLocked(approvedWithoutState.nextOutcome)).toBe(true)
+  expect(approvedWithoutState.retireIdempotencyKey).toBe(false)
+  // - approved decision with contradictory committed vs state ({ committed: true, state: "refused" })
+  const contradictoryApproved = makeDecision("approved", { committed: true, state: "refused", code: "law.cap" })
+  expect(parseRequestedDecisionLookup({ items: [contradictoryApproved] }, "dec_42")).toEqual({ kind: "malformed" })
+  const contradictoryReconciled = reconcilePendingRowOutcome(pending, { kind: "found", decision: contradictoryApproved })
+  expect(contradictoryReconciled.nextOutcome).toBe(pending)
+  expect(isOutcomeLocked(contradictoryReconciled.nextOutcome)).toBe(true)
+  expect(contradictoryReconciled.retireIdempotencyKey).toBe(false)
+  // - approved decision with valid consistent not_executed state succeeds
+  const validApprovedNotExec = makeDecision("approved", { committed: false, state: "not_executed" })
+  expect(parseRequestedDecisionLookup({ items: [validApprovedNotExec] }, "dec_42")).toEqual({
+    kind: "found",
+    decision: validApprovedNotExec,
+  })
   expect(parseRequestedDecisionLookup({ items: [{ ...makeDecision("approved"), call: { ...makeDecision("approved").call, state: { invalid: true } } }] }, "dec_42")).toEqual({ kind: "malformed" })
 
   const malformedFetcher = async (input: string): Promise<Response> => {
