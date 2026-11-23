@@ -1617,6 +1617,40 @@ fn evaluate_invariants_for_class(
     Ok(failures)
 }
 
+/// The stored properties of `object_type` whose values the runtime domain
+/// check reads ([`evaluate_typed_properties`]): each costs one unit of the
+/// invariant budget, before any invariant is dispatched.
+fn typed_properties<'c>(
+    catalog: &'c TypeCatalog<'_>,
+    object_type: &ObjectTypeName,
+) -> Vec<&'c norn_checker::entity_instance::EffectiveProperty> {
+    catalog
+        .effective_type(object_type)
+        .into_iter()
+        .flat_map(|object_type| &object_type.properties)
+        .filter(|property| {
+            !property.computed
+                && matches!(
+                    &property.kind,
+                    EffectiveKind::Base(
+                        PropertyType::Date {}
+                            | PropertyType::Timestamp { .. }
+                            | PropertyType::Decimal { .. }
+                            | PropertyType::Record { .. }
+                    )
+                )
+        })
+        .collect()
+}
+
+/// MANIFEST-LAWS-1 (S2): the units the invariant budget is charged for a
+/// row of `object_type` before its first invariant: one per typed property
+/// the runtime domain check reads. The dataset path adds it once per row
+/// to its fuel bound.
+pub(crate) fn typed_property_units(catalog: &TypeCatalog<'_>, object_type: &ObjectTypeName) -> u64 {
+    u64::try_from(typed_properties(catalog, object_type).len()).unwrap_or(u64::MAX)
+}
+
 /// VAL-DECIMAL-SCALE-1: apply the shared runtime decimal domain check, including Record members, before commit.
 fn evaluate_typed_properties(
     catalog: &TypeCatalog<'_>,
@@ -1632,23 +1666,7 @@ fn evaluate_typed_properties(
             },
         ));
     }
-    let properties = catalog
-        .effective_type(&key.object_type)
-        .into_iter()
-        .flat_map(|object_type| &object_type.properties)
-        .filter(|property| {
-            !property.computed
-                && matches!(
-                    &property.kind,
-                    EffectiveKind::Base(
-                        PropertyType::Date {}
-                            | PropertyType::Timestamp { .. }
-                            | PropertyType::Decimal { .. }
-                            | PropertyType::Record { .. }
-                    )
-                )
-        })
-        .collect::<Vec<_>>();
+    let properties = typed_properties(catalog, &key.object_type);
     let units = u64::try_from(properties.len()).unwrap_or(u64::MAX);
     if units > *remaining {
         return Err(InvariantEvaluationError::BudgetExceeded);
