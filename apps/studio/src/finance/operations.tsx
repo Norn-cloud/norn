@@ -1,11 +1,15 @@
-import { Link } from "@tanstack/react-router"
-import { ArrowRight, BadgeCheck, CircleAlert, Database, Fingerprint, GitMerge, Shield, ShieldX } from "lucide-react"
+import { Link, useLocation } from "@tanstack/react-router"
+import { ArrowRight, BadgeCheck, Database, Fingerprint, RotateCcw, Search, Shield, ShieldX, SlidersHorizontal } from "lucide-react"
+import { useEffect, useState } from "react"
 import { Chip } from "@/components/chip"
-import { Panel } from "@/components/panel"
-import { COMMANDS, isFinanceCommand, type RuleId } from "./behavior.ts"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
+import { AGGREGATES, COMMANDS, isFinanceCommand, type RuleId } from "./behavior.ts"
 import type { MenuEntry } from "../shell.tsx"
 import { CLIENT, ROW_COUNT, SYSTEMS, TYPES, type FinanceType, type MarkId } from "./data.ts"
-import { FinanceHeading, Mark, SystemDependencies, TypeTile } from "./workspace.tsx"
+import { RECORDS } from "./records.ts"
+import { FinanceHeading, SystemDependencies, TypeTile, useFinanceMode } from "./workspace.tsx"
 
 type Systems = readonly [MarkId, MarkId, ...MarkId[]]
 
@@ -15,6 +19,13 @@ interface Refusal {
   readonly evidence: string
   readonly reference: string
   readonly href: string
+}
+
+interface RuleParam {
+  readonly label: string
+  readonly value: number
+  readonly unit: string
+  readonly step?: number
 }
 
 type RuleObject = FinanceType | "lease" | "gl-entry"
@@ -33,6 +44,7 @@ interface FinanceRule {
   readonly condition: string
   readonly systems: Systems
   readonly needs: string
+  readonly param?: RuleParam
   readonly refusal?: Refusal
 }
 
@@ -44,6 +56,7 @@ export const RULES: readonly FinanceRule[] = [
     systems: ["valify", "iscore", "salesforce", "postgres"],
     condition: "LMS approval requires current verified Valify KYC, an I-Score inquiry within 30 days and no open CRM fraud or hardship flag.",
     needs: "Only the joined record can establish LMS approval, KYC validity, bureau freshness and CRM clearance.",
+    param: { label: "Max I-Score freshness", value: 30, unit: "days", step: 5 },
     refusal: {
       action: "Disbursement LN-1042-C refused", reason: "Valify KYC expired 3 Nov. LMS approved, I-Score fresh.",
       evidence: "Valify expiry 3 Nov 2026 · I-Score inquiry 22 Oct 2026 · LMS approved 4 Nov 2026 · CRM clearance recorded.",
@@ -57,6 +70,7 @@ export const RULES: readonly FinanceRule[] = [
     systems: ["postgres", "egx", "mcdr", "leasing"],
     condition: "Sum outstanding loans, margin credit and leases by national ID. Refuse an increase above EGP 5,000,000.",
     needs: "Loans, margin positions and lease obligations are recorded separately and must be merged by national ID.",
+    param: { label: "Client exposure ceiling", value: 5_000_000, unit: "EGP", step: 250_000 },
   },
   {
     id: "settlement", title: "Match every settlement within T+2",
@@ -65,6 +79,7 @@ export const RULES: readonly FinanceRule[] = [
     systems: ["fawry", "instapay", "postgres"],
     condition: "Match each Fawry or InstaPay settlement to an LMS installment within two business days, or open an exception.",
     needs: "Payment providers confirm settled amounts. The LMS provides the installment allocation and due date.",
+    param: { label: "Settlement match window", value: 2, unit: "business days", step: 1 },
   },
   {
     id: "hardship", title: "An open hardship case pauses collections",
@@ -81,6 +96,7 @@ export const RULES: readonly FinanceRule[] = [
     systems: ["postgres", "egx", "mcdr"],
     condition: "At 30 or more days past due in the LMS, block margin orders and brokerage cash withdrawals.",
     needs: "The outstanding loan is held by the LMS while the withdrawal or margin request arrives through brokerage.",
+    param: { label: "Arrears hold trigger", value: 30, unit: "DPD", step: 5 },
     refusal: {
       action: "Margin order BRK-55012 refused", reason: "Client 34 DPD on LN-1042-A.",
       evidence: "Brokerage order BRK-55012 · matched to client CL-1042 · LMS delinquency at decision exceeded the 30-day threshold.",
@@ -102,6 +118,7 @@ export const RULES: readonly FinanceRule[] = [
     systems: ["fawry", "salesforce", "postgres"],
     condition: "Raise an AML review when a payer other than the borrower sends more than EGP 50,000 in a month.",
     needs: "Fawry identifies the payer. The client model resolves the borrower across the CRM and LMS.",
+    param: { label: "Monthly third-party threshold", value: 50_000, unit: "EGP", step: 10_000 },
   },
   {
     id: "reporting", title: "FRA return equals source totals",
@@ -113,61 +130,238 @@ export const RULES: readonly FinanceRule[] = [
   },
 ]
 
-const refusedCount = RULES.filter(rule => rule.refusal).length
+const refusedCount = RULES.filter((rule) => rule.refusal).length
 
 export const financeRuleMenu = (): readonly MenuEntry[] => RULES.map(({ id, title }) => ({ href: `#${id}`, label: title }))
 
+const objectLabel = (type: RuleObject) => (type === "lease" || type === "gl-entry" ? SOURCE_OBJECTS[type].name : TYPES[type].name)
+
 export function RuleScope({ rule }: { readonly rule: Pick<FinanceRule, "guards" | "reads" | "path"> }) {
   const { guards, reads, path } = rule
-  return <dl className="space-y-2 text-xs">
-    <div className="flex items-baseline gap-2">
-      <dt className="w-10 shrink-0 text-muted-foreground">Guards</dt><dd className="flex flex-wrap gap-1.5">
-        {guards.split(", ").map(guard => isFinanceCommand(guard)
-          ? <Link key={guard} to="/sources/$concept" params={{ concept: COMMANDS[guard].on }} search={{ tab: "commands" }} hash={guard} className="font-mono text-tone-blue hover:underline">{guard}</Link>
-          : <code key={guard}>{guard}</code>)}
-      </dd>
-    </div>
-    <div className="flex items-baseline gap-2"><dt className="w-10 shrink-0 text-muted-foreground">Reads</dt><dd className="flex flex-wrap gap-1">
-      {reads.map(type => {
-        const auxiliary = type === "lease" || type === "gl-entry"
-        const item = auxiliary ? SOURCE_OBJECTS[type] : TYPES[type]
-        return <Link key={type} to={auxiliary ? `/policies/${type}` : `/sources/${type}`} className="rounded-md hover:ring-1 hover:ring-border"><Chip tone={item.tone}>{item.name}</Chip></Link>
-      })}
-    </dd></div>
-    <div className="flex items-baseline gap-2"><dt className="w-10 shrink-0 text-muted-foreground">Path</dt><dd className="font-mono leading-relaxed text-muted-foreground">{path}</dd></div>
-  </dl>
+  return (
+    <dl className="space-y-2.5 text-xs">
+      <div>
+        <dt className="text-[11px] font-medium text-muted-foreground">Guards</dt>
+        <dd className="mt-1 flex flex-wrap gap-1.5">
+          {guards.split(", ").map((guard) =>
+            isFinanceCommand(guard) ? (
+              <Link key={guard} to="/sources/$concept" params={{ concept: COMMANDS[guard].on }} search={{ tab: "commands" }} hash={guard}
+                className="rounded-sm border border-border bg-surface-subtle px-1.5 py-0.5 font-mono text-[11px] font-medium text-tone-blue hover:border-data-accent">
+                {guard}
+              </Link>
+            ) : (
+              <code key={guard} className="rounded-sm border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] text-foreground">{guard}</code>
+            ),
+          )}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-[11px] font-medium text-muted-foreground">Reads ({reads.length} objects)</dt>
+        <dd className="mt-1 flex flex-wrap gap-1">
+          {reads.map((type) => {
+            const auxiliary = type === "lease" || type === "gl-entry"
+            return (
+              <Link key={type} to={auxiliary ? `/policies/${type}` : `/sources/${type}`}
+                className="inline-flex items-center rounded-sm border border-border bg-background px-1.5 py-0.5 text-[11px] font-medium text-foreground hover:border-data-accent hover:text-tone-blue">
+                {objectLabel(type)}
+              </Link>
+            )
+          })}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-[11px] font-medium text-muted-foreground">Model path</dt>
+        <dd className="mt-1 rounded-md border border-border bg-surface-subtle px-2.5 py-2 font-mono text-[11px] leading-relaxed text-foreground/85">{path}</dd>
+      </div>
+    </dl>
+  )
 }
 
+/** Snowflake / Retool master-detail Rules workbench: clean scannable table + docked right inspector. */
 export function FinanceRules() {
-  return <section className="space-y-4">
-    <FinanceHeading title="Rules" description="Inspect finance checks and the evidence behind each recorded refusal in the synthetic sample." />
-    <div className="flex flex-wrap gap-2">
-      <Chip tone="green" icon={BadgeCheck} className="rounded-full">{RULES.length} checks passed in the sample</Chip>
-      <Chip tone="red" icon={ShieldX} className="rounded-full">{refusedCount} actions refused</Chip>
-    </div>
-    <div className="grid gap-3 lg:grid-cols-2">
-      {RULES.map(rule => {
-        const { id, title, condition, systems, needs, refusal } = rule
-        return <Panel key={id} id={id} label={title} icon={Shield} className="scroll-mt-4"
-        action={<Chip tone="green" dot>Check passed</Chip>}>
-        <div className="space-y-3 px-5 pt-2 pb-4">
-          <div className="border-b pb-3"><RuleScope rule={rule} /></div>
-          <p className="text-sm">{condition}</p>
-          <SystemDependencies systems={systems} needs={needs} />
-          {id === "settlement" && <Link to="/metrics" hash="corrections" className="inline-flex items-center gap-1 text-xs font-medium text-tone-blue hover:underline">View settlement correction<ArrowRight className="size-3.5" /></Link>}
-          {refusal ? <div className="space-y-2 rounded-xl border border-tone-red/25 bg-tone-red/5 p-3">
-            <p className="text-xs font-semibold text-tone-red">{refusal.action}</p>
-            <p className="text-sm">{refusal.reason}</p>
-            <p className="text-xs text-muted-foreground">{refusal.evidence}</p>
-            <Link to={refusal.href} className="inline-flex items-center gap-2 text-xs font-medium text-tone-blue hover:underline">Evidence · {refusal.reference}<ArrowRight className="size-3.5" /></Link>
-          </div> : <p className="flex items-center gap-2 border-t pt-2 text-xs text-muted-foreground">
-            No refusal recorded in this sample
-          </p>}
+  const hash = useLocation({ select: (location) => location.hash })
+  const [filter, setFilter] = useState<"all" | "refused">("all")
+  const [query, setQuery] = useState("")
+  const [selectedId, setSelectedId] = useState<RuleId>(() => RULES.find((r) => r.id === hash)?.id ?? RULES[0]!.id)
+  const [draftParams, setDraftParams] = useState<Readonly<Record<string, number>>>({})
+
+  useEffect(() => {
+    const match = RULES.find((r) => r.id === hash)
+    if (match) setSelectedId(match.id)
+  }, [hash])
+
+  const filtered = RULES.filter((rule) => {
+    if (filter === "refused" && !rule.refusal) return false
+    const q = query.trim().toLowerCase()
+    if (!q) return true
+    return `${rule.title} ${rule.guards} ${rule.condition} ${rule.reads.map(objectLabel).join(" ")}`.toLowerCase().includes(q)
+  })
+
+  const selected = filtered.find((r) => r.id === selectedId) ?? RULES.find((r) => r.id === selectedId) ?? RULES[0]!
+  const draftValue = selected.param ? (draftParams[selected.id] ?? selected.param.value) : undefined
+  const isDraft = selected.param !== undefined && draftValue !== selected.param.value
+
+  return (
+    <section className="space-y-4">
+      <FinanceHeading
+        title="Rules"
+        description="Cross-object invariants enforced before actions commit, with live refusal evidence and draft threshold tuning."
+        actions={
+          <div className="flex items-center gap-2 text-xs">
+            <Chip tone="green" dot>{RULES.length} active</Chip>
+            <Chip tone="red" dot>{refusedCount} refused in sample</Chip>
+          </div>
+        }
+      />
+
+      <div className="grid overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[minmax(0,1fr)_24.5rem]">
+        <div className="flex min-w-0 flex-col">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-subtle px-3.5 py-2">
+            <div role="group" aria-label="Filter rules" className="inline-flex rounded-md border border-border bg-background p-0.5 text-xs">
+              <button type="button" onClick={() => setFilter("all")} className={cn("rounded-sm px-2.5 py-1 font-medium", filter === "all" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                All ({RULES.length})
+              </button>
+              <button type="button" onClick={() => setFilter("refused")} className={cn("rounded-sm px-2.5 py-1 font-medium", filter === "refused" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                Refusals ({refusedCount})
+              </button>
+            </div>
+            <label className="relative block w-full max-w-xs sm:w-56">
+              <span className="sr-only">Search rules</span>
+              <Search className="pointer-events-none absolute start-2.5 top-2 size-3.5 text-muted-foreground" />
+              <Input className="h-7 bg-background ps-8 text-xs" placeholder="Filter rules…" value={query} onChange={(e) => setQuery(e.target.value)} />
+            </label>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-start text-xs" aria-label="Finance rules">
+              <thead>
+                <tr className="border-b border-border bg-surface-subtle/50 text-muted-foreground">
+                  <th className="px-4 py-2 text-start font-medium">Rule</th>
+                  <th className="px-3 py-2 text-start font-medium">Guards</th>
+                  <th className="px-3 py-2 text-start font-medium">Objects</th>
+                  <th className="px-4 py-2 text-end font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {filtered.map((rule) => {
+                  const active = rule.id === selected.id
+                  const modified = rule.param !== undefined && draftParams[rule.id] !== undefined && draftParams[rule.id] !== rule.param.value
+                  const firstTwo = rule.reads.slice(0, 2).map(objectLabel).join(", ")
+                  const extra = rule.reads.length - 2
+                  return (
+                    <tr
+                      key={rule.id}
+                      id={rule.id}
+                      onClick={() => setSelectedId(rule.id)}
+                      className={cn("cursor-pointer scroll-mt-4 transition-colors hover:bg-surface-subtle", active && "bg-tone-blue/[0.06]")}
+                    >
+                      <td className={cn("px-4 py-2.5", active && "border-s-2 border-s-data-accent")}>
+                        <div className="flex items-center gap-2">
+                          <Shield className={cn("size-3.5 shrink-0", rule.refusal ? "text-tone-red" : "text-muted-foreground")} />
+                          <span className="font-medium text-foreground">{rule.title}</span>
+                          {modified && <span className="rounded-sm bg-tone-blue/10 px-1.5 py-0.5 text-[10px] font-medium text-tone-blue">Draft</span>}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 font-mono text-[11px] text-muted-foreground">{rule.guards.split(", ")[0]}{rule.guards.includes(",") ? " +1" : ""}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">{firstTwo}{extra > 0 ? ` +${extra}` : ""}</td>
+                      <td className="px-4 py-2.5 text-end whitespace-nowrap">
+                        {rule.refusal ? <Chip tone="red" dot>1 refused</Chip> : <Chip tone="green" dot>Passed</Chip>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            {filtered.length === 0 && <p className="p-6 text-center text-xs text-muted-foreground">No rules match this filter.</p>}
+          </div>
         </div>
-      </Panel>
-      })}
-    </div>
-  </section>
+
+        <aside aria-label="Rule inspector" className="flex flex-col border-t border-border bg-surface-subtle/35 lg:border-s lg:border-t-0">
+          <div className="flex items-start justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold tracking-wider uppercase text-muted-foreground">Rule Inspector</p>
+              <h2 className="mt-0.5 text-sm font-semibold text-foreground">{selected.title}</h2>
+            </div>
+            <Chip tone={selected.refusal ? "red" : "green"} dot>{selected.refusal ? "Refusal recorded" : "Check passed"}</Chip>
+          </div>
+
+          <div className="flex-1 space-y-4 p-4">
+            {selected.refusal && (
+              <div className="space-y-1.5 rounded-md border border-tone-red/30 bg-tone-red/[0.04] p-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-tone-red">
+                  <ShieldX className="size-3.5 shrink-0" />
+                  <span>{selected.refusal.action}</span>
+                </div>
+                <p className="text-xs font-medium text-foreground">{selected.refusal.reason}</p>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">{selected.refusal.evidence}</p>
+                <Link to={selected.refusal.href} className="inline-flex items-center gap-1 pt-0.5 text-xs font-medium text-tone-blue hover:underline">
+                  Inspect evidence · {selected.refusal.reference}<ArrowRight className="size-3" />
+                </Link>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground">Business invariant</p>
+              <p className="text-xs leading-relaxed text-foreground">{selected.condition}</p>
+              {selected.id === "settlement" && (
+                <Link to="/metrics" hash="corrections" className="inline-flex items-center gap-1 pt-1 text-xs font-medium text-tone-blue hover:underline">
+                  View settlement correction<ArrowRight className="size-3" />
+                </Link>
+              )}
+            </div>
+
+            {selected.param && draftValue !== undefined && (
+              <div className="space-y-2 rounded-md border border-border bg-background p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
+                    <SlidersHorizontal className="size-3 text-muted-foreground" />
+                    Rule parameter
+                  </span>
+                  {isDraft && (
+                    <button type="button" onClick={() => setDraftParams((curr) => { const copy = { ...curr }; delete copy[selected.id]; return copy })}
+                      className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
+                      <RotateCcw className="size-3" />Reset
+                    </button>
+                  )}
+                </div>
+                <label className="block space-y-1 text-xs">
+                  <span className="text-muted-foreground">{selected.param.label}</span>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min={1}
+                      step={selected.param.step ?? 1}
+                      value={draftValue}
+                      onChange={(e) => {
+                        const val = Number(e.target.value)
+                        if (Number.isFinite(val) && val > 0) setDraftParams((curr) => ({ ...curr, [selected.id]: val }))
+                      }}
+                      className="h-8 w-36 font-mono text-xs"
+                    />
+                    <span className="text-xs text-muted-foreground">{selected.param.unit}</span>
+                  </div>
+                </label>
+                {isDraft && (
+                  <p role="status" className="text-[11px] text-tone-blue">
+                    Draft preview: {ROW_COUNT.format(draftValue)} {selected.param.unit} (live: {ROW_COUNT.format(selected.param.value)}). Evaluated before publish.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="border-t border-border pt-3">
+              <RuleScope rule={selected} />
+            </div>
+
+            <div className="border-t border-border pt-3">
+              <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">Backing systems</p>
+              <SystemDependencies systems={selected.systems} needs={selected.needs} compact />
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  )
 }
 
 export const MARKING_FIELDS = [
@@ -182,72 +376,185 @@ export type MarkingRole = typeof MARKING_ROLES[number]
 export const canRevealSample = (role: MarkingRole) => role === "Auditor"
 
 export function FinanceMarkings() {
-  return <section className="space-y-4">
-    <FinanceHeading title="Markings" description="See how personally identifiable information (PII) is displayed for each role in the synthetic document example." />
-    <Panel label="Personally identifiable information" icon={Fingerprint} action={<Chip tone="amber" icon={Shield}>Restricted</Chip>}>
-      <div className="overflow-x-auto px-5 py-3">
-        <table className="w-full min-w-135 text-start text-sm">
-          <thead className="text-xs text-muted-foreground"><tr>
-            <th scope="col" className="pb-3 text-start font-medium">Marked field</th>
-            {MARKING_ROLES.map(role => <th key={role} scope="col" className="w-[16%] pb-3 text-start font-medium">{role}</th>)}
-          </tr></thead>
-          <tbody>{MARKING_FIELDS.map(field => <tr key={field.field} className="border-t">
-            <th scope="row" className="py-3 text-start font-medium">
-              <div className="flex items-center gap-2"><TypeTile type={field.type} /><div>{field.label}<code className="block text-xs font-normal text-muted-foreground">{field.field}</code></div></div>
-            </th>
-            {MARKING_ROLES.map(role => <td key={role}>{canRevealSample(role)
-              ? <Chip tone="green" icon={BadgeCheck}>Can reveal</Chip>
-              : <span className="inline-flex items-center gap-2 text-xs text-muted-foreground"><span aria-hidden className="h-2.5 w-6 rounded-xs bg-black dark:ring-1 dark:ring-white/25" />Hidden</span>}</td>)}
-          </tr>)}</tbody>
-        </table>
+  return (
+    <section className="space-y-4">
+      <FinanceHeading
+        title="PII Markings"
+        description="Field-level sensitivity classifications governing what each role can view or reveal across documents and records."
+        actions={
+          <Link to="/examples/$scene" params={{ scene: "document" }} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-tone-blue hover:border-data-accent">
+            Preview in DocTypes<ArrowRight className="size-3.5" />
+          </Link>
+        }
+      />
+      <div className="overflow-hidden rounded-lg border border-border bg-background">
+        <div className="flex items-center justify-between border-b border-border bg-surface-subtle px-4 py-2.5">
+          <div className="flex items-center gap-2 text-xs font-semibold"><Fingerprint className="size-3.5 text-muted-foreground" />Personally identifiable information</div>
+          <Chip tone="amber" icon={Shield}>Restricted</Chip>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-135 text-start text-xs">
+            <thead>
+              <tr className="border-b border-border bg-surface-subtle/50 text-muted-foreground">
+                <th scope="col" className="px-4 py-2 text-start font-medium">Marked field</th>
+                {MARKING_ROLES.map((role) => <th key={role} scope="col" className="w-[18%] px-4 py-2 text-start font-medium">{role}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {MARKING_FIELDS.map((field) => (
+                <tr key={field.field} className="hover:bg-surface-subtle/60">
+                  <th scope="row" className="px-4 py-2.5 text-start font-medium">
+                    <div className="flex items-center gap-2.5">
+                      <TypeTile type={field.type} />
+                      <div>
+                        <div className="text-foreground">{field.label}</div>
+                        <code className="text-[11px] font-normal text-muted-foreground">{field.field}</code>
+                      </div>
+                    </div>
+                  </th>
+                  {MARKING_ROLES.map((role) => (
+                    <td key={role} className="px-4 py-2.5">
+                      {canRevealSample(role) ? (
+                        <Chip tone="green" icon={BadgeCheck}>Can reveal</Chip>
+                      ) : (
+                        <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                          <span aria-hidden className="h-2.5 w-6 rounded-xs bg-foreground/85" />Hidden
+                        </span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </Panel>
-    <Link to="/examples/$scene" params={{ scene: "document" }} className="inline-flex items-center gap-2 text-sm font-medium text-tone-blue hover:underline">
-      Preview role views in Document mapping<ArrowRight className="size-4" />
-    </Link>
-  </section>
+    </section>
+  )
 }
 
-const OVERVIEW = [
-  { count: SYSTEMS.length, label: "Systems synced", tone: "green", icon: Database, to: "/sources" },
-  { count: 11_872, label: "Borrowers merged", tone: "blue", icon: GitMerge, to: "/sources/client" },
-  { count: 32, label: "In review", tone: "amber", icon: CircleAlert, to: "/examples/dataset", hash: "review" },
-  { count: 212, label: "Quarantined", tone: "amber", icon: Shield },
-  { count: 1, label: "Correction this week", tone: "blue", icon: BadgeCheck, to: "/metrics", hash: "corrections" },
-  { count: refusedCount, label: "Refused actions", tone: "red", icon: ShieldX, to: "/guarantees", hash: "kyc" },
-] as const
+const FEATURED_OBJECTS: readonly FinanceType[] = ["client", "loan", "brokerage-account", "payment", "hardship-case", "regulatory-return"]
 
+/** Clean Palantir OMA + Snowsight Domain Overview: flat KPI strip, refusal table, core object cards, data-eng status bar. */
 export function FinanceHome() {
-  return <section className="space-y-5">
-    <FinanceHeading title="Home" description="Lending, payments and brokerage activity as of 22 November 2026." />
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {OVERVIEW.map(item => <Panel key={item.label} label={item.label} icon={item.icon}>
-        <div className="flex items-end justify-between gap-2 px-5 pt-1 pb-4">
-          <p className="text-3xl font-semibold tabular-nums" style={{ color: `var(--tone-${item.tone})` }}>{ROW_COUNT.format(item.count)}</p>
-          {"to" in item && <Link to={item.to} hash={"hash" in item ? item.hash : undefined} aria-label={`View ${item.label.toLowerCase()}`}
-            className="rounded-md p-1.5 text-tone-blue hover:bg-data-accent/10"><ArrowRight className="size-4" /></Link>}
-        </div>
-      </Panel>)}
-    </div>
-    <Panel label="Refused actions" icon={ShieldX}>
-      <ul className="divide-y px-5 pb-3">
-        {RULES.flatMap(({ id, refusal }) => refusal ? [<li key={id} className="py-2">
-          <Link to="/guarantees" hash={id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm hover:text-tone-blue">
-            <strong className="font-medium">{refusal.action}</strong><span className="text-xs text-muted-foreground">{refusal.reason}</span><ArrowRight className="ms-auto size-4 text-tone-blue" />
-          </Link>
-        </li>] : [])}
-      </ul>
-    </Panel>
-    <Panel label="Synced systems" icon={Database}>
-      <ul className="grid divide-y px-5 pb-3 sm:grid-cols-2 sm:gap-x-6 sm:divide-none">
-        {SYSTEMS.map(system => <li key={system.id} className="flex items-center justify-between gap-2 py-2">
-          <div className="flex items-center gap-2">
-            <div className="flex -space-x-1">{system.marks.map(mark => <Mark key={mark} id={mark} />)}</div>
-            <span className="text-sm">{system.name}</span>
+  const { setMode } = useFinanceMode()
+  return (
+    <section className="space-y-5">
+      <FinanceHeading
+        title="Overview"
+        description="Lending, payments and brokerage operations as of 22 November 2026 — clean business ontology powered by 7 synced systems."
+      />
+
+      <div className="grid grid-cols-2 divide-y divide-border overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-4 lg:divide-x lg:divide-y-0">
+        <Link to="/sources" className="block px-4 py-3 transition-colors hover:bg-surface-subtle">
+          <p className="text-[11px] font-medium text-muted-foreground">Business objects</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{Object.keys(TYPES).length}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">11,872 clients resolved</p>
+        </Link>
+        <Link to="/guarantees" hash="kyc" className="block px-4 py-3 transition-colors hover:bg-surface-subtle">
+          <p className="text-[11px] font-medium text-muted-foreground">Refused actions</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-tone-red">{refusedCount}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{RULES.length} active cross-object rules</p>
+        </Link>
+        <Link to="/metrics" hash="corrections" className="block px-4 py-3 transition-colors hover:bg-surface-subtle">
+          <p className="text-[11px] font-medium text-muted-foreground">Weekly reconciliation</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-tone-blue">97.50%</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">1 correction this week (was 98.00%)</p>
+        </Link>
+        <Link to="/workflows" className="block px-4 py-3 transition-colors hover:bg-surface-subtle">
+          <p className="text-[11px] font-medium text-muted-foreground">Lifecycles &amp; automations</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">5</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">3 state machines · 2 process managers</p>
+        </Link>
+      </div>
+
+      <section aria-label="Refused actions" className="overflow-hidden rounded-lg border border-border bg-background">
+        <header className="flex items-center justify-between border-b border-border bg-surface-subtle px-4 py-2.5">
+          <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+            <ShieldX className="size-3.5 text-tone-red" />Recent guardrail refusals
           </div>
-          <span className="text-xs tabular-nums text-muted-foreground">{system.syncedAt} EET</span>
-        </li>)}
-      </ul>
-    </Panel>
-  </section>
+          <Link to="/guarantees" className="inline-flex items-center gap-1 text-xs font-medium text-tone-blue hover:underline">
+            All {RULES.length} rules<ArrowRight className="size-3" />
+          </Link>
+        </header>
+        <div className="overflow-x-auto">
+          <table className="w-full text-start text-xs">
+            <thead>
+              <tr className="border-b border-border bg-surface-subtle/40 text-muted-foreground">
+                <th className="px-4 py-2 text-start font-medium">Blocked action</th>
+                <th className="px-4 py-2 text-start font-medium">Invariant</th>
+                <th className="px-4 py-2 text-start font-medium">Reason</th>
+                <th className="px-4 py-2 text-end font-medium">Evidence</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {RULES.flatMap((rule) =>
+                rule.refusal ? [
+                  <tr key={rule.id} className="hover:bg-surface-subtle">
+                    <td className="px-4 py-2.5 font-medium text-foreground">{rule.refusal.action}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{rule.title}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{rule.refusal.reason}</td>
+                    <td className="px-4 py-2.5 text-end">
+                      <Link to="/guarantees" hash={rule.id} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
+                        Inspect<ArrowRight className="size-3" />
+                      </Link>
+                    </td>
+                  </tr>,
+                ] : [],
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-label="Core domain objects" className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Core ontology objects</h2>
+          <Link to="/sources" search={{ view: "graph", model: "aggregates" }} className="inline-flex items-center gap-1 text-xs font-medium text-tone-blue hover:underline">
+            Aggregate boundaries<ArrowRight className="size-3" />
+          </Link>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {FEATURED_OBJECTS.map((type) => {
+            const aggRoot = AGGREGATES.some((a) => a.root === type)
+            const recCount = RECORDS.filter((r) => r.type === type).length
+            const ruleCount = RULES.filter((r) => r.reads.includes(type)).length
+            return (
+              <Link key={type} to="/sources/$concept" params={{ concept: type }}
+                className="group flex flex-col justify-between gap-3 rounded-lg border border-border bg-background p-3.5 transition-colors hover:border-data-accent">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <TypeTile type={type} className={aggRoot ? "border-data-accent/40 text-tone-blue" : undefined} />
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground group-hover:text-tone-blue">{TYPES[type].name}</h3>
+                      <p className="text-[11px] text-muted-foreground">{recCount} sample records</p>
+                    </div>
+                  </div>
+                  {aggRoot && <span className="rounded-sm bg-tone-blue/10 px-1.5 py-0.5 text-[10px] font-medium text-tone-blue">Aggregate root</span>}
+                </div>
+                <div className="flex items-center justify-between border-t border-border pt-2 text-[11px] text-muted-foreground">
+                  <span>{ruleCount} guarding rules</span>
+                  <span className="inline-flex items-center gap-1 font-medium text-foreground/80 group-hover:text-tone-blue">Open<ArrowRight className="size-3" /></span>
+                </div>
+              </Link>
+            )
+          })}
+        </div>
+      </section>
+
+      <footer className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-subtle px-4 py-2.5 text-xs">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5 font-medium text-foreground"><Database className="size-3.5 text-muted-foreground" />Data foundation</span>
+          <span><strong className="font-semibold text-foreground">{SYSTEMS.length}</strong> systems synced</span>
+          <span><strong className="font-semibold text-foreground">212</strong> quarantined</span>
+          <Link to="/examples/$scene" params={{ scene: "dataset" }} hash="review" onClick={() => setMode("data")} className="font-medium text-tone-amber hover:underline">
+            32 identity reviews pending
+          </Link>
+        </div>
+        <Link to="/examples/$scene" params={{ scene: "dataset" }} onClick={() => setMode("data")} className="inline-flex items-center gap-1 font-medium text-tone-blue hover:underline">
+          Open Data Engineering<ArrowRight className="size-3.5" />
+        </Link>
+      </footer>
+    </section>
+  )
 }

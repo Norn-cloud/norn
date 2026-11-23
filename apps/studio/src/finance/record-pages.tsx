@@ -1,5 +1,5 @@
 import { Link, Navigate, useParams, useSearch } from "@tanstack/react-router"
-import { ArrowRight, ChevronRight, Clock3, GitMerge, Network, Search, Waypoints } from "lucide-react"
+import { ArrowRight, ChevronRight, Clock3, Database, GitMerge, Network, Search, Waypoints } from "lucide-react"
 import { useState } from "react"
 import { Chip } from "@/components/chip"
 import { Input } from "@/components/ui/input"
@@ -8,14 +8,16 @@ import { cn } from "@/lib/utils"
 import { CLIENT, MARKS, TYPES, type FinanceType, type MarkId } from "./data.ts"
 import { BY_ID, LINKS, RECORDS, isFinanceType, type Fact, type FinanceRecord } from "./records.ts"
 import { financePolicyMenu } from "./policies.tsx"
-import { OBJECT_TABS, objectTab, TypeDefinition } from "./definitions.tsx"
-import { FinanceHeading, Mark, TypeTile } from "./workspace.tsx"
+import { PRIMARY_TABS, objectTab, primaryTabOf, TypeDefinition } from "./definitions.tsx"
+import { FinanceHeading, Mark, TypeTile, useFinanceMode } from "./workspace.tsx"
 
-export const financeSourceMenu = (): readonly MenuEntry[] =>
-  [...Object.entries(TYPES).map(([type, definition]): MenuEntry => ({
+export const financeSourceMenu = (): readonly MenuEntry[] => [
+  ...Object.entries(TYPES).map(([type, definition]): MenuEntry => ({
     href: `/sources/${type}`, label: definition.name, group: "Object types", kind: "objectType",
     count: RECORDS.filter((record) => record.type === type).length,
-  })), ...financePolicyMenu()]
+  })),
+  ...financePolicyMenu(),
+]
 
 export function RecordLink({ record, children, className }: {
   readonly record: FinanceRecord; readonly children: React.ReactNode; readonly className?: string
@@ -36,56 +38,118 @@ function TypeList({ type }: { readonly type: FinanceType }) {
   const [search, setSearch] = useState("")
   const routeSearch = useSearch({ strict: false })
   const tab = objectTab("tab" in routeSearch ? routeSearch.tab : undefined)
+  const activePrimary = primaryTabOf(tab)
   const records = RECORDS.filter((record) => record.type === type)
   const term = search.trim().toLowerCase()
   const matches = records.filter(({ id, name, summary }) => `${id} ${name} ${summary}`.toLowerCase().includes(term))
-  return <section className="space-y-4">
-    <Link to="/sources" search={{ view: "graph" }} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">Sources <ChevronRight className="size-3" /> Business model</Link>
-    <FinanceHeading title={TYPES[type].plural} description={`Model definition and ${records.length} sample records.`} />
-    <nav aria-label="Object type views" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1">
-      {OBJECT_TABS.map(({ id, label }) => <Link key={id} to="/sources/$concept" params={{ concept: type }} search={{ tab: id === "overview" ? undefined : id }}
-        aria-current={tab === id ? "page" : undefined}
-        className={cn("rounded-lg px-2.5 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted", tab === id && "bg-data-accent/10 text-foreground")}>{label}</Link>)}
-    </nav>
-    {tab !== "records" ? <TypeDefinition type={type} tab={tab} /> : <div className="rounded-2xl border bg-card">
-      <div className="border-b p-3">
-        <label className="relative block max-w-sm"><span className="sr-only">Find a record</span><Search className="absolute start-2.5 top-2.5 size-4 text-muted-foreground" /><Input className="ps-8" placeholder="Find a record" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-start text-sm" aria-label={TYPES[type].plural}>
-          <thead><tr className="border-b bg-surface-subtle text-left text-xs font-medium text-muted-foreground"><th className="px-4 py-2">Record</th><th className="px-4 py-2">Key</th><th className="px-4 py-2">Summary</th><th className="px-4 py-2">Status</th></tr></thead>
-          <tbody className="divide-y">
-            {matches.map((record) => <tr key={record.id} className="hover:bg-muted/40">
-              <td className="px-4 py-2.5"><RecordLink record={record} className="inline-flex items-center gap-2 font-medium hover:text-tone-blue"><TypeTile type={type} />{record.name}</RecordLink></td>
-              <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-muted-foreground">{record.id}</td>
-              <td className="px-4 py-2.5 tabular-nums">{record.summary}</td>
-              <td className="px-4 py-2.5"><Chip tone={["In review", "Draft"].includes(record.status) ? "amber" : "green"} className="rounded-full">{record.status}</Chip></td>
-            </tr>)}
-          </tbody>
-        </table>
-        {matches.length === 0 && <p className="p-4 text-sm text-muted-foreground">No sample records match this search.</p>}
-      </div>
-    </div>}
-  </section>
+
+  return (
+    <section className="space-y-4">
+      <Link to="/sources" search={{ view: "graph", model: "aggregates" }} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+        Objects <ChevronRight className="size-3" /> Business model
+      </Link>
+      <FinanceHeading title={TYPES[type].plural} description={`Typed ontology definition and ${records.length} sample records.`} />
+      <nav aria-label="Object type views" className="flex flex-wrap gap-1 border-b border-border">
+        {PRIMARY_TABS.map(({ id, label }) => (
+          <Link
+            key={id}
+            to="/sources/$concept"
+            params={{ concept: type }}
+            search={{ tab: id === "overview" ? undefined : id }}
+            aria-current={activePrimary === id ? "page" : undefined}
+            className={cn(
+              "border-b-2 border-transparent px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground",
+              activePrimary === id && "border-data-accent text-foreground",
+            )}
+          >
+            {label}
+          </Link>
+        ))}
+      </nav>
+
+      {tab !== "records" ? (
+        <TypeDefinition type={type} tab={tab} />
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-border bg-background">
+          <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-2.5">
+            <label className="relative block w-full max-w-xs">
+              <span className="sr-only">Find a record</span>
+              <Search className="pointer-events-none absolute start-2.5 top-2 size-3.5 text-muted-foreground" />
+              <Input className="h-7 bg-background ps-8 text-xs" placeholder="Find a record…" value={search} onChange={(event) => setSearch(event.target.value)} />
+            </label>
+            <span className="text-xs text-muted-foreground tabular-nums">{matches.length} records</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-start text-xs" aria-label={TYPES[type].plural}>
+              <thead>
+                <tr className="border-b border-border bg-surface-subtle/50 text-muted-foreground">
+                  <th className="px-4 py-2 text-start font-medium">Record</th>
+                  <th className="px-4 py-2 text-start font-medium">Key</th>
+                  <th className="px-4 py-2 text-start font-medium">Summary</th>
+                  <th className="px-4 py-2 text-end font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {matches.map((record) => (
+                  <tr key={record.id} className="transition-colors hover:bg-surface-subtle">
+                    <td className="px-4 py-2.5">
+                      <RecordLink record={record} className="inline-flex items-center gap-2 font-medium text-foreground hover:text-tone-blue">
+                        <TypeTile type={type} />{record.name}
+                      </RecordLink>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[11px] text-muted-foreground">{record.id}</td>
+                    <td className="px-4 py-2.5 tabular-nums text-foreground">{record.summary}</td>
+                    <td className="px-4 py-2.5 text-end">
+                      <Chip tone={["In review", "Draft"].includes(record.status) ? "amber" : "green"} dot>{record.status}</Chip>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {matches.length === 0 && <p className="p-4 text-xs text-muted-foreground">No sample records match this search.</p>}
+          </div>
+        </div>
+      )}
+    </section>
+  )
 }
 
 function SourceBadge({ id }: { readonly id: MarkId }) {
-  return <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border bg-card px-1.5 py-0.5 text-[10px] font-medium">
-    <Mark id={id} className="size-4 rounded-sm border-0 text-[7px]" />{MARKS[id].name}
-  </span>
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-sm border border-border bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+      <Mark id={id} className="size-3.5 rounded-xs border-0 text-[7px]" />{MARKS[id].name}
+    </span>
+  )
 }
 
 function Lineage({ fact }: { readonly fact: Fact }) {
-  return <section aria-label="Fact lineage" className="min-w-0 rounded-2xl border bg-card p-4">
-    <div className="mb-3 flex items-center gap-2"><Waypoints className="size-4 text-tone-blue" /><h3 className="text-sm font-semibold">Fact lineage</h3></div>
-    <div className="space-y-2 text-xs">
-      <SourceBadge id={fact.source} />
-      <p className="break-all rounded-md border bg-surface-subtle p-2 font-mono">{fact.path}</p>
-      <div className="flex items-center gap-2 text-muted-foreground"><ArrowRight className="size-3.5 text-tone-blue" />{fact.mapping}</div>
-      <p className="break-all rounded-md border border-data-accent/30 bg-data-accent/10 p-2 font-mono">{fact.target}</p>
-      <p className="flex items-center gap-2 pt-1 text-muted-foreground"><Clock3 className="size-3.5" />As of {fact.at}</p>
-    </div>
-  </section>
+  return (
+    <aside aria-label="Fact lineage" className="flex flex-col border-t border-border bg-surface-subtle/35 md:border-s md:border-t-0">
+      <header className="flex items-center gap-1.5 border-b border-border bg-surface-subtle px-4 py-2.5 text-xs font-semibold">
+        <Waypoints className="size-3.5 text-tone-blue" />Source lineage
+      </header>
+      <div className="space-y-3 p-4 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] text-muted-foreground">Origin system</span>
+          <SourceBadge id={fact.source} />
+        </div>
+        <div>
+          <p className="text-[11px] text-muted-foreground">Source column</p>
+          <p className="mt-1 break-all rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[11px]">{fact.path}</p>
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <ArrowRight className="size-3 text-tone-blue" />{fact.mapping}
+        </div>
+        <div>
+          <p className="text-[11px] text-muted-foreground">Domain property</p>
+          <p className="mt-1 break-all rounded-md border border-data-accent/35 bg-tone-blue/[0.06] px-2.5 py-1.5 font-mono text-[11px] text-foreground">{fact.target}</p>
+        </div>
+        <p className="flex items-center gap-1.5 border-t border-border pt-2.5 text-[11px] text-muted-foreground">
+          <Clock3 className="size-3.5" />As of {fact.at}
+        </p>
+      </div>
+    </aside>
+  )
 }
 
 const borrowerPositions = [[33, 21], [33, 75], [83, 10], [83, 31], [83, 52], [83, 73], [54, 87]] as const
@@ -99,11 +163,15 @@ function neighbours(record: FinanceRecord) {
   })
   if (record.id !== CLIENT.id) return direct
   const branches = direct.sort((a, b) => clientLinks.indexOf(a.record.id) - clientLinks.indexOf(b.record.id))
-  return [...branches, ...branches.filter(({ record: target }) => target.type === "loan").flatMap(({ record: loan }) =>
-    LINKS.flatMap(({ from, to, label }) => {
-      const installment = from === loan.id ? BY_ID.get(to) : undefined
-      return installment?.type === "installment" ? [{ record: installment, label, anchor: loan.id }] : []
-    }))]
+  return [
+    ...branches,
+    ...branches.filter(({ record: target }) => target.type === "loan").flatMap(({ record: loan }) =>
+      LINKS.flatMap(({ from, to, label }) => {
+        const installment = from === loan.id ? BY_ID.get(to) : undefined
+        return installment?.type === "installment" ? [{ record: installment, label, anchor: loan.id }] : []
+      }),
+    ),
+  ]
 }
 
 export function Neighbourhood({ record }: { readonly record: FinanceRecord }) {
@@ -113,75 +181,138 @@ export function Neighbourhood({ record }: { readonly record: FinanceRecord }) {
   const layout = wide ? [...borrowerPositions, [10, 21] as const, [10, 75] as const] : centredPositions
   const nodes = related.slice(0, layout.length).map((entry, index) => ({ ...entry, position: layout[index] ?? centre }))
   const centreOf = (id: string) => nodes.find(({ record: adjacent }) => adjacent.id === id)?.position ?? centre
-  return <section className="space-y-3" aria-label="Record neighbourhood">
-    <div className="flex items-center gap-2"><Network className="size-4 text-tone-blue" /><h2 className="text-section font-semibold">Neighbourhood</h2></div>
-    <div className="relative grid gap-2 rounded-2xl border bg-surface-subtle p-3 md:block md:h-[28rem] md:bg-[radial-gradient(var(--border)_1px,transparent_1px)] md:bg-size-[16px_16px]">
-      <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 hidden size-full md:block">
-        {nodes.map(({ record: adjacent, anchor, position: [a,b] }) => {
-          const [x,y]=centreOf(anchor)
-          return <path key={adjacent.id} d={`M ${x} ${y} C ${(x+a)/2} ${y}, ${(x+a)/2} ${b}, ${a} ${b}`} fill="none" stroke="var(--data-accent)" strokeWidth="1.4" strokeOpacity={0.7} vectorEffect="non-scaling-stroke" />
-        })}
-      </svg>
-      <div className="z-10 flex items-center gap-2 rounded-xl border border-data-accent bg-card p-2.5 ring-4 ring-data-accent/15 md:absolute md:w-[20%] md:-translate-1/2" style={{left:`${centre[0]}%`,top:`${centre[1]}%`}}>
-        <TypeTile type={record.type} /><div className="min-w-0"><div className="truncate text-xs font-semibold">{record.name}</div><code className="text-[10px] text-muted-foreground">{record.id}</code></div>
+  return (
+    <section className="overflow-hidden rounded-lg border border-border bg-background" aria-label="Record neighbourhood">
+      <header className="flex items-center gap-2 border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">
+        <Network className="size-3.5 text-tone-blue" />Linked records neighbourhood
+      </header>
+      <div className="relative grid gap-2 bg-surface-subtle/50 p-4 md:block md:h-[26rem] md:bg-[radial-gradient(var(--canvas-dot)_1px,transparent_1px)] md:bg-size-[16px_16px]">
+        <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 hidden size-full md:block">
+          {nodes.map(({ record: adjacent, anchor, position: [a, b] }) => {
+            const [x, y] = centreOf(anchor)
+            return <path key={adjacent.id} d={`M ${x} ${y} C ${(x + a) / 2} ${y}, ${(x + a) / 2} ${b}, ${a} ${b}`} fill="none" stroke="var(--edge)" strokeWidth="1.25" strokeOpacity={0.65} vectorEffect="non-scaling-stroke" />
+          })}
+        </svg>
+        <div className="z-10 flex items-center gap-2 rounded-md border border-data-accent bg-background p-2.5 md:absolute md:w-[20%] md:-translate-1/2" style={{ left: `${centre[0]}%`, top: `${centre[1]}%` }}>
+          <TypeTile type={record.type} className="border-data-accent/40 text-tone-blue" />
+          <div className="min-w-0">
+            <div className="truncate text-xs font-semibold">{record.name}</div>
+            <code className="text-[10px] text-muted-foreground">{record.id}</code>
+          </div>
+        </div>
+        {nodes.map(({ record: adjacent, label, position: [x, y] }) => (
+          <Link key={adjacent.id} to="/sources/$concept/$" params={{ concept: adjacent.type, _splat: adjacent.id }}
+            className="z-10 flex items-center gap-2 rounded-md border border-border bg-background p-2 transition-colors hover:border-data-accent md:absolute md:w-[19%] md:-translate-1/2" style={{ left: `${x}%`, top: `${y}%` }}>
+            <TypeTile type={adjacent.type} />
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-medium text-foreground">{TYPES[adjacent.type].name}</span>
+              <span className="block truncate text-[10px] text-muted-foreground">{label} · {adjacent.summary}</span>
+              <code className="block truncate text-[9px] text-muted-foreground">{adjacent.id}</code>
+            </span>
+          </Link>
+        ))}
+        {nodes.length === 0 && <p className="text-xs text-muted-foreground">No linked sample records.</p>}
       </div>
-      {nodes.map(({ record: adjacent, label, position:[x,y] }) => <Link key={adjacent.id} to="/sources/$concept/$" params={{ concept: adjacent.type, _splat: adjacent.id }}
-        className="z-10 flex items-center gap-2 rounded-xl border bg-card p-2 shadow-sm hover:border-data-accent hover:shadow-md md:absolute md:w-[19%] md:-translate-1/2" style={{left:`${x}%`,top:`${y}%`}}>
-        <TypeTile type={adjacent.type} /><span className="min-w-0"><span className="block truncate text-xs font-semibold">{TYPES[adjacent.type].name}</span><span className="block truncate text-[10px] text-muted-foreground">{label} · {adjacent.summary}</span><code className="block truncate text-[9px] text-muted-foreground">{adjacent.id}</code></span>
-      </Link>)}
-      {nodes.length === 0 && <p className="text-sm text-muted-foreground">No linked sample records.</p>}
-    </div>
-  </section>
+    </section>
+  )
 }
 
 function PaymentAllocation({ record }: { readonly record: FinanceRecord }) {
-  const installment = LINKS.find(link => link.to === record.id && link.label === "is paid by")?.from
-  const loanId = LINKS.find(link => link.to === installment && link.label === "has")?.from
-  const borrowerId = LINKS.find(link => link.to === loanId && link.label === "holds")?.from
+  const installment = LINKS.find((link) => link.to === record.id && link.label === "is paid by")?.from
+  const loanId = LINKS.find((link) => link.to === installment && link.label === "has")?.from
+  const borrowerId = LINKS.find((link) => link.to === loanId && link.label === "holds")?.from
   const loan = loanId ? BY_ID.get(loanId) : undefined
   const borrower = borrowerId ? BY_ID.get(borrowerId) : undefined
   if (!loan || !borrower) return null
-  return <section aria-label="Payment allocation" className="flex flex-wrap gap-2 rounded-xl border bg-card p-3">
-    {([[loan, "Applied to"], [borrower, "Paid by"]] as const).map(([target, label]) => <RecordLink key={target.id} record={target} className="inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs hover:border-data-accent">
-      <span className="text-muted-foreground">{label}</span><ArrowRight className="size-3 text-tone-blue" /><strong className="font-medium">{TYPES[target.type].name}</strong><code>{target.id}</code>
-    </RecordLink>)}
-  </section>
+  return (
+    <section aria-label="Payment allocation" className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-4 py-2.5 text-xs">
+      <span className="font-medium text-muted-foreground">Allocation:</span>
+      {([[loan, "Applied to"], [borrower, "Paid by"]] as const).map(([target, label]) => (
+        <RecordLink key={target.id} record={target} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-subtle px-2.5 py-1 hover:border-data-accent">
+          <span className="text-muted-foreground">{label}</span>
+          <ArrowRight className="size-3 text-tone-blue" />
+          <strong className="font-medium text-foreground">{TYPES[target.type].name}</strong>
+          <code className="text-muted-foreground">{target.id}</code>
+        </RecordLink>
+      ))}
+    </section>
+  )
 }
 
 export function RecordDetail({ record }: { readonly record: FinanceRecord }) {
+  const { mode } = useFinanceMode()
   const [active, setActive] = useState<Fact>(record.facts[0]!)
+  const [showLineage, setShowLineage] = useState(mode === "data")
   const history = record.history
-  return <section className="space-y-4">
-    <nav aria-label="Record breadcrumbs" className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-      <Link to="/sources" className="hover:text-foreground">Sources</Link><ChevronRight className="size-3" />
-      <Link to="/sources/$concept" params={{concept:record.type}} search={{ tab: "records" }} className="hover:text-foreground">{TYPES[record.type].plural}</Link><ChevronRight className="size-3" />
-      <span className="text-foreground" aria-current="page">{record.id}</span>
-    </nav>
-    <FinanceHeading title={record.name} description={`${TYPES[record.type].name} · ${record.id}`} />
-    <div className="flex flex-wrap items-center gap-2">
-      <TypeTile type={record.type} /><Chip tone="green" className="rounded-full">{record.status}</Chip>
-      {record.type === "client" && <Chip tone="blue" icon={GitMerge} className="rounded-full">Merged from 4 sources on National ID</Chip>}
-    </div>
-    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(13rem,0.5fr)]">
-      <section aria-label="Facts" className="min-w-0 rounded-2xl border bg-card p-4">
-        <h2 className="mb-2 text-sm font-semibold">Facts</h2>
-        <dl className="divide-y">
-          {record.facts.map((value) => <div key={value.target} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2 py-2 text-xs">
-            <dt className="text-muted-foreground">{value.label}</dt>
-            <dd><button type="button" aria-label={`Show lineage for ${value.label}`} aria-pressed={active === value} onClick={() => setActive(value)} className={cn("rounded px-1 text-left font-medium tabular-nums hover:bg-muted", active === value && "bg-data-accent/10 text-tone-blue")}>{value.value}</button></dd>
-            <dd><SourceBadge id={value.source} /></dd>
-          </div>)}
-        </dl>
-      </section>
-      <Lineage fact={active} />
-    </div>
-    {record.type === "payment" && <PaymentAllocation record={record} />}
-    {history && <section aria-label="Score history" className="rounded-2xl border bg-card p-4">
-      <h2 className="mb-3 text-sm font-semibold">I-Score history</h2>
-      <ol className="grid max-w-lg grid-cols-3 gap-2">{history.map(({ date, score }, index) => <li key={date} className={cn("rounded-lg border bg-surface-subtle p-3", index === history.length - 1 && "border-data-accent bg-data-accent/10")}>
-        <div className="text-[11px] text-muted-foreground">{date}</div><div className="text-lg font-semibold tabular-nums">{score}</div>
-      </li>)}</ol>
-    </section>}
-    <Neighbourhood record={record} />
-  </section>
+
+  return (
+    <section className="space-y-4">
+      <nav aria-label="Record breadcrumbs" className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+        <Link to="/sources" className="hover:text-foreground">Objects</Link><ChevronRight className="size-3" />
+        <Link to="/sources/$concept" params={{ concept: record.type }} search={{ tab: "records" }} className="hover:text-foreground">{TYPES[record.type].plural}</Link><ChevronRight className="size-3" />
+        <span className="font-mono text-foreground" aria-current="page">{record.id}</span>
+      </nav>
+      <FinanceHeading
+        title={record.name}
+        description={`${TYPES[record.type].name} · ${record.id}`}
+        actions={
+          <div className="flex items-center gap-2">
+            <Chip tone="green" dot>{record.status}</Chip>
+            {record.type === "client" && <Chip tone="blue" icon={GitMerge}>Merged from 4 sources</Chip>}
+            <button
+              type="button"
+              onClick={() => setShowLineage(!showLineage)}
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-muted-foreground hover:border-data-accent hover:text-foreground"
+            >
+              <Database className="size-3" />{showLineage ? "Hide lineage" : "Inspect lineage"}
+            </button>
+          </div>
+        }
+      />
+
+      <div className={cn("grid overflow-hidden rounded-lg border border-border bg-background", showLineage && "md:grid-cols-[minmax(0,1fr)_20rem]")}>
+        <section aria-label="Facts" className="min-w-0">
+          <header className="border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">Record attributes</header>
+          <dl className="divide-y divide-border px-4">
+            {record.facts.map((value) => (
+              <div key={value.target} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] items-center gap-3 py-2.5 text-xs">
+                <dt className="text-muted-foreground">{value.label}</dt>
+                <dd>
+                  <button
+                    type="button"
+                    aria-label={`Show lineage for ${value.label}`}
+                    aria-pressed={active === value}
+                    onClick={() => { setActive(value); setShowLineage(true) }}
+                    className={cn("rounded-sm px-1.5 py-0.5 text-left font-medium tabular-nums hover:bg-surface-subtle", active === value && showLineage && "bg-tone-blue/10 text-tone-blue")}
+                  >
+                    {value.value}
+                  </button>
+                </dd>
+                <dd>{showLineage && <SourceBadge id={value.source} />}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+        {showLineage && <Lineage fact={active} />}
+      </div>
+
+      {record.type === "payment" && <PaymentAllocation record={record} />}
+
+      {history && (
+        <section aria-label="Score history" className="overflow-hidden rounded-lg border border-border bg-background">
+          <header className="border-b border-border bg-surface-subtle px-4 py-2 text-xs font-semibold">I-Score history</header>
+          <ol className="grid max-w-lg grid-cols-3 divide-x divide-border">
+            {history.map(({ date, score }, index) => (
+              <li key={date} className={cn("p-3.5", index === history.length - 1 && "bg-tone-blue/[0.04]")}>
+                <div className="text-[11px] text-muted-foreground">{date}</div>
+                <div className="mt-0.5 text-lg font-semibold tabular-nums text-foreground">{score}</div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      <Neighbourhood record={record} />
+    </section>
+  )
 }

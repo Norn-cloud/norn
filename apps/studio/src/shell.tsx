@@ -277,9 +277,9 @@ function AppletPanel({ section, pathname, live }: { readonly section: Section; r
   const label = "flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-sm text-sidebar-foreground/85 outline-none hover:bg-sidebar-accent hover:text-sidebar-foreground data-current:bg-sidebar-accent data-current:font-medium data-current:text-sidebar-foreground [&_svg]:size-4 [&_svg]:shrink-0"
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <div className="space-y-3 px-4 pt-5 pb-3">
-        <div className="space-y-1">
-          <h2 className="truncate text-xl font-semibold tracking-tight">{section.label}</h2>
+      <div className={cn("space-y-3", financeDemo ? "border-b border-border px-3.5 py-3" : "px-4 pt-5 pb-3")}>
+        <div className="space-y-0.5">
+          <h2 className={cn("truncate font-semibold tracking-tight", financeDemo ? "text-sm" : "text-xl")}>{section.label}</h2>
           <ScopeSwitcher />
         </div>
         {section.action && (!section.action.liveOnly || live) && (
@@ -376,8 +376,11 @@ function CommandMenu({ sections, live }: { readonly sections: readonly Section[]
   ])
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex h-9 w-full max-w-md min-w-0 items-center gap-2 rounded-full bg-muted/60 px-3 text-sm text-muted-foreground ring-1 ring-border outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring max-md:w-9 max-md:justify-center max-md:px-0">
-        <Search aria-hidden className="size-4 shrink-0" /><span className="hidden truncate md:inline">Search…</span><Keys className="ms-auto hidden text-meta md:inline">⌘K</Keys>
+      <DialogTrigger shortcut="mod+k" aria-label="Search" className={cn(
+        "flex w-full max-w-md min-w-0 items-center gap-2 bg-muted/60 px-3 text-sm text-muted-foreground ring-1 ring-border outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring max-md:w-9 max-md:justify-center max-md:px-0",
+        financeDemo ? "h-8 rounded-md bg-surface-subtle text-xs" : "h-9 rounded-full",
+      )}>
+        <Search aria-hidden className={cn("shrink-0", financeDemo ? "size-3.5" : "size-4")} /><span className="hidden truncate md:inline">Search…</span><Keys className="ms-auto hidden text-meta md:inline">⌘K</Keys>
       </DialogTrigger>
       <DialogBackdrop className="fixed inset-0 bg-black/40 transition-opacity duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0" />
       <DialogContent className="fixed top-[12vh] left-1/2 m-0 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-2xl bg-popover p-0 text-popover-foreground shadow-2xl ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
@@ -471,11 +474,10 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   )
 }
 
-/**
- * The app rail and the selected applet's sidebar (shadcn's sidebar-09 layout), the page in a
+/** The app rail and the selected applet's sidebar (shadcn's sidebar-09 layout), the page in a
  * rounded card beside them, and the inspector docked on its right.
  */
-export function Shell(props: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
+export function Shell(props: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly centerTools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
   return <LocaleProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></LocaleProvider>
 }
 
@@ -502,7 +504,7 @@ function useHashScroll() {
 }
 
 /** The shell in the reader's direction: in Arabic the rail docks on the right. */
-function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
+function LocalizedShell({ sections, tools, centerTools, assistant, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly centerTools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
   const { locale } = useLocale()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const live = useMode().data?.kind === "live"
@@ -511,13 +513,20 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
   useHashScroll()
   return (
     <ViewProvider><InspectorProvider><TooltipProvider>
-      <SidebarProvider data-shell="rail" className="bg-shell has-data-[variant=inset]:bg-shell" style={{ "--sidebar-width": "20rem", "--sidebar-width-icon": "3.5rem" } as CSSProperties}>
-        <Sidebar collapsible="icon" variant="inset" side={directionOf(locale) === "rtl" ? "right" : "left"}
-          className="overflow-hidden p-0! group-data-[collapsible=icon]:w-(--sidebar-width-icon)!">
-          <div className="flex size-full min-w-0 flex-row bg-shell">
-          <Rail sections={applets} account={account} onSignOut={onSignOut} assistant={assistant} />
-          <div className="flex min-w-0 flex-1 py-2 max-md:pe-2">
-            <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl bg-sidebar ring-1 ring-sidebar-border">
+      <SidebarProvider
+        data-shell="rail"
+        data-finance-workbench={financeDemo ? "" : undefined}
+        className={cn("bg-shell has-data-[variant=inset]:bg-shell", financeDemo && "bg-background")}
+        style={{ "--sidebar-width": financeDemo ? "17.5rem" : "20rem", "--sidebar-width-icon": "3.25rem" } as CSSProperties}
+      >
+        <Sidebar collapsible="icon" variant={financeDemo ? "sidebar" : "inset"} side={directionOf(locale) === "rtl" ? "right" : "left"}
+          className={cn("overflow-hidden p-0! group-data-[collapsible=icon]:w-(--sidebar-width-icon)!", financeDemo && "border-e border-border bg-background")}>
+          <div className={cn("flex size-full min-w-0 flex-row", financeDemo ? "bg-background" : "bg-shell")}>
+          <div className={cn("flex h-full shrink-0", financeDemo && "border-e border-border bg-surface-subtle")}>
+            <Rail sections={applets} account={account} onSignOut={onSignOut} assistant={assistant} />
+          </div>
+          <div className={cn("flex min-w-0 flex-1", financeDemo ? "p-0" : "py-2 max-md:pe-2")}>
+            <div className={cn("flex min-w-0 flex-1 overflow-hidden bg-sidebar", !financeDemo && "rounded-2xl ring-1 ring-sidebar-border")}>
               {current
                 ? <AppletPanel key={current.path} section={current} pathname={pathname} live={live} />
                 : <div className="min-w-0 space-y-1 px-4 pt-5"><h2 className="text-xl font-semibold tracking-tight">Studio</h2><ScopeSwitcher /></div>}
@@ -525,18 +534,31 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
           </div>
           </div>
         </Sidebar>
-        <SidebarInset className="min-w-0 flex-row overflow-hidden ring-1 ring-border md:m-2! md:peer-data-[state=expanded]:ms-2! md:peer-data-[side=left]:peer-data-[state=collapsed]:ms-0!">
+        <SidebarInset className={cn(
+          "min-w-0 flex-row overflow-hidden",
+          financeDemo
+            ? "m-0! rounded-none! bg-background shadow-none!"
+            : "ring-1 ring-border md:m-2! md:peer-data-[state=expanded]:ms-2! md:peer-data-[side=left]:peer-data-[state=collapsed]:ms-0!",
+        )}>
           <div className="flex min-w-0 flex-1 flex-col">
-            <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 md:px-4">
+            <header className={cn(
+              "grid shrink-0 items-center gap-2 px-3 md:px-4",
+              financeDemo
+                ? "h-12 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] border-b border-border bg-background"
+                : "h-14 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+            )}>
               <div className="flex min-w-0 items-center gap-1.5">
                 <SidebarTrigger className={cn("-ms-1 text-muted-foreground")} />
                 <div className="min-w-0">{current && <Crumbs key={current.path} section={current} pathname={pathname} />}</div>
               </div>
-              <div className="flex justify-center md:w-[min(28rem,40vw)]"><CommandMenu sections={sections} live={live} /></div>
+              <div className="flex items-center justify-center gap-2">
+                {centerTools}
+                <div className={cn(financeDemo ? "w-44 md:w-52" : "md:w-[min(28rem,40vw)]")}><CommandMenu sections={sections} live={live} /></div>
+              </div>
               <div className="flex justify-end"><BarButtons tools={tools} /></div>
             </header>
             <ConnectionBanner />
-            <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8"><Outlet /></div>
+            <div className={cn("w-full", financeDemo ? "mx-auto max-w-[90rem] px-5 py-5 md:px-6" : "mx-auto max-w-6xl px-4 py-6 md:px-8")}><Outlet /></div>
           </div>
           <Inspector />
           <AssistantPanel assistant={assistant} />

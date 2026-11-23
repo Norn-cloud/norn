@@ -348,6 +348,68 @@
 @media (prefers-reduced-motion: reduce) { .react-flow .react-flow__edge, [data-edge-label], [data-exit-label] { transition: none; } }
 .react-flow .react-flow__edge.canvas-edge-failing .react-flow__edge-path { stroke: var(--destructive); stroke-width: 2px; }
 @media (prefers-reduced-motion: reduce) { .react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-path { animation: none; stroke-dasharray: none; } }
+
+/*
+ * Finance workbench theme: Snowflake Snowsight / Retool / Palantir OMA density.
+ * Flat 1px hairlines, crisp neutral surfaces, zero card-in-card shadows, one blue accent.
+ */
+[data-finance-workbench] {
+  --radius: 0.5rem;
+  --shell: #ffffff;
+  --canvas: #ffffff;
+  --background: #ffffff;
+  --card: #ffffff;
+  --surface-subtle: #f8f9fb;
+  --secondary: #f3f4f6;
+  --muted: #f3f4f6;
+  --muted-foreground: #5f6672;
+  --border: #e4e7ec;
+  --input: #d9dee6;
+  --sidebar: #ffffff;
+  --sidebar-accent: #f1f4f9;
+  --sidebar-border: #e4e7ec;
+  --data-accent: #2563eb;
+  --ring: #2563eb;
+  --action: #2563eb;
+  --elevation-1: none;
+  --elevation-node: 0 1px 2px rgb(15 23 42 / 0.06);
+  --elevation-node-hover: 0 2px 6px rgb(15 23 42 / 0.1);
+  --node-radius: 8px;
+  --canvas-surface: #f8f9fb;
+  --canvas-dot: rgb(15 23 42 / 0.11);
+}
+.dark [data-finance-workbench] {
+  --shell: #0c0d10;
+  --canvas: #0c0d10;
+  --background: #0f1115;
+  --card: #13161b;
+  --surface-subtle: #161920;
+  --secondary: #1b1f27;
+  --muted: #1b1f27;
+  --muted-foreground: #969fae;
+  --border: #252a34;
+  --input: #2b313d;
+  --sidebar: #0f1115;
+  --sidebar-accent: #1a1f29;
+  --sidebar-border: #252a34;
+  --elevation-1: none;
+}
+[data-finance-workbench] [data-slot="panel"] {
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  box-shadow: none;
+  --tw-ring-shadow: 0 0 #0000;
+}
+[data-finance-workbench] [data-slot="panel"] > header {
+  min-height: 2.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-subtle);
+  padding: 0.5rem 1rem;
+}
+[data-finance-workbench] [data-slot="panel"] > header h2 {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
 /* Where each source joins a bundle's rail. */
 .canvas-bundle-tick { fill: var(--card); stroke: var(--edge); stroke-width: 1.5px; }
 .react-flow .react-flow__edge.canvas-edge-active .canvas-bundle-tick { stroke: var(--edge-active); }

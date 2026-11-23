@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow, ListChecks } from "lucide-react"
+import { Blend, Boxes, ChartLine, Database, FileScan, Fingerprint, GitMerge, House, Inbox, LayoutDashboard, ListChecks, Network, Plug, ShieldCheck, Waypoints, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { endSession, useAccount } from "@/lib/session"
@@ -15,10 +15,10 @@ import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
 import { Shell, type Section } from "./shell.tsx"
 import { financeDemo } from "./lib/finance-demo.ts"
 import { financeSourceMenu } from "./finance/record-pages.tsx"
-import { financeExampleMenu } from "./finance/examples.tsx"
 import { financeWorkflowMenu } from "./finance/behavior-pages.tsx"
 import { financeRuleMenu } from "./finance/operations.tsx"
 import { financeMetricMenu } from "./finance/metrics.tsx"
+import { FinanceModeProvider, FinanceModeSwitcher, useFinanceMode } from "./finance/workspace.tsx"
 import { useSourcesMenu } from "./sources.tsx"
 import { useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
@@ -37,16 +37,37 @@ const SECTIONS: readonly Section[] = [
   { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "System", liveOnly: true },
 ]
 
-const FINANCE_SECTIONS: readonly Section[] = [
-  { path: "/", label: "Home", icon: House, summary: "Finance activity and exceptions.", group: "Work" },
-  { path: "/sources", label: "Sources", icon: Database, summary: "Mapped lending, brokerage, and payment systems.", kind: "source", group: "Model", useMenu: financeSourceMenu, paths: ["/objects", "/policies"] },
-  { path: "/metrics", label: "Metrics", icon: ChartLine, summary: "Repayment reconciliation and corrections.", kind: "question", group: "Model", useMenu: financeMetricMenu },
-  { path: "/examples", label: "Examples", icon: Network, summary: "Object explorer, document mapping and dataset mapping.", group: "Model", useMenu: financeExampleMenu },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "States and conditions for finance processes.", kind: "workflow", group: "Rules", useMenu: financeWorkflowMenu },
-  { path: "/guarantees", label: "Rules", icon: ShieldCheck, summary: "Finance checks and refusal evidence.", kind: "guarantee", group: "Rules", useMenu: financeRuleMenu },
-  { path: "/markings", label: "Markings", icon: Fingerprint, summary: "How each role sees personal data.", group: "Rules" },
-  { path: "/optimisations/collections", label: "Optimisation", icon: ListChecks, summary: "Collections allocation for the next seven days.", group: "Rules" },
+const FINANCE_DOMAIN_SECTIONS: readonly Section[] = [
+  { path: "/", label: "Overview", icon: House, summary: "Domain posture, refusals and core objects.", group: "Domain" },
+  { path: "/sources", label: "Objects", icon: Boxes, summary: "Business object types, aggregates and policies.", kind: "objectType", group: "Domain", useMenu: financeSourceMenu, paths: ["/objects", "/policies"] },
+  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "Branching lifecycles and cross-aggregate automations.", kind: "workflow", group: "Domain", useMenu: financeWorkflowMenu },
+  { path: "/guarantees", label: "Rules", icon: ShieldCheck, summary: "Cross-object invariants and refusal evidence.", kind: "guarantee", group: "Domain", useMenu: financeRuleMenu },
+  { path: "/examples/document", label: "DocTypes", icon: FileScan, summary: "Document extraction templates and role redaction.", group: "Operations" },
+  { path: "/metrics", label: "Metrics", icon: ChartLine, summary: "Repayment reconciliation and auditable corrections.", kind: "question", group: "Operations", useMenu: financeMetricMenu },
+  { path: "/optimisations/collections", label: "Optimisation", icon: ListChecks, summary: "7-day collections allocation plan.", group: "Operations" },
 ]
+
+const FINANCE_DATA_SECTIONS: readonly Section[] = [
+  { path: "/sources", label: "Sources & Sync", icon: Database, summary: "Seven connected systems and schema contracts.", kind: "source", group: "Pipelines", useMenu: financeSourceMenu, paths: ["/objects", "/policies"] },
+  { path: "/examples/dataset", label: "Dataset Mapping", icon: GitMerge, summary: "Source-to-domain field mappings, conflicts and identity review.", group: "Pipelines", useBadge: () => 32 },
+  { path: "/examples/explorer", label: "Record Lineage", icon: Waypoints, summary: "Borrower resolution graph and field-level source lineage.", group: "Quality" },
+  { path: "/markings", label: "PII Markings", icon: Fingerprint, summary: "Field sensitivity classifications and role reveal matrix.", group: "Quality" },
+]
+
+function FinanceShellRoot({ account, sidekick, onSignOut }: { readonly account: NonNullable<ReturnType<typeof useAccount>["data"]>; readonly sidekick: boolean; readonly onSignOut: () => void }) {
+  const { mode } = useFinanceMode()
+  const brand = account.previewBrand
+  return (
+    <Shell
+      sections={mode === "data" ? FINANCE_DATA_SECTIONS : FINANCE_DOMAIN_SECTIONS}
+      centerTools={<FinanceModeSwitcher />}
+      assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined}
+      account={account}
+      onSignOut={onSignOut}
+      tools={brand && <span className="me-1 hidden min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface-subtle px-2 py-1 text-[10px] whitespace-nowrap text-muted-foreground md:inline-flex"><span>Prepared for</span><img src={brand.logoUrl} alt={brand.name} referrerPolicy="no-referrer" className="h-4 max-w-16 object-contain" /></span>}
+    />
+  )
+}
 
 /**
  * Signed out (an explicit 401), a visitor sees only the sign-in page; signed in, the Studio.
@@ -59,10 +80,18 @@ function Root() {
   if (account.data != null) {
     const brand = account.data.previewBrand
     const usesAccess = account.data.authentication === "cloudflare-access"
-    return <Shell sections={financeDemo ? FINANCE_SECTIONS : SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => {
-        if (usesAccess) window.location.assign("/cdn-cgi/access/logout")
-        else void signOut()
-      }}
+    const handleSignOut = () => {
+      if (usesAccess) window.location.assign("/cdn-cgi/access/logout")
+      else void signOut()
+    }
+    if (financeDemo) {
+      return (
+        <FinanceModeProvider>
+          <FinanceShellRoot account={account.data} sidekick={sidekick} onSignOut={handleSignOut} />
+        </FinanceModeProvider>
+      )
+    }
+    return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={handleSignOut}
       tools={brand && <span className="me-1.5 hidden min-w-0 items-center gap-2 rounded-full border bg-card py-1 ps-2.5 pe-2 text-[10px] whitespace-nowrap text-muted-foreground md:inline-flex"><span>Prepared for</span><img src={brand.logoUrl} alt={brand.name} referrerPolicy="no-referrer" className="h-5 max-w-20 object-contain" /></span>} />
   }
   if (account.isPending) return null
