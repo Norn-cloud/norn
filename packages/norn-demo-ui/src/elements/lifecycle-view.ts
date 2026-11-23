@@ -509,8 +509,14 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
     }
   }
 
+  const listeners = new AbortController()
+  let onRetry: (() => void) | null = null
   root.addEventListener("click", (event) => {
     const target = event.target as Element | null
+    if (onRetry && target?.closest('[data-node="retry-button"]')) {
+      onRetry()
+      return
+    }
     const pick = target?.closest<HTMLElement>("[data-pick]")
     if (pick) {
       const index = Number(pick.dataset.pick)
@@ -524,7 +530,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
       taken = Math.max(0, Math.min(findings[picked]!.witness.steps.length, taken + Number(move.dataset.move)))
       paintSteps()
     }
-  })
+  }, { signal: listeners.signal })
 
   paintCounts(countsFrom(lifecycle, null, locale), null, options.read === undefined)
   paintSteps()
@@ -544,6 +550,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
       notes.hidden = false
     }
     return () => {
+      listeners.abort()
       if (raf !== null && typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(raf)
       resize?.disconnect()
     }
@@ -555,6 +562,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   if (!page) throw new Error("the lifecycle view's document has no page")
   let last: LiveAnswer | null = null
   let pendingRefresh = false
+  let disposed = false
   const paintState = (state: string) => {
     q(".norn-life")?.setAttribute("data-machine-state", state)
     const unavailable = q('[data-region="unavailable"]')
@@ -577,6 +585,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
     transport: {
       async call(_call, _input, callOptions) {
         const readOnce = async () => {
+          last = null
           last = await read(callOptions.signal)
           if (isRouteNotServed(last)) return { outcome: "network_failure" as const, payload: {} }
           const classified = classifyResponse(last.status, last.body)
@@ -595,20 +604,24 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
       },
     },
     onStep: (step) => {
+      if (disposed) return
       paintState(step.snapshot.stateId)
       if (pendingRefresh && step.snapshot.stateId !== "reading" && step.snapshot.stateId !== "opening") {
         pendingRefresh = false
-        if (step.snapshot.stateId === "unavailable") driver.dispatch({ kind: "user", eventId: "retry" })
-        else driver.dispatch({ kind: "subscription", bindingId: "subject" })
+        queueMicrotask(() => {
+          if (disposed) return
+          const current = driver.snapshot().stateId
+          if (current === "unavailable") driver.dispatch({ kind: "user", eventId: "retry" })
+          else if (current !== "reading" && current !== "opening") driver.dispatch({ kind: "subscription", bindingId: "subject" })
+        })
       }
     },
   })
   paintState(driver.snapshot().stateId)
   driver.dispatch({ kind: "page_opened" })
-  root.addEventListener("click", (event) => {
-    if ((event.target as Element | null)?.closest('[data-node="retry-button"]')) driver.dispatch({ kind: "user", eventId: "retry" })
-  })
+  onRetry = () => driver.dispatch({ kind: "user", eventId: "retry" })
   const triggerRefresh = () => {
+    if (disposed) return
     const state = driver.snapshot().stateId
     if (state === "reading" || state === "opening") {
       pendingRefresh = true
@@ -637,6 +650,8 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
     }
   })
   return () => {
+    disposed = true
+    listeners.abort()
     stop?.()
     driver.dispose()
     if (raf !== null && typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(raf)

@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
+import { sentence } from "@/components/lifecycle-view"
+import { useLocale } from "./lib/locale.tsx"
 import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
 import { FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
@@ -78,6 +80,7 @@ export function ObjectPage() {
   // `#lineage` (a traced number's record) opens on where it came from.
   const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
   const { view } = useView()
+  const { locale } = useLocale()
   const data = reads.data
   const lineage = data?.source?.document
   const problem = readProblem(catalogRead, reads)
@@ -147,8 +150,8 @@ export function ObjectPage() {
                 {concept.lifecycles.map((lifecycle) => {
                   const field = concept.fields.find((candidate) => candidate.id === lifecycle.property)
                   return (
-                    <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${field?.label ?? lifecycle.property.replaceAll("_", " ")}`}
-                      action={<Link to="/objects/$type" params={{ type: name }} hash="lifecycle" className="underline-offset-4 hover:underline">Type-wide view</Link>}>
+                    <Panel key={lifecycle.property} icon={GitBranch} label={`${locale === "ar" ? "دورة الحياة" : "Lifecycle"} · ${field?.label ?? sentence(lifecycle.property)}`}
+                      action={<Link to="/objects/$type" params={{ type: name }} hash="lifecycle" className="underline-offset-4 hover:underline">{locale === "ar" ? "العرض الشامل للنوع" : "Type-wide view"}</Link>}>
                       <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} concept={concept} /></Well>
                     </Panel>
                   )

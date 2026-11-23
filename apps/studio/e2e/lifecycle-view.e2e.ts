@@ -421,6 +421,7 @@ test.describe("Records page Lifecycle view mode", () => {
       payment_status: okFacets("payment_status", { unpaid: 10, paid: 20 }),
     })
     await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+    await expect(page.locator('[data-slot="tabs"]')).toHaveAttribute("dir", "rtl")
     const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
     await expect(statusView.locator(".norn-life")).toHaveAttribute("dir", "rtl")
     await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("٦٬٢٠٠ على الأقل")
@@ -455,5 +456,25 @@ test.describe("Records page Lifecycle view mode", () => {
     await expect(page).toHaveURL(/\/objects\/commerce\.PurchaseOrder#lifecycle$/)
     const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
     await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("12")
+  })
+
+  test("records page: a 409 object.snapshot_moved retries once and recovers instead of hanging", async ({ page }) => {
+    let statusReads = 0
+    await lifecycleCell(page, {
+      status: okFacets("status", { draft: 15, submitted: 5 }),
+      payment_status: okFacets("payment_status", { unpaid: 20 }),
+    })
+    await page.route("**/api/host/v1/objects/commerce.PurchaseOrder:facets**", (route: Route) => {
+      const url = new URL(route.request().url())
+      if (url.searchParams.get("properties") === "status" && statusReads++ === 0) {
+        return route.fulfill({ status: 409, json: { code: "object.snapshot_moved", message: "Snapshot moved" } })
+      }
+      return route.fallback()
+    })
+    await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+    const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("15")
+    await expect(statusView.locator(".norn-life")).toHaveAttribute("data-machine-state", "showing")
+    expect(statusReads).toBeGreaterThanOrEqual(2)
   })
 })

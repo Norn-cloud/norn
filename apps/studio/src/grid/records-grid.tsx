@@ -249,7 +249,12 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
               onValueChange={(next) => {
                 if (next === "table" || (next === "timeline" && timeline && canQuery) || (next === "lifecycle" && hasLifecycle)) {
                   setLayout(next)
-                  if (next !== "lifecycle") { restart(); setNotice(null) }
+                  if (next !== "lifecycle") {
+                    if (typeof location !== "undefined" && typeof history !== "undefined" && location.hash === "#lifecycle") {
+                      history.replaceState(null, "", `${location.pathname}${location.search}`)
+                    }
+                    restart(); setNotice(null)
+                  }
                 }
               }}>
               <ToggleGroupItem value="table" className="px-3">Table</ToggleGroupItem>
