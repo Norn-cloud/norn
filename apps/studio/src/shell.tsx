@@ -230,18 +230,33 @@ type Navigation = ReturnType<typeof useNavigation>
 const railButton = "relative flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-[1.0625rem]"
 
 /** One destination on the rail: its icon, its name as a hint, and its count. */
-function RailLink({ section, count }: { readonly section: Section; readonly count: string | undefined }) {
-  const { setOpenMobile } = useSidebar()
+function RailLink({ section, count, firstHref, active }: {
+  readonly section: Section; readonly count: string | undefined; readonly firstHref?: string; readonly active?: boolean
+}) {
+  const { setOpen, setOpenMobile } = useSidebar()
   const Icon = section.icon
+  const label = count ? `${section.label}, ${count} open` : section.label
+  const badge = count && <span data-count className="absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.625rem] leading-none font-semibold text-destructive-foreground tabular-nums ring-2 ring-sidebar">{count}</span>
+  // A destination without its own index page (Records) opens its first item, or expands the sidebar when none is loaded yet.
+  const to = section.index === false ? firstHref : section.path
+  if (to === undefined) {
+    return (
+      <Hint label={section.label}>
+        <ToolbarButton aria-label={label} onClick={() => setOpen(true)}
+          className={cn(railButton, active && "bg-sidebar-accent text-foreground")}>
+          <Icon aria-hidden />{badge}
+        </ToolbarButton>
+      </Hint>
+    )
+  }
   return (
     <Hint label={section.label}>
       <ToolbarLink
-        render={<Link to={section.path} activeOptions={{ exact: section.path === "/" }} onClick={() => setOpenMobile(false)} />}
-        aria-label={count ? `${section.label}, ${count} open` : section.label}
-        className={cn(railButton, "data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground")}
+        render={<Link to={to} activeOptions={{ exact: to === "/" }} onClick={() => setOpenMobile(false)} />}
+        aria-label={label}
+        className={cn(railButton, "data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground", active && "bg-sidebar-accent text-foreground")}
       >
-        <Icon aria-hidden />
-        {count && <span data-count className="absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.625rem] leading-none font-semibold text-destructive-foreground tabular-nums ring-2 ring-sidebar">{count}</span>}
+        <Icon aria-hidden />{badge}
       </ToolbarLink>
     </Hint>
   )
@@ -264,14 +279,15 @@ function AssistantToggle({ title }: { readonly title: string }) {
  * assistant and the viewer. With the sidebar collapsed it also carries the perspective's
  * destinations, so nothing is out of reach.
  */
-function Rail({ sections, perspective, navigation, account, onSignOut, assistant }: {
+function Rail({ sections, perspective, navigation, current, account, onSignOut, assistant }: {
   readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation
-  readonly account: Account; readonly onSignOut: () => void; readonly assistant?: AssistantContent
+  readonly current: Section | undefined; readonly account: Account; readonly onSignOut: () => void; readonly assistant?: AssistantContent
 }) {
   const { state, isMobile } = useSidebar()
   const global = sections.filter((section) => section.perspective === "global")
   const own = state === "collapsed" && !isMobile ? sections.filter((section) => section.perspective === perspective) : []
   const groups = [...new Set(own.map(({ group }) => group))]
+  const firstHref = (section: Section) => navigation.menus.get(section.path)?.find(({ href }) => !href.startsWith("#"))?.href
   return (
     <Toolbar orientation="vertical" aria-label="Studio" className="flex h-full w-(--sidebar-width-icon) shrink-0 flex-col items-center gap-1 py-2">
       <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-8 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -281,7 +297,10 @@ function Rail({ sections, perspective, navigation, account, onSignOut, assistant
       {groups.map((group) => (
         <div key={group ?? ""} role="group" aria-label={group} className="flex flex-col items-center gap-1">
           <div aria-hidden className="my-1.5 h-px w-4 bg-sidebar-border" />
-          {own.filter((section) => section.group === group).map((section) => <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)} />)}
+          {own.filter((section) => section.group === group).map((section) => (
+            <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)}
+              firstHref={firstHref(section)} active={section.index === false && current?.path === section.path} />
+          ))}
         </div>
       ))}
       <div className="mt-auto flex flex-col items-center gap-2">
@@ -626,7 +645,7 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
       <SidebarProvider data-shell="workbench" data-density={density} className="bg-background" style={{ "--sidebar-width": "17rem", "--sidebar-width-icon": "3rem" } as CSSProperties}>
         <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-sidebar-border">
           <div className="flex size-full min-w-0 flex-row bg-sidebar">
-            <Rail sections={sections} perspective={perspective} navigation={navigation} account={account} onSignOut={onSignOut} assistant={assistant} />
+            <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account} onSignOut={onSignOut} assistant={assistant} />
             <div className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
               <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname} />
             </div>
