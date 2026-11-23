@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "norn-rostering-solver"
+version = "0.1.0"
+description = "Deterministic OR-Tools CP-SAT shift-rostering solver worker (norn.solver.rostering@0.1.0) for Norn HR"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "ortools>=9.11,<10",
+]
+
+[project.scripts]
+norn-rostering-solver = "norn_rostering_solver.cli:main"
+norn-rostering-worker = "norn_rostering_solver.worker:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.3",
+    "ruff>=0.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["norn_rostering_solver"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+disallow_any_explicit = false
+
+[[tool.mypy.overrides]]
+module = ["ortools.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]

@@ -1,0 +1,19 @@
+{
+  "sha256": "0e40d20e00c884a1ce2beb55bf46cceb9dcb2aa134c6f2f746b83bb8191c44e1",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/norn-rostering-solver/pyproject.toml"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
