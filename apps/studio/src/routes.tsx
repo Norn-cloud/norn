@@ -5,7 +5,7 @@ import { CanvasPage } from "./canvas.tsx"
 import { ConnectionsPage } from "./connections.tsx"
 import { QuestionTreePage } from "./question-tree.tsx"
 import { DashboardBoardPage, DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
-import { GuaranteesPage } from "./guarantees.tsx"
+import { RulesPage } from "./guarantees.tsx"
 import { MarkingsPage } from "./markings.tsx"
 import { PAGES, type PagePath } from "./lib/pages.ts"
 import { RecordsPage } from "./grid/records-page.tsx"
@@ -45,13 +45,13 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/dashboards/$id/edit": DashboardEditorPage,
   "/workflows": WorkflowsPage,
   "/canvas": CanvasPage,
-  "/guarantees": GuaranteesPage,
+  "/rules": RulesPage,
   "/markings": MarkingsPage,
   "/connections": ConnectionsWithBindings,
 }
 
-/** Where an old address now lives: Questions became Metrics, and a saved link still opens its page. */
-export const MOVED = { "/questions": "/metrics" } as const
+/** Where an old address now lives: Questions became Metrics, Guarantees became Rules; a saved link still opens its page. */
+export const MOVED = { "/questions": "/metrics", "/guarantees": "/rules" } as const
 
 /** `/questions/new#x` → `/metrics/new#x`: the same page under its new prefix, nothing else changed. */
 export function movedTo(pathname: string): string | undefined {

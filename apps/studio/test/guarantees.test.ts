@@ -44,3 +44,24 @@ test("a guarantee link opens the details; any other hash keeps the reader's choi
   // A closed disclosure stays closed on an unrelated anchor.
   expect(openAfterHash(false, "summary")).toBe(false)
 })
+
+test("heldBy matches on both rule and object type, and lower-bound counts keep their + suffix", async () => {
+  const { heldBy, heldCountText } = await import("../src/laws.tsx")
+  const { recordName } = await import("../src/lib/objects.ts")
+  const law = { id: "canon.ItemizedDocument.total_matches_lines", artifactId: "canon.ItemizedDocument.total_matches_lines.law", subject: "canon.ItemizedDocument", rationale: "r", severity: "error" as const, modality: "always", response: "predicate", owner: "canon" }
+  const groups = [
+    { kind: "held_back" as const, ruleRef: { kind: "law" as const, artifactId: law.artifactId, lawId: law.id, version: "1" }, title: "t", objectType: "docs.LedgerEntry", count: 5, approximate: false, target: "/objects/docs.LedgerEntry?population=held_back", records: [] },
+    { kind: "held_back" as const, ruleRef: { kind: "law" as const, artifactId: law.artifactId, lawId: law.id, version: "1" }, title: "t", objectType: "docs.ScannedDocument", count: 500, approximate: true, target: "/objects/docs.ScannedDocument?population=held_back", records: [] },
+  ]
+  expect(heldBy(groups, law, "docs.ScannedDocument")?.count).toBe(500)
+  expect(heldBy(groups, law, "docs.LedgerEntry")?.count).toBe(5)
+  expect(heldBy(groups, law, "canon.Item")).toBeUndefined()
+  expect(heldCountText(1, false)).toBe("1")
+  expect(heldCountText(500, true)).toBe("500+")
+  // Title resolution matches main's record page: label, display_name, else id (never guessing doc_number).
+  expect(recordName({ id: "SCAN-1", values: { doc_number: "INV-1" } })).toBe("SCAN-1")
+  expect(recordName({ id: "SCAN-1", values: { label: "October invoice", doc_number: "INV-1" } })).toBe("October invoice")
+  expect(recordName({ id: "SCAN-1", values: { label: "", display_name: "Fallback name" } })).toBe("Fallback name")
+  expect(recordName({ id: "SCAN-1", values: null })).toBe("SCAN-1")
+  expect(recordName({ id: "SCAN-1" })).toBe("SCAN-1")
+})
