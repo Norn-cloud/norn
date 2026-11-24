@@ -610,6 +610,49 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
     Ok(())
 }
 
+/// D137 crash safety: a refused update publishes nothing. Once a batch is
+/// visible, a later batch of another generation is refused and every
+/// previously visible row stays exactly as it was, and the frontier stays.
+#[test]
+fn a_refused_update_preserves_every_visible_row() -> Result<(), Box<dyn std::error::Error>> {
+    let (dir, engine) = engine();
+    let (mut store, plan, context) = by_metal(true, 100);
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
+    let before = ask(&store, &engine, &plan, context.clone())?;
+    let visible = super::backend::mirror_rows(dir.path(), &tenant(), TYPE);
+    assert_ne!(visible, 0);
+    let mirror = store.analytics_frontier(&tenant(), WORLD)?;
+    let frontier = engine.frontier(&mirror).map_err(|r| r.detail)?;
+    commit(
+        &mut store,
+        vec![row("B", 2000, Some(500), TIMES[1], "silver")],
+    );
+    let mut update = store
+        .analytics_delta(&tenant(), WORLD, frontier.frontier, 10)?
+        .request;
+    assert_ne!(update.rows.len(), 0);
+    for pin in update.schema_pins.values_mut() {
+        pin.push('x');
+    }
+    assert_eq!(
+        engine.sync(&update).map_err(|r| r.code),
+        Err("core.compute.stale_input".to_owned())
+    );
+    assert_eq!(super::backend::mirror_rows(dir.path(), &tenant(), TYPE), visible);
+    assert_eq!(engine.frontier(&mirror).map_err(|r| r.detail)?, frontier);
+    let prepared = store.analytics_prepare(&plan, context.clone(), &tenant())?;
+    let refused = engine
+        .evaluate(prepared.request())
+        .map(|_| ())
+        .map_err(|r| r.code);
+    assert_eq!(refused, Err("analytics.frontier_behind".to_owned()));
+    drop(before);
+    Ok(())
+}
+
 /// A CSV in the tenant's scratch directory, the only place its load reads.
 fn csv(engine: &Engine, lines: &[&str]) -> (tempfile::NamedTempFile, String) {
     let mut file =

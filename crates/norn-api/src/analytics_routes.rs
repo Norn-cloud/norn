@@ -494,7 +494,7 @@ pub fn export_objects<E: SqlEngine>(
             source: source.clone(),
             columns,
             format,
-            model_pin: None,
+            model_pin: Some(store.model().model_hash().to_owned()),
         },
     )
     .map_err(engine_failure)?;
@@ -1776,7 +1776,7 @@ pub fn page_objects<E: SqlEngine>(
             ids: Vec::new(),
             offset,
             limit: u32::try_from(query.limit).unwrap_or(u32::MAX),
-            model_pin: None,
+            model_pin: Some(store.model().model_hash().to_owned()),
         };
         engine_page(store, transport, &request, query.after.is_some())?
     };
@@ -2029,7 +2029,7 @@ pub fn record_object<E: SqlEngine>(
             ids: vec![id.to_owned()],
             offset: 0,
             limit: 1,
-            model_pin: None,
+            model_pin: Some(store.model().model_hash().to_owned()),
         },
     )
     .map_err(engine_failure)?;

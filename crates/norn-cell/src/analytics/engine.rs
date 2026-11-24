@@ -679,7 +679,7 @@ impl Engine {
     /// As [`Self::evaluate`].
     pub fn members(&self, request: &MembersRequest) -> Outcome<MembersResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source, None)?;
+            let scope = Scope::new(conn, &request.source, request.model_pin.as_deref())?;
             let projection = Projection::build(&request.query, &scope)?;
             let members = projection.page(
                 conn,
@@ -1213,7 +1213,7 @@ impl Engine {
     /// An unknown column, a comparison its kind does not take, or a stale source.
     pub fn page(&self, request: &PageRequest) -> Outcome<PageResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source, None)?;
+            let scope = Scope::new(conn, &request.source, request.model_pin.as_deref())?;
             let mut conditions = vec![scope.population.clone()];
             if !request.ids.is_empty() {
                 conditions.push(Frag::fmt("\":id\" IN ({})", &[&id_list(&request.ids)]));
@@ -1355,7 +1355,7 @@ impl Engine {
             .map_err(|error| refusal("analytics.engine", error.to_string()))?
             .join(name);
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source, None)?;
+            let scope = Scope::new(conn, &request.source, request.model_pin.as_deref())?;
             let mut select = vec![
                 format!("{} AS id", ident(":id")),
                 format!("{} AS version", ident(":v")),

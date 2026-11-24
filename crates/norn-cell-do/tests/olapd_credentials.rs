@@ -139,9 +139,17 @@ impl Daemon {
     }
 
     fn database_exists(&self, tenant: &TenantId) -> bool {
-        self.root
-            .join(format!("{}.duckdb", tenant.as_str()))
-            .exists()
+        match ENGINE {
+            norn_cell::analytics::AnalyticalEngineId::DuckDb => {
+                self.root.join(format!("{}.duckdb", tenant.as_str()))
+            }
+            norn_cell::analytics::AnalyticalEngineId::DataFusion => self
+                .root
+                .join("t")
+                .join(tenant.as_str())
+                .join("catalog.sqlite3"),
+        }
+        .exists()
     }
 
     /// The landing attempts of `of` on disk.
