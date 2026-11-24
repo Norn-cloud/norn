@@ -311,8 +311,7 @@ fn uninterned_marking_storage_converts_atomically_without_reclassifying() {
     }
     tx.execute_batch(
         "DROP TABLE _norn_marking_subject;
-        DELETE FROM _norn_marking_current WHERE id = 'partial' AND property = 'public';
-        DELETE FROM _norn_marking_version WHERE id = 'partial' AND property = '';",
+        DELETE FROM _norn_marking_snapshot WHERE id = 'partial';",
     )
     .expect("incomplete slots stay incomplete");
     tx.commit().expect("fixture commits");
@@ -1031,13 +1030,13 @@ fn action_and_command_outputs_preserve_empty_unions_and_fail_closed_on_partial_s
         .expect("target facts commit with complete snapshots");
     drop(store);
 
-    // Keep one real marking row but remove another. A union over the rows
-    // left behind would understate the target's complete classification.
+    // Keep the stored marking rows but remove the current completeness marker.
+    // Reads must fail closed rather than trust rows without a snapshot marker.
     let raw = rusqlite::Connection::open(&path).expect("raw SQLite connection opens");
     let removed = raw
         .execute(
-            "DELETE FROM \"_norn_marking_current\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = (SELECT \"subject\" FROM \"_norn_marking_subject\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3) AND \"property\" = ?4",
-            rusqlite::params![MAIN_WORLD, "marking.MarkedTarget", "partial", "health"],
+            "DELETE FROM \"_norn_marking_snapshot\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"is_current\" = 1",
+            rusqlite::params![MAIN_WORLD, "marking.MarkedTarget", "partial"],
         )
         .expect("remove one row from the current marking snapshot");
     assert_eq!(removed, 1);
@@ -3414,11 +3413,11 @@ async fn noop_put_occurrence_lineage_preserves_values_and_survives_restart_and_r
             Some(std::collections::BTreeSet::from([label.to_owned()]))
         );
     }
-    // A lost occurrence row must not make an otherwise complete, public
-    // property snapshot look like a public no-op event.
+    // A lost immutable snapshot marker must not make a version look like a
+    // public no-op event.
     let connection = rusqlite::Connection::open(&target).expect("corruption fixture");
     connection.execute(
-        "DELETE FROM _norn_marking_version WHERE world = ?1 AND object_type = 'marking.Evidence' AND subject = (SELECT subject FROM _norn_marking_subject WHERE world = ?1 AND object_type = 'marking.Evidence' AND id = 'classified') AND version = 2 AND property = ''",
+        "DELETE FROM _norn_marking_snapshot WHERE world = ?1 AND object_type = 'marking.Evidence' AND id = 'classified' AND version = 2 AND is_current = 0",
         [MAIN_WORLD],
     ).expect("remove only immutable occurrence evidence");
     let event = restored
@@ -4240,4 +4239,487 @@ fn a_reveal_receipt_names_who_what_when_and_why_but_never_the_value() {
     assert_eq!(event["type"], "marking.revealed");
     assert_eq!(event["purpose"], "refund dispute");
     assert!(!event.to_string().contains('@'), "{event}");
+}
+
+fn sparse_marking_model() -> Model {
+    model(&[
+        json!({
+            "name": "marking.Unmarked",
+            "properties": [
+                {"id": "a", "type": {"kind": "text"}},
+                {"id": "b", "type": {"kind": "text"}},
+                {"id": "c", "type": {"kind": "text"}}
+            ]
+        }),
+        json!({
+            "name": "marking.Mixed",
+            "properties": [
+                {"id": "email", "type": {"kind": "text"}, "markings": [CONTACT]},
+                {"id": "name", "type": {"kind": "text"}}
+            ]
+        }),
+    ])
+}
+
+fn table_count(conn: &rusqlite::Connection, table: &str) -> Result<i64, rusqlite::Error> {
+    conn.query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |row| {
+        row.get(0)
+    })
+}
+
+#[test]
+fn sparse_markings_unmarked_commits_write_zero_slot_rows_and_read_empty()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("sparse-unmarked.sqlite");
+    let mut store = CellStore::open(&path, sparse_marking_model(), StoreOptions::default())?;
+    store.commit(&batch(
+        1,
+        vec![put(
+            "marking.Unmarked",
+            "u1",
+            &[("a", "one"), ("b", "two"), ("c", "three")],
+        )],
+    ))?;
+    store.commit(&batch(
+        2,
+        vec![put("marking.Unmarked", "u1", &[("a", "one-v2")])],
+    ))?;
+    store.commit(&batch(
+        3,
+        vec![FactWriteRow::Delete {
+            object_type: "marking.Unmarked".to_owned(),
+            key: "u1".to_owned(),
+        }],
+    ))?;
+    store.commit(&batch(
+        4,
+        vec![put("marking.Unmarked", "u2", &[("a", "live")])],
+    ))?;
+
+    let empty_props = BTreeMap::from([
+        ("a".to_owned(), Vec::new()),
+        ("b".to_owned(), Vec::new()),
+        ("c".to_owned(), Vec::new()),
+    ]);
+    assert_eq!(
+        store
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Unmarked", "u2", None)?,
+        Some(empty_props.clone())
+    );
+    for version in [1_u64, 2, 3] {
+        assert_eq!(
+            store
+                .read()
+                .effective_markings(MAIN_WORLD, "marking.Unmarked", "u1", Some(version))?,
+            Some(empty_props.clone())
+        );
+        assert_eq!(
+            store.read().fact_occurrence_markings(
+                MAIN_WORLD,
+                "marking.Unmarked",
+                "u1",
+                Some(version)
+            )?,
+            Some(std::collections::BTreeSet::new())
+        );
+    }
+    assert_eq!(
+        store
+            .read()
+            .property_marking_summary(MAIN_WORLD, "marking.Unmarked", "a")?,
+        Some(std::collections::BTreeSet::new())
+    );
+    assert!(
+        !store
+            .read()
+            .property_history_marked(MAIN_WORLD, "marking.Unmarked", "a")?
+    );
+    assert!(!store.read().stores_markings()?);
+    drop(store);
+
+    let raw = rusqlite::Connection::open(&path)?;
+    assert_eq!(table_count(&raw, "_norn_marking_current")?, 0);
+    assert_eq!(table_count(&raw, "_norn_marking_version")?, 0);
+    assert_eq!(table_count(&raw, "_norn_marking_subject")?, 0);
+    assert!(table_count(&raw, "_norn_marking_snapshot")? > 0);
+    Ok(())
+}
+
+#[test]
+fn sparse_markings_marked_commits_write_only_nonempty_slots()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("sparse-marked.sqlite");
+    let mut store = CellStore::open(&path, sparse_marking_model(), StoreOptions::default())?;
+    store.commit(&batch(
+        1,
+        vec![put(
+            "marking.Mixed",
+            "alice",
+            &[("email", "a@example.test"), ("name", "Alice")],
+        )],
+    ))?;
+    store.commit(&batch(
+        2,
+        vec![put(
+            "marking.Mixed",
+            "alice",
+            &[("email", "a2@example.test"), ("name", "Alice 2")],
+        )],
+    ))?;
+
+    let expected = BTreeMap::from([
+        ("email".to_owned(), vec![CONTACT.to_owned()]),
+        ("name".to_owned(), Vec::new()),
+    ]);
+    for version in [None, Some(1), Some(2)] {
+        assert_eq!(
+            store
+                .read()
+                .effective_markings(MAIN_WORLD, "marking.Mixed", "alice", version)?,
+            Some(expected.clone())
+        );
+        assert_eq!(
+            store
+                .read()
+                .fact_occurrence_markings(MAIN_WORLD, "marking.Mixed", "alice", version)?,
+            Some(std::collections::BTreeSet::new())
+        );
+    }
+    assert_eq!(
+        store
+            .read()
+            .property_marking_summary(MAIN_WORLD, "marking.Mixed", "email")?,
+        Some(std::collections::BTreeSet::from([CONTACT.to_owned()]))
+    );
+    assert_eq!(
+        store
+            .read()
+            .property_marking_summary(MAIN_WORLD, "marking.Mixed", "name")?,
+        Some(std::collections::BTreeSet::new())
+    );
+    assert!(store.read().stores_markings()?);
+    drop(store);
+
+    let raw = rusqlite::Connection::open(&path)?;
+    assert_eq!(table_count(&raw, "_norn_marking_subject")?, 1);
+    assert_eq!(table_count(&raw, "_norn_marking_current")?, 1);
+    assert_eq!(table_count(&raw, "_norn_marking_version")?, 2);
+    let empty_current: i64 = raw.query_row(
+        "SELECT COUNT(*) FROM _norn_marking_current WHERE markings = '[]'",
+        [],
+        |row| row.get(0),
+    )?;
+    let empty_version: i64 = raw.query_row(
+        "SELECT COUNT(*) FROM _norn_marking_version WHERE markings = '[]'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(empty_current, 0);
+    assert_eq!(empty_version, 0);
+    Ok(())
+}
+
+fn declassify_mixed_email_batch(
+    key: &str,
+    expected_version: u64,
+    logical_time: u64,
+) -> Result<CommitBatch, CellError> {
+    let change = MarkingDeclassification {
+        object_type: "marking.Mixed".to_owned(),
+        key: key.to_owned(),
+        property: "email".to_owned(),
+        expected_version,
+        markings: vec![CONTACT.to_owned()],
+        actor: "officer".to_owned(),
+        reason: "approved".to_owned(),
+    };
+    let mut request = batch(logical_time, Vec::new());
+    request.events = vec![change.ledger_event()?];
+    request.marking_declassifications = vec![change];
+    Ok(request)
+}
+
+fn inject_legacy_empty_marking_rows(path: &std::path::Path) -> Result<i64, rusqlite::Error> {
+    let raw = rusqlite::Connection::open(path)?;
+    raw.execute(
+        "INSERT INTO _norn_marking_subject (world, object_type, id) VALUES (?1, 'marking.Unmarked', 'bob')",
+        [MAIN_WORLD],
+    )?;
+    let alice_subject: i64 = raw.query_row(
+        "SELECT subject FROM _norn_marking_subject WHERE world = ?1 AND object_type = 'marking.Mixed' AND id = 'alice'",
+        [MAIN_WORLD],
+        |row| row.get(0),
+    )?;
+    let bob_subject: i64 = raw.query_row(
+        "SELECT subject FROM _norn_marking_subject WHERE world = ?1 AND object_type = 'marking.Unmarked' AND id = 'bob'",
+        [MAIN_WORLD],
+        |row| row.get(0),
+    )?;
+    for (object_type, subject, properties) in [
+        ("marking.Mixed", alice_subject, ["name", ""].as_slice()),
+        (
+            "marking.Unmarked",
+            bob_subject,
+            ["a", "b", "c", ""].as_slice(),
+        ),
+    ] {
+        for property in properties {
+            for table in ["_norn_marking_current", "_norn_marking_version"] {
+                raw.execute(
+                    &format!("INSERT INTO {table} (world, object_type, subject, property, version, markings) VALUES (?1, ?2, ?3, ?4, 1, '[]')"),
+                    rusqlite::params![MAIN_WORLD, object_type, subject, property],
+                )?;
+            }
+        }
+    }
+    Ok(bob_subject)
+}
+
+#[test]
+fn sparse_markings_declassify_to_empty_and_reclassify_preserves_current_and_as_of()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("sparse-declassify.sqlite");
+    let mut store = CellStore::open(&path, sparse_marking_model(), StoreOptions::default())?;
+    store.commit(&batch(
+        1,
+        vec![put(
+            "marking.Mixed",
+            "alice",
+            &[("email", "a@example.test"), ("name", "Alice")],
+        )],
+    ))?;
+    store.commit(&declassify_mixed_email_batch("alice", 1, 2)?)?;
+
+    assert_eq!(
+        store
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Mixed", "alice", None)?,
+        Some(BTreeMap::from([
+            ("email".to_owned(), Vec::new()),
+            ("name".to_owned(), Vec::new()),
+        ]))
+    );
+    let as_of_v1 = store
+        .read()
+        .version_as_of(MAIN_WORLD, "marking.Mixed", "alice", 1)?;
+    assert_eq!(as_of_v1, 1);
+    let marked = BTreeMap::from([
+        ("email".to_owned(), vec![CONTACT.to_owned()]),
+        ("name".to_owned(), Vec::new()),
+    ]);
+    assert_eq!(
+        store
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Mixed", "alice", Some(as_of_v1))?,
+        Some(marked.clone())
+    );
+    assert_eq!(
+        store
+            .read()
+            .property_marking_summary(MAIN_WORLD, "marking.Mixed", "email")?,
+        Some(std::collections::BTreeSet::new())
+    );
+    assert!(
+        store
+            .read()
+            .property_history_marked(MAIN_WORLD, "marking.Mixed", "email")?
+    );
+    assert!(store.read().stores_markings()?);
+    assert!(matches!(
+        store.commit(&declassify_mixed_email_batch("alice", 1, 3)?),
+        Err(CellError::MarkingDeclassificationInvalid(_))
+    ));
+
+    let raw = rusqlite::Connection::open(&path)?;
+    assert_eq!(table_count(&raw, "_norn_marking_current")?, 0);
+    assert_eq!(table_count(&raw, "_norn_marking_version")?, 1);
+    drop(raw);
+
+    store.commit(&batch(
+        4,
+        vec![put(
+            "marking.Mixed",
+            "alice",
+            &[("email", "a2@example.test"), ("name", "Alice")],
+        )],
+    ))?;
+    for version in [None, Some(1), Some(2)] {
+        assert_eq!(
+            store
+                .read()
+                .effective_markings(MAIN_WORLD, "marking.Mixed", "alice", version)?,
+            Some(marked.clone())
+        );
+    }
+    drop(store);
+
+    let raw = rusqlite::Connection::open(&path)?;
+    assert_eq!(table_count(&raw, "_norn_marking_current")?, 1);
+    assert_eq!(table_count(&raw, "_norn_marking_version")?, 2);
+    Ok(())
+}
+
+#[test]
+fn sparse_markings_reopen_passes_genesis_checkpoint_and_scrub_with_identical_exports()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("sparse-checkpoint.sqlite");
+    let key = norn_cell::CheckpointKey::from_bytes([0x5A; 32]);
+    let keyed = || StoreOptions {
+        checkpoint_key: Some(key.clone()),
+        ..StoreOptions::default()
+    };
+    let mut store = CellStore::open(&path, sparse_marking_model(), keyed())?;
+    store.commit(&batch(
+        1,
+        vec![put(
+            "marking.Mixed",
+            "alice",
+            &[("email", "a@example.test"), ("name", "Alice")],
+        )],
+    ))?;
+    store.commit(&declassify_mixed_email_batch("alice", 1, 2)?)?;
+    for seq in 3_u64..=128 {
+        store.commit(&batch(
+            seq,
+            vec![put(
+                "marking.Unmarked",
+                &format!("u-{seq}"),
+                &[("a", "v"), ("b", "w"), ("c", "z")],
+            )],
+        ))?;
+    }
+    let head = store.verified_head()?;
+    let receipts = store.read().receipts()?;
+    let mut exports = Vec::new();
+    for seq in 1_u64..=head.commits {
+        exports.push(store.export_record(seq)?);
+    }
+    drop(store);
+
+    let checkpointed = CellStore::open(&path, sparse_marking_model(), keyed())?;
+    assert!(matches!(
+        checkpointed.scrub_status(),
+        norn_cell::ScrubStatus::Verifying { target: 128, .. }
+    ));
+    assert_eq!(checkpointed.scrub_to_end(), norn_cell::ScrubStatus::Idle);
+    assert_eq!(checkpointed.verified_head()?, head);
+    assert_eq!(checkpointed.read().receipts()?, receipts);
+    for (idx, expected) in exports.iter().enumerate() {
+        let seq = u64::try_from(idx)?.saturating_add(1);
+        assert_eq!(&checkpointed.export_record(seq)?, expected);
+    }
+    drop(checkpointed);
+
+    let genesis = CellStore::open(&path, sparse_marking_model(), StoreOptions::default())?;
+    assert_eq!(genesis.verified_head()?, head);
+    assert_eq!(genesis.read().receipts()?, receipts);
+    assert_eq!(
+        genesis
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Unmarked", "u-128", None)?,
+        Some(BTreeMap::from([
+            ("a".to_owned(), Vec::new()),
+            ("b".to_owned(), Vec::new()),
+            ("c".to_owned(), Vec::new()),
+        ]))
+    );
+    assert_eq!(
+        genesis
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Mixed", "alice", None)?,
+        Some(BTreeMap::from([
+            ("email".to_owned(), Vec::new()),
+            ("name".to_owned(), Vec::new()),
+        ]))
+    );
+    assert_eq!(
+        genesis
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Mixed", "alice", Some(1))?,
+        Some(BTreeMap::from([
+            ("email".to_owned(), vec![CONTACT.to_owned()]),
+            ("name".to_owned(), Vec::new()),
+        ]))
+    );
+    Ok(())
+}
+
+#[test]
+fn legacy_explicit_empty_marking_rows_open_read_and_clean_up_on_rewrite()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("legacy-empty-rows.sqlite");
+    let mut store = CellStore::open(&path, sparse_marking_model(), StoreOptions::default())?;
+    store.commit(&batch(
+        1,
+        vec![
+            put(
+                "marking.Mixed",
+                "alice",
+                &[("email", "a@example.test"), ("name", "Alice")],
+            ),
+            put(
+                "marking.Unmarked",
+                "bob",
+                &[("a", "1"), ("b", "2"), ("c", "3")],
+            ),
+        ],
+    ))?;
+    drop(store);
+
+    let bob_subject = inject_legacy_empty_marking_rows(&path)?;
+    let mut reopened = CellStore::open(&path, sparse_marking_model(), StoreOptions::default())?;
+    assert_eq!(
+        reopened
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Mixed", "alice", None)?,
+        Some(BTreeMap::from([
+            ("email".to_owned(), vec![CONTACT.to_owned()]),
+            ("name".to_owned(), Vec::new()),
+        ]))
+    );
+    let empty_unmarked = BTreeMap::from([
+        ("a".to_owned(), Vec::new()),
+        ("b".to_owned(), Vec::new()),
+        ("c".to_owned(), Vec::new()),
+    ]);
+    assert_eq!(
+        reopened
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Unmarked", "bob", None)?,
+        Some(empty_unmarked.clone())
+    );
+    assert_eq!(
+        reopened
+            .read()
+            .fact_occurrence_markings(MAIN_WORLD, "marking.Unmarked", "bob", Some(1))?,
+        Some(std::collections::BTreeSet::new())
+    );
+    reopened.commit(&batch(
+        2,
+        vec![put("marking.Unmarked", "bob", &[("a", "1-v2")])],
+    ))?;
+    for version in [None, Some(1), Some(2)] {
+        assert_eq!(
+            reopened
+                .read()
+                .effective_markings(MAIN_WORLD, "marking.Unmarked", "bob", version)?,
+            Some(empty_unmarked.clone())
+        );
+    }
+    drop(reopened);
+
+    let raw = rusqlite::Connection::open(&path)?;
+    let bob_current: i64 = raw.query_row(
+        "SELECT COUNT(*) FROM _norn_marking_current WHERE subject = ?1",
+        [bob_subject],
+        |row| row.get(0),
+    )?;
+    assert_eq!(bob_current, 0);
+    Ok(())
 }

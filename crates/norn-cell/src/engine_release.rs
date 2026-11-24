@@ -82,10 +82,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 7,
         change: "#1424 U1: transactional automation trigger outbox (_norn_automation_outbox), lossless outbox continuation (_norn_automation_outbox_continuation), indexed trigger projection (_norn_retained_automation_trigger), and server-bound retained definition authority (_norn_retained_authority). The definitions.installed diff carries an optional retained.authority audit object for automation installs only.",
     },
+    StorageVersion {
+        version: 8,
+        change: "#1533 Part 1: sparse markings omit empty '[]' rows from _norn_marking_current and _norn_marking_version (and omit _norn_marking_subject rows when no non-empty markings exist; an absent slot alongside _norn_marking_snapshot equals the empty set), and drop the strictly redundant _norn_link_version/source and _norn_link_version/target prefix indexes",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 7;
+pub const STORAGE_VERSION: u32 = 8;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -327,7 +331,7 @@ fn run_chain(
 }
 
 /// The one migration step that brings a cell from `to - 1` to `to`.
-fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
+fn migrate_to<E: SqlEngine>(engine: &E, to: u32) -> Result<(), CellError> {
     match to {
         // Version 2 adds the stamp alone, which `upgrade` writes after the chain.
         // Version 3 adds the approval recovery tables. They derive from the
@@ -347,7 +351,15 @@ fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
         // Version 7 (#1424 U1) adds the automation outbox, continuation,
         // trigger projection, and retained authority tables through the schema
         // statements that follow the chain. Previously committed rows are unchanged.
-        2..=STORAGE_VERSION => Ok(()),
+        2..=7 => Ok(()),
+        // Version 8 (#1533 Part 1): sparse markings are backward-compatible with
+        // legacy stored `'[]'` rows (no marking row is rewritten), and the two
+        // strict-prefix indexes on `_norn_link_version` are dropped so upgraded
+        // cells shed their write amplification too.
+        8 => engine.execute_batch(
+            "DROP INDEX IF EXISTS \"_norn_link_version/source\";\n\
+             DROP INDEX IF EXISTS \"_norn_link_version/target\";",
+        ),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,

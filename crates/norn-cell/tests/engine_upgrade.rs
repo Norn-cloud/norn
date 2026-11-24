@@ -40,6 +40,19 @@ const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
 const STORAGE_V5: &str = include_str!("fixtures/engine-storage-v5.json");
 const STORAGE_V6: &str = include_str!("fixtures/engine-storage-v6.json");
 
+/// Storage version 8 (#1533 Part 1) drops the strictly redundant
+/// `_norn_link_version/source` and `_norn_link_version/target` prefix indexes
+/// (exact prefixes of `source_order` and `target_order`). Existing stored
+/// `'[]'` marking rows are retained verbatim and remain readable as empty.
+fn drop_redundant_link_indexes(image: &mut Value) {
+    if let Some(schema) = image["schema"].as_array_mut() {
+        schema.retain(|entry| {
+            entry["name"] != "_norn_link_version/source"
+                && entry["name"] != "_norn_link_version/target"
+        });
+    }
+}
+
 /// Storage version 7 (#1424 U1) adds the transactional automation trigger
 /// outbox, the lossless outbox continuation table, the indexed trigger
 /// projection, and the server-bound retained authority table, all initially
@@ -664,6 +677,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
+    drop_redundant_link_indexes(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -794,6 +808,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
+    drop_redundant_link_indexes(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -895,6 +910,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
+    drop_redundant_link_indexes(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -966,6 +982,7 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
+    drop_redundant_link_indexes(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1037,6 +1054,7 @@ fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
     expected["storage"] = STORAGE_VERSION.into();
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
+    drop_redundant_link_indexes(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1136,6 +1154,7 @@ fn upgrade_v6_with_checkpoint(path: &Path) -> CellStore<NativeEngine> {
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
     add_automation_tables(&mut expected);
+    drop_redundant_link_indexes(&mut expected);
     by_name(&mut expected);
     let mut actual = engine_fixture::image_of(path);
     by_name(&mut actual);
