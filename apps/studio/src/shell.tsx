@@ -226,7 +226,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
       <ChromeDockTrigger
         aria-label="Appearance"
         className={variant === "dock"
-          ? "relative grid size-10 place-items-center rounded-full text-(--dock-muted) transition-colors outline-none hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-(--dock-well) data-open:text-(--dock-foreground) [&_svg]:size-[18px]"
+          ? "relative grid size-10 place-items-center rounded-full text-(--dock-muted) transition-colors outline-none hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-(--dock-ring) data-open:bg-(--dock-well) data-open:text-(--dock-foreground) [&_svg]:size-[18px]"
           : cn(iconButton, "hidden @xl:flex")}
       >
         <Palette aria-hidden strokeWidth={1.7} />

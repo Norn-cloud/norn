@@ -137,14 +137,17 @@ function ToggleGroup(props: ToggleGroupProps) {
       multiple={isSingle ? false : (multiple ?? true)}
       value={selected}
       onKeyDownCapture={(event) => {
-        if (
-          isSingle &&
-          (event.key === "ArrowLeft" ||
-            event.key === "ArrowRight" ||
-            event.key === "ArrowUp" ||
-            event.key === "ArrowDown")
-        ) {
+        const isOrientationArrow =
+          orientation === "vertical"
+            ? event.key === "ArrowUp" || event.key === "ArrowDown"
+            : event.key === "ArrowLeft" || event.key === "ArrowRight"
+        if (isSingle && isOrientationArrow) {
           pendingArrowSelect.current = true
+          // Base UI moves roving focus synchronously during keydown; clear immediately
+          // after so a no-op arrow press can never arm a later pointer or Tab focus.
+          queueMicrotask(() => {
+            pendingArrowSelect.current = false
+          })
         }
         onKeyDownCapture?.(event)
       }}
