@@ -83,9 +83,31 @@ No complete `verify-promoted-subsystems.sh full` pass is recorded. The records a
 
 ## Exact sum
 
-From the repository root, run `verus --crate-type lib --edition=2024 crates/norn-ir/src/exact_sum.rs` with Verus 0.2026.11.22.1ce6a59. The postconditions describe the production methods. A ghost relation connects the two unsigned subtotals to every sequence they can represent.
+`ExactSum` accepts every `i128` coefficient and at most `u32::MAX` terms. Verus checks the signed result, sum of magnitudes, capacity, retraction and permutation laws in the production source. Posting admission separately requires a reversible `Amount`.
 
-With Kani 0.67.0, run `kani verification/query-compute-v1/arithmetic_kani.rs --harness full_width_operations` for the symbolic accumulator step, and repeat with `--harness sum_never_wraps --unwind 6` for the four-term query decision.
+Boat checked commit `75906e03d23664afcd8449afe09bcb8c803ea4f1` with Verus `0.2026.11.22.1ce6a59`, rustc `1.100.0` and Kani `0.67.0`. The accumulator source SHA-256 was `f6d6cda5e0e0a6f94e05b648c46e39619fd7798374ac12e0c79b07e0dc175ecc`. Verus discharged 18 obligations. D107 compared the standalone Verus VIR with release Cargo THIR from `norn-graph`, which compiles the same source into the shipped graph crate. All ten verified executable bodies matched, including the two derived clones. Across those bodies, 310 distinct expression-span/type pairs, 33 typed bindings (including parameters) and 18 call targets matched. The comparison normalizes compiler-inserted wrappers and compares calls and bindings with multiplicity. ExactSum's CI `guards` enrollment awaits the inline Verus runner in [G0, #1716](https://github.com/Norn-cloud/norn/pull/1716). The final-head rerun is recorded on [A1, #1719](https://github.com/Norn-cloud/norn/pull/1719).
+
+Run from the repository root with the pinned tools on `PATH`. A fresh output directory also gives Cargo a distinct compiler invocation on a warm build.
+
+```bash
+set -euo pipefail
+out=$(mktemp -d)
+RUSTUP_TOOLCHAIN=1.100.0 verus --edition=2024 --crate-type lib --log vir \
+    --log vir-option=no_fn_details --log-dir "$out/vir" \
+    -o "$out/libexact_sum.rlib" crates/norn-ir/src/exact_sum.rs
+RUSTC_BOOTSTRAP=norn_graph cargo +1.100.0 rustc --locked --release -p norn-graph --lib -- \
+    -Zunpretty=thir-tree "-Zdump-mir-dir=$out/mir" | \
+    awk '/^DefId\(/{keep=($0 ~ /::exact_sum::/)} keep' > "$out/exact.thir"
+python3 -B verification/exact-arith-v1/compare_exact_sum_ir.py \
+    "$out/vir/crate.vir" "$out/exact.thir"
+```
+
+Kani's full-width state transition passed 162 checks. The publication harness uses independent symbolic positive and negative subtotals. It passed 71 checks and reached both sides of `MAX_SUM`. Neither harness reported unreachable checks. Removing the magnitude guard from `decide` caused its decision assertion to fail.
+
+```bash
+kani verification/query-compute-v1/arithmetic_kani.rs --harness full_width_operations
+kani verification/query-compute-v1/arithmetic_kani.rs --harness sum_never_wraps
+```
 
 ## The Verus spike
 
