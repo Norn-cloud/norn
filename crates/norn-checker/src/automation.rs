@@ -866,6 +866,10 @@ mod tests {
         .unwrap();
         let action: ActionRoot = serde_json::from_value(json!({
             "actionId": "demo.app.offerAssistance",
+            "scopeRequired": [],
+            "idempotent": true,
+            "ledgered": false,
+            "outputSchema": { "type": "object" },
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": false,
