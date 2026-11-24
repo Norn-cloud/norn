@@ -10,9 +10,9 @@ HELPER = pathlib.Path(__file__).resolve().parent / "infisical-oidc.sh"
 FAKE_CURL = """#!/bin/sh
 for arg; do last=$arg; done
 case "$last" in
-  *audience=*) echo '{"value":"jwt"}' ;;
+  *audience=*) cat > /dev/null; echo '{"value":"jwt"}' ;;
   */oidc-auth/login) cat > /dev/null; echo '{"accessToken":"tok"}' ;;
-  */secrets/raw) printf '%s' "$FAKE_SECRETS" ;;
+  */secrets/raw) cat > /dev/null; printf '%s' "$FAKE_SECRETS" ;;
   *) exit 22 ;;
 esac
 """
@@ -31,12 +31,14 @@ def run(secrets: list, names=("A_KEY", "B_KEY"), identity="id", flags=()) -> tup
                "FAKE_SECRETS": json.dumps({"secrets": secrets})}
         result = subprocess.run(["bash", str(HELPER), *flags, "prod", "/x", *names], env=env, timeout=30,
                                 capture_output=True, text=True)
-        global LAST_STDOUT
+        global LAST_STDOUT, LAST_STDERR
         LAST_STDOUT = result.stdout
+        LAST_STDERR = result.stderr
         return result.returncode, output.read_text()
 
 
 LAST_STDOUT = ""
+LAST_STDERR = ""
 
 
 def entry(key, value):
@@ -44,7 +46,7 @@ def entry(key, value):
 
 
 code, written = run([entry("A_KEY", "alpha"), entry("B_KEY", "beta")])
-assert code == 0 and written == "a_key=alpha\nb_key=beta\n", (code, written)
+assert code == 0 and written == "a_key=alpha\nb_key=beta\n", (code, written, LAST_STDERR)
 for name, secrets, kwargs in (
     ("missing", [entry("A_KEY", "alpha")], {}),
     ("empty", [entry("A_KEY", "alpha"), entry("B_KEY", "")], {}),
@@ -61,10 +63,10 @@ for name, secrets, kwargs in (
     assert code != 0 and written == "", f"{name}: exit {code}, wrote {written!r}"
 # The runner percent-decodes command data, so a mask carries `%` escaped.
 code, written = run([entry("A_KEY", "a%0Ab"), entry("B_KEY", "beta")])
-assert code == 0 and "::add-mask::a%250Ab" in LAST_STDOUT.splitlines(), LAST_STDOUT
+assert code == 0 and "::add-mask::a%250Ab" in LAST_STDOUT.splitlines(), (code, LAST_STDOUT, LAST_STDERR)
 # --optional: a failure warns and exits 0 with nothing written.
 code, written = run([entry("A_KEY", "alpha")], flags=("--optional",))
-assert code == 0 and written == "" and "::warning::" in LAST_STDOUT, (code, written, LAST_STDOUT)
+assert code == 0 and written == "" and "::warning::" in LAST_STDOUT, (code, written, LAST_STDOUT, LAST_STDERR)
 code, written = run([entry("A_KEY", "alpha"), entry("B_KEY", "beta")], identity="", flags=("--optional",))
-assert code == 0 and written == "", (code, written)
+assert code == 0 and written == "", (code, written, LAST_STDERR)
 print("infisical-oidc tests: ok")

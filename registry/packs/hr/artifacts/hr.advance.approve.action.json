@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr.advance.approve.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Approve employee advance",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.advance.approve",
+    "description": "Approve a draft employee advance under independent manager or HR authority.",
+    "effectProgram": {
+      "entityArtifactId": "hr.EmployeeAdvance.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "advanceId",
+      "objectKind": "hr.EmployeeAdvance",
+      "transition": "approve"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "advanceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "advanceId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "advanceId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "advanceId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.advance.status == 'draft') and (slice.advance.amount > 0)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "advanceId"
+          }
+        },
+        "name": "advance",
+        "objectType": "hr.EmployeeAdvance"
+      }
+    ],
+    "title": "Approve employee advance",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.EmployeeAdvance"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.advance.approve.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

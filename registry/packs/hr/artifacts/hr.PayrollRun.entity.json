@@ -1,0 +1,750 @@
+{
+  "artifactId": "hr.PayrollRun.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Payroll run",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Period payroll batch over a proper half-open UTC [starts_at, ends_at) interval with exact decimal gross/deduction/net conservation and separation of duties (implements core.TimeInterval; HR-PR-01..06).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.TimeInterval"
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "posted"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "posted"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "calculate",
+              "to": "calculated"
+            },
+            {
+              "from": [
+                "calculated"
+              ],
+              "id": "reopen",
+              "to": "draft"
+            },
+            {
+              "from": [
+                "calculated"
+              ],
+              "id": "approve",
+              "to": "approved"
+            },
+            {
+              "from": [
+                "approved"
+              ],
+              "id": "post",
+              "to": "posted"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Organizational unit executing this payroll run.",
+          "id": "unit",
+          "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employer monetary payroll fund disbursing this payroll run.",
+          "id": "fund",
+          "target": "hr.PayrollFund"
+        }
+      ],
+      "name": "hr.PayrollRun",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "period_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "starts_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "ends_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "timezone",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "AED"
+              },
+              {
+                "value": "AFN"
+              },
+              {
+                "value": "ALL"
+              },
+              {
+                "value": "AMD"
+              },
+              {
+                "value": "AOA"
+              },
+              {
+                "value": "ARS"
+              },
+              {
+                "value": "AUD"
+              },
+              {
+                "value": "AWG"
+              },
+              {
+                "value": "AZN"
+              },
+              {
+                "value": "BAM"
+              },
+              {
+                "value": "BBD"
+              },
+              {
+                "value": "BDT"
+              },
+              {
+                "value": "BHD"
+              },
+              {
+                "value": "BIF"
+              },
+              {
+                "value": "BMD"
+              },
+              {
+                "value": "BND"
+              },
+              {
+                "value": "BOB"
+              },
+              {
+                "value": "BOV"
+              },
+              {
+                "value": "BRL"
+              },
+              {
+                "value": "BSD"
+              },
+              {
+                "value": "BTN"
+              },
+              {
+                "value": "BWP"
+              },
+              {
+                "value": "BYN"
+              },
+              {
+                "value": "BZD"
+              },
+              {
+                "value": "CAD"
+              },
+              {
+                "value": "CDF"
+              },
+              {
+                "value": "CHE"
+              },
+              {
+                "value": "CHF"
+              },
+              {
+                "value": "CHW"
+              },
+              {
+                "value": "CLF"
+              },
+              {
+                "value": "CLP"
+              },
+              {
+                "value": "CNY"
+              },
+              {
+                "value": "COP"
+              },
+              {
+                "value": "COU"
+              },
+              {
+                "value": "CRC"
+              },
+              {
+                "value": "CUP"
+              },
+              {
+                "value": "CVE"
+              },
+              {
+                "value": "CZK"
+              },
+              {
+                "value": "DJF"
+              },
+              {
+                "value": "DKK"
+              },
+              {
+                "value": "DOP"
+              },
+              {
+                "value": "DZD"
+              },
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "ERN"
+              },
+              {
+                "value": "ETB"
+              },
+              {
+                "value": "EUR"
+              },
+              {
+                "value": "FJD"
+              },
+              {
+                "value": "FKP"
+              },
+              {
+                "value": "GBP"
+              },
+              {
+                "value": "GEL"
+              },
+              {
+                "value": "GHS"
+              },
+              {
+                "value": "GIP"
+              },
+              {
+                "value": "GMD"
+              },
+              {
+                "value": "GNF"
+              },
+              {
+                "value": "GTQ"
+              },
+              {
+                "value": "GYD"
+              },
+              {
+                "value": "HKD"
+              },
+              {
+                "value": "HNL"
+              },
+              {
+                "value": "HTG"
+              },
+              {
+                "value": "HUF"
+              },
+              {
+                "value": "IDR"
+              },
+              {
+                "value": "ILS"
+              },
+              {
+                "value": "INR"
+              },
+              {
+                "value": "IQD"
+              },
+              {
+                "value": "IRR"
+              },
+              {
+                "value": "ISK"
+              },
+              {
+                "value": "JMD"
+              },
+              {
+                "value": "JOD"
+              },
+              {
+                "value": "JPY"
+              },
+              {
+                "value": "KES"
+              },
+              {
+                "value": "KGS"
+              },
+              {
+                "value": "KHR"
+              },
+              {
+                "value": "KMF"
+              },
+              {
+                "value": "KPW"
+              },
+              {
+                "value": "KRW"
+              },
+              {
+                "value": "KWD"
+              },
+              {
+                "value": "KYD"
+              },
+              {
+                "value": "KZT"
+              },
+              {
+                "value": "LAK"
+              },
+              {
+                "value": "LBP"
+              },
+              {
+                "value": "LKR"
+              },
+              {
+                "value": "LRD"
+              },
+              {
+                "value": "LSL"
+              },
+              {
+                "value": "LYD"
+              },
+              {
+                "value": "MAD"
+              },
+              {
+                "value": "MDL"
+              },
+              {
+                "value": "MGA"
+              },
+              {
+                "value": "MKD"
+              },
+              {
+                "value": "MMK"
+              },
+              {
+                "value": "MNT"
+              },
+              {
+                "value": "MOP"
+              },
+              {
+                "value": "MRU"
+              },
+              {
+                "value": "MUR"
+              },
+              {
+                "value": "MVR"
+              },
+              {
+                "value": "MWK"
+              },
+              {
+                "value": "MXN"
+              },
+              {
+                "value": "MXV"
+              },
+              {
+                "value": "MYR"
+              },
+              {
+                "value": "MZN"
+              },
+              {
+                "value": "NAD"
+              },
+              {
+                "value": "NGN"
+              },
+              {
+                "value": "NIO"
+              },
+              {
+                "value": "NOK"
+              },
+              {
+                "value": "NPR"
+              },
+              {
+                "value": "NZD"
+              },
+              {
+                "value": "OMR"
+              },
+              {
+                "value": "PAB"
+              },
+              {
+                "value": "PEN"
+              },
+              {
+                "value": "PGK"
+              },
+              {
+                "value": "PHP"
+              },
+              {
+                "value": "PKR"
+              },
+              {
+                "value": "PLN"
+              },
+              {
+                "value": "PYG"
+              },
+              {
+                "value": "QAR"
+              },
+              {
+                "value": "RON"
+              },
+              {
+                "value": "RSD"
+              },
+              {
+                "value": "RUB"
+              },
+              {
+                "value": "RWF"
+              },
+              {
+                "value": "SAR"
+              },
+              {
+                "value": "SBD"
+              },
+              {
+                "value": "SCR"
+              },
+              {
+                "value": "SDG"
+              },
+              {
+                "value": "SEK"
+              },
+              {
+                "value": "SGD"
+              },
+              {
+                "value": "SHP"
+              },
+              {
+                "value": "SLE"
+              },
+              {
+                "value": "SOS"
+              },
+              {
+                "value": "SRD"
+              },
+              {
+                "value": "SSP"
+              },
+              {
+                "value": "STN"
+              },
+              {
+                "value": "SVC"
+              },
+              {
+                "value": "SYP"
+              },
+              {
+                "value": "SZL"
+              },
+              {
+                "value": "THB"
+              },
+              {
+                "value": "TJS"
+              },
+              {
+                "value": "TMT"
+              },
+              {
+                "value": "TND"
+              },
+              {
+                "value": "TOP"
+              },
+              {
+                "value": "TRY"
+              },
+              {
+                "value": "TTD"
+              },
+              {
+                "value": "TWD"
+              },
+              {
+                "value": "TZS"
+              },
+              {
+                "value": "UAH"
+              },
+              {
+                "value": "UGX"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "USN"
+              },
+              {
+                "value": "UYI"
+              },
+              {
+                "value": "UYU"
+              },
+              {
+                "value": "UYW"
+              },
+              {
+                "value": "UZS"
+              },
+              {
+                "value": "VED"
+              },
+              {
+                "value": "VES"
+              },
+              {
+                "value": "VND"
+              },
+              {
+                "value": "VUV"
+              },
+              {
+                "value": "WST"
+              },
+              {
+                "value": "XAD"
+              },
+              {
+                "value": "XAF"
+              },
+              {
+                "value": "XAG"
+              },
+              {
+                "value": "XAU"
+              },
+              {
+                "value": "XBA"
+              },
+              {
+                "value": "XBB"
+              },
+              {
+                "value": "XBC"
+              },
+              {
+                "value": "XBD"
+              },
+              {
+                "value": "XCD"
+              },
+              {
+                "value": "XCG"
+              },
+              {
+                "value": "XDR"
+              },
+              {
+                "value": "XOF"
+              },
+              {
+                "value": "XPD"
+              },
+              {
+                "value": "XPF"
+              },
+              {
+                "value": "XPT"
+              },
+              {
+                "value": "XSU"
+              },
+              {
+                "value": "XUA"
+              },
+              {
+                "value": "YER"
+              },
+              {
+                "value": "ZAR"
+              },
+              {
+                "value": "ZMW"
+              },
+              {
+                "value": "ZWG"
+              }
+            ]
+          }
+        },
+        {
+          "id": "total_gross",
+          "markings": [
+            "pii.compensation"
+          ],
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "total_deductions",
+          "markings": [
+            "pii.compensation"
+          ],
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "total_net",
+          "markings": [
+            "pii.compensation"
+          ],
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "prepared_by_user_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "calculated"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "posted"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.PayrollRun.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

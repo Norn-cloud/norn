@@ -117,6 +117,9 @@
               },
               {
                 "value": "emergency"
+              },
+              {
+                "value": "compensatory"
               }
             ]
           }

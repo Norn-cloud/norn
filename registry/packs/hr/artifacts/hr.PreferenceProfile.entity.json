@@ -16,7 +16,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Governed business-terms trade-offs for deterministic rostering (cost cap, weekend fairness, shift requests, split-shift avoidance).",
+      "description": "Governed business-terms trade-offs for deterministic rostering (cost cap, daily/weekly hours, rest preferences, weekend fairness, split-shift avoidance).",
       "identity": [
         {
           "name": "primary",
@@ -53,6 +53,16 @@
           "id": "id",
           "type": {
             "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "jurisdiction_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
           }
         },
         {
@@ -617,7 +627,29 @@
           }
         },
         {
+          "id": "max_daily_hours",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "h",
+              "system": "ucum"
+            }
+          }
+        },
+        {
           "id": "max_weekly_hours",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "h",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "min_weekly_rest_hours",
           "type": {
             "kind": "decimal",
             "scale": 2,

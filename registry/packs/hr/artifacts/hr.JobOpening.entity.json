@@ -1,0 +1,130 @@
+{
+  "artifactId": "hr.JobOpening.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Job opening",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Authorized headcount requisition linked to an organizational unit and budgeted org.Post.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "closed"
+          ],
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "closed"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "id": "hold",
+              "to": "on_hold"
+            },
+            {
+              "from": [
+                "on_hold"
+              ],
+              "id": "reopen",
+              "to": "open"
+            },
+            {
+              "from": [
+                "open",
+                "on_hold"
+              ],
+              "id": "close",
+              "to": "closed"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Organizational unit hiring for this opening.",
+          "id": "unit",
+          "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Budgeted organizational post fulfilled by this opening.",
+          "id": "post",
+          "target": "org.Post"
+        }
+      ],
+      "name": "hr.JobOpening",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "title",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "openings_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "default": "open",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "on_hold"
+              },
+              {
+                "value": "closed"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.JobOpening.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,32 @@
+{
+  "artifactId": "loc_eg.setting.nosi_employer_rate",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "setting",
+  "lifecycle": "active",
+  "name": "Egypt NOSI employer social insurance rate (Law 148/2019)",
+  "namespace": "loc_eg",
+  "payload": {
+    "effectiveFrom": "2025-09-01T00:00:00Z",
+    "review": {
+      "reason": "Egypt Social Insurance and Pensions Law No. 148 of 2019 employer contribution rate (18.75%).",
+      "reviewedAt": "2025-09-01T00:00:00Z",
+      "reviewedBy": "loc_eg_maintainer",
+      "state": "active"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "settingKey": "loc_eg.nosi.employer_rate",
+    "settingVersion": "0.1",
+    "value": "0.1875",
+    "valueType": "number"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/loc-eg/artifacts/loc_eg.setting.nosi_employer_rate.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -20,6 +20,8 @@ mod accounting_commit;
 mod action_aggregates;
 #[path = "action_commit.rs"]
 mod action_commit;
+#[path = "action_parameters.rs"]
+mod action_parameters;
 #[path = "action_preconditions.rs"]
 mod action_preconditions;
 #[path = "action_preparation.rs"]
@@ -64,3 +66,5 @@ mod refusal_taxonomy;
 mod result_reconciliation;
 #[path = "snapshot_observe.rs"]
 mod snapshot_observe;
+#[path = "temporal_intervals.rs"]
+mod temporal_intervals;

@@ -16,13 +16,25 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Governed Egyptian labor parameters (Africa/Cairo timezone, EGP currency, statutory weekly/daily hour caps, rest gap, and annual leave tiers).",
+      "description": "Governed Egyptian labor parameters under Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-124): Africa/Cairo timezone, EGP currency, max 48h/wk regular, max 8h/day ordinary, max 10h workplace presence (12h for Arts. 119/121 intermittent or preparatory work), >= 24h weekly rest, annual leave tiers (prorated 6-11m, 15d / 21d / 30d / 45d), and >= 7d hazardous/remote supplement.",
       "identity": [
         {
           "name": "primary",
           "properties": [
             "id"
           ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Egyptian branch or organizational unit governed by this statutory labor profile.",
+          "id": "unit",
+          "target": "org.OrgUnit"
         }
       ],
       "name": "loc_eg.LaborProfile",
@@ -64,6 +76,13 @@
           }
         },
         {
+          "default": false,
+          "id": "intermittent_or_preparatory_work",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
           "id": "max_regular_weekly_hours",
           "type": {
             "kind": "decimal",
@@ -86,12 +105,34 @@
           }
         },
         {
-          "id": "min_rest_between_shifts_hours",
+          "id": "max_workplace_presence_hours",
           "type": {
             "kind": "decimal",
             "scale": 2,
             "unit": {
               "code": "h",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "min_weekly_rest_hours",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "h",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "first_year_annual_leave_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
               "system": "ucum"
             }
           }
@@ -109,6 +150,28 @@
         },
         {
           "id": "senior_annual_leave_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "disability_annual_leave_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "hazardous_remote_supplement_days",
           "type": {
             "kind": "decimal",
             "scale": 2,

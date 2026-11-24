@@ -1,7 +1,8 @@
 //! `norn-cell-rivet`: a runner process. It serves the cell actors (and, in
 //! conformance builds, the probe actor) to the Rivet engine named by
-//! `RIVET_ENDPOINT` (`http://<namespace>:<token>@host:6420`), and the public
-//! router on `NORN_LISTEN` (default `127.0.0.1:8787`). Any runner routes to
+//! `RIVET_ENDPOINT` (`https://<namespace>:<token>@host:6420`; plaintext only to
+//! loopback or with `NORN_RIVET_PLAINTEXT_ENGINE=single-host`), and the public
+//! router on `NORN_LISTEN` or the platform's `PORT`. Any runner routes to
 //! any cell: requests reach the actor through the engine's gateway.
 
 use std::sync::Arc;
@@ -29,9 +30,19 @@ async fn main() -> Result<()> {
         .init();
     let config = config::install(HostConfig::from_env());
     let endpoint = std::env::var("RIVET_ENDPOINT").context("RIVET_ENDPOINT names the engine")?;
-    let listen = std::env::var("NORN_LISTEN").unwrap_or_else(|_unset| "127.0.0.1:8787".to_owned());
+    config::check_engine_transport(
+        &endpoint,
+        std::env::var("NORN_RIVET_PLAINTEXT_ENGINE").ok().as_deref(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    let listen = std::env::var("NORN_LISTEN").unwrap_or_else(|_unset| {
+        std::env::var("PORT").map_or_else(
+            |_unset| "127.0.0.1:8787".to_owned(),
+            |port| format!("0.0.0.0:{port}"),
+        )
+    });
     let mut runner_config = rivetkit::ServeConfig::from_env()?;
-    // This host never starts or downloads an engine: it joins the one named.
+    // The runner joins the named engine and never starts or downloads one.
     runner_config.engine_spawn = rivetkit::EngineSpawnMode::Never;
     runner_config.engine_auto_download = false;
     let shutdown = CancellationToken::new();

@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "hr.leave.submit",
-    "description": "Move a draft leave request into pending manager approval once sufficient leave balance exists.",
+    "description": "Move a draft leave request into pending manager approval once its linked leave balance holds sufficient days.",
     "effectProgram": {
       "entityArtifactId": "hr.LeaveRequest.entity",
       "entityArtifactVersion": "0.1.0",
@@ -57,7 +57,8 @@
       "type": "object"
     },
     "preconditions": [
-      "slice.request.days > 0 and slice.balance.quantity >= slice.request.days"
+      "slice.balance.id in map(slice.request_balance as b, b.id)",
+      "(slice.request.days > 0) and (slice.balance.quantity >= slice.request.days)"
     ],
     "scopeRequired": [
       "orgId",
@@ -82,6 +83,16 @@
           }
         },
         "name": "balance",
+        "objectType": "hr.LeaveBalance"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "request",
+            "link": "balance"
+          }
+        },
+        "name": "request_balance",
         "objectType": "hr.LeaveBalance"
       }
     ],

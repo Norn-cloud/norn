@@ -41,7 +41,8 @@
         {
           "id": "calendar_date",
           "type": {
-            "kind": "date"
+            "kind": "ref",
+            "name": "core.time.date"
           }
         },
         {

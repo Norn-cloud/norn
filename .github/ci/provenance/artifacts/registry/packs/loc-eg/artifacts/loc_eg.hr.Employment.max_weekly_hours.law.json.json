@@ -1,0 +1,20 @@
+{
+  "sha256": "0c53252e0f6fc7999b1abaa1ede177ad9e31a2a2f03e3c0e86cd1ea948ffe7f5",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/loc-eg/egypt.ts",
+    "registry/packs/loc-eg/labels.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

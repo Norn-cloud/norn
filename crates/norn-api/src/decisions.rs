@@ -212,6 +212,10 @@ pub struct DecisionCall {
     /// The call's admitted input, as its requester sent it.
     #[schema(value_type = BTreeMap<String, serde_json::Value>)]
     pub input: RuntimeValue,
+    /// Optional provenance trace context carried by the parked call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub trace: Option<crate::actions::TraceContext>,
 }
 
 /// One page of open decisions.
@@ -750,6 +754,7 @@ fn call_document<E: SqlEngine>(
             action: call.call.action.clone(),
             definition: call.definition.clone(),
             input: RuntimeValue::Object(call.call.input.clone()),
+            trace: call.call.trace.clone().map(Into::into),
         }),
     })
 }
@@ -967,6 +972,10 @@ pub struct RequestedCall {
     pub encoded_input: String,
     /// The call's idempotency key.
     pub idempotency_key: String,
+    /// Optional provenance trace context carried by the parked call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub trace: Option<crate::actions::TraceContext>,
     /// Once it is approved, where the call stands (APPROVAL-RECOVERY-1).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<DecidedCall>,
@@ -1056,6 +1065,7 @@ fn requested_document(
             input,
             encoded_input,
             idempotency_key: held.call.idempotency_key.clone(),
+            trace: held.call.trace.clone().map(Into::into),
             state: state.map(|state| DecidedCall::of(state, None)),
         },
     })
@@ -1396,6 +1406,7 @@ fn run_approved<E: SqlEngine>(
     let request = crate::actions::ActionRequest {
         input: RuntimeValue::Object(held.call.input.clone()),
         idempotency_key: held.call.idempotency_key.clone(),
+        trace: held.call.trace.clone().map(Into::into),
     };
     // APPROVAL-PIN-1: the requester's pin holds at approval too.
     let query = crate::actions::ActionQuery {

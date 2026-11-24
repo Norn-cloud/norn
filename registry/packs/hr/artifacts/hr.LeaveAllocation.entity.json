@@ -1,0 +1,246 @@
+{
+  "artifactId": "hr.LeaveAllocation.entity",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Leave allocation",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Period leave entitlement grant crediting an employee LeaveBalance under a LeavePolicy (HR-LV-01, HR-LV-06).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "expired",
+            "cancelled"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "expired",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "activate",
+              "to": "active"
+            },
+            {
+              "from": [
+                "active"
+              ],
+              "id": "expire",
+              "to": "expired"
+            },
+            {
+              "from": [
+                "draft",
+                "active"
+              ],
+              "id": "cancel",
+              "to": "cancelled"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employee receiving this leave allocation.",
+          "id": "person",
+          "target": "hr.Person"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Leave policy authorizing this allocation.",
+          "id": "policy",
+          "target": "hr.LeavePolicy"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Conserved leave balance credited by this allocation.",
+          "id": "balance",
+          "target": "hr.LeaveBalance"
+        }
+      ],
+      "name": "hr.LeaveAllocation",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "jurisdiction_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "leave_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "annual"
+              },
+              {
+                "value": "sick"
+              },
+              {
+                "value": "unpaid"
+              },
+              {
+                "value": "emergency"
+              },
+              {
+                "value": "compensatory"
+              }
+            ]
+          }
+        },
+        {
+          "default": "standard",
+          "id": "entitlement_tier",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "prorated_initial"
+              },
+              {
+                "value": "first_year"
+              },
+              {
+                "value": "standard"
+              },
+              {
+                "value": "senior"
+              },
+              {
+                "value": "protected_disability"
+              }
+            ]
+          }
+        },
+        {
+          "default": false,
+          "id": "hazardous_or_remote",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "qualifying_service_months",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "starts_on",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "id": "ends_on",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "id": "allocated_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "carry_forward_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "active"
+              },
+              {
+                "value": "expired"
+              },
+              {
+                "value": "cancelled"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.LeaveAllocation.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

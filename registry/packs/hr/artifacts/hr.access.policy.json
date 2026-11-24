@@ -19,7 +19,38 @@
           {
             "role": {
               "anyOf": [
-                "employee",
+                "employee"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.LeaveRequest",
+        "ruleId": "employee_submit_or_cancel_own_leave",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.leave.submit",
+          "hr.leave.cancel"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
                 "branch_manager",
                 "hr_manager",
                 "hr_admin",
@@ -29,7 +60,7 @@
           }
         ],
         "resourceType": "hr.LeaveRequest",
-        "ruleId": "submit_or_cancel_leave",
+        "ruleId": "manager_submit_or_cancel_leave",
         "scope": {
           "dimensions": [
             "org",
@@ -52,10 +83,170 @@
                 "owner"
               ]
             }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "ne",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
           }
         ],
         "resourceType": "hr.LeaveRequest",
-        "ruleId": "decide_leave",
+        "ruleId": "decide_leave_independent_approver",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.leave_hold.consume",
+          "hr.leave_hold.release"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.LeaveHold",
+        "ruleId": "manage_leave_hold",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.comp_leave.submit"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "employee"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.CompensatoryLeaveRequest",
+        "ruleId": "employee_submit_own_compensatory_leave",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.comp_leave.submit"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.CompensatoryLeaveRequest",
+        "ruleId": "manager_submit_compensatory_leave",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.comp_leave.approve",
+          "hr.comp_leave.reject"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "ne",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.CompensatoryLeaveRequest",
+        "ruleId": "decide_compensatory_leave_independent_approver",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.leave_encashment.approve"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "hr_manager",
+                "payroll_officer",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "ne",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.LeaveEncashment",
+        "ruleId": "approve_leave_encashment_independent_approver",
         "scope": {
           "dimensions": [
             "org",
@@ -116,7 +307,8 @@
       },
       {
         "actions": [
-          "hr.attendance.record"
+          "hr.attendance.record",
+          "hr.attendance.reverse"
         ],
         "allOf": [
           {
@@ -131,7 +323,7 @@
           }
         ],
         "resourceType": "hr.AttendanceEvent",
-        "ruleId": "record_attendance",
+        "ruleId": "record_or_reverse_attendance",
         "scope": {
           "dimensions": [
             "org",
@@ -147,17 +339,22 @@
           {
             "role": {
               "anyOf": [
-                "employee",
-                "branch_manager",
-                "hr_manager",
-                "hr_admin",
-                "owner"
+                "employee"
               ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
             }
           }
         ],
         "resourceType": "hr.AttendanceRequest",
-        "ruleId": "submit_attendance_request",
+        "ruleId": "employee_submit_own_attendance_request",
         "scope": {
           "dimensions": [
             "org",
@@ -167,7 +364,7 @@
       },
       {
         "actions": [
-          "hr.attendance_request.approve"
+          "hr.attendance_request.submit"
         ],
         "allOf": [
           {
@@ -182,7 +379,404 @@
           }
         ],
         "resourceType": "hr.AttendanceRequest",
-        "ruleId": "approve_attendance_request",
+        "ruleId": "manager_submit_attendance_request",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.attendance_request.approve",
+          "hr.attendance_request.reject"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "ne",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.AttendanceRequest",
+        "ruleId": "decide_attendance_request_independent_approver",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.payroll.calculate"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "payroll_officer",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.PayrollRun",
+        "ruleId": "calculate_payroll",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.payroll.approve"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "prepared_by_user_id",
+              "op": "ne",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.PayrollRun",
+        "ruleId": "approve_payroll_independent_approver",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.payroll.post"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "payroll_officer",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.PayrollRun",
+        "ruleId": "post_payroll",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.expense_claim.submit"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "employee"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.ExpenseClaim",
+        "ruleId": "employee_submit_own_expense_claim",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.expense_claim.submit"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "payroll_officer",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.ExpenseClaim",
+        "ruleId": "manager_submit_expense_claim",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.expense_claim.approve",
+          "hr.expense_claim.reject"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "payroll_officer",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "ne",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.ExpenseClaim",
+        "ruleId": "decide_expense_claim_independent_approver",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.advance.approve"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "payroll_officer",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "ne",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.EmployeeAdvance",
+        "ruleId": "approve_employee_advance_independent_approver",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.advance.disburse"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "payroll_officer",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.EmployeeAdvance",
+        "ruleId": "disburse_employee_advance",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.job_offer.send"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.JobOffer",
+        "ruleId": "send_job_offer",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.job_offer.accept"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "employee"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "applicant_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.JobOffer",
+        "ruleId": "applicant_accept_own_job_offer",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.job_offer.accept"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.JobOffer",
+        "ruleId": "hr_accept_job_offer",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.onboarding.complete"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.OnboardingChecklist",
+        "ruleId": "complete_onboarding",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.appraisal.finalize"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "branch_manager",
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr.Appraisal",
+        "ruleId": "finalize_appraisal",
         "scope": {
           "dimensions": [
             "org",

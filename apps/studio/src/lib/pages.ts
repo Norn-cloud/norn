@@ -13,6 +13,7 @@ export const PAGES = {
   "/transforms": "/transforms",
   "/transforms/$id": "/transforms/shop.revenue_by_region",
   "/decisions": "/decisions",
+  "/imports": "/imports",
   "/runs/$id": "/runs/run_restock_7",
   "/episodes/$id": "/episodes/ep_demo_overridden",
   "/metrics": "/metrics",

@@ -123,7 +123,7 @@ fn rule() -> SynchronousRule {
         .unwrap(),
         &BTreeMap::new(),
         norn_kernel::DecisionBinding {
-            profile_id: "norn-zen/6".into(),
+            profile_id: "norn-zen/7".into(),
             environment_hash: "sqlite-action".into(),
         },
     )
@@ -160,6 +160,7 @@ fn call(action: &ActionRoot) -> ActionCall<'_> {
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 fn open(path: &Path, definitions: &[ObjectTypeDef]) -> Cell {
@@ -842,7 +843,7 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
         &writer,
         &BTreeMap::new(),
         norn_kernel::DecisionBinding {
-            profile_id: "norn-zen/6".into(),
+            profile_id: "norn-zen/7".into(),
             environment_hash: env.reference().unwrap().sha256,
         },
     )

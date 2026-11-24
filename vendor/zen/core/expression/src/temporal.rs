@@ -11,6 +11,7 @@ use crate::functions::InternalFunction;
 use crate::variable::{DynamicVariable, VariableType};
 use crate::Variable;
 use jiff::civil::{Date, DateTime, Time};
+use jiff::tz::{AmbiguousOffset, TimeZone};
 use jiff::Span;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
@@ -20,6 +21,10 @@ use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 use thiserror::Error;
+
+/// The one zone name `jiff-tzdb` 0.1.4 carries that `chrono-tz` 0.10.4 did not.
+/// Refusing it keeps the accepted IANA identifiers identical to Norn's pinned 597-zone set.
+const NOT_A_PINNED_IANA_ZONE: &str = "Factory";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum TemporalError {
@@ -33,6 +38,20 @@ pub enum TemporalError {
     MixedKinds,
     #[error("temporal arithmetic exceeds years 0001..9999")]
     OutOfRange,
+    #[error("invalid temporal interval; expected start < end")]
+    InvalidInterval,
+    #[error(
+        "invalid local timestamp; expected YYYY-MM-DDTHH:MM:SS with optional up to 9 fractional digits and no offset"
+    )]
+    InvalidLocalTimestamp,
+    #[error("unknown IANA timezone; expected a canonical zone in the pinned database")]
+    InvalidTimezone,
+    #[error("invalid DST policy; expected 'reject', 'earlier', or 'later'")]
+    InvalidDstPolicy,
+    #[error("local wall time does not exist in this timezone (DST spring-forward gap)")]
+    NonexistentLocalTime,
+    #[error("local wall time is ambiguous in this timezone (DST fall-back fold)")]
+    AmbiguousLocalTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +161,67 @@ impl Temporal {
         Ok(Self(Kind::Timestamp(utc)))
     }
 
+    pub fn parse_local_datetime(text: &str) -> Result<DateTime, TemporalError> {
+        let b = text.as_bytes();
+        // YYYY-MM-DDTHH:MM:SS (19 bytes) plus optional .f{1..9} (up to 29 bytes).
+        if !(19..=29).contains(&b.len()) || b[10] != b'T' || b[13] != b':' || b[16] != b':' {
+            return Err(TemporalError::InvalidLocalTimestamp);
+        }
+        let Ok(Self(Kind::Date(date))) = Self::date(&text[..10]) else {
+            return Err(TemporalError::InvalidLocalTimestamp);
+        };
+        if ![11, 12, 14, 15, 17, 18]
+            .iter()
+            .all(|i| b[*i].is_ascii_digit())
+        {
+            return Err(TemporalError::InvalidLocalTimestamp);
+        }
+        let nanos = if b.len() > 19 {
+            if b[19] != b'.' {
+                return Err(TemporalError::InvalidLocalTimestamp);
+            }
+            let fraction = &b[20..];
+            if !(1..=9).contains(&fraction.len()) || !fraction.iter().all(u8::is_ascii_digit) {
+                return Err(TemporalError::InvalidLocalTimestamp);
+            }
+            digits(fraction) * 10_i32.pow(9 - fraction.len() as u32)
+        } else {
+            0
+        };
+        let (hour, minute, second) = (digits(&b[11..13]), digits(&b[14..16]), digits(&b[17..19]));
+        if hour > 23 || minute > 59 || second > 59 {
+            return Err(TemporalError::InvalidLocalTimestamp);
+        }
+        Ok(date.at(hour as i8, minute as i8, second as i8, nanos))
+    }
+
+    pub fn resolve_local_timestamp(
+        local_wall_time: &str,
+        iana_tz: &str,
+        dst_policy: &str,
+    ) -> Result<Self, TemporalError> {
+        let local = Self::parse_local_datetime(local_wall_time)?;
+        let tz = pinned_timezone(iana_tz)?;
+        if !matches!(dst_policy, "reject" | "earlier" | "later") {
+            return Err(TemporalError::InvalidDstPolicy);
+        }
+        let offset = match tz.to_ambiguous_timestamp(local).offset() {
+            AmbiguousOffset::Unambiguous { offset } => offset,
+            AmbiguousOffset::Gap { .. } => return Err(TemporalError::NonexistentLocalTime),
+            AmbiguousOffset::Fold { before, after } => match dst_policy {
+                "reject" => return Err(TemporalError::AmbiguousLocalTime),
+                "earlier" => before,
+                "later" => after,
+                _ => return Err(TemporalError::InvalidDstPolicy),
+            },
+        };
+        let utc = shift(local, -i64::from(offset.seconds())).ok_or(TemporalError::OutOfRange)?;
+        if !in_range(utc.year()) {
+            return Err(TemporalError::OutOfRange);
+        }
+        Ok(Self(Kind::Timestamp(utc)))
+    }
+
     pub fn into_variable(self) -> Variable {
         Variable::Dynamic(Rc::new(self))
     }
@@ -157,6 +237,40 @@ impl Temporal {
 
 fn in_range(year: i16) -> bool {
     (1..=9999).contains(&year)
+}
+
+fn pinned_timezone(name: &str) -> Result<TimeZone, TemporalError> {
+    match jiff_tzdb::get(name) {
+        Some((canonical, data)) if canonical == name && name != NOT_A_PINNED_IANA_ZONE => {
+            TimeZone::tzif(name, data).map_err(|_| TemporalError::InvalidTimezone)
+        }
+        Some(_) | None => Err(TemporalError::InvalidTimezone),
+    }
+}
+
+fn diff_seconds(a: &DateTime, b: &DateTime) -> Decimal {
+    // Avoid i64 nanosecond overflow across the 9999-year range.
+    let ((a_seconds, a_nanos), (b_seconds, b_nanos)) = (epoch_parts(a), epoch_parts(b));
+    let seconds = Decimal::from(b_seconds - a_seconds);
+    let fraction = Decimal::from(b_nanos) - Decimal::from(a_nanos);
+    seconds + fraction / Decimal::from(1_000_000_000u32)
+}
+
+fn proper_interval<'a>(
+    args: &'a Arguments<'a>,
+    start_pos: usize,
+    end_pos: usize,
+) -> anyhow::Result<(&'a DateTime, &'a DateTime)> {
+    let (Kind::Timestamp(start), Kind::Timestamp(end)) = (
+        &args.dynamic::<Temporal>(start_pos)?.0,
+        &args.dynamic::<Temporal>(end_pos)?.0,
+    ) else {
+        return Err(TemporalError::MixedKinds.into());
+    };
+    if start >= end {
+        return Err(TemporalError::InvalidInterval.into());
+    }
+    Ok((start, end))
 }
 
 /// The value of a run of ASCII digits the caller has already checked (at most
@@ -268,6 +382,15 @@ pub(crate) fn definition(kind: InternalFunction) -> Rc<dyn FunctionDefinition> {
         F::AddDays => (vec![T::Date, T::Number], T::Date),
         F::SecondsBetween => (vec![T::Timestamp, T::Timestamp], T::Number),
         F::AddSeconds => (vec![T::Timestamp, T::Number], T::Timestamp),
+        F::IntervalsOverlap => (
+            vec![T::Timestamp, T::Timestamp, T::Timestamp, T::Timestamp],
+            T::Bool,
+        ),
+        F::IntervalGapSeconds | F::IntervalIntersectionSeconds => (
+            vec![T::Timestamp, T::Timestamp, T::Timestamp, T::Timestamp],
+            T::Number,
+        ),
+        F::ResolveLocalTimestamp => (vec![T::String, T::String, T::String], T::Timestamp),
         _ => unreachable!("not a deterministic temporal builtin"),
     };
     let arity = parameters.len();
@@ -299,14 +422,7 @@ pub(crate) fn definition(kind: InternalFunction) -> Rc<dyn FunctionDefinition> {
                     ) else {
                         return Err(TemporalError::MixedKinds.into());
                     };
-                    // Avoid i64 nanosecond overflow across the 9999-year range.
-                    let ((a_seconds, a_nanos), (b_seconds, b_nanos)) =
-                        (epoch_parts(a), epoch_parts(b));
-                    let seconds = Decimal::from(b_seconds - a_seconds);
-                    let fraction = Decimal::from(b_nanos) - Decimal::from(a_nanos);
-                    Ok(Variable::Number(
-                        seconds + fraction / Decimal::from(1_000_000_000u32),
-                    ))
+                    Ok(Variable::Number(diff_seconds(a, b)))
                 }
                 F::AddDays => {
                     let Kind::Date(date) = &args.dynamic::<Temporal>(0)?.0 else {
@@ -328,6 +444,41 @@ pub(crate) fn definition(kind: InternalFunction) -> Rc<dyn FunctionDefinition> {
                     anyhow::ensure!(in_range(result.year()), TemporalError::OutOfRange);
                     Ok(Temporal(Kind::Timestamp(result)).into_variable())
                 }
+                F::IntervalsOverlap => {
+                    let (a_start, a_end) = proper_interval(&args, 0, 1)?;
+                    let (b_start, b_end) = proper_interval(&args, 2, 3)?;
+                    Ok(Variable::Bool(a_start < b_end && b_start < a_end))
+                }
+                F::IntervalGapSeconds => {
+                    let (a_start, a_end) = proper_interval(&args, 0, 1)?;
+                    let (b_start, b_end) = proper_interval(&args, 2, 3)?;
+                    let gap = if a_end < b_start {
+                        diff_seconds(a_end, b_start)
+                    } else if b_end < a_start {
+                        diff_seconds(b_end, a_start)
+                    } else {
+                        Decimal::ZERO
+                    };
+                    Ok(Variable::Number(gap))
+                }
+                F::IntervalIntersectionSeconds => {
+                    let (a_start, a_end) = proper_interval(&args, 0, 1)?;
+                    let (b_start, b_end) = proper_interval(&args, 2, 3)?;
+                    let start = a_start.max(b_start);
+                    let end = a_end.min(b_end);
+                    let overlap = if start < end {
+                        diff_seconds(start, end)
+                    } else {
+                        Decimal::ZERO
+                    };
+                    Ok(Variable::Number(overlap))
+                }
+                F::ResolveLocalTimestamp => Ok(Temporal::resolve_local_timestamp(
+                    args.str(0)?,
+                    args.str(1)?,
+                    args.str(2)?,
+                )?
+                .into_variable()),
                 _ => unreachable!("not a deterministic temporal builtin"),
             }
         }),

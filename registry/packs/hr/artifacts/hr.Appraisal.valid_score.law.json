@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.Appraisal.valid_score.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.Appraisal.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Performance appraisal score must stay within the exact 0..100 percentage range (HR-LC-05).",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.Appraisal.valid_score",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/talent.ts"
+    },
+    "rationale": "Performance appraisal score must stay within the exact 0..100 percentage range (HR-LC-05).",
+    "response": {
+      "expression": "(self.score >= 0) and (self.score <= 100)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.Appraisal"
+      ],
+      "root": {
+        "id": "hr.Appraisal",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.Appraisal"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.Appraisal.valid_score.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

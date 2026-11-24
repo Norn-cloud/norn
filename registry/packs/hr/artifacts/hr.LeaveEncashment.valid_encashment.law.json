@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.LeaveEncashment.valid_encashment.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.LeaveEncashment.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Leave encashment converts strictly positive days for a non-negative amount",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.LeaveEncashment.valid_encashment",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/people_leave.ts"
+    },
+    "rationale": "Leave encashment must debit strictly positive encashable_days with a non-negative encashment_amount (HR-LV-09).",
+    "response": {
+      "expression": "(self.encashable_days > 0) and (self.encashment_amount >= 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.LeaveEncashment"
+      ],
+      "root": {
+        "id": "hr.LeaveEncashment",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.LeaveEncashment"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.LeaveEncashment.valid_encashment.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

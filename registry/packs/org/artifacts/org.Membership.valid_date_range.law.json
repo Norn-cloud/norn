@@ -1,0 +1,50 @@
+{
+  "artifactId": "org.Membership.valid_date_range.law",
+  "dependencies": [
+    {
+      "artifactId": "org.Membership.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A membership valid_from date must be strictly before valid_to whenever valid_to is present.",
+  "namespace": "org",
+  "payload": {
+    "id": "org.Membership.valid_date_range",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "org",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/org/org.ts"
+    },
+    "rationale": "A membership valid_from date must be strictly before valid_to whenever valid_to is present.",
+    "response": {
+      "expression": "(self.valid_to == null) or (date(self.valid_from) < date(self.valid_to ?? self.valid_from))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "org.Membership"
+      ],
+      "root": {
+        "id": "org.Membership",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "org.Membership"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/org/artifacts/org.Membership.valid_date_range.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

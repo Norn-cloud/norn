@@ -1,0 +1,45 @@
+{
+  "artifactId": "party.Organization.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Organization",
+  "namespace": "party",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A legal entity or company owning brands and identity business units.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "name": "party.Organization",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/party.Organization.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

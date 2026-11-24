@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr.job_offer.accept.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Accept job offer",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.job_offer.accept",
+    "description": "Record candidate acceptance of a sent job offer, locking its terms as immutable (HR-LC-01).",
+    "effectProgram": {
+      "entityArtifactId": "hr.JobOffer.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "offerId",
+      "objectKind": "hr.JobOffer",
+      "transition": "accept"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "offerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "offerId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "offerId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "offerId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.offer.status == 'sent'"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "offerId"
+          }
+        },
+        "name": "offer",
+        "objectType": "hr.JobOffer"
+      }
+    ],
+    "title": "Accept job offer",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.JobOffer"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.job_offer.accept.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -26,7 +26,7 @@
       {
         "link": "resource",
         "targetIdField": "resourceId",
-        "targetType": "hr.LeaveBalance"
+        "targetType": "hr.LaborCapacity"
       },
       {
         "link": "fulfils",
@@ -34,7 +34,7 @@
         "targetType": "hr.ShiftCommitment"
       }
     ],
-    "description": "Post a create-only AttendanceEvent fulfilling a ShiftCommitment (never mutates posted history; HR-AT-01).",
+    "description": "Post a create-only AttendanceEvent delivering hr.LaborCapacity and fulfilling a ShiftCommitment whose linked provider, receiver, and resource match the input (never mutates posted history; HR-AT-01).",
     "effectProgram": {
       "entityArtifactId": "hr.AttendanceEvent.entity",
       "entityArtifactVersion": "0.1.0",
@@ -52,17 +52,14 @@
         "action": {
           "type": "string"
         },
-        "clock_in_at": {
-          "type": "string"
-        },
-        "clock_out_at": {
-          "type": "string"
-        },
         "currency": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "ends_at": {
+          "type": "string"
         },
         "id": {
           "type": "string"
@@ -89,6 +86,15 @@
         "shiftCommitmentId": {
           "type": "string"
         },
+        "starts_at": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "unit": {
           "type": [
             "string",
@@ -103,8 +109,9 @@
         "quantity",
         "unit",
         "currency",
-        "clock_in_at",
-        "clock_out_at",
+        "starts_at",
+        "ends_at",
+        "timezone",
         "providerId",
         "receiverId",
         "resourceId",
@@ -125,6 +132,10 @@
       ],
       "type": "object"
     },
+    "preconditions": [
+      "input.quantity > 0",
+      "((input.providerId in map(slice.commitment_provider as p, p.id)) and (input.receiverId in map(slice.commitment_receiver as r, r.id))) and (input.resourceId in map(slice.commitment_resource as c, c.id))"
+    ],
     "scopeRequired": [
       "orgId",
       "environmentId"
@@ -158,7 +169,7 @@
           }
         },
         "name": "resource",
-        "objectType": "hr.LeaveBalance"
+        "objectType": "hr.LaborCapacity"
       },
       {
         "key": {
@@ -169,6 +180,36 @@
         },
         "name": "commitment",
         "objectType": "hr.ShiftCommitment"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "commitment",
+            "link": "provider"
+          }
+        },
+        "name": "commitment_provider",
+        "objectType": "hr.Person"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "commitment",
+            "link": "receiver"
+          }
+        },
+        "name": "commitment_receiver",
+        "objectType": "org.OrgUnit"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "commitment",
+            "link": "resource"
+          }
+        },
+        "name": "commitment_resource",
+        "objectType": "hr.LaborCapacity"
       }
     ],
     "title": "Record immutable attendance event",

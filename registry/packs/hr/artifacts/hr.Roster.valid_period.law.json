@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.Roster.valid_period.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.Roster.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Roster period_start must be on or before period_end.",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.Roster.valid_period",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/rostering.ts"
+    },
+    "rationale": "Roster period_start must be on or before period_end.",
+    "response": {
+      "expression": "date(self.period_start) <= date(self.period_end)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.Roster"
+      ],
+      "root": {
+        "id": "hr.Roster",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.Roster"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.Roster.valid_period.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

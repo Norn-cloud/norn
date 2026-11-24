@@ -8,7 +8,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 | Link | Terms | Mapped | Residual | Canon gaps | Non-conforming |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `norn.link.erpnext.canon` | 59 | 40 | 8 | 11 | 0 |
-| `norn.link.frappe-hr.canon` | 27 | 15 | 3 | 8 | 1 |
+| `norn.link.frappe-hr.canon` | 198 | 22 | 10 | 162 | 4 |
 | `norn.link.odoo.canon` | 42 | 27 | 3 | 11 | 1 |
 | `norn.link.shopify.canon` | 35 | 14 | 5 | 16 | 0 |
 
@@ -95,41 +95,212 @@ None.
 ### Maps
 
 - `norn.frappe-hr.attendance` subsumed_by `norn.hr.attendance.event`
+- `norn.frappe-hr.branch` subsumed_by `norn.org.unit`
 - `norn.frappe-hr.department` subsumed_by `norn.org.unit`
 - `norn.frappe-hr.designation` subsumed_by `norn.org.post`
 - `norn.frappe-hr.employee` subsumed_by `norn.org.person`
+- `norn.frappe-hr.employee.group` subsumed_by `norn.org.unit`
+- `norn.frappe-hr.guard.expense.self.approval` subsumed_by `norn.hr.guard.self.approval`
 - `norn.frappe-hr.guard.leave.insufficient.balance` subsumed_by `norn.hr.guard.leave.insufficient.balance`
 - `norn.frappe-hr.guard.leave.overlap` equivalent `norn.hr.guard.leave.overlap`
+- `norn.frappe-hr.guard.leave.self.approval` subsumed_by `norn.hr.guard.self.approval`
 - `norn.frappe-hr.guard.shift.overlap` equivalent `norn.hr.guard.shift.overlap`
 - `norn.frappe-hr.holiday.list` subsumed_by `norn.time.calendar`
 - `norn.frappe-hr.holiday.list.holiday` subsumed_by `norn.time.calendar.exception`
 - `norn.frappe-hr.leave.allocation` subsumed_by `norn.hr.leave.balance`
 - `norn.frappe-hr.leave.allocation.new.leaves.allocated` subsumed_by `norn.hr.leave.quantity`
+- `norn.frappe-hr.leave.allocation.total.leaves.allocated` subsumed_by `norn.hr.leave.quantity`
 - `norn.frappe-hr.leave.application` equivalent `norn.hr.leave.request`
 - `norn.frappe-hr.leave.application.submit` subsumed_by `norn.hr.leave.request.approve`
+- `norn.frappe-hr.leave.encashment.encashment.days` subsumed_by `norn.hr.leave.quantity`
+- `norn.frappe-hr.leave.ledger.entry.leaves` subsumed_by `norn.hr.leave.quantity`
 - `norn.frappe-hr.shift.assignment` subsumed_by `norn.hr.shift.commitment`
 - `norn.frappe-hr.shift.type` subsumed_by `norn.time.working.window`
 
 ### Residual (system-specific)
 
 - `norn.frappe-hr.attendance.status`
+- `norn.frappe-hr.employee.branch`
 - `norn.frappe-hr.employee.department`
 - `norn.frappe-hr.employee.designation`
+- `norn.frappe-hr.employee.holiday.list`
+- `norn.frappe-hr.expense.claim.type.default.account`
+- `norn.frappe-hr.holiday.list.holiday.weekly.off`
+- `norn.frappe-hr.leave.application.half.day`
+- `norn.frappe-hr.leave.ledger.entry.is.expired`
+- `norn.frappe-hr.shift.type.enable.auto.attendance`
 
 ### Missing from the canon
 
+- `norn.frappe-hr.additional.salary`
+- `norn.frappe-hr.additional.salary.amount`
+- `norn.frappe-hr.appointment.letter`
+- `norn.frappe-hr.appointment.letter.appointment.date`
+- `norn.frappe-hr.appointment.letter.issue`
+- `norn.frappe-hr.appraisal`
+- `norn.frappe-hr.appraisal.cycle`
+- `norn.frappe-hr.appraisal.cycle.end.date`
+- `norn.frappe-hr.appraisal.cycle.start.date`
+- `norn.frappe-hr.appraisal.final.score`
+- `norn.frappe-hr.appraisal.submit`
+- `norn.frappe-hr.attendance.early.exit`
+- `norn.frappe-hr.attendance.late.entry`
 - `norn.frappe-hr.attendance.request`
+- `norn.frappe-hr.attendance.request.submit`
+- `norn.frappe-hr.attendance.working.hours`
+- `norn.frappe-hr.compensatory.leave.request`
+- `norn.frappe-hr.compensatory.leave.request.submit`
+- `norn.frappe-hr.compensatory.leave.request.work.from.date`
+- `norn.frappe-hr.department.parent.department`
+- `norn.frappe-hr.employee.advance`
+- `norn.frappe-hr.employee.advance.advance.amount`
+- `norn.frappe-hr.employee.advance.claimed.amount`
+- `norn.frappe-hr.employee.advance.paid.amount`
+- `norn.frappe-hr.employee.advance.return`
+- `norn.frappe-hr.employee.advance.submit`
+- `norn.frappe-hr.employee.assigned.grade`
+- `norn.frappe-hr.employee.benefit.application`
+- `norn.frappe-hr.employee.checkin`
+- `norn.frappe-hr.employee.checkin.log.type`
+- `norn.frappe-hr.employee.checkin.time`
 - `norn.frappe-hr.employee.date.of.joining`
+- `norn.frappe-hr.employee.document.type`
+- `norn.frappe-hr.employee.employment.type`
+- `norn.frappe-hr.employee.grade`
+- `norn.frappe-hr.employee.grievance`
+- `norn.frappe-hr.employee.grievance.resolve`
+- `norn.frappe-hr.employee.grievance.status`
+- `norn.frappe-hr.employee.onboarding`
+- `norn.frappe-hr.employee.onboarding.date.of.joining`
+- `norn.frappe-hr.employee.onboarding.submit`
+- `norn.frappe-hr.employee.promotion`
+- `norn.frappe-hr.employee.promotion.promotion.date`
+- `norn.frappe-hr.employee.promotion.submit`
+- `norn.frappe-hr.employee.relieving.date`
+- `norn.frappe-hr.employee.reports.to`
+- `norn.frappe-hr.employee.separation`
+- `norn.frappe-hr.employee.separation.resignation.letter.date`
+- `norn.frappe-hr.employee.separation.submit`
+- `norn.frappe-hr.employee.status`
+- `norn.frappe-hr.employee.tax.exemption.declaration`
+- `norn.frappe-hr.employee.tax.exemption.proof.submission`
+- `norn.frappe-hr.employee.transfer`
+- `norn.frappe-hr.employee.transfer.submit`
+- `norn.frappe-hr.employee.transfer.transfer.date`
+- `norn.frappe-hr.employment.type`
+- `norn.frappe-hr.expense.claim`
+- `norn.frappe-hr.expense.claim.approval.status`
+- `norn.frappe-hr.expense.claim.submit`
+- `norn.frappe-hr.expense.claim.total.claimed.amount`
+- `norn.frappe-hr.expense.claim.total.sanctioned.amount`
+- `norn.frappe-hr.expense.claim.type`
+- `norn.frappe-hr.full.and.final.statement`
+- `norn.frappe-hr.full.and.final.statement.submit`
+- `norn.frappe-hr.full.and.final.statement.total.payable.amount`
+- `norn.frappe-hr.goal`
+- `norn.frappe-hr.goal.progress`
+- `norn.frappe-hr.gratuity`
+- `norn.frappe-hr.gratuity.amount`
+- `norn.frappe-hr.gratuity.submit`
+- `norn.frappe-hr.guard.advance.over.allocation`
+- `norn.frappe-hr.guard.appraisal.duplicate.cycle`
+- `norn.frappe-hr.guard.attendance.duplicate.date`
+- `norn.frappe-hr.guard.attendance.leave.conflict`
+- `norn.frappe-hr.guard.department.cycle`
+- `norn.frappe-hr.guard.employee.inactive.mutation`
+- `norn.frappe-hr.guard.employee.reports.to.self`
+- `norn.frappe-hr.guard.expense.sanctioned.exceeds.claimed`
+- `norn.frappe-hr.guard.goal.weightage.overflow`
+- `norn.frappe-hr.guard.job.offer.unaccepted.onboarding`
+- `norn.frappe-hr.guard.leave.allocation.overlap`
+- `norn.frappe-hr.guard.leave.block.list`
+- `norn.frappe-hr.guard.leave.encashment.ineligible`
+- `norn.frappe-hr.guard.payroll.period.overlap`
+- `norn.frappe-hr.guard.salary.slip.negative.net.pay`
+- `norn.frappe-hr.guard.salary.slip.overlap`
+- `norn.frappe-hr.guard.salary.structure.missing`
+- `norn.frappe-hr.guard.separation.pending.settlement`
+- `norn.frappe-hr.guard.tax.exemption.cap`
+- `norn.frappe-hr.income.tax.slab`
+- `norn.frappe-hr.income.tax.slab.effective.from`
+- `norn.frappe-hr.job.applicant`
+- `norn.frappe-hr.job.applicant.status`
+- `norn.frappe-hr.job.offer`
+- `norn.frappe-hr.job.offer.accept`
+- `norn.frappe-hr.job.offer.status`
+- `norn.frappe-hr.job.opening`
+- `norn.frappe-hr.job.opening.designation`
+- `norn.frappe-hr.job.opening.status`
+- `norn.frappe-hr.leave.allocation.submit`
 - `norn.frappe-hr.leave.application.cancel`
 - `norn.frappe-hr.leave.application.from.date`
 - `norn.frappe-hr.leave.application.to.date`
 - `norn.frappe-hr.leave.application.total.leave.days`
+- `norn.frappe-hr.leave.block.list`
+- `norn.frappe-hr.leave.encashment`
+- `norn.frappe-hr.leave.encashment.encashment.amount`
+- `norn.frappe-hr.leave.encashment.submit`
+- `norn.frappe-hr.leave.ledger.entry`
+- `norn.frappe-hr.leave.period`
+- `norn.frappe-hr.leave.period.from.date`
+- `norn.frappe-hr.leave.period.to.date`
+- `norn.frappe-hr.leave.policy`
+- `norn.frappe-hr.leave.policy.assignment`
+- `norn.frappe-hr.leave.policy.assignment.effective.from`
+- `norn.frappe-hr.leave.policy.assignment.grant`
+- `norn.frappe-hr.leave.type`
+- `norn.frappe-hr.leave.type.allow.encashment`
+- `norn.frappe-hr.leave.type.is.carry.forward`
+- `norn.frappe-hr.leave.type.is.lwp`
+- `norn.frappe-hr.leave.type.max.leaves.allowed`
+- `norn.frappe-hr.payroll.entry`
+- `norn.frappe-hr.payroll.entry.create.salary.slips`
+- `norn.frappe-hr.payroll.entry.make.bank.entry`
+- `norn.frappe-hr.payroll.entry.posting.date`
+- `norn.frappe-hr.payroll.entry.submit.salary.slips`
+- `norn.frappe-hr.payroll.period`
+- `norn.frappe-hr.payroll.period.end.date`
+- `norn.frappe-hr.payroll.period.start.date`
+- `norn.frappe-hr.salary.component`
+- `norn.frappe-hr.salary.component.is.tax.applicable`
+- `norn.frappe-hr.salary.component.type`
+- `norn.frappe-hr.salary.slip`
+- `norn.frappe-hr.salary.slip.gross.pay`
+- `norn.frappe-hr.salary.slip.net.pay`
+- `norn.frappe-hr.salary.slip.payment.days`
+- `norn.frappe-hr.salary.slip.submit`
+- `norn.frappe-hr.salary.slip.total.deduction`
+- `norn.frappe-hr.salary.structure`
+- `norn.frappe-hr.salary.structure.assignment`
+- `norn.frappe-hr.salary.structure.assignment.base`
+- `norn.frappe-hr.salary.structure.assignment.from.date`
+- `norn.frappe-hr.salary.structure.currency`
+- `norn.frappe-hr.salary.structure.payroll.frequency`
 - `norn.frappe-hr.shift.assignment.end.date`
 - `norn.frappe-hr.shift.assignment.start.date`
+- `norn.frappe-hr.shift.assignment.submit`
+- `norn.frappe-hr.shift.request`
+- `norn.frappe-hr.shift.request.from.date`
+- `norn.frappe-hr.shift.request.submit`
+- `norn.frappe-hr.shift.request.to.date`
+- `norn.frappe-hr.shift.type.end.time`
+- `norn.frappe-hr.shift.type.process.auto.attendance`
+- `norn.frappe-hr.shift.type.start.time`
+- `norn.frappe-hr.training.event`
+- `norn.frappe-hr.training.event.start.time`
+- `norn.frappe-hr.training.result`
+- `norn.frappe-hr.training.result.hours`
+- `norn.frappe-hr.training.result.submit`
+- `norn.frappe-hr.travel.request`
+- `norn.frappe-hr.travel.request.purpose`
+- `norn.frappe-hr.travel.request.submit`
 
 ### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
 
 - `norn.frappe-hr.attendance.cancel.amend`
+- `norn.frappe-hr.leave.type.allow.negative`
+- `norn.frappe-hr.salary.component.formula`
+- `norn.frappe-hr.salary.slip.cancel.amend`
 
 ## `norn.link.odoo.canon`
 

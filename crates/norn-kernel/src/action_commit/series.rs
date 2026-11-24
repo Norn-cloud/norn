@@ -1,5 +1,6 @@
 use norn_ir::{
     FactChange, KeyName, NamingSeriesIR, ObjectTypeName, PropertyId, ResourceLimitProfile,
+    TraceContext,
 };
 
 use crate::cell_host::{CellHost, FactKey, FactState, JsonObject, JsonValue};
@@ -61,6 +62,7 @@ where
             object_type,
             &call.input,
             &call.actor,
+            call.trace.as_ref(),
             &call.idempotency_key,
         )? {
             validate_generated_replay_input(
@@ -148,11 +150,13 @@ where
             effective_input: Some(generated_input.clone()),
             derived_values: preparation.derived_values.clone(),
             precondition_outcomes,
+            parameter_pins: slice.parameter_pins.clone(),
             actor: call.actor.clone(),
             turn: call.turn.id.clone(),
             transition: String::new(),
             from: String::new(),
             to: String::new(),
+            trace: call.trace.clone(),
         };
         check_action_record_size::<H::Error>(call.action, &record, limits)?;
         let changes = vec![FactChange::Create {
@@ -199,6 +203,7 @@ where
                     object_type,
                     &call.input,
                     &call.actor,
+                    call.trace.as_ref(),
                     &call.idempotency_key,
                 )? {
                     validate_generated_replay_input(
@@ -277,6 +282,7 @@ fn recorded_generated_call<X>(
     object_type: &ObjectTypeName,
     input: &JsonObject,
     actor: &str,
+    trace: Option<&TraceContext>,
     key: &str,
 ) -> Result<Option<ActionCallRecord>, ActionRefusal<X>> {
     if recorded.version == crate::cell_host::FactVersion::ABSENT {
@@ -292,7 +298,7 @@ fn recorded_generated_call<X>(
             key: key.to_owned(),
         });
     };
-    if record.binds_same_generated_call(action_id, object_type, input, actor) {
+    if record.binds_same_generated_call(action_id, object_type, input, actor, trace) {
         Ok(Some(record))
     } else {
         Err(ActionRefusal::IdempotencyConflict {

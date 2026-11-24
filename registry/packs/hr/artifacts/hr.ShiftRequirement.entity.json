@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Required staffing count for a role and half-open UTC shift slot at one organizational unit.",
+      "description": "Required staffing count for a role and proper half-open UTC [starts_at, ends_at) shift slot at one organizational unit (implements core.TimeInterval).",
       "identity": [
         {
           "name": "primary",
@@ -17,6 +17,9 @@
             "id"
           ]
         }
+      ],
+      "implements": [
+        "core.TimeInterval"
       ],
       "links": [
         {
@@ -48,15 +51,25 @@
         {
           "id": "starts_at",
           "type": {
-            "kind": "timestamp",
-            "timezone": "utc"
+            "kind": "ref",
+            "name": "core.time.instant"
           }
         },
         {
           "id": "ends_at",
           "type": {
-            "kind": "timestamp",
-            "timezone": "utc"
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "timezone",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
           }
         },
         {
@@ -66,7 +79,7 @@
           }
         }
       ],
-      "role": "thing"
+      "role": "happening"
     }
   },
   "provenance": {

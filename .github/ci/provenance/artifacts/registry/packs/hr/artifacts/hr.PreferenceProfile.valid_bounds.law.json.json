@@ -1,5 +1,5 @@
 {
-  "sha256": "4108409f57db0cb5f9777378547f9e0703447163bf8fbcfe167f6e623b6a0430",
+  "sha256": "3f00250db5154094c7e8bf5217a28da826891861b2ca85cc8d6d3ee8fd15fa03",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -8,8 +8,10 @@
   "parents": [
     "registry/packs/hr/access.ts",
     "registry/packs/hr/markings.ts",
+    "registry/packs/hr/payroll_expenses.ts",
     "registry/packs/hr/people_leave.ts",
-    "registry/packs/hr/rostering.ts"
+    "registry/packs/hr/rostering.ts",
+    "registry/packs/hr/talent.ts"
   ],
   "rights_evidence": [
     {

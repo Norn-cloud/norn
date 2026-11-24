@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr.leave_encashment.approve.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Approve leave encashment",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.leave_encashment.approve",
+    "description": "Approve a draft leave encashment under independent HR or payroll authority.",
+    "effectProgram": {
+      "entityArtifactId": "hr.LeaveEncashment.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "encashmentId",
+      "objectKind": "hr.LeaveEncashment",
+      "transition": "approve"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "encashmentId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "encashmentId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "encashmentId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "encashmentId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.encashment.status == 'draft') and (slice.encashment.encashable_days > 0)) and (slice.encashment.encashment_amount >= 0)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "encashmentId"
+          }
+        },
+        "name": "encashment",
+        "objectType": "hr.LeaveEncashment"
+      }
+    ],
+    "title": "Approve leave encashment",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.LeaveEncashment"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.leave_encashment.approve.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

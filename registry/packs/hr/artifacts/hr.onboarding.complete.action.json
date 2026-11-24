@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr.onboarding.complete.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Complete employee onboarding",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.onboarding.complete",
+    "description": "Mark an employee onboarding checklist completed once every required item is finished.",
+    "effectProgram": {
+      "entityArtifactId": "hr.OnboardingChecklist.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "checklistId",
+      "objectKind": "hr.OnboardingChecklist",
+      "transition": "complete"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "checklistId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "checklistId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "checklistId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "checklistId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.checklist.status == 'in_progress') and (slice.checklist.completed_items_count == slice.checklist.required_items_count)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "checklistId"
+          }
+        },
+        "name": "checklist",
+        "objectType": "hr.OnboardingChecklist"
+      }
+    ],
+    "title": "Complete employee onboarding",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.OnboardingChecklist"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.onboarding.complete.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,73 @@
+{
+  "artifactId": "hr.comp_leave.reject.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Reject compensatory leave request",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.comp_leave.reject",
+    "description": "Reject a pending compensatory leave request under independent manager authority.",
+    "effectProgram": {
+      "entityArtifactId": "hr.CompensatoryLeaveRequest.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "requestId",
+      "objectKind": "hr.CompensatoryLeaveRequest",
+      "transition": "reject"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Reject compensatory leave request",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.CompensatoryLeaveRequest"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.comp_leave.reject.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

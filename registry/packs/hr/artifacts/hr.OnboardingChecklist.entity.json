@@ -1,0 +1,125 @@
+{
+  "artifactId": "hr.OnboardingChecklist.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Onboarding checklist",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Structured employee onboarding checklist that cannot complete until all required items are finished (HR-LC-01).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "completed"
+          ],
+          "initial": [
+            "in_progress"
+          ],
+          "property": "status",
+          "terminal": [
+            "completed",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "in_progress"
+              ],
+              "guards": [
+                "self.completed_items_count == self.required_items_count"
+              ],
+              "id": "complete",
+              "to": "completed"
+            },
+            {
+              "from": [
+                "in_progress"
+              ],
+              "id": "cancel",
+              "to": "cancelled"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employee being onboarded.",
+          "id": "person",
+          "target": "hr.Person"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employment contract activated through onboarding.",
+          "id": "employment",
+          "target": "hr.Employment"
+        }
+      ],
+      "name": "hr.OnboardingChecklist",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "required_items_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "completed_items_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "default": "in_progress",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "in_progress"
+              },
+              {
+                "value": "completed"
+              },
+              {
+                "value": "cancelled"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.OnboardingChecklist.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

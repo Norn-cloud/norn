@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Immutable posted work event fulfilling a ShiftCommitment (implements core.EconomicEvent; corrections create a linked reversing event per HR-AT-01).",
+      "description": "Immutable posted work event fulfilling a ShiftCommitment (implements core.EconomicEvent and core.TimeInterval; clock-in/out map directly to starts_at/ends_at; corrections create a linked reversing event per HR-AT-01).",
       "identity": [
         {
           "name": "primary",
@@ -19,7 +19,8 @@
         }
       ],
       "implements": [
-        "core.EconomicEvent"
+        "core.EconomicEvent",
+        "core.TimeInterval"
       ],
       "links": [
         {
@@ -48,9 +49,9 @@
             "required": true,
             "to": "one"
           },
-          "description": "Associated time/leave resource.",
+          "description": "Employee labor capacity delivered in this event.",
           "id": "resource",
-          "target": "hr.LeaveBalance"
+          "target": "hr.LaborCapacity"
         },
         {
           "cardinality": {
@@ -135,17 +136,27 @@
           }
         },
         {
-          "id": "clock_in_at",
+          "id": "starts_at",
           "type": {
-            "kind": "timestamp",
-            "timezone": "utc"
+            "kind": "ref",
+            "name": "core.time.instant"
           }
         },
         {
-          "id": "clock_out_at",
+          "id": "ends_at",
           "type": {
-            "kind": "timestamp",
-            "timezone": "utc"
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "timezone",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
           }
         }
       ],

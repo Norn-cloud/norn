@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.JobOffer.valid_offer.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.JobOffer.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Job offer carries strictly positive CTC and non-reversed offer/expiry dates",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.JobOffer.valid_offer",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/talent.ts"
+    },
+    "rationale": "A job offer must quote a strictly positive offered_ctc and an expiry_date on or after offer_date (HR-LC-01).",
+    "response": {
+      "expression": "(self.offered_ctc > 0) and (date(self.offer_date) <= date(self.expiry_date))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.JobOffer"
+      ],
+      "root": {
+        "id": "hr.JobOffer",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.JobOffer"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.JobOffer.valid_offer.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.PayrollFund.non_negative.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.PayrollFund.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Payroll fund is a non-negative monetary resource denominated in currency without UCUM unit",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.PayrollFund.non_negative",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/payroll_expenses.ts"
+    },
+    "rationale": "A payroll fund is a monetary core.Resource (unit == null, currency != null) with a non-negative available balance (HR-PR-06).",
+    "response": {
+      "expression": "((self.quantity >= 0) and (self.unit == null)) and (self.currency != null)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.PayrollFund"
+      ],
+      "root": {
+        "id": "hr.PayrollFund",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.PayrollFund"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.PayrollFund.non_negative.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

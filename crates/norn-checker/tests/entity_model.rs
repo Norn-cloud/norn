@@ -1916,6 +1916,309 @@ fn interface_invariants_defer_parent_member_typing_until_artifact_set_admission(
 }
 
 #[test]
+fn interface_invariants_defer_property_ref_typing_locally_and_enforce_with_catalog() {
+    let valid_def: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.Window",
+        "role": "happening",
+        "properties": [
+            {"id": "starts_at", "type": {"kind": "ref", "name": "test.instant"}},
+            {"id": "ends_at", "type": {"kind": "ref", "name": "test.instant"}}
+        ],
+        "invariants": [{
+            "id": "proper",
+            "expression": "timestamp(self.starts_at) < timestamp(self.ends_at)",
+            "message": "starts_at must precede ends_at"
+        }]
+    }))
+    .expect("interface");
+    assert_eq!(norn_checker::check_interface_local(&valid_def), []);
+
+    let invalid_def: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.BadWindow",
+        "role": "happening",
+        "properties": [
+            {"id": "starts_at", "type": {"kind": "ref", "name": "test.instant"}},
+            {"id": "ends_at", "type": {"kind": "ref", "name": "test.instant"}}
+        ],
+        "invariants": [{
+            "id": "raw_order",
+            "expression": "self.starts_at < self.ends_at",
+            "message": "raw timestamp ordering is refused"
+        }]
+    }))
+    .expect("interface");
+    let catalog: Vec<norn_ir::PropertyTypeDef> = serde_json::from_value(serde_json::json!([{
+        "name": "test.instant",
+        "type": {"kind": "timestamp", "timezone": "utc"}
+    }]))
+    .expect("catalog");
+    let registry = std::collections::BTreeSet::new();
+    let context = norn_checker::EntityContext {
+        catalog: &catalog,
+        registry: &registry,
+        base: norn_checker::EntityModel::EMPTY,
+        tenant: None,
+    };
+    let ok_model = norn_checker::EntityModel {
+        interfaces: std::slice::from_ref(&valid_def),
+        ..norn_checker::EntityModel::EMPTY
+    };
+    assert_eq!(norn_checker::check_entity_model(&ok_model, &context), []);
+
+    let bad_model = norn_checker::EntityModel {
+        interfaces: std::slice::from_ref(&invalid_def),
+        ..norn_checker::EntityModel::EMPTY
+    };
+    let bad_findings = norn_checker::check_entity_model(&bad_model, &context);
+    assert!(
+        bad_findings
+            .iter()
+            .any(|f| f.code == codes::INVALID_INVARIANT_EXPRESSION),
+        "expected raw timestamp ordering to fail with catalog; got {bad_findings:?}"
+    );
+}
+
+#[test]
+fn t3_entity_model_and_artifact_set_refuse_unresolved_direct_and_transitive_refs_with_invariants() {
+    // Direct unresolved ref in T3 `check_entity_model` still refuses with `unknown_ref`
+    // and never skips invariant checking.
+    let direct_def: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.DirectUnresolved",
+        "role": "happening",
+        "properties": [
+            {"id": "starts_at", "type": {"kind": "ref", "name": "test.missing_instant"}},
+            {"id": "ends_at", "type": {"kind": "ref", "name": "test.missing_instant"}}
+        ],
+        "invariants": [{
+            "id": "bad_expr",
+            "expression": "timestamp(self.starts_at) < timestamp(self.ends_at)",
+            "message": "starts_at must precede ends_at"
+        }]
+    }))
+    .expect("interface");
+    let registry = BTreeSet::new();
+    let empty_ctx = EntityContext {
+        catalog: &[],
+        registry: &registry,
+        base: EntityModel::EMPTY,
+        tenant: None,
+    };
+    let direct_model = EntityModel {
+        interfaces: std::slice::from_ref(&direct_def),
+        ..EntityModel::EMPTY
+    };
+    let direct_findings = check_entity_model(&direct_model, &empty_ctx);
+    assert!(
+        direct_findings
+            .iter()
+            .any(|f| f.code == norn_checker::property_types::codes::UNKNOWN_REF),
+        "T3 direct unresolved ref must emit unknown_ref; got {direct_findings:?}"
+    );
+    assert!(
+        direct_findings
+            .iter()
+            .any(|f| f.code == codes::INVALID_INVARIANT_EXPRESSION),
+        "T3 check_entity_model must never skip invariant checking on unresolved ref; got {direct_findings:?}"
+    );
+
+    // Transitive unresolved ref (`test.alias` -> `test.missing_leaf`):
+    // T3 `check_entity_model` must NEVER skip invariant checking (zero-diagnostic bypass),
+    // and T3 `check_artifact_set` refuses with `property_type.validation.unknown_ref`.
+    let transitive_catalog: Vec<PropertyTypeDef> = serde_json::from_value(serde_json::json!([{
+        "name": "test.alias",
+        "type": {"kind": "ref", "name": "test.missing_leaf"}
+    }]))
+    .expect("catalog");
+    let transitive_def: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.TransitiveUnresolved",
+        "role": "happening",
+        "properties": [
+            {"id": "starts_at", "type": {"kind": "ref", "name": "test.alias"}},
+            {"id": "ends_at", "type": {"kind": "ref", "name": "test.alias"}}
+        ],
+        "invariants": [{
+            "id": "bad_expr",
+            "expression": "timestamp(self.starts_at) < timestamp(self.ends_at)",
+            "message": "starts_at must precede ends_at"
+        }]
+    }))
+    .expect("interface");
+    let transitive_ctx = EntityContext {
+        catalog: &transitive_catalog,
+        registry: &registry,
+        base: EntityModel::EMPTY,
+        tenant: None,
+    };
+    let transitive_model = EntityModel {
+        interfaces: std::slice::from_ref(&transitive_def),
+        ..EntityModel::EMPTY
+    };
+    let transitive_findings = check_entity_model(&transitive_model, &transitive_ctx);
+    assert!(
+        transitive_findings
+            .iter()
+            .any(|f| f.code == codes::INVALID_INVARIANT_EXPRESSION),
+        "T3 transitive unresolved ref must not bypass invariant checking; got {transitive_findings:?}"
+    );
+
+    let catalog_artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(serde_json::json!({
+        "irVersion": "0.1",
+        "artifactId": "test.types",
+        "kind": "entity",
+        "namespace": "test",
+        "name": "types",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {"orgId": "org_demo", "environmentId": "dev"},
+        "dependencies": [],
+        "provenance": {"source": "authoring_sdk", "sourcePath": "test/types.ts"},
+        "payload": {
+            "entityVersion": "2.0",
+            "propertyTypes": [{"name": "test.alias", "type": {"kind": "ref", "name": "test.missing_leaf"}}]
+        }
+    }))
+    .expect("catalog artifact");
+    let iface_artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(serde_json::json!({
+        "irVersion": "0.1",
+        "artifactId": "test.TransitiveUnresolved.interface",
+        "kind": "entity",
+        "namespace": "test",
+        "name": "TransitiveUnresolved",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {"orgId": "org_demo", "environmentId": "dev"},
+        "dependencies": [],
+        "provenance": {"source": "authoring_sdk", "sourcePath": "test/iface.ts"},
+        "payload": {
+            "entityVersion": "2.0",
+            "interface": transitive_def
+        }
+    }))
+    .expect("interface artifact");
+    let set_findings = norn_checker::check_artifact_set(
+        &[catalog_artifact, iface_artifact],
+        &norn_checker::EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        set_findings
+            .iter()
+            .any(|f| f.code == norn_checker::property_types::codes::UNKNOWN_REF),
+        "T3 check_artifact_set must refuse transitive unresolved ref with unknown_ref; got {set_findings:?}"
+    );
+}
+
+#[test]
+fn standalone_validate_artifact_refuses_disallowed_builtins_even_with_unresolved_property_ref() {
+    for (id, expr) in [
+        ("uses_rand", "rand() > 0"),
+        ("uses_ambient_clock", "d() != null"),
+        ("uses_epoch_seconds", "epoch_seconds(self.starts_at) > 0"),
+        ("uses_keys", "len(keys(self)) > 0"),
+    ] {
+        let artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(serde_json::json!({
+            "irVersion": "0.1",
+            "artifactId": format!("test.{id}.interface"),
+            "kind": "entity",
+            "namespace": "test",
+            "name": id,
+            "version": "0.1.0",
+            "lifecycle": "draft",
+            "scope": {"orgId": "org_demo", "environmentId": "dev"},
+            "dependencies": [],
+            "provenance": {"source": "authoring_sdk", "sourcePath": "test/disallowed.ts"},
+            "payload": {
+                "entityVersion": "2.0",
+                "interface": {
+                    "name": format!("test.Disallowed{id}"),
+                    "role": "happening",
+                    "properties": [
+                        {"id": "starts_at", "type": {"kind": "ref", "name": "core.time.instant"}},
+                        {"id": "ends_at", "type": {"kind": "ref", "name": "core.time.instant"}}
+                    ],
+                    "invariants": [{
+                        "id": id,
+                        "expression": expr,
+                        "message": "disallowed builtin must fail locally"
+                    }]
+                }
+            }
+        }))
+        .expect("artifact");
+        let findings = norn_checker::check_artifact(&artifact);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == codes::INVALID_INVARIANT_EXPRESSION),
+            "standalone validate_artifact must refuse `{expr}` even with PropertyType::Ref; got {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn object_type_implementing_core_time_interval_with_invalid_invariant_is_refused() {
+    let time_catalog: norn_ir::ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.time.json"
+    ))
+    .expect("core.time");
+    let time_interval: norn_ir::ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.TimeInterval.interface.json"
+    ))
+    .expect("core.TimeInterval");
+    let bad_shift: norn_ir::ArtifactEnvelope = serde_json::from_value(serde_json::json!({
+        "irVersion": "0.1",
+        "artifactId": "workforce.BadShift.entity",
+        "kind": "entity",
+        "namespace": "workforce",
+        "name": "BadShift",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {"orgId": "org_demo", "environmentId": "dev"},
+        "dependencies": [],
+        "provenance": {"source": "authoring_sdk", "sourcePath": "test/bad_shift.ts"},
+        "payload": {
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "workforce.BadShift",
+                "role": "happening",
+                "implements": ["core.TimeInterval"],
+                "identity": [{"name": "primary", "properties": ["shift_id"]}],
+                "properties": [
+                    {"id": "shift_id", "type": {"kind": "text"}},
+                    {"id": "starts_at", "type": {"kind": "ref", "name": "core.time.instant"}},
+                    {"id": "ends_at", "type": {"kind": "ref", "name": "core.time.instant"}},
+                    {"id": "timezone", "type": {"kind": "ref", "name": "core.time.iana_timezone"}, "constraints": {"nullable": true}}
+                ],
+                "invariants": [{
+                    "id": "invalid_raw_order",
+                    "expression": "self.starts_at < self.ends_at",
+                    "message": "raw timestamp ordering is invalid"
+                }]
+            }
+        }
+    }))
+    .expect("bad shift artifact");
+    let registry = BTreeSet::new();
+    let set_findings = norn_checker::check_artifact_set(
+        &[bad_shift],
+        &norn_checker::EntityArtifactSetContext {
+            registry: &registry,
+            base: &[time_catalog, time_interval],
+            tenant: None,
+        },
+    );
+    assert!(
+        set_findings
+            .iter()
+            .any(|f| f.code == codes::INVALID_INVARIANT_EXPRESSION),
+        "ObjectTypeDef implementing core.TimeInterval with invalid invariant must be refused; got {set_findings:?}"
+    );
+}
+
+#[test]
 fn inverse_roles_cannot_shadow_members_of_descendant_interfaces_without_implementers() {
     let model = serde_json::json!({"interfaces":[
         {"name":"test.Parent"},

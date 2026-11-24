@@ -43,9 +43,12 @@ cargo build --locked --release --features conformance  # the test build the suit
 ## Running
 
 A runner joins the engine named by `RIVET_ENDPOINT`
-(`http://default:<admin token>@<engine>:6420`) and serves the router on
-`NORN_LISTEN` (default `127.0.0.1:8787`). The other variables are the Durable
-Object Worker's:
+(`https://default:<admin token>@<engine>:6420`; it refuses plaintext `http`
+to anything but loopback unless `NORN_RIVET_PLAINTEXT_ENGINE=single-host`
+says the engine is on the same machine's bridge network) and serves the router on
+`NORN_LISTEN`. If it is unset, the runner binds to `0.0.0.0` on the platform's
+`PORT` or to `127.0.0.1:8787` when neither variable is set. The other variables
+are the Durable Object Worker's:
 
 - `NORN_HOST_ISSUER`, `NORN_HOST_JWKS_URL`
 - `NORN_LINEAGE_KEY`
@@ -55,7 +58,7 @@ Object Worker's:
 - `ALLOWED_ORIGINS`
 - `NORN_SYNC_STEP_MS`
 
-The three-instance deployment (compose and systemd) is in `apps/norn-cell-rivet`.
+See [the runner image and rehearsal](../../apps/norn-cell-rivet/README.md).
 
 ## Conformance
 

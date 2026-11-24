@@ -1,0 +1,51 @@
+{
+  "artifactId": "loc_eg.hr.PreferenceProfile.labor_law_14_2025.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.PreferenceProfile.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Egypt Labor Law No. 14 of 2025 rostering caps on Egyptian hr.PreferenceProfile",
+  "namespace": "loc_eg",
+  "payload": {
+    "condition": "(self.jurisdiction_code ?? '') == 'EG'",
+    "id": "loc_eg.hr.PreferenceProfile.labor_law_14_2025",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "loc_eg",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/loc-eg/egypt.ts"
+    },
+    "rationale": "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-123) overlay on Egyptian hr.PreferenceProfile (jurisdiction_code == 'EG'): <= 48h regular weekly hours, <= 8h ordinary daily hours, >= 24h consecutive weekly rest, and max 6 consecutive working days.",
+    "response": {
+      "expression": "(((self.max_weekly_hours <= 48) and (self.max_daily_hours <= 8)) and (self.min_weekly_rest_hours >= 24)) and (self.max_consecutive_days <= 6)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.PreferenceProfile"
+      ],
+      "root": {
+        "id": "hr.PreferenceProfile",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.PreferenceProfile"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/loc-eg/artifacts/loc_eg.hr.PreferenceProfile.labor_law_14_2025.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

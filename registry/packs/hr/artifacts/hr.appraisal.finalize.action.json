@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr.appraisal.finalize.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Finalize performance appraisal",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.appraisal.finalize",
+    "description": "Lock a submitted performance appraisal as finalized and immutable (HR-LC-04, HR-LC-05).",
+    "effectProgram": {
+      "entityArtifactId": "hr.Appraisal.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "appraisalId",
+      "objectKind": "hr.Appraisal",
+      "transition": "finalize"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "appraisalId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "appraisalId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "appraisalId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "appraisalId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.appraisal.status == 'submitted') and (slice.appraisal.score >= 0)) and (slice.appraisal.score <= 100)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "appraisalId"
+          }
+        },
+        "name": "appraisal",
+        "objectType": "hr.Appraisal"
+      }
+    ],
+    "title": "Finalize performance appraisal",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.Appraisal"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.appraisal.finalize.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

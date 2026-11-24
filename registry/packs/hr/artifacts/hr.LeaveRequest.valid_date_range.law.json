@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.LeaveRequest.valid_date_range.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.LeaveRequest.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Leave request starts_on must be on or before ends_on.",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.LeaveRequest.valid_date_range",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/people_leave.ts"
+    },
+    "rationale": "Leave request starts_on must be on or before ends_on.",
+    "response": {
+      "expression": "date(self.starts_on) <= date(self.ends_on)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.LeaveRequest"
+      ],
+      "root": {
+        "id": "hr.LeaveRequest",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.LeaveRequest"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.LeaveRequest.valid_date_range.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

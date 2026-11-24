@@ -1,0 +1,99 @@
+{
+  "artifactId": "hr.payroll.post.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Post payroll run",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.payroll.post",
+    "description": "Permanently post a non-empty approved payroll run after verifying its linked PayrollFund exists in matching currency with null UCUM unit (HR-PR-05, HR-PR-06).",
+    "effectProgram": {
+      "entityArtifactId": "hr.PayrollRun.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "payrollRunId",
+      "objectKind": "hr.PayrollRun",
+      "transition": "post"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "payrollRunId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "payrollRunId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "payrollRunId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "payrollRunId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.run.status == 'approved') and (slice.run.total_gross > 0)) and (slice.run.total_net == (slice.run.total_gross - slice.run.total_deductions))",
+      "((len(slice.run_fund) == 1) and all(slice.run_fund as f, f.unit == null)) and (slice.run.currency in map(slice.run_fund as f, f.currency ?? ''))"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "payrollRunId"
+          }
+        },
+        "name": "run",
+        "objectType": "hr.PayrollRun"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "run",
+            "link": "fund"
+          }
+        },
+        "name": "run_fund",
+        "objectType": "hr.PayrollFund"
+      }
+    ],
+    "title": "Post payroll run",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.PayrollRun"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.payroll.post.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

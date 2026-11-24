@@ -14,7 +14,7 @@
   "name": "Published rosters must carry an accepted solver receipt digest",
   "namespace": "hr",
   "payload": {
-    "condition": "self.status == \"published\"",
+    "condition": "self.status == 'published'",
     "id": "hr.Roster.published_requires_receipt",
     "lawVersion": "0.1",
     "modality": {

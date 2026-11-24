@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr.leave_hold.consume.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Consume leave hold",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.leave_hold.consume",
+    "description": "Consume an open leave hold when the associated leave request is approved.",
+    "effectProgram": {
+      "entityArtifactId": "hr.LeaveHold.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "holdId",
+      "objectKind": "hr.LeaveHold",
+      "transition": "consume"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "holdId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "holdId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "holdId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "holdId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.hold.status == 'open') and (slice.hold.quantity > 0)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "holdId"
+          }
+        },
+        "name": "hold",
+        "objectType": "hr.LeaveHold"
+      }
+    ],
+    "title": "Consume leave hold",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.LeaveHold"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.leave_hold.consume.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

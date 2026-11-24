@@ -94,6 +94,7 @@ fn call<'a>(action: &'a ActionRoot, input: JsonObject, action_version: &'a str) 
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 

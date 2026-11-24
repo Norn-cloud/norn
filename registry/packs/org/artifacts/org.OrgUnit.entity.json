@@ -31,6 +31,15 @@
           "description": "Parent organizational unit (strictly acyclic).",
           "id": "parent",
           "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional identity security boundary.",
+          "id": "business_unit",
+          "target": "identity.BusinessUnit"
         }
       ],
       "name": "org.OrgUnit",
@@ -55,29 +64,13 @@
             "kind": "enum",
             "values": [
               {
-                "value": "person"
-              },
-              {
                 "value": "organization"
-              },
-              {
-                "value": "system"
               }
             ]
           }
         },
         {
           "id": "unit_code",
-          "type": {
-            "kind": "ref",
-            "name": "core.code"
-          }
-        },
-        {
-          "constraints": {
-            "nullable": true
-          },
-          "id": "business_unit_code",
           "type": {
             "kind": "ref",
             "name": "core.code"

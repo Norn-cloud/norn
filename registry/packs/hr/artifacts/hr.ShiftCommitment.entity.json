@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Scheduled shift assignment (implements core.Commitment; carries half-open UTC [starts_at, ends_at) interval).",
+      "description": "Scheduled shift assignment (implements core.Commitment and core.TimeInterval with proper half-open UTC [starts_at, ends_at) interval).",
       "identity": [
         {
           "name": "primary",
@@ -19,7 +19,8 @@
         }
       ],
       "implements": [
-        "core.Commitment"
+        "core.Commitment",
+        "core.TimeInterval"
       ],
       "links": [
         {
@@ -47,9 +48,9 @@
             "from": "many",
             "to": "one"
           },
-          "description": "Optional labor resource classification.",
+          "description": "Employee labor capacity scheduled by this shift.",
           "id": "resource",
-          "target": "hr.LeaveBalance"
+          "target": "hr.LaborCapacity"
         },
         {
           "cardinality": {
@@ -131,15 +132,25 @@
         {
           "id": "starts_at",
           "type": {
-            "kind": "timestamp",
-            "timezone": "utc"
+            "kind": "ref",
+            "name": "core.time.instant"
           }
         },
         {
           "id": "ends_at",
           "type": {
-            "kind": "timestamp",
-            "timezone": "utc"
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "timezone",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
           }
         },
         {

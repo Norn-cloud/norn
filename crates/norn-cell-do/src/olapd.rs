@@ -50,7 +50,8 @@ use norn_api::olap_credential::{Denied, Keyring, body_digest};
 use norn_cell::analytics::engine::{Engine, Outcome, Settings, StoreBody};
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LandRequest, LandResponse,
-    MembersRequest, PageRequest, ProfileRequest, SettleRequest, SyncRequest, TenantId,
+    LineageRequest, MembersRequest, PageRequest, ProfileRequest, SettleRequest, SyncRequest,
+    TenantId,
 };
 use norn_kernel::LogicalTime;
 use serde::Serialize;
@@ -374,6 +375,7 @@ scoped!(
     MembersRequest,
     ProfileRequest,
     PageRequest,
+    LineageRequest,
     ExportRequest
 );
 
@@ -464,6 +466,7 @@ fn connection(stream: &TcpStream, engine: &Engine, gate: &Gate) -> std::io::Resu
         "/v1/members" => call.answer(|r: MembersRequest| engine.members(&r)),
         "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile(&r)),
         "/v1/page" => call.answer(|r: PageRequest| engine.page(&r)),
+        "/v1/lineage" => call.answer(|r: LineageRequest| engine.lineage(&r)),
         "/v1/land" => call.answer(|r: LandRequest| land(engine, &r)),
         "/v1/settle" => call.answer(|r: SettleRequest| settle(engine, &r)),
         "/v1/store" => call.answer(|r: StoreBody| {
