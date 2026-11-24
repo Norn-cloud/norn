@@ -423,6 +423,8 @@ pub const SYSTEM_DDL: &[&str] = &[
       "held" TEXT NOT NULL, "version" INTEGER NOT NULL, "commit_seq" INTEGER NOT NULL,
       PRIMARY KEY ("world", "ledger", "account", "unit", "layer", "version")
     )"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_quantity_history/commit_seq"
+      ON "_norn_quantity_history" ("commit_seq", "world", "ledger", "account", "unit", "layer", "version")"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_quantity_reservation" (
       "world" TEXT NOT NULL, "ledger" TEXT NOT NULL, "id" TEXT NOT NULL,
       "record" TEXT NOT NULL, "version" INTEGER NOT NULL, "commit_seq" INTEGER NOT NULL,
@@ -436,6 +438,8 @@ pub const SYSTEM_DDL: &[&str] = &[
     )"#,
     r#"CREATE UNIQUE INDEX IF NOT EXISTS "_norn_quantity_posting/reversal"
       ON "_norn_quantity_posting" ("world", "ledger", "reverses")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_quantity_posting/commit_seq"
+      ON "_norn_quantity_posting" ("commit_seq", "world", "ledger", "id")"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_meta" (
   "key" TEXT NOT NULL,
   "value" TEXT NOT NULL,
@@ -641,4 +645,24 @@ pub const SYSTEM_DDL: &[&str] = &[
 )"#,
     MARKING_NONEMPTY_DDL,
     MARKING_VERSION_NONEMPTY_DDL,
+    // OPEN-CHECKPOINT-1 (#1533), storage version 6.
+    crate::open_checkpoint::DDL,
 ];
+
+/// Ensure every core, flow, decision-ledger, due-retry, and automation-outbox
+/// system table exists (idempotent DDL).
+pub(crate) fn init_core_tables<E: crate::engine::SqlEngine>(
+    conn: &E,
+) -> Result<(), crate::CellError> {
+    for statement in SYSTEM_DDL
+        .iter()
+        .chain(&crate::flow_run::DDL)
+        .chain(&crate::decision_ledger::DDL)
+        .chain(&crate::due_retry::DDL)
+        .chain(&crate::automation_outbox::DDL)
+    {
+        conn.execute_batch(statement)?;
+    }
+    conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
+    Ok(())
+}

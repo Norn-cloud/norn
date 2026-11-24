@@ -12,7 +12,12 @@
 import type { PropertyType } from "./entity.ts"
 import type { Json } from "../canonical.ts"
 
-export type ValueSchema = StringSchema | ScalarSchema | ArraySchema | ObjectSchema | NullableSchema
+export type ValueSchema = StringSchema | ScalarSchema | ArraySchema | ObjectSchema | NullableSchema | JsonValueSchema
+
+/** Unrestricted bounded JSON value union (used for kernel-validated owned-row ops). */
+export interface JsonValueSchema extends Labels {
+  readonly type: readonly ["null", "boolean", "number", "string", "array", "object"]
+}
 
 /**
  * Display-only labels (D66). The checker admits them on ActionIR input
@@ -76,6 +81,7 @@ export const integer: ScalarSchema = { type: "integer" }
 export const number: ScalarSchema = { type: "number" }
 export const boolean: ScalarSchema = { type: "boolean" }
 export const nullValue: ScalarSchema = { type: "null" }
+export const jsonValue: JsonValueSchema = { type: ["null", "boolean", "number", "string", "array", "object"] }
 export const array = (items: ValueSchema): ArraySchema => ({ type: "array", items })
 
 /**

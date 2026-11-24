@@ -274,7 +274,7 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
     <div className="space-y-5">
       {guard?.(editor.dirty)}
       <EditorToolbar editor={editor} version={saved?.version} showSaveState />
-      <div className="flex items-start gap-6 overflow-x-auto pb-2" data-testid="question-tree">
+      <div className="flex items-start gap-6 overflow-x-auto px-1.5 pb-2" data-testid="question-tree">
         <ChoiceColumn title="Measure" field="measures" invalid={invalid("measure") || invalid("measures")} options={measureOptions} selected={chosen.measure} onSelect={(id) => patch({ measures: [id] })} />
         <div className="flex flex-col gap-4">
           <ChoiceColumn title="Group by" field="by" invalid={invalid("by")} options={groupOptions} selected={chosen.by}

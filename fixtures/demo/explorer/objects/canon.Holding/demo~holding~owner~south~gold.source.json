@@ -1,5 +1,5 @@
 {
-  "bundleDigest": "9bdb35a77f47fffa63eaee0fe669cad2ff69a3e7be486f88075dc80585c0e192",
+  "bundleDigest": "5aedd4eb02202bbfb8939282961f66010cc368cb3cbace555de0d4977595da30",
   "sourceRecordRef": {
     "system": "synthetic-shopify",
     "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
@@ -11,8 +11,8 @@
   "documentDigest": "602706d06000c09f8fa2140c628a6b1b516edb92988490af6228afd35513ff39",
   "mappingPin": {
     "artifactId": "shopify.three.mapping",
-    "version": "0.1.0",
-    "sha256": "0b501958ae3fb3fe7ddefdcc4a49c380439fc3f9ab7a89c489042e265bd4842f"
+    "version": "0.2.0",
+    "sha256": "a6dcc8e0061d313af41c8cd6341c6160efb6aeae2d86080728a2f5cb7466804b"
   },
   "fieldProvenance": {
     "currency": {
@@ -20,7 +20,7 @@
         "system": "synthetic-shopify",
         "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "shopify.three.mapping@0.2.0",
       "transform": "holding.currency",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -33,7 +33,7 @@
         "system": "synthetic-shopify",
         "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "shopify.three.mapping@0.2.0",
       "transform": "holding.location",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -47,7 +47,7 @@
         "system": "synthetic-shopify",
         "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "shopify.three.mapping@0.2.0",
       "transform": "holding.observed_at",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -61,7 +61,7 @@
         "system": "synthetic-shopify",
         "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "shopify.three.mapping@0.2.0",
       "transform": "holding.quantity",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -75,7 +75,7 @@
         "system": "synthetic-shopify",
         "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "shopify.three.mapping@0.2.0",
       "transform": "holding.quantity_basis",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -88,7 +88,7 @@
         "system": "synthetic-shopify",
         "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "shopify.three.mapping@0.2.0",
       "transform": "holding.resource_code",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -102,7 +102,7 @@
         "system": "synthetic-shopify",
         "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "shopify.three.mapping@0.2.0",
       "transform": "holding.unit",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -116,7 +116,7 @@
         "system": "synthetic-shopify",
         "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "shopify.three.mapping@0.2.0",
       "transform": "holding.valuation_method",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [

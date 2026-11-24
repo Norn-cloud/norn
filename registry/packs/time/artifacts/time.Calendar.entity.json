@@ -1,0 +1,110 @@
+{
+  "artifactId": "time.Calendar.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Calendar",
+  "namespace": "time",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Pinned IANA timezone and DST policy for materializing wall-clock schedules into canonical UTC intervals (TIME-PIN-1).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "name": "time.Calendar",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "label",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "iana_timezone",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
+          }
+        },
+        {
+          "default": "reject",
+          "id": "dst_policy",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.dst_policy"
+          }
+        },
+        {
+          "default": "2025b",
+          "id": "tzdb_version",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "2025b"
+              }
+            ]
+          }
+        },
+        {
+          "default": "sunday",
+          "id": "workweek_start",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "monday"
+              },
+              {
+                "value": "tuesday"
+              },
+              {
+                "value": "wednesday"
+              },
+              {
+                "value": "thursday"
+              },
+              {
+                "value": "friday"
+              },
+              {
+                "value": "saturday"
+              },
+              {
+                "value": "sunday"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/time/artifacts/time.Calendar.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

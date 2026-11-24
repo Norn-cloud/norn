@@ -85,6 +85,20 @@ impl Isolate {
         self
     }
 
+    /// Norn (#1440): attach an explicit versioned offline IANA tzdb lookup to this isolate.
+    pub fn set_tzdb(&mut self, tzdb: Option<Arc<dyn crate::temporal::TzdbLookup>>) {
+        self.vm.set_tzdb(tzdb);
+    }
+
+    pub fn take_tzdb(&mut self) -> Option<Arc<dyn crate::temporal::TzdbLookup>> {
+        self.vm.take_tzdb()
+    }
+
+    pub fn with_tzdb(mut self, tzdb: Option<Arc<dyn crate::temporal::TzdbLookup>>) -> Self {
+        self.set_tzdb(tzdb);
+        self
+    }
+
     pub fn set_cache(&mut self, cache: Arc<OpcodeCache>) {
         self.cache = Some(cache);
     }

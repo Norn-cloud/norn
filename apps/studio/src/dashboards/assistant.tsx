@@ -7,8 +7,10 @@ import { Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { dashboardField, getDisplayedScope, scopeHeaders, type Dashboard, type StudioScope } from "@/lib/definitions"
+import { dashboardField, getDisplayedScope, scopeHeaders, type Dashboard, type StudioScope, type Tile } from "@/lib/definitions"
 import { usePinnedScope } from "@/lib/session"
+import { plainMetricLabel } from "@/lib/plain-words"
+import { useView } from "@/lib/view"
 import { SafePrompt, type GuardDocument } from "@/components/safe-prompt"
 import type { QuestionCatalog } from "../builder.tsx"
 import { conceptTitle } from "../lib/catalog.ts"
@@ -81,16 +83,55 @@ export function examples(catalog: QuestionCatalog): readonly string[] {
   ].filter((text): text is string => typeof text === "string")
 }
 
-function Verdict({ proposal }: { readonly proposal: Proposal }) {
+function viewWords(view: Tile["view"]): string {
+  if (view.kind === "number") return "single number"
+  if (view.kind === "table") return "table"
+  return view.chart ? `${view.chart} chart` : "chart"
+}
+
+function tileMetrics(tile: Tile, catalog: QuestionCatalog | undefined): readonly string[] {
+  const aggregate = (tile.question as { readonly aggregate?: unknown }).aggregate
+  if (!Array.isArray(aggregate)) return []
+  return aggregate.flatMap((entry) => {
+    const id = typeof (entry as { readonly metric?: unknown } | null)?.metric === "string"
+      ? (entry as { readonly metric: string }).metric
+      : null
+    if (id === null) return []
+    const metric = catalog?.metrics.find((candidate) => candidate.name === id)
+    if (!metric) return [id]
+    return [metric.display ?? plainMetricLabel(inWords(metric.label))]
+  })
+}
+
+function Verdict({ proposal, catalog }: { readonly proposal: Proposal; readonly catalog?: QuestionCatalog }) {
+  const { view } = useView()
   const { verdict } = proposal
   if (!verdict.admitted) return <ValidationPanel title="The cell's checker refused this proposal" issues={verdict.findings.map(({ code, message, pointer }) => ({ code, message, field: dashboardField(pointer) }))} />
+  const canonical = verdict.restatement
+  const tiles = proposal.definition.tiles
   return (
     <div className="space-y-2 rounded-lg border bg-card p-3 text-sm shadow-elevation">
       <div className="flex items-center gap-2 font-medium"><CircleCheck className="size-4 text-success" />The cell's checker admitted this dashboard</div>
-      {verdict.restatement && (
+      {view === "business" && tiles.length > 0 && (
+        <div className="space-y-1 rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-meta" data-proposal-summary>
+          <p className="font-medium text-foreground">Summary (for reading — accepting signs the checker's exact words below)</p>
+          <ul className="list-disc space-y-0.5 ps-4 text-muted-foreground">
+            {tiles.map((tile) => {
+              const metrics = tileMetrics(tile, catalog)
+              return (
+                <li key={tile.id}>
+                  <span className="text-foreground">{tile.title}</span> — {viewWords(tile.view)}
+                  {metrics.length > 0 ? ` (${metrics.join(", ")})` : ""}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+      {canonical && (
         <>
           <p className="text-meta text-muted-foreground">In the checker's own words{proposal.state === "pending" ? "; accepting signs exactly these words" : ""}:</p>
-          <Well className="px-3 py-2"><pre className="text-meta leading-relaxed whitespace-pre-wrap" data-restatement>{verdict.restatement}</pre></Well>
+          <Well className="px-3 py-2"><pre className="font-sans text-meta leading-relaxed whitespace-pre-wrap" data-restatement>{canonical}</pre></Well>
         </>
       )}
     </div>
@@ -98,7 +139,7 @@ function Verdict({ proposal }: { readonly proposal: Proposal }) {
 }
 
 /** One proposal: what was asked, the checker's verdict, a live preview of what accepting installs, and the person's decision. */
-export function ProposalCard({ proposal, preview }: { readonly proposal: Proposal; readonly preview: (dashboard: Dashboard) => React.ReactNode }) {
+export function ProposalCard({ proposal, catalog, preview }: { readonly proposal: Proposal; readonly catalog?: QuestionCatalog; readonly preview: (dashboard: Dashboard) => React.ReactNode }) {
   const client = useQueryClient()
   const navigate = useNavigate()
   const pinnedScope = usePinnedScope(proposal.id)
@@ -125,7 +166,7 @@ export function ProposalCard({ proposal, preview }: { readonly proposal: Proposa
       {proposal.verdict.guard
         ? <SafePrompt guard={proposal.verdict.guard} />
         : proposal.verdict.note && <p className="text-sm">{proposal.verdict.note}</p>}
-      <Verdict proposal={proposal} />
+      <Verdict proposal={proposal} catalog={catalog} />
       {proposal.verdict.admitted && proposal.state !== "declined" && preview(proposal.definition)}
       {accept.isError && <p role="alert" className="text-sm text-destructive">Not accepted. {accept.error.message}</p>}
       {decline.isError && <p role="alert" className="text-sm text-destructive">Not declined. {decline.error.message}</p>}
@@ -199,11 +240,11 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
         {listing.isError && <p role="status" className="text-sm text-muted-foreground">{listing.error.message}</p>}
       </div>
       {ask.isPending && <div className="h-24 animate-pulse rounded-xl border bg-muted/40" aria-label="Proposing" />}
-      {latest && <ProposalCard key={latest.id} proposal={latest} preview={preview} />}
+      {latest && <ProposalCard key={latest.id} proposal={latest} catalog={catalog} preview={preview} />}
       {earlier.length > 0 && (
         <details className="rounded-xl border bg-card p-3 text-sm">
           <summary className="cursor-pointer font-medium">Earlier proposals ({earlier.length})</summary>
-          <div className="mt-3 space-y-3">{earlier.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} preview={() => null} />)}</div>
+          <div className="mt-3 space-y-3">{earlier.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} catalog={catalog} preview={() => null} />)}</div>
         </details>
       )}
     </section>

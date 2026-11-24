@@ -151,7 +151,10 @@ fn derives_in_order_before_lookup_and_validation_then_records_committed_evidence
     let mut cell = cell();
     let outcome =
         commit_action(&mut cell, &catalog, &invocation, &Allow).expect("related object is valid");
-    let ActionOutcome::Committed { record, receipt } = outcome else {
+    let ActionOutcome::Committed {
+        record, receipt, ..
+    } = outcome
+    else {
         panic!("new action must commit")
     };
     assert_eq!(receipt.written.len(), 2);
@@ -896,4 +899,368 @@ fn create_link_consumes_only_fields_without_a_declared_scalar_property() {
             .exists()
         );
     }
+}
+
+fn shift_guard_fixture() -> Result<(Vec<ObjectTypeDef>, ActionRoot), Box<dyn std::error::Error>> {
+    let definitions: Vec<ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "time.Shift",
+            "properties": [
+                {"id": "code", "type": {"kind": "text"}},
+                {"id": "count", "type": {"kind": "integer"}},
+                {"id": "hours", "type": {"kind": "decimal", "scale": 2}},
+                {"id": "start_date", "type": {"kind": "date"}},
+                {"id": "end_date", "type": {"kind": "date"}}
+            ]
+        },
+        {
+            "name": "time.ShiftLog",
+            "properties": [
+                {"id": "code", "type": {"kind": "text"}},
+                {"id": "shift_code", "type": {"kind": "text"}},
+                {"id": "extra_hours", "type": {"kind": "decimal", "scale": 2}}
+            ]
+        }
+    ]))?;
+    let guard_action: ActionRoot = serde_json::from_value(json!({
+        "actionId": "time.shift_log.create",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true,
+        "ledgered": true,
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "code": {"type": "string"},
+                "shift_code": {"type": "string"},
+                "extra_hours": {"type": "number", "nornType": {"kind": "decimal", "scale": 2}}
+            },
+            "required": ["code", "shift_code", "extra_hours"]
+        },
+        "outputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+        "slice": [{
+            "name": "shift",
+            "objectType": "time.Shift",
+            "key": {"property": {"from": "input", "property": "shift_code"}}
+        }],
+        "preconditions": [
+            "((slice.shift.count >= 0) and ((slice.shift.hours + input.extra_hours) <= 24.00)) and (date(slice.shift.start_date) < date(slice.shift.end_date))"
+        ],
+        "writes": [{"entityKind": "time.ShiftLog", "change": "created"}],
+        "effectProgram": {
+            "kind": "upsert_input_object",
+            "objectKind": "time.ShiftLog",
+            "objectIdField": "code",
+            "entityArtifactId": "time.ShiftLog.entity",
+            "entityArtifactVersion": "0.1.0",
+            "writeMode": {"kind": "create_only"}
+        }
+    }))?;
+    Ok((definitions, guard_action))
+}
+
+#[test]
+fn action_guard_admits_and_evaluates_exact_decimal_with_temporal_builtins()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (definitions, guard_action) = shift_guard_fixture()?;
+    let catalog = TypeCatalog::new(&definitions);
+
+    let seed_host =
+        |start_date: &str, end_date: &str| -> Result<Cell, Box<dyn std::error::Error>> {
+            let mut host = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+                .with_types(definitions.clone());
+            let shift_key = FactKey::new("time.Shift", "SH1");
+            let expected = host.load(&shift_key)?.version;
+            let shift_values: JsonObject = serde_json::from_value(json!({
+                "code": "SH1",
+                "count": 1,
+                "hours": "8.50",
+                "start_date": start_date,
+                "end_date": end_date
+            }))?;
+            let mut commit = CellCommit::empty();
+            commit.writes.push(FactWrite {
+                key: shift_key,
+                expected,
+                mutation: FactMutation::Put {
+                    values: shift_values,
+                },
+            });
+            host.commit(commit)
+                .map_err(|err| format!("seed shift commit: {err:?}"))?;
+            Ok(host)
+        };
+
+    let make_call = |idempotency_key: &str,
+                     extra_hours: &str|
+     -> Result<ActionCall<'_>, Box<dyn std::error::Error>> {
+        let input: JsonObject = serde_json::from_value(json!({
+            "code": "LOG1",
+            "shift_code": "SH1",
+            "extra_hours": extra_hours
+        }))?;
+        Ok(ActionCall {
+            action: &guard_action,
+            action_artifact_id: "time.shift_log.create.action",
+            action_version: "0.1.0",
+            scope: BTreeMap::from([
+                ("orgId".to_owned(), "org_demo".to_owned()),
+                ("environmentId".to_owned(), "dev".to_owned()),
+            ]),
+            actor: "time:manager".to_owned(),
+            input,
+            idempotency_key: idempotency_key.to_owned(),
+            object_type: None,
+            turn: DecisionTurn {
+                id: format!("{idempotency_key}-turn"),
+                now: LogicalTime::from_millis(1000),
+                world: World::Main,
+                consumes: None,
+            },
+            trace: None,
+        })
+    };
+
+    // Valid decimal sum (8.50 + 2.50 <= 24.00) and valid date ordering commits cleanly.
+    let mut ok_host = seed_host("2026-01-01", "2026-01-05")?;
+    let ok_call = make_call("log-ok", "2.50")?;
+    let outcome = commit_action(&mut ok_host, &catalog, &ok_call, &Allow)
+        .map_err(|err| format!("expected committed outcome, got {err:?}"))?;
+    assert!(matches!(outcome, ActionOutcome::Committed { .. }));
+
+    // Reversed dates fail the action guard with `action.precondition_failed`.
+    let mut bad_date_host = seed_host("2026-01-05", "2026-01-01")?;
+    let bad_date_call = make_call("log-bad-date", "2.50")?;
+    let Err(date_refusal) = commit_action(&mut bad_date_host, &catalog, &bad_date_call, &Allow)
+    else {
+        return Err("reversed shift dates must fail action precondition".into());
+    };
+    assert_eq!(date_refusal.code(), "action.precondition_failed");
+
+    // Decimal hours overflow (8.50 + 16.00 = 24.50 > 24.00) also fails the action guard.
+    let mut bad_hours_host = seed_host("2026-01-01", "2026-01-05")?;
+    let bad_hours_call = make_call("log-bad-hours", "16.00")?;
+    let Err(hours_refusal) = commit_action(&mut bad_hours_host, &catalog, &bad_hours_call, &Allow)
+    else {
+        return Err("excess decimal hours must fail action precondition".into());
+    };
+    assert_eq!(hours_refusal.code(), "action.precondition_failed");
+
+    Ok(())
+}
+
+struct TimeMaterializeFixture {
+    object_types: Vec<ObjectTypeDef>,
+    interfaces: Vec<norn_ir::InterfaceDef>,
+    property_types: Vec<norn_ir::PropertyTypeDef>,
+    laws: Vec<norn_ir::ArtifactEnvelope>,
+    action: ActionRoot,
+}
+
+impl TimeMaterializeFixture {
+    fn load() -> Self {
+        let decode_object = |raw: &str| -> ObjectTypeDef {
+            let env: serde_json::Value = serde_json::from_str(raw).expect("entity json");
+            serde_json::from_value(env["payload"]["objectType"].clone()).expect("objectType")
+        };
+        let decode_property_types = |raw: &str| -> Vec<norn_ir::PropertyTypeDef> {
+            let env: serde_json::Value = serde_json::from_str(raw).expect("propertyTypes json");
+            serde_json::from_value(env["payload"]["propertyTypes"].clone()).expect("propertyTypes")
+        };
+        let decode_law = |raw: &str| -> norn_ir::ArtifactEnvelope {
+            serde_json::from_str(raw).expect("law envelope")
+        };
+        let object_types = vec![
+            decode_object(include_str!(
+                "../../../registry/packs/time/artifacts/time.Calendar.entity.json"
+            )),
+            decode_object(include_str!(
+                "../../../registry/packs/time/artifacts/time.WorkingWindow.entity.json"
+            )),
+            decode_object(include_str!(
+                "../../../registry/packs/time/artifacts/time.MaterializedWindow.entity.json"
+            )),
+        ];
+        let time_interval_env: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../registry/core/artifacts/core.TimeInterval.interface.json"
+        ))
+        .expect("TimeInterval json");
+        let interfaces = vec![
+            serde_json::from_value(time_interval_env["payload"]["interface"].clone())
+                .expect("TimeInterval"),
+        ];
+        let mut property_types = decode_property_types(include_str!(
+            "../../../registry/core/artifacts/core.time.json"
+        ));
+        property_types.extend(decode_property_types(include_str!(
+            "../../../registry/core/artifacts/core.value_types.entity.json"
+        )));
+        let laws = vec![
+            decode_law(include_str!(
+                "../../../registry/packs/time/artifacts/time.Calendar.tzdb_version_pinned.law.json"
+            )),
+            decode_law(include_str!(
+                "../../../registry/packs/time/artifacts/time.WorkingWindow.valid_local_window.law.json"
+            )),
+            decode_law(include_str!(
+                "../../../registry/packs/time/artifacts/time.MaterializedWindow.resolved_matches_bounds.law.json"
+            )),
+        ];
+        let action_env: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../registry/packs/time/artifacts/time.window.materialize_interval.action.json"
+        ))
+        .expect("materialize_interval json");
+        let action = serde_json::from_value(action_env["payload"].clone()).expect("ActionRoot");
+        Self {
+            object_types,
+            interfaces,
+            property_types,
+            laws,
+            action,
+        }
+    }
+
+    fn catalog(&self) -> TypeCatalog<'_> {
+        TypeCatalog::new(&self.object_types)
+            .with_interfaces(&self.interfaces)
+            .with_property_types(&self.property_types)
+            .with_governing_laws(&self.laws)
+    }
+
+    fn seeded_host(&self) -> Cell {
+        let mut host = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+            .with_types(self.object_types.clone())
+            .with_interfaces(self.interfaces.clone())
+            .with_property_types(self.property_types.clone())
+            .with_governing_laws(self.laws.clone());
+        let mut seed = CellCommit::empty();
+        seed.writes.push(FactWrite {
+            key: FactKey::new("time.Calendar", "cal-ny"),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: object(json!({
+                    "id": "cal-ny",
+                    "code": "US-NY",
+                    "label": "New York",
+                    "iana_timezone": "America/New_York",
+                    "dst_policy": "reject",
+                    "tzdb_version": "2025b",
+                    "workweek_start": "monday"
+                })),
+            },
+        });
+        seed.writes.push(FactWrite {
+            key: FactKey::new("time.WorkingWindow", "ww-mon"),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: object(json!({
+                    "id": "ww-mon",
+                    "weekday": "monday",
+                    "start_local": "09:00",
+                    "end_local": "17:00"
+                })),
+            },
+        });
+        seed.links.push(norn_kernel::LinkWrite {
+            key: LinkKey::new(
+                FactKey::new("time.WorkingWindow", "ww-mon"),
+                "calendar",
+                FactKey::new("time.Calendar", "cal-ny"),
+            ),
+            expected: FactVersion::ABSENT,
+            mutation: norn_kernel::LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        });
+        host.commit(seed).expect("seed calendar and monday window");
+        host
+    }
+
+    fn edt_workday_call(&self, id: &str, calendar_date: &str) -> ActionCall<'_> {
+        ActionCall {
+            action: &self.action,
+            action_artifact_id: "time.window.materialize_interval.action",
+            action_version: "0.1.0",
+            scope: BTreeMap::from([
+                ("orgId".to_owned(), "org_demo".to_owned()),
+                ("environmentId".to_owned(), "dev".to_owned()),
+            ]),
+            actor: "time:scheduler".to_owned(),
+            input: object(json!({
+                "id": id,
+                "calendar_id": "cal-ny",
+                "working_window_id": "ww-mon",
+                "calendar_date": calendar_date,
+                "start_local_at": format!("{calendar_date}T09:00:00"),
+                "end_local_at": format!("{calendar_date}T17:00:00"),
+                "starts_at": format!("{calendar_date}T13:00:00Z"),
+                "ends_at": format!("{calendar_date}T21:00:00Z"),
+                "timezone": "America/New_York",
+                "dst_policy": "reject",
+                "tzdb_version": "2025b"
+            })),
+            idempotency_key: format!("materialize-{id}"),
+            object_type: None,
+            turn: DecisionTurn {
+                id: format!("turn-{id}"),
+                now: LogicalTime::from_millis(2000),
+                world: World::Main,
+                consumes: None,
+            },
+            trace: None,
+        }
+    }
+}
+
+fn assert_window_links_exist(host: &Cell, window_id: &str, expected: bool) {
+    let key = FactKey::new("time.MaterializedWindow", window_id);
+    assert_eq!(host.load(&key).expect("window target").exists(), expected);
+    assert_eq!(
+        host.load_link(&LinkKey::new(
+            key.clone(),
+            "calendar",
+            FactKey::new("time.Calendar", "cal-ny"),
+        ))
+        .expect("calendar link")
+        .exists(),
+        expected
+    );
+    assert_eq!(
+        host.load_link(&LinkKey::new(
+            key,
+            "working_window",
+            FactKey::new("time.WorkingWindow", "ww-mon"),
+        ))
+        .expect("working_window link")
+        .exists(),
+        expected
+    );
+}
+
+#[test]
+fn time_window_materialize_interval_refuses_weekday_mismatch_without_writes_or_links() {
+    let fixture = TimeMaterializeFixture::load();
+    let catalog = fixture.catalog();
+    let mut host = fixture.seeded_host();
+
+    // Attempting to materialize a Monday WorkingWindow for Tuesday 2026-06-16 must refuse
+    // and leave zero MaterializedWindow facts or outgoing links committed.
+    let before = host.ledger().len();
+    let tuesday_call = fixture.edt_workday_call("mw-tue", "2026-06-16");
+    let refusal = commit_action(&mut host, &catalog, &tuesday_call, &Allow)
+        .expect_err("tuesday date must fail monday working window weekday precondition");
+    assert_eq!(refusal.code(), "action.precondition_failed");
+    assert!(
+        refusal.to_string().contains("slice.working_window.weekday"),
+        "expected weekday precondition refusal, got: {refusal}"
+    );
+    assert_eq!(host.ledger().len(), before);
+    assert_window_links_exist(&host, "mw-tue", false);
+
+    // Materializing the same Monday WorkingWindow for Monday 2026-06-15 commits cleanly with both links.
+    let monday_call = fixture.edt_workday_call("mw-mon", "2026-06-15");
+    let committed = commit_action(&mut host, &catalog, &monday_call, &Allow)
+        .expect("monday date must commit cleanly");
+    assert!(matches!(committed, ActionOutcome::Committed { .. }));
+    assert_window_links_exist(&host, "mw-mon", true);
 }

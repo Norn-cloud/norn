@@ -1,4 +1,5 @@
 import { createContext, use, useEffect, useState, type ReactNode } from "react"
+import { DirectionProvider } from "@base-ui/react/direction-provider"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 /**
@@ -44,7 +45,11 @@ export function LocaleProvider({ children, initial }: { readonly children: React
     // Blocked or full storage only means the choice is not kept for the next visit.
     try { globalThis.localStorage?.setItem(KEY, next) } catch { /* not kept */ }
   }
-  return <LocaleContext value={{ locale, setLocale }}>{children}</LocaleContext>
+  return (
+    <LocaleContext value={{ locale, setLocale }}>
+      <DirectionProvider direction={directionOf(locale)}>{children}</DirectionProvider>
+    </LocaleContext>
+  )
 }
 
 export const useLocale = () => use(LocaleContext)

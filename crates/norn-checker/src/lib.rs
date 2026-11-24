@@ -24,6 +24,8 @@
 pub mod action_set;
 pub mod agent;
 pub mod artifact_set;
+/// Pure admission checks for the `automation` retained-definition kind (`AUTOMATION-1`).
+pub mod automation;
 pub mod classification;
 pub mod codes;
 mod concept_roles;
@@ -31,6 +33,7 @@ pub mod connector_path;
 pub mod consistency;
 /// Conservative action/policy projection for finite control analysis.
 pub mod controls_adapter;
+pub mod decision_links;
 mod defined_concepts;
 pub mod definition_catalog;
 pub mod definitions_diff;
@@ -49,7 +52,9 @@ mod finite;
 pub mod flow_performs;
 pub mod flow_source_map;
 pub mod function;
-mod graph;
+pub mod graph;
+/// Record-level ZEN guard expression admission and evaluation (`AUTOMATION-1`).
+pub mod guard_expr;
 /// Closure-keyed structural admission evidence reuse.
 pub mod incremental;
 mod inheritance;
@@ -68,7 +73,7 @@ pub mod metric_interchange;
 mod model;
 mod model_privacy;
 pub mod posting;
-mod soundness;
+pub mod soundness;
 pub mod source_agreement;
 pub mod table_analysis;
 pub mod tool_effect;
@@ -87,6 +92,7 @@ pub mod ontology;
 pub mod parameter;
 mod parameter_window;
 mod predicate_property;
+mod predicate_slice;
 pub mod property_codec;
 pub mod property_types;
 pub mod quantity_ledger;
@@ -98,18 +104,13 @@ pub mod source_schema;
 pub mod tool_ports;
 pub mod transform;
 pub mod typed_roots;
-pub mod ui_catalog;
-pub mod ui_interaction;
-pub mod ui_lifecycle;
-pub mod ui_machine;
-pub mod ui_view;
 pub mod verification;
-pub mod widget_ux;
 
 pub use action_set::{check_action_firing, check_action_set};
 pub use agent::{AgentContext, check_agent};
 pub use artifact_set::{
-    ResolvedArtifactSet, check_artifact_set, may_reference, resolve_artifact_set, scope_conflict,
+    ResolvedArtifactSet, Ring0ArtifactSetPhases, check_artifact_set,
+    check_artifact_set_ring0_phases, may_reference, resolve_artifact_set, scope_conflict,
 };
 pub use codes::{CodeEntry, Tier, conformance_manifest};
 pub use definitions_diff::{
@@ -167,7 +168,6 @@ pub use receipt::{
     check_artifact_set_with_receipt, check_artifact_set_with_verified_receipt, derive_type_env,
     recover_legacy_admission_receipt, verify_admission_receipt,
 };
-pub use widget_ux::{GeneratedTransitionEnabledWhenError, generated_transition_enabled_when};
 
 pub use sealing::{
     seal, validate_customization_overlay, validate_runtime_capability_backstop,
@@ -182,6 +182,9 @@ pub use typed_roots::decode_artifact_json;
 /// Same checks, codes, and messages as [`validate_artifact`]; only the
 /// location is re-expressed as a JSON-pointer [`Span`], resolved against the
 /// envelope's wire JSON (see [`Span::from_legacy_path_in`]).
+/// `ArtifactPayload::Widget` fails closed here with
+/// [`codes::WIDGET_RING1_REQUIRED`] because widget validation lives in Ring-1
+/// `norn-ui-checker`.
 #[must_use]
 pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
     if let Some(finding) = definition_catalog::catalog_write(artifact) {
@@ -218,6 +221,9 @@ pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
 /// admission path. Decode failures ([`decode_artifact_json`]) and envelope
 /// findings ([`check_artifact`]) are both returned in the checker
 /// [`Diagnostic`] model, with spans resolved against `value`.
+/// `ArtifactPayload::Widget` fails closed here with
+/// [`codes::WIDGET_RING1_REQUIRED`]; use Ring-1 `norn-ui-checker` to validate
+/// widget envelopes.
 #[must_use]
 pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
     if let Some(finding) = definition_catalog::catalog_write_json(value) {
@@ -242,4 +248,107 @@ pub mod execution_profile;
 #[must_use]
 pub fn is_canonical_timestamp(text: &str) -> bool {
     norn_expr::temporal::canonical_timestamp(text).is_ok()
+}
+
+#[cfg(test)]
+mod ring0_boundary_tests {
+    use crate::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Span};
+
+    #[test]
+    fn ring0_widget_runs_shape_and_typed_root_before_emitting_ring1_required()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut malformed_widget: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/ir/retail-replenishment.widget.json"
+        ))?;
+        // Include BOTH an unknown payload field (caught by `validate_root_shape`)
+        // AND null `projectionHints` (caught by `check_typed_root`).
+        if let Some(payload) = malformed_widget
+            .get_mut("payload")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            payload.insert(
+                "unknownExtraField".to_owned(),
+                serde_json::Value::Bool(true),
+            );
+            payload.insert("projectionHints".to_owned(), serde_json::Value::Null);
+        } else {
+            return Err("widget fixture payload must be an object".into());
+        }
+        let env: norn_ir::ArtifactEnvelope = serde_json::from_value(malformed_widget)?;
+
+        let findings = crate::check_artifact(&env);
+        let unknown_idx = findings.iter().position(|d| {
+            d.is_error()
+                && d.code.as_str() == "widget.validation.invalid_payload"
+                && d.span
+                    .as_ref()
+                    .is_some_and(|s| s.pointer == "/payload/unknownExtraField")
+        });
+        let typed_root_idx = findings.iter().position(|d| {
+            d.is_error()
+                && d.code.as_str() == "widget.validation.invalid_payload"
+                && d.span
+                    .as_ref()
+                    .is_some_and(|s| s.pointer == "/payload/projectionHints")
+        });
+        let ring1_required_idx = findings
+            .iter()
+            .position(|d| d.is_error() && d.code.as_str() == crate::codes::WIDGET_RING1_REQUIRED);
+
+        assert!(
+            unknown_idx.is_some(),
+            "Ring-0 root-shape error must fire on widgets: {findings:#?}"
+        );
+        assert!(
+            typed_root_idx.is_some(),
+            "Ring-0 typed-root error must still fire even with unknown fields: {findings:#?}"
+        );
+        assert!(
+            ring1_required_idx.is_some(),
+            "Ring-0 must also fail closed with WIDGET_RING1_REQUIRED: {findings:#?}"
+        );
+        assert!(
+            unknown_idx < typed_root_idx && typed_root_idx < ring1_required_idx,
+            "Ring-0 order must be root-shape < typed-root < WIDGET_RING1_REQUIRED: {findings:#?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dedupe_findings_retains_higher_severity_on_key_collision() {
+        let warning = Diagnostic {
+            witness: None,
+            code: DiagnosticCode::new("ir.validation.unsupported_version"),
+            severity: DiagnosticSeverity::Warning,
+            message: "advisory warning".to_owned(),
+            span: Some(Span {
+                pointer: "/irVersion".to_owned(),
+                source: None,
+            }),
+            artifact_id: Some("a.widget".to_owned()),
+            remediation: None,
+        };
+        let error = Diagnostic {
+            severity: DiagnosticSeverity::Error,
+            message: "unsupported IR version".to_owned(),
+            ..warning.clone()
+        };
+        let info = Diagnostic {
+            severity: DiagnosticSeverity::Info,
+            message: "advisory info".to_owned(),
+            ..warning.clone()
+        };
+        for pair in [
+            [warning.clone(), error.clone()],
+            [error.clone(), warning],
+            [info, error],
+        ] {
+            let deduped = crate::entity_artifacts::dedupe_findings(pair);
+            assert_eq!(deduped.len(), 1);
+            assert_eq!(
+                deduped.first().map(|d| &d.severity),
+                Some(&DiagnosticSeverity::Error)
+            );
+        }
+    }
 }

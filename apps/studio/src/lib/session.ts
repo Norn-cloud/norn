@@ -3,8 +3,10 @@ import { type QueryClient, QueryClientContext, queryOptions, useQuery, useQueryC
 import { forgetDrafts, sessionKey } from "../actions/kept-drafts.ts"
 import { forgetParkedCalls } from "../actions/parked-calls.ts"
 import {
+  defaultFetch,
   getDisplayedScope,
   getDisplayedWorkspaceScope,
+  sameStudioScope,
   scopeFromAccount,
   setDisplayedWorkspaceScope,
   workspaceScopeFromAccount,
@@ -62,6 +64,8 @@ const isReadQuery = (query: { readonly queryKey: readonly unknown[] }) =>
 
 /** Forget every read made as the reader who made it (records, picker choices, the inbox): all but the session itself. */
 export function forgetReads(client: QueryClient, options: { readonly refetchActive?: boolean; readonly deferActiveRefetch?: boolean } = {}): void {
+  refreshMode()
+  void client.cancelQueries({ predicate: isReadQuery })
   if (options.refetchActive) {
     client.removeQueries({ predicate: isReadQuery, type: "inactive" })
     const resetActive = () => { void client.resetQueries({ predicate: isReadQuery, type: "active" }) }
@@ -72,28 +76,43 @@ export function forgetReads(client: QueryClient, options: { readonly refetchActi
   client.removeQueries({ predicate: isReadQuery })
 }
 
-const defaultAccountFetch: Fetch = (input, init) => fetch(input, init)
+function accountScopeOf(account: Account | null): StudioScope | null | undefined {
+  if (account === null) return null
+  if (account.environmentId === undefined) return undefined
+  return account.organization === null || account.environmentId === null
+    ? null
+    : { orgId: account.organization.id, environmentId: account.environmentId }
+}
 
 /**
- * The session query. Whenever a read of it names a different reader than the last one (the session
- * expired and `/api/me` answered 401, someone else signed in, or the organization changed), the
- * previous reader's reads and parked calls are forgotten before the new answer is shown, the way a
- * sign-out forgets them. Hygiene only: every read is the server's decision for whoever asks.
+ * The session query. Whenever a read of it names a different reader or scope than the last one
+ * (the session expired and `/api/me` answered 401, someone else signed in, the organization
+ * changed, or the organization's cell environment changed), the previous reader/scope's reads and
+ * parked calls are forgotten before the new answer is shown, the way a sign-out forgets them.
+ * Hygiene only: every read is the server's decision for whoever asks.
  */
-export function accountQuery(client: QueryClient, fetcher: Fetch = defaultAccountFetch) {
+export function accountQuery(client: QueryClient, fetcher: Fetch = defaultFetch) {
   return queryOptions({
     queryKey: SESSION,
     queryFn: async () => {
       const account = await readAccount(fetcher)
-      if (fetcher === defaultAccountFetch) setDisplayedWorkspaceScope(workspaceScopeFromAccount(account))
+      if (fetcher === defaultFetch) setDisplayedWorkspaceScope(workspaceScopeFromAccount(account))
       const previous = client.getQueryData<Account | null>(SESSION)
       if (previous !== undefined && sessionKey(previous) !== sessionKey(account)) {
-        // A parked call's exact input and key are the previous reader's: never kept for the next,
-        // nor for the same reader coming back after a tenant switch or an expiry.
+        // A parked call's exact input and key are the previous reader/scope's: never kept for the
+        // next, nor for the same reader coming back after a tenant/environment switch or expiry.
         forgetParkedCalls()
-        refreshMode()
-        // Defer active query resets until after this queryFn returns and publishes the new session.
-        forgetReads(client, { refetchActive: account !== null, deferActiveRefetch: true })
+        const sameReader = previous !== null && account !== null
+          && previous.user.id === account.user.id
+          && (previous.organization?.id ?? null) === (account.organization?.id ?? null)
+        const nextScope = accountScopeOf(account)
+        const cachedScope = client.getQueryData<StudioScope | null>(["studio-scope"])
+        // If only the environment changed and `useStudioScope` / `syncStudioScopeChange` already
+        // switched `["studio-scope"]` and purged old caches, keep the new scope's in-flight mode read.
+        if (!(sameReader && nextScope !== undefined && cachedScope !== undefined && sameStudioScope(cachedScope, nextScope))) {
+          // Defer active query resets until the new session is published.
+          forgetReads(client, { refetchActive: account !== null, deferActiveRefetch: true })
+        }
       }
       return account
     },
@@ -180,7 +199,6 @@ export async function endSession(client: QueryClient, signOut: () => Promise<voi
   if (signOut === authApi.signOut) setDisplayedWorkspaceScope(null)
   forgetDrafts()
   forgetParkedCalls()
-  refreshMode()
   forgetReads(client)
   await client.invalidateQueries({ queryKey: SESSION })
 }

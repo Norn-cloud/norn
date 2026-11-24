@@ -15,8 +15,11 @@ pub mod approval_definitions;
 pub mod approvals;
 /// Default-deny server authorization for host operations and kernel action requests.
 pub mod authz;
+/// The `automation` retained-definition kind (`AUTOMATION-1`).
+pub mod automation_definitions;
 pub mod clock;
 pub mod contracts;
+pub(crate) mod decision_refusal;
 pub mod decisions;
 pub mod olap_credential;
 pub mod openapi;
@@ -83,6 +86,8 @@ pub mod trace_contract;
 pub mod transform_routes;
 /// File uploads: signed storage URLs, CSV profiling, generated definitions and row loads.
 pub mod uploads;
+/// The `view` retained-definition kind (VIEW-DEF-1).
+pub mod view_definitions;
 
 /// The trusted transport's identity seam: verified host tokens to Norn principals.
 pub mod principal;

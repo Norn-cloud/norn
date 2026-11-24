@@ -12,12 +12,18 @@ import { RecordsPage } from "./grid/records-page.tsx"
 import { DecisionsPage } from "./decisions/inbox.tsx"
 import { ImportTriagePage } from "./imports/import-triage-page.tsx"
 import { RunPage } from "./runs/run-page.tsx"
+import { CasesPage } from "./learning/cases-page.tsx"
 import { EpisodePage } from "./learning/episode-page.tsx"
+import { EpisodesPage } from "./learning/episodes-page.tsx"
+import { MisfitPage } from "./learning/misfit-page.tsx"
+import { ProposalDetailPage, ProposalsPage } from "./learning/proposals-page.tsx"
 import { SourcesItemPage } from "./objects.tsx"
 import { QuestionPage, QuestionsPage } from "./questions.tsx"
+import { SemanticMapPage } from "./semantic-map.tsx"
 import { ObjectTypePage, SourcesPage } from "./sources.tsx"
 import { TransformPage, TransformsPage } from "./transforms.tsx"
 import { ToolBindings } from "./tool-bindings.tsx"
+import { ViewDetailPage, ViewEditorPage, ViewsPage } from "./views.tsx"
 import { WorkflowsPage } from "./workflows.tsx"
 
 const ConnectionsWithBindings = () => <ConnectionsPage><ToolBindings /></ConnectionsPage>
@@ -34,7 +40,12 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/decisions": DecisionsPage,
   "/imports": ImportTriagePage,
   "/runs/$id": RunPage,
+  "/learning/episodes": EpisodesPage,
   "/episodes/$id": EpisodePage,
+  "/learning/cases": CasesPage,
+  "/learning/misfit": MisfitPage,
+  "/learning/proposals": ProposalsPage,
+  "/learning/proposals/$id": ProposalDetailPage,
   "/metrics": QuestionsPage,
   "/metrics/new": QuestionBuilderPage,
   "/metrics/build": QuestionTreePage,
@@ -43,7 +54,12 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/dashboards/new": DashboardEditorPage,
   "/dashboards/$id": DashboardBoardPage,
   "/dashboards/$id/edit": DashboardEditorPage,
+  "/views": ViewsPage,
+  "/views/new": ViewEditorPage,
+  "/views/$id": ViewDetailPage,
+  "/views/$id/edit": ViewEditorPage,
   "/workflows": WorkflowsPage,
+  "/map": SemanticMapPage,
   "/canvas": CanvasPage,
   "/rules": RulesPage,
   "/markings": MarkingsPage,

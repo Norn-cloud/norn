@@ -43,9 +43,12 @@ impl NodeHandler for DecisionNodeHandler {
     )]
     async fn handle(&self, ctx: NodeContext<Self::NodeData, Self::TraceData>) -> NodeResult {
         if let Some(contracts) = &ctx.extensions.contracts {
-            if let Some(result) =
-                contracts.derive(&ctx.node.key, &ctx.input, ctx.extensions.meter.as_ref())
-            {
+            if let Some(result) = contracts.derive_with_tzdb(
+                &ctx.node.key,
+                &ctx.input,
+                ctx.extensions.meter.as_ref(),
+                ctx.extensions.tzdb.as_ref(),
+            ) {
                 return result
                     .node_context(&ctx)
                     .and_then(|value| ctx.success(value));

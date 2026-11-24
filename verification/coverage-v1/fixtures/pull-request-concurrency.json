@@ -10,7 +10,7 @@
     },
     {
       "name": "ci-policy.yml as checked in",
-      "on": "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n  pull_request_target:\n  # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.\n  issue_comment:\n    types: [created, edited, deleted]\n  # Branch heads are checked by their pull_request run; a branch push run\n  # would duplicate the full gate on the same commit.\n  push:\n    branches: [main]\n  merge_group:\n  workflow_dispatch:\n",
+      "on": "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n  # Branch heads are checked by their pull_request run; a branch push run\n  # would duplicate the full gate on the same commit.\n  push:\n    branches: [main]\n  merge_group:\n  workflow_dispatch:\n",
       "concurrency": "concurrency:\n  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}\n",
       "expect": "accept",
       "source": ".github/workflows/ci-policy.yml"

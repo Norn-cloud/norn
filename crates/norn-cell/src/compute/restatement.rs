@@ -20,6 +20,60 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+/// S2c (#1559): refuse any restatement slice whose grouped or filtered fields
+/// carry a marking in current or retained history.
+fn check_restatement_markings<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    slices: &[(QuestionPlan, String)],
+) -> Result<(), CellError> {
+    for (plan, world) in slices {
+        if let Some(marked) = reader.check_question_markings(plan, world, true, false)? {
+            return Err(match marked {
+                crate::MarkedQuestionPath::History { .. } => refused("question.marked_history"),
+                crate::MarkedQuestionPath::Live { .. } => refused("question.refused"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_restatement_slices(
+    build: &RestatementBuild,
+    slices: &[RestatementSlice<'_>],
+) -> Result<(Option<Generation>, String), CellError> {
+    let expected: BTreeSet<String> = serde_json::from_str(text(&build.values, "slice_ids")?)
+        .map_err(|_invalid| refused(INVALID))?;
+    if expected.is_empty()
+        || expected.len() > MAX_SLICES
+        || expected.iter().any(String::is_empty)
+        || slices.len() != expected.len()
+        || slices
+            .iter()
+            .map(|s| s.id.to_owned())
+            .collect::<BTreeSet<_>>()
+            != expected
+    {
+        return Err(refused(INVALID));
+    }
+    if slices
+        .iter()
+        .any(|slice| !authorized(&build.context, &slice.context))
+    {
+        return Err(refused("core.compute.stale_input"));
+    }
+    let (encoded, previous_digest) = selected(&build.values)?;
+    let previous = decode(encoded, previous_digest)?;
+    if previous.as_ref().is_some_and(|g| {
+        g.outputs.keys().cloned().collect::<BTreeSet<_>>() != expected
+            || g.outputs
+                .values()
+                .any(|a| !authorized(&build.context, &a.result.context))
+    }) {
+        return Err(refused(INVALID));
+    }
+    Ok((previous, previous_digest.to_owned()))
+}
+
 /// Native concept whose declared actions own restatement approval and activation.
 pub const RESTATEMENT_TYPE: &str = "core.analytics.Restatement";
 const INVALID: &str = "core.world.invalid_restatement";
@@ -95,6 +149,7 @@ pub struct PreparedRestatement {
     build: RestatementBuild,
     encoded: String,
     digest: String,
+    checked_slices: Vec<(QuestionPlan, String)>,
 }
 impl PreparedRestatement {
     pub(crate) fn matches_context(&self, world: &str, scope: &str) -> bool {
@@ -273,7 +328,7 @@ impl<E: SqlEngine> CellStore<E> {
             &context,
             expected_version,
             write,
-            transition,
+            (transition, &[]),
             &mut |_| Ok(()),
         )?;
         Ok(RestatementBuild {
@@ -323,38 +378,19 @@ impl<E: SqlEngine> CellStore<E> {
         if !Arc::ptr_eq(&self.instance_identity, &build.instance) {
             return Err(refused(INVALID));
         }
-        let expected: BTreeSet<String> = serde_json::from_str(text(&build.values, "slice_ids")?)
-            .map_err(|_invalid| refused(INVALID))?;
-        if expected.is_empty()
-            || expected.len() > MAX_SLICES
-            || expected.iter().any(String::is_empty)
-            || slices.len() != expected.len()
-            || slices
-                .iter()
-                .map(|s| s.id.to_owned())
-                .collect::<BTreeSet<_>>()
-                != expected
-        {
-            return Err(refused(INVALID));
-        }
-        if slices
+        let (previous, previous_digest) = validate_restatement_slices(&build, &slices)?;
+        let checked_slices: Vec<(QuestionPlan, String)> = slices
             .iter()
-            .any(|slice| !authorized(&build.context, &slice.context))
-        {
-            return Err(refused("core.compute.stale_input"));
-        }
-        let (encoded, previous_digest) = selected(&build.values)?;
-        let previous = decode(encoded, previous_digest)?;
-        if previous.as_ref().is_some_and(|g| {
-            g.outputs.keys().cloned().collect::<BTreeSet<_>>() != expected
-                || g.outputs
-                    .values()
-                    .any(|a| !authorized(&build.context, &a.result.context))
-        }) {
-            return Err(refused(INVALID));
-        }
+            .map(|slice| (slice.plan.clone(), slice.context.world.clone()))
+            .collect();
+        let before = {
+            let reader = self.read();
+            let version = reader.snapshot_version()?;
+            check_restatement_markings(&reader, &checked_slices)?;
+            version
+        };
         let mut generation = Generation {
-            previous: previous.as_ref().map(|_| previous_digest.into()),
+            previous: previous.as_ref().map(|_| previous_digest),
             reason: text(&build.values, "reason")?.into(),
             outputs: BTreeMap::new(),
             deltas: BTreeMap::new(),
@@ -387,6 +423,15 @@ impl<E: SqlEngine> CellStore<E> {
             );
             generation.outputs.insert(slice.id.into(), answer);
         }
+        // S2c (#1559): confirm the store did not move between the marking
+        // check and slice evaluation; discard the staged generation if it did.
+        {
+            let reader = self.read();
+            if reader.snapshot_version()? != before {
+                check_restatement_markings(&reader, &checked_slices)?;
+                return Err(refused("core.projection.answer_moved"));
+            }
+        }
         let digest = crate::codec::hash_json(&generation)?;
         let encoded = serde_json::to_string(&generation)?;
         check_slot_size(&candidate_values(&build, &encoded, &digest))?;
@@ -394,6 +439,7 @@ impl<E: SqlEngine> CellStore<E> {
             build,
             encoded,
             digest,
+            checked_slices,
         })
     }
     fn check_restatement_delta(
@@ -476,6 +522,7 @@ impl<E: SqlEngine> CellStore<E> {
             build,
             encoded,
             digest,
+            checked_slices,
         } = prepared;
         let values = candidate_values(&build, &encoded, &digest);
         self.write_restatement(
@@ -483,7 +530,7 @@ impl<E: SqlEngine> CellStore<E> {
             &build.context,
             build.version,
             values,
-            Some("stage"),
+            (Some("stage"), &checked_slices),
             probe,
         )
         .map(|_version| ())
@@ -494,7 +541,7 @@ impl<E: SqlEngine> CellStore<E> {
         context: &QueryContext,
         expected: u64,
         values: BTreeMap<String, RuntimeValue>,
-        transition: Option<&str>,
+        (transition, checked_slices): (Option<&str>, &[(QuestionPlan, String)]),
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<u64, CellError> {
         check_slot_size(&values)?;
@@ -525,6 +572,10 @@ impl<E: SqlEngine> CellStore<E> {
                     if reader.version(&context.world, RESTATEMENT_TYPE, id)? != expected {
                         return Err(refused(INVALID));
                     }
+                    // S2c (#1559): revalidate slice markings inside the staging
+                    // commit transaction so a definition install or labelled
+                    // commit between preparation and staging cannot sneak past.
+                    check_restatement_markings(reader, checked_slices)?;
                     Ok(())
                 },
                 probe,

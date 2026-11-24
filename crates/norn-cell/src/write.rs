@@ -219,6 +219,7 @@ pub(crate) struct Writer<'a, E: SqlEngine> {
     /// The effective-values catalog, built once per commit: its effective
     /// model is derived on first use, so a catalog per write re-derived it.
     catalog: std::cell::OnceCell<TypeCatalog<'a>>,
+    link_read_markings: BTreeSet<String>,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -237,6 +238,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             batch_output_facts: None,
             pending_snapshot_digests: BTreeMap::new(),
             catalog: std::cell::OnceCell::new(),
+            link_read_markings: BTreeSet::new(),
         }
     }
 
@@ -249,11 +251,10 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         to_i64(self.commit_seq, "commit_seq")
     }
 
-    /// Consume the delivery, apply the whole-object writes (returning their
-    /// new versions), then the fact changes.
+    /// Consume the delivery, apply whole-object writes, then fact changes.
     #[allow(
         clippy::too_many_lines,
-        reason = "one transaction resolves value, occurrence and recomputed lineage before capturing its output snapshots"
+        reason = "resolves lineage atomically before snapshots"
     )]
     pub(crate) fn apply_writes(&mut self) -> Result<Vec<WrittenRow>, CellError> {
         self.verify_mutation_scopes()?;
@@ -269,8 +270,16 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         for (read, properties) in &self.batch.marking_property_reads {
             inherited.extend(self.property_lineage_markings(read, properties)?);
         }
+        inherited.extend(crate::link_guard::predicate_filter_lineage_markings(
+            &self.reader(),
+            self.world,
+            &self.batch.marking_predicate_reads,
+        )?);
         let occurrence_inherited = self.occurrence_lineage_markings(&inherited)?;
         let destination_markings = self.value_lineage_markings()?;
+        self.link_read_markings.clone_from(&occurrence_inherited);
+        self.link_read_markings
+            .extend(destination_markings.values().flatten().cloned());
         let mapped = self.mapped_properties();
         self.batch_output_facts = Some(self.emitted_fact_versions()?);
         if let Some(consumption) = &self.batch.consumes {
@@ -288,12 +297,8 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             )?;
             let changed = self.write_changed_properties(write)?;
             let derived = self.derived_properties(write);
-            // #1355: a property the consumed mapping computed from its source
-            // record alone takes that record's classifications (its
-            // provenance `markings`), its own declaration and its own previous
-            // versions; never what the commit read to validate links or record
-            // findings. Derived outputs and every write without such proof
-            // keep the commit's full read lineage, as unproven ones must.
+            // #1355: mapped source properties take their source record markings,
+            // declaration and prior versions, never link-validation reads.
             let source = mapped
                 .get(&(write.target().0.to_owned(), write.target().1.to_owned()))
                 .filter(|_| matches!(write, FactWriteRow::Put { .. }));
@@ -309,9 +314,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 &changed,
             );
             if changed.is_empty() && matches!(write, FactWriteRow::Put { .. }) {
-                // A no-op still emits an observable version and fact event.
-                // Preserved values keep their labels; explicitly recomputed
-                // outputs also refresh their provenance when values are equal.
+                // No-op write: preserve value labels; refresh occurrence and derived lineage.
                 self.apply_occurrence_lineage_to_version(
                     &row.object_type,
                     &row.key,
@@ -1245,11 +1248,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             ),
             params![self.world, object_type, key, version],
         )?;
-        // Classify each exact version before another mutation can replace its
-        // provenance. Both whole-object writes and canonical fact changes use
-        // this boundary; later batch propagation only adds classifications.
-        // A tombstone snapshot has no new live values. Reclassifying the
-        // still-live prior row here would rewrite an older immutable version.
+        // Classify each exact live version before later mutations replace its provenance.
         if self
             .reader()
             .root_row(self.world, object_type, key)?
@@ -1284,12 +1283,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .collect()
     }
 
-    /// The writes of this commit the mapping computed from the consumed
-    /// source records alone, each with those records' classifications: every
-    /// `observed_fact` event naming the written key carries a typed
-    /// provenance with no upstream fact (the transform read no other object)
-    /// and well-formed `markings`. Empty for a commit that consumes no
-    /// observation; a key with any other event stays out (fail closed).
+    /// Writes computed from consumed source records alone, with their markings.
     fn mapped_properties(&self) -> BTreeMap<(String, String), BTreeSet<String>> {
         let mut mapped: BTreeMap<(String, String), Option<BTreeSet<String>>> = BTreeMap::new();
         if !matches!(self.batch.consumes, Some(Consumption::Observation { .. })) {
@@ -2978,14 +2972,21 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         Ok(version)
     }
 
-    /// Apply the batch's link changes in order. Every change bumps the
-    /// link's version (`_norn_link_version`), an add replaces an existing
-    /// link's values, and a remove of an absent link only bumps its version.
+    /// Apply the batch's link changes in order under `mode`.
     #[allow(
         clippy::too_many_lines,
-        reason = "link state, version and original creation evidence are written atomically"
+        reason = "link state, version and creation are atomic"
     )]
-    pub(crate) fn apply_links(&mut self) -> Result<Vec<LinkedRow>, CellError> {
+    pub(crate) fn apply_links(
+        &mut self,
+        mode: crate::link_guard::LinkGuardMode,
+    ) -> Result<Vec<LinkedRow>, CellError> {
+        if mode.check_read_markings() {
+            crate::link_guard::check_link_read_markings(
+                &self.batch.links,
+                &self.link_read_markings,
+            )?;
+        }
         let mut linked = Vec::with_capacity(self.batch.links.len());
         for change in &self.batch.links {
             let (object_type, link, source, target, target_type, values) = match change {
@@ -3075,6 +3076,17 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     Some(to_i64(version, "link version")?),
                 ))
             };
+            if mode.check_slot_target() {
+                crate::link_guard::check_slot_target_match(
+                    &self.reader(),
+                    self.world,
+                    &table_name,
+                    declaration.target.as_str(),
+                    source,
+                    target,
+                    &target_type,
+                )?;
+            }
             self.conn.execute(
                 &format!(
                     "DELETE FROM {} WHERE {} = ?1 AND {} = ?2 AND {} = ?3",
@@ -3111,7 +3123,14 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     to_i64(version, "link version")?
                 ],
             )?;
-            self.record_link_creation(&table_name, source, target, creation)?;
+            crate::link_guard::record_link_creation(
+                self.conn,
+                self.world,
+                &table_name,
+                source,
+                target,
+                creation,
+            )?;
             linked.push(LinkedRow {
                 object_type: object_type.clone(),
                 link: link.clone(),
@@ -3122,30 +3141,6 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             });
         }
         Ok(linked)
-    }
-
-    fn record_link_creation(
-        &self,
-        table: &str,
-        source: &str,
-        target: &str,
-        creation: Option<(Option<i64>, Option<i64>)>,
-    ) -> Result<(), CellError> {
-        self.conn.execute(
-            &format!(
-                "DELETE FROM \"{LINK_CREATION}\" WHERE \"world\" = ?1 AND \"link_table\" = ?2 AND \"source\" = ?3 AND \"target\" = ?4"
-            ),
-            params![self.world, table, source, target],
-        )?;
-        if let Some((commit, version)) = creation {
-            self.conn.execute(
-                &format!(
-                    "INSERT INTO \"{LINK_CREATION}\" (\"world\", \"link_table\", \"source\", \"target\", \"created_commit\", \"creation_version\") VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
-                ),
-                params![self.world, table, source, target, commit, version],
-            )?;
-        }
-        Ok(())
     }
 
     fn add_link(

@@ -80,10 +80,12 @@ test("a typed compute refusal keeps the cell's reason while an unavailable respo
   })
   await router.load()
   const metric = { name: "measure", objectType: "test.Record", expression: "amount", label: "sum(amount)", kind: "simple", timeProperty: "date", numerator: null }
+  const { studioScopeKey } = await import("../src/lib/definitions.ts")
   const home = (evaluation: Evaluation) => {
     const client = new QueryClient()
-    client.setQueryData(["studio-mode"], { kind: "live" })
-    client.setQueryData(["studio-scope"], { orgId: "org_demo", environmentId: "analytics" })
+    const scope = { orgId: "org_demo", environmentId: "analytics" }
+    client.setQueryData(["studio-scope"], scope)
+    client.setQueryData(["studio-mode", studioScopeKey(scope)], { kind: "live", scope })
     client.setQueryData(["metrics", "org_demo:analytics"], { document: { metrics: [metric] } })
     client.setQueryData(["key-number", "org_demo:analytics", metric.name, recentWindow(Date.now()).start], evaluation)
     return renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)

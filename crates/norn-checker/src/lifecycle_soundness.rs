@@ -283,7 +283,8 @@ fn is_timer(edge: &Edge<'_>) -> bool {
 }
 
 /// The net of `machine`: one state per enum value, one edge per (source, transition).
-pub(crate) fn net(machine: &Machine<'_>) -> Net {
+#[must_use]
+pub fn net(machine: &Machine<'_>) -> Net {
     let mut net = Net {
         states: machine.states.len(),
         initial: machine

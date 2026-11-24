@@ -1,0 +1,4 @@
+{
+  "order": 100100,
+  "value": "crates/norn-kernel/tests/registry_ref_invariants.rs"
+}

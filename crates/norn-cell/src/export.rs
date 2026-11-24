@@ -104,6 +104,9 @@ pub struct ExportRecord {
     /// with a record newer than its engine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_version: Option<u32>,
+    /// Original automation continuation, when matching paused in this commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation_continuation: Option<crate::automation_outbox::AutomationOutboxContinuation>,
 }
 
 impl ExportRecord {

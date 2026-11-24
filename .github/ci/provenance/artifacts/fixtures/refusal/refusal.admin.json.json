@@ -1,5 +1,5 @@
 {
-  "sha256": "adbc31bfda4010ff1731f315f6e6b009938f553619aa178f03070acf53fe54bf",
+  "sha256": "4ddce819bca8db135dc05108fd7001d9f7b5d3c7807dc4cc9da3ab9da1d8895c",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -10,7 +10,8 @@
     "crates/norn-cell-do/src/server.rs",
     "crates/norn-cell-do/src/tenant.rs",
     "crates/norn-cell-do/src/actions.rs",
-    "crates/norn-cell-do/src/policy.rs"
+    "crates/norn-cell-do/src/policy.rs",
+    "crates/norn-cell-do/src/incident.rs"
   ],
   "rights_evidence": [
     {

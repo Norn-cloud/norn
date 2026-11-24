@@ -183,6 +183,7 @@ pub(crate) fn record<E: SqlEngine>(
     consumed_input: Option<Value>,
     definition_install: Option<DefinitionInstallRecord>,
     storage_version: Option<u32>,
+    automation_continuation: Option<crate::automation_outbox::AutomationOutboxContinuation>,
     entries: Vec<LedgerEntry>,
 ) -> Result<(), CellError> {
     let commit_seq = receipt.body.commit_seq;
@@ -260,6 +261,7 @@ pub(crate) fn record<E: SqlEngine>(
             .then(|| model.definitions_snapshot()),
         definition_install,
         storage_version,
+        automation_continuation,
     };
     // The record's hash and its packed encoding both start from its canonical
     // text; canonicalize it once.
@@ -280,6 +282,8 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// Engine or sequence-range errors while reading the receipt head.
     pub fn export_commit_count(&self) -> Result<u64, CellError> {
+        // S8 (#1551): export reads wait until the history scrub completes.
+        self.read().check_history("export reads")?;
         Ok(self.read().next_commit_seq()?.saturating_sub(1))
     }
 
@@ -289,8 +293,10 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     ///
     /// `core.world.fork_evidence_forbidden` for a commit minted after the
-    /// fork's lineage left main (FORK-EVIDENCE-1); engine errors, invalid JSON, or an export
-    /// record whose content hash does not verify.
+    /// fork's lineage left main (FORK-EVIDENCE-1); [`CellError::Verifying`]
+    /// while the history scrub is incomplete (S8); [`CellError::Fenced`] on a
+    /// fenced cell; engine errors, invalid JSON, or an export record whose
+    /// content hash does not verify.
     pub fn export_record(&self, commit_seq: u64) -> Result<Option<ExportRecord>, CellError> {
         // The lineage's main horizon, not this fork's base: a fork of a fork
         // inherits its parent fork's minted commits below its own base.
@@ -300,6 +306,8 @@ impl<E: SqlEngine> CellStore<E> {
         {
             return Err(CellError::ForkEvidenceForbidden);
         }
+        // S8 (#1551): portable export records wait for the history scrub.
+        self.read().check_history("export reads")?;
         let Some(record) = self.local_export_record(commit_seq)? else {
             return Ok(None);
         };
@@ -325,7 +333,7 @@ impl<E: SqlEngine> CellStore<E> {
             return Ok(None);
         };
         for entry in &record.entries {
-            self.read()
+            self.verifier()
                 .verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
         }
         Ok(Some(record))
@@ -356,6 +364,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     /// A store read or corrupt fence value.
     pub fn perform_fence_generation(&self, command_id: &str) -> Result<Option<u64>, CellError> {
+        self.read().check_live()?;
         let fenced: Option<String> = self.conn.query_optional(
             &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
             params![format!("restore:perform_fence:{command_id}")],

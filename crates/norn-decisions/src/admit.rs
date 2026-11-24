@@ -10,8 +10,8 @@ use norn_ir::jdm::{
     JdmHitPolicy, JdmNode, JdmSchemaContent, JdmSubDecisionContent, JdmSwitchContent,
 };
 use norn_ir::{
-    DECIDE_INPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, JsonValue, RULE_IR_V2_VERSION,
-    ResourceLimitProfile, RuleContractV2, RuleRoot, RuntimeObject, RuntimeValue,
+    JsonValue, RULE_IR_V2_VERSION, ResourceLimitProfile, RuleContractV2, RuleRoot, RuntimeObject,
+    RuntimeValue,
 };
 use zen_engine::Decision;
 use zen_engine::loader::MemoryLoader;
@@ -73,6 +73,7 @@ pub struct AdmittedDecision {
     assignment_fuel: Vec<norn_expr::graph::BoundAssignment>,
     rule_id: String,
     binding: DecisionBinding,
+    pub(crate) tzdb_sha256: String,
     decision: Decision,
     slice_schema: Arc<Schema>,
     event_schema: Arc<Schema>,
@@ -81,43 +82,24 @@ pub struct AdmittedDecision {
 }
 
 impl AdmittedDecision {
-    /// Loads `root` with the sub-decisions it reaches. `sub_decisions` is
-    /// keyed by the `decisionNode` key (the sub-decision rule's artifact id)
-    /// and must be exactly the reachable closure.
+    /// [`Self::admit_with_defaults`] against an explicit versioned
+    /// [`TzdbBundle`](norn_expr::temporal::TzdbBundle) (`#1440`).
     ///
     /// # Errors
     ///
-    /// An [`AdmissionError`] when any check above fails.
-    pub fn admit(
-        root: &RuleRoot,
-        sub_decisions: &BTreeMap<String, RuleRoot>,
-        binding: DecisionBinding,
-    ) -> Result<Self, AdmissionError> {
-        Self::admit_with_defaults(root, sub_decisions, binding, None)
-    }
-
-    /// [`Self::admit`], with the rule's `defaults` member as exact runtime
-    /// values parsed from the artifact's source text (#2770). The decoded
-    /// IR defaults carry numbers as `f64`, which cannot recover an authored
-    /// decimal, so a numeric default is admitted only from `exact_defaults`;
-    /// without it a numeric default is refused, as by [`Self::admit`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::admit`]; [`AdmissionError::InvalidDefault`] when a numeric
-    /// default has no exact source value, or the exact value is not the
-    /// decoded one.
-    pub fn admit_with_defaults(
+    /// As [`Self::admit_with_defaults`].
+    pub fn admit_with_defaults_in(
         root: &RuleRoot,
         sub_decisions: &BTreeMap<String, RuleRoot>,
         binding: DecisionBinding,
         exact_defaults: Option<&RuntimeObject>,
+        tzdb: &norn_expr::temporal::TzdbBundle,
     ) -> Result<Self, AdmissionError> {
         let root_graph = decision_graph(root, RuleContractV2::Decide)?;
         let loader = MemoryLoader::default();
         let mut loaded_keys = BTreeSet::new();
         let mut contracts = crate::step::StepContracts::default();
-        contracts.bind_expressions(root)?;
+        contracts.bind_expressions_in(root, tzdb)?;
         // Deepest depth each key has been expanded at: a key is re-expanded
         // only on a deeper path (which may exceed the bound), so the walk is
         // at most MAX_SUB_DECISION_DEPTH expansions per key.
@@ -162,7 +144,7 @@ impl AdmittedDecision {
                             size: loaded_keys.len(),
                         });
                     }
-                    contracts.bind_expressions(sub)?;
+                    contracts.bind_expressions_in(sub, tzdb)?;
                     loader.add(key, graph_content(&sub.rule_id, sub_graph)?);
                 }
                 stack.push((sub.rule_id.as_str(), sub_graph, child_depth));
@@ -195,6 +177,7 @@ impl AdmittedDecision {
             assignment_fuel,
             rule_id: root.rule_id.clone(),
             binding,
+            tzdb_sha256: tzdb.sha256().to_owned(),
             decision: Decision::from(Arc::new(content))
                 .with_loader(loader)
                 .with_contracts(policies),
@@ -707,110 +690,7 @@ fn sub_decision_content(content: &JdmSubDecisionContent) -> DecisionNodeContent 
     }
 }
 
-fn invalid_schema(rule_id: &str, path: &str, reason: impl Into<String>) -> AdmissionError {
-    AdmissionError::InvalidSchema {
-        rule_id: rule_id.to_owned(),
-        path: path.to_owned(),
-        reason: reason.into(),
-    }
-}
-
-fn parse_schema(rule: &RuleRoot, member: &str) -> Result<Schema, AdmissionError> {
-    let document = norn_ir::JsonValue::Object(match member {
-        "inputSchema" => rule.input_schema.clone(),
-        _ => rule.output_schema.clone(),
-    });
-    Schema::parse(&document, member)
-        .map_err(|violation| invalid_schema(&rule.rule_id, &violation.path, violation.reason))
-}
-
-/// A sub-decision's schema: the closed dialect, rooted at a record.
-fn closed_record(rule: &RuleRoot, member: &str) -> Result<(), AdmissionError> {
-    match parse_schema(rule, member)?.properties() {
-        Some(_) => Ok(()),
-        None => Err(invalid_schema(
-            &rule.rule_id,
-            member,
-            "must be a closed record",
-        )),
-    }
-}
-
-/// The record members of a decide schema, which must be exactly `members`,
-/// all required.
-fn contract_members(
-    rule: &RuleRoot,
-    schema: &Schema,
-    member: &str,
-    members: &[&str],
-) -> Result<BTreeMap<String, Schema>, AdmissionError> {
-    let properties = schema
-        .properties()
-        .ok_or_else(|| invalid_schema(&rule.rule_id, member, "must be a closed record"))?;
-    let declared: BTreeSet<&str> = properties.keys().map(String::as_str).collect();
-    let expected: BTreeSet<&str> = members.iter().copied().collect();
-    let required: BTreeSet<&str> = schema
-        .required()
-        .into_iter()
-        .flatten()
-        .map(String::as_str)
-        .collect();
-    if declared != expected || required != expected {
-        return Err(invalid_schema(
-            &rule.rule_id,
-            member,
-            format!("the decide contract requires exactly the members {members:?}, all required"),
-        ));
-    }
-    Ok(properties.clone())
-}
-
-fn decide_input(rule: &RuleRoot) -> Result<(Schema, Schema), AdmissionError> {
-    let schema = parse_schema(rule, "inputSchema")?;
-    let mut members = contract_members(rule, &schema, "inputSchema", &DECIDE_INPUT_MEMBERS)?;
-    let mut record = |name: &str| {
-        members
-            .remove(name)
-            .filter(|member| member.properties().is_some())
-            .ok_or_else(|| {
-                invalid_schema(
-                    &rule.rule_id,
-                    &format!("inputSchema.properties.{name}"),
-                    "must be a closed record",
-                )
-            })
-    };
-    let slice = record("slice")?;
-    let event = record("event")?;
-    Ok((slice, event))
-}
-
-fn decide_output(rule: &RuleRoot) -> Result<Schema, AdmissionError> {
-    let schema = parse_schema(rule, "outputSchema")?;
-    let members = contract_members(rule, &schema, "outputSchema", &DECIDE_OUTPUT_MEMBERS)?;
-    for (name, member) in &members {
-        match member {
-            Schema::Array(items) if items.properties().is_some() => {}
-            Schema::Object { .. }
-            | Schema::Array(_)
-            | Schema::String(_)
-            | Schema::Integer
-            | Schema::Number
-            | Schema::Decimal(_)
-            | Schema::Boolean
-            | Schema::Null
-            | Schema::Json
-            | Schema::Nullable(_) => {
-                return Err(invalid_schema(
-                    &rule.rule_id,
-                    &format!("outputSchema.properties.{name}"),
-                    "must be a list of closed records",
-                ));
-            }
-        }
-    }
-    Ok(schema)
-}
+use crate::contract::{closed_record, decide_input, decide_output, invalid_schema};
 
 fn defaults(
     rule: &RuleRoot,

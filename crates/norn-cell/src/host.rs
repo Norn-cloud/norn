@@ -35,8 +35,9 @@ use norn_kernel::{
     CommitReceipt, CommitVersions, CommitView, Consumed, DueTimer, Effect, FactKey, FactMutation,
     FactState, FactVersion, Generation, LedgerSeq, LinkKey, LinkMutation, LinkReadTarget,
     LinkState, LogicalTime, ObservationAuthorization, ObservationEvent, ObservationId, Observed,
-    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery, PredicateReadMember,
-    Proposed, TimerId, WrittenLinkVersion, WrittenVersion, check_commit_identifiers,
+    OwnedRowsCommitProof, Performed, PredicateActionRead, PredicateObject, PredicateQuery,
+    PredicateReadMember, Proposed, TimerId, WrittenLinkVersion, WrittenVersion,
+    check_commit_identifiers,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -723,6 +724,7 @@ fn predicate_objects<S: SqlEngine>(
     limit: usize,
     max_bytes: u64,
 ) -> Result<Option<Vec<PredicateObject>>, CellError> {
+    reader.check_live()?;
     let scan_cap = usize::try_from(
         norn_ir::ResourceLimitProfile::norn_limits_v1()
             .slice
@@ -759,16 +761,10 @@ fn predicate_objects<S: SqlEngine>(
     let candidates: Vec<(FactKey, FactVersion, JsonObject)> = records
         .into_iter()
         .map(|record| {
-            let values = record
-                .values
-                .into_iter()
-                // A stored null is an absent property.
-                .filter(|(_, value)| !value.is_null())
-                .collect::<JsonObject>();
             (
                 FactKey::new(record.object_type, record.id),
                 FactVersion(record.version),
-                values,
+                record.values,
             )
         })
         .collect();
@@ -786,35 +782,7 @@ fn link_state<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     key: &LinkKey,
 ) -> Result<LinkState, CellError> {
-    let source_type = key.source.object_type.as_str();
-    let version = reader.link_version(
-        MAIN_WORLD,
-        source_type,
-        &key.link,
-        &key.source.key,
-        key.target.object_type.as_str(),
-        &key.target.key,
-    )?;
-    let values = reader
-        .link(
-            MAIN_WORLD,
-            source_type,
-            &key.link,
-            &key.source.key,
-            &key.target.key,
-        )?
-        .map(|record| {
-            record
-                .values
-                .into_iter()
-                // A stored null is an absent property.
-                .filter(|(_, value)| !value.is_null())
-                .collect::<JsonObject>()
-        });
-    Ok(LinkState {
-        version: FactVersion(version),
-        values,
-    })
+    crate::link_guard::link_state(reader, key)
 }
 
 /// What the kernel's admission check reads, inside the commit transaction.
@@ -915,40 +883,16 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
         link: &str,
         excluded: &std::collections::BTreeSet<FactKey>,
     ) -> Result<Option<bool>, CellError> {
-        let Some((source_type, _, _)) =
-            self.0
-                .root_row(MAIN_WORLD, source.object_type.as_str(), &source.key)?
-        else {
-            return Ok(Some(false));
-        };
-        // At most N excluded targets can occupy the first N rows. Read one
-        // extra witness, bounding records and key bytes before materialization.
-        let limits = norn_ir::ResourceLimitProfile::norn_limits_v1().slice;
-        let fetch = excluded.len().saturating_add(1).min(
-            usize::try_from(limits.max_records)
-                .unwrap_or(usize::MAX)
-                .saturating_add(1),
-        );
-        let Some(targets) = self.0.link_targets_with_versions(
-            MAIN_WORLD,
-            &source_type,
-            link,
-            &source.key,
-            fetch,
-            limits.max_canonical_bytes,
-        )?
-        else {
-            return Ok(None);
-        };
-        if targets
-            .iter()
-            .any(|(key, ty, _)| !excluded.contains(&FactKey::new(self.0.canonical_type(ty), key)))
-        {
-            return Ok(Some(true));
-        }
-        // A short page is a complete absence proof; a full page containing
-        // only excluded targets cannot establish final presence.
-        Ok((targets.len() < fetch).then_some(false))
+        crate::link_guard::has_link_target(self.0, source, link, excluded)
+    }
+
+    fn has_link_source(
+        &self,
+        target: &FactKey,
+        link: &str,
+        excluded: &std::collections::BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, CellError> {
+        crate::link_guard::has_link_source(self.0, target, link, excluded)
     }
 
     fn link_targets(
@@ -1093,6 +1037,12 @@ where
         // retain reads folded into their write expectations by the kernel.
         let mut marking_reads =
             Self::occurrence_reads(commit, &marking_reads, !marking_events.is_empty());
+        crate::link_guard::extend_predicate_marking_reads(
+            &commit.predicate_reads,
+            &mut marking_reads,
+        );
+        let marking_predicate_reads =
+            crate::link_guard::predicate_marking_specs(&commit.predicate_reads);
         let mut marking_events = marking_events;
         let mut marking_historical_reads = Vec::new();
         // Function freshness and information lineage are separate contracts.
@@ -1134,6 +1084,7 @@ where
             marking_reads,
             marking_reference_reads: Vec::new(),
             marking_property_reads: Vec::new(),
+            marking_predicate_reads,
             marking_historical_reads,
             marking_value_reads,
             marking_occurrence_reads: None,
@@ -1277,6 +1228,8 @@ where
         // they are not evidence of a classified decision predicate. Kernel
         // decisions may fold reads of written targets into their expectations,
         // so retain that full set for attributed rule/action turns.
+        // Live link commits additionally fold `marking_value_reads` into
+        // `Writer::link_read_markings` inside `Writer::apply_writes`.
         if attributed_rule
             || commit
                 .writes
@@ -1918,47 +1871,7 @@ where
             }
         }
         let guard = |reader: &StoreReader<'_, S>| {
-            // OBS-EVIDENCE-1: preparation cannot authorize a bundle disputed before BEGIN.
-            for bundle in mapped {
-                reader
-                    .check_mapping_bundle(bundle)
-                    .map_err(CommitError::Host)?;
-            }
-            if let Some(Consumed::Observation {
-                id: ObservationId(observation_id),
-            }) = &commit.consumes
-            {
-                // OBS-PAGE-1: a page commit applies exactly its still-pending
-                // members, in page order; a bundle commit exactly its bundle.
-                let applied: Vec<String> = mapped
-                    .iter()
-                    .map(|b| format!("mapping-bundle:{}", b.digest))
-                    .collect();
-                let expected = if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
-                    reader
-                        .pending_page_member_ids(observation_id)
-                        .map_err(CommitError::Host)?
-                        .ok_or(CommitError::Host(CellError::SourceEvidenceChanged))?
-                } else if mapped.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![observation_id.clone()]
-                };
-                if applied != expected {
-                    return Err(CommitError::Host(CellError::SourceEvidenceChanged));
-                }
-            } else if !mapped.is_empty() {
-                return Err(CommitError::Host(CellError::MappingBundleMismatch));
-            }
-            if !mapped.is_empty()
-                && reader
-                    .mapping_link_plan(mapped, &commit)
-                    .map_err(CommitError::Host)?
-                    .links
-                    != commit.links
-            {
-                return Err(CommitError::Host(CellError::SourceEvidenceChanged));
-            }
+            let mapping_proof = crate::link_guard::verify_mapping_links(reader, &commit, mapped)?;
             if authorization.is_none() {
                 for key in commit
                     .reads
@@ -2002,15 +1915,17 @@ where
                     }
                 }
             }
+            crate::link_guard::check_commit_link_slots(reader, &commit)?;
             let model = reader.model();
             let catalog = model
                 .type_catalog()
                 .with_governing_laws(model.law_artifacts());
             let model = CommitModel::new(&catalog);
-            Proposed::new(&commit)
+            let versions = Proposed::new(&commit)
                 .authorize(authorization, owned_rows)?
                 .check(&model, &GuardView(reader))
-                .map(Checked::into_versions)
+                .map(Checked::into_versions)?;
+            Ok((versions, mapping_proof))
         };
         match self.store.commit_guarded_submitted(
             &batch,
@@ -2189,6 +2104,23 @@ where
             }
         }
         Ok(objects)
+    }
+
+    fn read_predicate_for_action(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        max_bytes: u64,
+        authorize: &mut dyn FnMut(&PredicateObject) -> bool,
+    ) -> Result<PredicateActionRead, CellError> {
+        crate::link_guard::read_predicate_for_action(
+            &self.store.read(),
+            predicate,
+            max_members,
+            max_bytes,
+            authorize,
+            predicate_objects,
+        )
     }
 
     fn read_link_targets(

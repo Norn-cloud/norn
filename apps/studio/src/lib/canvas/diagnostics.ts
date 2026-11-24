@@ -7,6 +7,7 @@ export interface Finding {
   readonly message: string
   readonly span: { readonly pointer: string } | null
   readonly artifactId: string | null
+  readonly witness?: { readonly steps: readonly { readonly edge: number; readonly moves: readonly { readonly side: "ui" | "backend"; readonly label: string }[] }[] } | null
 }
 
 /** The `norn-checker-abi/check@1` result of `checkArtifactSet`. */

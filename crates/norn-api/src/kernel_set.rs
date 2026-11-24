@@ -6,8 +6,9 @@
 use std::collections::BTreeSet;
 
 use norn_cell::Model;
-use norn_checker::{EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt};
+use norn_checker::{EntityArtifactSetContext, ReceiptSources};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
+use norn_ui_checker::check_artifact_set_with_receipt;
 
 /// An admitted kernel set, ready to install.
 #[derive(Debug, Clone)]

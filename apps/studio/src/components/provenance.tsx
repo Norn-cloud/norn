@@ -166,7 +166,7 @@ export function ProvenancePopover({ children, variant = "inline", className, lab
         ? <span className={cn("flex min-w-0 items-center gap-1", className)}>
           <span className="min-w-0 flex-1 truncate">{children}</span>
           <PopoverTrigger tabIndex={-1} onClick={keep} aria-label={`Where ${label} came from`} title={`Where ${label} came from`}
-            className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 outline-none transition-opacity group-hover/cell:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 data-[state=open]:opacity-100">
+            className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 outline-none transition-opacity group-hover/cell:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 data-open:opacity-100">
             <Waypoints className="size-3.5" aria-hidden />
           </PopoverTrigger>
         </span>

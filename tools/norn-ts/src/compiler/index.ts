@@ -497,6 +497,14 @@ export class SyntaxCompiler {
           return B.X.unsafeZen(text, valueSchema(this.checker, this.checker.getTypeFromTypeNode(e.typeArguments[0]), e, new Set(), this.schemaBudget))
         }
         if (id === "@norn/authoring#Norn.byteLength") return B.X.call("len", this.data(e.arguments[0]!, env))
+        if (id === "@norn/authoring#Norn.take") {
+          if (e.arguments.length !== 2) throw new CompileError("NORN-FLOW-EXPRESSION", "Norn.take takes a string and an integer literal cap", e)
+          return B.X.take(this.data(e.arguments[0]!, env), this.data(e.arguments[1]!, env))
+        }
+        if (id === "@norn/authoring#Norn.floor") {
+          if (e.arguments.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "Norn.floor takes one number", e)
+          return B.X.floor(this.data(e.arguments[0]!, env))
+        }
         if (id === "@norn/authoring#Norn.parseDate" || id === "@norn/authoring#Norn.parseTimestamp") {
           if (e.arguments.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "temporal conversion needs exactly one argument", e)
           return B.X.call(id.endsWith("parseDate") ? "date" : "timestamp", this.data(e.arguments[0]!, env))

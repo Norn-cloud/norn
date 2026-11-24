@@ -5,7 +5,9 @@ import { Box, Database, Layers, Plus, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
 import { cn } from "@/lib/utils"
+import { LoadState } from "@/components/load-state"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { refreshMode } from "./lib/live-transport.ts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -254,10 +256,24 @@ export function ObjectTypePage() {
   const concept = catalog?.byName.get(type)
   return (
     <div className="space-y-6">
-      {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
-      {read.isError && <p className="text-destructive">{read.error.message}</p>}
-      {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} recorded={read.data?.origin === "recorded"} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
-      {concept?.definition === "object type" && <RecordsGrid key={concept.name} concept={concept} />}
+      <LoadState
+        status={read.status}
+        data={catalog}
+        error={read.error}
+        isFetching={read.isFetching}
+        onRetry={() => { refreshMode(); void read.refetch() }}
+        skeleton="detail"
+        loadingLabel="Reading type definition"
+      >
+        {(loaded) => (
+          <>
+            {concept
+              ? <ObjectTypeDetail catalog={loaded} concept={concept} recorded={read.data?.origin === "recorded"} />
+              : <EmptyState icon={Shapes} title="Type not found" next={<Button asChild size="sm" variant="outline"><Link to="/sources">See all sources and types</Link></Button>}>No object type named {type} is installed.</EmptyState>}
+            {concept?.definition === "object type" && <RecordsGrid key={concept.name} concept={concept} />}
+          </>
+        )}
+      </LoadState>
     </div>
   )
 }
@@ -305,39 +321,55 @@ export function SourcesPage() {
       <PageHeader title="Sources" meta={read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         description="The systems that feed this workspace, and the one model every system's records are mapped into."
         primary={<Button asChild><Link to="/connections"><Plus aria-hidden />Connect a source</Link></Button>} />
-      {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
-      {read.isError && <p className="text-destructive">{read.error.message}</p>}
-      {catalog && <>
-        <Systems catalog={catalog} />
-        {read.data?.origin === "live" && <SourceConnections />}
-        <Tabs defaultValue="types" className="gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-section font-medium">The model</h2>
-            <TabsList className="ms-2"><TabsTrigger value="types">Types</TabsTrigger><TabsTrigger value="graph">Graph</TabsTrigger></TabsList>
-            <label className="relative ms-auto block w-full max-w-64">
-              <span className="sr-only">Find an object type</span>
-              <Search aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input type="search" placeholder="Find an object type" value={search} onChange={(event) => setSearch(event.target.value)} className="h-8 ps-8" />
-            </label>
-          </div>
-          <TabsContent value="graph" className="overflow-hidden rounded-lg border p-3"><ModelGraph catalog={catalog} /></TabsContent>
-          <TabsContent value="types" className="space-y-6">
-            {OVERVIEW_GROUPS.filter(({ has }) => search.trim() !== "" || catalog.concepts.some(has)).map(({ label, has }) => {
-              const shown = catalog.concepts.filter((concept) => has(concept) && matches(concept))
-              return (
-                <div key={label} className="space-y-2">
-                  <h3 className="text-meta font-medium text-muted-foreground">{label} <span className="font-normal tabular-nums">{shown.length}</span></h3>
-                  {shown.length > 0
-                    ? <DenseTable head={<TableRow><TableHead>Name</TableHead><TableHead>What it is</TableHead><TableHead className="text-end">Facts</TableHead><TableHead className="text-end">Links</TableHead><TableHead>Fed by</TableHead></TableRow>}>
-                        {shown.map((concept) => <ConceptRow key={concept.name} concept={concept} />)}
-                      </DenseTable>
-                    : <div className="rounded-lg border"><EmptyState icon={Search}>Nothing here matches “{search.trim()}”.</EmptyState></div>}
-                </div>
-              )
-            })}
-          </TabsContent>
-        </Tabs>
-      </>}
+      <LoadState
+        status={read.status}
+        data={catalog}
+        error={read.error}
+        isFetching={read.isFetching}
+        onRetry={() => { refreshMode(); void read.refetch() }}
+        bone="sources-overview"
+        skeleton="table"
+        loadingLabel="Reading sources and types"
+      >
+        {(loaded) => (
+          <>
+            <Systems catalog={loaded} />
+            {read.data?.origin === "live" && <SourceConnections />}
+            <Tabs defaultValue="types" className="gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-section font-medium">The model</h2>
+                <TabsList className="ms-2"><TabsTrigger value="types">Types</TabsTrigger><TabsTrigger value="graph">Graph</TabsTrigger></TabsList>
+                <label className="relative ms-auto block w-full max-w-64">
+                  <span className="sr-only">Find an object type</span>
+                  <Search aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input type="search" placeholder="Find an object type" value={search} onChange={(event) => setSearch(event.target.value)} className="h-8 ps-8" />
+                </label>
+              </div>
+              <TabsContent value="graph" className="overflow-hidden rounded-lg border p-3"><ModelGraph catalog={loaded} /></TabsContent>
+              <TabsContent value="types" className="space-y-6">
+                {loaded.concepts.length === 0 && (
+                  <EmptyState icon={Database} title="No types installed yet" next={<Button asChild size="sm" variant="outline"><Link to="/connections"><Plus aria-hidden />Connect a source</Link></Button>}>
+                    Connect a system or upload a CSV to define your first object type.
+                  </EmptyState>
+                )}
+                {OVERVIEW_GROUPS.filter(({ has }) => search.trim() !== "" || loaded.concepts.some(has)).map(({ label, has }) => {
+                  const shown = loaded.concepts.filter((concept) => has(concept) && matches(concept))
+                  return (
+                    <div key={label} className="space-y-2">
+                      <h3 className="text-meta font-medium text-muted-foreground">{label} <span className="font-normal tabular-nums">{shown.length}</span></h3>
+                      {shown.length > 0
+                        ? <DenseTable head={<TableRow><TableHead>Name</TableHead><TableHead>What it is</TableHead><TableHead className="text-end">Facts</TableHead><TableHead className="text-end">Links</TableHead><TableHead>Fed by</TableHead></TableRow>}>
+                            {shown.map((concept) => <ConceptRow key={concept.name} concept={concept} />)}
+                          </DenseTable>
+                        : <div className="rounded-lg border"><EmptyState icon={Search}>Nothing here matches “{search.trim()}”.</EmptyState></div>}
+                    </div>
+                  )
+                })}
+              </TabsContent>
+            </Tabs>
+          </>
+        )}
+      </LoadState>
     </section>
   )
 }

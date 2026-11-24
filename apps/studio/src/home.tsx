@@ -1,10 +1,12 @@
-import { useQueries, useQuery } from "@tanstack/react-query"
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { ArrowRight, ArrowUp, Blend, Database, LayoutDashboard, ShieldCheck, Sigma, Sparkles } from "lucide-react"
 import { useState } from "react"
 import { useAssistant } from "@/assistant-slot"
-import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
+import { PageHeader, Panel, Well } from "@/components/panel"
 import { StatStrip } from "@/components/kpi-tile"
+import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { conceptTitle } from "./lib/catalog.ts"
@@ -12,8 +14,9 @@ import { useStudioScope } from "./lib/definitions.ts"
 import { evaluateQuestion, type Evaluation } from "./lib/evaluate.ts"
 import { member } from "./lib/exact.ts"
 import { FRESHNESS, groupDigits } from "./lib/format.ts"
-import { useMode } from "./lib/live-transport.ts"
+import { retryMode, useMode } from "./lib/live-transport.ts"
 import { metricHeading, readMetrics, recentWindow, type MetricSummary } from "./lib/metrics.ts"
+import { useView } from "./lib/view.tsx"
 import { Inbox as InboxPanel } from "./inbox.tsx"
 
 /** How many key numbers Home asks for: the cell answers each live, one request apiece. */
@@ -57,16 +60,24 @@ function EmptyWorkspaceChecklist() {
 
 /** "What do I do now": ask, what needs you, and the numbers that matter, each one click from where to act. */
 export function HomePage() {
+  const queryClient = useQueryClient()
   const mode = useMode()
+  const retry = () => { void retryMode(queryClient) }
   const empty = mode.data?.kind === "live" && Array.isArray(mode.data.catalog?.document) && isEmptyWorkspace(mode.data.catalog.document)
   return (
     <section className="max-w-5xl space-y-8">
       <PageHeader title="Home" description={empty ? "Your workspace is ready. Follow these steps to bring data in and build your first dashboard." : "What needs you, and the numbers that matter. Every item opens where you act on it."} />
       <AskBar />
-      {empty ? <EmptyWorkspaceChecklist /> : <>
-        <InboxPanel />
-        <KeyNumbers />
-      </>}
+      {mode.isError
+        ? <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={retry} />
+        : mode.isPending
+          ? <LoadState status="pending" bone="home-key-numbers" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={retry}>{() => null}</LoadState>
+          : empty
+            ? <EmptyWorkspaceChecklist />
+            : <>
+                <InboxPanel />
+                <KeyNumbers />
+              </>}
     </section>
   )
 }
@@ -85,11 +96,11 @@ function AskBar() {
   }
   return (
     <form onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <InputGroup className="h-11 rounded-lg border-border bg-card dark:bg-card">
-        <InputGroupAddon><Sparkles aria-hidden /></InputGroupAddon>
+      <InputGroup className="h-12 rounded-2xl border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) dark:bg-card">
+        <InputGroupAddon><Sparkles aria-hidden className="text-muted-foreground" /></InputGroupAddon>
         <InputGroupInput aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)} />
         <InputGroupAddon align="inline-end">
-          <InputGroupButton type="submit" size="sm" variant="default" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
+          <InputGroupButton type="submit" size="sm" variant="default" className="rounded-full px-3.5" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
     </form>
@@ -112,9 +123,10 @@ const totalable = (metric: MetricSummary) => metric.timeProperty !== null && (me
 /** The first admitted metrics, each answered live by the cell as one total over the latest 26 weeks. */
 function KeyNumbers() {
   const live = useMode().data?.kind === "live"
+  const { view } = useView()
   const scope = useStudioScope()
   const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
-  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: () => readMetrics(scope.data), retry: false, enabled: live && !scope.isPending })
+  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: ({ signal }) => readMetrics({ signal, scope: scope.data }), retry: false, enabled: live && !scope.isPending })
   const picked = (metrics.data?.document.metrics ?? []).filter(totalable).slice(0, KEY_NUMBERS)
   const window = recentWindow(Date.now())
   const answers = useQueries({
@@ -138,35 +150,66 @@ function KeyNumbers() {
   return (
     <section aria-labelledby="key-numbers" className="space-y-3">
       <h2 id="key-numbers" className="text-section font-medium">Key numbers</h2>
-      {metrics.isPending && <Skeleton className="h-28 rounded-lg" />}
-      {metrics.isError && <p className="text-sm text-muted-foreground">{metrics.error.message}</p>}
-      {metrics.data && picked.length === 0 && <div className="rounded-lg border"><EmptyState icon={Sigma}>No admitted measure adds up on its own yet.</EmptyState></div>}
-      {shown.length > 0 && (
-        <StatStrip>
-          {shown.map(({ metric, answer }) => {
-            const result = answer?.data?.kind === "answer" ? answer.data.read : undefined
-            const [key] = Object.keys(result?.document.rows ?? {})
-            const value = key === undefined ? undefined : result?.numbers.get(`/rows/${member(key)}/value`)
-            return (
-              <section key={metric.name} data-slot="kpi" className="flex min-w-0 flex-col gap-1.5 px-4 py-3">
-                <h3 className="truncate text-meta text-muted-foreground" title={metricHeading(metric)}>{metricHeading(metric)}</h3>
-                {answer?.isPending && <Skeleton className="h-7 w-24" />}
-                {result && <p className="text-figure leading-none font-medium tracking-tight tabular-nums [overflow-wrap:anywhere]">{value === undefined ? "—" : groupDigits(value)}</p>}
-                <p className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
-                  <span className="truncate">{conceptTitle(metric.objectType)}</span>
-                  {result && <><span aria-hidden>·</span><span title={FRESHNESS[result.document.freshness].meaning}>{FRESHNESS[result.document.freshness].label}</span></>}
-                  <Link to="/metrics" className="ms-auto inline-flex shrink-0 items-center gap-0.5 text-foreground underline-offset-4 hover:underline">Why<ArrowRight aria-hidden className="size-3.5" /></Link>
-                </p>
-              </section>
-            )
-          })}
-        </StatStrip>
-      )}
-      {refused.length > 0 && (
-        <ul className="space-y-0.5 text-meta text-muted-foreground" aria-label="Key numbers not shown">
-          {refused.map(({ metric, reason }) => <li key={metric.name} data-refused-number={metric.name}>{conceptTitle(metric.objectType)} · {metricHeading(metric)} (not shown). {reason}</li>)}
-        </ul>
-      )}
+      <LoadState
+        status={metrics.status}
+        data={metrics.data}
+        error={metrics.error}
+        isFetching={metrics.isFetching}
+        onRetry={() => void metrics.refetch()}
+        bone="home-key-numbers"
+        skeleton="cards"
+        loadingLabel="Reading key numbers"
+        isEmpty={() => picked.length === 0}
+        empty={{
+          icon: Sigma,
+          title: "No key numbers yet",
+          description: "No admitted measure adds up on its own yet.",
+          next: <Button asChild size="sm" variant="outline"><Link to="/sources"><Database />Connect a source or upload a CSV</Link></Button>,
+        }}
+        notServed={{ icon: Sigma, title: "Metrics not served yet", description: "This workspace does not serve derived metrics yet." }}
+      >
+        {() => (
+          <>
+            {shown.length > 0 && (
+              <StatStrip>
+                {shown.map(({ metric, answer }) => {
+                  const result = answer?.data?.kind === "answer" ? answer.data.read : undefined
+                  const [key] = Object.keys(result?.document.rows ?? {})
+                  const value = key === undefined ? undefined : result?.numbers.get(`/rows/${member(key)}/value`)
+                  const label = metricHeading(metric, "period", view)
+                  return (
+                    <section key={metric.name} data-slot="kpi" className="flex min-w-0 flex-col gap-1.5 px-4 py-3">
+                      <h3 className="truncate text-meta text-muted-foreground" title={label}>{label}</h3>
+                      {answer?.isPending && <Skeleton className="h-7 w-24" />}
+                      {result && <p className="text-figure leading-none font-medium tracking-tight tabular-nums [overflow-wrap:anywhere]">{value === undefined ? "—" : groupDigits(value)}</p>}
+                      {answer?.isError && (
+                        <p className="text-sm text-muted-foreground">
+                          Couldn't read this number.{" "}
+                          <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => void answer?.refetch()}>Retry</button>
+                        </p>
+                      )}
+                      <p className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
+                        <span className="truncate">{conceptTitle(metric.objectType)}</span>
+                        {result && <><span aria-hidden>·</span><span title={FRESHNESS[result.document.freshness].meaning}>{FRESHNESS[result.document.freshness].label}</span></>}
+                        <Link to="/metrics" className="ms-auto inline-flex shrink-0 items-center gap-0.5 text-foreground underline-offset-4 hover:underline">Why<ArrowRight aria-hidden className="size-3.5" /></Link>
+                      </p>
+                    </section>
+                  )
+                })}
+              </StatStrip>
+            )}
+            {refused.length > 0 && (
+              <ul className="space-y-0.5 text-meta text-muted-foreground" aria-label="Key numbers not shown">
+                {refused.map(({ metric, reason }) => (
+                  <li key={metric.name} data-refused-number={metric.name}>
+                    {conceptTitle(metric.objectType)} · {metricHeading(metric, "period", view)} (not shown). {reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </LoadState>
     </section>
   )
 }

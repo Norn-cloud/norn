@@ -2008,3 +2008,532 @@ fn cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations() {
         assert_eq!(result.output.commands[0]["complete"].as_bool(), Some(false));
     }
 }
+
+#[test]
+fn val_exact_decision_assignment_admits_and_evaluates_temporal_and_decimal_expressions()
+-> Result<(), Box<dyn std::error::Error>> {
+    use norn_ir::{PropertyAdditivity, PropertyType, Rounding, WholeNumber};
+
+    let decimal_site =
+        |scale: u64, rounding: Rounding| -> Result<Json, Box<dyn std::error::Error>> {
+            Ok(json!({
+                "type": "number",
+                "nornType": serde_json::to_value(PropertyType::Decimal {
+                    additivity: PropertyAdditivity::Undeclared {},
+                    scale: WholeNumber(scale),
+                    rounding: Some(rounding),
+                    unit: None,
+                    currency_source: None,
+                    per_unit: None,
+                    unit_source: Vec::new(),
+                })?
+            }))
+        };
+
+    let slice = closed(&json!({
+        "flag": { "type": "boolean" },
+        "hours": decimal_site(2, Rounding::Refuse)?,
+        "start_date": { "type": "string" },
+        "end_date": { "type": "string" },
+        "start_ts": { "type": "string" },
+        "end_ts": { "type": "string" },
+        "divisor": { "type": "integer" }
+    }));
+    let mut root = commands_rule(
+        "demo.temporal_decimal_assignment",
+        &slice,
+        "[{actionId:'allocate',valid:(slice.hours >= 0.00) and (date(slice.start_date) < date(slice.end_date)),value:slice.flag ? seconds_between(timestamp(slice.start_ts), timestamp(slice.end_ts)) / slice.divisor : slice.hours}]",
+    );
+    root["outputSchema"]["properties"]["commands"]["items"] = closed(&json!({
+        "actionId": { "type": "string" },
+        "valid": { "type": "boolean" },
+        "value": decimal_site(2, Rounding::HalfEven)?
+    }));
+
+    let parsed_rule: norn_ir::RuleRoot = serde_json::from_value(root)?;
+    let decision = AdmittedDecision::admit(&parsed_rule, &BTreeMap::new(), binding())
+        .map_err(|err| format!("admit temporal/decimal decision: {err:?}"))?;
+
+    // True arm divides exact `seconds_between` (1s) by dynamic integer `divisor` (3) -> 0.33.
+    let true_slice = Value::object([
+        ("flag", Value::Bool(true)),
+        ("hours", Value::Number("8.50".parse()?)),
+        ("start_date", Value::String("2026-01-01".into())),
+        ("end_date", Value::String("2026-01-05".into())),
+        ("start_ts", Value::String("2026-03-09T14:00:00Z".into())),
+        ("end_ts", Value::String("2026-03-09T14:00:01Z".into())),
+        ("divisor", Value::from(3_i64)),
+    ]);
+    let true_eval = run(&decision, true_slice, event(), EvaluationBudget::default())
+        .map_err(|err| format!("true-arm decision eval: {err:?}"))?;
+    let true_cmd = true_eval
+        .output
+        .commands
+        .first()
+        .ok_or("expected one command")?;
+    assert_eq!(
+        true_cmd.get("valid"),
+        Some(&norn_ir::RuntimeValue::Bool(true))
+    );
+    assert_eq!(
+        true_cmd.get("value"),
+        Some(&norn_ir::RuntimeValue::from_json_text("0.33")?)
+    );
+
+    // False arm returns exact `slice.hours` while temporal guard detects reversed dates.
+    let false_slice = Value::object([
+        ("flag", Value::Bool(false)),
+        ("hours", Value::Number("8.50".parse()?)),
+        ("start_date", Value::String("2026-01-05".into())),
+        ("end_date", Value::String("2026-01-01".into())),
+        ("start_ts", Value::String("2026-03-09T14:00:00Z".into())),
+        ("end_ts", Value::String("2026-03-09T14:00:01Z".into())),
+        ("divisor", Value::from(3_i64)),
+    ]);
+    let false_eval = run(&decision, false_slice, event(), EvaluationBudget::default())
+        .map_err(|err| format!("false-arm decision eval: {err:?}"))?;
+    let false_cmd = false_eval
+        .output
+        .commands
+        .first()
+        .ok_or("expected one command")?;
+    assert_eq!(
+        false_cmd.get("valid"),
+        Some(&norn_ir::RuntimeValue::Bool(false))
+    );
+    assert_eq!(
+        false_cmd.get("value"),
+        Some(&norn_ir::RuntimeValue::from_json_text("8.5")?)
+    );
+
+    // Zero divisor in the exact decision assignment refuses cleanly at runtime.
+    let zero_slice = Value::object([
+        ("flag", Value::Bool(true)),
+        ("hours", Value::Number("8.50".parse()?)),
+        ("start_date", Value::String("2026-01-01".into())),
+        ("end_date", Value::String("2026-01-05".into())),
+        ("start_ts", Value::String("2026-03-09T14:00:00Z".into())),
+        ("end_ts", Value::String("2026-03-09T14:00:01Z".into())),
+        ("divisor", Value::from(0_i64)),
+    ]);
+    assert!(
+        run(&decision, zero_slice, event(), EvaluationBudget::default()).is_err(),
+        "zero divisor in exact decision assignment must fail closed"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn ordered_fold_two_arg_round_preserves_fold_policy_in_conditions_and_call_args()
+-> Result<(), Box<dyn std::error::Error>> {
+    use zen_engine::{
+        Isolate, Variable,
+        meter::Meter,
+        scaled::{Rounding, ScaledArithmetic},
+    };
+
+    let mut isolate = Isolate::with_environment(Variable::Null);
+    let profile = ScaledArithmetic {
+        scale: 2,
+        rounding: Rounding::HalfAwayFromZero,
+    };
+    isolate.set_meter(Some(Meter::new(1_000).with_arithmetic(profile)));
+
+    // 2-argument `round(..., 2)` inherits the OrderedFold meter policy, so
+    // ternary conditions, call arguments, and repeating quotients retain the
+    // fold's declared rounding mode without forcing `Rounding::Refuse`.
+    assert_eq!(
+        isolate
+            .run_standard("round((1 / 2 > 0) ? 1 : 2, 2)")
+            .map_err(|err| format!("fold 2-arg round ternary condition: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round((1 / 3 > 0) ? 1 : 2, 2)")
+            .map_err(|err| format!("fold 2-arg round repeating ternary condition: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(len([1 / 2]), 2)")
+            .map_err(|err| format!("fold 2-arg round call arg: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(len([1 / 3]), 2)")
+            .map_err(|err| format!("fold 2-arg round repeating call arg: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(1 / 3, 2)")
+            .map_err(|err| format!("fold 2-arg round repeating quotient: {err:?}"))?,
+        Variable::Number("0.33".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(1.005, 2)")
+            .map_err(|err| format!("fold 2-arg round over-scale literal: {err:?}"))?,
+        Variable::Number("1.01".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(-1.005, 2)")
+            .map_err(|err| format!("fold 2-arg round negated over-scale literal: {err:?}"))?,
+        Variable::Number("-1.01".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round((1 / 3 > 0) ? -1.005 : 1.005, 2)")
+            .map_err(|err| format!(
+                "fold 2-arg round ternary negated over-scale literal: {err:?}"
+            ))?,
+        Variable::Number("-1.01".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round((round(1.25, 1) > 1) ? 1 : 2, 2)")
+            .map_err(|err| format!("fold nested 2-arg round condition: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+
+    // Over-scale literals outside `round` or inside conditions/call args still refuse.
+    for overscale_refusal in [
+        "1.005",
+        "-1.005",
+        "round((1.005 > 0) ? 1 : 2, 2)",
+        "round(len([1.005]), 2)",
+    ] {
+        assert!(
+            isolate.run_standard(overscale_refusal).is_err(),
+            "fold meter must refuse non-rescale over-scale literal `{overscale_refusal}`"
+        );
+    }
+
+    // Explicit 3-argument `round(..., scale, mode)` enters an isolated exact
+    // site, so bare division and undeclared 2-arg `round` inside its condition
+    // or non-`round` call arguments still fail closed.
+    for isolated_refusal in [
+        "round((1 / 2 > 0) ? 1 : 2, 2, 'half_even')",
+        "round((1 / 3 > 0) ? 1 : 2, 2, 'half_even')",
+        "round((round(1.25, 1) > 1) ? 1 : 2, 2, 'half_even')",
+        "round(len([1 / 2]), 2, 'half_even')",
+        "round(len([1 / 3]), 2, 'half_even')",
+    ] {
+        assert!(
+            isolate.run_standard(isolated_refusal).is_err(),
+            "explicit 3-arg round must isolate `{isolated_refusal}` even under fold meter"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn time_window_materialize_sub_decision_executes_and_refuses_dst_anomalies() {
+    let sub = rule(&json!({
+        "ruleFile": "registry/packs/time/artifacts/time.window.materialize.rule.json"
+    }));
+    let mut root = commands_rule(
+        "time.window.materialize_harness",
+        &closed(&json!({
+            "start_local_at": {"type": "string"},
+            "end_local_at": {"type": "string"},
+            "iana_timezone": {"type": "string"},
+            "dst_policy": {"type": "string", "enum": ["reject", "earlier", "later"]}
+        })),
+        "[{actionId: 'time.window.materialize_interval', starts_at: window.starts_at, ends_at: window.ends_at, duration_seconds: window.duration_seconds, proper_interval: window.proper_interval}]",
+    );
+    root["outputSchema"]["properties"]["commands"]["items"] = closed(&json!({
+        "actionId": {"type": "string"},
+        "starts_at": {"type": "string"},
+        "ends_at": {"type": "string"},
+        "duration_seconds": {"type": "number"},
+        "proper_interval": {"type": "boolean"}
+    }));
+    root["graph"]["nodes"].as_array_mut().unwrap().insert(
+        1,
+        json!({
+            "id": "call",
+            "name": "call",
+            "type": "decisionNode",
+            "content": {
+                "key": "time.window.materialize.rule",
+                "inputField": "slice",
+                "outputPath": "window",
+                "passThrough": true
+            }
+        }),
+    );
+    root["graph"]["edges"][0]["targetId"] = json!("call");
+    root["graph"]["edges"].as_array_mut().unwrap().push(json!({
+        "id": "e_call",
+        "sourceId": "call",
+        "targetId": "x"
+    }));
+    let subs = BTreeMap::from([("time.window.materialize.rule".to_owned(), sub)]);
+    let admitted = AdmittedDecision::admit(&rule(&root), &subs, binding()).unwrap();
+    let eval = |slice: &Json| {
+        run(
+            &admitted,
+            value(slice),
+            event(),
+            EvaluationBudget::default(),
+        )
+    };
+
+    // Unambiguous EDT workday resolves cleanly to canonical UTC [13:00Z, 21:00Z).
+    let edt = eval(&json!({
+        "start_local_at": "2026-06-15T09:00:00",
+        "end_local_at": "2026-06-15T17:00:00",
+        "iana_timezone": "America/New_York",
+        "dst_policy": "reject"
+    }))
+    .unwrap();
+    let edt_cmd = &edt.output.commands[0];
+    assert_eq!(
+        edt_cmd["starts_at"],
+        norn_ir::RuntimeValue::String("2026-06-15T13:00:00Z".to_owned())
+    );
+    assert_eq!(
+        edt_cmd["ends_at"],
+        norn_ir::RuntimeValue::String("2026-06-15T21:00:00Z".to_owned())
+    );
+    assert_eq!(
+        edt_cmd["duration_seconds"],
+        norn_ir::RuntimeValue::from_json_text("28800").unwrap()
+    );
+    assert_eq!(
+        edt_cmd["proper_interval"],
+        norn_ir::RuntimeValue::Bool(true)
+    );
+
+    // DST spring-forward gap (2026-03-08T02:30:00 in America/New_York) refuses under every policy.
+    for policy in ["reject", "earlier", "later"] {
+        let err = eval(&json!({
+            "start_local_at": "2026-03-08T02:30:00",
+            "end_local_at": "2026-03-08T10:30:00",
+            "iana_timezone": "America/New_York",
+            "dst_policy": policy
+        }))
+        .unwrap_err();
+        let DecisionError::Strict {
+            site: StrictSite::DecisionTableOutput,
+            message,
+            ..
+        } = &err
+        else {
+            panic!("expected strict table output refusal for gap ({policy}), got {err:?}");
+        };
+        assert!(
+            message.to_lowercase().contains("gap"),
+            "expected DST gap message for {policy}, got: {message}"
+        );
+    }
+
+    // DST fall-back fold (2026-11-01T01:30:00 in America/New_York) refuses under "reject".
+    let fold_err = eval(&json!({
+        "start_local_at": "2026-11-01T01:30:00",
+        "end_local_at": "2026-11-01T09:30:00",
+        "iana_timezone": "America/New_York",
+        "dst_policy": "reject"
+    }))
+    .unwrap_err();
+    let DecisionError::Strict {
+        site: StrictSite::DecisionTableOutput,
+        message,
+        ..
+    } = &fold_err
+    else {
+        panic!("expected strict table output refusal for fold reject, got {fold_err:?}");
+    };
+    assert!(
+        message.to_lowercase().contains("ambiguous"),
+        "expected DST fold ambiguity message, got: {message}"
+    );
+
+    // Same DST fold resolves deterministically under "earlier" (UTC-4 -> 05:30Z, 9h) and "later" (UTC-5 -> 06:30Z, 8h).
+    for (policy, expected_start, expected_duration) in [
+        ("earlier", "2026-11-01T05:30:00Z", "32400"),
+        ("later", "2026-11-01T06:30:00Z", "28800"),
+    ] {
+        let res = eval(&json!({
+            "start_local_at": "2026-11-01T01:30:00",
+            "end_local_at": "2026-11-01T09:30:00",
+            "iana_timezone": "America/New_York",
+            "dst_policy": policy
+        }))
+        .unwrap();
+        let cmd = &res.output.commands[0];
+        assert_eq!(
+            cmd["starts_at"],
+            norn_ir::RuntimeValue::String(expected_start.to_owned())
+        );
+        assert_eq!(
+            cmd["ends_at"],
+            norn_ir::RuntimeValue::String("2026-11-01T14:30:00Z".to_owned())
+        );
+        assert_eq!(
+            cmd["duration_seconds"],
+            norn_ir::RuntimeValue::from_json_text(expected_duration).unwrap()
+        );
+        assert_eq!(cmd["proper_interval"], norn_ir::RuntimeValue::Bool(true));
+    }
+
+    // Reversed bounds produce negative duration and proper_interval = false.
+    let reversed = eval(&json!({
+        "start_local_at": "2026-06-15T17:00:00",
+        "end_local_at": "2026-06-15T09:00:00",
+        "iana_timezone": "America/New_York",
+        "dst_policy": "reject"
+    }))
+    .unwrap();
+    let rev_cmd = &reversed.output.commands[0];
+    assert_eq!(
+        rev_cmd["duration_seconds"],
+        norn_ir::RuntimeValue::from_json_text("-28800").unwrap()
+    );
+    assert_eq!(
+        rev_cmd["proper_interval"],
+        norn_ir::RuntimeValue::Bool(false)
+    );
+}
+
+#[test]
+fn edmonton_2025b_and_2026c_decision_evaluation_and_mismatch_refusal()
+-> Result<(), Box<dyn std::error::Error>> {
+    use norn_decisions::evaluate_in;
+    use norn_expr::temporal::TzdbBundle;
+
+    let sub = rule(&json!({
+        "ruleFile": "registry/packs/time/artifacts/time.window.materialize.rule.json"
+    }));
+    let mut root = commands_rule(
+        "time.window.materialize_tzdb_harness",
+        &closed(&json!({
+            "start_local_at": {"type": "string"},
+            "end_local_at": {"type": "string"},
+            "iana_timezone": {"type": "string"},
+            "dst_policy": {"type": "string", "enum": ["reject", "earlier", "later"]}
+        })),
+        "[{actionId: 'time.window.materialize_interval', starts_at: window.starts_at, ends_at: window.ends_at, duration_seconds: window.duration_seconds, proper_interval: window.proper_interval}]",
+    );
+    if let Some(items) = root.pointer_mut("/outputSchema/properties/commands/items") {
+        *items = closed(&json!({
+            "actionId": {"type": "string"},
+            "starts_at": {"type": "string"},
+            "ends_at": {"type": "string"},
+            "duration_seconds": {"type": "number"},
+            "proper_interval": {"type": "boolean"}
+        }));
+    }
+    if let Some(nodes) = root
+        .pointer_mut("/graph/nodes")
+        .and_then(Json::as_array_mut)
+    {
+        nodes.insert(
+            1,
+            json!({
+                "id": "call",
+                "name": "call",
+                "type": "decisionNode",
+                "content": {
+                    "key": "time.window.materialize.rule",
+                    "inputField": "slice",
+                    "outputPath": "window",
+                    "passThrough": true
+                }
+            }),
+        );
+    }
+    if let Some(target_id) = root.pointer_mut("/graph/edges/0/targetId") {
+        *target_id = json!("call");
+    }
+    if let Some(edges) = root
+        .pointer_mut("/graph/edges")
+        .and_then(Json::as_array_mut)
+    {
+        edges.push(json!({
+            "id": "e_call",
+            "sourceId": "call",
+            "targetId": "x"
+        }));
+    }
+    let root_rule = rule(&root);
+    let subs = BTreeMap::from([("time.window.materialize.rule".to_owned(), sub)]);
+    let b25 = TzdbBundle::v2025b();
+    let b26 = TzdbBundle::v2026c();
+
+    let admitted_25 = AdmittedDecision::admit_in(&root_rule, &subs, binding(), b25)?;
+    let admitted_26 = AdmittedDecision::admit_in(&root_rule, &subs, binding(), b26)?;
+    assert_eq!(admitted_25.tzdb_sha256(), b25.sha256());
+    assert_eq!(admitted_26.tzdb_sha256(), b26.sha256());
+
+    let slice_json = json!({
+        "start_local_at": "2026-12-31T23:30:00",
+        "end_local_at": "2027-01-01T00:30:00",
+        "iana_timezone": "America/Edmonton",
+        "dst_policy": "reject"
+    });
+    let slice_25 = admitted_25.validate_slice(value(&slice_json))?;
+    let event_25 = admitted_25.type_event(event())?;
+    let slice_26 = admitted_26.validate_slice(value(&slice_json))?;
+    let event_26 = admitted_26.type_event(event())?;
+
+    // 2025b: 2026-12-31 23:30 MST (UTC-7) -> 2027-01-01T06:30:00Z.
+    let out_25 = evaluate_in(
+        &admitted_25,
+        &slice_25,
+        &event_25,
+        EvaluationBudget::default(),
+        b25,
+    )?;
+    let cmd_25 = out_25.output.commands.first().ok_or("missing 2025b cmd")?;
+    assert_eq!(
+        cmd_25.get("starts_at"),
+        Some(&norn_ir::RuntimeValue::String(
+            "2027-01-01T06:30:00Z".to_owned()
+        ))
+    );
+
+    // 2026c: 2026-12-31 23:30 UTC-6 -> 2027-01-01T05:30:00Z.
+    let out_26 = evaluate_in(
+        &admitted_26,
+        &slice_26,
+        &event_26,
+        EvaluationBudget::default(),
+        b26,
+    )?;
+    let cmd_26 = out_26.output.commands.first().ok_or("missing 2026c cmd")?;
+    assert_eq!(
+        cmd_26.get("starts_at"),
+        Some(&norn_ir::RuntimeValue::String(
+            "2027-01-01T05:30:00Z".to_owned()
+        ))
+    );
+
+    // Mismatched tzdb digest between admission and evaluation is refused cleanly.
+    assert!(matches!(
+        evaluate_in(
+            &admitted_25,
+            &slice_25,
+            &event_25,
+            EvaluationBudget::default(),
+            b26,
+        ),
+        Err(DecisionError::TzdbMismatch { .. })
+    ));
+    assert!(matches!(
+        norn_decisions::evaluate(
+            &admitted_26,
+            &slice_26,
+            &event_26,
+            EvaluationBudget::default(),
+        ),
+        Err(DecisionError::TzdbMismatch { .. })
+    ));
+    Ok(())
+}

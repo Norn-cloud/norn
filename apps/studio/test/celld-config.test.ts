@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
 import { celldConfig, celldStudio } from "../celld-config.ts"
 
 const SECRET = "s".repeat(32)
@@ -10,11 +11,18 @@ test("a stage writes the Worker, assets, auth database and secrets as celld read
     name: "norn-studio-demo",
     main: "worker/index.ts",
     compatibility_date: "2026-11-01",
-    compatibility_flags: ["nodejs_compat"],
+    compatibility_flags: ["nodejs_compat", "enable_request_signal"],
     assets: { directory: "dist", binding: "ASSETS", not_found_handling: "single-page-application", run_worker_first: ["/api/*"] },
     d1_databases: [{ binding: "AUTH_DB", database_name: "norn-studio-auth-demo", migrations_dir: "worker/migrations" }],
     vars: { BETTER_AUTH_SECRET: SECRET, BETTER_AUTH_URL: "https://demo.norn.cloud", AUTH_SCRYPT: "js", STUDIO_BUILD: BUILD, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip" },
   })
+})
+
+test("Studio Worker deployments enable disconnect signals for forwarded reads", () => {
+  const config = celldConfig(celldStudio({ ...BASE, NORN_HOST_SERVICE: "norn-cell" }))
+  expect(config.compatibility_flags).toContain("enable_request_signal")
+  const alchemy = readFileSync(new URL("../alchemy.run.ts", import.meta.url), "utf8")
+  expect(alchemy).toContain("compatibilityFlags: [...STUDIO_WORKER_COMPATIBILITY_FLAGS]")
 })
 
 test("the cell host and the assistant bind only when configured", () => {

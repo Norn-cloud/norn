@@ -55,8 +55,11 @@ export async function cellCall<T>(path: string, init: RequestInit = {}, fetcher:
       ? await resolveWriteScope(fetcher, boundScope)
       : boundScope !== undefined
         ? boundScope
-        : await readStudioScope(fetcher)
-  } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
+        : await readStudioScope(fetcher, init.signal ?? undefined)
+  } catch (error) {
+    if (error instanceof CellUnavailable && error.status === 404) return { kind: "unavailable" }
+    throw error
+  }
   if (scope === null) return { kind: "no-cell" }
   const active = scope
   const call = scopedHostFetch(fetcher, "/api/host", async () => active)

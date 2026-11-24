@@ -6,7 +6,10 @@ mod version;
 fn val_env_versions_never_alias_or_accept_unknown_formats() {
     let number: u32 = kani::any();
     match version::TypeEnvVersion::from_number(number) {
-        Some(version) => { assert!(number == 1 || number == 2); assert_eq!(version.number(), number); }
-        None => assert!(number != 1 && number != 2),
+        Some(version) => {
+            assert!(number == 1 || number == 2 || number == 3);
+            assert_eq!(version.number(), number);
+        }
+        None => assert!(number != 1 && number != 2 && number != 3),
     }
 }

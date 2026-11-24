@@ -1,5 +1,5 @@
 {
-  "bundleDigest": "f230f5ec20ebcd4321884f2add318ff018649c0b7bb8518d05c8d6d9cae9b3e2",
+  "bundleDigest": "fa74f922cd8ef32ca5c2e2b8fe7583021d78cf973df1449b2c6ca4be8f1ec0aa",
   "sourceRecordRef": {
     "system": "synthetic-erpnext",
     "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
@@ -11,8 +11,8 @@
   "documentDigest": "e8b16fcde65bf995830edf0c25889b6c78e8ced54a6720685d01e72afac142ac",
   "mappingPin": {
     "artifactId": "erpnext.three.mapping",
-    "version": "0.1.0",
-    "sha256": "1d538ebe3e9a2c5307c49eebd2713a83a7b831ef467a48ec8e2d9aaed1f0a5c5"
+    "version": "0.2.0",
+    "sha256": "1a08febe3975be4fe9a6408e7d0479cec083d90046dd703c6f10dad6c6a6381d"
   },
   "fieldProvenance": {
     "currency": {
@@ -20,7 +20,7 @@
         "system": "synthetic-erpnext",
         "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
       },
-      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.2.0",
       "transform": "order.currency",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -33,7 +33,7 @@
         "system": "synthetic-erpnext",
         "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
       },
-      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.2.0",
       "transform": "order.due_at",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -47,7 +47,7 @@
         "system": "synthetic-erpnext",
         "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
       },
-      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.2.0",
       "transform": "order.quantity",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -61,7 +61,7 @@
         "system": "synthetic-erpnext",
         "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
       },
-      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.2.0",
       "transform": "order.status",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -74,7 +74,7 @@
         "system": "synthetic-erpnext",
         "record": "Sales Order Item/erpnext/demo/Sales Order Item/SYN-ERPNEXT-order"
       },
-      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.2.0",
       "transform": "order.unit",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [

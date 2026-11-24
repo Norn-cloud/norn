@@ -194,3 +194,9 @@ pub struct LayoutViewport {
     /// Canvas zoom factor.
     pub zoom: Decimal,
 }
+
+/// JSON Schema for the versioned editor-layout sidecar.
+#[must_use]
+pub fn layout_sidecar_schema() -> Schema {
+    schemars::schema_for!(LayoutSidecar)
+}

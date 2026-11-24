@@ -4,6 +4,7 @@ import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } fr
 import { ChartLine, Database, House, Rows3 } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import { modeQuery, type Mode } from "../src/lib/live-transport.ts"
 import type { Account } from "../src/lib/session.ts"
 import { Shell, decoded, diffExpanded, initials, perspectiveOf, sectionOf, target, type MenuEntry, type Section } from "../src/shell.tsx"
 import { isEmptyWorkspace } from "../src/home.tsx"
@@ -191,18 +192,25 @@ test("collapsing one space records only that branch, leaving untouched destinati
   expect(next).toEqual({ "space:Operations": false, "dest:/metrics": true })
 })
 
-test("#1414: the workspace switcher shows the workspace name and plan/role, never raw org or environment ids", async () => {
+test("#1414: the workspace switcher shows the workspace name and role, never raw org or environment ids", async () => {
   const rawAccount: Account = {
     user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" },
     organization: { id: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", name: "Analytical", role: "owner" },
   }
   const client = new QueryClient()
+  const scope = { orgId: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", environmentId: "rehearsal2" }
   client.setQueryData(["session"], rawAccount)
-  client.setQueryData(["studio-scope"], { orgId: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", environmentId: "rehearsal2" })
-  client.setQueryData(["studio-mode"], { kind: "live", catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {} })
+  client.setQueryData(["studio-scope"], scope)
+  const liveMode: Mode = {
+    kind: "live",
+    scope,
+    catalog: { document: [], numbers: new Map(), origin: "live" },
+    counts: {},
+    publishedQuestions: new Set(),
+  }
+  client.setQueryData(modeQuery(scope).queryKey, liveMode)
   const doc: WorkspacesDocument = {
     workspaces: [{ id: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", name: "Analytical", slug: "analytical", role: "owner", active: true, hasCell: true }],
-    planLabel: "Free plan",
   }
   client.setQueryData(WORKSPACES_QUERY_KEY, doc)
   const router = createRouter({
@@ -212,7 +220,7 @@ test("#1414: the workspace switcher shows the workspace name and plan/role, neve
   await router.load()
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
   expect(html).toContain("Analytical")
-  expect(html).toContain("Live · Free plan")
+  expect(html).toContain("Live · Owner")
   expect(html).not.toContain("MPu3nAkCMSqDEjamX5eb9IB6or836fCS")
   expect(html).not.toContain("rehearsal2")
   expect(html).not.toContain("New workspace")

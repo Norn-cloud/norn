@@ -48,6 +48,8 @@ mod invariant_commit;
 mod limits;
 #[path = "location_hierarchy.rs"]
 mod location_hierarchy;
+#[path = "predicate_slice_and_links.rs"]
+mod predicate_slice_and_links;
 #[path = "psm_action_laws.rs"]
 mod psm_action_laws;
 #[path = "psm_action_transition.rs"]
@@ -62,6 +64,8 @@ mod quantity_reservations;
 mod receipt_effect;
 #[path = "refusal_taxonomy.rs"]
 mod refusal_taxonomy;
+#[path = "registry_ref_invariants.rs"]
+mod registry_ref_invariants;
 #[path = "result_reconciliation.rs"]
 mod result_reconciliation;
 #[path = "snapshot_observe.rs"]

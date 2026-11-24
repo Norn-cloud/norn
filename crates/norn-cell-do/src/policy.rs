@@ -45,7 +45,7 @@ use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
 };
 
-use crate::actions::ActionPolicy;
+use crate::actions::{ActionPolicy, collection_access_key};
 
 use crate::seed::SeedError;
 
@@ -772,17 +772,17 @@ impl ReadPolicy {
         authz::authorize(&pdp, &request).is_ok()
     }
 
-    /// The trusted disclosure request for `request`: the verified caller, its
-    /// declared roles and a `norn.disclose_refusal_detail` grant in this
-    /// cell's scope, asking for the diagnostic of an action the cell's policy
-    /// governs. `None` (deny) for any other caller or action.
+    /// Trusted disclosure request for `request` (DIAG-DISCLOSE-1); `None` denies.
     fn disclosure_request(
         &self,
         request: &RefusalDetailRequest<'_>,
     ) -> Option<(Pdp, authz::AccessRequest)> {
         let caller = self.member(request.actor)?;
-        self.action_policy()
-            .filter(|policy| policy.callable(request.action_id))?;
+        (request.action_id == norn_api::decisions::DECISION_REFUSAL_ACTION
+            || self
+                .action_policy()
+                .is_some_and(|p| p.callable(request.action_id)))
+        .then_some(())?;
         let actor_kind = match caller.actor_kind {
             "user" => ActorKind::User,
             "service" => ActorKind::Service,
@@ -1038,6 +1038,27 @@ impl Authorizer for ReadPolicy {
                 })
     }
 
+    fn authorize_automation_grant(
+        &self,
+        request: &norn_api::authz::AutomationGrantRequest<'_>,
+    ) -> Result<norn_api::authz::VerifiedAutomationGrant, Refusal> {
+        if scope_key(request.scope) != self.key {
+            return Err(norn_api::authz::read_denied());
+        }
+        let parent_grant_ids = self
+            .member(request.actor)
+            .zip(self.action_policy())
+            .and_then(|(caller, policy)| {
+                policy.authorize_automation_grant(
+                    &caller,
+                    &request.action.action_id,
+                    request.matched_types,
+                )
+            })
+            .ok_or_else(norn_api::authz::read_denied)?;
+        Ok(norn_api::authz::VerifiedAutomationGrant { parent_grant_ids })
+    }
+
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
         let asked = request.access.capability == capability_name(request.capability)
             && request.access.action_id == READ_ACTION
@@ -1133,36 +1154,6 @@ impl RoleReads {
                 )
                 .is_ok()
             })
-    }
-}
-
-fn collection_access_key(
-    key: &ScopeKey,
-    subject: &str,
-    capability: ReadCapability,
-    object_type: &str,
-) -> norn_kernel::authz::AccessRequest {
-    let key = key.clone();
-    norn_kernel::authz::AccessRequest {
-        principal: norn_kernel::authz::PrincipalInput {
-            subject_id: subject.into(),
-            actor_kind: ActorKind::User,
-            agent_session_id: None,
-            roles: vec![],
-            attributes: std::collections::BTreeMap::new(),
-        },
-        scope: Some(key.clone()),
-        capability: capability_name(capability).into(),
-        action_id: READ_ACTION.into(),
-        resource: norn_kernel::authz::ResourceInput {
-            object_type: object_type.into(),
-            id: object_type.into(),
-            scope: key,
-            attributes: std::collections::BTreeMap::new(),
-        },
-        context: std::collections::BTreeMap::new(),
-        binding: None,
-        delegation: norn_kernel::authz::Delegation::Direct,
     }
 }
 

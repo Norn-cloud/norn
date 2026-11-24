@@ -1,0 +1,31 @@
+{
+  "artifactId": "identity.Directory.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Directory",
+  "namespace": "identity",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "Named directory entry implemented by identity scope boundaries such as identity.BusinessUnit.",
+      "name": "identity.Directory",
+      "properties": [
+        {
+          "id": "name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/identity.Directory.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

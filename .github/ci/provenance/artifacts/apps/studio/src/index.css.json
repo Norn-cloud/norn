@@ -1,5 +1,5 @@
 {
-  "sha256": "090ac2dfdbe475e5808d961f379d8a8d3d53dd89b52994313da5b4c95208a1e0",
+  "sha256": "0e91048df3f68b33a474c35a222c4332a5f3f210a3dde9c9ed15c06c55664d77",
   "origin": "derived",
   "category": "software",
   "license": "MIT",
@@ -9,7 +9,7 @@
       "revision": "4aaea19d9cff3e0908e12a8c1d504b8c5ec34610",
       "evidence": {
         "path": "apps/studio/src/components/ui/provenance.json",
-        "sha256": "173c33669988a7a9299ca004641e4a6b5983a4cfff64a30771424e941ace4623"
+        "sha256": "15970611f480966a7643ab63a462f47e24c030d3349b6ebdfb62e743d334091f"
       }
     }
   ],
@@ -18,7 +18,7 @@
   "rights_evidence": [
     {
       "path": "apps/studio/src/components/ui/provenance.json",
-      "sha256": "173c33669988a7a9299ca004641e4a6b5983a4cfff64a30771424e941ace4623"
+      "sha256": "15970611f480966a7643ab63a462f47e24c030d3349b6ebdfb62e743d334091f"
     },
     {
       "path": "apps/studio/src/components/ui/LICENSE",

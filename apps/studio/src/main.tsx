@@ -1,10 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Blend, ChartLine, Columns2, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
-import { StrictMode } from "react"
+import { BarChart3, Blend, Bookmark, BookMarked, ChartLine, Columns2, Database, FileDiff, Fingerprint, GitCompareArrows, House, Inbox, LayoutDashboard, Map as MapIcon, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
+import { StrictMode, useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import { scopeFromAccount } from "@/lib/definitions"
-import { endSession, useAccount } from "@/lib/session"
+import { CellUnavailable, scopeFromAccount } from "@/lib/definitions"
+import { CellRefusal, NotServed } from "@/lib/live-transport"
+import { endSession, useAccount, type Account } from "@/lib/session"
+import { applyAppearance, storedShellChrome, storedSkin } from "@/lib/appearance"
+import { storedCustomTheme } from "@/lib/studio-theme"
+import "./bones/registry.ts"
+import { isSectionVisible, useLearningCapabilities } from "@/lib/learning/capabilities"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
@@ -16,6 +21,7 @@ import { routeTree } from "./routes.tsx"
 import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
 import { Shell, type Section } from "./shell.tsx"
 import { useRecordsMenu, useSourcesMenu } from "./sources.tsx"
+import { useViewsMenu } from "./views.tsx"
 import { useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
 
@@ -25,21 +31,47 @@ import "./index.css"
  */
 const SECTIONS: readonly Section[] = [
   { path: "/", label: "Home", icon: House, perspective: "global" },
-  { path: "/decisions", label: "Inbox", icon: Inbox, perspective: "global", useBadge: useDecisionBadge, paths: ["/episodes"] },
+  { path: "/decisions", label: "Inbox", icon: Inbox, perspective: "global", useBadge: useDecisionBadge },
   // Workspace: what an operator works with.
   { path: "/objects", label: "Records", icon: Rows3, perspective: "workspace", group: "Data", kind: "source", useMenu: useRecordsMenu, index: false },
+  { path: "/views", label: "Views", icon: Bookmark, perspective: "workspace", group: "Data", useMenu: useViewsMenu, pinned: true },
   { path: "/metrics", label: "Metrics", icon: ChartLine, perspective: "workspace", group: "Analysis", kind: "question", useMenu: useQuestionsMenu },
   { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, perspective: "workspace", group: "Analysis" },
   { path: "/workflows", label: "Workflows", icon: Workflow, perspective: "workspace", group: "Operations", kind: "workflow", useMenu: useWorkflowsMenu, paths: ["/runs"] },
   { path: "/imports", label: "Import triage", icon: Columns2, perspective: "workspace", group: "Operations", useBadge: useImportTriageBadge },
+  { path: "/learning/episodes", label: "Episodes", icon: GitCompareArrows, perspective: "workspace", group: "Learning", paths: ["/episodes"] },
+  { path: "/learning/cases", label: "Cases & eval sets", icon: BookMarked, perspective: "workspace", group: "Learning" },
+  { path: "/learning/misfit", label: "Misfit board", icon: BarChart3, perspective: "workspace", group: "Learning" },
+  { path: "/learning/proposals", label: "Proposals", icon: FileDiff, perspective: "workspace", group: "Learning" },
   // Builder: how the model is made.
   { path: "/sources", label: "Sources", icon: Database, perspective: "builder", group: "Model", kind: "source", useMenu: useSourcesMenu, paths: ["/objects"] },
+  { path: "/map", label: "Semantic map", icon: MapIcon, perspective: "builder", group: "Model", kind: "objectType" },
   { path: "/transforms", label: "Transforms", icon: Blend, perspective: "builder", group: "Model", kind: "transform" },
   { path: "/canvas", label: "Canvas", icon: Network, perspective: "builder", group: "Logic" },
   { path: "/rules", label: "Rules", icon: ShieldCheck, perspective: "builder", group: "Logic", kind: "guarantee", useMenu: useRulesMenu },
   { path: "/markings", label: "Markings", icon: Fingerprint, perspective: "builder", group: "Logic" },
   { path: "/connections", label: "Connections", icon: Plug, perspective: "builder", group: "Settings" },
 ]
+
+/**
+ * Signed-in shell: reads Learning capabilities once from the current scoped cell's catalog
+ * (`GET /v1/definitions`, shared with every route gate via `useMode()`). Learning entries carry no
+ * menu/badge hooks, so omitting unavailable ones keeps Shell's hook order invariant.
+ */
+function SignedInShell({ account, sidekick }: { readonly account: Account; readonly sidekick: boolean }) {
+  const learning = useLearningCapabilities()
+  const sections = useMemo(() => SECTIONS.filter((section) => isSectionVisible(section.path, learning)), [learning])
+  const sidekickScopeKey = `${account.user.id}:${account.organization?.id ?? ""}:${account.environmentId ?? ""}`
+  const sidekickScope = scopeFromAccount(account)
+  return (
+    <Shell
+      sections={sections}
+      assistant={sidekick ? { title: "Sidekick", content: <Sidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
+      account={account}
+      onSignOut={() => void signOut()}
+    />
+  )
+}
 
 /**
  * Signed out (an explicit 401), a visitor sees only the sign-in page; signed in, the Studio.
@@ -49,18 +81,7 @@ function Root() {
   const account = useAccount()
   // Sidekick is offered only where a bridge serves it (a private deployment); elsewhere the rail shows no entry for it.
   const sidekick = useSidekickServed()
-  if (account.data != null) {
-    const sidekickScopeKey = `${account.data.user.id}:${account.data.organization?.id ?? ""}:${account.data.environmentId ?? ""}`
-    const sidekickScope = scopeFromAccount(account.data)
-    return (
-      <Shell
-        sections={SECTIONS}
-        assistant={sidekick ? { title: "Sidekick", content: <Sidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
-        account={account.data}
-        onSignOut={() => void signOut()}
-      />
-    )
-  }
+  if (account.data != null) return <SignedInShell account={account.data} sidekick={sidekick} />
   if (account.isPending) return null
   if (account.isError) {
     return (
@@ -82,14 +103,30 @@ async function signOut() {
   }
 }
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) => {
+        if (error instanceof NotServed) return false
+        if (error instanceof CellUnavailable && error.retryable === false) return false
+        if (error instanceof CellRefusal && error.retryable === false) return false
+        return failureCount < 3
+      },
+    },
+  },
+})
 const root = createRootRoute({ component: Root })
 const router = createRouter({ routeTree: routeTree(root) })
 
-// Dark and light are peers: follow the reader's system setting.
+// Dark and light are peers: follow the reader's system setting unless a custom theme pins an explicit appearance.
 const dark = window.matchMedia("(prefers-color-scheme: dark)")
-const applyScheme = () => document.documentElement.classList.toggle("dark", dark.matches)
+const applyScheme = () => {
+  const forced = document.documentElement.dataset.forcedAppearance
+  if (forced === "dark" || forced === "light") return
+  document.documentElement.classList.toggle("dark", dark.matches)
+}
 applyScheme()
+applyAppearance(storedSkin(), storedShellChrome(), undefined, storedCustomTheme())
 dark.addEventListener("change", applyScheme)
 
 // An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.

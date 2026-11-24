@@ -3,13 +3,13 @@ import { ChartArea, ChartColumn, ChartLine, ChartPie, Hash, Maximize2, Table2, t
 import { useState } from "react"
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, XAxis, YAxis, type PieLabelRenderProps } from "recharts"
 import { ValidationPanel } from "@/components/editor"
+import { LoadState } from "@/components/load-state"
 import { EmptyState, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { buckets, declarations, fraction, shown, type Bucket } from "@/lib/answer"
 import { chartEmpty, chartFrame, pieSlices, type ChartFrame } from "@/lib/chart"
@@ -188,8 +188,8 @@ export function TileAnswer({ tile, catalog, scope }: { readonly tile: Pick<Tile,
   // The bucket whose records open with the details: a number asked for its trace.
   const [tracing, setTracing] = useState<string>()
   const result = run.data
-  if (run.isPending) return <Well className="p-3"><Skeleton className="h-40 w-full rounded-md" /></Well>
-  if (run.isError || result === undefined) return <Well><p role="alert" className="px-2 py-6 text-center text-meta text-destructive">Not run: {run.error instanceof Error ? run.error.message : "no answer"}</p></Well>
+  if (run.isPending) return <LoadState status="pending" skeleton="panel" loadingLabel={`Reading ${tile.title}`} onRetry={() => void run.refetch()}>{() => null}</LoadState>
+  if (run.isError || result === undefined) return <LoadState status="error" error={run.error ?? new Error("The cell did not answer.")} isFetching={run.isFetching} onRetry={() => void run.refetch()}>{() => null}</LoadState>
   if (result.kind !== "answer") return <Well><NoAnswer result={result} /></Well>
   const read = answerRead(question, catalog, result)
   const declared = declarations(read)

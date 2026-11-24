@@ -2,12 +2,13 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import { ChartLine, CircleCheck, Play, Plus } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
+import { LoadState } from "@/components/load-state"
 import { EmptyState, Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { CellUnavailable, defaultFetch, fetchWithTimeout, getDisplayedScope, parseUnavailableDetail, scopeHeaders, useStudioScope, type StudioScope } from "@/lib/definitions"
 import { list, modKey, sameValue, type Issue } from "@/lib/editor"
 import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
-import { getDisplayedScope, scopeHeaders, useStudioScope, type StudioScope } from "./lib/definitions.ts"
 import { usePinnedScope } from "./lib/session.ts"
 import { readDocument } from "./lib/exact.ts"
 import { readMetrics, recentWindow } from "./lib/metrics.ts"
@@ -106,8 +107,16 @@ const UNAVAILABLE = "The question catalogue is not available on this deployment.
 
 export async function readCatalog(boundScope?: StudioScope | null): Promise<QuestionCatalog> {
   const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
-  const response = await fetch("/api/questions/catalog", { headers: { accept: "application/json", ...scopeHeaders(scope) } })
-  if (!response.ok) throw new Error(response.status === 401 ? "Sign in to build questions." : UNAVAILABLE)
+  const response = await fetchWithTimeout(defaultFetch, "/api/questions/catalog", { headers: { accept: "application/json", ...scopeHeaders(scope) } })
+  if (!response.ok) {
+    if (response.status === 401) throw new Error("Sign in to build questions.")
+    if (response.status >= 500) {
+      const body = await response.json().catch(() => null)
+      const message = typeof (body as { message?: unknown } | null)?.message === "string" ? (body as { message: string }).message : undefined
+      throw new CellUnavailable(response.status, message, parseUnavailableDetail(body))
+    }
+    throw new Error(UNAVAILABLE)
+  }
   const catalog = catalogOf(await response.json().catch(() => undefined))
   if (catalog === undefined) throw new Error(UNAVAILABLE)
   return catalog
@@ -311,12 +320,13 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
   )
 }
 
-/** The checker's admission, quietly: its own restatement is one click away. */
+/** The checker's admission, quietly: its own restatement is one click away, verbatim. */
 function Checked({ verdict }: { readonly verdict: QuestionVerdict }) {
+  const canonical = verdict.restatement?.text
   return (
     <details className="group text-meta text-muted-foreground">
       <summary className="flex cursor-pointer list-none items-center gap-1.5"><CircleCheck aria-hidden className="size-3.5 text-success" />Checked by the server<span className="underline-offset-4 group-open:hidden hover:underline">· what it read</span></summary>
-      <p className="mt-1.5 max-w-[72ch] text-pretty">{verdict.restatement?.text ?? "The checker admitted this question."}</p>
+      <p className="mt-1.5 max-w-[72ch] text-pretty">{canonical ?? "The checker admitted this question."}</p>
     </details>
   )
 }
@@ -330,7 +340,7 @@ function BuiltAnswer({ question, catalog, title, scope }: { readonly question: Q
   const scopeKey = scope ? `${scope.orgId}:${scope.environmentId}` : ""
   const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: () => readMetrics(scope), retry: false, staleTime: 60_000 })
   const [picked, setPicked] = useState<UnitGroup | null>(null)
-  if (metrics.isPending) return <p className="text-sm text-muted-foreground">Asking the cell…</p>
+  if (metrics.isPending) return <LoadState status="pending" skeleton="panel" loadingLabel="Reading metric definitions" onRetry={() => void metrics.refetch()}>{() => null}</LoadState>
   const partitions = question.aggregate.map(({ metric }) => metrics.data?.document.metrics.find(({ name }) => name === metric)?.unitPartition ?? [])
   const sources = partitions[0] ?? []
   const shared = partitions.every((partition) => partition.length === sources.length && partition.every((property, index) => property === sources[index]))
@@ -350,9 +360,17 @@ export function QuestionBuilderPage() {
         <h1 className="text-title font-semibold tracking-tight">Explore a metric</h1>
         <p className="max-w-2xl text-muted-foreground">Pick what to measure, how to group it, which records count and over which dates, then Run. The server checks the question before it answers.</p>
       </div>
-      {catalog.isPending && <p className="text-muted-foreground">Reading the catalogue…</p>}
-      {catalog.isError && <EmptyState icon={ChartLine}>{catalog.error.message}</EmptyState>}
-      {catalog.data && <QuestionBuilder key={scopeKey} catalog={catalog.data} originScope={scope.data} guard={(dirty) => <DirtyGuard dirty={dirty} />} />}
+      <LoadState
+        status={catalog.status}
+        data={catalog.data}
+        error={catalog.error}
+        isFetching={catalog.isFetching}
+        onRetry={() => void catalog.refetch()}
+        skeleton="detail"
+        loadingLabel="Reading metric catalogue"
+      >
+        {(data) => <QuestionBuilder key={scopeKey} catalog={data} originScope={scope.data} guard={(dirty) => <DirtyGuard dirty={dirty} />} />}
+      </LoadState>
     </section>
   )
 }

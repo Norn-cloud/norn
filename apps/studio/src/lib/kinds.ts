@@ -19,14 +19,14 @@ export interface KindStyle {
 
 // Literal class names, so Tailwind finds them.
 export const KINDS: Readonly<Record<Kind, KindStyle>> = {
-  source: { label: "Source", icon: Database, text: "text-kind-source", fill: "bg-kind-source/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
-  mapping: { label: "Mapping", icon: ArrowRightLeft, text: "text-kind-mapping", fill: "bg-kind-mapping/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
-  objectType: { label: "Object type", icon: Box, text: "text-kind-object", fill: "bg-kind-object/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
-  transform: { label: "Transform", icon: Blend, text: "text-kind-transform", fill: "bg-kind-transform/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
-  question: { label: "Question", icon: ChartLine, text: "text-kind-question", fill: "bg-kind-question/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
-  workflow: { label: "Workflow", icon: Workflow, text: "text-kind-workflow", fill: "bg-kind-workflow/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
-  guarantee: { label: "Rule", icon: ShieldCheck, text: "text-kind-guarantee", fill: "bg-kind-guarantee/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
-  policy: { label: "Policy", icon: Scale, text: "text-kind-policy", fill: "bg-kind-policy/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-foreground" },
+  source: { label: "Source", icon: Database, text: "text-kind-source", fill: "bg-kind-source/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
+  mapping: { label: "Mapping", icon: ArrowRightLeft, text: "text-kind-mapping", fill: "bg-kind-mapping/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
+  objectType: { label: "Object type", icon: Box, text: "text-kind-object", fill: "bg-kind-object/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
+  transform: { label: "Transform", icon: Blend, text: "text-kind-transform", fill: "bg-kind-transform/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
+  question: { label: "Question", icon: ChartLine, text: "text-kind-question", fill: "bg-kind-question/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
+  workflow: { label: "Workflow", icon: Workflow, text: "text-kind-workflow", fill: "bg-kind-workflow/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
+  guarantee: { label: "Rule", icon: ShieldCheck, text: "text-kind-guarantee", fill: "bg-kind-guarantee/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
+  policy: { label: "Policy", icon: Scale, text: "text-kind-policy", fill: "bg-kind-policy/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
 }
 
 /** What a check's result means: held, held with a declared loss, refused or broken, or not known. */

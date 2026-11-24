@@ -5,16 +5,21 @@
 //! `NORN_RECORD_ENGINE_FIXTURE=$PWD/crates/norn-cell/tests/fixtures/engine-storage-vN.json \
 //!   cargo test -p norn-cell --lib suites::engine_fixture_record -- --ignored`
 //!
-//! It uses only APIs every storage version has, so it builds unchanged
-//! against an older checkout. `engine-storage-v1.json` was recorded this way
-//! on `main` at 962938d9d8, the last storage-version-1 engine, and
+//! For v6, apply this recorder and the test-only checkpoint options in
+//! `support/engine_fixture.rs` to the named v6 checkout before recording.
+//!
+//! `engine-storage-v1.json` was recorded on `main` at 962938d9d8, the last storage-version-1 engine, and
 //! `engine-storage-v2.json` on `main` at 592458be94, the last
 //! storage-version-2 engine, `engine-storage-v3.json` on `main` at
-//! 3931329a9a, the last storage-version-3 engine, and
-//! `engine-storage-v4.json` at e09c0f2e25, the last storage-version-4
-//! engine.
+//! 3931329a9a, the last storage-version-3 engine, `engine-storage-v4.json`
+//! at e09c0f2e25, the last storage-version-4 engine, and
+//! `engine-storage-v5.json` on `main` at 919482b548, the last
+//! storage-version-5 engine, and `engine-storage-v6.json` on `main` at
+//! 3a8dea5338, the OPEN-CHECKPOINT-1 storage-version-6 engine.
 #![cfg(feature = "native")]
 #![allow(clippy::expect_used, missing_docs, reason = "fixture recorder")]
+
+use crate::engine::SqlEngine as _;
 
 #[path = "support/engine_fixture.rs"]
 mod engine_fixture;
@@ -26,7 +31,27 @@ fn record_engine_storage_fixture() {
     let dir = tempfile::tempdir().expect("directory");
     let cell = dir.path().join("cell.sqlite");
     engine_fixture::write_cell(&cell);
+    let store = norn_cell::CellStore::open(
+        &cell,
+        engine_fixture::model(),
+        engine_fixture::checkpoint_fixture_options(),
+    )
+    .expect("open with fixture checkpoint key");
+    store
+        .conn
+        .transaction(|| {
+            let verified = store.verify_history(&std::cell::RefCell::default())?;
+            store.finish_open_scrub(true, &verified)
+        })
+        .expect("record an authenticated checkpoint for the short fixture");
+    drop(store);
     let image = engine_fixture::image_of(&cell);
+    assert_eq!(
+        image["tables"]["_norn_open_checkpoint"]["rows"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
     let text = serde_json::to_string_pretty(&image).expect("image") + "\n";
     std::fs::write(out, text).expect("write fixture");
 }

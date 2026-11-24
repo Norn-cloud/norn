@@ -104,10 +104,19 @@ use crate::{Expression, Number, UnaryTest};
 pub(crate) mod bounds;
 mod cost;
 mod sites;
-mod units;
-use units::{Operand, Operation};
+mod tzdb;
+pub(crate) mod units;
+use units::{Operand, Operation, exact_type, expected_exact_type};
+pub(crate) use units::{decimal_destination, validate_exact_environment};
 
 pub use bounds::StructuralLimits;
+pub use tzdb::{
+    check_expression, check_expression_in, check_expression_under, check_expression_under_in,
+    check_expression_with, check_expression_with_in, check_expression_with_root_bounds,
+    check_expression_with_root_bounds_in, check_expression_with_sources,
+    check_expression_with_sources_in, check_unary, check_unary_in, check_unary_with,
+    check_unary_with_in,
+};
 
 /// The checker profile: the admitted grammar documented in this module, its
 /// structural bounds ([`StructuralLimits::NORN_EXPR_4`]), and the static cost
@@ -340,8 +349,29 @@ pub fn certify_expression(
     expected: &Type,
     limits: &ResourceLimitProfile,
 ) -> Result<(CheckedExpression, FuelCertificate), String> {
+    certify_expression_in(
+        expression,
+        env,
+        expected,
+        limits,
+        crate::temporal::TzdbBundle::default_bundle(),
+    )
+}
+
+/// [`certify_expression`] against an explicit versioned
+/// [`TzdbBundle`](crate::temporal::TzdbBundle).
+///
+/// # Errors
+/// Refuses unsupported expressions, over-budget or overflowing bounds.
+pub fn certify_expression_in(
+    expression: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+    limits: &ResourceLimitProfile,
+    tzdb: &crate::temporal::TzdbBundle,
+) -> Result<(CheckedExpression, FuelCertificate), String> {
     let checked = check_expression_with_sources_and_root_bounds(
-        expression, env, expected, limits, None, true,
+        expression, env, expected, limits, None, true, tzdb,
     )
     .map(|(checked, _)| checked)
     .map_err(|errors| format!("expression cost admission refused: {errors:?}"))?;
@@ -498,24 +528,6 @@ impl CheckedExpression {
     pub const fn cost(&self) -> CostEstimate {
         self.cost
     }
-}
-
-/// Type-checks `expr` in `env` under [`CHECKER_PROFILE`] and the shipped limit
-/// profile `norn.limits/1`, and checks its result against `expected`.
-///
-/// [`check_expression_with`] under
-/// [`ResourceLimitProfile::norn_limits_v1`], returning only the type.
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found.
-pub fn check_expression(
-    expr: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-) -> Result<InferredType, Vec<Diagnostic>> {
-    check_expression_with(expr, env, expected, &ResourceLimitProfile::norn_limits_v1())
-        .map(CheckedExpression::into_inferred)
 }
 
 /// Validates the source-level bounds and exact numeric literals used by an
@@ -837,37 +849,6 @@ fn validate_source(
     }
 }
 
-/// Type-checks `expr` in `env` under [`CHECKER_PROFILE`] and checks its result
-/// against `expected`, bounding it by `limits`.
-///
-/// Returns the proved [`InferredType`] of the result and its [`CostEstimate`],
-/// or every finding. See the module docs for the admitted grammar. Numeric
-/// scale and integrality are not proved statically: a `number` result is
-/// assignable to `integer`/`decimal`. Date and timestamp properties retain
-/// distinct inferred types and may be projected to unformatted string-shaped
-/// rule outputs; shared temporal property invariants enforce their wire formats
-/// before admitted expressions run on committed values. Duration remains an
-/// ordinary string.
-///
-/// Before any recursive walk the expression must pass the structural bounds
-/// ([`StructuralLimits::NORN_EXPR_4`]; closures nest at most
-/// `limits.slice.max_relation_depth` deep). After it type-checks, its static
-/// worst-case cost on a conforming slice must be at most
-/// `limits.decide.fuel_units` (`expr.cost.exceeds_budget` otherwise, with the
-/// estimate in the message).
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found.
-pub fn check_expression_with(
-    expr: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-    limits: &ResourceLimitProfile,
-) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources(expr, env, expected, limits).map(|(checked, _)| checked)
-}
-
 /// Enforced bounds on one independently bounded expression-context root.
 ///
 /// These are assumptions of the cost proof, not runtime enforcement or
@@ -883,65 +864,15 @@ pub struct RootCostBounds {
     pub max_records: u64,
 }
 
-/// Checks an expression whose named context roots have independent enforced
-/// bounds. Costs from separate roots add; their bytes are never pooled.
-/// Unlisted roots retain the default shared context bound from `limits`.
-/// Structural, type, and fuel gates are identical to [`check_expression_with`].
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found by the expression checker.
-pub fn check_expression_with_root_bounds(
+pub(crate) fn check_typed_expression_in(
     expr: &Expression,
     env: &ZenTypeEnv,
     expected: &Type,
     limits: &ResourceLimitProfile,
-    root_bounds: &BTreeMap<String, RootCostBounds>,
+    tzdb: &crate::temporal::TzdbBundle,
 ) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(
-        expr,
-        env,
-        expected,
-        limits,
-        Some(root_bounds),
-        true,
-    )
-    .map(|(checked, _)| checked)
-}
-
-/// Checks an expression with the same bounds and grammar as
-/// [`check_expression_with`], retaining its owned construction sources.
-///
-/// Provenance is unavailable when any required AST span or literal member key
-/// cannot be projected faithfully. Parentheses are unwrapped, while arbitrary
-/// operations remain scalar sources; this is not an integrality proof.
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found by the expression checker.
-pub fn check_expression_with_sources(
-    expr: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-    limits: &ResourceLimitProfile,
-) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None, false)
-}
-
-pub(crate) fn check_typed_expression(
-    expr: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(
-        expr,
-        env,
-        expected,
-        &ResourceLimitProfile::norn_limits_v1(),
-        None,
-        true,
-    )
-    .map(|(checked, _)| checked)
+    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None, true, tzdb)
+        .map(|(checked, _)| checked)
 }
 
 /// VAL-EXACT-1: select the exact runtime only for declared reads/results or an explicit site.
@@ -994,6 +925,7 @@ struct AnalysisContext<'a> {
     exact_enabled: bool,
     /// Read paths a guarding condition proved non-null.
     assumed: &'a [Vec<String>],
+    tzdb: &'a crate::temporal::TzdbBundle,
 }
 struct Analysis {
     inferred: Option<InferredType>,
@@ -1018,6 +950,7 @@ fn analyze_expression(
         root_bounds,
         exact_enabled,
         assumed,
+        tzdb,
     } = *context;
     let structural = StructuralLimits::NORN_EXPR_4;
     let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
@@ -1041,7 +974,7 @@ fn analyze_expression(
             runtime_source: Ok(source.to_owned()),
         };
     }
-    let mut checker = Checker::new(env, metadata, None);
+    let mut checker = Checker::new(env, metadata, None, tzdb);
     checker.exact_math = exact_enabled;
     checker.non_null = assumed.to_vec();
     let expectation = checker.expectation(expected);
@@ -1086,50 +1019,42 @@ fn analyze_expression(
     }
 }
 
-fn check_expression_with_sources_and_root_bounds(
+pub(super) struct CheckOptions<'a> {
+    pub(super) limits: &'a ResourceLimitProfile,
+    pub(super) root_bounds: Option<&'a BTreeMap<String, RootCostBounds>>,
+    pub(super) exact_enabled: bool,
+    pub(super) assumed: &'a [Vec<String>],
+    pub(super) tzdb: &'a crate::temporal::TzdbBundle,
+}
+
+pub(super) fn check_expression_with_sources_and_root_bounds(
     expr: &Expression,
     env: &ZenTypeEnv,
     expected: &Type,
     limits: &ResourceLimitProfile,
     root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
     exact_enabled: bool,
+    tzdb: &crate::temporal::TzdbBundle,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
-    check_guarded(expr, env, expected, limits, root_bounds, exact_enabled, &[])
-}
-
-/// [`check_expression`] for an expression evaluated only when a guarding
-/// condition holds (a law's response under its condition): every literal read
-/// path the condition proves non-null is read as non-null.
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found.
-pub fn check_expression_under(
-    expr: &Expression,
-    condition: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-) -> Result<InferredType, Vec<Diagnostic>> {
     check_guarded(
         expr,
         env,
         expected,
-        &ResourceLimitProfile::norn_limits_v1(),
-        None,
-        false,
-        &condition_null_guards(condition),
+        &CheckOptions {
+            limits,
+            root_bounds,
+            exact_enabled,
+            assumed: &[],
+            tzdb,
+        },
     )
-    .map(|(checked, _)| checked.into_inferred())
 }
 
-fn check_guarded(
+pub(super) fn check_guarded(
     expr: &Expression,
     env: &ZenTypeEnv,
     expected: &Type,
-    limits: &ResourceLimitProfile,
-    root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
-    exact_enabled: bool,
-    assumed: &[Vec<String>],
+    options: &CheckOptions<'_>,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
     let source = expr.source();
     let structural = StructuralLimits::NORN_EXPR_4;
@@ -1141,10 +1066,11 @@ fn check_guarded(
         source,
         env,
         expected,
-        limits,
-        root_bounds,
-        exact_enabled,
-        assumed,
+        limits: options.limits,
+        root_bounds: options.root_bounds,
+        exact_enabled: options.exact_enabled,
+        assumed: options.assumed,
+        tzdb: options.tzdb,
     };
     let outcome = intellisense.with_ast(source, false, |ast, metadata| {
         analyze_expression(ast, metadata, &context)
@@ -1168,8 +1094,16 @@ fn check_guarded(
     };
     // Only declared exact sites use error-on-zero division. Plain Number keeps
     // the legacy nullable division contract in this same checker.
-    if exact_enabled && !exact {
-        return check_guarded(expr, env, expected, limits, root_bounds, false, assumed);
+    if options.exact_enabled && !exact {
+        return check_guarded(
+            expr,
+            env,
+            expected,
+            &CheckOptions {
+                exact_enabled: false,
+                ..*options
+            },
+        );
     }
     if !diagnostics.is_empty() {
         return Err(diagnostics);
@@ -1188,7 +1122,7 @@ fn check_guarded(
             span,
         }]
     })?;
-    if exact_enabled && exact {
+    if options.exact_enabled && exact {
         diagnostics.extend(validate_lowered_source(&runtime_source, span));
     }
     // Cross-check: zen's strict analysis must not report an error either.
@@ -1205,7 +1139,7 @@ fn check_guarded(
             span,
         }]);
     }
-    let cost = lowered_cost(source, &runtime_source, cost, limits, span)?;
+    let cost = lowered_cost(source, &runtime_source, cost, options.limits, span)?;
     Ok((
         CheckedExpression {
             inferred,
@@ -1249,7 +1183,7 @@ fn validate_lowered_source(source: &str, span: (u32, u32)) -> Vec<Diagnostic> {
     let mut parser = IntelliSense::new();
     parser
         .with_ast(source, false, |ast, metadata| {
-            exact_admission(ast, metadata, false)
+            sites::exact_admission(ast, metadata, false)
         })
         .unwrap_or_else(|| {
             vec![Diagnostic {
@@ -1343,46 +1277,12 @@ fn within_budget(
 /// The name of a unary test's subject, the column value it tests.
 pub const SUBJECT_VARIABLE: &str = "$";
 
-/// Type-checks the unary test `test` against a subject `$` of type `subject`
-/// in `env`, under the same allowlist as [`check_expression`] and the shipped
-/// limit profile `norn.limits/1`.
-///
-/// [`check_unary_with`] under [`ResourceLimitProfile::norn_limits_v1`].
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found.
-pub fn check_unary(
-    test: &UnaryTest,
-    env: &ZenTypeEnv,
-    subject: &Type,
-) -> Result<(), Vec<Diagnostic>> {
-    check_unary_with(test, env, subject, &ResourceLimitProfile::norn_limits_v1()).map(|_| ())
-}
-
-/// Type-checks the unary test `test` against a subject `$` of type `subject`
-/// in `env`, under the same allowlist, structural bounds, and cost bound as
-/// [`check_expression_with`], and returns its [`CostEstimate`] (one cell
-/// evaluation; the subject is bounded like a slice of its own).
-///
-/// zen desugars each part of a unary test (joined by `,` as `or`, or by `and`
-/// / `or`) into a standard expression over `$`; see [`UnaryTest`]. Every part
-/// must check as a non-null `bool` under [`CHECKER_PROFILE`]. Invalid dynamic
-/// temporal operands can still fail with a typed runtime error. In
-/// particular `> 5` on a nullable subject is `expr.type.nullable` (handle it
-/// with `$ != null and ($ ?? 0) > 5`, or a non-null column), and `'retired'`
-/// against an enum subject that lacks that value is
-/// `expr.type.constant_comparison`. The empty wildcard test always checks,
-/// at no cost.
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found.
-pub fn check_unary_with(
+pub(super) fn check_unary_with_bundle(
     test: &UnaryTest,
     env: &ZenTypeEnv,
     subject: &Type,
     limits: &ResourceLimitProfile,
+    tzdb: &crate::temporal::TzdbBundle,
 ) -> Result<CostEstimate, Vec<Diagnostic>> {
     if test.is_wildcard() {
         return Ok(CostEstimate(0));
@@ -1406,7 +1306,7 @@ pub fn check_unary_with(
         if !found.is_empty() {
             return (found, whole, None);
         }
-        let mut checker = Checker::new(env, metadata, Some(subject));
+        let mut checker = Checker::new(env, metadata, Some(subject), tzdb);
         checker.unary_test(ast);
         let cost = checker
             .diagnostics
@@ -1723,7 +1623,7 @@ fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>, exact: bo
             Operand::Dimensionless
         }),
         Type::DecimalBinding { .. } => T::Number(if exact {
-            Operand::Unresolved
+            Operand::Bound(None)
         } else {
             Operand::Dimensionless
         }),
@@ -1739,6 +1639,7 @@ fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>, exact: bo
 }
 
 struct Scope {
+    id: usize,
     alias: Option<String>,
     element: T,
 }
@@ -1750,6 +1651,7 @@ struct Checker<'a> {
     /// expression, where `$` is not bound.
     subject: Option<&'a Type>,
     scopes: Vec<Scope>,
+    next_scope_id: usize,
     diagnostics: Vec<Diagnostic>,
     notes: Vec<Diagnostic>,
     /// The proved type of every inferred node, by address, for the cost
@@ -1761,6 +1663,7 @@ struct Checker<'a> {
     /// response is evaluated only when its condition holds. Expressions in
     /// the profile itself never narrow.
     non_null: Vec<Vec<String>>,
+    tzdb: &'a crate::temporal::TzdbBundle,
 }
 
 /// The literal read paths `node` proves non-null when it evaluates to
@@ -1876,18 +1779,25 @@ fn address(node: &Node<'_>) -> usize {
 }
 
 impl<'a> Checker<'a> {
-    fn new(env: &'a ZenTypeEnv, metadata: &'a AstMetadata, subject: Option<&'a Type>) -> Self {
+    fn new(
+        env: &'a ZenTypeEnv,
+        metadata: &'a AstMetadata,
+        subject: Option<&'a Type>,
+        tzdb: &'a crate::temporal::TzdbBundle,
+    ) -> Self {
         Self {
             env,
             metadata,
             subject,
             scopes: Vec::new(),
+            next_scope_id: 0,
             diagnostics: Vec::new(),
             notes: Vec::new(),
             types: HashMap::new(),
             exact: false,
             exact_math: false,
             non_null: Vec::new(),
+            tzdb,
         }
     }
 
@@ -2104,22 +2014,14 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn number(&mut self, node: &Node<'_>) -> Option<()> {
-        match self.value(node, Some(&T::Number(Operand::Dimensionless)))? {
-            T::Number(_) => Some(()),
-            ty @ (T::Null
-            | T::Bool
-            | T::Str(_)
-            | T::Date
-            | T::Timestamp
-            | T::ParsedDate
-            | T::ParsedTimestamp
-            | T::List(_)
-            | T::Record(_)
-            | T::Optional(_)) => self.report(
+    fn numeric_rounding(&mut self, node: &Node<'_>, operand: &Node<'_>) -> Option<Operand> {
+        let op = self.numeric(operand)?;
+        match units::admit_rounding(&op) {
+            Some(result) => Some(result),
+            None => self.report(
                 node,
-                codes::TYPE_ERROR,
-                format!("expected a number, found `{ty}`"),
+                codes::UNIT,
+                format!("VAL-UNIT / VAL-RATE: rounding refuses {op:?}"),
             ),
         }
     }
@@ -2239,7 +2141,14 @@ impl<'a> Checker<'a> {
     /// fractional dynamic value at runtime; fractional literals are known at
     /// admission and are refused here.
     fn temporal_amount(&mut self, node: &Node<'_>) -> Option<()> {
-        self.number(node)?;
+        let op = self.numeric(node)?;
+        if !units::destination(&op, &Operand::Dimensionless) {
+            return self.report(
+                node,
+                codes::UNIT,
+                format!("temporal arithmetic refuses dimensioned operand {op:?}"),
+            );
+        }
         if fractional_numeric_literal(node) {
             return self.report(
                 node,
@@ -2285,7 +2194,7 @@ impl<'a> Checker<'a> {
     fn iana_timezone_text(&mut self, node: &Node<'_>) -> Option<()> {
         self.string(node)?;
         if let Node::String(text) = unparenthesized(node)
-            && crate::temporal::validate_timezone(text).is_err()
+            && crate::temporal::validate_timezone_in(text, self.tzdb).is_err()
         {
             return self.report(
                 node,
@@ -2347,7 +2256,7 @@ impl<'a> Checker<'a> {
             Node::Null => Some(T::Null),
             Node::Bool(_) => Some(T::Bool),
             Node::Number(number) => match number.to_string().parse::<Number>() {
-                Ok(_) => Some(T::Number(Operand::Literal)),
+                Ok(parsed) => Some(T::Number(units::literal(&parsed))),
                 Err(err) => self.report(node, codes::TYPE_ERROR, err.to_string()),
             },
             Node::String(text) => Some(T::Str(Some(BTreeSet::from([(*text).to_owned()])))),
@@ -2662,7 +2571,33 @@ impl<'a> Checker<'a> {
                 };
                 self.exact |= exact_type(&field.ty);
                 match lower(&field.ty, depth, self.env, Some(&name), self.exact_math) {
-                    Some(ty) => Some(ty),
+                    Some(mut ty) => {
+                        if self.exact_math
+                            && let Some(group) = units::decimal_binding_group(&field.ty)
+                        {
+                            let owner = self.env.decimal_binding_owner(&name, key);
+                            let instance = units::instance_path(
+                                target,
+                                &|alias| {
+                                    self.scopes
+                                        .iter()
+                                        .rev()
+                                        .find(|scope| scope.alias.as_deref() == Some(alias))
+                                        .map(|scope| scope.id)
+                                },
+                                self.scopes.last().map(|scope| scope.id),
+                            );
+                            let op = units::bound_operand(owner, instance, group);
+                            if let T::Number(slot) = &mut ty {
+                                *slot = op;
+                            } else if let T::Optional(inner) = &mut ty
+                                && let T::Number(slot) = inner.as_mut()
+                            {
+                                *slot = op;
+                            }
+                        }
+                        Some(ty)
+                    }
                     None => self.report(
                         node,
                         codes::OPAQUE_READ,
@@ -2751,12 +2686,15 @@ impl<'a> Checker<'a> {
             ..
         } = unparenthesized(right)
         {
-            let low = self.number(low);
-            let high = self.number(high);
+            let low = self.numeric(low);
+            let high = self.numeric(high);
             let needle = needle?;
-            low.and(high)?;
+            let (low, high) = (low?, high?);
             return match needle {
-                T::Number(_) => Some(T::Bool),
+                T::Number(n) => self
+                    .numeric_operation(node, Operation::Compare, &n, &low)
+                    .and_then(|_| self.numeric_operation(node, Operation::Compare, &n, &high))
+                    .map(|_| T::Bool),
                 ty @ (T::Null
                 | T::Bool
                 | T::Str(_)
@@ -3192,13 +3130,17 @@ impl<'a> Checker<'a> {
                 let b = self.string(arguments.get(1)?);
                 a.and(b).map(|()| T::Bool)
             }
-            F::Abs | F::Floor | F::Ceil => {
+            F::Abs => {
                 self.arity(node, arguments, 1)?;
                 self.numeric(first?).map(T::Number)
             }
+            F::Floor | F::Ceil => {
+                self.arity(node, arguments, 1)?;
+                self.numeric_rounding(node, first?).map(T::Number)
+            }
             F::Round if arguments.len() == 3 => {
                 self.exact = true;
-                let operand = self.numeric(first?)?;
+                let operand = self.numeric_rounding(node, first?)?;
                 self.string(arguments.get(2)?)?;
                 if !matches!(arguments.get(1), Some(Node::Number(n)) if n.to_string().parse::<u8>().is_ok_and(|n| n <= 18))
                     || !matches!(
@@ -3224,7 +3166,7 @@ impl<'a> Checker<'a> {
                         "expected 1 or 2 arguments".to_owned(),
                     );
                 }
-                let operand = self.numeric(first?)?;
+                let operand = self.numeric_rounding(node, first?)?;
                 match arguments.get(1) {
                     None => Some(T::Number(operand)),
                     Some(Node::Number(places))
@@ -3245,7 +3187,30 @@ impl<'a> Checker<'a> {
                     first?,
                     Some(&T::List(Box::new(T::Number(Operand::Dimensionless)))),
                 )? {
-                    T::List(item) if matches!(*item, T::Number(_)) => Some(*item),
+                    T::List(item) => match *item {
+                        T::Number(op) => match units::admit_sum(&op) {
+                            Some(result) => Some(T::Number(result)),
+                            None => self.report(
+                                node,
+                                codes::UNIT,
+                                format!("VAL-UNIT / VAL-RATE: sum refuses {op:?}"),
+                            ),
+                        },
+                        ty @ (T::Null
+                        | T::Bool
+                        | T::Str(_)
+                        | T::Date
+                        | T::Timestamp
+                        | T::ParsedDate
+                        | T::ParsedTimestamp
+                        | T::List(_)
+                        | T::Record(_)
+                        | T::Optional(_)) => self.report(
+                            node,
+                            codes::TYPE_ERROR,
+                            format!("`sum` of `{}`", T::List(Box::new(ty))),
+                        ),
+                    },
                     ty @ (T::Null
                     | T::Bool
                     | T::Number(_)
@@ -3254,7 +3219,6 @@ impl<'a> Checker<'a> {
                     | T::Timestamp
                     | T::ParsedDate
                     | T::ParsedTimestamp
-                    | T::List(_)
                     | T::Record(_)
                     | T::Optional(_)) => {
                         self.report(node, codes::TYPE_ERROR, format!("`sum` of `{ty}`"))
@@ -3315,11 +3279,14 @@ impl<'a> Checker<'a> {
         let Some(Node::Closure { body, alias }) = arguments.get(1).copied() else {
             return self.unsupported(node, "a closure argument that is not a closure");
         };
+        let scope_id = self.next_scope_id;
+        self.next_scope_id = self.next_scope_id.saturating_add(1);
         self.scopes.push(Scope {
+            id: scope_id,
             alias: alias.map(ToOwned::to_owned),
             element: element.clone(),
         });
-        let result = match function {
+        let mut result = match function {
             C::Map => self.value(body, None).map(|ty| T::List(Box::new(ty))),
             // zen flattens one level: every element of a list body is spliced
             // in, so the result has the body's element type.
@@ -3347,6 +3314,9 @@ impl<'a> Checker<'a> {
             C::All | C::None | C::Some | C::One => self.boolean(body).map(|()| T::Bool),
         };
         self.scopes.pop();
+        if let Some(ty) = &mut result {
+            strip_scope_bounds(ty, scope_id);
+        }
         result
     }
 
@@ -3408,145 +3378,22 @@ impl<'a> Checker<'a> {
     }
 }
 
-pub(crate) fn validate_exact_environment(env: &ZenTypeEnv, prefix: &str) -> Result<(), String> {
-    for (name, record) in env
-        .records()
-        .iter()
-        .filter(|(name, _)| name.starts_with(prefix))
-    {
-        for field in record.fields.values() {
-            let mut ty = &field.ty;
-            while let Type::Optional(inner) | Type::List(inner) = ty {
-                ty = inner;
-            }
-            if let Type::Decimal {
-                unit,
-                currency_source,
-                per_unit,
-                ..
-            } = ty
-                && matches!(
-                    units::declared(
-                        env,
-                        Some(name),
-                        unit.as_ref(),
-                        currency_source.as_ref(),
-                        per_unit.as_ref()
-                    ),
-                    Operand::Unresolved
-                )
-            {
-                return Err("exact currency requires a fixed singleton currencySource and compatible Decimal bindings".into());
+fn strip_scope_bounds(ty: &mut T, scope_id: usize) {
+    match ty {
+        T::Number(operand) => units::strip_scope_operand(operand, scope_id),
+        T::List(inner) | T::Optional(inner) => strip_scope_bounds(inner, scope_id),
+        T::Record(Rec::Literal(fields)) => {
+            for field in fields.values_mut() {
+                strip_scope_bounds(field, scope_id);
             }
         }
+        T::Null
+        | T::Bool
+        | T::Str(_)
+        | T::Date
+        | T::Timestamp
+        | T::ParsedDate
+        | T::ParsedTimestamp
+        | T::Record(Rec::Env { .. }) => {}
     }
-    Ok(())
-}
-
-/// VAL-EXACT-1: record references are inspected when their members are read.
-fn exact_type(mut ty: &Type) -> bool {
-    while let Type::Optional(inner) | Type::List(inner) = ty {
-        ty = inner;
-    }
-    matches!(ty, Type::Decimal { .. })
-}
-
-fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {
-    let mut pending = vec![ty];
-    let mut visited = BTreeSet::new();
-    while let Some(ty) = pending.pop() {
-        if exact_type(ty) {
-            return true;
-        }
-        let mut names = Vec::new();
-        ty.records(&mut names);
-        for name in names {
-            if visited.insert(name.clone())
-                && let Some(record) = env.record(&name)
-            {
-                pending.extend(record.fields.values().map(|field| &field.ty));
-            }
-        }
-    }
-    false
-}
-
-pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType> {
-    while let Type::Optional(inner) = ty {
-        ty = inner;
-    }
-    let Type::Decimal {
-        scale,
-        unit,
-        rounding,
-        currency_source,
-        per_unit,
-    } = ty
-    else {
-        return None;
-    };
-    Some(norn_ir::PropertyType::Decimal {
-        additivity: norn_ir::PropertyAdditivity::Undeclared {},
-
-        scale: norn_ir::WholeNumber(*scale),
-        unit: unit.clone(),
-        rounding: Some(*rounding),
-        currency_source: currency_source.clone(),
-        per_unit: per_unit.clone(),
-        unit_source: Vec::new(),
-    })
-}
-
-/// VAL-ROUND: no information-losing operation enters the exact runtime implicitly.
-pub(crate) fn exact_admission<'n>(
-    root: &'n Node<'n>,
-    metadata: &AstMetadata,
-    destination: bool,
-) -> Vec<Diagnostic> {
-    let mut pending = vec![(root, destination)];
-    let mut out = Vec::new();
-    while let Some((node, destination)) = pending.pop() {
-        let round = matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() >= 2);
-        let site = destination
-            || matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() == 3);
-        let reason = if matches!(
-            node,
-            Node::Binary {
-                operator: Operator::Arithmetic(ArithmeticOperator::Divide),
-                ..
-            }
-        ) && !destination
-        {
-            Some("division requires a declared Decimal destination or explicit round site")
-        } else if matches!(
-            node,
-            Node::Binary {
-                operator: Operator::Comparison(ComparisonOperator::In | ComparisonOperator::NotIn),
-                ..
-            }
-        ) {
-            Some("membership is outside the exact arithmetic profile")
-        } else if matches!(node, Node::FunctionCall { kind, .. } if !(matches!(kind, FunctionKind::Internal(InternalFunction::Len)) || round && site))
-        {
-            Some("function requires an explicit supported exact site")
-        } else if matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.get(1).is_some_and(|value| matches!(value, Node::Number(scale) if scale.to_string().parse::<u32>().is_ok_and(|scale| scale > 18))))
-        {
-            Some("round exceeds the exact arithmetic scale bound")
-        } else if !destination && matches!(node, Node::Number(value) if value.scale() > 18) {
-            Some("numeric literal exceeds the exact arithmetic scale bound")
-        } else {
-            None
-        };
-        if let Some(reason) = reason {
-            out.push(Diagnostic {
-                code: "core.values.inexact",
-                message: reason.to_owned(),
-                span: metadata.get(&address(node)).map_or((0, 0), |m| m.span),
-            });
-        }
-        let mut children = Vec::new();
-        bounds::children(node, &mut children);
-        pending.extend(children.into_iter().map(|child| (child, site)));
-    }
-    out
 }

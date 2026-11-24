@@ -428,6 +428,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine or decode errors.
     pub fn flow_run(&self, world: &str, run_id: &str) -> Result<Option<RunRow>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             &format!(r#"SELECT {COLUMNS} FROM "{FLOW_RUN}" WHERE "world"=?1 AND "run_id"=?2"#),
             params![world, run_id],
@@ -443,6 +444,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine or decode errors.
     pub fn live_runs(&self, world: &str, flow: &str) -> Result<u64, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 r#"SELECT "object_type","state_property","state" FROM "{FLOW_RUN}" INDEXED BY "_norn_flow_run/flow_state" WHERE "world"=?1 AND "flow_id"=?2 AND "state" IS NOT NULL"#
@@ -480,6 +482,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine or decode errors.
     pub fn flow_runs(&self, world: &str, filter: &RunFilter) -> Result<Vec<RunRow>, CellError> {
+        self.check_live()?;
         let limit = i64::from(filter.limit.clamp(1, MAX_RUN_PAGE));
         let rows = self.conn.query(
             &format!(

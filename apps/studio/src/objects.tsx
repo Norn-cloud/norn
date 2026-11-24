@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
+import { sentence } from "@/components/lifecycle-view"
+import { useLocale } from "./lib/locale.tsx"
 import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
 import { FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
@@ -37,6 +39,8 @@ import { transport, type ObjectReads, type SourceLineage } from "./lib/transport
 import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { maskedOf } from "./lib/privacy.ts"
 import { MaskedValue } from "@/components/masked-value"
+import { LoadState } from "@/components/load-state"
+import { refreshMode } from "./lib/live-transport.ts"
 import { SourceChip } from "@/components/source-chip"
 import { RecentChanges, RulesKept, WhoCanAct, useTypeAccess } from "./record-rail.tsx"
 import { RecordLineage } from "./record-lineage.tsx"
@@ -79,6 +83,7 @@ export function ObjectPage() {
   // `#lineage` (a traced number's record) opens on where it came from.
   const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
   const { view } = useView()
+  const { locale } = useLocale()
   const data = reads.data
   const lineage = data?.source?.document
   const problem = readProblem(catalogRead, reads)
@@ -130,11 +135,21 @@ export function ObjectPage() {
       </header>
       {data && concept && broken[0] && <Broken concept={concept} reads={data} finding={broken[0]} heldBack={heldBack} />}
       {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
-      {problem === undefined && (reads.isPending || catalogRead.isPending) && <p className="text-muted-foreground">Reading the record…</p>}
-      {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
+      {problem === undefined && (reads.isPending || catalogRead.isPending || reads.isError || catalogRead.isError) && (
+        <LoadState
+          status={reads.isError || catalogRead.isError ? "error" : "pending"}
+          error={reads.error ?? catalogRead.error}
+          isFetching={reads.isFetching || catalogRead.isFetching}
+          onRetry={() => { refreshMode(); void catalogRead.refetch(); void reads.refetch() }}
+          skeleton="detail"
+          loadingLabel="Reading the record"
+        >
+          {() => null}
+        </LoadState>
+      )}
       {reads.isSuccess && data === null && (live
         ? <QuarantinedRecord objectType={name} id={id} onDone={readAgain} />
-        : <p className="text-muted-foreground">This record is not available yet.</p>)}
+        : <EmptyState icon={Rows3} title="Record not available" next={<Button asChild size="sm" variant="outline"><Link to="/objects/$type" params={{ type: name }}>Back to {concept?.title ?? conceptTitle(name)}</Link></Button>}>This record is not available yet.</EmptyState>)}
       {data && concept && (
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList variant="line" className="w-full justify-start overflow-x-auto">
@@ -145,11 +160,15 @@ export function ObjectPage() {
               <div className="min-w-0 space-y-6">
                 {view === "technical" && <p className="text-pretty text-muted-foreground">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>}
                 <Facts concept={concept} reads={data} onLineage={() => setTab("lineage")} sources={sources} />
-                {concept.lifecycles.map((lifecycle) => (
-                  <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${lifecycle.property.replaceAll("_", " ")}`}>
-                    <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
-                  </Panel>
-                ))}
+                {concept.lifecycles.map((lifecycle) => {
+                  const field = concept.fields.find((candidate) => candidate.id === lifecycle.property)
+                  return (
+                    <Panel key={lifecycle.property} icon={GitBranch} label={`${locale === "ar" ? "دورة الحياة" : "Lifecycle"} · ${field?.label ?? sentence(lifecycle.property)}`}
+                      action={<Link to="/objects/$type" params={{ type: name }} hash="lifecycle" className="underline-offset-4 hover:underline">{locale === "ar" ? "العرض الشامل للنوع" : "Type-wide view"}</Link>}>
+                      <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} concept={concept} /></Well>
+                    </Panel>
+                  )
+                })}
                 {live && <Findings objectType={name} id={id} actionFor={corrections.actionFor} />}
                 {live ? <div id="record-history" className="scroll-mt-6"><History objectType={name} id={id} /></div> : <Panel icon={HistoryIcon} label="History"><Well>
                   <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>
@@ -440,13 +459,13 @@ function Facts({ concept, reads, onLineage, sources }: {
             const masked = maskedOf(reads.object.document, field.id)
             const system = systemOf(field.id)
             return (
-              <div key={field.id} data-fact={field.id} className="grid min-h-row-read grid-cols-[minmax(0,11rem)_minmax(0,1fr)_auto] items-center gap-3 px-3">
+              <div key={field.id} data-fact={field.id} className="grid min-h-row-read grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_auto]">
                 <dt className="flex min-w-0 items-center gap-1.5 text-muted-foreground" title={field.id}><span className="truncate">{field.label ?? field.id.replaceAll("_", " ")}</span><MarkingChips markings={field.markings} catalog={markings} /></dt>
-                <dd className={cn("flex min-w-0 items-center gap-2", field.decimal && "tabular-nums")}>
-                  <span className="min-w-0 truncate font-medium"><FactValue field={field} reads={reads} onLineage={onLineage} /></span>
+                <dd className={cn("col-span-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 sm:col-span-1", field.decimal && "tabular-nums")}>
+                  <span className={cn("min-w-0 font-medium", masked === null ? "truncate" : "max-w-full")}><FactValue field={field} reads={reads} onLineage={onLineage} /></span>
                   {masked !== null && <HiddenTag revealable={masked.revealable} />}
                 </dd>
-                <dd className="flex justify-end">{system !== undefined && <SourceChip system={system} />}</dd>
+                <dd className="col-start-2 row-start-1 flex justify-end sm:col-start-3 sm:row-start-auto">{system !== undefined && <SourceChip system={system} />}</dd>
               </div>
             )
           })}

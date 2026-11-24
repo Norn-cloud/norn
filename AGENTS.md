@@ -111,6 +111,10 @@ rewrite other entries. The subsystem id is its directory name.
 - Do not commit `.env` files, credentials, logs or scratch output.
 - Never revert changes you did not make.
 
+## Studio UI
+
+Before building or reviewing UI in `apps/studio/` or `@norn/ui`, read [the Studio design & UI architecture contract](apps/studio/DESIGN.md). It governs the open-canvas aesthetic (zero box-in-box), Tailwind v4 + CSS variable skinning, the Base UI + Vercel UI SDK primitive stack (no Radix in first-party code), the 3-layer checked UI contract, honest status precedence, Semantic Map / Ripple UX, domain-agnostic Studio rules, and Boat browser-proof requirements.
+
 ## Norn authoring
 
 Before writing or reviewing Norn definitions or engine features, every agent must read:
