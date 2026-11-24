@@ -2,7 +2,7 @@ import { hashKey, queryOptions, replaceEqualDeep, useMutation, useQuery, useQuer
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createNornClient, fillRoute, NornRefusalError, NornUnavailableError, scopedQuery, type CallOptions, type FetchLike, type GetRoute, type NornClient, type NornDocument, type Operation, type PostRoute, type Success } from "../../../../packages/norn-sdk/src/client.ts"
 import type { LiveRefusal, LiveSnapshot } from "../../../../packages/norn-demo-ui/src/live/client.ts"
-import { CELL_FETCH_TIMEOUT_MS, CellUnavailable, fetchWithTimeout, NO_DATA_CELL, parseUnavailableDetail, recordCellReachable, sameStudioScope, StudioScopeError, type StudioScope } from "./definitions.ts"
+import { CELL_FETCH_TIMEOUT_MS, CellUnavailable, fetchWithTimeout, getDisplayedScope, NO_DATA_CELL, parseUnavailableDetail, recordCellReachable, sameStudioScope, scopeHeaders, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "./definitions.ts"
 import { live } from "./live-reads.ts"
 import { CellRefusal, NotServed } from "./live-transport.ts"
 
@@ -43,7 +43,11 @@ export const cellQueryKey = (route: string, scope: StudioScope, params: unknown)
 
 const browserFetch: FetchLike = (input, init) => fetch(input, init)
 
-/** The typed client through Studio's host proxy, as the signed-in account; reads keep Studio's read deadline. */
+/**
+ * The typed client through Studio's host proxy, as the signed-in account; reads keep Studio's read
+ * deadline. A write carries the expected-scope headers (#1643), so Studio's Worker refuses it
+ * (`409 workspace.changed`) if the session's active workspace is no longer `scope`.
+ */
 export function studioCellClient(scope: StudioScope, fetcher: FetchLike = browserFetch): NornClient {
   return createNornClient({
     baseUrl: "/api/host",
@@ -52,7 +56,9 @@ export function studioCellClient(scope: StudioScope, fetcher: FetchLike = browse
     fetch: async (input, init) => {
       const method = init?.method?.toUpperCase() ?? "GET"
       if (method === "GET") return fetchWithTimeout(fetcher, input, init, CELL_FETCH_TIMEOUT_MS, () => recordCellReachable(scope))
-      const response = await fetcher(input, init)
+      const headers = new Headers(init?.headers)
+      for (const [name, value] of Object.entries(scopeHeaders(scope))) headers.set(name, value)
+      const response = await fetcher(input, { ...init, headers })
       if (response.ok) recordCellReachable(scope)
       return response
     },
@@ -270,15 +276,13 @@ export function invalidateCellRoutes(client: QueryClient, scope: StudioScope, pr
 export type CellCall<P extends PostRoute> = Pick<CallOptions<Operation<P, "post">>, "path" | "query" | "body">
 export type CellResult<P extends PostRoute> = CellDocument<Success<Operation<P, "post">>>
 
-/** Why a call submitted in one workspace was not sent: the workspace changed before it could be. */
-export const SCOPE_CHANGED = "The workspace changed before this change was sent. Nothing was sent."
-
 /** The scope each call was submitted in, by the call's own variables (a copy made at submission). */
 const submittedIn = new WeakMap<object, StudioScope>()
 
 /**
- * Bind `call` to `scope`, the scope it is submitted in: the copy returned is what the mutation runs.
- * Each submission gets its own copy, so one variables object submitted in two scopes is two calls.
+ * Bind `call` to `scope`, the scope it is submitted in (the form's bound scope, #1643): the copy
+ * returned is what the mutation runs. Each submission gets its own copy, so one variables object
+ * submitted in two scopes is two calls.
  */
 export function submitIn<V extends object>(call: V, scope: StudioScope | null): V {
   const bound = { ...call }
@@ -286,12 +290,21 @@ export function submitIn<V extends object>(call: V, scope: StudioScope | null): 
   return bound
 }
 
+/** Whether `error` is Studio's Worker refusing a write whose expected scope is no longer the session's. */
+function workspaceChanged(error: unknown): boolean {
+  if (!(error instanceof NornUnavailableError) || error.status !== 409 || error.body === null) return false
+  try { return (JSON.parse(error.body) as { readonly code?: unknown } | null)?.code === "workspace.changed" } catch { return false }
+}
+
 /**
  * The mutation options of one route. A call runs in the scope it was submitted in (`submitIn`),
- * never the scope of whatever render last updated the options: a call queued (offline, or behind
- * another) in workspace A that would start after the page moved to B is refused before any request
- * is sent, and a call never submitted through `submitIn` is refused too. On success the submitting
- * scope's reads are invalidated.
+ * never the scope of whatever render last updated the options. Before any request it is refused
+ * (`WORKSPACE_CHANGED_MESSAGE`, nothing sent) when the page's scope (`current`) or the tab's
+ * displayed workspace (`getDisplayedScope`, #1643) is no longer that scope: a call queued (offline,
+ * or behind another) in workspace A never starts in B. A call never bound through `submitIn` is
+ * refused too. The request carries the expected-scope headers, so the Worker refuses it if the
+ * session moved in another tab; that refusal is the same error. On success the submitting scope's
+ * reads are invalidated.
  */
 export function cellMutationOptions<P extends PostRoute>(client: QueryClient, route: P, current: () => StudioScope | null, config: {
   readonly invalidates?: (result: CellResult<P>, call: CellCall<P>) => readonly CellRoutePrefix[]
@@ -301,8 +314,13 @@ export function cellMutationOptions<P extends PostRoute>(client: QueryClient, ro
     mutationFn: async (call) => {
       const scope = submittedIn.get(call)
       if (scope === undefined) throw new StudioScopeError(NO_DATA_CELL)
-      if (!sameStudioScope(scope, current())) throw new StudioScopeError(SCOPE_CHANGED)
-      return asDocument(await (studioCellClient(scope, config.fetch).post as unknown as LooseCall)(route, call))
+      const displayed = getDisplayedScope()
+      if (!sameStudioScope(scope, current()) || (displayed !== undefined && !sameStudioScope(scope, displayed))) throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
+      try {
+        return asDocument(await (studioCellClient(scope, config.fetch).post as unknown as LooseCall)(route, call))
+      } catch (error) {
+        throw workspaceChanged(error) ? new StudioScopeError(WORKSPACE_CHANGED_MESSAGE) : error
+      }
     },
     onSuccess: async (result, call) => {
       const scope = submittedIn.get(call)

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test"
 import { MutationObserver, onlineManager, QueryClient } from "@tanstack/react-query"
 import { parseLiveFrame } from "../../../packages/norn-sdk/src/live.ts"
 import { LiveClient, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../../../packages/norn-demo-ui/src/live/client.ts"
-import { actionReads, attachLive, cellMutationOptions, cellPath, cellQueryKey, cellQueryOptions, invalidateCellRoutes, SCOPE_CHANGED, submitIn, type CellDocument, type LiveSource } from "../src/lib/cell-query.ts"
-import { CellUnavailable, StudioScopeError, type StudioScope } from "../src/lib/definitions.ts"
+import { actionReads, attachLive, cellMutationOptions, cellPath, cellQueryKey, cellQueryOptions, invalidateCellRoutes, submitIn, type CellDocument, type LiveSource } from "../src/lib/cell-query.ts"
+import { CellUnavailable, EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, setDisplayedScope, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "../src/lib/definitions.ts"
 import { CellRefusal, NotServed } from "../src/lib/live-transport.ts"
 
 const ROUTE = "/v1/objects/{type}/{id}"
@@ -313,13 +313,14 @@ const ACTION = "/v1/actions/{actionId}" as const
 const call = { path: { actionId: "demo.item.add" }, body: { input: { amount: "1" }, idempotencyKey: "k1" } }
 
 /** A cell that counts writes, and a mutation observer as `useCellMutation` runs it, with the page's scope in `page.scope`. */
-function writer(client: QueryClient, page: { scope: StudioScope | null }) {
+function writer(client: QueryClient, page: { scope: StudioScope | null }, answer: () => Response = () => new Response('{"outcome":"committed"}')) {
   const posts: string[] = []
-  const fetch = async (url: string) => { posts.push(url); return new Response('{"outcome":"committed"}') }
+  const headers: Headers[] = []
+  const fetch = async (url: string, init?: RequestInit) => { posts.push(url); headers.push(new Headers(init?.headers)); return answer() }
   const options = () => cellMutationOptions(client, ACTION, () => page.scope, { fetch, invalidates: () => [{ route: "/v1/inbox" }] })
   const observer = new MutationObserver(client, options())
   // A render updates a pending mutation's options, as `useMutation` does.
-  return { posts, observer, rerender: () => observer.setOptions(options()) }
+  return { posts, headers, observer, rerender: () => observer.setOptions(options()) }
 }
 
 test("a write queued in one workspace is refused, with nothing sent, once the page moved to another", async () => {
@@ -339,7 +340,7 @@ test("a write queued in one workspace is refused, with nothing sent, once the pa
     onlineManager.setOnline(true)
     const error = await sent
     expect(error).toBeInstanceOf(StudioScopeError)
-    expect((error as Error).message).toBe(SCOPE_CHANGED)
+    expect((error as Error).message).toBe(WORKSPACE_CHANGED_MESSAGE)
     expect(posts).toEqual([])
     expect(client.getQueryState(cellQueryKey("/v1/inbox", other, {}))?.isInvalidated).toBe(false)
   } finally {
@@ -351,7 +352,7 @@ test("a write queued in one workspace is refused, with nothing sent, once the pa
 test("a write runs in the scope it was submitted in, and invalidates that scope's reads", async () => {
   const client = new QueryClient()
   const page: { scope: StudioScope | null } = { scope }
-  const { posts, observer } = writer(client, page)
+  const { posts, headers, observer } = writer(client, page)
   client.setQueryData(cellQueryKey("/v1/inbox", scope, {}), { document: {} })
   client.setQueryData(cellQueryKey("/v1/inbox", other, {}), { document: {} })
   // One variables object submitted twice is two calls, each bound to its own scope.
@@ -360,10 +361,36 @@ test("a write runs in the scope it was submitted in, and invalidates that scope'
   expect(first).not.toBe(second)
   await observer.mutate(first)
   expect(posts).toEqual(["/api/host/v1/actions/demo.item.add?orgId=org_1&environmentId=dev"])
+  // The write names the scope it expects, so Studio's Worker refuses it if the session moved (#1643).
+  expect(headers[0]?.get(EXPECTED_ORG_HEADER)).toBe("org_1")
+  expect(headers[0]?.get(EXPECTED_ENV_HEADER)).toBe("dev")
   expect(client.getQueryState(cellQueryKey("/v1/inbox", scope, {}))?.isInvalidated).toBe(true)
   expect(client.getQueryState(cellQueryKey("/v1/inbox", other, {}))?.isInvalidated).toBe(false)
-  expect(await observer.mutate(second).catch((error: unknown) => (error as Error).message)).toBe(SCOPE_CHANGED)
+  expect(await observer.mutate(second).catch((error: unknown) => (error as Error).message)).toBe(WORKSPACE_CHANGED_MESSAGE)
   // A call that was never bound to a scope is refused too.
   expect(await observer.mutate(call).catch((error: unknown) => error)).toBeInstanceOf(StudioScopeError)
   expect(posts).toHaveLength(1)
+})
+
+test("a write is refused before any request once the tab shows another workspace, and the Worker's stale-scope refusal is the same error", async () => {
+  const client = new QueryClient()
+  const page: { scope: StudioScope | null } = { scope }
+  try {
+    // Another tab switched the session; this tab's displayed workspace follows (#1643), the form's scope has not.
+    setDisplayedScope(other)
+    const stale = writer(client, page)
+    const refused = await stale.observer.mutate(submitIn(call, scope)).catch((error: unknown) => error)
+    expect(refused).toBeInstanceOf(StudioScopeError)
+    expect((refused as Error).message).toBe(WORKSPACE_CHANGED_MESSAGE)
+    expect(stale.posts).toEqual([])
+    // The tab still shows this workspace, but the session moved: the Worker refuses with 409.
+    setDisplayedScope(scope)
+    const moved = writer(client, page, () => new Response('{"code":"workspace.changed","message":"Your active workspace changed.","error":"Your active workspace changed."}', { status: 409 }))
+    const answered = await moved.observer.mutate(submitIn(call, scope)).catch((error: unknown) => error)
+    expect(answered).toBeInstanceOf(StudioScopeError)
+    expect((answered as Error).message).toBe(WORKSPACE_CHANGED_MESSAGE)
+    expect(moved.posts).toHaveLength(1)
+  } finally {
+    setDisplayedScope(undefined)
+  }
 })
