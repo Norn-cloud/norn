@@ -59,11 +59,11 @@ export function LifecycleStepper({ lifecycle, record, concept, locale: explicitL
               aria-current={current ? "step" : undefined} className="flex items-center gap-2">
               {index > 0 && <span aria-hidden className="text-xs text-muted-foreground/70">{rtl ? "←" : "→"}</span>}
               <span className={cn(
-                "grid min-w-[6.5rem] self-stretch content-center gap-0.5 rounded-lg border bg-card px-3 py-1.5 text-sm shadow-elevation transition-[border-color,box-shadow]",
+                "grid min-w-[6.5rem] self-stretch content-center gap-0.5 rounded-lg border px-3 py-1.5 text-sm transition-[border-color,box-shadow]",
                 isEnding && "border-[3px] border-double px-[calc(0.75rem-2px)] py-[calc(0.375rem-2px)]",
                 current
-                  ? "border-ring font-medium text-foreground ring-2 ring-ring/25"
-                  : "border-border text-muted-foreground",
+                  ? "border-primary bg-card font-medium text-foreground shadow-elevation ring-2 ring-primary/25"
+                  : "border-border/90 bg-surface-subtle/70 text-muted-foreground",
               )}>
                 <span className={cn("leading-snug", current && "text-foreground")}>{display(step)}</span>
                 {role !== "" && <span className="text-[11px] font-normal text-muted-foreground">{role}</span>}
