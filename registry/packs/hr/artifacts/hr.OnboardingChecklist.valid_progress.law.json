@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.OnboardingChecklist.valid_progress.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.OnboardingChecklist.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Onboarding completed_items_count must stay within [0, required_items_count] and equal required_items_count when status is completed.",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.OnboardingChecklist.valid_progress",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/talent.ts"
+    },
+    "rationale": "Onboarding completed_items_count must stay within [0, required_items_count] and equal required_items_count when status is completed.",
+    "response": {
+      "expression": "(((self.required_items_count >= 1) and (self.completed_items_count >= 0)) and (self.completed_items_count <= self.required_items_count)) and ((self.status != 'completed') or (self.completed_items_count == self.required_items_count))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.OnboardingChecklist"
+      ],
+      "root": {
+        "id": "hr.OnboardingChecklist",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.OnboardingChecklist"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.OnboardingChecklist.valid_progress.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

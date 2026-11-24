@@ -1,0 +1,218 @@
+{
+  "artifactId": "hr.SalarySlip.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Salary slip",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Individual employee pay commitment under a PayrollRun (implements core.Commitment; exact decimal conservation per HR-PR-01..05).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Commitment"
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "fulfilled"
+          ],
+          "initial": [
+            "requested"
+          ],
+          "property": "status",
+          "terminal": [
+            "fulfilled",
+            "cancelled",
+            "breached"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "requested"
+              ],
+              "id": "promise",
+              "to": "promised"
+            },
+            {
+              "from": [
+                "promised"
+              ],
+              "id": "fulfil",
+              "to": "fulfilled"
+            },
+            {
+              "from": [
+                "requested",
+                "promised"
+              ],
+              "id": "cancel",
+              "to": "cancelled"
+            },
+            {
+              "from": [
+                "promised"
+              ],
+              "id": "breach",
+              "to": "breached"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employer unit promising compensation.",
+          "id": "provider",
+          "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employee receiving compensation.",
+          "id": "receiver",
+          "target": "hr.Person"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Employee labor capacity compensated by this slip.",
+          "id": "resource",
+          "target": "hr.LaborCapacity"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Parent payroll run containing this salary slip.",
+          "id": "payroll_run",
+          "target": "hr.PayrollRun"
+        }
+      ],
+      "name": "hr.SalarySlip",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "requested",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "requested"
+              },
+              {
+                "value": "promised"
+              },
+              {
+                "value": "fulfilled"
+              },
+              {
+                "value": "cancelled"
+              },
+              {
+                "value": "breached"
+              }
+            ]
+          }
+        },
+        {
+          "id": "due_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "gross_pay",
+          "markings": [
+            "pii.compensation"
+          ],
+          "type": {
+            "kind": "ref",
+            "name": "core.money_amount"
+          }
+        },
+        {
+          "id": "total_deductions",
+          "markings": [
+            "pii.compensation"
+          ],
+          "type": {
+            "kind": "ref",
+            "name": "core.money_amount"
+          }
+        },
+        {
+          "id": "net_pay",
+          "markings": [
+            "pii.compensation"
+          ],
+          "type": {
+            "kind": "ref",
+            "name": "core.money_amount"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.SalarySlip.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

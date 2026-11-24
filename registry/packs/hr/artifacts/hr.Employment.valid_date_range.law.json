@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.Employment.valid_date_range.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.Employment.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Employment effective_from must be strictly before effective_to whenever effective_to is present.",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.Employment.valid_date_range",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/people_leave.ts"
+    },
+    "rationale": "Employment effective_from must be strictly before effective_to whenever effective_to is present.",
+    "response": {
+      "expression": "(self.effective_to == null) or (date(self.effective_from) < date(self.effective_to ?? self.effective_from))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.Employment"
+      ],
+      "root": {
+        "id": "hr.Employment",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.Employment"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.Employment.valid_date_range.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr.payroll.approve.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Approve payroll run",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.payroll.approve",
+    "description": "Approve a calculated payroll run under independent authority (preparer cannot approve own run).",
+    "effectProgram": {
+      "entityArtifactId": "hr.PayrollRun.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "payrollRunId",
+      "objectKind": "hr.PayrollRun",
+      "transition": "approve"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "payrollRunId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "payrollRunId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "payrollRunId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "payrollRunId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.run.status == 'calculated') and (slice.run.total_net == (slice.run.total_gross - slice.run.total_deductions))) and (slice.run.total_net >= 0)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "payrollRunId"
+          }
+        },
+        "name": "run",
+        "objectType": "hr.PayrollRun"
+      }
+    ],
+    "title": "Approve payroll run",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.PayrollRun"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.payroll.approve.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

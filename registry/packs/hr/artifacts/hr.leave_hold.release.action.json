@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr.leave_hold.release.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Release leave hold",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.leave_hold.release",
+    "description": "Release an open leave hold back to available balance when a request is rejected or cancelled.",
+    "effectProgram": {
+      "entityArtifactId": "hr.LeaveHold.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "holdId",
+      "objectKind": "hr.LeaveHold",
+      "transition": "release"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "holdId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "holdId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "holdId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "holdId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.hold.status == 'open'"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "holdId"
+          }
+        },
+        "name": "hold",
+        "objectType": "hr.LeaveHold"
+      }
+    ],
+    "title": "Release leave hold",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.LeaveHold"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.leave_hold.release.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

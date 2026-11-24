@@ -14,7 +14,7 @@
   "name": "Submitted or approved leave requests consume strictly positive days",
   "namespace": "hr",
   "payload": {
-    "condition": "self.status != \"draft\"",
+    "condition": "self.status != 'draft'",
     "id": "hr.LeaveRequest.positive_days",
     "lawVersion": "0.1",
     "modality": {

@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.PayrollRun.conservation.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.PayrollRun.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Payroll run totals conserve net = gross - deductions without negative net",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.PayrollRun.conservation",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/payroll_expenses.ts"
+    },
+    "rationale": "Payroll run totals must satisfy exact decimal conservation (total_net == total_gross - total_deductions) with non-negative components (HR-PR-01, HR-PR-04).",
+    "response": {
+      "expression": "(((self.total_gross >= 0) and (self.total_deductions >= 0)) and (self.total_net == (self.total_gross - self.total_deductions))) and (self.total_net >= 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.PayrollRun"
+      ],
+      "root": {
+        "id": "hr.PayrollRun",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.PayrollRun"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.PayrollRun.conservation.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "hr.leave.reject",
-    "description": "Reject a pending leave request and release any pending hold.",
+    "description": "Reject a pending leave request under independent manager authority.",
     "effectProgram": {
       "entityArtifactId": "hr.LeaveRequest.entity",
       "entityArtifactVersion": "0.1.0",

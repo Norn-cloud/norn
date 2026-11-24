@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Governed employee leave request with explicit approval workflow and positive-day guard.",
+      "description": "Governed employee leave request with explicit approval workflow, separation of duties, and positive-day guard.",
       "identity": [
         {
           "name": "primary",
@@ -99,6 +99,12 @@
           }
         },
         {
+          "id": "requester_user_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
           "id": "leave_kind",
           "type": {
             "kind": "enum",
@@ -114,6 +120,9 @@
               },
               {
                 "value": "emergency"
+              },
+              {
+                "value": "compensatory"
               }
             ]
           }

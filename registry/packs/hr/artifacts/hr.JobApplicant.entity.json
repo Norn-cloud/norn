@@ -1,0 +1,175 @@
+{
+  "artifactId": "hr.JobApplicant.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Job applicant",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Candidate progressing through the recruitment pipeline for a JobOpening (contact PII marked).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "hired"
+          ],
+          "initial": [
+            "applied"
+          ],
+          "property": "status",
+          "terminal": [
+            "hired",
+            "rejected",
+            "withdrawn"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "applied"
+              ],
+              "id": "screen",
+              "to": "screening"
+            },
+            {
+              "from": [
+                "screening"
+              ],
+              "id": "interview",
+              "to": "interviewed"
+            },
+            {
+              "from": [
+                "interviewed"
+              ],
+              "id": "extend_offer",
+              "to": "offered"
+            },
+            {
+              "from": [
+                "offered"
+              ],
+              "id": "hire",
+              "to": "hired"
+            },
+            {
+              "from": [
+                "applied",
+                "screening",
+                "interviewed",
+                "offered"
+              ],
+              "id": "reject",
+              "to": "rejected"
+            },
+            {
+              "from": [
+                "applied",
+                "screening",
+                "interviewed",
+                "offered"
+              ],
+              "id": "withdraw",
+              "to": "withdrawn"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Job opening the applicant applied to.",
+          "id": "opening",
+          "target": "hr.JobOpening"
+        }
+      ],
+      "name": "hr.JobApplicant",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "full_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "email",
+          "markings": [
+            "pii.demographic"
+          ],
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "phone",
+          "markings": [
+            "pii.demographic"
+          ],
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "applied",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "applied"
+              },
+              {
+                "value": "screening"
+              },
+              {
+                "value": "interviewed"
+              },
+              {
+                "value": "offered"
+              },
+              {
+                "value": "hired"
+              },
+              {
+                "value": "rejected"
+              },
+              {
+                "value": "withdrawn"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.JobApplicant.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

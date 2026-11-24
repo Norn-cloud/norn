@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.CompensatoryLeaveRequest.positive_days.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.CompensatoryLeaveRequest.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A compensatory leave request must claim strictly positive credited days (HR-LV-08).",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.CompensatoryLeaveRequest.positive_days",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/people_leave.ts"
+    },
+    "rationale": "A compensatory leave request must claim strictly positive credited days (HR-LV-08).",
+    "response": {
+      "expression": "self.credited_days > 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.CompensatoryLeaveRequest"
+      ],
+      "root": {
+        "id": "hr.CompensatoryLeaveRequest",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.CompensatoryLeaveRequest"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.CompensatoryLeaveRequest.positive_days.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

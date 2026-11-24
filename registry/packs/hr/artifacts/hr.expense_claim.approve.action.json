@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr.expense_claim.approve.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Approve expense claim",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.expense_claim.approve",
+    "description": "Approve a submitted expense claim under independent manager authority (requester cannot approve own claim; HR-EX-01, HR-EX-02).",
+    "effectProgram": {
+      "entityArtifactId": "hr.ExpenseClaim.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "expenseClaimId",
+      "objectKind": "hr.ExpenseClaim",
+      "transition": "approve"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "expenseClaimId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "expenseClaimId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "expenseClaimId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "expenseClaimId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.claim.status == 'submitted') and (slice.claim.sanctioned_amount >= 0)) and (slice.claim.sanctioned_amount <= slice.claim.claimed_amount)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "expenseClaimId"
+          }
+        },
+        "name": "claim",
+        "objectType": "hr.ExpenseClaim"
+      }
+    ],
+    "title": "Approve expense claim",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.ExpenseClaim"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.expense_claim.approve.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

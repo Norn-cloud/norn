@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.SalaryStructureAssignment.non_negative_base_pay.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.SalaryStructureAssignment.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Salary structure assignment base pay is non-negative",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.SalaryStructureAssignment.non_negative_base_pay",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/payroll_expenses.ts"
+    },
+    "rationale": "Assigned base compensation must be non-negative in exact decimal currency units (HR-PR-01, HR-PR-07).",
+    "response": {
+      "expression": "self.base_pay >= 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.SalaryStructureAssignment"
+      ],
+      "root": {
+        "id": "hr.SalaryStructureAssignment",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.SalaryStructureAssignment"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.SalaryStructureAssignment.non_negative_base_pay.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

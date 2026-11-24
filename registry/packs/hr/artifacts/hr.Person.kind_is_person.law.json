@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.Person.kind_is_person.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.Person.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "An HR person record always represents a natural person, never an organization or system.",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.Person.kind_is_person",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/people_leave.ts"
+    },
+    "rationale": "An HR person record always represents a natural person, never an organization or system.",
+    "response": {
+      "expression": "self.kind == 'person'",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.Person"
+      ],
+      "root": {
+        "id": "hr.Person",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.Person"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.Person.kind_is_person.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

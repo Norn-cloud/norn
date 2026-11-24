@@ -1,0 +1,88 @@
+{
+  "artifactId": "hr.payroll.calculate.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Calculate payroll run",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.payroll.calculate",
+    "description": "Move a draft payroll run into calculated status after computing exact salary slips.",
+    "effectProgram": {
+      "entityArtifactId": "hr.PayrollRun.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "payrollRunId",
+      "objectKind": "hr.PayrollRun",
+      "transition": "calculate"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "payrollRunId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "payrollRunId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "payrollRunId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "payrollRunId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.run.status == 'draft'"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "payrollRunId"
+          }
+        },
+        "name": "run",
+        "objectType": "hr.PayrollRun"
+      }
+    ],
+    "title": "Calculate payroll run",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.PayrollRun"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.payroll.calculate.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

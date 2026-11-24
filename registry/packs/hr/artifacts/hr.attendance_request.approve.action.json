@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "hr.attendance_request.approve",
-    "description": "Approve a pending attendance regularization request under manager authority.",
+    "description": "Approve a pending attendance regularization request under independent manager authority.",
     "effectProgram": {
       "entityArtifactId": "hr.AttendanceRequest.entity",
       "entityArtifactVersion": "0.1.0",

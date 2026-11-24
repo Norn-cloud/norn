@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.SalarySlip.conservation.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.SalarySlip.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Salary slip conserves net_pay = gross_pay - total_deductions without negative net",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.SalarySlip.conservation",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/payroll_expenses.ts"
+    },
+    "rationale": "Every salary slip must conserve exact decimal net pay (net_pay == gross_pay - total_deductions >= 0; HR-PR-01, HR-PR-04).",
+    "response": {
+      "expression": "(((self.gross_pay >= 0) and (self.total_deductions >= 0)) and (self.net_pay == (self.gross_pay - self.total_deductions))) and (self.net_pay >= 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.SalarySlip"
+      ],
+      "root": {
+        "id": "hr.SalarySlip",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.SalarySlip"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.SalarySlip.conservation.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

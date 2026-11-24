@@ -1,0 +1,73 @@
+{
+  "artifactId": "hr.expense_claim.reject.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Reject expense claim",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.expense_claim.reject",
+    "description": "Reject a submitted employee expense claim under independent manager authority.",
+    "effectProgram": {
+      "entityArtifactId": "hr.ExpenseClaim.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "expenseClaimId",
+      "objectKind": "hr.ExpenseClaim",
+      "transition": "reject"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "expenseClaimId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "expenseClaimId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "expenseClaimId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "expenseClaimId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Reject expense claim",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr.ExpenseClaim"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.expense_claim.reject.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

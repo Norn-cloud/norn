@@ -16,13 +16,25 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Governed Egyptian labor parameters (Africa/Cairo timezone, EGP currency, statutory weekly/daily hour caps, rest gap, and annual leave tiers).",
+      "description": "Governed Egyptian labor parameters under Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-124): Africa/Cairo timezone, EGP currency, statutory weekly/daily hour caps, rest gap, and annual leave tiers (15d / 21d / 30d / 45d).",
       "identity": [
         {
           "name": "primary",
           "properties": [
             "id"
           ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Egyptian branch or organizational unit governed by this statutory labor profile.",
+          "id": "unit",
+          "target": "org.OrgUnit"
         }
       ],
       "name": "loc_eg.LaborProfile",
@@ -97,6 +109,17 @@
           }
         },
         {
+          "id": "first_year_annual_leave_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
+              "system": "ucum"
+            }
+          }
+        },
+        {
           "id": "standard_annual_leave_days",
           "type": {
             "kind": "decimal",
@@ -109,6 +132,17 @@
         },
         {
           "id": "senior_annual_leave_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "disability_annual_leave_days",
           "type": {
             "kind": "decimal",
             "scale": 2,

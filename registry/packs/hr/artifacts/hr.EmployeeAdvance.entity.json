@@ -1,0 +1,183 @@
+{
+  "artifactId": "hr.EmployeeAdvance.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Employee advance",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Cash advance issued to an employee ahead of business expenses (implements core.Claim; HR-EX-03).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Claim"
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "settled",
+            "cancelled"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "settled",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "approve",
+              "to": "approved"
+            },
+            {
+              "from": [
+                "approved"
+              ],
+              "id": "disburse",
+              "to": "disbursed"
+            },
+            {
+              "from": [
+                "disbursed"
+              ],
+              "id": "settle",
+              "to": "settled"
+            },
+            {
+              "from": [
+                "draft",
+                "approved"
+              ],
+              "id": "cancel",
+              "to": "cancelled"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employer unit holding the advance settlement claim.",
+          "id": "creditor",
+          "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employee accountable for settling or returning the advance.",
+          "id": "debtor",
+          "target": "hr.Person"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional commitment giving rise to this advance.",
+          "id": "arises_from",
+          "target": "core.Commitment"
+        }
+      ],
+      "name": "hr.EmployeeAdvance",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "amount",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "due_date",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.date"
+          }
+        },
+        {
+          "id": "requester_user_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "purpose",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "disbursed"
+              },
+              {
+                "value": "settled"
+              },
+              {
+                "value": "cancelled"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.EmployeeAdvance.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

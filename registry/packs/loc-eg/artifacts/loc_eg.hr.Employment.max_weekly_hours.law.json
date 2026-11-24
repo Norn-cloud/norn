@@ -1,0 +1,50 @@
+{
+  "artifactId": "loc_eg.hr.Employment.max_weekly_hours.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.Employment.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Egypt Labor Law No. 14 of 2025 48h weekly cap on hr.Employment",
+  "namespace": "loc_eg",
+  "payload": {
+    "id": "loc_eg.hr.Employment.max_weekly_hours",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "loc_eg",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/loc-eg/egypt.ts"
+    },
+    "rationale": "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-123) overlay capping contracted regular weekly hours on hr.Employment at 48h.",
+    "response": {
+      "expression": "self.max_weekly_hours <= 48",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.Employment"
+      ],
+      "root": {
+        "id": "hr.Employment",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.Employment"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/loc-eg/artifacts/loc_eg.hr.Employment.max_weekly_hours.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

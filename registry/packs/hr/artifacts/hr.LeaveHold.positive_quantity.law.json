@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.LeaveHold.positive_quantity.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.LeaveHold.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Leave holds reserve strictly positive quantity",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.LeaveHold.positive_quantity",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/people_leave.ts"
+    },
+    "rationale": "A leave hold must reserve strictly positive days against its backing leave balance (HR-LV-04).",
+    "response": {
+      "expression": "self.quantity > 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.LeaveHold"
+      ],
+      "root": {
+        "id": "hr.LeaveHold",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.LeaveHold"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.LeaveHold.positive_quantity.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Self-service employee request to regularize missed or remote attendance (covers Frappe HR canon gap).",
+      "description": "Self-service employee request to regularize missed or remote attendance with independent manager approval.",
       "identity": [
         {
           "name": "primary",
@@ -82,6 +82,12 @@
       "properties": [
         {
           "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "requester_user_id",
           "type": {
             "kind": "text"
           }

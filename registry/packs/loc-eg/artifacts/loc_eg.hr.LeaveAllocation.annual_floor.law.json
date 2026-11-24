@@ -1,0 +1,51 @@
+{
+  "artifactId": "loc_eg.hr.LeaveAllocation.annual_floor.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.LeaveAllocation.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Egypt Labor Law No. 14 of 2025 Art. 124 annual leave statutory floor on hr.LeaveAllocation",
+  "namespace": "loc_eg",
+  "payload": {
+    "condition": "self.leave_kind == 'annual'",
+    "id": "loc_eg.hr.LeaveAllocation.annual_floor",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "loc_eg",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/loc-eg/egypt.ts"
+    },
+    "rationale": "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Art. 124) overlay enforcing the statutory first-year minimum of 15 annual leave days (scaling to 21d in year 2+, 30d at 10+ years/age 50+, and 45d for persons with disabilities).",
+    "response": {
+      "expression": "self.allocated_days >= 15",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.LeaveAllocation"
+      ],
+      "root": {
+        "id": "hr.LeaveAllocation",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.LeaveAllocation"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/loc-eg/artifacts/loc_eg.hr.LeaveAllocation.annual_floor.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

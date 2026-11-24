@@ -4,7 +4,7 @@
   "irVersion": "0.1",
   "kind": "labels",
   "lifecycle": "active",
-  "name": "Egyptian Arabic labels for time, org, and HR packs",
+  "name": "Egyptian Arabic labels for time, org, HR, and Egypt localization packs",
   "namespace": "locale",
   "payload": {
     "entries": [
@@ -854,6 +854,379 @@
       },
       {
         "label": {
+          "ar": "سياسة الإجازات"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.LeavePolicy"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeavePolicy",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود السياسة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeavePolicy",
+          "property": "policy_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "اسم السياسة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeavePolicy",
+          "property": "label"
+        }
+      },
+      {
+        "label": {
+          "ar": "رصيد الإجازة السنوية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeavePolicy",
+          "property": "annual_base_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "رصيد الإجازة المرضية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeavePolicy",
+          "property": "sick_base_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "رصيد الإجازة العارضة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeavePolicy",
+          "property": "emergency_base_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحد الأقصى للترحيل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeavePolicy",
+          "property": "max_carry_forward_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeavePolicy",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "نشط"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeavePolicy",
+          "property": "status",
+          "value": "active"
+        }
+      },
+      {
+        "label": {
+          "ar": "مؤرشف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeavePolicy",
+          "property": "status",
+          "value": "archived"
+        }
+      },
+      {
+        "label": {
+          "ar": "تخصيص إجازة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.LeaveAllocation"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "نوع الإجازة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "leave_kind"
+        }
+      },
+      {
+        "label": {
+          "ar": "من تاريخ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "starts_on"
+        }
+      },
+      {
+        "label": {
+          "ar": "إلى تاريخ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "ends_on"
+        }
+      },
+      {
+        "label": {
+          "ar": "الأيام المخصصة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "allocated_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "الأيام المرحّلة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "carry_forward_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "سنوية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "leave_kind",
+          "value": "annual"
+        }
+      },
+      {
+        "label": {
+          "ar": "مرضية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "leave_kind",
+          "value": "sick"
+        }
+      },
+      {
+        "label": {
+          "ar": "بدون أجر"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "leave_kind",
+          "value": "unpaid"
+        }
+      },
+      {
+        "label": {
+          "ar": "عارضة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "leave_kind",
+          "value": "emergency"
+        }
+      },
+      {
+        "label": {
+          "ar": "تعويضية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "leave_kind",
+          "value": "compensatory"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "نشط"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "status",
+          "value": "active"
+        }
+      },
+      {
+        "label": {
+          "ar": "منتهي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "status",
+          "value": "expired"
+        }
+      },
+      {
+        "label": {
+          "ar": "ملغى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "status",
+          "value": "cancelled"
+        }
+      },
+      {
+        "label": {
           "ar": "طلب إجازة"
         },
         "review": {
@@ -875,6 +1248,19 @@
           "kind": "property",
           "objectType": "hr.LeaveRequest",
           "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "مقدم الطلب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveRequest",
+          "property": "requester_user_id"
         }
       },
       {
@@ -1013,6 +1399,20 @@
       },
       {
         "label": {
+          "ar": "تعويضية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveRequest",
+          "property": "leave_kind",
+          "value": "compensatory"
+        }
+      },
+      {
+        "label": {
           "ar": "مسودة"
         },
         "review": {
@@ -1079,6 +1479,388 @@
           "objectType": "hr.LeaveRequest",
           "property": "status",
           "value": "cancelled"
+        }
+      },
+      {
+        "label": {
+          "ar": "طلب إجازة تعويضية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.CompensatoryLeaveRequest"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.CompensatoryLeaveRequest",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "مقدم الطلب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.CompensatoryLeaveRequest",
+          "property": "requester_user_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ العمل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.CompensatoryLeaveRequest",
+          "property": "work_date"
+        }
+      },
+      {
+        "label": {
+          "ar": "السبب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.CompensatoryLeaveRequest",
+          "property": "reason"
+        }
+      },
+      {
+        "label": {
+          "ar": "الأيام المستحقة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.CompensatoryLeaveRequest",
+          "property": "credited_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.CompensatoryLeaveRequest",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.CompensatoryLeaveRequest",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "بانتظار الموافقة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.CompensatoryLeaveRequest",
+          "property": "status",
+          "value": "pending"
+        }
+      },
+      {
+        "label": {
+          "ar": "موافق عليه"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.CompensatoryLeaveRequest",
+          "property": "status",
+          "value": "approved"
+        }
+      },
+      {
+        "label": {
+          "ar": "مرفوض"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.CompensatoryLeaveRequest",
+          "property": "status",
+          "value": "rejected"
+        }
+      },
+      {
+        "label": {
+          "ar": "مقابل نقدي للإجازات"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.LeaveEncashment"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveEncashment",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "مقدم الطلب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveEncashment",
+          "property": "requester_user_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ الصرف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveEncashment",
+          "property": "encashment_date"
+        }
+      },
+      {
+        "label": {
+          "ar": "الأيام المستحقة للصرف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveEncashment",
+          "property": "encashable_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveEncashment",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "قيمة المقابل النقدي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveEncashment",
+          "property": "encashment_amount"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveEncashment",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveEncashment",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "موافق عليه"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveEncashment",
+          "property": "status",
+          "value": "approved"
+        }
+      },
+      {
+        "label": {
+          "ar": "تم الصرف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveEncashment",
+          "property": "status",
+          "value": "paid"
+        }
+      },
+      {
+        "label": {
+          "ar": "ملغى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveEncashment",
+          "property": "status",
+          "value": "cancelled"
+        }
+      },
+      {
+        "label": {
+          "ar": "سعة العمل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.LaborCapacity"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LaborCapacity",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود المورد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LaborCapacity",
+          "property": "resource_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "عدد الساعات"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LaborCapacity",
+          "property": "quantity"
+        }
+      },
+      {
+        "label": {
+          "ar": "الدور"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LaborCapacity",
+          "property": "role_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الفترة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LaborCapacity",
+          "property": "period_code"
         }
       },
       {
@@ -1254,6 +2036,19 @@
       },
       {
         "label": {
+          "ar": "المنطقة الزمنية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ShiftCommitment",
+          "property": "timezone"
+        }
+      },
+      {
+        "label": {
           "ar": "الدور"
         },
         "review": {
@@ -1276,6 +2071,1923 @@
           "kind": "property",
           "objectType": "hr.ShiftCommitment",
           "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "سجل حضور وانصراف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.AttendanceEvent"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.AttendanceEvent",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "وقت الحضور"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.AttendanceEvent",
+          "property": "starts_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "وقت الانصراف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.AttendanceEvent",
+          "property": "ends_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "المنطقة الزمنية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.AttendanceEvent",
+          "property": "timezone"
+        }
+      },
+      {
+        "label": {
+          "ar": "ساعات العمل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.AttendanceEvent",
+          "property": "quantity"
+        }
+      },
+      {
+        "label": {
+          "ar": "طلب تسوية حضور"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.AttendanceRequest"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.AttendanceRequest",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "مقدم الطلب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.AttendanceRequest",
+          "property": "requester_user_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ العمل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.AttendanceRequest",
+          "property": "work_date"
+        }
+      },
+      {
+        "label": {
+          "ar": "السبب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.AttendanceRequest",
+          "property": "reason"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.AttendanceRequest",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.AttendanceRequest",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "بانتظار الموافقة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.AttendanceRequest",
+          "property": "status",
+          "value": "pending"
+        }
+      },
+      {
+        "label": {
+          "ar": "موافق عليه"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.AttendanceRequest",
+          "property": "status",
+          "value": "approved"
+        }
+      },
+      {
+        "label": {
+          "ar": "مرفوض"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.AttendanceRequest",
+          "property": "status",
+          "value": "rejected"
+        }
+      },
+      {
+        "label": {
+          "ar": "هيكل الرواتب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.SalaryStructure"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalaryStructure",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود الهيكل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalaryStructure",
+          "property": "structure_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalaryStructure",
+          "property": "label"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalaryStructure",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "دورية الصرف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalaryStructure",
+          "property": "pay_frequency"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalaryStructure",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "شهري"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.SalaryStructure",
+          "property": "pay_frequency",
+          "value": "monthly"
+        }
+      },
+      {
+        "label": {
+          "ar": "كل أسبوعين"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.SalaryStructure",
+          "property": "pay_frequency",
+          "value": "biweekly"
+        }
+      },
+      {
+        "label": {
+          "ar": "أسبوعي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.SalaryStructure",
+          "property": "pay_frequency",
+          "value": "weekly"
+        }
+      },
+      {
+        "label": {
+          "ar": "نشط"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.SalaryStructure",
+          "property": "status",
+          "value": "active"
+        }
+      },
+      {
+        "label": {
+          "ar": "مؤرشف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.SalaryStructure",
+          "property": "status",
+          "value": "archived"
+        }
+      },
+      {
+        "label": {
+          "ar": "تخصيص هيكل راتب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.SalaryStructureAssignment"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalaryStructureAssignment",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ السريان"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalaryStructureAssignment",
+          "property": "effective_from"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalaryStructureAssignment",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "الأجر الأساسي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalaryStructureAssignment",
+          "property": "base_pay"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسير الرواتب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.PayrollRun"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollRun",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود الفترة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollRun",
+          "property": "period_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "بداية الفترة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollRun",
+          "property": "starts_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "نهاية الفترة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollRun",
+          "property": "ends_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollRun",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "إجمالي الاستحقاقات"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollRun",
+          "property": "total_gross"
+        }
+      },
+      {
+        "label": {
+          "ar": "إجمالي الاستقطاعات"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollRun",
+          "property": "total_deductions"
+        }
+      },
+      {
+        "label": {
+          "ar": "صافي المسير"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollRun",
+          "property": "total_net"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُعد المسير"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollRun",
+          "property": "prepared_by_user_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollRun",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.PayrollRun",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "محسوب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.PayrollRun",
+          "property": "status",
+          "value": "calculated"
+        }
+      },
+      {
+        "label": {
+          "ar": "معتمد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.PayrollRun",
+          "property": "status",
+          "value": "approved"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُرحّل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.PayrollRun",
+          "property": "status",
+          "value": "posted"
+        }
+      },
+      {
+        "label": {
+          "ar": "قسيمة راتب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.SalarySlip"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalarySlip",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "إجمالي الراتب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalarySlip",
+          "property": "gross_pay"
+        }
+      },
+      {
+        "label": {
+          "ar": "إجمالي الخصومات"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalarySlip",
+          "property": "total_deductions"
+        }
+      },
+      {
+        "label": {
+          "ar": "صافي الراتب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalarySlip",
+          "property": "net_pay"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.SalarySlip",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "عهدة / سلفة موظف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.EmployeeAdvance"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "المبلغ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "amount"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ الاستحقاق"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "due_date"
+        }
+      },
+      {
+        "label": {
+          "ar": "مقدم الطلب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "requester_user_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الغرض"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "purpose"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "معتمد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "status",
+          "value": "approved"
+        }
+      },
+      {
+        "label": {
+          "ar": "مصروف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "status",
+          "value": "disbursed"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُسوّى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "status",
+          "value": "settled"
+        }
+      },
+      {
+        "label": {
+          "ar": "ملغى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.EmployeeAdvance",
+          "property": "status",
+          "value": "cancelled"
+        }
+      },
+      {
+        "label": {
+          "ar": "مطالبة مصروفات"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.ExpenseClaim"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ExpenseClaim",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "مقدم الطلب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ExpenseClaim",
+          "property": "requester_user_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "المبلغ المطلوب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ExpenseClaim",
+          "property": "claimed_amount"
+        }
+      },
+      {
+        "label": {
+          "ar": "المبلغ المعتمد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ExpenseClaim",
+          "property": "sanctioned_amount"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ExpenseClaim",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "الوصف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ExpenseClaim",
+          "property": "description"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.ExpenseClaim",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.ExpenseClaim",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُقدّم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.ExpenseClaim",
+          "property": "status",
+          "value": "submitted"
+        }
+      },
+      {
+        "label": {
+          "ar": "معتمد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.ExpenseClaim",
+          "property": "status",
+          "value": "approved"
+        }
+      },
+      {
+        "label": {
+          "ar": "مدفوع"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.ExpenseClaim",
+          "property": "status",
+          "value": "paid"
+        }
+      },
+      {
+        "label": {
+          "ar": "مرفوض"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.ExpenseClaim",
+          "property": "status",
+          "value": "rejected"
+        }
+      },
+      {
+        "label": {
+          "ar": "وظيفة شاغرة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.JobOpening"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOpening",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "المسمى الوظيفي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOpening",
+          "property": "title"
+        }
+      },
+      {
+        "label": {
+          "ar": "عدد الشواغر"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOpening",
+          "property": "openings_count"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOpening",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "مفتوحة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobOpening",
+          "property": "status",
+          "value": "open"
+        }
+      },
+      {
+        "label": {
+          "ar": "معلّقة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobOpening",
+          "property": "status",
+          "value": "on_hold"
+        }
+      },
+      {
+        "label": {
+          "ar": "مغلقة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobOpening",
+          "property": "status",
+          "value": "closed"
+        }
+      },
+      {
+        "label": {
+          "ar": "متقدم لوظيفة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.JobApplicant"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobApplicant",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم الكامل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobApplicant",
+          "property": "full_name"
+        }
+      },
+      {
+        "label": {
+          "ar": "البريد الإلكتروني"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobApplicant",
+          "property": "email"
+        }
+      },
+      {
+        "label": {
+          "ar": "رقم الهاتف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobApplicant",
+          "property": "phone"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobApplicant",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "تقدّم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobApplicant",
+          "property": "status",
+          "value": "applied"
+        }
+      },
+      {
+        "label": {
+          "ar": "فرز أولي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobApplicant",
+          "property": "status",
+          "value": "screening"
+        }
+      },
+      {
+        "label": {
+          "ar": "تمت المقابلة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobApplicant",
+          "property": "status",
+          "value": "interviewed"
+        }
+      },
+      {
+        "label": {
+          "ar": "عرض وظيفي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobApplicant",
+          "property": "status",
+          "value": "offered"
+        }
+      },
+      {
+        "label": {
+          "ar": "تم التعيين"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobApplicant",
+          "property": "status",
+          "value": "hired"
+        }
+      },
+      {
+        "label": {
+          "ar": "مرفوض"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobApplicant",
+          "property": "status",
+          "value": "rejected"
+        }
+      },
+      {
+        "label": {
+          "ar": "منسحب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobApplicant",
+          "property": "status",
+          "value": "withdrawn"
+        }
+      },
+      {
+        "label": {
+          "ar": "عرض عمل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.JobOffer"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOffer",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOffer",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "إجمالي العرض السنوي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOffer",
+          "property": "offered_ctc"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ العرض"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOffer",
+          "property": "offer_date"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ الانتهاء"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOffer",
+          "property": "expiry_date"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOffer",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobOffer",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُرسل"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobOffer",
+          "property": "status",
+          "value": "sent"
+        }
+      },
+      {
+        "label": {
+          "ar": "مقبول"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobOffer",
+          "property": "status",
+          "value": "accepted"
+        }
+      },
+      {
+        "label": {
+          "ar": "مرفوض"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobOffer",
+          "property": "status",
+          "value": "declined"
+        }
+      },
+      {
+        "label": {
+          "ar": "منتهي الصلاحية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.JobOffer",
+          "property": "status",
+          "value": "expired"
+        }
+      },
+      {
+        "label": {
+          "ar": "قائمة إجراءات التعيين"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.OnboardingChecklist"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.OnboardingChecklist",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "البنود المطلوبة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.OnboardingChecklist",
+          "property": "required_items_count"
+        }
+      },
+      {
+        "label": {
+          "ar": "البنود المكتملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.OnboardingChecklist",
+          "property": "completed_items_count"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.OnboardingChecklist",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "قيد التنفيذ"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.OnboardingChecklist",
+          "property": "status",
+          "value": "in_progress"
+        }
+      },
+      {
+        "label": {
+          "ar": "مكتملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.OnboardingChecklist",
+          "property": "status",
+          "value": "completed"
+        }
+      },
+      {
+        "label": {
+          "ar": "ملغاة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.OnboardingChecklist",
+          "property": "status",
+          "value": "cancelled"
+        }
+      },
+      {
+        "label": {
+          "ar": "تقييم الأداء"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.Appraisal"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Appraisal",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "دورة التقييم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Appraisal",
+          "property": "cycle_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الدرجة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Appraisal",
+          "property": "score"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحالة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Appraisal",
+          "property": "status"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Appraisal",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُقدّم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Appraisal",
+          "property": "status",
+          "value": "submitted"
+        }
+      },
+      {
+        "label": {
+          "ar": "نهائي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.Appraisal",
+          "property": "status",
+          "value": "finalized"
+        }
+      },
+      {
+        "label": {
+          "ar": "ملف قانون العمل المصري (قانون ١٤ لسنة ٢٠٢٥)"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "loc_eg.LaborProfile"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "تاريخ السريان"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "effective_from"
+        }
+      },
+      {
+        "label": {
+          "ar": "المنطقة الزمنية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "iana_timezone"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحد الأقصى للساعات الأسبوعية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "max_regular_weekly_hours"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحد الأقصى لساعات التواجد اليومي"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "max_daily_hours"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحد الأدنى للراحة بين الورديات"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "min_rest_between_shifts_hours"
+        }
+      },
+      {
+        "label": {
+          "ar": "الإجازة السنوية للسنة الأولى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "first_year_annual_leave_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "الإجازة السنوية الاعتيادية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "standard_annual_leave_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "الإجازة السنوية للأقدمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "senior_annual_leave_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "الإجازة السنوية لذوي الإعاقة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "disability_annual_leave_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "سنوات الأقدمية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "seniority_threshold_years"
+        }
+      },
+      {
+        "label": {
+          "ar": "نظام الراحة الأسبوعية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "weekend_pattern"
+        }
+      },
+      {
+        "label": {
+          "ar": "الجمعة والسبت"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "weekend_pattern",
+          "value": "friday_saturday"
+        }
+      },
+      {
+        "label": {
+          "ar": "الجمعة فقط"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "weekend_pattern",
+          "value": "friday_only"
         }
       }
     ],

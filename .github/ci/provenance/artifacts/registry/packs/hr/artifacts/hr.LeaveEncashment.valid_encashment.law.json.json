@@ -1,0 +1,24 @@
+{
+  "sha256": "4e181685c2277ca0f6c88676a4dde04dbb84e744f64a15488d2f5cfe47f43de3",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/hr/access.ts",
+    "registry/packs/hr/markings.ts",
+    "registry/packs/hr/payroll_expenses.ts",
+    "registry/packs/hr/people_leave.ts",
+    "registry/packs/hr/rostering.ts",
+    "registry/packs/hr/talent.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

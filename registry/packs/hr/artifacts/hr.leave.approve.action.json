@@ -57,7 +57,7 @@
       "type": "object"
     },
     "preconditions": [
-      "slice.request.status == \"pending\" and slice.balance.quantity >= slice.request.days"
+      "(slice.request.status == 'pending') and (slice.balance.quantity >= slice.request.days)"
     ],
     "scopeRequired": [
       "orgId",

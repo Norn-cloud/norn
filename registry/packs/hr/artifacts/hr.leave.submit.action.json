@@ -57,7 +57,7 @@
       "type": "object"
     },
     "preconditions": [
-      "slice.request.days > 0 and slice.balance.quantity >= slice.request.days"
+      "(slice.request.days > 0) and (slice.balance.quantity >= slice.request.days)"
     ],
     "scopeRequired": [
       "orgId",

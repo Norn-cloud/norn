@@ -1,0 +1,217 @@
+{
+  "artifactId": "hr.ExpenseClaim.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Expense claim",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Employee expense reimbursement claim with strict claimed/sanctioned bounds and independent approval (implements core.Claim; HR-EX-01, HR-EX-02).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Claim"
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "approved",
+            "paid"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "paid",
+            "rejected"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "submit",
+              "to": "submitted"
+            },
+            {
+              "from": [
+                "submitted"
+              ],
+              "id": "approve",
+              "to": "approved"
+            },
+            {
+              "from": [
+                "approved"
+              ],
+              "id": "mark_paid",
+              "to": "paid"
+            },
+            {
+              "from": [
+                "submitted"
+              ],
+              "id": "reject",
+              "to": "rejected"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employee entitled to reimbursement.",
+          "id": "creditor",
+          "target": "hr.Person"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employer unit obliged to reimburse sanctioned expenses.",
+          "id": "debtor",
+          "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional commitment giving rise to this expense claim.",
+          "id": "arises_from",
+          "target": "core.Commitment"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional employee advance partially or fully offsetting this claim.",
+          "id": "advance",
+          "target": "hr.EmployeeAdvance"
+        }
+      ],
+      "name": "hr.ExpenseClaim",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "amount",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "due_date",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.date"
+          }
+        },
+        {
+          "id": "requester_user_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "claimed_amount",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "sanctioned_amount",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "description",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "submitted"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "paid"
+              },
+              {
+                "value": "rejected"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.ExpenseClaim.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

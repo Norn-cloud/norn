@@ -1,0 +1,153 @@
+{
+  "artifactId": "hr.LeavePolicy.entity",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Leave policy",
+  "namespace": "hr",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Jurisdiction-agnostic entitlement policy declaring annual, sick, and emergency base allowances and carry-forward cap.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "archived"
+          ],
+          "initial": [
+            "active"
+          ],
+          "property": "status",
+          "terminal": [
+            "archived"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "active"
+              ],
+              "id": "archive",
+              "to": "archived"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional organizational unit governed by this leave policy.",
+          "id": "unit",
+          "target": "org.OrgUnit"
+        }
+      ],
+      "name": "hr.LeavePolicy",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "policy_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "label",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "annual_base_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "sick_base_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "emergency_base_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "max_carry_forward_days",
+          "type": {
+            "kind": "decimal",
+            "scale": 2,
+            "unit": {
+              "code": "d",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "default": "active",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "active"
+              },
+              {
+                "value": "archived"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.LeavePolicy.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
