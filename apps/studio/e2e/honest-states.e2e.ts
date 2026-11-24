@@ -306,12 +306,11 @@ test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded
   await expect(page.getByText("Nothing needs you")).toBeVisible()
 })
 
-test("CSV load write deadlines: a 15 s dataset load succeeds without hitting the 12 s read timeout; a 90 s timeout enters Outcome unknown, blocks duplicate submission, and reconciles via source.Connection", async ({ page }) => {
+test("CSV load writes: a 15 s dataset load succeeds without hitting the 12 s read timeout; a gateway 504 shows honest ambiguous copy with no one-click retry; a 422 refusal keeps retry", async ({ page }) => {
   await session(page)
   const sha = "cd".repeat(32)
   let loadCalls = 0
-  let mode: "slow-ok" | "timeout-then-land" = "slow-ok"
-  let connectionLanded = false
+  let mode: "slow-ok" | "gateway-504" | "refusal-422" = "slow-ok"
   const slowLoad: { release?: () => void } = {}
   const pendingReleases: (() => void)[] = []
   const connectionEntity = {
@@ -331,24 +330,6 @@ test("CSV load write deadlines: a 15 s dataset load succeeds without hitting the
     const path = new URL(route.request().url()).pathname
     if (path.endsWith("/v1/definitions")) return route.fulfill({ json: { artifacts: [...(definitions as unknown[]), connectionEntity] } })
     if (path.endsWith("/v1/objects/source.Connection")) return route.fulfill({ json: { records: [] } })
-    if (path.endsWith("/v1/objects/source.Connection/upload.sale")) {
-      if (!connectionLanded) return route.fulfill({ status: 404, json: { code: "object.not_found", message: "not found" } })
-      return route.fulfill({
-        json: {
-          objectType: "source.Connection",
-          id: "upload.sale",
-          version: 1,
-          values: {
-            status: "ok",
-            last_sync_ended_at: "2027-01-15T08:05:00Z",
-            watermark: JSON.stringify({ sha256: sha, rows: 2 }),
-            rows_read: 2,
-            rows_landed: 2,
-            rows_quarantined: 0,
-          },
-        },
-      })
-    }
     if (path.endsWith("/v1/uploads:begin")) {
       return route.fulfill({ json: { uploadId: "up_1", putUrl: "https://storage.example/up_1", putHeaders: { "content-type": "text/csv" }, expiresAt: "2027-01-15T09:00:00Z" } })
     }
@@ -372,7 +353,7 @@ test("CSV load write deadlines: a 15 s dataset load succeeds without hitting the
     if (path.endsWith("/v1/datasets:load")) {
       loadCalls += 1
       const body = route.request().postDataJSON() as { requestKey?: string }
-      expect(typeof body.requestKey).toBe("string")
+      expect(body.requestKey).toBeUndefined()
       if (mode === "slow-ok") {
         await new Promise<void>((resolve) => {
           slowLoad.release = resolve
@@ -380,9 +361,10 @@ test("CSV load write deadlines: a 15 s dataset load succeeds without hitting the
         })
         return route.fulfill({ json: { objectType: "upload.Sale", rows: 2, rejected: 0, reasons: {}, bytes: 42, millis: 15_000 } })
       }
-      // Timeout path: hold open until cleaned up in finally so the 90 s write deadline fires.
-      await new Promise<void>((resolve) => { pendingReleases.push(resolve) })
-      return route.abort()
+      if (mode === "gateway-504") {
+        return route.fulfill({ status: 504, contentType: "text/html", body: "<html><body>504 Gateway Timeout</body></html>" })
+      }
+      return route.fulfill({ status: 422, json: { code: "bulk.missing_column", message: "the file has no column amount" } })
     }
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
   })
@@ -391,7 +373,7 @@ test("CSV load write deadlines: a 15 s dataset load succeeds without hitting the
     await page.clock.install()
     await page.goto("/sources")
 
-    // 1. Slow 15 s dataset load succeeds without tripping the 12 s read timeout.
+    // 1. Slow 15 s dataset load succeeds without tripping the 12 s read timeout; duplicate submit is blocked while in flight.
     await page.getByRole("button", { name: "Upload a CSV" }).first().click()
     const dialog = page.getByRole("dialog", { name: "Upload a CSV" })
     await dialog.getByLabel("CSV file").setInputFiles({ name: "sales.csv", mimeType: "text/csv", buffer: Buffer.from("sku,amount\nA1,10.00\nA2,20.00\n") })
@@ -403,17 +385,18 @@ test("CSV load write deadlines: a 15 s dataset load succeeds without hitting the
     // Advance 15 s (>12 s read deadline): the POST write must still be in flight, NOT aborted at 12 s.
     await page.clock.runFor(15_000)
     await expect(dialog.getByRole("button", { name: "Loading…" })).toBeDisabled()
-    await expect(dialog.locator('[data-load-outcome="unknown"]')).toHaveCount(0)
+    await expect(dialog.getByRole("button", { name: "As governed records" })).toBeDisabled()
+    await expect(dialog.locator('[data-load-outcome="ambiguous"]')).toHaveCount(0)
     slowLoad.release?.()
     await expect(dialog).toContainText("2 rows loaded into upload.Sale in 15000 ms.")
     expect(loadCalls).toBe(1)
 
-    // Close and reopen for part 2: 90 s timeout enters Outcome unknown, blocks duplicate submission, and reconciles via source.Connection.
+    // 2. Gateway 504 on a CSV load shows honest ambiguous copy, links to the source in Sources, and offers no one-click retry.
+    await page.clock.resume()
     await page.keyboard.press("Escape")
     await expect(dialog).toBeHidden()
-    mode = "timeout-then-land"
+    mode = "gateway-504"
     loadCalls = 0
-    connectionLanded = false
 
     await page.getByRole("button", { name: "Upload a CSV" }).first().click()
     await dialog.getByLabel("CSV file").setInputFiles({ name: "sales.csv", mimeType: "text/csv", buffer: Buffer.from("sku,amount\nA1,10.00\nA2,20.00\n") })
@@ -421,26 +404,27 @@ test("CSV load write deadlines: a 15 s dataset load succeeds without hitting the
     await expect(dialog.getByLabel("Type name")).toBeVisible()
     await dialog.getByLabel("Type name").fill("Sale")
     await dialog.getByRole("button", { name: "Load 2 rows as a dataset" }).click()
-    await expect.poll(() => loadCalls).toBe(1)
 
-    // Advance past the 90 s UPLOAD_STEP_MS deadline: must enter Outcome unknown and block re-submission.
-    await page.clock.runFor(91_000)
-    const unknown = dialog.locator('[data-load-outcome="unknown"]')
-    await expect(unknown).toBeVisible()
-    await expect(unknown).toHaveAttribute("data-reconcile-state", "unresolved")
-    await expect(unknown).toContainText("Outcome unknown")
-    await expect(unknown).toContainText("Re-submitting is blocked")
-    await expect(dialog.getByRole("button", { name: /Load .* as a dataset/ })).toHaveCount(0)
-    await expect(dialog.getByRole("button", { name: "As governed records" })).toHaveCount(0)
+    const ambiguous = dialog.locator('[data-load-outcome="ambiguous"]')
+    await expect(ambiguous).toBeVisible()
+    await expect(ambiguous).toContainText("The load may or may not have finished. Check this source's latest load in Sources before trying again.")
+    await expect(ambiguous.getByRole("link", { name: /Sources/ })).toHaveAttribute("href", "/sources#upload.sale")
+    await expect(dialog.getByRole("button", { name: /Retry|Check again|Load .* as a dataset|As governed records/ })).toHaveCount(0)
     expect(loadCalls).toBe(1)
-    await page.clock.resume()
-    await shoot(page, "upload-outcome-unknown")
 
-    // Once the server finishes writing source.Connection, "Check again" reconciles cleanly without issuing a second write.
-    connectionLanded = true
-    await unknown.getByRole("button", { name: "Check again" }).click()
-    await expect(dialog).toContainText("2 rows loaded into upload.Sale (confirmed from the workspace).")
-    expect(loadCalls).toBe(1)
+    // 3. Clear 422 refusal shows the server reason and keeps the submit button enabled for retry.
+    await page.keyboard.press("Escape")
+    await expect(dialog).toBeHidden()
+    mode = "refusal-422"
+
+    await page.getByRole("button", { name: "Upload a CSV" }).first().click()
+    await dialog.getByLabel("CSV file").setInputFiles({ name: "sales.csv", mimeType: "text/csv", buffer: Buffer.from("sku,amount\nA1,10.00\nA2,20.00\n") })
+    await dialog.getByRole("button", { name: "Upload", exact: true }).click()
+    await expect(dialog.getByLabel("Type name")).toBeVisible()
+    await dialog.getByLabel("Type name").fill("Sale")
+    await dialog.getByRole("button", { name: "Load 2 rows as a dataset" }).click()
+    await expect(dialog).toContainText("the file has no column amount")
+    await expect(dialog.getByRole("button", { name: "Load 2 rows as a dataset" })).toBeEnabled()
   } finally {
     for (const release of pendingReleases) release()
     await page.unrouteAll({ behavior: "ignoreErrors" })

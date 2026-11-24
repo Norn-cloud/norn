@@ -115,7 +115,7 @@ export function SourceConnections() {
               const status = connectionStatus(values)
               const read = connections.data
               return (
-                <TableRow key={id}>
+                <TableRow key={id} id={id} className="scroll-mt-4 target:bg-accent/40">
                   <TableCell><div className="font-medium">{values.label ?? id}</div><div className="text-xs text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono">{values.target}</span></div></TableCell>
                   <TableCell>
                     <Badge variant={status.variant}>{status.label}</Badge>
