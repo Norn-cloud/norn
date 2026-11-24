@@ -138,6 +138,36 @@ const findingsOf = (body: Record<string, unknown> | null): readonly Finding[] =>
 const isSavedView = (value: unknown): value is SavedView =>
   value !== null && typeof value === "object" && typeof (value as SavedView).title === "string" && typeof (value as SavedView).objectType === "string"
 
+/** Shown when the cell answers 200 with a body that is not a readable definition. */
+export const UNREADABLE_VIEW = "The cell's answer for this view could not be read; nothing was opened."
+
+/**
+ * How many view detail reads one listing keeps in flight: the list has no page cap, so without a
+ * bound a large workspace would open one request (each with its own deadline) per view at once.
+ */
+export const VIEW_READ_CONCURRENCY = 6
+
+/** `read` over `items` in order, with at most `limit` in flight; the first failure stops further reads and rejects. */
+export async function mapBounded<T, R>(items: readonly T[], limit: number, read: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array<R>(items.length)
+  let next = 0
+  let failed = false
+  const worker = async (): Promise<void> => {
+    while (!failed && next < items.length) {
+      const index = next
+      next += 1
+      try {
+        results[index] = await read(items[index]!)
+      } catch (error) {
+        failed = true
+        throw error
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(0, Math.min(limit, items.length)) }, worker))
+  return results
+}
+
 /** The cell's saved views, through the Studio Worker's host route as the signed-in account. */
 export function cellViews(
   fetcher: Fetch = defaultFetch,
@@ -177,11 +207,13 @@ export function cellViews(
   const getWith = (read: ReturnType<typeof callWith>, scope: StudioScope) => async (id: string, signal?: AbortSignal): Promise<StoredView | undefined> => {
     const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`, signal === undefined ? undefined : { signal })
     if (status === 404 && body?.code === "definition.not_found") return undefined
-    // Only a `view` definition is a view: another kind under this id (an automation, a dashboard)
-    // never opens here, so its controls are never wired to this route's retire and save.
-    if (status === 200 && body?.kind !== KIND) return undefined
-    if (status !== 200 || typeof body?.version !== "number" || !isSavedView(body.payload)) {
-      throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
+    // Only a `view` definition is a view: a well-formed definition of another kind under this id
+    // (an automation, a dashboard) never opens here, so its controls are never wired to this route's
+    // retire and save. A body without a readable kind is not "no view": the cell's answer could not
+    // be read, and says so.
+    if (status === 200 && typeof body?.kind === "string" && body.kind !== KIND && typeof body.version === "number") return undefined
+    if (status !== 200 || body?.kind !== KIND || typeof body?.version !== "number" || !isSavedView(body.payload)) {
+      throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : status === 200 ? UNREADABLE_VIEW : undefined)
     }
     if (body.lifecycle === "retired") return undefined
     return {
@@ -256,11 +288,12 @@ export function cellViews(
       if (seen.has(cursor)) throw new CellUnavailable(status, "The cell's view list repeated a page; not every view could be read.")
       seen.add(cursor)
     }
-    const read = await Promise.all(ids.map(async ({ id, updatedAtMs }) => {
+    // At most VIEW_READ_CONCURRENCY detail reads in flight, whatever the list's length.
+    const read = await mapBounded(ids, VIEW_READ_CONCURRENCY, async ({ id, updatedAtMs }) => {
       // Only explicit 404 definition.not_found (or retired) returns undefined; transport/5xx errors propagate.
       const stored = await pinnedGet(id)
       return stored === undefined ? [] : [{ ...stored, ...(updatedAtMs !== undefined && stored.updatedAtMs === undefined ? { updatedAtMs } : {}) }]
-    }))
+    })
     return read.flat()
   }
 

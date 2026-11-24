@@ -129,13 +129,18 @@ export function accountQuery(client: QueryClient, fetcher: Fetch = defaultFetch,
 
 const noSubscription = () => () => {}
 
+/** Who reads now, from the cached session answer (no `/api/me` read): a callback's view of the reader, never a render's. */
+export function readerKeyIn(client: QueryClient | undefined): string {
+  return sessionKey(client?.getQueryData<Account | null>(SESSION))
+}
+
 /**
  * Who reads (`sessionKey` of the cached session), re-rendered whenever the session answer changes.
  * Reads only the cache: it never asks `/api/me`, and works without a QueryClientProvider.
  */
 export function useReaderKey(): string {
   const client = useContext(QueryClientContext)
-  const read = () => sessionKey(client?.getQueryData<Account | null>(SESSION))
+  const read = () => readerKeyIn(client)
   return useSyncExternalStore(client === undefined ? noSubscription : (notify) => client.getQueryCache().subscribe(notify), read, read)
 }
 

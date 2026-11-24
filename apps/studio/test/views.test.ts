@@ -19,10 +19,13 @@ import {
   cellViews,
   cleanView,
   duplicateView,
+  mapBounded,
   newViewId,
   saveViewDraft,
   sortKeys,
   sortText,
+  UNREADABLE_VIEW,
+  VIEW_READ_CONCURRENCY,
   viewField,
   viewPreviewQueryKey,
   WORKSPACE_CHANGED_MESSAGE,
@@ -36,9 +39,9 @@ import type { ViewsBarNotice } from "../src/grid/views-bar.tsx"
 
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
 const { invalidateActionReads } = await import("../src/actions/action-sheet.tsx")
-const { RecordsGrid, visibleDrawerRow } = await import("../src/grid/records-grid.tsx")
+const { RecordsGrid, readWithdrawn, visibleDrawerRow } = await import("../src/grid/records-grid.tsx")
 const { deletedViewNotice, updateGridView } = await import("../src/grid/views-bar.tsx")
-const { deletionReceipts, reloadConflictingView, scopedDeletedView, selectViewSpace, viewEditorDraft, ViewConflictBanner, ViewDetail, ViewEditor } = await import("../src/views.tsx")
+const { deletionReceiptFor, deletionReceipts, receiptSuperseded, reloadConflictingView, scopedDeletedView, selectViewSpace, viewEditorDraft, ViewConflictBanner, ViewDetail, ViewEditor } = await import("../src/views.tsx")
 
 const SCOPE_A: StudioScope = { orgId: "org_a", environmentId: "prod" }
 const SCOPE_B: StudioScope = { orgId: "org_b", environmentId: "prod" }
@@ -807,6 +810,24 @@ test("the drawer shows the opened record as the latest page serves it, and close
   expect(visibleDrawerRow(null, [first], null)).toBeNull()
 })
 
+// #1700 R1: a refetch refused with 401 or 403 (scope probe or records read) keeps TanStack's cached
+// page in `data`; the refusal wins over it, so the page is hidden and the drawer closes.
+test("an authorization refusal on a refetch withdraws the cached page and closes the drawer", () => {
+  const row = { record: { objectType: "canon.Item", id: "a", scope: "s", version: 1, values: { label: "Alpha" }, withheld: false }, at: "/records/0", numbers: new Map<string, string>() }
+  for (const status of [401, 403]) {
+    const refused = new CellUnavailable(status)
+    expect(readWithdrawn(refused)).toBe(true)
+    expect(visibleDrawerRow("a", [row], refused)).toBeNull()
+  }
+  expect(readWithdrawn(new StudioScopeError(WORKSPACE_CHANGED_MESSAGE))).toBe(true)
+  // An outage is not a refusal: the last page stays, with the error beside it.
+  for (const status of [0, 500, 503]) {
+    expect(readWithdrawn(new CellUnavailable(status))).toBe(false)
+    expect(visibleDrawerRow("a", [row], new CellUnavailable(status))).toBe(row)
+  }
+  expect(readWithdrawn(null)).toBe(false)
+})
+
 test("a detail definition read stays pinned before dispatch and discards a late result from its former workspace", async () => {
   let active = SCOPE_A
   const fetched: (string | null)[] = []
@@ -972,6 +993,56 @@ test("a definition of another kind is not a view, so the detail never wires its 
   expect(await store.get("ops.automation.a", SCOPE_A)).toBeUndefined()
 })
 
+// #1700 R7: only a well-formed definition of another kind is "no view"; an unreadable 200 is an unavailable read.
+test.each([
+  ["an empty body", ""],
+  ["a body that is not JSON", "<html>gateway</html>"],
+  ["a body without a kind", JSON.stringify({ id: "studio.view.a", version: 1, lifecycle: "active", payload: SAMPLE_VIEW })],
+  ["a kind that is not a string", JSON.stringify({ id: "studio.view.a", kind: 7, version: 1, lifecycle: "active", payload: SAMPLE_VIEW })],
+  ["another kind without a version", JSON.stringify({ id: "studio.view.a", kind: "automation", lifecycle: "active" })],
+])("a 200 with %s is an unavailable read, never \"No view\"", async (_case, body) => {
+  const store = cellViews(async () => new Response(body, { status: 200 }))
+  const read = store.get("studio.view.a", SCOPE_A)
+  await expect(read).rejects.toBeInstanceOf(CellUnavailable)
+  await expect(store.get("studio.view.a", SCOPE_A)).rejects.toThrow(UNREADABLE_VIEW)
+})
+
+// #1700 R6: the listing reads every view's detail with a bounded number in flight.
+test("listAll reads every detail with at most VIEW_READ_CONCURRENCY in flight, in the cell's order", async () => {
+  const total = 40
+  let inFlight = 0
+  let peak = 0
+  const fetcher: Fetch = async (input) => {
+    const url = new URL(String(input), "https://studio.test")
+    if (url.pathname.endsWith("/v1/definitions:list")) {
+      return Response.json({ items: Array.from({ length: total }, (_, index) => ({ id: `studio.view.${index}` })), cursor: null })
+    }
+    inFlight += 1
+    peak = Math.max(peak, inFlight)
+    // Later ids answer sooner, so order is the listing's, not the answers'.
+    const id = decodeURIComponent(url.pathname.split("/v1/definitions/")[1] ?? "")
+    await new Promise((resolve) => setTimeout(resolve, total - Number(id.split(".").at(-1))))
+    inFlight -= 1
+    return Response.json({ id, kind: "view", version: 1, lifecycle: "active", payload: { ...SAMPLE_VIEW, title: id } })
+  }
+  const listed = await cellViews(fetcher).listAll(SCOPE_A)
+  expect(listed.map(({ id }) => id)).toEqual(Array.from({ length: total }, (_, index) => `studio.view.${index}`))
+  expect(peak).toBe(VIEW_READ_CONCURRENCY)
+})
+
+test("a failed detail read stops further reads and fails the listing", async () => {
+  const started: number[] = []
+  const failed = await mapBounded([0, 1, 2, 3, 4, 5, 6, 7], 2, async (index) => {
+    started.push(index)
+    await new Promise((resolve) => setTimeout(resolve, 1))
+    if (index === 1) throw new CellUnavailable(503)
+    return index
+  }).catch((error: unknown) => error)
+  expect(failed).toBeInstanceOf(CellUnavailable)
+  expect(started.length).toBeLessThan(8)
+  expect(await mapBounded([], 6, async (value: number) => value)).toEqual([])
+})
+
 // #1700 S8: the list follows the cell's cursor past ten pages; a repeated cursor is an error, not success.
 test("listAll follows the cursor to the end and refuses a listing that repeats a page", async () => {
   const pages = 12
@@ -994,6 +1065,36 @@ test("listAll follows the cursor to the end and refuses a listing that repeats a
   listCalls.length = 0
   await expect(cellViews(fetcher(true)).listAll(SCOPE_A)).rejects.toBeInstanceOf(CellUnavailable)
   expect(listCalls).toEqual([null, "p1"])
+})
+
+// #1700 R2: a deletion's receipt belongs to the reader and workspace that pressed Delete; a reply that
+// arrives after either changed (another sign-in, a role change, a workspace switch) leaves none.
+test("a deletion answered after the reader or workspace changed leaves no receipt for the next reader", () => {
+  const gone = { id: "studio.view.a", version: 3, scope: SCOPE_A, view: SAMPLE_VIEW }
+  const alice = { reader: "alice-admin", scope: SCOPE_A }
+  expect(deletionReceiptFor(gone, alice, alice)).toEqual({ ...gone, reader: "alice-admin" })
+  // Held across a role change in the same workspace: the reply is dropped, never given to the new role.
+  expect(deletionReceiptFor(gone, alice, { reader: "alice-viewer", scope: SCOPE_A })).toBeUndefined()
+  expect(deletionReceiptFor(gone, alice, { reader: "bob", scope: SCOPE_A })).toBeUndefined()
+  expect(deletionReceiptFor(gone, alice, { reader: "alice-admin", scope: SCOPE_A_STAGING })).toBeUndefined()
+  expect(deletionReceiptFor(gone, alice, { reader: "alice-admin", scope: null })).toBeUndefined()
+  // A view from another workspace than the one shown is never receipted under the shown one.
+  expect(deletionReceiptFor({ ...gone, scope: SCOPE_B }, alice, alice)).toBeUndefined()
+  expect(deletionReceiptFor(undefined, alice, alice)).toBeUndefined()
+})
+
+// #1700 R4: a read that serves a newer active revision (restored elsewhere) supersedes the receipt.
+test("a newer active revision of a deleted view supersedes its receipt", () => {
+  const receipt = { id: "studio.view.a", version: 3, scope: SCOPE_A, view: SAMPLE_VIEW, reader: "alice" }
+  const served = (version: number, scope = SCOPE_A, id = "studio.view.a") => ({ id, version, scope, view: SAMPLE_VIEW })
+  expect(receiptSuperseded(receipt, served(4))).toBe(true)
+  // The pre-deletion read, the same id elsewhere, or another view never clear it.
+  expect(receiptSuperseded(receipt, served(2))).toBe(false)
+  expect(receiptSuperseded(receipt, served(3))).toBe(false)
+  expect(receiptSuperseded(receipt, served(9, SCOPE_B))).toBe(false)
+  expect(receiptSuperseded(receipt, served(9, SCOPE_A, "studio.view.b"))).toBe(false)
+  expect(receiptSuperseded(receipt, null)).toBe(false)
+  expect(receiptSuperseded(receipt, undefined)).toBe(false)
 })
 
 // #1700 S7: each deletion keeps its own receipt, by reader, workspace and view id.

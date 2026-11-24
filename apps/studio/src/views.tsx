@@ -16,7 +16,7 @@ import type { Concept } from "./lib/catalog.ts"
 import { NO_DATA_CELL, StudioScopeError, useStudioScope, type Finding, type StudioScope } from "./lib/definitions.ts"
 import type { Issue } from "./lib/editor.ts"
 import { useMode } from "./lib/live-transport.ts"
-import { useReaderKey } from "./lib/session.ts"
+import { readerKeyIn, useReaderKey } from "./lib/session.ts"
 import { recordName } from "./lib/objects.ts"
 import { LIMITS, propertyWithheld, recordsQueryPrefix, sortable, totalText, type RecordsQuery, type SortKey } from "./lib/records-query.ts"
 import { offersTimeline } from "./lib/timeline.ts"
@@ -92,6 +92,44 @@ export const deletionReceipts = {
   subscribe(listener: () => void): () => void { receiptListeners.add(listener); return () => { receiptListeners.delete(listener) } },
   snapshot: (): readonly DeletionReceipt[] => receiptList,
   clear(): void { publishReceipts([]) },
+}
+
+/** Who started a deletion: the reader and the workspace shown when Delete was pressed. */
+export interface DeletionStart { readonly reader: string; readonly scope: StudioScope | null }
+
+/**
+ * The receipt for a deletion the cell just answered, bound to who started it. When the reader
+ * (another sign-in, or a role change) or the workspace changed while the deletion was pending,
+ * there is none: its Undo belongs to the reader who deleted, never to the next one.
+ */
+export function deletionReceiptFor(gone: RemovedView | undefined, started: DeletionStart, now: DeletionStart): DeletionReceipt | undefined {
+  if (gone === undefined || started.reader !== now.reader || !sameScope(started.scope, now.scope) || !sameScope(gone.scope, started.scope)) return undefined
+  return { ...gone, reader: started.reader }
+}
+
+/**
+ * Whether a read confirms a newer active revision of a deleted view (someone restored it, here or
+ * elsewhere): the receipt is stale, and its Undo would only conflict with that revision.
+ */
+export function receiptSuperseded(receipt: RemovedView, served: StoredView | null | undefined): boolean {
+  return served != null && served.id === receipt.id && sameScope(served.scope, receipt.scope) && served.version > receipt.version
+}
+
+/** Drop every receipt a list or detail read shows superseded by a newer active revision. */
+function reconcileReceipts(served: readonly StoredView[]): void {
+  for (const receipt of deletionReceipts.snapshot()) {
+    if (served.some((view) => receiptSuperseded(receipt, view))) deletionReceipts.remove(receipt)
+  }
+}
+
+/** A deletion's start (as rendered when pressed) and the reader and workspace now (from the cache, when the cell answers). */
+function useDeletionStart(scope: StudioScope | null): { readonly start: () => DeletionStart; readonly now: () => DeletionStart } {
+  const client = useQueryClient()
+  const reader = useReaderKey()
+  return {
+    start: () => ({ reader, scope }),
+    now: () => ({ reader: readerKeyIn(client), scope: client.getQueryData<StudioScope | null>(["studio-scope"]) ?? null }),
+  }
 }
 
 /** This reader's deletion receipts in `scope`, re-rendered as receipts are added or restored. */
@@ -303,7 +341,9 @@ export function ViewsPage() {
     retry: false,
   })
   const refresh = () => client.invalidateQueries({ queryKey: ["views"] })
-  const { reader, receipts } = useDeletionReceipts(activeScope)
+  const { receipts } = useDeletionReceipts(activeScope)
+  const deletion = useDeletionStart(activeScope)
+  useEffect(() => { if (list.data) reconcileReceipts(list.data) }, [list.data])
 
   const duplicate = useMutation({
     mutationFn: async (stored: StoredView) => {
@@ -314,12 +354,13 @@ export function ViewsPage() {
     onSuccess: refresh,
   })
 
+  // The reader and workspace travel with the deletion from the press; the receipt is kept only if both still hold when the cell answers.
   const remove = useMutation({
-    mutationFn: async (stored: StoredView) => {
+    mutationFn: async ({ stored }: { readonly stored: StoredView; readonly started: DeletionStart }) => {
       const retired = settled(await views.retire(stored.id, stored.version, stored.scope))
       return retired.saved ? { id: stored.id, version: retired.version, scope: stored.scope, view: stored.view } : undefined
     },
-    onSuccess: (gone) => { if (gone !== undefined) deletionReceipts.add({ ...gone, reader }) },
+    onSuccess: (gone, { started }) => { const receipt = deletionReceiptFor(gone, started, deletion.now()); if (receipt) deletionReceipts.add(receipt) },
     onSettled: refresh,
   })
 
@@ -386,7 +427,7 @@ export function ViewsPage() {
                       <Button asChild variant="ghost" size="sm"><Link to="/views/$id/edit" params={{ id: stored.id }}><Pencil />Edit</Link></Button>
                       <RenamePopover current={stored.view.title} onRename={(title) => rename(stored, title)} />
                       <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(stored)}><Copy />Duplicate</Button>
-                      <Button variant="ghost" size="sm" onClick={() => remove.mutate(stored)}><Trash2 />Delete</Button>
+                      <Button variant="ghost" size="sm" onClick={() => remove.mutate({ stored, started: deletion.start() })}><Trash2 />Delete</Button>
                     </div>
                   }
                 >
@@ -437,7 +478,9 @@ function ScopedViewDetail({ id, store = views }: {
   if (sourceScope === null && stored.data != null) setSourceScope(stored.data.scope)
   const detailScopeMismatch = scopeMismatch
     || (stored.error instanceof StudioScopeError && stored.error.message === WORKSPACE_CHANGED_MESSAGE)
-  const { reader, receipts } = useDeletionReceipts(activeScope)
+  const { receipts } = useDeletionReceipts(activeScope)
+  const deletion = useDeletionStart(activeScope)
+  useEffect(() => { if (stored.data) reconcileReceipts([stored.data]) }, [stored.data])
   const invalidate = () => {
     void client.invalidateQueries({ queryKey: ["views"] })
     void client.invalidateQueries({ queryKey: ["view", id] })
@@ -457,11 +500,15 @@ function ScopedViewDetail({ id, store = views }: {
   })
 
   const remove = useMutation({
-    mutationFn: async (from: StoredView) => {
+    mutationFn: async ({ from }: { readonly from: StoredView; readonly started: DeletionStart }) => {
       const retired = settled(await store.retire(from.id, from.version, from.scope))
       return retired.saved ? { id: from.id, version: retired.version, scope: from.scope, view: from.view } : undefined
     },
-    onSuccess: (gone) => { if (gone !== undefined) deletionReceipts.add({ ...gone, reader }); void client.invalidateQueries({ queryKey: ["views"] }) },
+    onSuccess: (gone, { started }) => {
+      const receipt = deletionReceiptFor(gone, started, deletion.now())
+      if (receipt) deletionReceipts.add(receipt)
+      void client.invalidateQueries({ queryKey: ["views"] })
+    },
   })
 
   const rename = async (from: StoredView, title: string): Promise<string | null> => {
@@ -475,7 +522,9 @@ function ScopedViewDetail({ id, store = views }: {
     }
   }
 
-  const deleted = detailScopeMismatch ? undefined : scopedDeletedView(receipts.find((receipt) => receipt.id === id), id, activeScope)
+  // A read that serves a newer active revision wins over a stale receipt (the view was restored).
+  const receipt = receipts.find((kept) => kept.id === id && !receiptSuperseded(kept, stored.data))
+  const deleted = detailScopeMismatch ? undefined : scopedDeletedView(receipt, id, activeScope)
   const active = deleted || detailScopeMismatch ? undefined : stored.data
   const loaded = stored.data
   useEffect(() => {
@@ -510,7 +559,7 @@ function ScopedViewDetail({ id, store = views }: {
             <Button asChild size="sm"><Link to="/views/$id/edit" params={{ id: active.id }}><Pencil />Edit</Link></Button>
             <RenamePopover current={active.view.title} onRename={(title) => rename(active, title)} />
             <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(active)}><Copy />Duplicate</Button>
-            <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => remove.mutate(active)}><Trash2 />Delete</Button>
+            <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => remove.mutate({ from: active, started: deletion.start() })}><Trash2 />Delete</Button>
           </div>
         )}
       </div>

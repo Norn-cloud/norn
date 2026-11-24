@@ -15,7 +15,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import type { Concept, Field } from "../lib/catalog.ts"
-import { NO_DATA_CELL, readAtScope, readStudioScope, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
+import { CellUnavailable, NO_DATA_CELL, readAtScope, readStudioScope, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
 import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, recordsQueryPrefix, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, readRecordsAtScope, type RecordsRead } from "../lib/records-source.ts"
@@ -81,12 +81,22 @@ export interface GridQuery { readonly filter: Predicate | null; readonly sort: r
 export type DisplayedGridQuery = GridQuery & { readonly initialColumns: readonly string[]; readonly scope?: StudioScope }
 
 /**
+ * Whether the latest read withdrew this reader's view of the records: the workspace changed, or
+ * the session or the cell refused the reader (401 or 403, from the scope probe or the records
+ * read). It wins over any cached page: TanStack keeps the last page on a failed refetch, and that
+ * page must not stay on screen once the reader may no longer see it.
+ */
+export function readWithdrawn(error: Error | null): boolean {
+  return error instanceof StudioScopeError || (error instanceof CellUnavailable && (error.status === 401 || error.status === 403))
+}
+
+/**
  * The drawer's row: the opened record's id resolved against the latest page the cell served, so a
  * later read that withholds, changes or drops the record shows that, never the row as first
- * opened. A refused or workspace-changed read, or a page without the record, closes the drawer.
+ * opened. A refused, withdrawn or workspace-changed read, or a page without the record, closes the drawer.
  */
-export function visibleDrawerRow(openedId: string | null, rows: readonly GridRow[], error: Error | null, scopeRefused = false): GridRow | null {
-  if (openedId === null || error instanceof StudioScopeError || scopeRefused) return null
+export function visibleDrawerRow(openedId: string | null, rows: readonly GridRow[], error: Error | null, refused = false): GridRow | null {
+  if (openedId === null || readWithdrawn(error) || refused) return null
   return rows.find(({ record }) => record.id === openedId) ?? null
 }
 
@@ -183,8 +193,9 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
   }, [data, client, name, scope?.orgId, scope?.environmentId])
 
   // Controls are on only when the last page says the cell applied the query.
-  const scopeChanged = result.isError && result.error instanceof StudioScopeError
-  const page = !scopeChanged && data?.kind === "page" ? data : undefined
+  // A workspace change or an authorization refusal hides the cached page (and with it the drawer).
+  const withdrawn = result.isError && readWithdrawn(result.error)
+  const page = !withdrawn && data?.kind === "page" ? data : undefined
   // While a refused or restarting read is shown, keep what the last page said.
   const lastServed = useRef(false)
   if (page !== undefined) lastServed.current = page.served !== null

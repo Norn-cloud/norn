@@ -22,8 +22,9 @@ import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
-import { useStudioScope } from "./lib/definitions.ts"
-import { useMode } from "./lib/live-transport.ts"
+import { useStudioScope, type StudioScope } from "./lib/definitions.ts"
+import { readObjectAtScope, useMode } from "./lib/live-transport.ts"
+import type { Fetch } from "./lib/cell-read.ts"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { QuarantinedRecord } from "./quarantined-record.tsx"
@@ -38,7 +39,7 @@ import { stamp } from "./lib/format.ts"
 import { transport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { maskedOf } from "./lib/privacy.ts"
-import { MaskedValue } from "@/components/masked-value"
+import { MaskedValue, RevealScope } from "@/components/masked-value"
 import { LoadState } from "@/components/load-state"
 import { refreshMode } from "./lib/live-transport.ts"
 import { SourceChip } from "@/components/source-chip"
@@ -53,6 +54,19 @@ import { DenseTable, ObjectTypePage, RECORDED_HINT, useCatalog } from "./sources
  * `/sources/$concept/$`: a record, its id the rest of the path. The splat also
  * matches the object type's own URL with an empty id, which is the type's page.
  */
+/**
+ * One record's read, keyed by and read at its source workspace when that is known (a live cell);
+ * the recording has none. Exported for the test that reads the same id in two workspaces.
+ */
+export function recordRead(objectType: string, id: string, scope: StudioScope | undefined, fetcher?: Fetch) {
+  return {
+    queryKey: scope === undefined ? ["object", objectType, id] as const : ["object", objectType, id, scope.orgId, scope.environmentId] as const,
+    queryFn: ({ signal }: { readonly signal?: AbortSignal }): Promise<ObjectReads | null> => scope === undefined
+      ? transport.object(objectType, id)
+      : readObjectAtScope(objectType, id, scope, signal, fetcher),
+  }
+}
+
 export function SourcesItemPage() {
   const { _splat: id = "" } = useParams({ strict: false })
   return id === "" ? <ObjectTypePage /> : <ObjectPage />
@@ -68,12 +82,21 @@ export function ObjectPage() {
   const { concept: name = "", _splat: id = "" } = useParams({ strict: false })
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
-  const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
+  // The record's source workspace: a live record is read at the server-reported scope (checked
+  // before and after the read), cached under it, and its reveals go to it. The same id in another
+  // workspace is another record, never this one's cached read.
+  const mode = useMode()
+  const studioScope = useStudioScope()
+  const sourceScope = mode.data?.kind === "live" ? studioScope.data ?? undefined : undefined
+  const reads = useQuery({
+    ...recordRead(name, id, sourceScope),
+    enabled: !mode.isPending && !(mode.data?.kind === "live" && studioScope.isPending),
+  })
   // The header names the version this read shows and, from the history, the commit that wrote it: a
   // read again reads both, so neither is left from an earlier read.
   const queries = useQueryClient()
   const readAgain = () => { void reads.refetch(); void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) }) }
-  const live = useMode().data?.kind === "live"
+  const live = mode.data?.kind === "live"
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
   const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
   const evidence = review.data?.document.evidence ?? []
@@ -104,6 +127,7 @@ export function ObjectPage() {
     })
     : null
   return (
+    <RevealScope.Provider value={sourceScope}>
     <section className="space-y-6">
       {/* One header: the record's name with its state beside it, one quiet line of facts under it, the record's actions at the end. */}
       <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
@@ -226,6 +250,7 @@ export function ObjectPage() {
       )}
       {corrections.sheet(() => { readAgain(); void review.refetch() })}
     </section>
+    </RevealScope.Provider>
   )
 }
 

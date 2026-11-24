@@ -776,3 +776,38 @@ test("records page: a lost live connection shows the counts as the last read and
   await view.getByRole("button", { name: "Refresh" }).click()
   await expect(count).toHaveText("4")
 })
+
+// #1700 R5: a cell that accepts each socket and sheds it (1013) before any answer still exhausts the
+// reconnects: the board says Live is off and offers Refresh, never stale counts as live.
+test("records page: sockets accepted then shed before any answer still end in Refresh", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "uses the lifecycle stand-in cell")
+  test.setTimeout(90_000)
+  const cell = await lifecycleCell(page, { status: okFacets("status", { draft: 3 }) }, { includeWidget: false })
+  // Installed after the stand-in cell's routeWebSocket, so it replaces Playwright's routed WebSocket.
+  await page.addInitScript(() => {
+    class ShedSocket extends EventTarget {
+      readyState = 0
+      constructor(readonly url: string) {
+        super()
+        setTimeout(() => {
+          this.readyState = 1
+          this.dispatchEvent(new Event("open"))
+          setTimeout(() => { this.readyState = 3; this.dispatchEvent(new CloseEvent("close", { code: 1013 })) }, 0)
+        }, 0)
+      }
+      send() {}
+      close() {}
+    }
+    Object.defineProperty(window, "WebSocket", { configurable: true, value: ShedSocket })
+  })
+  await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+  const view = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+  const count = card(view, "draft").locator("[data-count]")
+  await expect(count).toHaveText("3")
+  const banner = view.locator('[data-region="live-off"]')
+  await expect(banner).toBeVisible({ timeout: 40_000 })
+  await expect(banner).toContainText("Live updates are off; counts show the last read.")
+  cell.setFacets("status", okFacets("status", { draft: 4 }))
+  await view.getByRole("button", { name: "Refresh" }).click()
+  await expect(count).toHaveText("4")
+})

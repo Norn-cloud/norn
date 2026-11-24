@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page, type Route } from "@playwright/test"
 import { workspaceCell } from "./workspace-cell.ts"
 
 const shots = process.env.SHOTS
@@ -556,4 +556,103 @@ test("views: two deletions keep two Undos across navigation, and undoing one lea
   await expect(page.getByText(/Deleted “First view”/)).toHaveCount(0)
   await expect(page.getByText(/Deleted “Second view”/)).toBeVisible()
   await expect(page.getByRole("heading", { name: "First view", exact: true })).toBeVisible()
+})
+
+// #1700 R1: a refetch refused for this reader wins over the cached page: the rows and the drawer
+// go, and the next successful read does not reopen the drawer.
+test("views: a refused refetch hides the cached rows and closes the drawer; the next read keeps it closed", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.refused"
+  cell.defs.set(id, savedView("Refused view"))
+  await page.goto(`/views/${id}`)
+  const grid = page.getByRole("grid", { name: "Application records" })
+  await grid.getByText("Ben Park").click()
+  await expect(page.getByRole("dialog", { name: "app-2" })).toContainText("Ben Park")
+
+  // The cell now refuses this reader (a bare 403, as a proxy or a revoked session answers).
+  const list = /\/api\/host\/v1\/objects\/funnel\.Application\?/
+  const refuse = (route: Route) => route.fulfill({ status: 403, contentType: "text/plain", body: "Forbidden" })
+  await page.route(list, refuse)
+  await Promise.all([page.waitForResponse(list), refocus(page)])
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(page.getByText("Ben Park")).toHaveCount(0)
+  await shoot(page, "views-refused-refetch")
+
+  await page.unroute(list, refuse)
+  await Promise.all([page.waitForResponse(list), refocus(page)])
+  await expect(grid.getByText("Ben Park")).toBeVisible()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+})
+
+// #1700 R2: a deletion's receipt and Undo belong to the reader who pressed Delete; a role change
+// while the deletion is pending leaves the new role neither.
+test("views: a deletion answered after a role change leaves no receipt or Undo for the new role", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.clock.install()
+  const cell = await workspaceCell(page)
+  let role = "admin"
+  let sessionReads = 0
+  await page.route("**/api/me", (route) => {
+    sessionReads += 1
+    return route.fulfill({ json: { user: { id: "u_ops", name: "Operator Admin", email: "ops@example.com" }, organization: { id: "org_demo", name: "Workspace Demo", role }, environmentId: "prod" } })
+  })
+  let release = () => {}
+  const held = new Promise<void>((resolve) => { release = resolve })
+  await page.route(/\/v1\/definitions\/.+:retire/, async (route) => { await held; await route.fallback() })
+  cell.defs.set("studio.view.funnel_application.held", savedView("Held view"))
+  await page.goto("/views")
+  const panel = page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: "Held view", exact: true }) })
+  const retire = page.waitForRequest(/:retire/)
+  await panel.getByRole("button", { name: "Delete" }).click()
+  await retire
+
+  // The same person's role drops in this workspace while the deletion is out; the session is read again.
+  role = "viewer"
+  const before = sessionReads
+  await page.clock.setSystemTime(Date.now() + 120_000)
+  await refocus(page)
+  await expect.poll(() => sessionReads - before).toBeGreaterThanOrEqual(2)
+  release()
+  await expect(page.getByRole("heading", { name: "Held view", exact: true })).toHaveCount(0)
+  await expect(page.getByText(/Deleted “Held view”/)).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Undo" })).toHaveCount(0)
+  expect(cell.defs.get("studio.view.funnel_application.held")?.retired).toBe(true)
+})
+
+// #1700 R4: a view restored elsewhere after this reader deleted it opens as the cell serves it.
+test("views: a view restored elsewhere drops the stale Deleted notice on the list and the view", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.restored"
+  cell.defs.set(id, savedView("Restored view"))
+  await page.goto(`/views/${id}`)
+  await page.getByRole("button", { name: "Delete" }).click()
+  await expect(page.getByText(/Deleted “Restored view”/)).toBeVisible()
+
+  // Someone else restores it: a newer active revision.
+  const stored = cell.defs.get(id)!
+  stored.retired = false
+  stored.version += 1
+  stored.updatedAtMs = Date.now()
+  await page.getByRole("link", { name: "Back to views" }).click()
+  await expect(page.getByRole("heading", { name: "Restored view", exact: true })).toBeVisible()
+  await expect(page.getByText(/Deleted “Restored view”/)).toHaveCount(0)
+  await page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: "Restored view", exact: true }) }).getByRole("link", { name: "Open" }).click()
+  await expect(page).toHaveURL(new RegExp(`/views/${id.replaceAll(".", "\\.")}$`))
+  await expect(page.getByRole("grid", { name: "Application records" })).toBeVisible()
+  await expect(page.getByText(/Deleted “Restored view”/)).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Undo" })).toHaveCount(0)
+})
+
+// #1700 R7: a 200 the cell sent without a readable definition is an unavailable read, not "No view".
+test("views: an unreadable definition answer says so and never shows No view", async ({ page }) => {
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.garbled"
+  cell.defs.set(id, savedView("Garbled view"))
+  await page.route(new RegExp(`/v1/definitions/${id.replaceAll(".", "\\.")}(\\?|$)`), (route) => route.fulfill({ status: 200, contentType: "application/json", body: "" }))
+  await page.goto(`/views/${id}`)
+  await expect(page.getByText("The cell's answer for this view could not be read; nothing was opened.")).toBeVisible()
+  await expect(page.getByText(`No view ${id} is saved.`)).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0)
 })

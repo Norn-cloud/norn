@@ -122,6 +122,45 @@ test("markings: a reveal answered after the cell withdrew the reveal is never sh
   await expect(page.getByText("Amira Haddad")).toHaveCount(0)
 })
 
+const refocus = (page: Page) => page.evaluate(() => {
+  for (const visibility of ["hidden", "visible"]) {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: visibility })
+    window.dispatchEvent(new Event("visibilitychange"))
+  }
+})
+
+// #1700 R3: the record page's read and its reveals go to the workspace the record was read from.
+test("markings: a record-page reveal is sent to the workspace the record was read from", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const name = await askReveal(page)
+  await expect(name.locator("[data-revealed]")).toContainText("Amira Haddad")
+  expect(new Set(cell.readScopes)).toEqual(new Set(["org_demo/analytics"]))
+  expect(cell.revealScopes).toEqual([{ at: "org_demo/analytics", expected: "org_demo/analytics" }])
+})
+
+// #1700 R3: a reveal still out when the session moves to another workspace is never shown; the page reads the record there.
+test("markings: a reveal answered after a workspace switch is never shown, and the record is read in the new workspace", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  let environmentId = "analytics"
+  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" }, environmentId } }))
+  await page.goto(PARTY)
+  const release = cell.holdReveal()
+  const name = await askReveal(page)
+  await expect.poll(() => cell.reveals.length).toBe(1)
+  environmentId = "staging"
+  await refocus(page)
+  await expect.poll(() => cell.readScopes.includes("org_demo/staging")).toBe(true)
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Masked · you may reveal")
+  const answered = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/reveal"))
+  release()
+  await answered
+  await page.waitForTimeout(300)
+  await expect(name.locator("[data-revealed]")).toHaveCount(0)
+  await expect(page.getByText("Amira Haddad")).toHaveCount(0)
+  expect(cell.revealScopes).toEqual([{ at: "org_demo/analytics", expected: "org_demo/analytics" }])
+})
+
 test("markings: a reveal asked under a projection, answered after it changed and changed back, is never shown", async ({ page }) => {
   const cell = await recordCell(page, "admin")
   await page.goto(PARTY)
