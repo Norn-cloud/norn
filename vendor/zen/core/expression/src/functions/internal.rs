@@ -34,7 +34,6 @@ pub enum InternalFunction {
     Avg,
     Min,
     Max,
-    Rand,
     Median,
     Mode,
     Floor,
@@ -224,11 +223,6 @@ impl From<&InternalFunction> for Rc<dyn FunctionDefinition> {
 
             IF::Abs => Rc::new(StaticFunction {
                 implementation: Rc::new(imp::abs),
-                signature: FunctionSignature::single(VT::Number, VT::Number),
-            }),
-
-            IF::Rand => Rc::new(StaticFunction {
-                implementation: Rc::new(imp::rand),
                 signature: FunctionSignature::single(VT::Number, VT::Number),
             }),
 
@@ -757,14 +751,6 @@ pub(crate) mod imp {
             .unwrap_or(0);
 
         Ok(V::Number(a.trunc_with_scale(dp)))
-    }
-
-    pub fn rand(args: Arguments) -> anyhow::Result<V> {
-        let a = args.number(0)?;
-        let upper_range = a.round().to_i64().context("Invalid upper range")?;
-
-        let random_number = fastrand::i64(0..=upper_range);
-        Ok(V::Number(Decimal::from(random_number)))
     }
 
     pub fn min(args: Arguments) -> anyhow::Result<V> {

@@ -910,3 +910,24 @@ fn validate_call_sources(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use norn_ir::ResourceLimitProfile;
+
+    use crate::AdmissionError;
+
+    /// #1711: the deterministic VM has no RNG, so decision admission refuses `rand`
+    /// as a standard expression and as a unary cell.
+    #[test]
+    fn rand_is_refused_by_decision_admission() {
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        for (source, unary) in [("rand(1)", false), ("rand(1)", true), ("< rand(1)", true)] {
+            let result = super::validate_source("t.rule", "cell", source, unary, &limits);
+            assert!(
+                matches!(result, Err(AdmissionError::InvalidExpression { .. })),
+                "{source} (unary {unary}): {result:?}"
+            );
+        }
+    }
+}

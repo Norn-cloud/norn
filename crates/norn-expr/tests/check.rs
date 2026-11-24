@@ -618,7 +618,8 @@ fn review_counterexamples_are_rejected() {
         ("[d(self.launched_at, 'UTC')]", SYNTAX),
         ("{a: d(self.launched_at, 'UTC')}", SYNTAX),
         // Everything else outside the allowlist.
-        ("rand(10)", UNSUPPORTED_CONSTRUCT),
+        // #1711: the deterministic VM has no RNG, so `rand` does not parse.
+        ("rand(10)", SYNTAX),
         ("d()", SYNTAX),
         ("date()", SYNTAX),
         ("matches(self.name, '^W')", UNSUPPORTED_CONSTRUCT),
@@ -1383,7 +1384,7 @@ fn unary_tests_outside_the_profile_are_rejected() {
         ("5 % 2", Type::Number, UNSUPPORTED_CONSTRUCT),
         ("2 ^ 3", Type::Number, UNSUPPORTED_CONSTRUCT),
         ("max([3, 5, 8])", Type::Number, UNSUPPORTED_CONSTRUCT),
-        ("rand(100) >= 0", Type::Bool, UNSUPPORTED_CONSTRUCT),
+        ("rand(100) >= 0", Type::Bool, SYNTAX),
         ("matches($, '[0-9]+')", Type::text(), UNSUPPORTED_CONSTRUCT),
         ("`a ${$}`", Type::text(), UNSUPPORTED_CONSTRUCT),
         ("$[0:5] == 'sample'", Type::text(), UNSUPPORTED_CONSTRUCT),

@@ -1,5 +1,6 @@
 use crate::lexer::Bracket;
 use crate::variable::DynamicVariable;
+use crate::vm::error::{VMError, VMResult};
 use crate::vm::VmDate;
 use crate::Variable;
 use anyhow::anyhow;
@@ -31,37 +32,79 @@ impl DynamicVariable for VmInterval {
     }
 }
 
+/// Norn (#1711): the most elements an interval may enumerate: a `Vec<Variable>` of
+/// this length is the largest the allocator can be asked for.
+const MAX_INTERVAL_ELEMENTS: usize = isize::MAX.unsigned_abs() / std::mem::size_of::<Variable>();
+
+/// Norn (#1711): the integers an interval enumerates, computed once with checked
+/// arithmetic. The same approved `len` is charged as fuel and then allocated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct IntervalRange {
+    start: i128,
+    len: usize,
+}
+
+impl IntervalRange {
+    /// Norn `metering`: the units charged before the range is materialized.
+    pub fn fuel(&self) -> u64 {
+        u64::try_from(self.len).unwrap_or(u64::MAX)
+    }
+
+    /// Materializes exactly the approved `len` elements, reserving them up front.
+    pub fn to_array(&self, interval: &VmInterval) -> VMResult<Vec<Variable>> {
+        let mut list = Vec::new();
+        list.try_reserve_exact(self.len)
+            .map_err(|_| interval.too_large())?;
+        for n in (self.start..).take(self.len) {
+            let n = i64::try_from(n).map_err(|_| interval.too_large())?;
+            list.push(Variable::Number(Decimal::from(n)));
+        }
+
+        Ok(list)
+    }
+}
+
 impl VmInterval {
-    pub fn to_array(&self) -> Option<Vec<Variable>> {
+    /// Norn (#1711): the checked integer range of a number interval; `None` if the
+    /// interval does not enumerate integers (a date interval, a bound beyond `i64`),
+    /// a typed error if its element count overflows or cannot be allocated.
+    pub fn range(&self) -> Option<VMResult<IntervalRange>> {
         let (start, end) = self.bounds()?;
-        let list = (start..=end)
-            .map(|n| Variable::Number(Decimal::from(n)))
-            .collect::<Vec<_>>();
-
-        Some(list)
+        let len = end
+            .checked_sub(start)
+            .and_then(|span| span.checked_add(1))
+            .map(|len| len.max(0))
+            .and_then(|len| usize::try_from(len).ok())
+            .filter(|len| *len <= MAX_INTERVAL_ELEMENTS);
+        Some(
+            len.map(|len| IntervalRange { start, len })
+                .ok_or_else(|| self.too_large()),
+        )
     }
 
-    /// Norn `metering`: number of elements `to_array` would produce, without allocating.
-    pub fn array_len(&self) -> Option<u64> {
-        let (start, end) = self.bounds()?;
-        Some(u64::try_from(i128::from(end) - i128::from(start) + 1).unwrap_or(0))
+    fn too_large(&self) -> VMError {
+        VMError::IntervalTooLarge {
+            interval: self.to_string(),
+        }
     }
 
-    fn bounds(&self) -> Option<(i64, i64)> {
+    /// The first and last integers, widened to `i128` so an open bound at `i64::MIN`
+    /// or `i64::MAX` cannot overflow.
+    fn bounds(&self) -> Option<(i128, i128)> {
         let (left, right) = match (&self.left, &self.right) {
             (VmIntervalData::Number(l), VmIntervalData::Number(r)) => (*l, *r),
             _ => return None,
         };
 
         let start = match &self.left_bracket {
-            Bracket::LeftParenthesis => left.to_i64()? + 1,
-            Bracket::LeftSquareBracket => left.to_i64()?,
+            Bracket::LeftParenthesis => i128::from(left.to_i64()?) + 1,
+            Bracket::LeftSquareBracket => i128::from(left.to_i64()?),
             _ => return None,
         };
 
         let end = match &self.right_bracket {
-            Bracket::RightParenthesis => right.to_i64()? - 1,
-            Bracket::RightSquareBracket => right.to_i64()?,
+            Bracket::RightParenthesis => i128::from(right.to_i64()?) - 1,
+            Bracket::RightSquareBracket => i128::from(right.to_i64()?),
             _ => return None,
         };
 

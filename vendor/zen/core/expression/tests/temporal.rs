@@ -878,3 +878,21 @@ fn resolve_local_timestamp_uses_explicit_isolate_tzdb_and_fails_closed_when_abse
     assert_eq!(standalone_26.as_str(), Some("2027-01-01T05:30:00Z"));
     Ok(())
 }
+
+/// Norn (#1711): an optional temporal compared with `null` is decided by `null`
+/// equality, never by the temporal-kind guard; mixed kinds stay refused.
+#[test]
+fn optional_temporal_null_equality_is_decided_before_the_kind_guard() {
+    for value in ["date('2024-01-01')", "timestamp('2024-01-01T00:00:00Z')"] {
+        boolean(&format!("{value} == null"), false);
+        boolean(&format!("null == {value}"), false);
+        boolean(&format!("{value} != null"), true);
+        boolean(&format!("null != {value}"), true);
+        for flag in [true, false] {
+            boolean(&format!("({flag} ? {value} : null) == null"), !flag);
+            boolean(&format!("({flag} ? {value} : null) != null"), flag);
+        }
+        rejected(&format!("{value} == 1"));
+        rejected(&format!("{value} != 'x'"));
+    }
+}

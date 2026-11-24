@@ -24,6 +24,32 @@ pub struct LoopScope {
     count: usize,
 }
 
+impl LoopScope {
+    /// The loop over an array, or over the integers of an interval. Norn (#1711): an
+    /// interval is materialized at exactly its checked length (the length `Begin` was
+    /// charged for), or refused with `VMError::IntervalTooLarge`.
+    fn begin(var: Variable) -> VMResult<Option<Self>> {
+        let array = if matches!(var, Array(_)) {
+            var
+        } else {
+            match var.dynamic::<VmInterval>().map(|i| (i, i.range())) {
+                Some((interval, Some(range))) => Variable::from_array(range?.to_array(interval)?),
+                _ => return Ok(None),
+            }
+        };
+        let len = match &array {
+            Array(a) => a.borrow().len(),
+            _ => 0,
+        };
+        Ok(Some(LoopScope {
+            array,
+            len,
+            iter: 0,
+            count: 0,
+        }))
+    }
+}
+
 #[derive(Debug)]
 pub struct VM {
     scopes: Vec<LoopScope>,
@@ -178,7 +204,6 @@ fn is_scaled_allowed_function(
             | F::Avg
             | F::Min
             | F::Max
-            | F::Rand
             | F::Median
             | F::Mode
             | F::Floor
@@ -655,8 +680,12 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                 Opcode::Equal => {
                     let b = self.pop()?;
                     let a = self.pop()?;
-                    if a.dynamic::<crate::temporal::Temporal>().is_some()
-                        != b.dynamic::<crate::temporal::Temporal>().is_some()
+                    // Norn (#1711): `null` equals only `null`, so an optional temporal
+                    // compared with `null` is decided before the temporal-kind guard.
+                    let either_null = matches!(a, Null) || matches!(b, Null);
+                    if !either_null
+                        && a.dynamic::<crate::temporal::Temporal>().is_some()
+                            != b.dynamic::<crate::temporal::Temporal>().is_some()
                     {
                         return Err(OpcodeErr {
                             opcode: "Equal".into(),
@@ -1406,28 +1435,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                 }
                 Opcode::Begin => {
                     let var = self.pop()?;
-                    let maybe_scope = match &var {
-                        Array(a) => {
-                            let arr = a.borrow();
-                            Some(LoopScope {
-                                len: arr.len(),
-                                array: var.clone(),
-                                count: 0,
-                                iter: 0,
-                            })
-                        }
-                        _ => var
-                            .dynamic::<VmInterval>()
-                            .and_then(|s| s.to_array())
-                            .map(|arr| LoopScope {
-                                len: arr.len(),
-                                array: Variable::from_array(arr),
-                                count: 0,
-                                iter: 0,
-                            }),
-                    };
-
-                    let Some(scope) = maybe_scope else {
+                    let Some(scope) = LoopScope::begin(var)? else {
                         return Err(OpcodeErr {
                             opcode: "Begin".into(),
                             message: "Unsupported type".into(),
@@ -1585,8 +1593,8 @@ impl VMInner<'_, '_> {
                 Some(Array(a)) => a.borrow().len() as u64,
                 Some(var) => var
                     .dynamic::<VmInterval>()
-                    .and_then(|i| i.array_len())
-                    .unwrap_or(0),
+                    .and_then(|i| i.range()?.ok())
+                    .map_or(0, |range| range.fuel()),
                 None => 0,
             },
             Opcode::CallFunction { kind, arg_count } => {

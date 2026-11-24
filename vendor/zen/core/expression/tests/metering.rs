@@ -133,6 +133,63 @@ fn large_interval_is_charged_before_it_is_materialized() {
     assert!(exhausted(err).used > 1_000_000_000);
 }
 
+/// Norn (#1711): an interval whose element count overflows `u64`, `usize` or the
+/// allocator is a typed refusal, metered or not, and never a zero-cost allocation.
+#[test]
+fn overflowing_intervals_are_typed_refusals() {
+    const MIN: &str = "-9223372036854775808";
+    const MAX: &str = "9223372036854775807";
+    for interval in [
+        format!("[{MIN}..{MAX}]"),
+        format!("({MIN}..{MAX})"),
+        format!("[0..{MAX}]"),
+        format!("({MIN}..0]"),
+    ] {
+        let expression = format!("count({interval}, # > 0)");
+        let meter = Meter::new(1_000);
+        let metered = isolate(&meter).run_standard(&expression).err();
+        let unmetered = Isolate::new().run_standard(&expression).err();
+        for err in [metered, unmetered] {
+            assert!(
+                matches!(
+                    err,
+                    Some(IsolateError::VMError {
+                        source: VMError::IntervalTooLarge { .. }
+                    })
+                ),
+                "{expression}: {err:?}"
+            );
+        }
+        assert!(meter.used() < 1_000, "{expression}: {}", meter.used());
+    }
+}
+
+/// Norn (#1711): open bounds at the `i64` limits enumerate without overflowing.
+#[test]
+fn open_interval_bounds_at_the_i64_limits_do_not_overflow() {
+    const MIN: &str = "-9223372036854775808";
+    const MAX: &str = "9223372036854775807";
+    for (expression, expected) in [
+        (format!("count(({MAX}..{MAX}], true)"), json!(0)),
+        (format!("count([{MIN}..{MIN}), true)"), json!(0)),
+        (format!("count([{MAX}..{MIN}], true)"), json!(0)),
+        (format!("map(({MAX}..{MAX}], #)"), json!([])),
+        (format!("map([{MAX}..{MAX}], #)"), json!([i64::MAX])),
+        (
+            format!("map(({MIN}..-9223372036854775806), #)"),
+            json!([i64::MIN + 1]),
+        ),
+    ] {
+        let meter = Meter::new(1_000);
+        let result = isolate(&meter).run_standard(&expression);
+        assert_eq!(
+            result.map(|value| value.to_value()).ok(),
+            Some(expected),
+            "{expression}"
+        );
+    }
+}
+
 fn cost_with(expression: &str, env: serde_json::Value) -> u64 {
     let meter = Meter::new(u64::MAX);
     Isolate::with_environment(env.into())

@@ -214,9 +214,6 @@ fn function_info(fk: &FunctionKind) -> String {
             InternalFunction::Avg => "Calculates the average of all elements in the input array",
             InternalFunction::Min => "Returns the smallest of the elements in the input array",
             InternalFunction::Max => "Returns the largest of the elements in the input array",
-            InternalFunction::Rand => {
-                "Generates a random number between 0 (inclusive) and max (inclusive)"
-            }
             InternalFunction::Median => {
                 "Calculates the median value of all elements in the input array"
             }
@@ -333,7 +330,6 @@ fn function_param_names(fk: &FunctionKind) -> Vec<&'static str> {
             | InternalFunction::Max
             | InternalFunction::Median
             | InternalFunction::Mode => vec!["arr"],
-            InternalFunction::Rand => vec!["max"],
             InternalFunction::Round | InternalFunction::Trunc => vec!["num", "digits"],
             InternalFunction::IsNumeric
             | InternalFunction::String
