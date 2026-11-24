@@ -47,9 +47,11 @@ fn definitions() -> &'static [ArtifactEnvelope] {
             "core.Order.interface",
             "core.Entitlement.entity",
             "identity.BusinessUnit.entity",
+            "identity.Directory.interface",
             "location.Region.entity",
             "location.Space.entity",
             "party.Brand.entity",
+            "party.Organization.entity",
         ];
         let mut paths: Vec<PathBuf> = ["core", "packs/canon", "packs/erpnext", "packs/shopify"]
             .into_iter()
