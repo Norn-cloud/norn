@@ -741,6 +741,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         decision_id: &str,
     ) -> Result<Option<ApprovedCall>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             &format!(
                 r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" a JOIN "{DECISION}" d ON d."world"=a."world" AND d."decision_id"=a."decision_id" WHERE a."world"=?1 AND a."decision_id"=?2"#
@@ -760,6 +761,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         run_id: &str,
     ) -> Result<Vec<ApprovedCall>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" a JOIN "{DECISION}" d ON d."world"=a."world" AND d."decision_id"=a."decision_id" WHERE a."world"=?1 AND a."run_id"=?2 ORDER BY d."commit_seq""#
@@ -783,6 +785,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         limit: usize,
     ) -> Result<Vec<ApprovedCall>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" a JOIN "{DECISION}" d ON d."world"=a."world" AND d."decision_id"=a."decision_id" WHERE a."world"=?1 AND a."consumed_seq" IS NULL AND a."refused_code" IS NULL ORDER BY d."commit_seq" LIMIT ?2"#
@@ -809,6 +812,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         commit_seq: u64,
     ) -> Result<Option<String>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             &format!(
                 r#"SELECT "decision_id" FROM "{APPROVED_CALL}" WHERE "world"=?1 AND "consumed_seq"=?2"#
@@ -830,6 +834,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         commit_seq: u64,
     ) -> Result<Option<StepCallOwner>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             &format!(
                 r#"SELECT "run_id","command_id","generation" FROM "{STEP_CALL}" WHERE "world"=?1 AND "commit_seq"=?2"#
@@ -855,6 +860,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         decision_id: &str,
     ) -> Result<Option<DecisionRow>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             &format!(
                 r#"SELECT "decision_id","command_id","generation","run_id","step","resolution","choice","note","decided_by","idempotency_key","request_hash","resolved_at_ms","commit_seq" FROM "{DECISION}" WHERE "world"=?1 AND "decision_id"=?2"#

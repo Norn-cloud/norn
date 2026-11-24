@@ -13,9 +13,24 @@ export interface LiveSnapshot {
   readonly body: unknown
 }
 
+export interface LiveRefusal {
+  readonly code: string
+  readonly message: string
+}
+
+export interface LiveClientRefusal extends LiveRefusal {
+  readonly id: string | null
+  readonly path: string | null
+}
+
 export type LiveState = "idle" | "connecting" | "open" | "unavailable"
 
 export type LiveListener = (snapshot: LiveSnapshot) => void
+
+export interface LiveSubscribeOptions {
+  /** Called when the cell refuses this subscription (`{"type":"refused",...}`). */
+  readonly onRefused?: (refusal: LiveRefusal) => void
+}
 
 /** The slice of the browser WebSocket the client uses (tests pass their own). */
 export interface SocketLike {
@@ -33,16 +48,27 @@ export interface LiveOptions {
   readonly delay?: (attempt: number) => number
   readonly schedule?: (callback: () => void, ms: number) => unknown
   readonly onState?: (state: LiveState) => void
+  /** Called on any protocol `refused` frame, including frames with `id: null`. */
+  readonly onRefused?: (refusal: LiveClientRefusal) => void
+}
+
+interface Subscriber {
+  readonly listener: LiveListener
+  readonly onRefused?: (refusal: LiveRefusal) => void
 }
 
 interface Entry {
   readonly id: string
   readonly path: string
-  readonly listeners: Set<LiveListener>
+  readonly subscribers: Set<Subscriber>
   last: LiveSnapshot | undefined
+  refused: LiveRefusal | undefined
 }
 
 const OPEN = 1
+/** The cell closes a socket with 1009 on any client frame larger than 4096 bytes. */
+const MAX_MESSAGE = 4096
+const utf8 = new TextEncoder()
 
 export class LiveClient {
   readonly #options: LiveOptions
@@ -67,25 +93,33 @@ export class LiveClient {
     return this.#entries.get(path)?.last
   }
 
-  /** Listen to `path`; the last answer, if any, is delivered at once. Returns the unsubscribe. */
-  subscribe(path: string, listener: LiveListener): () => void {
+  /** The cell's refusal for `path`, if this subscription was refused. */
+  refusal(path: string): LiveRefusal | undefined {
+    return this.#entries.get(path)?.refused
+  }
+
+  /** Listen to `path`; the last answer or refusal, if any, is delivered at once. Returns the unsubscribe. */
+  subscribe(path: string, listener: LiveListener, options?: LiveSubscribeOptions): () => void {
     let entry = this.#entries.get(path)
+    const isNew = entry === undefined
     if (!entry) {
-      entry = { id: `s${++this.#next}`, path, listeners: new Set(), last: undefined }
+      entry = { id: `s${++this.#next}`, path, subscribers: new Set(), last: undefined, refused: undefined }
       this.#entries.set(path, entry)
       this.#byId.set(entry.id, entry)
-      this.#send({ type: "subscribe", id: entry.id, path })
     }
-    entry.listeners.add(listener)
+    const subscriber: Subscriber = options?.onRefused ? { listener, onRefused: options.onRefused } : { listener }
+    entry.subscribers.add(subscriber)
     if (entry.last) listener(entry.last)
+    if (entry.refused) subscriber.onRefused?.(entry.refused)
+    if (isNew) this.#sendSubscribe(entry)
     this.#ensure()
     const held = entry
     return () => {
-      held.listeners.delete(listener)
-      if (held.listeners.size > 0) return
+      held.subscribers.delete(subscriber)
+      if (held.subscribers.size > 0) return
       this.#entries.delete(held.path)
       this.#byId.delete(held.id)
-      this.#send({ type: "unsubscribe", id: held.id })
+      if (held.refused?.code !== "live.not_subscribable") this.#send({ type: "unsubscribe", id: held.id })
       if (this.#entries.size === 0) this.close()
     }
   }
@@ -105,6 +139,26 @@ export class LiveClient {
 
   #send(message: unknown) {
     if (this.#socket?.readyState === OPEN) this.#socket.send(JSON.stringify(message))
+  }
+
+  #sendSubscribe(entry: Entry) {
+    if (entry.refused?.code === "live.not_subscribable") return
+    const wire = JSON.stringify({ type: "subscribe", id: entry.id, path: entry.path })
+    if (utf8.encode(wire).byteLength > MAX_MESSAGE) {
+      // Never send a frame larger than MAX_MESSAGE: the cell closes the shared socket with 1009.
+      const refusal: LiveRefusal = { code: "live.not_subscribable", message: "subscription exceeds the live protocol frame limit" }
+      entry.refused = refusal
+      const subscribers = [...entry.subscribers]
+      queueMicrotask(() => {
+        if (this.#byId.get(entry.id) !== entry) return
+        for (const subscriber of subscribers) {
+          if (entry.subscribers.has(subscriber)) subscriber.onRefused?.(refusal)
+        }
+        this.#options.onRefused?.({ ...refusal, id: entry.id, path: entry.path })
+      })
+      return
+    }
+    if (this.#socket?.readyState === OPEN) this.#socket.send(wire)
   }
 
   #ensure() {
@@ -138,20 +192,32 @@ export class LiveClient {
       if (this.#socket !== socket) return
       this.#failures = 0
       this.#setState("open")
-      for (const entry of this.#entries.values()) socket.send(JSON.stringify({ type: "subscribe", id: entry.id, path: entry.path }))
+      for (const entry of this.#entries.values()) this.#sendSubscribe(entry)
     })
     socket.addEventListener("message", (event) => {
       if (this.#socket !== socket || typeof event.data !== "string") return
-      let message: { type?: unknown; id?: unknown; status?: unknown; digest?: unknown; body?: unknown }
+      let message: { type?: unknown; id?: unknown; status?: unknown; digest?: unknown; body?: unknown; code?: unknown; message?: unknown }
       try {
         message = JSON.parse(event.data) as typeof message
       } catch {
         return
       }
+      if (message.type === "refused" && typeof message.code === "string" && typeof message.message === "string") {
+        const id = typeof message.id === "string" ? message.id : null
+        const entry = id !== null ? this.#byId.get(id) : undefined
+        const refusal: LiveRefusal = { code: message.code, message: message.message }
+        if (entry) {
+          entry.refused = refusal
+          for (const subscriber of entry.subscribers) subscriber.onRefused?.(refusal)
+        }
+        this.#options.onRefused?.({ ...refusal, id, path: entry?.path ?? null })
+        return
+      }
       const entry = typeof message.id === "string" ? this.#byId.get(message.id) : undefined
       if (!entry || message.type !== "snapshot" || typeof message.status !== "number" || typeof message.digest !== "string") return
+      entry.refused = undefined
       entry.last = { status: message.status, digest: message.digest, body: message.body }
-      for (const listener of entry.listeners) listener(entry.last)
+      for (const subscriber of entry.subscribers) subscriber.listener(entry.last)
     })
     socket.addEventListener("close", (event) => {
       if (this.#socket !== socket) return

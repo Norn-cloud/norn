@@ -32,6 +32,7 @@ pub struct WorkersEngine {
     storage: JsValue,
     active: Cell<bool>,
     revision: crate::engine::WriteRevision,
+    checkpoint_key: Option<crate::open_checkpoint::CheckpointKey>,
 }
 
 impl WorkersEngine {
@@ -42,7 +43,20 @@ impl WorkersEngine {
             storage,
             active: Cell::new(false),
             revision: crate::engine::WriteRevision::new(),
+            checkpoint_key: None,
         }
+    }
+
+    /// OPEN-CHECKPOINT-1 (#1551 round 4): the same engine holding the host's
+    /// open-checkpoint key (`NORN_CHECKPOINT_KEY`, from the Worker's secret
+    /// store), so a checkpoint MAC'd under it shortens the open.
+    #[must_use]
+    pub const fn with_checkpoint_key(
+        mut self,
+        key: Option<crate::open_checkpoint::CheckpointKey>,
+    ) -> Self {
+        self.checkpoint_key = key;
+        self
     }
 }
 
@@ -144,6 +158,10 @@ impl SqlEngine for WorkersEngine {
     /// nothing writes between two reads of a call.
     fn read_isolation(&self) -> crate::engine::ReadIsolation {
         crate::engine::ReadIsolation::ExclusiveSynchronous
+    }
+
+    fn checkpoint_key(&self) -> Option<crate::open_checkpoint::CheckpointKey> {
+        self.checkpoint_key
     }
 
     /// This connection is the database's only writer, so a count of the

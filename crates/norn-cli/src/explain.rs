@@ -340,4 +340,100 @@ mod tests {
         };
         assert_eq!(args.locale.as_deref(), Some("fr-CA"));
     }
+
+    fn explain_widget_case(tag: &str, widget: serde_json::Value) -> (String, bool) {
+        let mut pool: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).unwrap();
+        pool.extend(
+            serde_json::from_str::<Vec<serde_json::Value>>(include_str!(
+                "../../../fixtures/law-ir/laws.json"
+            ))
+            .unwrap(),
+        );
+        pool.push(widget);
+        let path = std::env::temp_dir().join(format!(
+            "norn-explain-cli-{tag}-widget-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, serde_json::to_string(&pool).unwrap()).unwrap();
+        let cli = crate::Cli::try_parse_from([
+            "norn",
+            "explain",
+            "law",
+            "erpnext.no_unpaid_ship",
+            "--defs",
+            path.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        let crate::Command::Explain(args) = cli.command else {
+            panic!("wrong command");
+        };
+        let result = execute(&args).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        result
+    }
+
+    #[test]
+    fn explain_command_admits_valid_widget_and_refuses_invalid_widget() {
+        let valid_widget = serde_json::json!({
+            "irVersion": "0.1",
+            "artifactId": "erpnext.widget.valid",
+            "kind": "widget",
+            "namespace": "erpnext",
+            "name": "Valid Widget",
+            "version": "0.1.0",
+            "lifecycle": "draft",
+            "scope": { "orgId": "org_demo", "environmentId": "dev" },
+            "dependencies": [],
+            "provenance": { "source": "authoring_sdk" },
+            "payload": {
+                "widgetVersion": "0.1",
+                "widgetId": "erpnext.widget.valid",
+                "dataDependencies": [],
+                "viewStates": [{ "stateId": "ready", "kind": "ready" }],
+                "actionBindings": [],
+                "permissions": []
+            }
+        });
+        let (valid_out, valid_admitted) = explain_widget_case("valid", valid_widget);
+        assert!(valid_admitted, "{valid_out}");
+
+        let invalid_widget = serde_json::json!({
+            "irVersion": "0.1",
+            "artifactId": "erpnext.widget.invalid",
+            "kind": "widget",
+            "namespace": "erpnext",
+            "name": "Invalid Widget",
+            "version": "0.1.0",
+            "lifecycle": "draft",
+            "scope": { "orgId": "org_demo", "environmentId": "dev" },
+            "dependencies": [],
+            "provenance": { "source": "authoring_sdk" },
+            "payload": {
+                "widgetVersion": "0.1",
+                "widgetId": "erpnext.widget.invalid",
+                "dataDependencies": [{
+                    "dependencyId": "edge",
+                    "objectKind": "erpnext.SalesOrder",
+                    "query": { "kind": "relation_traversal" }
+                }],
+                "viewStates": [{ "stateId": "ready", "kind": "ready" }],
+                "actionBindings": [],
+                "permissions": []
+            }
+        });
+        let (invalid_out, invalid_admitted) = explain_widget_case("invalid", invalid_widget);
+        assert!(!invalid_admitted, "{invalid_out}");
+        let response: serde_json::Value = serde_json::from_str(&invalid_out).unwrap();
+        assert!(
+            response["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "widget.validation.invalid_payload"),
+            "{invalid_out}"
+        );
+    }
 }

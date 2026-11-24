@@ -44,6 +44,13 @@
 //! Stability: the `--json` events and the `.norn/dev.json` descriptor
 //! (`norn-dev/1`) are experimental, not a frozen contract (D84). The
 //! descriptor and the `ready` event say so with `"stability": "experimental"`.
+use clap::Parser;
+use norn_api::host::DevHost;
+use norn_api::scope::CellScope;
+use norn_cell::engine::NativeEngine;
+use norn_cell::{CellStore, InstalledDefinitionSet};
+use serde::Deserialize;
+use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
@@ -55,15 +62,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use clap::Parser;
-use norn_api::host::DevHost;
-use norn_api::scope::CellScope;
-use norn_cell::engine::NativeEngine;
-use norn_cell::{CellStore, InstalledDefinitionSet, StoreOptions};
-use serde::Deserialize;
-use serde_json::{Value, json};
-
 mod admit;
+mod checkpoint_key;
 mod definitions;
 mod http;
 mod load;
@@ -834,7 +834,7 @@ impl Session<'_> {
                 diagnostics,
             })?
         };
-        let engine = NativeEngine::open(cell_path, StoreOptions::default())
+        let engine = NativeEngine::open(cell_path, checkpoint_key::dev_store_options(cell_path))
             .map_err(|error| refused(error.to_string()))?;
         let store = CellStore::provision_definitions_riding(
             engine,
@@ -907,7 +907,7 @@ fn reopen(
     if !path.exists() {
         return Ok((None, None));
     }
-    let engine = NativeEngine::open(path, StoreOptions::default())
+    let engine = NativeEngine::open(path, checkpoint_key::dev_store_options(path))
         .map_err(|error| unreadable(error.to_string()))?;
     let Some(active) = CellStore::read_active_definitions(&engine)
         .map_err(|error| unreadable(error.to_string()))?

@@ -1,0 +1,124 @@
+{
+  "artifactId": "time.MaterializedWindow.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Materialized window",
+  "namespace": "time",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A half-open UTC interval [starts_at, ends_at) materialized from a WorkingWindow and Calendar under pinned tzdb 2025b and explicit DST policy (implements core.TimeInterval).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.TimeInterval"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Calendar whose pinned timezone and DST policy materialized this interval.",
+          "id": "calendar",
+          "target": "time.Calendar"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Recurring working window materialized into this UTC interval.",
+          "id": "working_window",
+          "target": "time.WorkingWindow"
+        }
+      ],
+      "name": "time.MaterializedWindow",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "calendar_date",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.date"
+          }
+        },
+        {
+          "id": "start_local_at",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "end_local_at",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "starts_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "ends_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "timezone",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
+          }
+        },
+        {
+          "default": "reject",
+          "id": "dst_policy",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.dst_policy"
+          }
+        },
+        {
+          "default": "2025b",
+          "id": "tzdb_version",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "2025b"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/time/artifacts/time.MaterializedWindow.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -255,9 +255,11 @@ fn owl_scale_admission() {
                 "core.Order.interface",
                 "core.Entitlement.entity",
                 "identity.BusinessUnit.entity",
+                "identity.Directory.interface",
                 "location.Region.entity",
                 "location.Space.entity",
                 "party.Brand.entity",
+                "party.Organization.entity",
             ];
             let dirs = [
                 "registry/core/artifacts",

@@ -343,8 +343,17 @@ impl CellCore {
         }
     }
 
+    fn is_fenced(&self) -> bool {
+        self.tenant
+            .serving_host()
+            .is_some_and(norn_api::timers::is_fenced)
+    }
+
     /// SYNC-ONE-1: claim the next connection due at `now_ms`.
     pub fn sync_due(&mut self, now_ms: u64) -> Option<String> {
+        if self.is_fenced() {
+            return None;
+        }
         let host = self.tenant.serving_host()?;
         let connect = self.connect.as_mut()?;
         connect.restore_schedule(host).ok()?;
@@ -356,6 +365,15 @@ impl CellCore {
     /// # Errors
     /// A host failure reading the cell.
     pub fn next_due(&mut self, now_ms: u64) -> Result<Option<u64>, String> {
+        if self
+            .tenant
+            .serving_host()
+            .is_some_and(norn_api::timers::is_fence_persist_pending)
+        {
+            return Ok(Some(
+                now_ms.saturating_add(norn_api::timers::FENCE_RETRY_MS),
+            ));
+        }
         let cell = self.tenant.next_due().map_err(|refusal| refusal.code)?;
         Ok(earliest(cell, self.sync_next(now_ms)?))
     }
@@ -377,6 +395,9 @@ impl CellCore {
     }
 
     fn sync_next(&mut self, now_ms: u64) -> Result<Option<u64>, String> {
+        if self.is_fenced() {
+            return Ok(None);
+        }
         let (Some(host), Some(connect)) = (self.tenant.serving_host(), self.connect.as_mut())
         else {
             return Ok(None);

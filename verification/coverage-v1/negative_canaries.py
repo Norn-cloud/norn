@@ -1503,9 +1503,9 @@ def workflow_context_canaries(source: str) -> None:
                 ("tolerated", lambda job: job["steps"][planner].__setitem__("continue-on-error", True)),
                 ("before the checkout", lambda job: job["steps"].insert(0, job["steps"].pop(planner))),
                 ("with an extra step", lambda job: job["steps"].append({"run": "cargo build --workspace"})),
-                ("on Boat", lambda job: job.__setitem__("runs-on", workflow["jobs"]["core"]["runs-on"])),
+                ("on Boat", lambda job: job.__setitem__("runs-on", workflow["jobs"]["test"]["runs-on"])),
                 ("in the cache-writer environment",
-                 lambda job: job.__setitem__("environment", workflow["jobs"]["core"]["environment"])),
+                 lambda job: job.__setitem__("environment", workflow["jobs"]["test"]["environment"])),
                 ("run for trusted events", lambda job: job.__setitem__("if", "always()")),
                 ("unbound base", lambda job: job["steps"][planner]["env"].__setitem__("BASE", "")),
                 ("forged head", lambda job: job["steps"][planner]["env"].__setitem__("HEAD_SHA", "HEAD")),
@@ -1541,59 +1541,92 @@ def workflow_context_canaries(source: str) -> None:
         document["jobs"]["core"]["steps"][0]["run"] = document["jobs"]["core"]["steps"][0]["run"].replace(
             'if [ "$(available)" -lt "$minimum" ]; then', "if true; then")
         rejected("unconditional core cleanup", document)
-        for name in ("core", "test"):
-            # The Boat reclaim runs only on self-hosted VMs, frees only named image content,
-            # and fails fast below 40 GiB: each weakening is rejected.
-            boat = next(i for i, step in enumerate(workflow["jobs"][name]["steps"])
-                        if step.get("name") == "Reclaim Boat runner disk space")
-            for label, key, before, after in (
-                    ("hosted", "if", "'self-hosted'", "'github-hosted'"),
-                    ("always", "if", "${{ runner.environment == 'self-hosted' }}", "${{ always() }}"),
-                    ("threshold", "run", "40 * 1024 * 1024", "1 * 1024 * 1024"),
-                    ("check", "run", '[ "$(available)" -ge "$minimum" ]', "true"),
-                    ("tolerated", "run", "docker system prune --all --force", "docker system prune --all --force || true"),
-                    ("broad", "run", "rustup toolchain uninstall stable nightly-2025-03-01", "sudo rm -rf /usr/local/rustup /var/lib")):
-                document = copy.deepcopy(workflow)
-                step = document["jobs"][name]["steps"][boat]
-                if before not in step[key]:
-                    raise AssertionError(f"Boat reclaim canary target drifted: {label}")
-                step[key] = step[key].replace(before, after)
-                rejected(f"{name} Boat reclaim {label}", document)
+        # The Boat reclaim runs only on self-hosted VMs (test bundles), frees only named
+        # image content, and fails fast below 40 GiB: each weakening is rejected.
+        boat = next(i for i, step in enumerate(workflow["jobs"]["test"]["steps"])
+                    if step.get("name") == "Reclaim Boat runner disk space")
+        for label, key, before, after in (
+                ("hosted", "if", "'self-hosted'", "'github-hosted'"),
+                ("always", "if", "${{ runner.environment == 'self-hosted' }}", "${{ always() }}"),
+                ("threshold", "run", "40 * 1024 * 1024", "1 * 1024 * 1024"),
+                ("check", "run", '[ "$(available)" -ge "$minimum" ]', "true"),
+                ("tolerated", "run", "docker system prune --all --force", "docker system prune --all --force || true"),
+                ("broad", "run", "rustup toolchain uninstall stable nightly-2025-03-01", "sudo rm -rf /usr/local/rustup /var/lib")):
             document = copy.deepcopy(workflow)
-            del document["jobs"][name]["steps"][boat]
-            rejected(f"{name} without Boat reclaim", document)
-            for label, change in (
-                    ("unconditional wrapper", lambda job: job["env"].__setitem__("RUSTC_WRAPPER", "sccache")),
-                    ("fatal server IO", lambda job: job["env"].pop("SCCACHE_IGNORE_SERVER_IO_ERROR")),
-                    ("unbounded local cache", lambda job: job["env"].pop("SCCACHE_CACHE_SIZE")),
-                    ("shared cache on Boat", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
-                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
-                        .replace("gha=false", "gha=true"))),
-                    ("masked compile failure", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
-                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
-                        .replace('exit "$status"', "exit 0"))),
-                    ("fallback without compiling", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
-                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
-                        .replace('  exec "$@"\n', "  exit 0\n"))),
-                    ("fatal temporary file", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
-                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
-                        .replace('log=$(mktemp) || exec "$@"', "log=$(mktemp)"))),
-                    # Any `sccache:` line (a warning before a local compile) would rerun a failing compiler.
-                    ("warnings as cache failures", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
-                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
-                        .replace("grep -q '^sccache: error: '", "grep -q '^sccache: '"))),
-                    # The action's post-job stats call setFailed when the stats request fails.
-                    ("fatal post-job stats", lambda job: next(step for step in job["steps"]
-                        if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].pop("disable_annotations")),
-                    ("post-job stats re-enabled", lambda job: next(step for step in job["steps"]
-                        if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].__setitem__(
-                        "disable_annotations", False)),
-                    ("cache writer for every event", lambda job: job.__setitem__("environment", "ci-cache-writer-boat")),
+            step = document["jobs"]["test"]["steps"][boat]
+            if before not in step[key]:
+                raise AssertionError(f"Boat reclaim canary target drifted: {label}")
+            step[key] = step[key].replace(before, after)
+            rejected(f"test Boat reclaim {label}", document)
+        document = copy.deepcopy(workflow)
+        del document["jobs"]["test"]["steps"][boat]
+        rejected("test without Boat reclaim", document)
+        for name in ("core", "test"):
+            sccache_mutations = [
+                ("unconditional wrapper", lambda job: job["env"].__setitem__("RUSTC_WRAPPER", "sccache")),
+                ("fatal server IO", lambda job: job["env"].pop("SCCACHE_IGNORE_SERVER_IO_ERROR")),
+                ("unbounded local cache", lambda job: job["env"].pop("SCCACHE_CACHE_SIZE")),
+                ("shared cache on Boat", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                    next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                    .replace("gha=false", "gha=true"))),
+                ("masked compile failure", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                    next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                    .replace('exit "$status"', "exit 0"))),
+                ("fallback without compiling", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                    next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                    .replace('  exec "$@"\n', "  exit 0\n"))),
+                ("fatal temporary file", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                    next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                    .replace('log=$(mktemp) || exec "$@"', "log=$(mktemp)"))),
+                # Any `sccache:` line (a warning before a local compile) would rerun a failing compiler.
+                ("warnings as cache failures", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                    next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                    .replace("grep -q '^sccache: error: '", "grep -q '^sccache: '"))),
+                # The action's post-job stats call setFailed when the stats request fails.
+                ("fatal post-job stats", lambda job: next(step for step in job["steps"]
+                    if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].pop("disable_annotations")),
+                ("post-job stats re-enabled", lambda job: next(step for step in job["steps"]
+                    if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].__setitem__(
+                    "disable_annotations", False)),
+                ("cache writer for every event", lambda job: job.__setitem__("environment", "ci-cache-writer-boat")),
+                ("merge groups write the shared cache", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                    next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                    .replace("push:refs/heads/main)", "push:refs/heads/main | merge_group:refs/heads/gh-readonly-queue/main/*)"))),
+                ("cache keys in the job environment", lambda job: job["env"].update(
+                    {"AWS_ACCESS_KEY_ID": "${{ secrets.NORN_SCCACHE_KEY_ID }}"})),
+                ("cache keys exported to later steps", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                    next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                    .replace('if sccache --start-server; then', 'echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> "$GITHUB_ENV"\nif sccache --start-server; then'))),
+                ("pull requests write the shared cache", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                    next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                    .replace("mode=READ_ONLY", "mode=READ_WRITE"))),
+                ("shared cache on hosted runners", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                    next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                    .replace('if [ "$gha" = false ] && [ -n', 'if [ -n'))),
+                ("cache keys outside the start step", lambda job: next(step for step in job["steps"]
+                    if step.get("uses", "").startswith("Swatinem/rust-cache@")).__setitem__("env",
+                    {"NORN_SCCACHE_SECRET": "${{ secrets.NORN_SCCACHE_SECRET }}"})),
+                # The keys come from Infisical over OIDC, never from GitHub secrets again.
+                ("cache keys back in GitHub secrets", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("env",
+                    {"NORN_SCCACHE_%s" % name: "${{ secrets.NORN_SCCACHE_%s }}" % name
+                     for name in ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")})),
+                ("job-wide write permissions for the cache", lambda job: job.__setitem__("permissions", "write-all")),
+                ("fatal start", lambda job: next(step for step in job["steps"]
+                    if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                    "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n")),
+            ]
+            if name == "test":
+                sccache_mutations.extend([
                     ("retired cache-writer environment", lambda job: job.__setitem__("environment",
                         job["environment"].replace("'ci-cache-writer-boat'", "'ci-cache-writer'"))),
                     # A human's push or re-run of main runs hosted: it must not receive the key.
@@ -1612,39 +1645,11 @@ def workflow_context_canaries(source: str) -> None:
                     # A hosted main push uses the Actions cache: it never receives the writable key (#1369).
                     ("cache writer for hosted main pushes", lambda job: job.__setitem__("environment",
                         job["environment"].replace(" && vars.NORN_MAIN_RUNNER == 'boat'", ""))),
-                    ("merge groups write the shared cache", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
-                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
-                        .replace("push:refs/heads/main)", "push:refs/heads/main | merge_group:refs/heads/gh-readonly-queue/main/*)"))),
-                    ("cache keys in the job environment", lambda job: job["env"].update(
-                        {"AWS_ACCESS_KEY_ID": "${{ secrets.NORN_SCCACHE_KEY_ID }}"})),
-                    ("cache keys exported to later steps", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
-                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
-                        .replace('if sccache --start-server; then', 'echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> "$GITHUB_ENV"\nif sccache --start-server; then'))),
-                    ("pull requests write the shared cache", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
-                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
-                        .replace("mode=READ_ONLY", "mode=READ_WRITE"))),
-                    ("shared cache on hosted runners", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
-                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
-                        .replace('if [ "$gha" = false ] && [ -n', 'if [ -n'))),
-                    ("cache keys outside the start step", lambda job: next(step for step in job["steps"]
-                        if step.get("uses", "").startswith("Swatinem/rust-cache@")).__setitem__("env",
-                        {"NORN_SCCACHE_SECRET": "${{ secrets.NORN_SCCACHE_SECRET }}"})),
-                    # The keys come from Infisical over OIDC, never from GitHub secrets again.
-                    ("cache keys back in GitHub secrets", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("env",
-                        {"NORN_SCCACHE_%s" % name: "${{ secrets.NORN_SCCACHE_%s }}" % name
-                         for name in ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")})),
                     ("cache-key step on hosted runners", lambda job: next(step for step in job["steps"]
                         if step.get("id") == "sccache-keys").pop("if")),
                     ("cache-key step without its OIDC token", lambda job: job.pop("permissions")),
-                    ("job-wide write permissions for the cache", lambda job: job.__setitem__("permissions", "write-all")),
-                    ("fatal start", lambda job: next(step for step in job["steps"]
-                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
-                        "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):
+                ])
+            for label, change in sccache_mutations:
                 document = copy.deepcopy(workflow)
                 change(document["jobs"][name])
                 rejected(f"{name} sccache {label}", document)
@@ -1656,8 +1661,8 @@ def workflow_context_canaries(source: str) -> None:
                     if step.get("name") == "Audit Actions secret inventory")
         step["continue-on-error"] = True
         rejected("core secret inventory failure ignored", document)
-        # Outside core and test no job mints an OIDC token, `write-all` included.
-        for name in ("full", "trusted-policy"):
+        # Outside test no job mints an OIDC token, `write-all` included.
+        for name in ("core", "full", "trusted-policy"):
             for label, permissions in (("write-all", "write-all"), ("id-token", {"id-token": "write"})):
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["permissions"] = permissions
@@ -1691,8 +1696,9 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["jobs"]["test"]["steps"][0]["run"] = workflow["jobs"]["core"]["steps"][0]["run"]
         rejected("threshold-only hosted bundle cleanup", document)
+        # Boat's base image needs libclang made loadable before any bindgen build (`test`
+        # bundles; `core` keeps the same step as a skipped no-op for base's PINNED_STEPS).
         for name in ("core", "test"):
-            # Boat's base image needs libclang made loadable before any bindgen build.
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"] = [step for step in document["jobs"][name]["steps"]
                                                if step.get("name") != "Make libclang loadable on Boat runners"]
@@ -1751,10 +1757,9 @@ def workflow_context_canaries(source: str) -> None:
                     raise AssertionError("Boat runner evaluation drift: " + case)
                 # The writable cache key goes exactly to the runs the main-push arm sends to Boat:
                 # never a hosted run (a human's push or re-run), a pull request or a merge group.
-                for job in ("core", "test"):
-                    environment = condition_value(concrete(workflow["jobs"][job]["environment"]))
-                    if environment != ("ci-cache-writer-boat" if main_push else ""):
-                        raise AssertionError(f"{job} cache-writer environment drift: " + case)
+                environment = condition_value(concrete(workflow["jobs"]["test"]["environment"]))
+                if environment != ("ci-cache-writer-boat" if main_push else ""):
+                    raise AssertionError("test cache-writer environment drift: " + case)
         for name in ("core", "test", "full", "trusted-policy"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
@@ -1793,11 +1798,11 @@ def workflow_context_canaries(source: str) -> None:
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
             for event in ("pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'pull_request'", repr(event)))
-            if name in ("core", "test"):
+            if name == "test":
                 unsafe += ["ubuntu-24.04", merge_only]
             else:
-                # The required verdict and the trusted-policy control jobs stay hosted in
-                # every form: a verdict queued for a Boat VM that cannot start would never report.
+                # core, the required verdict and the trusted-policy control jobs stay hosted in
+                # every form: only bundles take a Boat start.
                 unsafe += [runner, merge_only]
             for value in unsafe:
                 if value == workflow["jobs"][name]["runs-on"]:
@@ -1806,8 +1811,7 @@ def workflow_context_canaries(source: str) -> None:
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)
         document = copy.deepcopy(workflow)
-        for name in ("core", "test"):
-            document["jobs"][name]["runs-on"] = runner
+        document["jobs"]["test"]["runs-on"] = runner
         candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
         validator.validate_workflow_integrity([], formal_path=candidate)
         for name in ("core", "test"):
@@ -1888,7 +1892,7 @@ def workflow_canaries() -> None:
         ("wrong affected base", "github.event_name == 'pull_request' && github.event.pull_request.base.sha", "github.event_name == 'pull_request' && github.sha"),
         ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
         ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
-        ("more bundles than the start budget", "length <= 3 and all(.[];", "length <= 6 and all(.[];"),
+        ("more bundles than the start budget", "length <= 8 and all(.[];", "length <= 10 and all(.[];"),
         ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
         ("forged core verdict", "CORE: ${{ needs.core.result }}", "CORE: success"),
         ("forged planner verdict", "PLANNER: ${{ needs.plan.result }}", "PLANNER: success"),

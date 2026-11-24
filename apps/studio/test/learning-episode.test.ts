@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { decodeEpisode, readEpisode } from "../src/lib/learning/episode.ts"
+import { decodeEpisode, episodeFilterPredicate, episodeFiltersFromServed, listEpisodes, readEpisode } from "../src/lib/learning/episode.ts"
+import { EMPTY_QUERY } from "../src/lib/records-query.ts"
 import type { ObjectRecord } from "../src/lib/transport.ts"
 
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/learning-episode.json", import.meta.url), "utf8")) as { readonly records: readonly ObjectRecord[] }
@@ -91,5 +92,56 @@ test("reading an episode: scoped to the session, each answer kept apart, no cell
   expect((await readEpisode("x", cell(() => Response.json({ ...fixture.records[0], values: {} })).fetcher)).kind).toBe("malformed")
   const none = cell(() => { throw new Error("no call") }, { ...ME, environmentId: null })
   expect(await readEpisode("x", none.fetcher)).toEqual({ kind: "no-cell" })
+  expect(none.calls).toHaveLength(0)
+})
+
+test("listing episodes: server filter encodes only flat agreement clause accepted by object_query.rs, echoes cleanly, and keeps withheld/malformed/restart apart", async () => {
+  const pred = episodeFilterPredicate({ agreement: "overridden" })
+  expect(pred).toEqual({
+    all: [
+      { property: "agreement", op: "eq", value: "overridden" },
+    ],
+  })
+  expect(episodeFiltersFromServed({ sort: [], filter: pred })).toEqual({
+    agreement: "overridden",
+  })
+  // Dotted/nested clauses are not emitted and are ignored if echoed.
+  expect(episodeFiltersFromServed({
+    sort: [],
+    filter: {
+      all: [
+        { property: "agreement", op: "eq", value: "overridden" },
+        { property: "outcome.state", op: "eq", value: "recorded" },
+        { property: "triage.verdict", op: "empty" },
+      ],
+    },
+  })).toEqual({ agreement: "overridden" })
+  expect(episodeFilterPredicate({})).toBeNull()
+
+  const ok = cell(() => Response.json({
+    objectType: "learning.Episode",
+    records: [
+      fixture.records[0],
+      { objectType: "learning.Episode", id: "ep_withheld", scope: "org_demo/analytics", version: null, values: null, withheld: true, withheldProperties: [] },
+      { ...fixture.records[0], id: "ep_bad", values: { ...fixture.records[0]!.values, agreement: "accepted" } },
+    ],
+    query: { sort: [], filter: pred },
+    total: { count: 3, approximate: false },
+    next: "cursor_2",
+    quarantineCount: 1,
+  }))
+  const page = await listEpisodes({ ...EMPTY_QUERY, filter: pred }, ok.fetcher)
+  if (page.kind !== "page") throw new Error(`expected page, got ${page.kind}`)
+  expect(ok.calls[0]!.pathname).toBe("/api/host/v1/objects/learning.Episode")
+  expect(JSON.parse(ok.calls[0]!.searchParams.get("filter") ?? "null")).toEqual(pred)
+  expect(page.rows.map((r) => r.kind)).toEqual(["ok", "withheld", "malformed"])
+  expect(page.next).toBe("cursor_2")
+  expect(page.quarantineCount).toBe(1)
+
+  expect(await listEpisodes(EMPTY_QUERY, cell(() => Response.json({ code: "object.snapshot_moved", message: "moved" }, { status: 409 })).fetcher)).toEqual({ kind: "restart" })
+  expect(await listEpisodes(EMPTY_QUERY, cell(() => Response.json({ code: "authz.denied", message: "denied" }, { status: 403 })).fetcher)).toEqual({ kind: "refused", status: 403, code: "authz.denied", message: "denied", diagnostics: [] })
+  expect(await listEpisodes(EMPTY_QUERY, cell(() => Response.json({ code: "object.type_unknown" }, { status: 404 })).fetcher)).toEqual({ kind: "unavailable" })
+  const none = cell(() => { throw new Error("no call") }, { ...ME, environmentId: null })
+  expect(await listEpisodes(EMPTY_QUERY, none.fetcher)).toEqual({ kind: "no-cell" })
   expect(none.calls).toHaveLength(0)
 })

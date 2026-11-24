@@ -1,0 +1,50 @@
+{
+  "artifactId": "time.MaterializedWindow.resolved_matches_bounds.law",
+  "dependencies": [
+    {
+      "artifactId": "time.MaterializedWindow.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "MaterializedWindow UTC starts_at and ends_at must equal the checked tzdb 2025b resolution of start_local_at and end_local_at under the pinned timezone and dst_policy, forming a proper interval.",
+  "namespace": "time",
+  "payload": {
+    "id": "time.MaterializedWindow.resolved_matches_bounds",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "time",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/time/calendars.ts"
+    },
+    "rationale": "MaterializedWindow UTC starts_at and ends_at must equal the checked tzdb 2025b resolution of start_local_at and end_local_at under the pinned timezone and dst_policy, forming a proper interval.",
+    "response": {
+      "expression": "(((self.tzdb_version == '2025b') and (timestamp(self.starts_at) == resolve_local_timestamp(self.start_local_at, self.timezone, self.dst_policy))) and (timestamp(self.ends_at) == resolve_local_timestamp(self.end_local_at, self.timezone, self.dst_policy))) and (timestamp(self.starts_at) < timestamp(self.ends_at))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "time.MaterializedWindow"
+      ],
+      "root": {
+        "id": "time.MaterializedWindow",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "time.MaterializedWindow"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/time/artifacts/time.MaterializedWindow.resolved_matches_bounds.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
