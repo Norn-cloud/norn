@@ -12,10 +12,17 @@
 //! Authority is never borrowed from a later triggering actor, and retiring an
 //! automation voids its pending outbox candidates in the same transaction.
 //!
-//! Dispatch obligation (U2): before invoking `then.actionId` for a candidate,
-//! U2 must require the candidate's `(automation_id, revision)` to match the
-//! current active revision and must reauthorize the bound author's live grant
-//! and the target row under the dispatch hold.
+//! Dispatch obligations (U2):
+//! - Before invoking `then.actionId` for a candidate, U2 must require the
+//!   candidate's `(automation_id, revision)` to match the current active
+//!   revision and must reauthorize the bound author's live grant and the
+//!   target row under the dispatch hold.
+//! - Before draining pending candidates, U2 must expand any pending
+//!   `_norn_automation_outbox_continuation` rows from committed history at
+//!   `trigger_commit_seq` (before = state at `seq - 1`, after = state at `seq`)
+//!   under the continuation's recorded storage, engine, and definitions
+//!   versions, inserting expanded candidates idempotently into
+//!   `_norn_automation_outbox`.
 //!
 //! The runtime reserves the `norn.automation.` / `norn.automation/` idempotency
 //! key namespace (`S5a`-equivalent): the public `POST /v1/actions/{actionId}`
@@ -587,6 +594,21 @@ pub fn pending_automation_trigger_count<E: SqlEngine>(host: &DevHost<E>) -> Resu
     cell.store()
         .read()
         .pending_automation_trigger_count(norn_cell::MAIN_WORLD)
+        .map_err(Refusal::host)
+}
+
+/// Count of pending automation outbox continuation rows in the main world.
+///
+/// # Errors
+/// Poisoned synchronization or a store failure.
+pub fn pending_automation_continuation_count<E: SqlEngine>(
+    host: &DevHost<E>,
+) -> Result<u64, Refusal> {
+    let _epoch = host.definition_read()?;
+    let cell = host.cell()?;
+    cell.store()
+        .read()
+        .pending_automation_continuation_count(norn_cell::MAIN_WORLD)
         .map_err(Refusal::host)
 }
 

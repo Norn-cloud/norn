@@ -3474,7 +3474,7 @@ impl<E: SqlEngine> CellStore<E> {
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
-            automation_outbox::record(&writer.reader(), effective_batch, &written, commit_seq, &watch)?;
+            automation_outbox::record(&writer.reader(), effective_batch, &written, commit_seq, version, &watch)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links()?;

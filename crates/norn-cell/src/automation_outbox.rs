@@ -1,5 +1,5 @@
-//! AUTOMATION-OUTBOX-1 (Core 04): transactional automation trigger outbox and
-//! indexed trigger projection.
+//! AUTOMATION-OUTBOX-1 (Core 04): transactional automation trigger outbox,
+//! lossless overflow continuation, and indexed trigger projection.
 //!
 //! Matching automation trigger candidates are recorded inside the same `SQLite`
 //! transaction as the triggering write (direct action calls, bound flow calls,
@@ -7,9 +7,14 @@
 //! write and action triggers are projected transactionally into
 //! `_norn_retained_automation_trigger` inside `SqlEngine::definition_writes`.
 //! The commit path probes only touched root hierarchies and committed
-//! `norn.ActionCall` ids via indexed lookups, skips snapshot reads and JSON
-//! serialization when no rule matches, and bounds fan-out by
-//! [`MAX_CANDIDATES_PER_COMMIT`] (refusing and rolling back on overflow).
+//! `norn.ActionCall` ids via indexed `LIMIT 1` lookups, skips snapshot reads
+//! and JSON serialization when no rule matches, pages rules with keyset
+//! cursors (`LIMIT` [`RULE_PAGE_LIMIT`]) so no unbounded rule list is ever
+//! materialized in a commit, records up to [`MAX_CANDIDATES_PER_COMMIT`]
+//! candidates inline, and persists one idempotent continuation row in
+//! `_norn_automation_outbox_continuation` in the same transaction when
+//! matching crosses the inline bound. A business write is never refused or
+//! rolled back because of hidden automation rules.
 //!
 //! ## Snapshot semantics (filtered per rule against `rule.object_type`)
 //! - **Created / sibling replacement** (`event:created`): `before_values = None`,
@@ -23,13 +28,24 @@
 //!   unchanged target -> `Some(before)` / `Some(after)` (`before == after`);
 //!   absent receipt-only target -> `None` / `None`.
 //!
-//! ## Retirement & U2 authority obligations (`Core 05 AUTH-ATTENUATE-1`)
-//! Retiring an automation deletes its trigger-index row and marks its pending
-//! outbox candidates void (`voided_commit_seq = commit_seq`) in the same
-//! transaction. No trigger actor grant is stored on candidates; U2 must require
-//! the candidate's revision to remain the current active revision and
-//! reauthorize the author's live grant (`parent_grant_ids` + `author`) and
-//! concrete target row under the dispatch hold.
+//! ## Retirement & U2 obligations (`Core 04` / `Core 05 AUTH-ATTENUATE-1`)
+//! - **Retirement & live authority:** retiring an automation deletes its
+//!   trigger-index row and marks its pending outbox candidates void
+//!   (`voided_commit_seq = commit_seq`) in the same transaction. No trigger
+//!   actor grant is stored on candidates; U2 must require the candidate's
+//!   revision to remain the current active revision and reauthorize the
+//!   author's live grant (`parent_grant_ids` + `author`) and concrete target
+//!   row under the dispatch hold.
+//! - **Lossless continuation expansion:** before draining candidates, U2 must
+//!   expand any pending `_norn_automation_outbox_continuation` rows from
+//!   committed history at `trigger_commit_seq` (before = state at `seq - 1`,
+//!   after = state at `seq`) using the recorded `cursor`, `storage_version`,
+//!   `engine_version`, and `definitions_version`, inserting remaining
+//!   candidates idempotently into `_norn_automation_outbox` and still enforcing
+//!   the active-revision and live-grant checks above before dispatch.
+
+mod continuation;
+mod trigger_index;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,35 +54,40 @@ use serde::{Deserialize, Serialize};
 
 use crate::Model;
 use crate::codec::canonical_json;
-use crate::engine::{SqlEngine, SqlRow, params};
+use crate::engine::{SqlEngine, params};
 use crate::error::CellError;
-use crate::read::{ObjectRecord, StoreReader, to_i64, to_u64};
-use crate::retained::{RetainedDefinition, RetainedLifecycle};
+use crate::read::{ObjectRecord, StoreReader, to_i64};
 use crate::store::{CommitBatch, FactWriteRow, WrittenRow};
+
+pub use continuation::{
+    AutomationContinuationCursor, AutomationOutboxContinuation, current_engine_version,
+};
+use trigger_index::{
+    Page1Cache, RulePage, TriggerMatcher, WatchedRule, has_action_rules, has_row_rules_for_root,
+    query_action_rules_page, query_row_rules_page,
+};
+pub(crate) use trigger_index::{sync_trigger_index, void_retired};
 
 /// The transactional trigger outbox table.
 pub(crate) const AUTOMATION_OUTBOX: &str = "_norn_automation_outbox";
 
-/// Indexed projection of active, enabled, authority-bound write and action
-/// automation triggers, maintained transactionally on install, revision, and
-/// retire. Prefixed `_norn_retained_` so `NativeEngine` S1 write-protects it
-/// outside `SqlEngine::definition_writes`.
-pub(crate) const AUTOMATION_TRIGGER_INDEX: &str = "_norn_retained_automation_trigger";
-
-/// Maximum automation trigger candidates one commit may enqueue. Exceeding
-/// this bound refuses and rolls back the entire commit rather than dropping
-/// candidates.
+/// Maximum automation trigger candidates recorded inline inside one triggering
+/// commit. Additional matches are never dropped and never refuse the commit:
+/// one idempotent continuation row is written in the same transaction for U2
+/// to expand from committed history.
 pub const MAX_CANDIDATES_PER_COMMIT: usize = 256;
 
-/// Trigger kind strings persisted in the outbox and trigger index.
-const KIND_CREATED: &str = "event:created";
-const KIND_UPDATED: &str = "event:updated";
-const KIND_ACTION: &str = "event:action";
-const KIND_LIFECYCLE_ENTERED: &str = "lifecycle_entered";
+/// Maximum indexed automation rules fetched per keyset-paged `SQLite` query
+/// during a commit.
+pub const RULE_PAGE_LIMIT: usize = 64;
 
-/// The outbox and trigger-projection DDL, applied with the other system tables
-/// (purely additive).
-pub(crate) const DDL: [&str; 7] = [
+/// Maximum `(written object × rule)` evaluations performed inline during one
+/// commit before yielding to a transactional continuation row.
+pub const MAX_RULE_SCANS_PER_COMMIT: usize = 4_096;
+
+/// The outbox, continuation, and trigger-projection DDL, applied with the
+/// other system tables (purely additive).
+pub(crate) const DDL: [&str; 9] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_automation_outbox" (
   "world" TEXT NOT NULL,
   "automation_id" TEXT NOT NULL,
@@ -86,6 +107,18 @@ pub(crate) const DDL: [&str; 7] = [
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_automation_outbox/pending" ON "_norn_automation_outbox" ("world", "trigger_commit_seq", "automation_id", "revision", "object_type", "object_id", "object_version") WHERE "consumed_commit_seq" IS NULL AND "voided_commit_seq" IS NULL"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_automation_outbox/automation" ON "_norn_automation_outbox" ("automation_id", "revision") WHERE "consumed_commit_seq" IS NULL AND "voided_commit_seq" IS NULL"#,
+    r#"CREATE TABLE IF NOT EXISTS "_norn_automation_outbox_continuation" (
+  "trigger_commit_seq" INTEGER NOT NULL,
+  "world" TEXT NOT NULL,
+  "cursor" TEXT NOT NULL,
+  "storage_version" INTEGER NOT NULL,
+  "engine_version" TEXT NOT NULL,
+  "definitions_version" INTEGER NOT NULL,
+  "recorded_at_ms" INTEGER NOT NULL,
+  "completed_commit_seq" INTEGER,
+  PRIMARY KEY ("trigger_commit_seq")
+)"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_automation_outbox_continuation/pending" ON "_norn_automation_outbox_continuation" ("world", "trigger_commit_seq") WHERE "completed_commit_seq" IS NULL"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_retained_automation_trigger" (
   "automation_id" TEXT NOT NULL,
   "revision" INTEGER NOT NULL,
@@ -97,7 +130,7 @@ pub(crate) const DDL: [&str; 7] = [
   "lifecycle_state" TEXT,
   PRIMARY KEY ("automation_id")
 )"#,
-    r#"CREATE INDEX IF NOT EXISTS "_norn_retained_automation_trigger/type" ON "_norn_retained_automation_trigger" ("object_type", "trigger_kind", "automation_id")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_retained_automation_trigger/type" ON "_norn_retained_automation_trigger" ("object_type", "automation_id") WHERE "trigger_kind" != 'event:action'"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_retained_automation_trigger/root" ON "_norn_retained_automation_trigger" ("root_type", "trigger_kind")"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_retained_automation_trigger/action" ON "_norn_retained_automation_trigger" ("action_id", "automation_id") WHERE "trigger_kind" = 'event:action'"#,
 ];
@@ -155,248 +188,19 @@ pub struct AutomationTriggerCandidate {
     pub voided_commit_seq: Option<u64>,
 }
 
-/// Write- or action-triggered matcher projected from an active `automation`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum TriggerMatcher {
-    Created,
-    Updated,
-    Action { action_id: String },
-    LifecycleEntered { property: String, state: String },
-}
-
-impl TriggerMatcher {
-    const fn kind_label(&self) -> &'static str {
-        match self {
-            Self::Created => KIND_CREATED,
-            Self::Updated => KIND_UPDATED,
-            Self::Action { .. } => KIND_ACTION,
-            Self::LifecycleEntered { .. } => KIND_LIFECYCLE_ENTERED,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct WatchedRule {
-    automation_id: String,
-    revision: u64,
-    object_type: String,
-    matcher: TriggerMatcher,
-}
-
 /// Pre-commit trigger probe results and pre-write object snapshots captured
 /// before `Writer::apply_writes` mutates any rows.
 #[derive(Default)]
 pub(crate) struct AutomationWatch {
     watched_row_roots: BTreeSet<String>,
-    action_rules: BTreeMap<String, Vec<WatchedRule>>,
+    watched_actions: BTreeSet<String>,
     before: BTreeMap<(String, String), Option<ObjectRecord>>,
 }
 
 impl AutomationWatch {
     fn is_empty(&self) -> bool {
-        self.watched_row_roots.is_empty() && self.action_rules.is_empty()
+        self.watched_row_roots.is_empty() && self.watched_actions.is_empty()
     }
-}
-
-fn parse_watched_rule(automation_id: &str, revision: u64, payload: &str) -> Option<WatchedRule> {
-    let value: serde_json::Value = serde_json::from_str(payload).ok()?;
-    if value.get("enabled").and_then(serde_json::Value::as_bool) != Some(true) {
-        return None;
-    }
-    let object_type = value.get("objectType")?.as_str()?.to_owned();
-    let when = value.get("when")?.as_object()?;
-    let field = |k: &str| when.get(k).and_then(serde_json::Value::as_str);
-    let matcher = match field("kind")? {
-        "event" => match field("event")? {
-            "created" => TriggerMatcher::Created,
-            "updated" => TriggerMatcher::Updated,
-            "action" => TriggerMatcher::Action {
-                action_id: field("actionId")?.to_owned(),
-            },
-            _ => return None,
-        },
-        "lifecycle_entered" => TriggerMatcher::LifecycleEntered {
-            property: field("property")?.to_owned(),
-            state: field("state")?.to_owned(),
-        },
-        // `stale` triggers are timer-driven (U4), never enqueued on write commits.
-        _ => return None,
-    };
-    Some(WatchedRule {
-        automation_id: automation_id.to_owned(),
-        revision,
-        object_type,
-        matcher,
-    })
-}
-
-/// Maintain `_norn_retained_automation_trigger` transactionally on install,
-/// revision, and retire. Must be called inside `SqlEngine::definition_writes`.
-pub(crate) fn sync_trigger_index<E: SqlEngine>(
-    conn: &E,
-    model: &Model,
-    definition: &RetainedDefinition,
-) -> Result<(), CellError> {
-    conn.execute(
-        &format!("DELETE FROM \"{AUTOMATION_TRIGGER_INDEX}\" WHERE \"automation_id\" = ?1"),
-        params![definition.id],
-    )?;
-    // Core 05 AUTH-ATTENUATE-1: index only active automations with a server-bound revocable grant.
-    let authorized = definition.lifecycle == RetainedLifecycle::Active
-        && definition
-            .authority
-            .as_ref()
-            .is_some_and(|a| a.revocable && !a.parent_grant_ids.is_empty());
-    let Some(rule) = authorized
-        .then(|| parse_watched_rule(&definition.id, definition.revision, &definition.payload))
-        .flatten()
-    else {
-        return Ok(());
-    };
-    let root_type = model
-        .chain(&rule.object_type)
-        .ok()
-        .and_then(|chain| chain.first().map(String::as_str))
-        .unwrap_or(&rule.object_type);
-    let (action_id, lifecycle_property, lifecycle_state) = match &rule.matcher {
-        TriggerMatcher::Created | TriggerMatcher::Updated => (None, None, None),
-        TriggerMatcher::Action { action_id } => (Some(action_id.as_str()), None, None),
-        TriggerMatcher::LifecycleEntered { property, state } => {
-            (None, Some(property.as_str()), Some(state.as_str()))
-        }
-    };
-    conn.execute(
-        &format!(
-            "INSERT INTO \"{AUTOMATION_TRIGGER_INDEX}\" (\
-              \"automation_id\", \"revision\", \"object_type\", \"root_type\", \
-              \"trigger_kind\", \"action_id\", \"lifecycle_property\", \"lifecycle_state\"\
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
-        ),
-        params![
-            rule.automation_id,
-            to_i64(rule.revision, "automation revision")?,
-            rule.object_type,
-            root_type,
-            rule.matcher.kind_label(),
-            action_id,
-            lifecycle_property,
-            lifecycle_state,
-        ],
-    )
-}
-
-/// Mark every pending outbox candidate for any retired automation in `changes`
-/// as void in the same transaction as `:retire`.
-pub(crate) fn void_retired<'a, E: SqlEngine>(
-    conn: &E,
-    changes: impl IntoIterator<Item = &'a crate::retained::RetainedDefinitionChange>,
-    commit_seq: u64,
-) -> Result<(), CellError> {
-    let sql = format!(
-        "UPDATE \"{AUTOMATION_OUTBOX}\" SET \"voided_commit_seq\" = ?1 \
-         WHERE \"automation_id\" = ?2 AND \"revision\" <= ?3 \
-         AND \"consumed_commit_seq\" IS NULL AND \"voided_commit_seq\" IS NULL"
-    );
-    for change in changes {
-        if change.definition.kind == "automation"
-            && change.definition.lifecycle == RetainedLifecycle::Retired
-        {
-            conn.execute(
-                &sql,
-                params![
-                    to_i64(commit_seq, "voided commit seq")?,
-                    change.definition.id,
-                    to_i64(change.definition.revision, "retiring revision")?,
-                ],
-            )?;
-        }
-    }
-    Ok(())
-}
-
-const INDEX_COLUMNS: &str = "\"automation_id\", \"revision\", \"object_type\", \"trigger_kind\", \"action_id\", \"lifecycle_property\", \"lifecycle_state\"";
-
-fn decode_indexed_rule(values: Vec<crate::engine::SqlValue>) -> Result<WatchedRule, CellError> {
-    let row = SqlRow(values);
-    let automation_id: String = row.get(0)?;
-    let revision = to_u64(row.get(1)?, "automation revision")?;
-    let object_type: String = row.get(2)?;
-    let trigger_kind: String = row.get(3)?;
-    let (action_id, prop, state): (Option<String>, Option<String>, Option<String>) =
-        (row.get(4)?, row.get(5)?, row.get(6)?);
-    let missing = |col: &str| CellError::Engine(format!("indexed trigger missing {col}"));
-    let matcher = match trigger_kind.as_str() {
-        KIND_CREATED => TriggerMatcher::Created,
-        KIND_UPDATED => TriggerMatcher::Updated,
-        KIND_ACTION => TriggerMatcher::Action {
-            action_id: action_id.ok_or_else(|| missing("action_id"))?,
-        },
-        KIND_LIFECYCLE_ENTERED => TriggerMatcher::LifecycleEntered {
-            property: prop.ok_or_else(|| missing("lifecycle_property"))?,
-            state: state.ok_or_else(|| missing("lifecycle_state"))?,
-        },
-        other => {
-            return Err(CellError::Engine(format!(
-                "indexed automation trigger has unknown kind {other:?}"
-            )));
-        }
-    };
-    Ok(WatchedRule {
-        automation_id,
-        revision,
-        object_type,
-        matcher,
-    })
-}
-
-fn has_row_rules_for_root<E: SqlEngine>(conn: &E, root_type: &str) -> Result<bool, CellError> {
-    let found: Option<i64> = conn.query_optional(
-        &format!(
-            "SELECT 1 FROM \"{AUTOMATION_TRIGGER_INDEX}\" \
-             WHERE \"root_type\" = ?1 AND \"trigger_kind\" != '{KIND_ACTION}' LIMIT 1"
-        ),
-        params![root_type],
-        |row| row.get(0),
-    )?;
-    Ok(found.is_some())
-}
-
-fn query_action_rules<E: SqlEngine>(
-    conn: &E,
-    action_id: &str,
-) -> Result<Vec<WatchedRule>, CellError> {
-    let rows = conn.query(
-        &format!(
-            "SELECT {INDEX_COLUMNS} FROM \"{AUTOMATION_TRIGGER_INDEX}\" \
-             WHERE \"trigger_kind\" = '{KIND_ACTION}' AND \"action_id\" = ?1 \
-             ORDER BY \"automation_id\""
-        ),
-        params![action_id],
-    )?;
-    rows.into_iter().map(decode_indexed_rule).collect()
-}
-
-fn query_row_rules_for_lineage<E: SqlEngine>(
-    conn: &E,
-    model: &Model,
-    concrete_type: &str,
-) -> Result<Vec<WatchedRule>, CellError> {
-    let mut rules = Vec::new();
-    for ancestor in model.chain(concrete_type)? {
-        let rows = conn.query(
-            &format!(
-                "SELECT {INDEX_COLUMNS} FROM \"{AUTOMATION_TRIGGER_INDEX}\" \
-                 WHERE \"object_type\" = ?1 AND \"trigger_kind\" != '{KIND_ACTION}' \
-                 ORDER BY \"automation_id\""
-            ),
-            params![ancestor],
-        )?;
-        for values in rows {
-            rules.push(decode_indexed_rule(values)?);
-        }
-    }
-    rules.sort_by(|left, right| left.automation_id.cmp(&right.automation_id));
-    Ok(rules)
 }
 
 fn fact_change_target(fact: &FactChange) -> (&str, &str) {
@@ -444,47 +248,38 @@ fn extract_action_call<E: SqlEngine>(
 fn action_calls_in_batch<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     batch: &CommitBatch,
-) -> Vec<ActionCallMeta> {
-    let mut calls = Vec::new();
+) -> BTreeMap<String, ActionCallMeta> {
+    let mut calls = BTreeMap::new();
     for write in &batch.writes {
         if let FactWriteRow::Put {
             object_type,
+            key,
             values,
-            ..
         } = write
             && object_type == norn_kernel::ACTION_CALL_TYPE
             && let Some(meta) = extract_action_call(reader, values)
         {
-            calls.push(meta);
+            calls.insert(key.clone(), meta);
         }
     }
     for fact in &batch.facts {
-        match fact {
-            FactChange::Create {
-                object_type,
-                values,
-                ..
-            }
-            | FactChange::Set {
-                object_type,
-                values,
-                ..
-            } if object_type.as_str() == norn_kernel::ACTION_CALL_TYPE => {
-                if let Some(meta) = extract_action_call(reader, values) {
-                    calls.push(meta);
-                }
-            }
-            FactChange::Create { .. }
-            | FactChange::Set { .. }
-            | FactChange::Delete { .. }
-            | FactChange::Transition { .. } => {}
+        if let FactChange::Create {
+            object_type,
+            key,
+            values,
+        } = fact
+            && object_type.as_str() == norn_kernel::ACTION_CALL_TYPE
+            && let Some(meta) = extract_action_call(reader, values)
+        {
+            calls.insert(key.clone(), meta);
         }
     }
     calls
 }
 
-/// Capture pre-commit state for objects touched by `batch` via indexed probes.
-/// Returns immediately with zero object reads when no rule matches.
+/// Capture pre-commit state for objects touched by `batch` via indexed
+/// `LIMIT 1` probes. Returns immediately with zero object reads when no rule
+/// matches.
 pub(crate) fn capture_before<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     batch: &CommitBatch,
@@ -494,13 +289,13 @@ pub(crate) fn capture_before<E: SqlEngine>(
     }
     let model = reader.model();
     let action_calls = action_calls_in_batch(reader, batch);
-    let mut action_rules: BTreeMap<String, Vec<WatchedRule>> = BTreeMap::new();
-    for call in &action_calls {
-        if !action_rules.contains_key(&call.action_id) {
-            let rules = query_action_rules(reader.conn, &call.action_id)?;
-            if !rules.is_empty() {
-                action_rules.insert(call.action_id.clone(), rules);
-            }
+    let mut watched_actions = BTreeSet::new();
+    let mut checked_actions = BTreeSet::new();
+    for call in action_calls.values() {
+        if checked_actions.insert(call.action_id.as_str())
+            && has_action_rules(reader.conn, &call.action_id)?
+        {
+            watched_actions.insert(call.action_id.clone());
         }
     }
     let touched: Vec<(&str, &str)> = batch
@@ -518,7 +313,7 @@ pub(crate) fn capture_before<E: SqlEngine>(
             watched_row_roots.insert(root.to_owned());
         }
     }
-    if watched_row_roots.is_empty() && action_rules.is_empty() {
+    if watched_row_roots.is_empty() && watched_actions.is_empty() {
         return Ok(AutomationWatch::default());
     }
     let mut before = BTreeMap::new();
@@ -528,8 +323,8 @@ pub(crate) fn capture_before<E: SqlEngine>(
             capture_root_snapshot(reader, &batch.world, root, key, &mut before)?;
         }
     }
-    for call in &action_calls {
-        if action_rules.contains_key(&call.action_id) && model.has_type(&call.target_type) {
+    for call in action_calls.values() {
+        if watched_actions.contains(&call.action_id) && model.has_type(&call.target_type) {
             capture_root_snapshot(
                 reader,
                 &batch.world,
@@ -541,7 +336,7 @@ pub(crate) fn capture_before<E: SqlEngine>(
     }
     Ok(AutomationWatch {
         watched_row_roots,
-        action_rules,
+        watched_actions,
         before,
     })
 }
@@ -626,21 +421,64 @@ struct CandidateEmit<'a> {
     action_id: Option<&'a str>,
 }
 
+#[derive(Default)]
+struct MatchBudget {
+    emitted: usize,
+    scanned: usize,
+}
+
+impl MatchBudget {
+    const fn candidates_exhausted(&self) -> bool {
+        self.emitted >= MAX_CANDIDATES_PER_COMMIT
+    }
+
+    const fn scans_exhausted(&self) -> bool {
+        self.scanned >= MAX_RULE_SCANS_PER_COMMIT
+    }
+
+    const fn record_candidate(&mut self) {
+        self.emitted = self.emitted.saturating_add(1);
+    }
+
+    const fn record_scan(&mut self) {
+        self.scanned = self.scanned.saturating_add(1);
+    }
+}
+
+struct RecordContext<'a> {
+    batch: &'a CommitBatch,
+    commit_seq: u64,
+    watch: &'a AutomationWatch,
+    final_rows: &'a BTreeMap<(String, String), &'a WrittenRow>,
+    action_calls: &'a BTreeMap<String, ActionCallMeta>,
+}
+
+struct RowTargetCtx<'a> {
+    root: &'a str,
+    key: &'a str,
+    before_record: Option<&'a ObjectRecord>,
+    after_record: Option<&'a ObjectRecord>,
+    before_lazy: LazySnapshot<'a>,
+    after_lazy: LazySnapshot<'a>,
+    emit: CandidateEmit<'a>,
+}
+
+struct ActionTargetCtx<'a> {
+    call_key: &'a str,
+    action_id: &'a str,
+    effective_object_type: &'a str,
+    before_lazy: LazySnapshot<'a>,
+    after_lazy: LazySnapshot<'a>,
+    emit: CandidateEmit<'a>,
+}
+
 fn emit_candidate<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     rule: &WatchedRule,
     ctx: &CandidateEmit<'_>,
     before_lazy: &mut LazySnapshot<'_>,
     after_lazy: &mut LazySnapshot<'_>,
-    emitted: &mut usize,
 ) -> Result<(), CellError> {
-    *emitted = emitted.saturating_add(1);
-    if *emitted > MAX_CANDIDATES_PER_COMMIT {
-        return Err(CellError::AutomationFanoutExceeded {
-            limit: MAX_CANDIDATES_PER_COMMIT,
-            actual: *emitted,
-        });
-    }
     let model = reader.model();
     let before_json = before_lazy.json_for(model, &rule.object_type)?;
     let after_json = after_lazy.json_for(model, &rule.object_type)?;
@@ -657,13 +495,19 @@ fn emit_candidate<E: SqlEngine>(
 
 /// Record matching automation trigger candidates inside the triggering commit's
 /// `SQLite` transaction (Pass 1: row-write triggers; Pass 2: `event:action`
-/// driven from committed `norn.ActionCall` records). Refuses and rolls back
-/// with [`CellError::AutomationFanoutExceeded`] past [`MAX_CANDIDATES_PER_COMMIT`].
+/// driven from committed `norn.ActionCall` records).
+///
+/// Never refuses or rolls back a business write on automation fan-out: rule
+/// lookups are keyset-paged with `LIMIT`, at most [`MAX_CANDIDATES_PER_COMMIT`]
+/// candidates are written inline, and any remaining work persists one
+/// idempotent continuation row in `_norn_automation_outbox_continuation` in the
+/// same transaction for U2 to expand from committed history.
 pub(crate) fn record<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     batch: &CommitBatch,
     written: &[WrittenRow],
     commit_seq: u64,
+    definitions_version: u64,
     watch: &AutomationWatch,
 ) -> Result<(), CellError> {
     if watch.is_empty() {
@@ -678,27 +522,32 @@ pub(crate) fn record<E: SqlEngine>(
             final_rows.insert((root, row.key.clone()), row);
         }
     }
-    let mut emitted: usize = 0;
-    if !watch.watched_row_roots.is_empty() {
-        record_row_triggers(
-            reader,
-            batch,
-            commit_seq,
-            watch,
-            &final_rows,
-            &action_calls,
-            &mut emitted,
-        )?;
+    let ctx = RecordContext {
+        batch,
+        commit_seq,
+        watch,
+        final_rows: &final_rows,
+        action_calls: &action_calls,
+    };
+    let mut budget = MatchBudget::default();
+    let mut paused = if watch.watched_row_roots.is_empty() {
+        None
+    } else {
+        record_row_triggers(reader, &ctx, &mut budget)?
+    };
+    if paused.is_none() && !watch.watched_actions.is_empty() {
+        paused = record_action_triggers(reader, &ctx, &mut budget)?;
     }
-    if !watch.action_rules.is_empty() {
-        record_action_triggers(
-            reader,
-            batch,
-            commit_seq,
-            watch,
-            &final_rows,
-            &action_calls,
-            &mut emitted,
+    if let Some(cursor) = paused {
+        continuation::insert_continuation(
+            reader.conn,
+            &continuation::ContinuationRecord {
+                trigger_commit_seq: commit_seq,
+                world: &batch.world,
+                cursor: &cursor,
+                definitions_version,
+                recorded_at_ms: batch.logical_time,
+            },
         )?;
     }
     Ok(())
@@ -706,90 +555,146 @@ pub(crate) fn record<E: SqlEngine>(
 
 fn record_row_triggers<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
-    batch: &CommitBatch,
-    commit_seq: u64,
-    watch: &AutomationWatch,
-    final_rows: &BTreeMap<(String, String), &WrittenRow>,
-    action_calls: &[ActionCallMeta],
-    emitted: &mut usize,
-) -> Result<(), CellError> {
+    ctx: &RecordContext<'_>,
+    budget: &mut MatchBudget,
+) -> Result<Option<AutomationContinuationCursor>, CellError> {
     let model = reader.model();
-    let mut rules_by_concrete: BTreeMap<String, Vec<WatchedRule>> = BTreeMap::new();
-    for (target, row) in final_rows {
-        let (root, key) = target;
-        if !watch.watched_row_roots.contains(root) {
+    let mut row_cache = Page1Cache::default();
+    for (target_key, row) in ctx.final_rows {
+        let (root, key) = target_key;
+        if !ctx.watch.watched_row_roots.contains(root) {
             continue;
         }
-        if !rules_by_concrete.contains_key(&row.object_type) {
-            let loaded = query_row_rules_for_lineage(reader.conn, model, &row.object_type)?;
-            rules_by_concrete.insert(row.object_type.clone(), loaded);
+        let chain = model.chain(&row.object_type)?;
+        let mut first_pages = Vec::with_capacity(chain.len());
+        for ancestor in chain {
+            let page = row_cache.get_or_load(reader.conn, ancestor, query_row_rules_page)?;
+            first_pages.push((ancestor.as_str(), page));
         }
-        let Some(rules) = rules_by_concrete
-            .get(&row.object_type)
-            .filter(|r| !r.is_empty())
-        else {
+        if first_pages.iter().all(|(_, page)| page.rules.is_empty()) {
             continue;
-        };
-        let before_record = watch.before.get(target).and_then(Option::as_ref);
-        let after_record = reader.object(&batch.world, root, key)?;
-        let primary_action = action_calls
-            .iter()
+        }
+        let before_record = ctx.watch.before.get(target_key).and_then(Option::as_ref);
+        let after_record = reader.object(&ctx.batch.world, root, key)?;
+        let primary_action = ctx
+            .action_calls
+            .values()
             .find(|call| call.target_root == *root && call.target_key == *key)
             .map(|call| call.action_id.as_str());
-        let mut before_lazy = LazySnapshot::new(before_record);
-        let mut after_lazy = LazySnapshot::new(after_record.as_ref());
-        let ctx = CandidateEmit {
-            world: &batch.world,
-            commit_seq,
-            recorded_at_ms: batch.logical_time,
-            object_type: &row.object_type,
-            object_id: &row.key,
-            object_version: row.version,
-            action_id: primary_action,
+        let mut target = RowTargetCtx {
+            root,
+            key,
+            before_record,
+            after_record: after_record.as_ref(),
+            before_lazy: LazySnapshot::new(before_record),
+            after_lazy: LazySnapshot::new(after_record.as_ref()),
+            emit: CandidateEmit {
+                world: &ctx.batch.world,
+                commit_seq: ctx.commit_seq,
+                recorded_at_ms: ctx.batch.logical_time,
+                object_type: &row.object_type,
+                object_id: &row.key,
+                object_version: row.version,
+                action_id: primary_action,
+            },
         };
-        for rule in rules {
-            let rule_before =
-                before_record.filter(|rec| model.is_a(&rec.object_type, &rule.object_type));
-            let rule_after = after_record
-                .as_ref()
-                .filter(|rec| model.is_a(&rec.object_type, &rule.object_type));
-            if row_rule_matches(&rule.matcher, rule_before, rule_after) {
-                emit_candidate(
-                    reader,
-                    rule,
-                    &ctx,
-                    &mut before_lazy,
-                    &mut after_lazy,
-                    emitted,
-                )?;
+        for (ancestor, first_page) in first_pages {
+            if first_page.rules.is_empty() {
+                continue;
+            }
+            if let Some(cursor) =
+                match_row_rules_for_ancestor(reader, &mut target, ancestor, first_page, budget)?
+            {
+                return Ok(Some(cursor));
             }
         }
     }
-    Ok(())
+    Ok(None)
+}
+
+fn match_row_rules_for_ancestor<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    target: &mut RowTargetCtx<'_>,
+    ancestor: &str,
+    first_page: RulePage,
+    budget: &mut MatchBudget,
+) -> Result<Option<AutomationContinuationCursor>, CellError> {
+    let model = reader.model();
+    let mut page = first_page;
+    let mut after_id: Option<String> = None;
+    loop {
+        let mut prev_id = after_id;
+        for rule in &page.rules {
+            if budget.scans_exhausted() {
+                return Ok(Some(AutomationContinuationCursor::Row {
+                    root_type: target.root.to_owned(),
+                    object_id: target.key.to_owned(),
+                    ancestor_type: ancestor.to_owned(),
+                    after_automation_id: prev_id,
+                }));
+            }
+            budget.record_scan();
+            let rule_before = target
+                .before_record
+                .filter(|rec| model.is_a(&rec.object_type, &rule.object_type));
+            let rule_after = target
+                .after_record
+                .filter(|rec| model.is_a(&rec.object_type, &rule.object_type));
+            if row_rule_matches(&rule.matcher, rule_before, rule_after) {
+                if budget.candidates_exhausted() {
+                    return Ok(Some(AutomationContinuationCursor::Row {
+                        root_type: target.root.to_owned(),
+                        object_id: target.key.to_owned(),
+                        ancestor_type: ancestor.to_owned(),
+                        after_automation_id: prev_id,
+                    }));
+                }
+                emit_candidate(
+                    reader,
+                    rule,
+                    &target.emit,
+                    &mut target.before_lazy,
+                    &mut target.after_lazy,
+                )?;
+                budget.record_candidate();
+            }
+            prev_id = Some(rule.automation_id.clone());
+        }
+        if !page.has_more {
+            return Ok(None);
+        }
+        after_id = prev_id;
+        page = query_row_rules_page(reader.conn, ancestor, after_id.as_deref(), RULE_PAGE_LIMIT)?;
+        if page.rules.is_empty() {
+            return Ok(None);
+        }
+    }
 }
 
 fn record_action_triggers<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
-    batch: &CommitBatch,
-    commit_seq: u64,
-    watch: &AutomationWatch,
-    final_rows: &BTreeMap<(String, String), &WrittenRow>,
-    action_calls: &[ActionCallMeta],
-    emitted: &mut usize,
-) -> Result<(), CellError> {
+    ctx: &RecordContext<'_>,
+    budget: &mut MatchBudget,
+) -> Result<Option<AutomationContinuationCursor>, CellError> {
     let model = reader.model();
-    for call in action_calls {
-        let Some(rules) = watch.action_rules.get(&call.action_id) else {
+    let mut action_cache = Page1Cache::default();
+    for (call_key, call) in ctx.action_calls {
+        if !ctx.watch.watched_actions.contains(&call.action_id) {
             continue;
-        };
+        }
+        let first_page =
+            action_cache.get_or_load(reader.conn, &call.action_id, query_action_rules_page)?;
+        if first_page.rules.is_empty() {
+            continue;
+        }
         let target_key = (call.target_root.clone(), call.target_key.clone());
-        let before_record = watch.before.get(&target_key).and_then(Option::as_ref);
+        let before_record = ctx.watch.before.get(&target_key).and_then(Option::as_ref);
         let after_record = if model.has_type(&call.target_type) {
-            reader.object(&batch.world, &call.target_root, &call.target_key)?
+            reader.object(&ctx.batch.world, &call.target_root, &call.target_key)?
         } else {
             None
         };
-        let written_row = final_rows.get(&target_key).copied();
+        let written_row = ctx.final_rows.get(&target_key).copied();
         let effective_object_type = after_record
             .as_ref()
             .map(|rec| rec.object_type.as_str())
@@ -803,35 +708,87 @@ fn record_action_triggers<E: SqlEngine>(
         } else if let Some(before) = before_record {
             before.version
         } else if model.has_type(effective_object_type) {
-            reader.version(&batch.world, effective_object_type, &call.target_key)?
+            reader.version(&ctx.batch.world, effective_object_type, &call.target_key)?
         } else {
             0
         };
-        let mut before_lazy = LazySnapshot::new(before_record);
-        let mut after_lazy = LazySnapshot::new(after_record.as_ref());
-        let ctx = CandidateEmit {
-            world: &batch.world,
-            commit_seq,
-            recorded_at_ms: batch.logical_time,
-            object_type: effective_object_type,
-            object_id: &call.target_key,
-            object_version,
-            action_id: Some(call.action_id.as_str()),
+        let mut target = ActionTargetCtx {
+            call_key,
+            action_id: &call.action_id,
+            effective_object_type,
+            before_lazy: LazySnapshot::new(before_record),
+            after_lazy: LazySnapshot::new(after_record.as_ref()),
+            emit: CandidateEmit {
+                world: &ctx.batch.world,
+                commit_seq: ctx.commit_seq,
+                recorded_at_ms: ctx.batch.logical_time,
+                object_type: effective_object_type,
+                object_id: &call.target_key,
+                object_version,
+                action_id: Some(call.action_id.as_str()),
+            },
         };
-        for rule in rules {
-            if model.is_a(effective_object_type, &rule.object_type) {
+        if let Some(cursor) = match_action_rules_for_call(reader, &mut target, first_page, budget)?
+        {
+            return Ok(Some(cursor));
+        }
+    }
+    Ok(None)
+}
+
+fn match_action_rules_for_call<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    target: &mut ActionTargetCtx<'_>,
+    first_page: RulePage,
+    budget: &mut MatchBudget,
+) -> Result<Option<AutomationContinuationCursor>, CellError> {
+    let model = reader.model();
+    let mut page = first_page;
+    let mut after_id: Option<String> = None;
+    loop {
+        let mut prev_id = after_id;
+        for rule in &page.rules {
+            if budget.scans_exhausted() {
+                return Ok(Some(AutomationContinuationCursor::Action {
+                    action_call_key: target.call_key.to_owned(),
+                    action_id: target.action_id.to_owned(),
+                    after_automation_id: prev_id,
+                }));
+            }
+            budget.record_scan();
+            if model.is_a(target.effective_object_type, &rule.object_type) {
+                if budget.candidates_exhausted() {
+                    return Ok(Some(AutomationContinuationCursor::Action {
+                        action_call_key: target.call_key.to_owned(),
+                        action_id: target.action_id.to_owned(),
+                        after_automation_id: prev_id,
+                    }));
+                }
                 emit_candidate(
                     reader,
                     rule,
-                    &ctx,
-                    &mut before_lazy,
-                    &mut after_lazy,
-                    emitted,
+                    &target.emit,
+                    &mut target.before_lazy,
+                    &mut target.after_lazy,
                 )?;
+                budget.record_candidate();
             }
+            prev_id = Some(rule.automation_id.clone());
+        }
+        if !page.has_more {
+            return Ok(None);
+        }
+        after_id = prev_id;
+        page = query_action_rules_page(
+            reader.conn,
+            target.action_id,
+            after_id.as_deref(),
+            RULE_PAGE_LIMIT,
+        )?;
+        if page.rules.is_empty() {
+            return Ok(None);
         }
     }
-    Ok(())
 }
 
 fn insert_candidate<E: SqlEngine>(
@@ -869,127 +826,17 @@ fn insert_candidate<E: SqlEngine>(
     )
 }
 
-const SELECT_COLUMNS: &str = "\"world\", \"automation_id\", \"revision\", \"trigger_commit_seq\", \"object_type\", \"object_id\", \"object_version\", \"trigger_kind\", \"action_id\", \"before_values\", \"after_values\", \"recorded_at_ms\", \"consumed_commit_seq\", \"voided_commit_seq\"";
-
-fn decode_snapshot(text: Option<String>) -> Result<Option<BTreeMap<String, Value>>, CellError> {
-    text.map(|raw| {
-        match Value::from_json_text(&raw)
-            .map_err(|e| CellError::Encoding(format!("automation outbox snapshot: {e}")))?
-        {
-            Value::Object(map) => Ok(map),
-            Value::Null
-            | Value::Bool(_)
-            | Value::Number(_)
-            | Value::String(_)
-            | Value::Array(_) => Err(CellError::Encoding(
-                "automation outbox snapshot must be a JSON object".to_owned(),
-            )),
-        }
-    })
-    .transpose()
-}
-
-fn decode_candidate(
-    values: Vec<crate::engine::SqlValue>,
-) -> Result<AutomationTriggerCandidate, CellError> {
-    let row = SqlRow(values);
-    let opt_seq = |idx: usize, label: &'static str| -> Result<Option<u64>, CellError> {
-        row.get::<Option<i64>>(idx)?
-            .map(|seq| to_u64(seq, label))
-            .transpose()
-    };
-    Ok(AutomationTriggerCandidate {
-        world: row.get(0)?,
-        key: AutomationTriggerKey {
-            automation_id: row.get(1)?,
-            revision: to_u64(row.get(2)?, "automation revision")?,
-            trigger_commit_seq: to_u64(row.get(3)?, "trigger commit seq")?,
-            object_type: row.get(4)?,
-            object_id: row.get(5)?,
-            object_version: to_u64(row.get(6)?, "object version")?,
-        },
-        trigger_kind: row.get(7)?,
-        action_id: row.get(8)?,
-        before_values: decode_snapshot(row.get(9)?)?,
-        after_values: decode_snapshot(row.get(10)?)?,
-        recorded_at_ms: to_u64(row.get(11)?, "trigger recorded_at_ms")?,
-        consumed_commit_seq: opt_seq(12, "consumed commit seq")?,
-        voided_commit_seq: opt_seq(13, "voided commit seq")?,
-    })
-}
-
-impl<E: SqlEngine> StoreReader<'_, E> {
-    /// Pending (unconsumed, unvoided) automation trigger candidates in `world`,
-    /// ordered deterministically by `(trigger_commit_seq, automation_id,
-    /// revision, object_type, object_id, object_version)`, up to `limit`.
-    ///
-    /// # Errors
-    /// SQL engine or decode errors.
-    pub fn pending_automation_triggers(
-        &self,
-        world: &str,
-        limit: usize,
-    ) -> Result<Vec<AutomationTriggerCandidate>, CellError> {
-        let rows = self.conn.query(
-            &format!(
-                "SELECT {SELECT_COLUMNS} FROM \"{AUTOMATION_OUTBOX}\" \
-                 WHERE \"world\" = ?1 AND \"consumed_commit_seq\" IS NULL AND \"voided_commit_seq\" IS NULL \
-                 ORDER BY \"trigger_commit_seq\", \"automation_id\", \"revision\", \"object_type\", \"object_id\", \"object_version\" \
-                 LIMIT ?2"
-            ),
-            params![world, i64::try_from(limit).unwrap_or(i64::MAX)],
-        )?;
-        rows.into_iter().map(decode_candidate).collect()
-    }
-
-    /// All automation trigger candidates recorded by commit `commit_seq` in
-    /// `world` (including consumed and voided rows for audit inspection).
-    ///
-    /// # Errors
-    /// SQL engine or decode errors.
-    pub fn automation_triggers_for_commit(
-        &self,
-        world: &str,
-        commit_seq: u64,
-    ) -> Result<Vec<AutomationTriggerCandidate>, CellError> {
-        let rows = self.conn.query(
-            &format!(
-                "SELECT {SELECT_COLUMNS} FROM \"{AUTOMATION_OUTBOX}\" \
-                 WHERE \"world\" = ?1 AND \"trigger_commit_seq\" = ?2 \
-                 ORDER BY \"automation_id\", \"revision\", \"object_type\", \"object_id\", \"object_version\""
-            ),
-            params![world, to_i64(commit_seq, "trigger commit seq")?],
-        )?;
-        rows.into_iter().map(decode_candidate).collect()
-    }
-
-    /// Total number of pending (unconsumed, unvoided) automation trigger
-    /// candidates in `world`.
-    ///
-    /// # Errors
-    /// SQL engine or count range errors.
-    pub fn pending_automation_trigger_count(&self, world: &str) -> Result<u64, CellError> {
-        let count: i64 = self.conn.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM \"{AUTOMATION_OUTBOX}\" \
-                 WHERE \"world\" = ?1 AND \"consumed_commit_seq\" IS NULL AND \"voided_commit_seq\" IS NULL"
-            ),
-            params![world],
-            |row| row.get(0),
-        )?;
-        to_u64(count, "automation trigger count")
-    }
-}
-
 #[cfg(all(test, feature = "native"))]
 #[allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
+    clippy::too_many_lines,
     reason = "transactional trigger outbox unit tests"
 )]
 mod tests {
+    use super::trigger_index::{KIND_ACTION, KIND_CREATED, KIND_LIFECYCLE_ENTERED, KIND_UPDATED};
     use super::*;
     use crate::Model;
     use crate::flow_run::RunStarter;
@@ -1001,7 +848,7 @@ mod tests {
         CellStore, CommitOutcome, CommitPoint, InstalledDefinitionInput, MAIN_WORLD, StoreOptions,
     };
     use crate::test_door::TestCommit as _;
-    use norn_ir::ObjectTypeDef;
+    use norn_ir::{ObjectTypeDef, ObjectTypeName};
     use serde_json::json;
 
     const SCOPE: &str = "org_demo/dev";
@@ -1600,15 +1447,75 @@ mod tests {
             delete_triggers[0].after_values, None,
             "deleted target must have after_values = None"
         );
+
+        // 4. Canonical `FactChange::Create` for `norn.ActionCall` in `batch.facts`
+        //    is also collected and triggers `event:action`.
+        let fact_create_call = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 140,
+            idempotency_key: Some("ping-fact-create".to_owned()),
+            facts: vec![FactChange::Create {
+                object_type: ObjectTypeName(norn_kernel::ACTION_CALL_TYPE.to_owned()),
+                key: "demo.ticket.ping/k4".to_owned(),
+                values: BTreeMap::from([
+                    (
+                        "actionId".to_owned(),
+                        Value::String("demo.ticket.ping".into()),
+                    ),
+                    (
+                        "object".to_owned(),
+                        Value::Object(BTreeMap::from([
+                            ("objectType".to_owned(), Value::String("demo.Ticket".into())),
+                            ("key".to_owned(), Value::String("t-ghost-fact".into())),
+                        ])),
+                    ),
+                ]),
+            }],
+            ..CommitBatch::default()
+        };
+        let CommitOutcome::Committed(fact_rcpt) =
+            store.commit(&fact_create_call).expect("fact create")
+        else {
+            panic!("expected commit");
+        };
+        let fact_triggers = store
+            .read()
+            .automation_triggers_for_commit(MAIN_WORLD, fact_rcpt.body.commit_seq)
+            .expect("triggers");
+        assert_eq!(fact_triggers.len(), 1);
+        assert_eq!(fact_triggers[0].key.automation_id, "ops.on_receipt_only");
+        assert_eq!(fact_triggers[0].key.object_id, "t-ghost-fact");
+        assert_eq!(fact_triggers[0].before_values, None);
+        assert_eq!(fact_triggers[0].after_values, None);
     }
 
-    /// S4: unrelated writes skip all object reads and automation work, and
-    /// candidate fan-out past `MAX_CANDIDATES_PER_COMMIT` refuses and rolls back.
+    /// S4: unrelated writes skip all object reads and automation work; a
+    /// single-rule, large-batch write over `MAX_CANDIDATES_PER_COMMIT` commits
+    /// cleanly with exactly `MAX` inline candidates and one idempotent
+    /// continuation row in the same transaction; a rolled-back transaction
+    /// leaves neither candidates nor a continuation row.
     #[test]
-    fn unrelated_write_does_no_automation_work_and_fanout_refuses() {
+    fn unrelated_write_skips_work_and_large_batch_records_transactional_continuation() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("hotpath.sqlite");
-        let (mut store, _model, _canonical) = open_with_ticket_automations(&path);
+        let (model, canonical) = sample_model();
+        let mut store =
+            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("open");
+        store.bind("scope", SCOPE).expect("bind");
+        store
+            .install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)
+            .expect("defs");
+        // Single active rule watching `demo.Ticket` creates.
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            1,
+            "ops.on_create",
+            "demo.Ticket",
+            json!({ "kind": "event", "event": "created" }),
+        );
 
         let unrelated = CommitBatch {
             world: MAIN_WORLD.to_owned(),
@@ -1631,7 +1538,11 @@ mod tests {
             watch.before.is_empty(),
             "unrelated write must perform zero pre-commit object reads"
         );
-        store.commit(&unrelated).expect("commit unrelated");
+        let CommitOutcome::Committed(note_rcpt) =
+            store.commit(&unrelated).expect("commit unrelated")
+        else {
+            panic!("expected commit");
+        };
         assert_eq!(
             store
                 .read()
@@ -1639,13 +1550,27 @@ mod tests {
                 .expect("count"),
             0
         );
+        assert_eq!(
+            store
+                .read()
+                .pending_automation_continuation_count(MAIN_WORLD)
+                .expect("cont count"),
+            0
+        );
+        assert_eq!(
+            store
+                .read()
+                .automation_outbox_continuation(note_rcpt.body.commit_seq)
+                .expect("cont"),
+            None
+        );
 
-        // Fan-out exceeding MAX_CANDIDATES_PER_COMMIT refuses and rolls back completely.
-        let overflow_count = MAX_CANDIDATES_PER_COMMIT.saturating_add(1);
+        // Single-rule large-batch write exceeding MAX_CANDIDATES_PER_COMMIT.
+        let overflow_count = MAX_CANDIDATES_PER_COMMIT.saturating_add(5);
         let overflow_writes: Vec<FactWriteRow> = (0..overflow_count)
             .map(|idx| FactWriteRow::Put {
                 object_type: "demo.Ticket".to_owned(),
-                key: format!("t-bulk-{idx}"),
+                key: format!("t-bulk-{idx:04}"),
                 values: BTreeMap::from([
                     ("status".to_owned(), Value::String("open".into())),
                     ("score".to_owned(), Value::from(10_i64)),
@@ -1660,30 +1585,259 @@ mod tests {
             writes: overflow_writes,
             ..CommitBatch::default()
         };
-        let refused = store.commit(&overflow_batch);
-        assert!(
-            matches!(
-                refused,
-                Err(CellError::AutomationFanoutExceeded { limit, actual })
-                    if limit == MAX_CANDIDATES_PER_COMMIT && actual == overflow_count
-            ),
-            "{refused:?}"
-        );
+
+        // 1. A rolled-back transaction leaves neither candidates nor a continuation row.
+        let aborted = store.commit_probed(&overflow_batch, &mut |point| {
+            if point == CommitPoint::FactsApplied {
+                return Err(CellError::Engine(
+                    "simulated crash after outbox and continuation write".to_owned(),
+                ));
+            }
+            Ok(())
+        });
+        assert!(aborted.is_err());
         assert_eq!(
             store
                 .read()
                 .pending_automation_trigger_count(MAIN_WORLD)
                 .expect("count"),
             0,
-            "refused fan-out must roll back every outbox candidate"
+            "rolled-back transaction must leave zero candidates"
         );
         assert_eq!(
             store
                 .read()
-                .object(MAIN_WORLD, "demo.Ticket", "t-bulk-0")
+                .pending_automation_continuation_count(MAIN_WORLD)
+                .expect("cont count"),
+            0,
+            "rolled-back transaction must leave zero continuation rows"
+        );
+        assert_eq!(
+            store
+                .read()
+                .object(MAIN_WORLD, "demo.Ticket", "t-bulk-0000")
                 .expect("read"),
-            None,
-            "refused fan-out must roll back every business row write"
+            None
+        );
+
+        // 2. The real commit succeeds without refusal: every business row lands,
+        //    exactly MAX_CANDIDATES_PER_COMMIT inline candidates are persisted,
+        //    and one continuation row captures the exact resume cursor and versions.
+        let CommitOutcome::Committed(receipt) = store
+            .commit(&overflow_batch)
+            .expect("large batch must commit")
+        else {
+            panic!("expected committed receipt");
+        };
+        let commit_seq = receipt.body.commit_seq;
+        assert!(
+            store
+                .read()
+                .object(MAIN_WORLD, "demo.Ticket", "t-bulk-0000")
+                .expect("read first")
+                .is_some()
+        );
+        assert!(
+            store
+                .read()
+                .object(
+                    MAIN_WORLD,
+                    "demo.Ticket",
+                    &format!("t-bulk-{:04}", overflow_count.saturating_sub(1)),
+                )
+                .expect("read last")
+                .is_some(),
+            "rows past the inline outbox bound must still commit"
+        );
+        let inline = store
+            .read()
+            .automation_triggers_for_commit(MAIN_WORLD, commit_seq)
+            .expect("inline triggers");
+        assert_eq!(inline.len(), MAX_CANDIDATES_PER_COMMIT);
+        assert_eq!(
+            store
+                .read()
+                .pending_automation_continuation_count(MAIN_WORLD)
+                .expect("cont count"),
+            1
+        );
+        let expected_cursor = AutomationContinuationCursor::Row {
+            root_type: "demo.Ticket".to_owned(),
+            object_id: format!("t-bulk-{MAX_CANDIDATES_PER_COMMIT:04}"),
+            ancestor_type: "demo.Ticket".to_owned(),
+            after_automation_id: None,
+        };
+        let cont = store
+            .read()
+            .automation_outbox_continuation(commit_seq)
+            .expect("cont")
+            .expect("continuation row exists");
+        assert_eq!(cont.trigger_commit_seq, commit_seq);
+        assert_eq!(cont.world, MAIN_WORLD);
+        assert_eq!(cont.cursor, expected_cursor);
+        assert_eq!(cont.storage_version, crate::engine_release::STORAGE_VERSION);
+        assert_eq!(cont.engine_version, current_engine_version());
+        assert_eq!(cont.definitions_version, receipt.body.definitions_version);
+        assert_eq!(cont.recorded_at_ms, 200);
+        assert_eq!(cont.completed_commit_seq, None);
+
+        // 3. Idempotent on trigger_commit_seq: replay and duplicate insert keep the original row.
+        assert!(matches!(
+            store.commit(&overflow_batch).expect("replay"),
+            CommitOutcome::Replayed(_)
+        ));
+        continuation::insert_continuation(
+            store.read().conn,
+            &continuation::ContinuationRecord {
+                trigger_commit_seq: commit_seq,
+                world: MAIN_WORLD,
+                cursor: &AutomationContinuationCursor::Action {
+                    action_call_key: "ignored".to_owned(),
+                    action_id: "ignored".to_owned(),
+                    after_automation_id: None,
+                },
+                definitions_version: 999,
+                recorded_at_ms: 999,
+            },
+        )
+        .expect("duplicate continuation insert ignored");
+        let pending_conts = store
+            .read()
+            .pending_automation_continuations(MAIN_WORLD, 10)
+            .expect("pending conts");
+        assert_eq!(pending_conts, vec![cont.clone()]);
+
+        // 4. Reopen durability: both inline candidates and continuation row survive restart.
+        drop(store);
+        let reopened = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+        assert_eq!(
+            reopened
+                .read()
+                .pending_automation_trigger_count(MAIN_WORLD)
+                .expect("reopened count"),
+            u64::try_from(MAX_CANDIDATES_PER_COMMIT).expect("u64")
+        );
+        assert_eq!(
+            reopened
+                .read()
+                .automation_outbox_continuation(commit_seq)
+                .expect("reopened cont"),
+            Some(cont)
+        );
+    }
+
+    /// S4: indexed rule lookups use `LIMIT` with keyset cursors, and a pause in
+    /// the middle of a type's rule list records the exact `after_automation_id`
+    /// keyset cursor for deterministic U2 resumption.
+    #[test]
+    fn keyset_rule_paging_and_mid_rule_list_continuation_cursor() {
+        const { assert!(MAX_CANDIDATES_PER_COMMIT == 256) };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("keyset.sqlite");
+        let (model, canonical) = sample_model();
+        let mut store =
+            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("open");
+        store.bind("scope", SCOPE).expect("bind");
+        store
+            .install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)
+            .expect("defs");
+        for (idx, id) in ["ops.r1", "ops.r2", "ops.r3"].into_iter().enumerate() {
+            install_automation_for(
+                &mut store,
+                &model,
+                &canonical,
+                1_u64.saturating_add(u64::try_from(idx).expect("u64")),
+                id,
+                "demo.Ticket",
+                json!({ "kind": "event", "event": "created" }),
+            );
+        }
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            4,
+            "ops.a1",
+            "demo.Ticket",
+            json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
+        );
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            5,
+            "ops.a2",
+            "demo.Ticket",
+            json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
+        );
+
+        // Keyset paging with LIMIT 2 walks all 3 row rules cleanly without duplicates.
+        let p1 = query_row_rules_page(store.read().conn, "demo.Ticket", None, 2).expect("p1");
+        assert!(p1.has_more);
+        let p1_ids: Vec<&str> = p1.rules.iter().map(|r| r.automation_id.as_str()).collect();
+        assert_eq!(p1_ids, ["ops.r1", "ops.r2"]);
+        let p2 =
+            query_row_rules_page(store.read().conn, "demo.Ticket", Some("ops.r2"), 2).expect("p2");
+        assert!(!p2.has_more);
+        let p2_ids: Vec<&str> = p2.rules.iter().map(|r| r.automation_id.as_str()).collect();
+        assert_eq!(p2_ids, ["ops.r3"]);
+
+        // Keyset paging with LIMIT 1 walks both action rules cleanly.
+        let a1 =
+            query_action_rules_page(store.read().conn, "demo.ticket.ping", None, 1).expect("a1");
+        assert!(a1.has_more);
+        assert_eq!(a1.rules.len(), 1);
+        assert_eq!(a1.rules[0].automation_id, "ops.a1");
+        let a2 = query_action_rules_page(store.read().conn, "demo.ticket.ping", Some("ops.a1"), 1)
+            .expect("a2");
+        assert!(!a2.has_more);
+        assert_eq!(a2.rules.len(), 1);
+        assert_eq!(a2.rules[0].automation_id, "ops.a2");
+
+        // 86 rows × 3 rules = 258 matches: 85*3 = 255 on t-0000..t-0084 plus
+        // ops.r1 on t-0085 hits 256 inline; ops.r2 on t-0085 pauses mid-rule-list.
+        let writes: Vec<FactWriteRow> = (0..86_usize)
+            .map(|idx| FactWriteRow::Put {
+                object_type: "demo.Ticket".to_owned(),
+                key: format!("t-{idx:04}"),
+                values: BTreeMap::from([
+                    ("status".to_owned(), Value::String("open".into())),
+                    ("score".to_owned(), Value::from(1_i64)),
+                ]),
+            })
+            .collect();
+        let batch = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 300,
+            idempotency_key: Some("mid-rule-pause".to_owned()),
+            writes,
+            ..CommitBatch::default()
+        };
+        let CommitOutcome::Committed(receipt) = store.commit(&batch).expect("commit") else {
+            panic!("expected commit");
+        };
+        assert_eq!(
+            store
+                .read()
+                .automation_triggers_for_commit(MAIN_WORLD, receipt.body.commit_seq)
+                .expect("triggers")
+                .len(),
+            MAX_CANDIDATES_PER_COMMIT
+        );
+        let cont = store
+            .read()
+            .automation_outbox_continuation(receipt.body.commit_seq)
+            .expect("cont")
+            .expect("continuation exists");
+        assert_eq!(
+            cont.cursor,
+            AutomationContinuationCursor::Row {
+                root_type: "demo.Ticket".to_owned(),
+                object_id: "t-0085".to_owned(),
+                ancestor_type: "demo.Ticket".to_owned(),
+                after_automation_id: Some("ops.r1".to_owned()),
+            }
         );
     }
 

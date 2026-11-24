@@ -10,6 +10,7 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
+    clippy::too_many_lines,
     missing_docs,
     reason = "integration-test crate"
 )]
@@ -39,8 +40,9 @@ const STORAGE_V3: &str = include_str!("fixtures/engine-storage-v3.json");
 const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
 
 /// Storage version 6 (#1424 U1) adds the transactional automation trigger
-/// outbox, the indexed trigger projection, and the server-bound retained
-/// authority table, all initially empty on older cells (purely additive DDL).
+/// outbox, the lossless outbox continuation table, the indexed trigger
+/// projection, and the server-bound retained authority table, all initially
+/// empty on older cells (purely additive DDL).
 fn add_automation_tables(image: &mut Value) {
     let objects = [
         (
@@ -63,6 +65,18 @@ fn add_automation_tables(image: &mut Value) {
         ),
         (
             "table",
+            "_norn_automation_outbox_continuation",
+            "_norn_automation_outbox_continuation",
+            "CREATE TABLE \"_norn_automation_outbox_continuation\" (\n  \"trigger_commit_seq\" INTEGER NOT NULL,\n  \"world\" TEXT NOT NULL,\n  \"cursor\" TEXT NOT NULL,\n  \"storage_version\" INTEGER NOT NULL,\n  \"engine_version\" TEXT NOT NULL,\n  \"definitions_version\" INTEGER NOT NULL,\n  \"recorded_at_ms\" INTEGER NOT NULL,\n  \"completed_commit_seq\" INTEGER,\n  PRIMARY KEY (\"trigger_commit_seq\")\n)",
+        ),
+        (
+            "index",
+            "_norn_automation_outbox_continuation/pending",
+            "_norn_automation_outbox_continuation",
+            "CREATE INDEX \"_norn_automation_outbox_continuation/pending\" ON \"_norn_automation_outbox_continuation\" (\"world\", \"trigger_commit_seq\") WHERE \"completed_commit_seq\" IS NULL",
+        ),
+        (
+            "table",
             "_norn_retained_automation_trigger",
             "_norn_retained_automation_trigger",
             "CREATE TABLE \"_norn_retained_automation_trigger\" (\n  \"automation_id\" TEXT NOT NULL,\n  \"revision\" INTEGER NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"root_type\" TEXT NOT NULL,\n  \"trigger_kind\" TEXT NOT NULL,\n  \"action_id\" TEXT,\n  \"lifecycle_property\" TEXT,\n  \"lifecycle_state\" TEXT,\n  PRIMARY KEY (\"automation_id\")\n)",
@@ -71,7 +85,7 @@ fn add_automation_tables(image: &mut Value) {
             "index",
             "_norn_retained_automation_trigger/type",
             "_norn_retained_automation_trigger",
-            "CREATE INDEX \"_norn_retained_automation_trigger/type\" ON \"_norn_retained_automation_trigger\" (\"object_type\", \"trigger_kind\", \"automation_id\")",
+            "CREATE INDEX \"_norn_retained_automation_trigger/type\" ON \"_norn_retained_automation_trigger\" (\"object_type\", \"automation_id\") WHERE \"trigger_kind\" != 'event:action'",
         ),
         (
             "index",
@@ -118,6 +132,23 @@ fn add_automation_tables(image: &mut Value) {
                 "recorded_at_ms",
                 "consumed_commit_seq",
                 "voided_commit_seq"
+            ],
+            "rows": [],
+        }),
+    );
+    tables.insert(
+        "_norn_automation_outbox_continuation".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "trigger_commit_seq",
+                "world",
+                "cursor",
+                "storage_version",
+                "engine_version",
+                "definitions_version",
+                "recorded_at_ms",
+                "completed_commit_seq"
             ],
             "rows": [],
         }),

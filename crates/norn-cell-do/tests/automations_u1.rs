@@ -10,6 +10,7 @@ mod step_cell;
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::too_many_lines,
     reason = "automation U1 integration tests"
 )]
 mod cases {
@@ -19,7 +20,8 @@ mod cases {
     use ed25519_dalek::{Signer, SigningKey};
     use norn_api::automation_definitions::{
         automation_approved_key, automation_run_key, automation_triggers_for_commit,
-        pending_automation_trigger_count, pending_automation_triggers,
+        pending_automation_continuation_count, pending_automation_trigger_count,
+        pending_automation_triggers,
     };
     use norn_api::provision::PROVISION_PATH;
     use norn_api::scope::CellScope;
@@ -934,7 +936,7 @@ mod cases {
             );
         }
 
-        // Nothing committed, nothing parked, and zero candidates recorded.
+        // Nothing committed, nothing parked, and zero candidates or continuations recorded.
         let (get_status, _) = call(
             &cell,
             "GET",
@@ -947,5 +949,79 @@ mod cases {
         let (_, page) = call_with(&cell, "GET", "/v1/decisions", &pending_query, APPROVER, "");
         assert_eq!(page["total"], json!(0), "{page}");
         assert_eq!(pending_automation_trigger_count(&cell.host).unwrap(), 0);
+        assert_eq!(
+            pending_automation_continuation_count(&cell.host).unwrap(),
+            0
+        );
+    }
+
+    /// 8. Hidden automations never alter or refuse business writes and never
+    /// leak their existence in ordinary action responses or refusals.
+    #[test]
+    fn hidden_automations_are_never_disclosed_in_business_write_responses_or_refusals() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cell = provisioned_tenant(
+            &dir.path().join("no-disclosure.sqlite"),
+            &["owner", "member"],
+        );
+        let def = json!({
+            "kind": "automation",
+            "id": "ops.hidden_watch",
+            "payload": automation_payload(
+                "Hidden watch",
+                json!({ "kind": "event", "event": "created" }),
+            ),
+        });
+        let admit = cell.call(
+            "POST",
+            "/v1/definitions:admit",
+            Some(&user_token("owner")),
+            &def.to_string(),
+        );
+        assert_eq!(admit.status, 200, "{}", admit.body);
+        let digest =
+            serde_json::from_str::<Value>(&admit.body).unwrap()["restatementSha256"].clone();
+        let mut signed = def;
+        signed["signoff"] = json!({ "restatementSha256": digest });
+        let installed = cell.call(
+            "POST",
+            "/v1/definitions:install",
+            Some(&user_token("owner")),
+            &signed.to_string(),
+        );
+        assert_eq!(installed.status, 200, "{}", installed.body);
+
+        // A member without definition visibility commits cleanly and sees no automation fields.
+        let ok = cell.call(
+            "POST",
+            &format!("/v1/actions/{MELT_ACTION}"),
+            Some(&user_token("member")),
+            &melt_body("melt-member-ok", "15", "12", "k-member-ok"),
+        );
+        assert_eq!(ok.status, 200, "{}", ok.body);
+        assert!(
+            !ok.body.to_ascii_lowercase().contains("automation"),
+            "ordinary write response must not reveal automations: {}",
+            ok.body
+        );
+
+        // A failing write returns its ordinary business refusal with no automation code or detail,
+        // and leaves no extra candidates or continuation rows behind.
+        let bad = cell.call(
+            "POST",
+            &format!("/v1/actions/{MELT_ACTION}"),
+            Some(&user_token("member")),
+            &melt_body("melt-member-bad", "10", "15", "k-member-bad"),
+        );
+        assert_ne!(bad.status, 200, "{}", bad.body);
+        assert_ne!(bad.status, 429, "{}", bad.body);
+        assert!(
+            !bad.body.to_ascii_lowercase().contains("automation"),
+            "ordinary write refusal must not reveal automations: {}",
+            bad.body
+        );
+        let host = cell.tenant.serving_host().unwrap();
+        assert_eq!(pending_automation_trigger_count(host).unwrap(), 1);
+        assert_eq!(pending_automation_continuation_count(host).unwrap(), 0);
     }
 }

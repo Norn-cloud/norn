@@ -501,15 +501,6 @@ pub enum CellError {
         "a mapping page captures a dispute after a record it commits; deliver its records one at a time"
     )]
     MappingPageSpansDispute,
-    /// AUTOMATION-OUTBOX-1: one commit matched more automation trigger
-    /// candidates than the per-commit bound permits. Nothing commits.
-    #[error("automation trigger fan-out ({actual}) exceeds the per-commit limit ({limit})")]
-    AutomationFanoutExceeded {
-        /// Maximum trigger candidates permitted in one commit.
-        limit: usize,
-        /// Number of candidates matched when the bound was tripped.
-        actual: usize,
-    },
     /// A fault probe stopped the commit (deterministic simulation only).
     #[error("injected crash at {0:?}")]
     InjectedCrash(CommitPoint),

@@ -76,7 +76,7 @@ pub const CHANNEL: &[StorageVersion] = &[
     },
     StorageVersion {
         version: 6,
-        change: "#1424 U1: transactional automation trigger outbox (_norn_automation_outbox), indexed trigger projection (_norn_retained_automation_trigger), and server-bound retained definition authority (_norn_retained_authority)",
+        change: "#1424 U1: transactional automation trigger outbox (_norn_automation_outbox), lossless outbox continuation (_norn_automation_outbox_continuation), indexed trigger projection (_norn_retained_automation_trigger), and server-bound retained definition authority (_norn_retained_authority)",
     },
 ];
 
