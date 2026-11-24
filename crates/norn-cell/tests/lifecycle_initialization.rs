@@ -262,10 +262,10 @@ fn unrecorded_because(refusal: &LifecycleInitRefusal, reason: &str) -> bool {
     reason = "test fixture: a failed setup step fails the test"
 )]
 fn refusal(error: CommitError<norn_cell::CellError>) -> (FactKey, LifecycleInitRefusal) {
-    match error {
-        CommitError::LifecycleInitialization { key, refusal } => (key, *refusal),
-        other => panic!("expected a lifecycle initialization refusal, got {other:?}"),
-    }
+    let CommitError::LifecycleInitialization { key, refusal } = error else {
+        panic!("expected a lifecycle initialization refusal, got {error:?}");
+    };
+    (key, *refusal)
 }
 
 fn turn(id: &str) -> DecisionTurn {
