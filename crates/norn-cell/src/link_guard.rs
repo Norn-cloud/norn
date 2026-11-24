@@ -87,6 +87,25 @@ impl LinkGuardMode {
     pub(crate) const fn check_slot_target(self) -> bool {
         matches!(self, Self::Host | Self::VerifiedMapping(_))
     }
+
+    /// Physical-slot version floor for monotonic live link writes; returns `0`
+    /// during `RetainedReplay` so pre-PR exports whose cross-root replacement
+    /// recorded version `1` replay with byte-identical receipts.
+    pub(crate) fn slot_version_floor<E: SqlEngine>(
+        self,
+        reader: &StoreReader<'_, E>,
+        world: &str,
+        table_name: &str,
+        source: &str,
+        target: &str,
+    ) -> Result<u64, CellError> {
+        if matches!(self, Self::RetainedReplay) {
+            return Ok(0);
+        }
+        Ok(reader
+            .link_version_row(world, table_name, source, target)?
+            .map_or(0, |(existing, _)| existing))
+    }
 }
 
 /// Verify mapping bundle evidence, exact pending page/bundle consumption, and

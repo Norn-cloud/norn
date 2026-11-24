@@ -1013,3 +1013,124 @@ async fn r3_blocker3_restore_replays_verified_historical_classified_link_batch()
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].target, "P2");
 }
+
+fn iface_link_model() -> Model {
+    let definitions: Vec<norn_ir::ObjectTypeDef> = [
+        json!({
+            "name": "test.Node",
+            "properties": [],
+            "links": [{
+                "id": "related",
+                "target": "test.Target",
+                "cardinality": {"to": "many", "from": "many"}
+            }]
+        }),
+        json!({"name": "test.TargetA", "implements": ["test.Target"], "properties": []}),
+        json!({"name": "test.TargetChild", "extends": "test.TargetA", "properties": []}),
+        json!({"name": "test.TargetB", "implements": ["test.Target"], "properties": []}),
+    ]
+    .into_iter()
+    .map(|definition| serde_json::from_value(definition).expect("definition"))
+    .collect();
+    let interface = serde_json::from_value(json!({"name": "test.Target", "properties": []}))
+        .expect("interface");
+    Model::from_definitions_with_interfaces(&definitions, &[], &[interface])
+        .expect("interface model")
+}
+
+#[tokio::test]
+async fn r10_restore_replays_legacy_cross_root_link_v1_and_advances_monotonically() {
+    let iface_model = iface_link_model();
+    let dir = tempfile::tempdir().expect("directory");
+    let export = dir.path().join("export");
+    let target = dir.path().join("restored.sqlite");
+
+    let mut store = CellStore::open_in_memory(iface_model.clone()).expect("store");
+    store.bind("scope", "org_demo/dev").expect("bind");
+    store
+        .commit(&CommitBatch {
+            facts: [
+                ("test.Node", "source"),
+                ("test.TargetChild", "target"),
+                ("test.TargetB", "target"),
+            ]
+            .into_iter()
+            .map(|(object_type, key)| {
+                serde_json::from_value(json!({
+                    "op": "create", "objectType": object_type, "key": key, "values": {}
+                }))
+                .expect("fact")
+            })
+            .collect(),
+            ..batch(1)
+        })
+        .expect("seed objects");
+
+    let add = |seq: u64, target_type: &str| CommitBatch {
+        links: vec![LinkChange::Add {
+            object_type: "test.Node".to_owned(),
+            link: "related".to_owned(),
+            source: "source".to_owned(),
+            target: "target".to_owned(),
+            values: BTreeMap::new(),
+            target_type: Some(target_type.to_owned()),
+        }],
+        ..batch(seq)
+    };
+    store.commit(&add(2, "test.TargetA")).expect("TargetA v1");
+    store
+        .commit(&add(3, "test.TargetChild"))
+        .expect("TargetChild v2");
+    store
+        .commit(&add(4, "test.TargetB"))
+        .expect("TargetB live v3");
+
+    let r1 = store.export_record(1).expect("journal").expect("r1");
+    let r2 = store.export_record(2).expect("journal").expect("r2");
+    let r3 = store.export_record(3).expect("journal").expect("r3");
+    let mut r4 = store.export_record(4).expect("journal").expect("r4");
+    assert_eq!(r4.receipt.body.linked.len(), 1);
+    assert_eq!(r4.receipt.body.linked[0].version, 3);
+    r4.receipt.body.linked[0].version = 1;
+    r4.receipt.hash = hash(&r4.receipt.body);
+
+    let mut exporter = Exporter::local(&export).expect("exporter");
+    for record in [&r1, &r2, &r3, &r4] {
+        exporter.append(record).await.expect("append record");
+    }
+    let manifest = exporter.verify().await.expect("verified manifest");
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        iface_model.clone(),
+        "org_demo/dev",
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("restore must replay pre-PR cross-root link receipt with version 1");
+
+    let mut rebuilt = CellStore::open(&target, iface_model, StoreOptions::default()).expect("open");
+    assert_eq!(
+        rebuilt
+            .read()
+            .link_version(
+                "main",
+                "test.Node",
+                "related",
+                "source",
+                "test.TargetB",
+                "target",
+            )
+            .expect("restored TargetB version"),
+        1
+    );
+    let next_a = rebuilt
+        .commit(&add(5, "test.TargetA"))
+        .expect("post-restore live TargetA");
+    assert_eq!(next_a.receipt().body.linked[0].version, 2);
+    let next_b = rebuilt
+        .commit(&add(6, "test.TargetB"))
+        .expect("post-restore live TargetB");
+    assert_eq!(next_b.receipt().body.linked[0].version, 3);
+}
