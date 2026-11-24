@@ -1428,14 +1428,17 @@ fn prepare_restatement_fails_closed_on_malformed_entity_after_valid_catalog() {
     }));
     {
         use norn_cell::engine::SqlEngine as _;
-        norn_cell::engine::NativeEngine::open(&path, StoreOptions::default())
-            .expect("raw engine")
-            .execute(
-                "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
-                &[norn_cell::engine::SqlValue::Text(
-                    serde_json::to_string(&corrupted).expect("corrupted json"),
-                )],
-            )
+        let tamper =
+            norn_cell::engine::NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+        tamper
+            .definition_writes(|| {
+                tamper.execute(
+                    "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
+                    &[norn_cell::engine::SqlValue::Text(
+                        serde_json::to_string(&corrupted).expect("corrupted json"),
+                    )],
+                )
+            })
             .expect("corrupt retained set");
     }
     let point = cutoff(&store, &context);
