@@ -2199,13 +2199,35 @@ fn decide_profile<E: SqlEngine>(
     }
 }
 
+fn profile_exchange<E: SqlEngine>(
+    store: &CellStore<E>,
+    transport: &dyn Transport,
+    tenant: &TenantId,
+    source: &Source,
+    call: &EngineCall,
+    resumed: Option<EngineAnswer>,
+) -> Result<norn_cell::analytics::ProfileResponse, Refusal> {
+    use crate::object_routes::snapshot_moved;
+    if resumed
+        .as_ref()
+        .is_some_and(|a| a.op == call.op && a.digest != call.digest)
+    {
+        return Err(snapshot_moved());
+    }
+    let world = mirror_world(source);
+    let answer =
+        exchange_from(store, transport, tenant, world, call, resumed).map_err(engine_failure)?;
+    if answer.status != 200 {
+        return Err(match refused(&answer.body) {
+            CellError::ComputeRefused("core.compute.stale_input") => snapshot_moved(),
+            err => engine_failure(err),
+        });
+    }
+    decode(&answer.body).map_err(engine_failure)
+}
+
 /// HOST-READ-5 on the engine (D102/D136): column profile over the caller's
-/// authorized snapshot, computed by the tenant analytics engine. A caller
-/// without Values sees withheld counts and no value statistics.
-///
-/// # Errors
-/// Denied gate (403), marked dataset column (403), unknown type (404), stale
-/// provenance (409), or unreachable engine.
+/// authorized snapshot. Errors: 403, 404, 409 (stale provenance), or 500.
 pub fn profile_objects<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -2214,41 +2236,35 @@ pub fn profile_objects<E: SqlEngine>(
     access: &dyn ObjectAccess,
     transport: &dyn Transport,
 ) -> Result<crate::object_profile::NornObjectProfile, Refusal> {
-    use norn_cell::analytics::{ProfileRequest, ProfileResponse};
-    // PRIVACY-1: marked mirror types profile natively; datasets pass gate then refuse if marked.
-    let native_only = {
-        let guard = host.cell()?;
-        let reader = guard.store().read();
-        let is_dataset = reader
-            .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
-            .map_err(Refusal::host)?
-            .is_some();
-        !(is_dataset
-            || host.marking_catalog(&reader)?.is_empty()
-            || unlabeled(&reader, object_type))
+    use crate::object_routes::{cell_version, not_found, snapshot_moved};
+    use norn_cell::analytics::ProfileRequest;
+    let resumed = transport.resumed();
+    let resumed_profile = resumed.as_ref().is_some_and(|a| a.op == "profile");
+    let native = || {
+        if resumed_profile {
+            return Err(snapshot_moved());
+        }
+        crate::object_profile::get_object_profile(host, scope, actor, object_type, access)
     };
-    if native_only {
-        return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
+    if {
+        let guard = host.cell()?;
+        matches!(
+            decide_profile(host, &guard.store().read(), object_type)?,
+            ProfilePlan::Native
+        )
+    } {
+        return native();
     }
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;
     let store = guard.store();
-    // After the gate, so a denied caller costs what it did: the decision
-    // again, with the profiled frontier, at one cell version (S3, #1547).
-    let (plan, source, _snapshot, start_version) =
-        decided_source(host, store, object_type, |reader| {
-            decide_profile(host, reader, object_type)
-        })?;
+    let (plan, source, _snapshot, start_version) = decided_source(host, store, object_type, |r| {
+        decide_profile(host, r, object_type)
+    })?;
     match plan {
         ProfilePlan::Native => {
             drop(guard);
-            return crate::object_profile::get_object_profile(
-                host,
-                scope,
-                actor,
-                object_type,
-                access,
-            );
+            return native();
         }
         ProfilePlan::RefusedColumn(column) => return Err(marked_column(&column)),
         ProfilePlan::Engine => {}
@@ -2256,7 +2272,7 @@ pub fn profile_objects<E: SqlEngine>(
     let declared = store
         .model()
         .effective_property_types(object_type)
-        .map_err(|_unknown| crate::object_routes::not_found())?;
+        .map_err(|_unknown| not_found())?;
     let model_pin = store.model().model_hash().to_owned();
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
     let tenant = TenantId::of_scope(&host.scope().key());
@@ -2271,38 +2287,18 @@ pub fn profile_objects<E: SqlEngine>(
         },
     )
     .map_err(engine_failure)?;
-    // S3: an answer re-entered for another cell version is a moved snapshot.
-    let resumed = transport.resumed();
-    if resumed
-        .as_ref()
-        .is_some_and(|a| a.op == call.op && a.digest != call.digest)
-    {
-        return Err(crate::object_routes::snapshot_moved());
-    }
-    let world = mirror_world(&source);
-    let answer =
-        exchange_from(store, transport, &tenant, world, &call, resumed).map_err(engine_failure)?;
-    if answer.status != 200 {
-        let err = refused(&answer.body);
-        if matches!(err, CellError::ComputeRefused("core.compute.stale_input")) {
-            return Err(crate::object_routes::snapshot_moved());
-        }
-        return Err(engine_failure(err));
-    }
-    let profile: ProfileResponse = decode(&answer.body).map_err(engine_failure)?;
-    // QUERY-FRESH-1: the cell is still at the version and model the profile
-    // was decided at, and the engine read exactly that snapshot.
+    let profile = profile_exchange(store, transport, &tenant, &source, &call, resumed)?;
     let schema_pin = matches!(source, Source::Mirror { .. }).then_some(table.pin.as_str());
     if store.model().model_hash() != model_pin
-        || crate::object_routes::cell_version(&store.read())? != start_version
+        || cell_version(&store.read())? != start_version
         || profile
             .provenance
             .verify(&tenant, &source, &model_pin, schema_pin)
             .is_err()
     {
-        return Err(crate::object_routes::snapshot_moved());
+        return Err(snapshot_moved());
     }
-    let engine = profile.provenance.engine.as_str().to_owned();
+    let rows = if values { profile.rows } else { 0 };
     let properties = declared
         .iter()
         .map(|(property, declared_type)| {
@@ -2311,18 +2307,17 @@ pub fn profile_objects<E: SqlEngine>(
                 .iter()
                 .find(|c| &c.column == property)
                 .filter(|_| values);
-            let rows = if values { profile.rows } else { 0 };
             property_profile(property, declared_type.as_ref(), column, rows)
         })
         .collect::<Result<_, _>>()?;
     Ok(crate::object_profile::NornObjectProfile {
         object_type: object_type.to_owned(),
-        rows: if values { profile.rows } else { 0 },
+        rows,
         withheld_rows: if values { 0 } else { profile.rows },
         quarantined_rows: profile.quarantined,
         approximate: false,
         scan_limit: profile.rows,
-        engine,
+        engine: profile.provenance.engine.as_str().to_owned(),
         properties,
     })
 }

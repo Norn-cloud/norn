@@ -569,24 +569,55 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
         vec![row("A", 1000, Some(400), TIMES[0], "gold")],
     );
     let mut mirror = store.analytics_frontier(&tenant(), WORLD)?;
-    engine.frontier(&mirror).map_err(|r| r.detail)?;
+    let initial = engine.frontier(&mirror).map_err(|r| r.detail)?;
     let batch = store.analytics_delta(&tenant(), WORLD, 0, 3)?.request;
-    let mut other_schema = batch.clone();
-    other_schema
-        .schema_pins
-        .values_mut()
-        .for_each(|pin| pin.push('x'));
+    assert!(!batch.rows.is_empty());
     let refuses = |request: &SyncRequest| {
         matches!(
             engine.sync(request),
             Err(refused) if refused.code == "core.compute.stale_input"
         )
     };
+    let assert_unchanged = |frontier_req: &norn_cell::analytics::FrontierRequest,
+                            expected: &norn_cell::analytics::FrontierResponse|
+     -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            engine.frontier(frontier_req).map_err(|r| r.detail)?,
+            *expected
+        );
+        let profile = engine
+            .profile(&norn_cell::analytics::ProfileRequest {
+                tenant: tenant(),
+                source: Source::Mirror {
+                    world: WORLD.into(),
+                    table: TYPE.into(),
+                    frontier: expected.frontier,
+                    scope: "synthetic".into(),
+                    excluded: Vec::new(),
+                    model: None,
+                },
+                columns: vec!["recovered".to_owned()],
+                model_pin: frontier_req.model_pin.clone(),
+                cell_revision: String::new(),
+            })
+            .map_err(|r| r.detail)?;
+        assert_eq!(profile.rows, 0);
+        Ok(())
+    };
+    let mut other_schema = batch.clone();
+    for pin in other_schema.schema_pins.values_mut() {
+        pin.push('x');
+    }
     assert!(refuses(&other_schema));
+    assert_unchanged(&mirror, &initial)?;
+    let mut missing_pin = batch.clone();
+    missing_pin.schema_pins.clear();
+    assert!(refuses(&missing_pin));
+    assert_unchanged(&mirror, &initial)?;
     mirror.model_pin = "another model".into();
     let reset = engine.frontier(&mirror).map_err(|r| r.detail)?;
     assert!(refuses(&batch));
-    assert_eq!(engine.frontier(&mirror).map_err(|r| r.detail)?, reset);
+    assert_unchanged(&mirror, &reset)?;
     Ok(())
 }
 
@@ -697,7 +728,7 @@ fn a_load_types_rows_and_quarantines_refused_ones_with_reasons() {
 /// and the refused load has no lineage record.
 #[test]
 fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
-    use ::duckdb::OptionalExt as _;
+    use duckdb::OptionalExt as _;
     let (dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
     let (first, first_sha) = csv(
