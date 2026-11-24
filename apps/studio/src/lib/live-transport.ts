@@ -431,12 +431,22 @@ function maybeInvalidateSession(client: QueryClient, nextScope: StudioScope | nu
 }
 
 /**
- * Synchronize Studio's client caches when a scoped read discovers `/api/me` moved to a new scope
- * (org or environment): invalidates the old mode/catalog, cancels and drops old-scope queries,
- * updates `["studio-scope"]` so every capability gate closes immediately until the new scope's
- * catalog arrives, and refreshes the session query if needed.
+ * Synchronize Studio's client caches when a scoped read or write discovers `/api/me` moved to a new
+ * scope (org or environment): invalidates the old mode/catalog, cancels and drops old-scope queries,
+ * and closes capability gates immediately. When `nextScope` is `undefined` (for example, a write
+ * received `409 workspace.changed` but the follow-up `/api/me` read failed during an outage), stale
+ * caches are purged and `["studio-scope"]` is invalidated without writing `null` into the cache so
+ * Studio never falls back to recorded mode during an outage.
  */
-export function syncStudioScopeChange(client: QueryClient, nextScope: StudioScope | null): void {
+export function syncStudioScopeChange(client: QueryClient, nextScope: StudioScope | null | undefined): void {
+  if (nextScope === undefined) {
+    lastObservedScope.delete(client)
+    refreshMode()
+    purgeStaleScopeQueries(client, "")
+    void client.invalidateQueries({ queryKey: ["studio-scope"] })
+    void client.invalidateQueries({ queryKey: ["session"] })
+    return
+  }
   const nextKey = studioScopeKey(nextScope)
   lastObservedScope.set(client, nextKey)
   if (activeModeScopeKey !== nextKey) refreshMode()

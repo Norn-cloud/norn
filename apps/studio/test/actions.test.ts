@@ -500,7 +500,7 @@ test("callAction preserves an explicit null scope pin and notifies onScopeMismat
 
   // 2. On 409 workspace.changed, onScopeMismatch receives the re-read scope and the write is never replayed.
   let writes = 0
-  const observed: ({ orgId: string; environmentId: string } | null)[] = []
+  const observed: ({ orgId: string; environmentId: string } | null | undefined)[] = []
   const mismatchFetcher = async (input: string) => {
     const url = new URL(input, "https://studio.test")
     if (url.pathname === "/api/me") {
@@ -516,4 +516,19 @@ test("callAction preserves an explicit null scope pin and notifies onScopeMismat
   expect(writes).toBe(1)
   expect(observed).toEqual([{ orgId: "org_new", environmentId: "env_new" }])
   expect(refused).toMatchObject({ kind: "refused", status: 409, code: "workspace.changed" })
+
+  // 3. If the follow-up /api/me read fails (503/timeout), onScopeMismatch receives undefined (not null)
+  //    so callers close the old gate without overwriting ["studio-scope"] with null ("no cell").
+  const outageObserved: ({ orgId: string; environmentId: string } | null | undefined)[] = []
+  const outageFetcher = async (input: string) => {
+    const url = new URL(input, "https://studio.test")
+    if (url.pathname === "/api/me") return new Response("unavailable", { status: 503 })
+    return Response.json({ code: "workspace.changed", message: "Workspace changed" }, { status: 409 })
+  }
+  const outageRefused = await callAction("canon.holding.adjust", "{}", "k-outage", outageFetcher, {
+    scope: { orgId: "org_old", environmentId: "env_old" },
+    onScopeMismatch: (actual) => { outageObserved.push(actual) },
+  })
+  expect(outageObserved).toEqual([undefined])
+  expect(outageRefused).toMatchObject({ kind: "refused", status: 409, code: "workspace.changed" })
 })

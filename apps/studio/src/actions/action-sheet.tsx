@@ -20,7 +20,7 @@ import type { ParkedCall } from "../lib/screen/call.ts"
 
 export interface ActionScopeBinding {
   readonly scope: StudioScope | null
-  readonly onScopeMismatch?: (actual: StudioScope | null) => void
+  readonly onScopeMismatch?: (actual: StudioScope | null | undefined) => void
 }
 
 /**

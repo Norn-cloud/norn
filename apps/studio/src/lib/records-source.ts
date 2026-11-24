@@ -111,17 +111,18 @@ export async function readRecordsAtScope(
  *   A query is never sent to the recording: it cannot sort or filter, and the grid offers neither.
  * - A refusal is returned exactly, with every diagnostic. A 409 `object.snapshot_moved` is `restart`.
  */
-export async function readRecords(objectType: string, query: RecordsQuery, deps: RecordsDeps = defaults): Promise<RecordsRead> {
+export async function readRecords(objectType: string, query: RecordsQuery, deps: RecordsDeps = defaults, signal?: AbortSignal): Promise<RecordsRead> {
   let scope: StudioScope | null
   try {
-    scope = await readStudioScope(deps.fetcher)
+    scope = await readStudioScope(deps.fetcher, signal)
   } catch (error) {
+    if (signal?.aborted) throw error
     // No signed-in session reachable (local preview, tests): only the recording can be read.
     if (error instanceof CellUnavailable) return recordedPage(await deps.recorded(objectType, query.after))
     throw error
   }
   if (scope === null) return { kind: "no-cell" }
-  return fetchLiveRecords(objectType, query, scope, deps.fetcher, deps.recorded)
+  return fetchLiveRecords(objectType, query, scope, deps.fetcher, deps.recorded, signal)
 }
 
 /** The diagnostics that point at one part of the request, e.g. `/filter/all/2`. */

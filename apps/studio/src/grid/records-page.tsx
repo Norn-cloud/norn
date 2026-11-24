@@ -17,21 +17,30 @@ import { RecordsGrid, type DisplayedGridQuery } from "./records-grid.tsx"
 import { offersTimeline } from "../lib/timeline.ts"
 import { ViewsBar, openedQuery } from "./views-bar.tsx"
 
-function ScopedRecordsContent({ concept, scope, timeline }: {
+function ScopedRecordsTabs({ concept, scope, scopeKey, initialTab, timeline }: {
   readonly concept: Concept
   readonly scope: StudioScope | undefined
+  readonly scopeKey: string
+  readonly initialTab: string
   readonly timeline: boolean
 }) {
   // The open saved view (none: every record) and the query the grid shows, for saving.
-  // Keyed by `(concept.name, orgId, environmentId)` from the parent so a workspace switch never
-  // carries one workspace's open view or filter query into another workspace.
+  // Held above `<Tabs>` so switching Records -> Profile -> Records in the same workspace keeps the
+  // selected view, while keying this component by `(concept.name, orgId, environmentId)` resets it
+  // whenever the active workspace changes.
   const [view, setView] = useState<StoredView | null>(null)
   const [query, setQuery] = useState<DisplayedGridQuery>()
   return (
-    <>
-      <ViewsBar objectType={concept.name} scope={scope} open={view} query={query} onOpen={setView} />
-      <RecordsGrid key={`${concept.name}:${studioScopeKey(scope)}:${view?.id ?? "all"}:${view?.version ?? 0}`} concept={concept} scope={scope} initial={view ? openedQuery(view) : undefined} onQuery={setQuery} timeline={timeline} />
-    </>
+    <Tabs defaultValue={initialTab}>
+      <TabsList><TabsTrigger value="records">Records</TabsTrigger><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="quarantine">Quarantine</TabsTrigger><TabsTrigger value="rules">Rules</TabsTrigger></TabsList>
+      <TabsContent value="records" className="grid gap-3 pt-3">
+        <ViewsBar objectType={concept.name} scope={scope} open={view} query={query} onOpen={setView} />
+        <RecordsGrid key={`${concept.name}:${scopeKey}:${view?.id ?? "all"}:${view?.version ?? 0}`} concept={concept} scope={scope} initial={view ? openedQuery(view) : undefined} onQuery={setQuery} timeline={timeline} />
+      </TabsContent>
+      <TabsContent value="profile" className="pt-3"><ProfilePanel objectType={concept.name} scales={new Map(concept.fields.flatMap(({ id, decimal }) => decimal?.scale === undefined ? [] : [[id, decimal.scale] as const]))} /></TabsContent>
+      <TabsContent value="quarantine" className="pt-3"><QuarantinePanel objectType={concept.name} /></TabsContent>
+      <TabsContent value="rules" className="pt-3"><LawsPanel concept={concept} label="Rules its records must keep" /></TabsContent>
+    </Tabs>
   )
 }
 
@@ -69,15 +78,7 @@ export function RecordsPage() {
               <PageHeader title={concept.title} lang={concept.titleLang} meta={<span className="font-mono">{concept.name}</span>}
                 actions={<Button asChild variant="ghost" size="sm"><Link to="/sources/$concept" params={{ concept: concept.name }}>Definition</Link></Button>} />
               {live
-                ? <Tabs key={`${concept.name}:${scopeKey}:${initialTab}`} defaultValue={initialTab}>
-                  <TabsList><TabsTrigger value="records">Records</TabsTrigger><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="quarantine">Quarantine</TabsTrigger><TabsTrigger value="rules">Rules</TabsTrigger></TabsList>
-                  <TabsContent value="records" className="grid gap-3 pt-3">
-                    <ScopedRecordsContent key={`${concept.name}:${scopeKey}`} concept={concept} scope={activeScope} timeline={timeline} />
-                  </TabsContent>
-                  <TabsContent value="profile" className="pt-3"><ProfilePanel objectType={concept.name} scales={new Map(concept.fields.flatMap(({ id, decimal }) => decimal?.scale === undefined ? [] : [[id, decimal.scale] as const]))} /></TabsContent>
-                  <TabsContent value="quarantine" className="pt-3"><QuarantinePanel objectType={concept.name} /></TabsContent>
-                  <TabsContent value="rules" className="pt-3"><LawsPanel concept={concept} label="Rules its records must keep" /></TabsContent>
-                </Tabs>
+                ? <ScopedRecordsTabs key={`${concept.name}:${scopeKey}:${initialTab}`} concept={concept} scope={activeScope} scopeKey={scopeKey} initialTab={initialTab} timeline={timeline} />
                 : <RecordsGrid key={concept.name} concept={concept} timeline={timeline} />}
             </>}
           </>

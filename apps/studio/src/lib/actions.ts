@@ -89,10 +89,16 @@ export type CatalogRead =
   /** The server-reported scope moved away from the scope this call was bound to; no request reached the new cell. */
   | { readonly kind: "scope-changed" }
 
-export interface ActionScopeOptions {
+export interface ListActionsScopeOptions {
   readonly scope?: StudioScope | null
   readonly signal?: AbortSignal
   readonly onScopeMismatch?: (actual: StudioScope | null) => void
+}
+
+export interface ActionScopeOptions {
+  readonly scope?: StudioScope | null
+  readonly signal?: AbortSignal
+  readonly onScopeMismatch?: (actual: StudioScope | null | undefined) => void
 }
 
 /** An approval-gated call (APPROVAL-1): 202, nothing committed yet; a decider settles it in the inbox. */
@@ -145,7 +151,7 @@ function refusalOf(text: string): Refusal | null {
   }
 }
 
-async function scoped(fetcher: Fetch, options: ActionScopeOptions = {}): Promise<{ readonly kind: "ok"; readonly call: Fetch } | { readonly kind: "no-cell" } | { readonly kind: "scope-changed" }> {
+async function scoped(fetcher: Fetch, options: ListActionsScopeOptions = {}): Promise<{ readonly kind: "ok"; readonly call: Fetch } | { readonly kind: "no-cell" } | { readonly kind: "scope-changed" }> {
   const scope = await readStudioScope(fetcher, options.signal)
   if (options.scope !== undefined && !sameStudioScope(scope, options.scope)) {
     options.onScopeMismatch?.(scope)
@@ -162,7 +168,7 @@ export async function listActions(
   objectKind: string | undefined,
   fetcher: Fetch = defaultFetch,
   objectId?: string,
-  options: ActionScopeOptions = {},
+  options: ListActionsScopeOptions = {},
 ): Promise<CatalogRead> {
   let resolved
   try { resolved = await scoped(fetcher, options) } catch (error) {
@@ -224,7 +230,7 @@ export async function callAction(
   if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
   if (refusal !== null) {
     if (response.status === 409 && refusal.code === "workspace.changed" && onScopeMismatch !== undefined) {
-      const actual = await readStudioScope(fetcher, signal).catch(() => null)
+      const actual = await readStudioScope(fetcher, signal).then((next) => next, () => undefined)
       onScopeMismatch(actual)
     }
     return { kind: "refused", status: response.status, ...refusal }
