@@ -208,11 +208,11 @@ fn refusal_categories_are_stable() {
         (
             CommitError::<Infallible>::LifecycleInitialization {
                 key: key.clone(),
-                refusal: norn_kernel::LifecycleInitRefusal::InvalidInitialState {
+                refusal: Box::new(norn_kernel::LifecycleInitRefusal::InvalidInitialState {
                     lifecycle: "status".into(),
                     state: Some("posted".into()),
                     initial: vec!["draft".into()],
-                },
+                }),
             }
             .refusal(),
             "lifecycle.validation.undeclared_write",

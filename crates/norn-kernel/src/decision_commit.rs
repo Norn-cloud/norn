@@ -2296,7 +2296,7 @@ impl<X> DecisionRefusal<X> {
             CommitError::TraversalLimitExceeded { key, reason } => {
                 Self::TraversalLimitExceeded { key, reason }
             }
-            CommitError::LifecycleInitialization { key, refusal } => match refusal {
+            CommitError::LifecycleInitialization { key, refusal } => match *refusal {
                 LifecycleInitRefusal::InvalidInitialState {
                     lifecycle,
                     state,
@@ -3287,9 +3287,17 @@ pub(crate) fn check_first_write_lifecycles(
                 if current.is_some() {
                     return Err(unrecorded("the commit records its creation twice"));
                 }
+                // The decision `create` rule: initial states, then the
+                // effective values, so every guard below reads the same
+                // values the final comparison does.
+                let created = with_initial_states::<Infallible>(catalog, key, created)
+                    .map_err(lifecycle_init_refusal)?;
                 current = Some(
-                    with_initial_states::<Infallible>(catalog, key, created)
-                        .map_err(lifecycle_init_refusal)?,
+                    catalog
+                        .effective_object_values(&key.object_type, &created)
+                        .map_err(|error| {
+                            unrecorded(&format!("the created values are refused: {error}"))
+                        })?,
                 );
             }
             FactEvent::Set {
@@ -3308,7 +3316,8 @@ pub(crate) fn check_first_write_lifecycles(
                     catalog.immutable_state(&key.object_type, replayed)
                 {
                     return Err(unrecorded(&format!(
-                        "a property is set in immutable {lifecycle} state {state}"
+                        "a property is set in immutable {} state {state}",
+                        lifecycle.as_str()
                     )));
                 }
                 replayed.insert(property.as_str().to_owned(), value.clone());

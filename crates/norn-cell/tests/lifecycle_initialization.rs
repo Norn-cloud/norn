@@ -20,22 +20,46 @@ mod common;
 use norn_cell::SqliteCell;
 use norn_ir::{DecisionOutput, FactChange, ObjectTypeName, PropertyId, TransitionId};
 use norn_kernel::cell_host::JsonObject;
+use norn_kernel::snapshot_observe::{ObservedSnapshot, prepare_observed_snapshot};
 use norn_kernel::{
     CellCommit, CellHost, CommitError, DecisionTurn, EnvelopeLimits, FactEvent, FactKey,
-    FactMutation, FactVersion, FactWrite, LifecycleInitRefusal, LogicalTime, World,
-    commit_decision, decision_cell_commit_with_host, load_slice,
+    FactMutation, FactVersion, FactWrite, LifecycleInitRefusal, LogicalTime,
+    ObservationAuthorization, ObservationEvent, World, commit_decision,
+    decision_cell_commit_with_host, load_slice,
 };
 use serde_json::json;
 
 type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
+type ObservedCell = SqliteCell<ObservationEvent, JsonObject, JsonObject>;
 type Commit = CellCommit<FactEvent, JsonObject, JsonObject>;
 
 const SCOPE: &str = "org_demo/dev";
 
-/// A domain-neutral model: a `test.Document` with a guarded lifecycle, and a
-/// `test.Report` that inherits `test.Record`'s lifecycle and adds its own.
 fn cell() -> Cell {
-    let types: [norn_ir::ObjectTypeDef; 4] = [
+    open()
+}
+
+/// A domain-neutral model: a `test.Document` with a guarded lifecycle, a
+/// `test.Report` that inherits `test.Record`'s lifecycle and adds its own, a
+/// `test.Ticket` with no lifecycle default, and a `test.Batch` whose guard
+/// reads a defaulted property.
+fn open<E>() -> SqliteCell<E, JsonObject, JsonObject> {
+    let types = guarded_types()
+        .into_iter()
+        .chain(hierarchy_types())
+        .map(|value| serde_json::from_value(value).expect("definition decodes"))
+        .collect::<Vec<norn_ir::ObjectTypeDef>>();
+    SqliteCell::open_in_memory(
+        common::model_of(&types),
+        SCOPE,
+        |command: &norn_kernel::Command<JsonObject>| command.payload.clone(),
+    )
+    .expect("opens")
+}
+
+/// Lifecycles whose transitions are guarded.
+fn guarded_types() -> [serde_json::Value; 2] {
+    [
         json!({
             "name": "test.Document",
             "properties": [
@@ -55,6 +79,29 @@ fn cell() -> Cell {
                 ]
             }]
         }),
+        json!({
+            "name": "test.Batch",
+            "properties": [
+                { "id": "state", "default": "open", "type": { "kind": "enum", "values": [
+                    { "value": "open" }, { "value": "sealed" }
+                ] } },
+                { "id": "size", "default": "1", "type": { "kind": "integer" } }
+            ],
+            "lifecycles": [{
+                "property": "state",
+                "initial": ["open"],
+                "terminal": ["sealed"],
+                "transitions": [{ "id": "seal", "from": ["open"], "to": "sealed",
+                                  "guards": ["self.size > 0"] }]
+            }]
+        }),
+    ]
+}
+
+/// An inherited lifecycle beside the subtype's own, and a lifecycle with no
+/// default state.
+fn hierarchy_types() -> [serde_json::Value; 3] {
+    [
         json!({
             "name": "test.Record",
             "properties": [
@@ -99,13 +146,6 @@ fn cell() -> Cell {
             }]
         }),
     ]
-    .map(|value| serde_json::from_value(value).expect("definition decodes"));
-    SqliteCell::open_in_memory(
-        common::model_of(&types),
-        SCOPE,
-        |command: &norn_kernel::Command<JsonObject>| command.payload.clone(),
-    )
-    .expect("opens")
 }
 
 fn values(value: serde_json::Value) -> JsonObject {
@@ -117,7 +157,11 @@ fn document() -> FactKey {
 }
 
 /// A first write of `key` with `values` and the recorded `events`.
-fn put(key: &FactKey, values: JsonObject, events: Vec<FactEvent>) -> Commit {
+fn put<E>(
+    key: &FactKey,
+    values: JsonObject,
+    events: Vec<E>,
+) -> CellCommit<E, JsonObject, JsonObject> {
     CellCommit {
         writes: vec![FactWrite {
             key: key.clone(),
@@ -131,7 +175,10 @@ fn put(key: &FactKey, values: JsonObject, events: Vec<FactEvent>) -> Commit {
 
 /// Everything a refusal must leave untouched: the verified ledger head, the
 /// stored rows, and the object's absence (no burned version).
-fn snapshot(cell: &Cell, key: &FactKey) -> (String, String, FactVersion) {
+fn snapshot<E: serde::Serialize + 'static>(
+    cell: &SqliteCell<E, JsonObject, JsonObject>,
+    key: &FactKey,
+) -> (String, String, FactVersion) {
     let head = cell.store().verified_head().expect("verified head");
     let dump = cell.store().read().dump().expect("dump");
     let state = cell.load(key).expect("loads");
@@ -141,7 +188,7 @@ fn snapshot(cell: &Cell, key: &FactKey) -> (String, String, FactVersion) {
 
 fn refusal(error: CommitError<norn_cell::CellError>) -> (FactKey, LifecycleInitRefusal) {
     match error {
-        CommitError::LifecycleInitialization { key, refusal } => (key, refusal),
+        CommitError::LifecycleInitialization { key, refusal } => (key, *refusal),
         other => panic!("expected a lifecycle initialization refusal, got {other:?}"),
     }
 }
@@ -372,7 +419,7 @@ fn a_guard_that_fails_at_creation_refuses_the_compound_decision() {
 }
 
 #[test]
-fn forged_transition_sequences_are_refused_with_no_effects() {
+fn stripped_or_skipped_transitions_are_refused_with_no_effects() {
     let mut cell = cell();
     let key = document();
     let before = snapshot(&cell, &key);
@@ -386,21 +433,18 @@ fn forged_transition_sequences_are_refused_with_no_effects() {
     );
 
     // The final row alone: without its transitions it is a forged state.
-    let mut dropped = legal.clone();
-    dropped
+    let mut stripped = legal.clone();
+    stripped
         .events
         .retain(|event| !matches!(event, FactEvent::Transitioned { .. }));
-    let (_, stripped) = refusal(
-        cell.commit(dropped)
-            .expect_err("published with no recorded path"),
-    );
+    let (_, stripped) = refusal(cell.commit(stripped).expect_err("no recorded path"));
     assert!(matches!(
         stripped,
         LifecycleInitRefusal::InvalidInitialState { .. }
     ));
 
     // A skipped step: publish straight from draft is undeclared.
-    let mut skipped = legal.clone();
+    let mut skipped = legal;
     skipped.events.retain(|event| {
         !matches!(event, FactEvent::Transitioned { transition, .. } if transition.as_str() == "submit")
     });
@@ -409,22 +453,32 @@ fn forged_transition_sequences_are_refused_with_no_effects() {
         skipped,
         LifecycleInitRefusal::IllegalTransition { ref transition, .. } if transition == "publish"
     ));
+    assert_eq!(snapshot(&cell, &key), before);
+}
 
-    // A forged creation: the recorded values satisfy no guard the write
-    // could have passed (an empty document cannot be submitted).
-    let mut guarded = legal.clone();
-    for event in &mut guarded.events {
+/// `edit` applied to every recorded `Created` of `commit`.
+fn edit_created(commit: &mut Commit, edit: impl Fn(&mut JsonObject)) {
+    for event in &mut commit.events {
         if let FactEvent::Created { values, .. } = event {
-            values.insert(
-                "pages".into(),
-                serde_json::from_value(json!(0)).expect("int"),
-            );
+            edit(values);
         }
     }
-    let (_, guard) = refusal(
-        cell.commit(guarded)
-            .expect_err("the submit guard does not hold for the recorded creation"),
-    );
+}
+
+#[test]
+fn forged_creations_and_unrecorded_writes_are_refused_with_no_effects() {
+    let mut cell = cell();
+    let key = document();
+    let before = snapshot(&cell, &key);
+    let legal = prepared_create_and_publish(&cell, 3);
+    let int = |value: i64| serde_json::from_value(json!(value)).expect("int");
+
+    // The submit guard does not hold for the recorded creation.
+    let mut guarded = legal.clone();
+    edit_created(&mut guarded, |values| {
+        values.insert("pages".into(), int(0));
+    });
+    let (_, guard) = refusal(cell.commit(guarded).expect_err("empty document submitted"));
     assert!(matches!(
         guard,
         LifecycleInitRefusal::IllegalTransition { ref transition, .. } if transition == "submit"
@@ -432,14 +486,9 @@ fn forged_transition_sequences_are_refused_with_no_effects() {
 
     // A recorded creation in a non-initial state.
     let mut created = legal.clone();
-    for event in &mut created.events {
-        if let FactEvent::Created { values, .. } = event {
-            values.insert(
-                "status".into(),
-                serde_json::from_value(json!("submitted")).expect("state"),
-            );
-        }
-    }
+    edit_created(&mut created, |values| {
+        values.insert("status".into(), "submitted".into());
+    });
     let (_, initial) = refusal(cell.commit(created).expect_err("created submitted"));
     assert!(matches!(
         initial,
@@ -449,10 +498,7 @@ fn forged_transition_sequences_are_refused_with_no_effects() {
     // A written row its recorded changes never produced.
     let mut diverged = legal.clone();
     if let FactMutation::Put { values } = &mut diverged.writes[0].mutation {
-        values.insert(
-            "pages".into(),
-            serde_json::from_value(json!(9)).expect("int"),
-        );
+        values.insert("pages".into(), int(9));
     }
     let (_, unrecorded) = refusal(cell.commit(diverged).expect_err("pages were never set"));
     assert!(matches!(
@@ -470,20 +516,145 @@ fn forged_transition_sequences_are_refused_with_no_effects() {
         FactEvent::Set {
             key: key.clone(),
             property: PropertyId("status".into()),
-            value: serde_json::from_value(json!("published")).expect("state"),
-        },
-        FactEvent::Transitioned {
-            key: key.clone(),
-            lifecycle: PropertyId("status".into()),
-            transition: TransitionId("publish".into()),
-            from: "submitted".into(),
-            to: "published".into(),
+            value: "published".into(),
         },
     ];
     let (_, set) = refusal(cell.commit(direct_set).expect_err("lifecycle set"));
     assert!(matches!(set, LifecycleInitRefusal::UnrecordedChange { .. }));
-
     assert_eq!(snapshot(&cell, &key), before);
+}
+
+/// Create `test.Batch` `B-1` recording `created`, then seal it.
+fn seal_batch(created: JsonObject) -> Commit {
+    let key = FactKey::new("test.Batch", "B-1");
+    put(
+        &key,
+        values(json!({ "state": "sealed", "size": 1 })),
+        vec![
+            FactEvent::Created {
+                key: key.clone(),
+                values: created,
+            },
+            FactEvent::Transitioned {
+                key: key.clone(),
+                lifecycle: PropertyId("state".into()),
+                transition: TransitionId("seal".into()),
+                from: "open".into(),
+                to: "sealed".into(),
+            },
+        ],
+    )
+}
+
+#[test]
+fn replayed_guards_read_the_effective_created_values() {
+    let mut cell = cell();
+    let key = FactKey::new("test.Batch", "B-1");
+    let before = snapshot(&cell, &key);
+    // An explicit `size` of 0 fails the seal guard.
+    let (_, zero) = refusal(
+        cell.commit(seal_batch(values(json!({ "size": 0 }))))
+            .expect_err("a zero-size batch cannot be sealed"),
+    );
+    assert!(matches!(
+        zero,
+        LifecycleInitRefusal::IllegalTransition { ref transition, .. } if transition == "seal"
+    ));
+    assert_eq!(snapshot(&cell, &key), before);
+    // An omitted defaulted property is guarded on its effective default (1),
+    // the same value the written row is compared with, as a decision would.
+    cell.commit(seal_batch(JsonObject::new()))
+        .expect("the guard reads the effective default");
+    assert_eq!(
+        cell.load(&key)
+            .expect("loads")
+            .values
+            .and_then(|values| values.get("state").cloned()),
+        Some(norn_ir::RuntimeValue::from("sealed"))
+    );
+}
+
+#[test]
+fn an_empty_observation_authorization_does_not_exempt_a_forged_first_write() {
+    let mut cell: ObservedCell = open();
+    let key = document();
+    let before = snapshot(&cell, &key);
+    let forged = put(
+        &key,
+        values(json!({ "status": "published", "pages": 1 })),
+        Vec::new(),
+    );
+    let (refused, _) = refusal(
+        cell.commit_observed(forged, ObservationAuthorization::empty())
+            .expect_err("no sealed write covers the forged put"),
+    );
+    assert_eq!(refused, key);
+    assert_eq!(snapshot(&cell, &key), before);
+}
+
+/// A sealed observation that creates `D-1` with `pages`.
+fn observe_document(
+    cell: &ObservedCell,
+) -> (
+    CellCommit<ObservationEvent, JsonObject, JsonObject>,
+    ObservationAuthorization,
+) {
+    let model = cell.store().model().clone();
+    let catalog = model.type_catalog();
+    let key = document();
+    let slice = load_slice(cell, [key.clone()]).expect("slice");
+    let provenance = serde_json::from_value(json!({
+        "source": { "system": "synthetic", "record": "document/D-1" },
+        "mappingVersion": "fixture.document@1",
+        "recordedAt": "2026-11-01T00:00:00Z",
+        "sourceFields": ["pages"]
+    }))
+    .expect("source provenance");
+    prepare_observed_snapshot(
+        &catalog,
+        &slice,
+        &turn("observe"),
+        ObservedSnapshot {
+            key: &key,
+            values: &values(json!({ "pages": 2 })),
+            lifecycles: &[],
+            provenance: &provenance,
+        },
+    )
+    .expect("sealed observed write")
+    .into_parts()
+}
+
+#[test]
+fn a_sealed_observation_exempts_only_its_own_writes() {
+    let mut cell: ObservedCell = open();
+    let observed = document();
+    let forged = FactKey::new("test.Document", "D-2");
+    let before = (snapshot(&cell, &observed), snapshot(&cell, &forged));
+
+    let (mut commit, authorization) = observe_document(&cell);
+    commit.writes.push(FactWrite {
+        key: forged.clone(),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: values(json!({ "status": "published", "pages": 1 })),
+        },
+    });
+    let (refused, _) = refusal(
+        cell.commit_observed(commit, authorization)
+            .expect_err("the unsealed write is an ordinary first write"),
+    );
+    assert_eq!(refused, forged);
+    assert_eq!(
+        (snapshot(&cell, &observed), snapshot(&cell, &forged)),
+        before
+    );
+
+    // The sealed write alone is admitted under its own contract.
+    let (commit, authorization) = observe_document(&cell);
+    cell.commit_observed(commit, authorization)
+        .expect("the sealed observation commits");
+    assert!(cell.load(&observed).expect("loads").values.is_some());
 }
 
 #[test]

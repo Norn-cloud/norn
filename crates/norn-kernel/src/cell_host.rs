@@ -908,7 +908,7 @@ pub enum CommitError<X> {
         /// The object written for the first time.
         key: FactKey,
         /// Why its initialization was refused.
-        refusal: LifecycleInitRefusal,
+        refusal: Box<LifecycleInitRefusal>,
     },
     /// An observed write did not match its opaque prepared authorization, or
     /// its findings differed from the shared final-state evaluation.
@@ -969,7 +969,7 @@ impl<X> CommitError<X> {
             Self::InvariantViolation { .. } => "commit.invariant_violation",
             Self::InvariantBudgetExceeded { .. } => "commit.invariant_budget_exceeded",
             Self::InvariantModel { .. } => "commit.invariant_model",
-            Self::LifecycleInitialization { refusal, .. } => refusal.code(),
+            Self::LifecycleInitialization { .. } => norn_ir::lifecycle_codes::UNDECLARED_WRITE,
             Self::ObservationAuthorization => "commit.observation_authorization",
             Self::EventLimitExceeded { .. } => "commit.event_limit",
             Self::Overflow => "commit.overflow",
@@ -980,7 +980,8 @@ impl<X> CommitError<X> {
 
 /// Why the shared commit admission refused a first write's lifecycle
 /// initialization (GRAPH-STATE-1). The same rule as a decision `create`
-/// followed by its `transition`s, so both paths refuse the same states.
+/// followed by its `transition`s, so both paths refuse the same states. Every
+/// variant carries the commit code `lifecycle.validation.undeclared_write`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LifecycleInitRefusal {
     /// A lifecycle is declared over the property, but it does not resolve to
@@ -1019,20 +1020,6 @@ pub enum LifecycleInitRefusal {
         /// What the replay could not reconstruct.
         reason: String,
     },
-}
-
-impl LifecycleInitRefusal {
-    /// Stable machine-readable code, shared with the decision path's
-    /// lifecycle refusals.
-    #[must_use]
-    pub const fn code(&self) -> &'static str {
-        match self {
-            Self::Unresolved { .. } => "commit.unresolved_lifecycle",
-            Self::InvalidInitialState { .. }
-            | Self::IllegalTransition { .. }
-            | Self::UnrecordedChange { .. } => norn_ir::lifecycle_codes::UNDECLARED_WRITE,
-        }
-    }
 }
 
 pub use crate::commit_check::{CommitModel, CommitView, check_commit, check_commit_owned_rows};

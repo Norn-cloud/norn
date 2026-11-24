@@ -652,24 +652,31 @@ fn check_immutable<E, C, T, V: CommitView + ?Sized>(
 /// initialization ([`crate::decision_commit::check_first_write_lifecycles`],
 /// the decision `create` and `transition` rules). This holds for every
 /// admission of every host, so a direct `Put` cannot place a new object in a
-/// state its lifecycle never reached. There is no caller-selectable bypass:
-/// only a sealed observation, whose opaque authorization the kernel prepared,
-/// reconciles lifecycles under its own evidence contract instead
-/// ([`crate::snapshot_observe`]).
+/// state its lifecycle never reached. There is no caller-selectable flag: only
+/// the exact writes a sealed observation's opaque, kernel-prepared
+/// authorization covers reconcile lifecycles under their own evidence
+/// contract instead ([`crate::snapshot_observe`]); every other write in the
+/// same commit is checked here.
 fn check_lifecycle_initialization<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
-    if authorization.is_some() {
-        return Ok(());
-    }
+    let authorized = authorization.map(ObservationAuthorization::indexed);
     let mut recorded: Option<BTreeMap<FactKey, Vec<&crate::decision_commit::FactEvent>>> = None;
     for write in &commit.writes {
         let FactMutation::Put { values } = &write.mutation else {
             continue;
         };
+        // Only the exact write a sealed observation prepared is exempt; any
+        // other write in the same commit is an ordinary command mutation.
+        if authorized
+            .as_ref()
+            .is_some_and(|index| index.authorizes(write))
+        {
+            continue;
+        }
         let canonical = model.canonical(&write.key);
         if view
             .concrete(&canonical)
@@ -688,7 +695,7 @@ fn check_lifecycle_initialization<E: 'static, C, T, V: CommitView + ?Sized>(
         )
         .map_err(|refusal| CommitError::LifecycleInitialization {
             key: write.key.clone(),
-            refusal,
+            refusal: Box::new(refusal),
         })?;
     }
     Ok(())
@@ -705,10 +712,10 @@ fn recorded_fact_events<'c, E: 'static, C, T>(
     // Only the kernel's own fact event type records this evidence, identified
     // by type: a host whose ledger events are another type records none, so
     // it creates a lifecycle-bearing object only in an admitted initial state.
-    let fact_events = commit
-        .events
-        .iter()
-        .filter_map(|event| (event as &dyn std::any::Any).downcast_ref::<FactEvent>());
+    let fact_events = commit.events.iter().filter_map(|event| {
+        let event: &dyn std::any::Any = event;
+        event.downcast_ref::<FactEvent>()
+    });
     for event in fact_events {
         let key = match event {
             FactEvent::Created { key, .. }
