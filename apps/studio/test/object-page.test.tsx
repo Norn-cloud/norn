@@ -42,7 +42,9 @@ test("a record page names its type and copyable id, and offers every tab", async
   const html = await page("canon.Item", "demo/item/gold")
   expect(html).toContain("Gold scrap")
   expect(html).toContain("Copy demo/item/gold")
-  for (const tab of ["Overview", "Lineage", "Guarantees"]) expect(html).toContain(`>${tab}</button>`)
+  for (const tab of ["Overview", "Lineage", "Rules"]) expect(html).toContain(`>${tab}</button>`)
+  expect(html).not.toContain(">Guarantees</button>")
+  expect(html).toContain('href="/rules"')
   // Who may act is the cell's decision: the rail is there, and the recorded demo says no role was decided.
   expect(html).not.toContain(">Access</button>")
   expect(html).toContain("Who can see or act")
