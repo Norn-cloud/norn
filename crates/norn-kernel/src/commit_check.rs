@@ -933,7 +933,7 @@ fn recheck_subjects<E, C, T, V: CommitView + ?Sized>(
                 view,
                 index,
                 &write.key,
-                &checked,
+                checked,
                 &mut of_targets,
             )?;
         }
