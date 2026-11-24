@@ -341,10 +341,10 @@ fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellE
         let declared = match &root {
             EntityRoot::V2(root) => Some(root.object_type.name.as_str()),
             EntityRoot::V2Interface(root) => Some(root.interface.name.as_str()),
+            EntityRoot::V1(root) => Some(root.object_kind.as_str()),
             EntityRoot::V2PropertyTypes(_)
             | EntityRoot::V2Extension(_)
-            | EntityRoot::V2Markings(_)
-            | EntityRoot::V1(_) => None,
+            | EntityRoot::V2Markings(_) => None,
         };
         if let Some(name) = declared.filter(|name| is_reserved_kernel_name(name)) {
             return Err(refused(format!(

@@ -2403,7 +2403,20 @@ fn compose_baseline(mut value: Value) -> Value {
 #[test]
 fn a_composed_page_is_held_to_its_placed_catalog_declarations() {
     let entry = json!({ "entryId": "tile", "label": { "en": "Tile" }, "trust": "native" });
-    for (catalog, refused) in [(json!([entry]), false), (json!([entry, entry]), true)] {
+    let mut renderer = entry.clone();
+    renderer["renders"] = json!("number");
+    let money = json!({ "entryId": "money", "label": { "en": "Money" }, "trust": "native", "renders": "number" });
+    let mut machined = entry.clone();
+    machined["machine"] = json!({
+        "machineVersion": "0.1", "initialStateId": "missing", "fields": [], "events": [],
+        "states": [{ "stateId": "idle", "role": "idle" }], "transitions": []
+    });
+    for (catalog, refused) in [
+        (json!([entry]), false),
+        (json!([entry, entry]), true),
+        (json!([renderer, money]), true),
+        (json!([machined]), true),
+    ] {
         let mut baseline = baseline_widget("baseline-revision");
         let ux = baseline.at_mut("payload").at_mut("ux");
         ux.set("catalog", catalog);

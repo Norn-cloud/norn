@@ -353,6 +353,32 @@ fn a_definition_set_with_an_extension_is_refused_at_the_cell() -> TestResult {
 }
 
 #[test]
+fn a_v1_definition_may_not_declare_a_kernel_record_kind() -> TestResult {
+    let declared: ArtifactEnvelope = serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "artifactId": "defs.Calls.entity",
+        "kind": "entity",
+        "namespace": "defs",
+        "name": "Calls",
+        "version": "1.0.0",
+        "lifecycle": "draft",
+        "scope": { "orgId": "org_demo", "environmentId": "dev" },
+        "dependencies": [],
+        "provenance": { "source": "authoring_sdk" },
+        "payload": { "objectKind": norn_kernel::ACTION_CALL_TYPE, "fields": {} }
+    }))?;
+    let model = item_model()?;
+    let store = CellStore::open_in_memory(model.clone())?;
+    let input = input_for(&[org_item()?, declared])?;
+    let checked = store.check_definitions_in_scope(&model, &input, Some(0), "org_demo/dev");
+    assert!(
+        matches!(&checked, Err(CellError::DefinitionMigrationRefused(_))),
+        "{checked:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_definition_set_may_not_declare_a_kernel_record_type() -> TestResult {
     for name in [norn_kernel::ACTION_CALL_TYPE, "norn.actioncall"] {
         let mut record = norn_cell::kernel_record_types()
