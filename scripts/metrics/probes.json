@@ -50,6 +50,53 @@
       },
       "caveats": "Wall time of the formal phase's proof run (verify-promoted-subsystems.sh full), on the verification-tools snapshot whose prebuilt tool roots are linked in; the bootstraps (checksum checks) are untimed. Per-gate values are the script's own [pass] seconds (1 s resolution). One run on a default Boat VM; Rust builds inside the gate start cold.",
       "snapshot": "norn-verification-tools-2a4a90522c10"
+    },
+    {
+      "name": "studio-bundle-size",
+      "requires": [
+        "apps/studio/package.json",
+        "scripts/metrics/probe_studio_bundle.py"
+      ],
+      "prepare": "cd apps/studio && bun install --frozen-lockfile --ignore-scripts --backend copyfile",
+      "run": "python3 scripts/metrics/probe_studio_bundle.py --studio-dir apps/studio",
+      "timeout_s": 600,
+      "workload": {
+        "app": "apps/studio",
+        "bundler": "vite"
+      },
+      "caveats": "Production vite build of apps/studio (including dist/widgets from closeBundle); gzip sizes use deterministic Python gzip level 9 (mtime=0)."
+    },
+    {
+      "name": "binary-and-wasm-sizes",
+      "requires": [
+        "crates/norn-cli/Cargo.toml",
+        "crates/norn-cell-rivet/Cargo.toml",
+        "crates/norn-checker-wasm/Cargo.toml",
+        "crates/norn-cell-do/Cargo.toml",
+        "scripts/metrics/probe_binary_sizes.py"
+      ],
+      "prepare": "TARGET_DIR=\"${CARGO_TARGET_DIR:-$PWD/target}\" && (rustc --print target-libdir --target wasm32-unknown-unknown >/dev/null 2>&1 || rustup target add wasm32-unknown-unknown) && cargo build --locked --release -p norn-cli --bin norn && (cd crates/norn-cell-rivet && CARGO_TARGET_DIR=\"$TARGET_DIR/rivet\" cargo build --locked --release --bin norn-cell-rivet) && cargo rustc --locked -p norn-checker-wasm --lib --target wasm32-unknown-unknown --profile wasm-release --crate-type cdylib && cargo build --locked -p norn-cell-do --lib --target wasm32-unknown-unknown --profile wasm-release",
+      "run": "python3 scripts/metrics/probe_binary_sizes.py",
+      "timeout_s": 1800,
+      "workload": {
+        "native_profile": "release",
+        "wasm_profile": "wasm-release"
+      },
+      "caveats": "Unstripped release native binaries (Linux x86_64 ELF) and wasm-release cdylib .wasm artifacts before wasm-bindgen/wasm-opt; gzip sizes use deterministic Python gzip level 9 (mtime=0)."
+    },
+    {
+      "name": "engine-core-metrics",
+      "requires": [
+        "crates/norn-testkit/examples/engine_core_metrics.rs"
+      ],
+      "prepare": "cargo build --locked --release -p norn-testkit --example engine_core_metrics",
+      "run": "\"${CARGO_TARGET_DIR:-target}/release/examples/engine_core_metrics\"",
+      "timeout_s": 600,
+      "workload": {
+        "profile": "release",
+        "example": "engine_core_metrics"
+      },
+      "caveats": "Single-thread deterministic release micro-benchmark on one Boat VM (native bundled SQLite in JournalMode::Delete, in-memory cells for VmRSS delta, standalone JDM decision and ZEN expression loops); measures core Rust engine overhead without HTTP/Rivet transport."
     }
   ]
 }
