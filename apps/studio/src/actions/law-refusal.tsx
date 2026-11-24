@@ -83,10 +83,15 @@ function useCaller(): string {
  * be what the law evaluated.
  * The cell decided all of it; this only lays out its refusal.
  */
-function RefusalSteps({ variant, request, check, why, at: answered }: { readonly variant: "disclosed" | "redacted"; readonly request: RefusalRequest | undefined; readonly check: ReactNode; readonly why: string
-  /** When the cell's answer reached this page: the refusal carries no time of its own, and no receipt is kept for it. */
-  readonly at: Date }) {
+function RefusalSteps({ variant, request, check, why, at: answered, decidedAt }: { readonly variant: "disclosed" | "redacted"; readonly request: RefusalRequest | undefined; readonly check: ReactNode; readonly why: string
+  /** When the cell's answer reached this page; labelled "Received at" when the refusal carries no `decidedAt`. */
+  readonly at: Date
+  /** The cell's RFC 3339 UTC timestamp (`decidedAt`), when carried on `norn/refusal@2`. */
+  readonly decidedAt?: string }) {
   const caller = useCaller()
+  const cellTime = decidedAt !== undefined && !Number.isNaN(Date.parse(decidedAt)) ? new Date(decidedAt) : null
+  const shownTime = cellTime ?? answered
+  const timeLabel = cellTime !== null ? "Decided at" : "Received at"
   return (
     <div role="alert" data-refusal={variant} className="overflow-hidden rounded-xl border border-border bg-card text-sm">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
@@ -107,7 +112,7 @@ function RefusalSteps({ variant, request, check, why, at: answered }: { readonly
         <Step icon={ShieldX} label="The result" last>
           <Rows label="Who, when and why" rows={[
             ["Who", caller],
-            ["When", <time dateTime={answered.toISOString()}>{answered.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time>],
+            [timeLabel, <time dateTime={cellTime !== null ? decidedAt : shownTime.toISOString()} title={cellTime !== null ? decidedAt : shownTime.toISOString()}>{shownTime.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time>],
             ["Why", why],
             ["Kept", "Nothing was written. The cell keeps no receipt of a refused call."],
           ]} />
@@ -122,11 +127,13 @@ function RefusalSteps({ variant, request, check, why, at: answered }: { readonly
  * the law's own sentence, the values it checked, and what to do. Technical view adds the code, the
  * subject and the law's pin, and the cell's own message.
  */
-export function LawRefusal({ code, reason, explanation, fields, technical, onUse, request, at = new Date() }: { readonly code: string; readonly reason: RefusalReason; readonly explanation: string; readonly fields: Readonly<Record<string, InputField>>; readonly technical: boolean
+export function LawRefusal({ code, reason, explanation, fields, technical, onUse, request, at = new Date(), decidedAt }: { readonly code: string; readonly reason: RefusalReason; readonly explanation: string; readonly fields: Readonly<Record<string, InputField>>; readonly technical: boolean
   /** What was asked; the request step is left out without it. */
   readonly request?: RefusalRequest
-  /** When the refusal reached the form. */
+  /** When the refusal reached the form (fallback when `decidedAt` is absent). */
   readonly at?: Date
+  /** When the cell decided the refusal (`norn/refusal@2`'s `decidedAt`). */
+  readonly decidedAt?: string
   /** Put a value the record holds into the form's field (the cell checks it again on the next submit). */
   readonly onUse?: (path: string, text: string) => void }) {
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
@@ -144,7 +151,7 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
   const shown = (path: string, value: unknown) => isList(value) ? atDeclared(compared(value).text, listScale) : atDeclared(value, scaleOf(path))
   const parts = (value: unknown) => isList(value) ? value.map((part) => atDeclared(part, listScale)).join(" + ") : undefined
   return (
-    <RefusalSteps variant="disclosed" request={request} at={at} why={lawNameOf(catalog.data?.document ?? [], reason.pin?.artifactId) ?? rationale ?? explanation} check={
+    <RefusalSteps variant="disclosed" request={request} at={at} decidedAt={decidedAt} why={lawNameOf(catalog.data?.document ?? [], reason.pin?.artifactId) ?? rationale ?? explanation} check={
       <div className="grid gap-2.5">
         {rationale !== undefined && <p className="flex items-start gap-2 font-medium text-pretty text-foreground"><span className="min-w-0 flex-1">{rationale}</span><Chip tone="red" icon={ShieldX} data-verdict="fails">Fails</Chip></p>}
         {checked.length === 2 && held.length === 1 ? (() => {
@@ -190,13 +197,15 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
  * reads nothing but the refusal itself: no finding, record or history this page may hold, which
  * could name a rule or a value the cell did not disclose for this call (a grant revoked since).
  */
-export function RedactedLawRefusal({ code, message, technical, request, at = new Date() }: { readonly code: string; readonly message: string; readonly technical: boolean
+export function RedactedLawRefusal({ code, message, technical, request, at = new Date(), decidedAt }: { readonly code: string; readonly message: string; readonly technical: boolean
   /** What was asked; the request step is left out without it. */
   readonly request?: RefusalRequest
-  /** When the refusal reached the form. */
-  readonly at?: Date }) {
+  /** When the refusal reached the form (fallback when `decidedAt` is absent). */
+  readonly at?: Date
+  /** When the cell decided the refusal (`norn/refusal@2`'s `decidedAt`). */
+  readonly decidedAt?: string }) {
   return (
-    <RefusalSteps variant="redacted" request={request} at={at} why="A law this change would break. Your role is not told which." check={
+    <RefusalSteps variant="redacted" request={request} at={at} decidedAt={decidedAt} why="A law this change would break. Your role is not told which." check={
       <div className="grid gap-2.5">
         <p className="text-meta text-muted-foreground">The cell said: “{message}”. It does not say which law, or which values, to your role.</p>
         {technical && <span className="border-t border-border/70 pt-2 font-mono text-xs text-muted-foreground">{code}</span>}

@@ -1,15 +1,18 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandItemIcon, CommandList } from "@ui-sdk/react/command"
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle, DialogTrigger } from "@ui-sdk/react/dialog"
-import { MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
+import { MenuGroup, MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
 import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
-import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
+import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronLeft, ChevronRight, ChevronsUpDown, CloudOff, Keyboard, LayoutGrid, LogOut, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
+import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, CircleEllipsis, CloudOff, Keyboard, LayoutGrid, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
+import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
+import { AppearanceProvider, SHELLS, SKINS, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
 import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
 import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -19,10 +22,14 @@ import { KINDS, type Kind } from "@/lib/kinds"
 import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, directionOf, isLocale, useLocale } from "@/lib/locale"
-import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
-import { useMode } from "@/lib/live-transport"
-import { useStudioScope } from "@/lib/definitions"
+import { WORKSPACES } from "@/lib/workspaces"
+import { isRetryableModeError, retryMode, useMode } from "@/lib/live-transport"
+import { lastReachableAt, useStudioScope } from "@/lib/definitions"
+import { CopyId } from "@/components/copy-id"
+import { formatLastReachable } from "@/components/load-state"
+import { explainError } from "@/lib/plain-words"
 import { useAccount, type Account } from "@/lib/session"
+import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
 
@@ -110,72 +117,137 @@ export function decoded(segment: string): string {
   }
 }
 
-/** The open workspace as the server reported it; until the mode is decided it says so, never naming the recording. */
-function useOpenWorkspace() {
-  const mode = useMode()
-  const scope = useStudioScope()
-  const account = useAccount()
-  const live = mode.data?.kind === "live"
-  const recorded = WORKSPACES.find(({ recorded }) => recorded)
-  const open = live
-    ? { id: "live", name: account.data?.organization?.name ?? scope.data?.orgId ?? "Connected cell", detail: `Live cell${scope.data ? ` · ${scope.data.orgId}/${scope.data.environmentId}` : ""}` }
-    : mode.data?.kind !== "recorded"
-      ? { id: "pending", name: account.data?.organization?.name ?? scope.data?.orgId ?? "Workspace", detail: mode.isError || mode.failureCount > 0 ? "Can't reach the cell · retrying" : "Connecting…" }
-      : recorded && { id: recorded.id, name: recorded.name, detail: recorded.detail }
-  return { live, open }
+const roleLabel = (role: string) => role === "" ? "" : `${role[0]!.toUpperCase()}${role.slice(1)}`
+
+/** Delays showing the "connecting slowly" hint so fast local/warm loads stay quiet. */
+const CONNECTING_HINT_MS = 3_000
+const recordedWorkspace = WORKSPACES.find(({ recorded }) => recorded)
+
+/** True once the initial mode probe has been waiting longer than `CONNECTING_HINT_MS`. */
+function useSlowConnecting(mode: ReturnType<typeof useMode>): boolean {
+  const [slow, setSlow] = useState(false)
+  const waiting = mode.data === undefined && mode.isPending && !mode.isError
+  useEffect(() => {
+    if (!waiting) { setSlow(false); return }
+    const timer = setTimeout(() => setSlow(true), CONNECTING_HINT_MS)
+    return () => clearTimeout(timer)
+  }, [waiting])
+  return waiting && slow
 }
 
-/** A workspace entry that does something here: published results, or the recording while no cell is connected. */
+/** The open workspace as the server reported it; never renders raw org or environment ids. */
+function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
+  const mode = useMode()
+  const account = useAccount()
+  const slow = useSlowConnecting(mode)
+  const live = mode.data?.kind === "live"
+  const recorded = mode.data?.kind === "recorded"
+  const retrying = !mode.isError && mode.failureCount > 0 && isRetryableModeError(mode.failureReason)
+  const active = doc?.workspaces.find((workspace) => workspace.active)
+  const organization = active ?? account.data?.organization
+  const open = live
+    ? { name: organization?.name ?? "Connected workspace", detail: organization?.role ? `Live · ${roleLabel(organization.role)}` : "Live workspace" }
+    : recorded
+      ? organization
+        ? { name: organization.name, detail: "Recorded demo data" }
+        : recordedWorkspace
+      : {
+          name: organization?.name ?? "Workspace",
+          detail: mode.isError ? "Workspace unavailable" : retrying ? "Reconnecting…" : slow ? "Connecting to cell…" : "Connecting…",
+        }
+  const workspaceOpen = organization != null || live
+  return { live, open, active, workspaceOpen, recordedSelection: recorded ? recordedWorkspace?.id : undefined }
+}
+
+/** An example dataset entry that opens here: published benchmark results, or the recording while no cell is connected. */
 const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspace.results !== undefined || (workspace.recorded && !live)
 
-/** The scope switcher: the open workspace, and the others that open from here. */
-function ScopeSwitcher() {
-  const { live, open } = useOpenWorkspace()
+/** The workspace switcher: the user's real workspaces and a separate labelled Examples group. */
+function ScopeSwitcher({ variant = "sidebar" }: { readonly variant?: "sidebar" | "pill" }) {
+  const workspaces = useWorkspaces()
+  const doc = workspaces.data
+  const { live, open, active, workspaceOpen, recordedSelection } = useOpenWorkspace(doc)
+  const realWorkspaces = doc?.workspaces ?? []
+  const examples = WORKSPACES.filter((workspace) => real(workspace, live))
+  const showWorkspaceSection = realWorkspaces.length > 0 || workspaceOpen
   return (
     <Menu>
-      <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-start text-sm transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent">
-        <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-[0.6875rem] font-semibold text-foreground shadow-control ring-1 ring-border/90 dark:bg-card">{initials(open?.name ?? "")}</span>
-        <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
-          <span className="truncate font-semibold tracking-[-0.01em] text-sidebar-foreground">{open?.name}</span>
-          <span className="truncate text-xs text-muted-foreground">{open?.detail}</span>
-        </span>
-        <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-      </MenuTrigger>
+      {variant === "pill"
+        ? (
+          <MenuTrigger data-scope className="group/scope inline-flex h-8 max-w-60 min-w-0 items-center gap-2 rounded-full border border-border bg-card ps-1.5 pe-2.5 text-sm text-foreground transition-[color,background-color] duration-150 outline-none hover:bg-(--well) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-(--well)">
+            <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-full bg-(--well) text-[0.625rem] font-medium text-foreground ring-1 ring-border">{initials(open?.name ?? "")}</span>
+            <span className="truncate font-normal tracking-[-0.01em]">{open?.name}</span>
+            <ChevronDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          </MenuTrigger>
+        )
+        : (
+          <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-start text-sm transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent">
+            <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-[0.6875rem] font-semibold text-foreground shadow-control ring-1 ring-border/90 dark:bg-card">{initials(open?.name ?? "")}</span>
+            <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
+              <span className="truncate font-semibold tracking-[-0.01em] text-sidebar-foreground">{open?.name}</span>
+              <span className="truncate text-xs text-muted-foreground">{open?.detail}</span>
+            </span>
+            <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          </MenuTrigger>
+        )}
       <KitMenuContent align="start" className="w-72">
-        <MenuRadioGroup value={live ? "live" : open?.id ?? ""}>
-          {live && open && (
-            <KitMenuRadioItem value="live" className="flex-col items-start gap-0">
-              <span>{open.name}</span><span className="text-xs text-muted-foreground">{open.detail}</span>
-            </KitMenuRadioItem>
-          )}
-          {/* Only what opens: the recorded workspace and published results; nothing greyed out or "coming soon". */}
-          {WORKSPACE_GROUPS.filter((group) => WORKSPACES.some((workspace) => workspace.group === group && real(workspace, live))).map((group, index) => (
-            <div key={group} role="none">
-              {(index > 0 || live) && <KitMenuSeparator />}
-              <KitMenuLabel>{group}</KitMenuLabel>
-              {WORKSPACES.filter((workspace) => workspace.group === group && real(workspace, live)).map((workspace) => workspace.results !== undefined
+        {showWorkspaceSection && (
+          <>
+            <MenuRadioGroup value={active ? `ws:${active.id}` : workspaceOpen ? "current" : ""}>
+              <KitMenuLabel>Your workspaces</KitMenuLabel>
+              {workspaceOpen && active === undefined && open && (
+                <KitMenuRadioItem value="current" label={open.name} closeOnSelect className="flex-col items-start gap-0">
+                  <span className="truncate">{open.name}</span>
+                  <span className="text-xs text-muted-foreground">{open.detail}</span>
+                </KitMenuRadioItem>
+              )}
+              {realWorkspaces.map((workspace) => (
+                <KitMenuRadioItem key={workspace.id} value={`ws:${workspace.id}`} label={workspace.name} disabled={!workspace.active} closeOnSelect className="flex-col items-start gap-0">
+                  <span className="truncate">{workspace.name}</span>
+                  <span className="text-xs text-muted-foreground">{workspace.hasCell ? roleLabel(workspace.role) : `${roleLabel(workspace.role)} · No cell yet`}</span>
+                </KitMenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+            {realWorkspaces.some((workspace) => !workspace.active) && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">Switching workspaces is coming soon.</p>
+            )}
+          </>
+        )}
+        {workspaces.isError && (
+          <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs text-destructive">
+            <span>{workspaces.error instanceof WorkspaceError ? workspaces.error.message : "Could not load workspaces."}</span>
+            <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => void workspaces.refetch()}>Retry</button>
+          </div>
+        )}
+        {examples.length > 0 && (
+          <>
+            {showWorkspaceSection && <KitMenuSeparator />}
+            <MenuRadioGroup value={recordedSelection ?? ""}>
+              <KitMenuLabel>Examples</KitMenuLabel>
+              {examples.map((workspace) => workspace.results !== undefined
                 ? (
-                  <KitMenuItem key={workspace.id} value={workspace.id} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
+                  <KitMenuItem key={workspace.id} value={`example:${workspace.id}`} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
                     <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
                   </KitMenuItem>
                 )
                 : (
-                  <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} disabled={live || !workspace.recorded} className="flex-col items-start gap-0">
+                  <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} className="flex-col items-start gap-0">
                     <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
                   </KitMenuRadioItem>
                 ))}
-            </div>
-          ))}
-        </MenuRadioGroup>
+            </MenuRadioGroup>
+          </>
+        )}
       </KitMenuContent>
     </Menu>
   )
 }
 
-/** The view (Business or Technical) and the language, as menu choices; choosing one closes the menu. */
+/** The view (Business or Technical), language, skin and chrome layout as menu choices. */
 function ViewAndLanguage() {
   const { view, setView } = useView()
   const { locale, setLocale } = useLocale()
+  const { skin, setSkin, shell, setShell } = useAppearance()
   return <>
     <MenuRadioGroup value={view} onValueChange={(next) => { if (next === "business" || next === "technical") setView(next) }}>
       <KitMenuLabel>View</KitMenuLabel>
@@ -187,20 +259,115 @@ function ViewAndLanguage() {
       <KitMenuLabel>Language</KitMenuLabel>
       {LOCALES.map(({ tag, name }) => <KitMenuRadioItem key={tag} value={tag} lang={tag} closeOnSelect>{name}</KitMenuRadioItem>)}
     </MenuRadioGroup>
+    <KitMenuSeparator />
+    <MenuRadioGroup value={skin} onValueChange={(next) => { if (isSkin(next)) setSkin(next) }}>
+      <KitMenuLabel>Skin</KitMenuLabel>
+      {SKINS.map(({ id, label }) => <KitMenuRadioItem key={id} value={id} closeOnSelect>{label}</KitMenuRadioItem>)}
+    </MenuRadioGroup>
+    <KitMenuSeparator />
+    <MenuRadioGroup value={shell} onValueChange={(next) => { if (isShellChrome(next)) setShell(next) }}>
+      <KitMenuLabel>Chrome</KitMenuLabel>
+      {SHELLS.map(({ id, label }) => <KitMenuRadioItem key={id} value={id} closeOnSelect>{label}</KitMenuRadioItem>)}
+    </MenuRadioGroup>
   </>
 }
 
+/** Interactive skin & shell chrome tray powered by the first-party `@ui-sdk/core` + `@ui-sdk/react` ChromeDock primitive. */
+function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: "top" | "bottom"; readonly variant?: "bar" | "dock" }) {
+  const { skin, setSkin, shell, setShell } = useAppearance()
+  return (
+    <ChromeDock
+      value={skin}
+      items={SKINS.map(({ id }) => id)}
+      onValueChange={(next) => { if (isSkin(next)) setSkin(next) }}
+      className="relative inline-flex"
+    >
+      <ChromeDockTrigger
+        aria-label="Appearance"
+        className={variant === "dock"
+          ? "relative grid size-10 place-items-center rounded-full text-(--dock-muted) transition-colors outline-none hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-(--dock-ring) data-open:bg-(--dock-well) data-open:text-(--dock-foreground) [&_svg]:size-[18px]"
+          : cn(iconButton, "hidden @xl:flex")}
+      >
+        <Palette aria-hidden strokeWidth={1.7} />
+      </ChromeDockTrigger>
+      <ChromeDockTray
+        side={side}
+        align="end"
+        sideOffset={8}
+        aria-label="Appearance settings"
+        className="w-72 origin-(--transform-origin) rounded-2xl bg-popover p-3.5 text-popover-foreground shadow-float ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
+      >
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+              <span>Skin</span>
+              <span className="capitalize text-foreground">{skin}</span>
+            </div>
+            <div role="group" aria-label="Skin" className="grid grid-cols-2 gap-1.5">
+              {SKINS.map((option) => (
+                <ChromeDockOption
+                  key={option.id}
+                  value={option.id}
+                  data-skin-option={option.id}
+                  className="flex items-center gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-start text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-[state=selected]:border-action data-[state=selected]:bg-action/10 data-[state=selected]:text-foreground"
+                >
+                  <span aria-hidden className="size-3.5 shrink-0 rounded-full border border-border/90 shadow-xs" style={{ backgroundColor: option.swatch }} />
+                  <span className="truncate">{option.label}</span>
+                </ChromeDockOption>
+              ))}
+            </div>
+          </div>
+          <div className="h-px bg-border/80" />
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-muted-foreground">Shell chrome</div>
+            <div role="group" aria-label="Shell chrome" className="grid grid-cols-2 gap-1.5">
+              {SHELLS.map((option) => {
+                const active = shell === option.id
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    aria-pressed={active}
+                    data-shell-option={option.id}
+                    data-state={active ? "selected" : "idle"}
+                    onClick={() => setShell(option.id)}
+                    className="flex items-center gap-1.5 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:border-action aria-pressed:bg-action/10"
+                  >
+                    {option.id === "sidebar" ? <PanelLeft aria-hidden className="size-3.5 shrink-0" /> : <PanelBottom aria-hidden className="size-3.5 shrink-0" />}
+                    <span className="truncate">{option.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </ChromeDockTray>
+    </ChromeDock>
+  )
+}
+
 /** The signed-in user, their organization and role, and sign-out. The role is shown, never used to hide or allow anything. */
-export function AccountMenu({ account, onSignOut }: { readonly account: Account; readonly onSignOut: () => void }) {
+export function AccountMenu({ account, onSignOut, inToolbar = true, variant = "rail" }: {
+  readonly account: Account
+  readonly onSignOut: () => void
+  readonly inToolbar?: boolean
+  readonly variant?: "rail" | "topbar" | "dock"
+}) {
   const { user, organization } = account
+  const triggerClass = variant === "topbar"
+    ? "grid size-9 place-items-center rounded-full bg-[linear-gradient(135deg,#fde2e4,#fbe8cf)] text-[0.8125rem] font-medium text-[#8a3b2c] ring-1 ring-black/5 outline-none transition-[box-shadow,transform] hover:ring-foreground/20 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring dark:bg-[linear-gradient(135deg,#33252a,#332c22)] dark:text-[#f6d6c9] dark:ring-white/10"
+    : variant === "dock"
+      ? "flex size-8 items-center justify-center rounded-full bg-(--dock-active) text-[0.6875rem] font-medium text-(--dock-foreground) ring-1 ring-(--dock-border) outline-none hover:ring-(--dock-foreground)/40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+      : "flex size-8 items-center justify-center rounded-full bg-background text-[0.6875rem] font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+  const trigger = inToolbar
+    ? <ToolbarButton render={<MenuTrigger />} aria-label="Account" className={triggerClass}>{initials(user.name || user.email)}</ToolbarButton>
+    : <MenuTrigger aria-label="Account" className={triggerClass}>{initials(user.name || user.email)}</MenuTrigger>
   return (
     <Menu onAction={(value) => { if (value === "sign-out") onSignOut() }}>
-      <Hint label={`${user.name} · ${organization ? `${organization.name} · ${organization.role}` : "No organization"}`}>
-        <ToolbarButton render={<MenuTrigger />} aria-label="Account" className="flex size-8 items-center justify-center rounded-full bg-background text-[0.6875rem] font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
-          {initials(user.name || user.email)}
-        </ToolbarButton>
+      <Hint side={variant === "topbar" ? "bottom" : variant === "dock" ? "top" : "right"} label={`${user.name} · ${organization ? `${organization.name} · ${organization.role}` : "No organization"}`}>
+        {trigger}
       </Hint>
-      <KitMenuContent side="end" align="end" className="min-w-60">
+      <KitMenuContent side={variant === "topbar" ? "bottom" : variant === "dock" ? "top" : "end"} align="end" className="min-w-60">
         <div className="grid px-2 py-1.5 text-sm">
           <span className="font-medium">{user.name}</span>
           <span className="text-meta text-muted-foreground">{user.email}</span>
@@ -538,6 +705,7 @@ function PerspectiveSwitch({ perspective, onChange }: { readonly perspective: Pe
 function CommandMenu({ sections, navigation, onPerspective }: { readonly sections: readonly Section[]; readonly navigation: Navigation; readonly onPerspective: (next: Perspective) => void }) {
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
+  const { setSkin, setShell } = useAppearance()
   const lists = sections.map((section) => ({ section, entries: navigation.menus.get(section.path) ?? [] }))
   const routes = new Map<string, { to: string; hash?: string }>([
     ...sections.map(({ path }) => [`section:${path}`, { to: path }] as const),
@@ -553,6 +721,16 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
         <DialogTitle className="sr-only">Search Studio</DialogTitle>
         <Command onAction={(value) => {
           setOpen(false)
+          if (value.startsWith("skin:")) {
+            const next = value.slice("skin:".length)
+            if (isSkin(next)) setSkin(next)
+            return
+          }
+          if (value.startsWith("shell:")) {
+            const next = value.slice("shell:".length)
+            if (isShellChrome(next)) setShell(next)
+            return
+          }
           const perspective = value.startsWith("perspective:") ? value.slice("perspective:".length) : undefined
           if (isPerspective(perspective)) return onPerspective(perspective)
           const to = routes.get(value)
@@ -581,6 +759,21 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
                 </CommandItem>
               ))}
             </CommandGroup>
+            <CommandGroup>
+              <CommandGroupLabel className="px-2 pt-3 pb-1 text-xs text-muted-foreground">Appearance</CommandGroupLabel>
+              {SKINS.map(({ id, label, detail }) => (
+                <CommandItem key={id} value={`skin:${id}`} label={`Skin: ${label}`} keywords={[detail]} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                  <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Palette /></CommandItemIcon>Skin: {label}
+                  <span className="ms-auto text-xs text-muted-foreground">{detail}</span>
+                </CommandItem>
+              ))}
+              {SHELLS.map(({ id, label, detail }) => (
+                <CommandItem key={id} value={`shell:${id}`} label={`Chrome: ${label}`} keywords={[detail]} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                  <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4">{id === "sidebar" ? <PanelLeft /> : <PanelBottom />}</CommandItemIcon>Chrome: {label}
+                  <span className="ms-auto text-xs text-muted-foreground">{detail}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
             {lists.filter(({ entries }) => entries.length > 0).map(({ section, entries }) => (
               <CommandGroup key={section.path}>
                 <CommandGroupLabel className="px-2 pt-3 pb-1 text-xs text-muted-foreground">{section.label}</CommandGroupLabel>
@@ -600,18 +793,77 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
 }
 
 /**
- * The cell did not answer the mode read (a network error or a 5xx): say so above the page and keep
- * retrying; nothing is shown from the recording meanwhile.
+ * Honest cell connection banner (#1424):
+ * - Slow initial cold start (`data-connection="connecting"`): explains why and offers Retry now.
+ * - Brief automatic retry on transient outages (`data-connection="retrying"`): never lingers forever.
+ * - Persistent failure or non-retryable refusal such as `503 cell.unopenable` (`data-connection="unavailable"`):
+ *   never says "Retrying…"; shows "Workspace unavailable", what the server said, incident id when logged,
+ *   when it was last reachable, and an explicit Retry button.
  */
 function ConnectionBanner() {
+  const queryClient = useQueryClient()
+  const scope = useStudioScope()
   const mode = useMode()
-  if (mode.data !== undefined || (mode.failureCount === 0 && !mode.isError)) return null
+  const slow = useSlowConnecting(mode)
+  const { locale } = useLocale()
+  const { view } = useView()
+  const retry = () => {
+    void retryMode(queryClient)
+    void queryClient.invalidateQueries({
+      predicate: (query) => {
+        const head = query.queryKey[0]
+        return query.state.status === "error" && head !== "studio-scope" && head !== "studio-mode"
+      },
+    })
+  }
+  if (mode.data !== undefined) return null
+  if (mode.failureCount === 0 && !mode.isError) {
+    if (!slow) return null
+    return (
+      <div role="status" data-connection="connecting" className="flex flex-wrap items-center gap-2 border-b bg-muted/50 px-4 py-2 text-sm md:px-8">
+        <Loader2 aria-hidden className="size-4 shrink-0 animate-spin text-muted-foreground" />
+        <span className="font-medium">Connecting to your workspace cell…</span>
+        <span className="text-muted-foreground">Starting a cold cell can take a moment.</span>
+        <Button type="button" variant="outline" size="xs" className="ms-auto" onClick={retry}>Retry now</Button>
+      </div>
+    )
+  }
+  const retrying = !mode.isError && isRetryableModeError(mode.failureReason)
+  if (retrying) {
+    return (
+      <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-tone-amber/30 bg-tone-amber/10 px-4 py-2 text-sm text-tone-amber md:px-8">
+        <CloudOff aria-hidden className="size-4 shrink-0" />
+        <span className="font-medium">Couldn't reach the cell.</span>
+        <span className="text-foreground/80">Reconnecting…</span>
+        <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry now</Button>
+      </div>
+    )
+  }
+  const error = mode.error ?? mode.failureReason
+  const info = explainError(error, locale, view)
+  const reachable = lastReachableAt(scope.data)
+  const reachableLabel = formatLastReachable(reachable)
   return (
-    <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-tone-amber/30 bg-tone-amber/10 px-4 py-2 text-sm text-tone-amber md:px-8">
-      <CloudOff aria-hidden className="size-4 shrink-0" />
-      <span className="font-medium">Couldn't reach the cell.</span>
-      <span className="text-foreground/80">{mode.isError ? "It didn't answer after several tries." : "Retrying…"}</span>
-      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={() => void mode.refetch()}>Retry now</Button>
+    <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm md:px-8">
+      <CloudOff aria-hidden className="size-4 shrink-0 text-destructive" />
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="font-medium text-foreground">Workspace unavailable.</span>
+        <span className="text-foreground/85">{info.headline}</span>
+        {info.detail && <span className="text-meta text-muted-foreground">{info.detail}</span>}
+        {reachable !== null && reachableLabel !== null && (
+          <span className="text-meta text-muted-foreground">
+            · Last reachable <time dateTime={new Date(reachable).toISOString()} title={new Date(reachable).toISOString()}>{reachableLabel}</time>
+          </span>
+        )}
+        {info.incidentId && (
+          <span className="inline-flex items-center gap-1 text-meta text-muted-foreground">· Incident <CopyId value={info.incidentId} /></span>
+        )}
+        {view === "technical" && info.code && (
+          <span className="font-mono text-xs text-muted-foreground">· {info.code}</span>
+        )}
+      </div>
+      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry</Button>
     </div>
   )
 }
@@ -632,6 +884,7 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
         <KitMenuContent align="end" className="w-52"><ViewAndLanguage /></KitMenuContent>
       </Menu>}
       {tools}
+      <AppearanceTray />
       <Popover>
         <PopoverTrigger aria-label="Keyboard shortcuts" className={cn(iconButton, "hidden @xl:flex")}><Keyboard aria-hidden /></PopoverTrigger>
         <KitPopoverContent align="end" className="w-60">
@@ -655,13 +908,156 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   )
 }
 
+/** Speech-bubble "AI" glyph from v6/shell.tsx, rendered in the accent colour. */
+function AiGlyph({ className }: { readonly className?: string }) {
+  return (
+    <span aria-hidden className={cn("relative grid size-[18px] place-items-center text-action", className)}>
+      <MessageCircle className="absolute inset-0 size-full" strokeWidth={1.8} />
+      <span className="relative text-[7px] leading-none font-bold tracking-tight">AI</span>
+    </span>
+  )
+}
+
+/**
+ * Centered icon-only floating dark pill dock rendered in `dock` shell mode (`data-shell="dock"`),
+ * following norn-mockups v6/shell.tsx craft: rounded-[26px] dark pill, size-10 circular buttons,
+ * soft #34343a active well, hover tooltips, AI glyph, appearance tray, and overflow destinations.
+ */
+function FloatingDock({ sections, perspective, navigation, current, assistant }: {
+  readonly sections: readonly Section[]
+  readonly perspective: Perspective
+  readonly navigation: Navigation
+  readonly current: Section | undefined
+  readonly assistant?: AssistantContent
+}) {
+  const { open, toggle } = useAssistant()
+  const global = sections.filter((section) => section.perspective === "global")
+  const firstHref = (section: Section) => navigation.menus.get(section.path)?.find(({ href }) => !href.startsWith("#"))?.href
+  const resolvedOwn = sections
+    .filter((section) => section.perspective === perspective)
+    .map((section) => ({
+      section,
+      to: section.index === false ? firstHref(section) : section.path,
+      count: navigation.badges.get(section.path),
+    }))
+    .filter((entry): entry is { readonly section: Section; readonly to: string; readonly count: string | undefined } => entry.to !== undefined)
+  const primary = resolvedOwn.slice(0, 5)
+  const overflow = resolvedOwn.slice(5)
+  const dockBtn = "relative grid size-10 place-items-center rounded-full text-(--dock-muted) outline-none transition-colors hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-(--dock-ring) data-[active=true]:bg-(--dock-well) data-[active=true]:text-(--dock-foreground) data-open:bg-(--dock-well) data-open:text-(--dock-foreground)"
+
+  return (
+    <nav
+      data-slot="floating-dock"
+      aria-label="Floating dock"
+      className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4"
+    >
+      <Toolbar
+        aria-label="Dock navigation"
+        className="pointer-events-auto flex max-w-full items-center gap-1 rounded-[26px] bg-(--dock-surface) p-1.5 text-(--dock-foreground) shadow-(--dock-shadow) ring-1 ring-(--dock-border) backdrop-blur-xl"
+      >
+        {global.map((section) => {
+          const Icon = section.icon
+          const count = navigation.badges.get(section.path)
+          const active = current?.path === section.path
+          const label = count ? `${section.label}, ${count} open` : section.label
+          return (
+            <Hint key={section.path} side="top" label={label}>
+              <ToolbarLink
+                render={<Link to={section.path} />}
+                aria-label={label}
+                aria-current={active ? "page" : undefined}
+                data-active={active || undefined}
+                className={dockBtn}
+              >
+                <Icon aria-hidden className="size-[18px]" strokeWidth={1.7} />
+                {count && <span aria-hidden className="absolute top-[7px] right-[7px] size-[6px] rounded-full bg-(--dock-indicator) ring-2 ring-(--dock-surface)" />}
+              </ToolbarLink>
+            </Hint>
+          )
+        })}
+        {primary.map(({ section, to, count }) => {
+          const Icon = section.icon
+          const active = current?.path === section.path
+          const label = count ? `${section.label}, ${count} open` : section.label
+          return (
+            <Hint key={section.path} side="top" label={label}>
+              <ToolbarLink
+                render={<Link to={to} />}
+                aria-label={label}
+                aria-current={active ? "page" : undefined}
+                data-active={active || undefined}
+                className={dockBtn}
+              >
+                <Icon aria-hidden className="size-[18px]" strokeWidth={1.7} />
+                {count && <span aria-hidden className="absolute top-[7px] right-[7px] size-[6px] rounded-full bg-(--dock-indicator) ring-2 ring-(--dock-surface)" />}
+              </ToolbarLink>
+            </Hint>
+          )
+        })}
+        <ToolbarSeparator className="mx-1 h-5 w-px bg-white/10" />
+        {assistant && (
+          <Hint side="top" label={assistant.title}>
+            <ToolbarButton
+              aria-label={assistant.title}
+              aria-pressed={open}
+              data-active={open || undefined}
+              onClick={toggle}
+              className={dockBtn}
+            >
+              <AiGlyph />
+            </ToolbarButton>
+          </Hint>
+        )}
+        <AppearanceTray side="top" variant="dock" />
+        {overflow.length > 0 && (
+          <Menu>
+            <Hint side="top" label="More destinations">
+              <MenuTrigger aria-label="More destinations" className={dockBtn}>
+                <CircleEllipsis aria-hidden className="size-[18px]" strokeWidth={1.7} />
+              </MenuTrigger>
+            </Hint>
+            <KitMenuContent side="top" align="end" className="min-w-48">
+              <MenuGroup>
+                <KitMenuLabel>More destinations</KitMenuLabel>
+                {overflow.map(({ section, to, count }) => {
+                  const Icon = section.icon
+                  const overflowLabel = count ? `${section.label}, ${count} open` : section.label
+                  return (
+                    <KitMenuItem key={section.path} value={section.path} label={section.label} aria-label={overflowLabel} render={<Link to={to} aria-label={overflowLabel} />}>
+                      <Icon aria-hidden />
+                      <span className="truncate">{section.label}</span>
+                      {count && <span aria-hidden className="ms-auto rounded-full bg-destructive px-1.5 text-[0.625rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{count}</span>}
+                    </KitMenuItem>
+                  )
+                })}
+              </MenuGroup>
+            </KitMenuContent>
+          </Menu>
+        )}
+      </Toolbar>
+    </nav>
+  )
+}
+
 /**
  * The workbench shell: a slim rail and the perspective's sidebar on one quiet tint, the page flat on
  * the background beside them under one bar (breadcrumbs, search, the perspective switch), and the
  * inspector and assistant docked on the end side.
  */
-export function Shell(props: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
-  return <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
+export function Shell(props: {
+  readonly sections: readonly Section[]
+  readonly tools?: ReactNode
+  readonly assistant?: AssistantContent
+  readonly account: Account
+  readonly onSignOut: () => void
+  readonly initialSkin?: Skin
+  readonly initialShell?: ShellChrome
+}) {
+  return (
+    <AppearanceProvider initialSkin={props.initialSkin} initialShell={props.initialShell}>
+      <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
+    </AppearanceProvider>
+  )
 }
 
 /**
@@ -745,38 +1141,72 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
     }
   }, [open, isMobile])
 
+  const { shell } = useAppearance()
+  const isDock = shell === "dock"
+
   return (
     <>
-      <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-none!">
-        <div className="flex size-full min-w-0 flex-row bg-shell">
-          <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account}
-            onSignOut={onSignOut} assistant={assistant} railRef={railRef}
-            onExpandSection={expandSection} />
-          <div ref={sidebarPanelRef} className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-            <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname}
-              chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} />
+      {!isDock && (
+        <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-none!">
+          <div className="flex size-full min-w-0 flex-row bg-shell">
+            <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account}
+              onSignOut={onSignOut} assistant={assistant} railRef={railRef}
+              onExpandSection={expandSection} />
+            <div ref={sidebarPanelRef} className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+              <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname}
+                chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} />
+            </div>
           </div>
-        </div>
-      </Sidebar>
-      <SidebarInset className="min-w-0 flex-row overflow-clip bg-background md:my-2 md:me-2 md:ms-0 md:rounded-shell md:border md:border-border/90 md:shadow-shell">
+        </Sidebar>
+      )}
+      <SidebarInset className={cn(
+        "min-w-0 flex-row overflow-clip bg-background",
+        !isDock && "md:my-2 md:me-2 md:ms-0 md:rounded-shell md:border md:border-border/90 md:shadow-shell",
+      )}>
         <div className="@container flex min-w-0 flex-1 flex-col">
-          <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b border-border/80 bg-background/95 px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-lg text-muted-foreground" />
-              <div className="hidden min-w-0 overflow-hidden @[17rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
-            </div>
-            <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
-            <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
-              <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
-              <BarButtons tools={tools} />
-            </div>
-          </header>
+          {isDock
+            ? (
+              <header data-slot="dock-topbar" className="flex h-[4.4rem] shrink-0 items-center gap-3 bg-background px-6 md:px-8">
+                <Link to="/" aria-label="Norn Studio home" className="flex size-8 shrink-0 items-center justify-center rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
+                  <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain" />
+                </Link>
+                <ScopeSwitcher variant="pill" />
+                <div className="hidden min-w-0 overflow-hidden @[36rem]:block">{current && current.path !== "/" && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
+                <div className="ms-auto flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 justify-center @3xl:w-52"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
+                  <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
+                  {tools}
+                  <Popover>
+                    <PopoverTrigger aria-label="Notifications" className={iconButton}><Bell aria-hidden /></PopoverTrigger>
+                    <KitPopoverContent align="end">
+                      <PopoverTitle className="mb-1 text-sm font-medium">Notifications</PopoverTitle>
+                      <p className="text-sm text-muted-foreground">Nothing yet.</p>
+                    </KitPopoverContent>
+                  </Popover>
+                  <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="topbar" />
+                </div>
+              </header>
+            )
+            : (
+              <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b border-border/80 bg-background/95 px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-lg text-muted-foreground" />
+                  <div className="hidden min-w-0 overflow-hidden @[17rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
+                </div>
+                <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
+                <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
+                  <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
+                  <BarButtons tools={tools} />
+                </div>
+              </header>
+            )}
           <ConnectionBanner />
-          <div className="mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"><Outlet /></div>
+          <div className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"}><Outlet /></div>
         </div>
         <Inspector />
         <AssistantPanel assistant={assistant} />
       </SidebarInset>
+      {isDock && <FloatingDock sections={sections} perspective={perspective} navigation={navigation} current={current} assistant={assistant} />}
     </>
   )
 }
@@ -784,6 +1214,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
 /** The shell in the reader's direction: in Arabic the rail docks on the right. */
 function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
   const { locale } = useLocale()
+  const { shell } = useAppearance()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const navigate = useNavigate()
   const chosen = usePerspective()
@@ -799,7 +1230,7 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
   useHashScroll()
   return (
     <ViewProvider><InspectorProvider><TooltipProvider>
-      <SidebarProvider data-shell="workbench" data-density={density} className="bg-shell" style={{ "--sidebar-width": "17rem", "--sidebar-width-icon": "3rem" } as CSSProperties}>
+      <SidebarProvider data-shell={shell} data-density={density} className="bg-shell" style={{ "--sidebar-width": "17rem", "--sidebar-width-icon": "3rem" } as CSSProperties}>
         <WorkbenchFrame sections={sections} tools={tools} assistant={assistant} account={account} onSignOut={onSignOut}
           locale={locale} pathname={pathname} perspective={perspective} navigation={navigation} current={current} switchTo={switchTo} />
       </SidebarProvider>

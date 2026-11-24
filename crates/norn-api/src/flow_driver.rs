@@ -21,7 +21,7 @@ use norn_cell::engine::SqlEngine;
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{
     CellCommit, CommandId, Consumed, DecisionTurn, EnvelopeLimits, FactEvent, FactKey, Generation,
-    LogicalTime, World,
+    LogicalTime, TurnEnvelopeLimits, TurnEnvelopeMeter, World,
 };
 
 use norn_cell::flow_run::RunStarter;
@@ -61,7 +61,8 @@ fn refused(code: &str, message: &str) -> Refusal {
 ///
 /// # Errors
 /// The run object is gone; the rule refused the turn (`run.turn_refused`,
-/// `run.flow_inadmissible`); the kernel refused its output; a host failure.
+/// `run.flow_inadmissible`); the kernel refused its output (`422` without
+/// disclosing flow run operands); a host failure.
 pub(crate) fn result_turn<E: SqlEngine>(
     cell: &ActionCell<E>,
     flow: &InstalledFlow,
@@ -110,12 +111,16 @@ pub(crate) fn result_turn<E: SqlEngine>(
             generation: delivery.generation,
         }),
     };
-    norn_kernel::decision_cell_commit::<_, _, _, norn_cell::CellError>(
-        &catalog,
-        &slice,
-        &turn,
-        &output,
-        &EnvelopeLimits::V1,
+    let mut meter = TurnEnvelopeMeter::with_limits(
+        EnvelopeLimits::V1,
+        TurnEnvelopeLimits {
+            max_events: u64::from(EnvelopeLimits::V1.max_events),
+            max_commands: u64::from(EnvelopeLimits::V1.max_commands),
+            max_timers: u64::from(EnvelopeLimits::V1.max_timers),
+        },
+    );
+    norn_kernel::decision_cell_commit_with_host_and_meter(
+        cell, &catalog, &slice, &turn, &output, &mut meter,
     )
     .map_err(|refusal| refused(refusal.code(), "the flow's result turn was refused"))
 }

@@ -7,6 +7,7 @@
     "code": "object.not_found",
     "category": "visibility",
     "message": "no such readable object",
-    "explanation": "the object does not exist or is not readable by this principal"
+    "explanation": "the object does not exist or is not readable by this principal",
+    "decidedAt": "2027-01-15T08:00:00Z"
   }
 }

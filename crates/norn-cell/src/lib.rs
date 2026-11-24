@@ -30,6 +30,7 @@
 //!   commit consumes.
 
 pub mod analytics;
+pub mod automation_outbox;
 pub mod catalog;
 pub mod cell_identity;
 pub mod classification;
@@ -49,6 +50,7 @@ pub mod fork;
 mod history;
 mod history_selection;
 pub mod host;
+mod link_guard;
 mod link_laws;
 pub mod mapping_bundle;
 pub mod mapping_conflict;

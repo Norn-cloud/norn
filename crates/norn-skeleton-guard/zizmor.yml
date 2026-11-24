@@ -4,10 +4,6 @@
 # Every other ignore is a `# zizmor: ignore[..]` comment on the workflow line itself. These are
 # lines where no comment can go, because a gate pins their text byte for byte.
 #
-# dangerous-triggers, ci-policy.yml `pull_request_target` and `issue_comment`: the `on:` block
-# is pinned by verification/coverage-v1/fixtures/pull-request-concurrency.json. The
-# trusted-policy job checks out the candidate only as data and runs base-owned code on it.
-#
 # template-injection: expressions inside actions/github-script `script:` bodies that
 # verification/coverage-v1/validate.py and negative_canaries.py pin. None expands
 # attacker-controlled text:
@@ -18,17 +14,13 @@
 # - job.status: GitHub's success/failure/cancelled enum.
 # Moving a pinned line means moving its entry here in the same gated PR.
 rules:
-  dangerous-triggers:
-    ignore:
-      - ci-policy.yml:6
-      - ci-policy.yml:8
   template-injection:
     ignore:
-      - ci-policy.yml:492
-      - ci-policy.yml:528
-      - ci-policy.yml:537
-      - ci-policy.yml:554
-      - ci-policy.yml:560
+      - trusted-policy.yml:83
+      - trusted-policy.yml:119
+      - trusted-policy.yml:128
+      - trusted-policy.yml:145
+      - trusted-policy.yml:151
       - trusted-merge-group.yml:56
       - trusted-merge-group.yml:57
       - trusted-merge-group.yml:105

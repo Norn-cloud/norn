@@ -24,8 +24,7 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_cell::decision_ledger::{
-    DecisionRequest, DecisionResolved, DecisionRow, MAX_EXPIRES_IN_MS, MAX_TEXT_CHARS,
-    OptionEffect, Resolution,
+    DecisionRequest, DecisionResolved, DecisionRow, MAX_EXPIRES_IN_MS, OptionEffect, Resolution,
 };
 use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
@@ -39,11 +38,13 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::approvals::{CallState, HeldCall};
 use crate::authz::{AccessRequest, Operation, ReadCapability, ReadRequest};
+pub use crate::decision_refusal::DECISION_REFUSAL_ACTION;
+use crate::decision_refusal::check_answer;
 use crate::flow_definitions::DECISION_FUNCTION;
 use crate::flow_driver::{AsStarter, Delivery, result_turn};
 use crate::host::{ActionCell, DevHost};
 use crate::question_routes::{QuestionRuntime, handle_key, world_values};
-use crate::refusal::{Refusal, RefusalDiagnostic, RefusalSpan, codes};
+use crate::refusal::Refusal;
 use crate::run_routes::{FlowView, InstalledFlow, ReadAccess, installed_flow};
 use crate::scope::ScopeQuery;
 
@@ -457,25 +458,6 @@ pub fn not_found() -> Refusal {
         "no such decision",
         "no open decision with this id is waiting on the caller",
     )
-}
-
-fn at(code: &str, pointer: &str, message: &str) -> Refusal {
-    let mut refusal = Refusal::new(
-        StatusCode::UNPROCESSABLE_ENTITY,
-        code,
-        message,
-        "correct the field and decide again",
-    );
-    refusal.diagnostics = vec![RefusalDiagnostic {
-        code: code.to_owned(),
-        severity: "error".to_owned(),
-        message: message.to_owned(),
-        span: Some(RefusalSpan {
-            pointer: pointer.to_owned(),
-        }),
-        law: None,
-    }];
-    refusal
 }
 
 /// The decision id of a parked command at a generation: opaque, and bound to
@@ -1351,7 +1333,7 @@ fn decide_held<E: SqlEngine>(
             "its deadline passed before anyone decided",
         )));
     }
-    check_answer(&decision, body)?;
+    check_answer(host, actor, &cell, &decision, body)?;
     let recorded = match &decision.call {
         None => record(&mut cell, &decision, body, actor, now)?,
         Some(held) => record_call(&mut cell, &decision, held, body, actor)?,
@@ -1466,53 +1448,6 @@ pub struct DecideCall<'a> {
     pub body: &'a DecideRequest,
     /// The host's clock.
     pub now: LogicalTime,
-}
-
-/// The answer's own refusals, in the contract's order: an unevaluable
-/// decider law, an unknown choice, a long note, a bad idempotency key.
-fn check_answer(decision: &OpenDecision, body: &DecideRequest) -> Result<(), Refusal> {
-    if decision.request.decider.law.is_some() {
-        // No decider law is evaluated on this host yet: fail closed.
-        return Err(Refusal::new(
-            StatusCode::FORBIDDEN,
-            decision_codes::LAW_NOT_SATISFIED,
-            "the decider law is not satisfied",
-            "this decision names a law the cell cannot evaluate for the caller",
-        ));
-    }
-    if !decision
-        .request
-        .options
-        .iter()
-        .any(|option| option.id == body.choice)
-    {
-        return Err(at(
-            decision_codes::UNKNOWN_CHOICE,
-            "/choice",
-            "choice names no option of this decision",
-        ));
-    }
-    if body
-        .note
-        .as_deref()
-        .is_some_and(|note| note.chars().count() > MAX_TEXT_CHARS)
-    {
-        return Err(at(
-            decision_codes::NOTE_TOO_LONG,
-            "/note",
-            "the note is longer than 500 characters",
-        ));
-    }
-    if body.idempotency_key.trim().is_empty()
-        || body.idempotency_key.len() > MAX_IDEMPOTENCY_KEY_BYTES
-    {
-        return Err(at(
-            codes::INVALID_REQUEST,
-            "/idempotencyKey",
-            "idempotencyKey must be 1-128 bytes",
-        ));
-    }
-    Ok(())
 }
 
 /// Record `actor`'s answer and move the run: the flow's result turn is

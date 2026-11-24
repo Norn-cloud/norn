@@ -34,17 +34,45 @@ pub fn id() -> Option<String> {
     try_id().ok()
 }
 
-/// The response for `refused`. An internal refusal is logged with its cause
-/// and carries the incident id; any other refusal is served unchanged.
+/// Format a Unix timestamp in seconds as RFC 3339 UTC (`YYYY-MM-DDTHH:MM:SSZ`),
+/// using Howard Hinnant's civil-from-days algorithm.
 #[must_use]
-pub fn respond(refused: Refusal) -> Response {
-    respond_with(refused, try_id)
+#[allow(
+    clippy::arithmetic_side_effects,
+    reason = "bounded calendar decomposition over u64 Unix seconds in i128"
+)]
+pub fn format_utc(unix_secs: u64) -> String {
+    let secs_per_day: u64 = 86_400;
+    let days = unix_secs / secs_per_day;
+    let rem = unix_secs % secs_per_day;
+    let hour = rem / 3_600;
+    let minute = (rem % 3_600) / 60;
+    let second = rem % 60;
+    let z = i128::from(days) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
-fn respond_with(
-    mut refused: Refusal,
+/// Prepare `refused` at the server boundary: log internal causes under a fresh
+/// incident id (INCIDENT-1) and stamp `decidedAt` when a host clock (`now` in
+/// Unix seconds) is provided.
+pub fn prepare(refused: &mut Refusal, now: Option<u64>) {
+    prepare_with(refused, now, try_id);
+}
+
+fn prepare_with(
+    refused: &mut Refusal,
+    now: Option<u64>,
     next_id: impl FnOnce() -> Result<String, String>,
-) -> Response {
+) {
     if refused.is_internal() {
         let seq = NEXT.fetch_add(1, Ordering::Relaxed);
         let cause = refused
@@ -71,6 +99,34 @@ fn respond_with(
             }
         }
     }
+    if let Some(now) = now {
+        refused.set_decided_at(format_utc(now));
+    }
+}
+
+/// The response for `refused`. An internal refusal is logged with its cause
+/// and carries the incident id; any other refusal is served unchanged.
+#[must_use]
+pub fn respond(refused: Refusal) -> Response {
+    respond_with(refused, try_id)
+}
+
+fn respond_with(
+    mut refused: Refusal,
+    next_id: impl FnOnce() -> Result<String, String>,
+) -> Response {
+    prepare_with(&mut refused, None, next_id);
+    Response {
+        status: refused.status,
+        body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
+    }
+}
+
+/// The response for `refused`, stamped with `decidedAt` from the host clock
+/// (`now`, Unix seconds) and logged under an incident id when internal.
+#[must_use]
+pub fn respond_at(mut refused: Refusal, now: u64) -> Response {
+    prepare(&mut refused, Some(now));
     Response {
         status: refused.status,
         body: serde_json::to_string(&refused).unwrap_or_else(|_| String::from("{}")),
@@ -157,14 +213,22 @@ fn random_bytes() -> Result<[u8; 16], String> {
 pub fn recent() -> Vec<String> {
     sink::recent()
 }
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests {
-    use super::*;
+    use super::format_utc;
 
     #[test]
+    fn formats_unix_seconds_as_rfc3339_utc() {
+        assert_eq!(format_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format_utc(1_800_000_000), "2027-01-15T08:00:00Z");
+        // Leap day: 2024-02-29T23:59:59Z
+        assert_eq!(format_utc(1_709_251_199), "2024-02-29T23:59:59Z");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn entropy_failure_preserves_internal_refusal_without_issuing_id() {
-        let response = respond_with(Refusal::host("storage fault"), || {
+        let response = super::respond_with(super::Refusal::host("storage fault"), || {
             Err(String::from("rng offline"))
         });
         assert_eq!(response.status, 500, "{}", response.body);
@@ -178,7 +242,7 @@ mod tests {
             "cause must never leak: {}",
             response.body
         );
-        let logged = recent();
+        let logged = super::recent();
         assert!(
             logged.iter().any(|line| {
                 line.contains("entropy failed: rng offline")

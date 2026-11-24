@@ -648,3 +648,21 @@ pub const SYSTEM_DDL: &[&str] = &[
     // OPEN-CHECKPOINT-1 (#1533), storage version 6.
     crate::open_checkpoint::DDL,
 ];
+
+/// Ensure every core, flow, decision-ledger, due-retry, and automation-outbox
+/// system table exists (idempotent DDL).
+pub(crate) fn init_core_tables<E: crate::engine::SqlEngine>(
+    conn: &E,
+) -> Result<(), crate::CellError> {
+    for statement in SYSTEM_DDL
+        .iter()
+        .chain(&crate::flow_run::DDL)
+        .chain(&crate::decision_ledger::DDL)
+        .chain(&crate::due_retry::DDL)
+        .chain(&crate::automation_outbox::DDL)
+    {
+        conn.execute_batch(statement)?;
+    }
+    conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
+    Ok(())
+}

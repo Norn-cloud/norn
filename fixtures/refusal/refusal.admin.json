@@ -23,6 +23,7 @@
     "code": "core.laws.violated",
     "category": "precondition",
     "message": "a declared precondition does not hold",
-    "explanation": "docs.ScannedDocument/SCAN-INV-1041: core.laws.violated: canon.ItemizedDocument.total_matches_lines: A document's total must equal the sum of its lines; when they differ, a digit was usually misread or a decimal point dropped."
+    "explanation": "docs.ScannedDocument/SCAN-INV-1041: core.laws.violated: canon.ItemizedDocument.total_matches_lines: A document's total must equal the sum of its lines; when they differ, a digit was usually misread or a decimal point dropped.",
+    "decidedAt": "2027-01-15T08:00:00Z"
   }
 }

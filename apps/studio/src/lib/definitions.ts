@@ -1,5 +1,5 @@
 import { createContext, use } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { QueryClientContext, queryOptions, useQuery } from "@tanstack/react-query"
 import { z } from "zod"
 
 /**
@@ -95,6 +95,246 @@ export const NO_DATA_CELL = "This workspace has no data cell yet."
 export class StudioScopeError extends Error {}
 const accountScope = z.object({ organization: z.object({ id: z.string().min(1) }).nullable(), environmentId: z.string().min(1).nullable() })
 
+/** Structured refusal metadata preserved when a cell answers with `norn/refusal@2` or times out. */
+export interface UnavailableDetail {
+  readonly code?: string
+  readonly retryable?: boolean
+  readonly explanation?: string
+  readonly incidentId?: string
+  readonly category?: string
+  readonly timedOut?: boolean
+  readonly decidedAt?: string
+}
+
+/** Parse structured fields from a `norn/refusal@2` (or Worker error) JSON object. */
+export function parseUnavailableDetail(body: unknown): UnavailableDetail {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return {}
+  const record = body as Record<string, unknown>
+  const explanation = typeof record.explanation === "string" && record.explanation !== ""
+    ? record.explanation
+    : typeof record.error === "string" && record.error !== "" ? record.error : undefined
+  return {
+    ...(typeof record.code === "string" ? { code: record.code } : {}),
+    ...(typeof record.retryable === "boolean" ? { retryable: record.retryable } : {}),
+    ...(explanation !== undefined ? { explanation } : {}),
+    ...(typeof record.incidentId === "string" && record.incidentId !== "" ? { incidentId: record.incidentId } : {}),
+    ...(typeof record.category === "string" ? { category: record.category } : {}),
+    ...(typeof record.decidedAt === "string" && record.decidedAt !== "" ? { decidedAt: record.decidedAt } : {}),
+  }
+}
+
+const REACHABLE_KEY = "norn.cell.lastReachableAt"
+const reachableByScope = new Map<string, number>()
+
+const reachableStorageKey = (scope: StudioScope): string => `${REACHABLE_KEY}:${studioScopeKey(scope)}`
+
+/** Record that `scope`'s workspace cell answered cleanly at `at` (Unix ms). */
+export function recordCellReachable(scope: StudioScope | null | undefined, at = Date.now()): void {
+  if (scope == null) return
+  const key = studioScopeKey(scope)
+  reachableByScope.set(key, at)
+  try { globalThis.sessionStorage?.setItem(reachableStorageKey(scope), String(at)) } catch { /* storage blocked or SSR */ }
+}
+
+/** The last instant (Unix ms) `scope`'s workspace cell answered cleanly in this session, if any. */
+export function lastReachableAt(scope: StudioScope | null | undefined): number | null {
+  if (scope == null) return null
+  const key = studioScopeKey(scope)
+  const cached = reachableByScope.get(key)
+  if (cached !== undefined) return cached
+  try {
+    const stored = globalThis.sessionStorage?.getItem(reachableStorageKey(scope))
+    if (stored) {
+      const parsed = Number(stored)
+      if (Number.isFinite(parsed) && parsed > 0) { reachableByScope.set(key, parsed); return parsed }
+    }
+  } catch { /* storage blocked or SSR */ }
+  return null
+}
+
+/** Reset remembered reachability across all scopes (for tests). */
+export function resetCellReachable(): void {
+  reachableByScope.clear()
+  try {
+    const storage = globalThis.sessionStorage
+    if (!storage) return
+    const toRemove: string[] = []
+    for (let i = 0; i < storage.length; i += 1) {
+      const key = storage.key(i)
+      if (key !== null && (key === REACHABLE_KEY || key.startsWith(`${REACHABLE_KEY}:`))) {
+        toRemove.push(key)
+      }
+    }
+    for (const key of toRemove) storage.removeItem(key)
+  } catch { /* ignore */ }
+}
+
+/** Default per-request deadline (ms) for idempotent reads so a hung host never spins a surface forever. */
+export const CELL_FETCH_TIMEOUT_MS = 12_000
+
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
+const NULL_BODY_STATUSES = new Set([101, 204, 205, 304])
+
+/** Whether an HTTP method is an idempotent read eligible for the default read deadline. */
+export function isReadMethod(method?: string): boolean {
+  return method === undefined || READ_METHODS.has(method.toUpperCase())
+}
+
+/** RequestInit with an optional per-call deadline override (reads only; writes supply their own deadline). */
+export type ScopedRequestInit = RequestInit & { readonly timeoutMs?: number }
+
+const timeoutError = (): CellUnavailable =>
+  new CellUnavailable(0, "The workspace did not answer in time.", { timedOut: true, retryable: true, code: "cell.timeout" })
+
+/**
+ * Bound one fetch call with a deadline that stays active through response body consumption,
+ * preserving any caller-supplied AbortSignal. Unexpected transport/stream errors normalize into a
+ * retryable `CellUnavailable(0)` unless the caller aborted the request.
+ */
+export async function fetchWithTimeout(
+  fetcher: Fetch,
+  input: string,
+  init?: RequestInit,
+  timeoutMs = CELL_FETCH_TIMEOUT_MS,
+  onComplete?: () => void,
+): Promise<Response> {
+  const callerSignal = init?.signal
+  if (callerSignal?.aborted) {
+    throw callerSignal.reason ?? new DOMException("Aborted", "AbortError")
+  }
+  const controller = new AbortController()
+  let timedOut = false
+  let cleaned = false
+  const onCallerAbort = () => controller.abort(callerSignal?.reason ?? new DOMException("Aborted", "AbortError"))
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort(new DOMException("Timed out", "TimeoutError"))
+  }, timeoutMs)
+  const cleanup = () => {
+    if (cleaned) return
+    cleaned = true
+    clearTimeout(timer)
+    callerSignal?.removeEventListener("abort", onCallerAbort)
+  }
+  callerSignal?.addEventListener("abort", onCallerAbort, { once: true })
+
+  let response: Response
+  try {
+    response = await fetcher(input, { ...init, signal: controller.signal })
+  } catch (error) {
+    cleanup()
+    if (callerSignal?.aborted) throw error
+    const isTimeout = timedOut
+      || controller.signal.aborted
+      || (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
+      || (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"))
+    if (isTimeout) throw timeoutError()
+    if (error instanceof CellUnavailable || error instanceof StudioScopeError) throw error
+    throw new CellUnavailable(0, undefined, { retryable: true })
+  }
+
+  if (response.body === null || NULL_BODY_STATUSES.has(response.status)) {
+    cleanup()
+    if (response.ok) onComplete?.()
+    return response
+  }
+
+  const reader = response.body.getReader()
+  const abortReason = (): unknown =>
+    callerSignal?.aborted
+      ? (callerSignal.reason ?? new DOMException("Aborted", "AbortError"))
+      : timeoutError()
+
+  let onAbort: (() => void) | null = null
+  let streamFailure: unknown = undefined
+  const finish = () => {
+    if (onAbort !== null) {
+      controller.signal.removeEventListener("abort", onAbort)
+      onAbort = null
+    }
+    cleanup()
+  }
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(streamController) {
+      onAbort = () => {
+        const reason = abortReason()
+        streamFailure = reason
+        finish()
+        void reader.cancel(reason).catch(() => {})
+        try { streamController.error(reason) } catch { /* already closed or errored */ }
+      }
+      if (controller.signal.aborted) {
+        onAbort()
+        return
+      }
+      controller.signal.addEventListener("abort", onAbort, { once: true })
+    },
+    async pull(streamController) {
+      if (controller.signal.aborted) {
+        const reason = abortReason()
+        streamFailure = reason
+        finish()
+        void reader.cancel(reason).catch(() => {})
+        try { streamController.error(reason) } catch { /* already closed or errored */ }
+        return
+      }
+      try {
+        const { done, value } = await reader.read()
+        if (controller.signal.aborted) {
+          const reason = abortReason()
+          streamFailure = reason
+          finish()
+          void reader.cancel(reason).catch(() => {})
+          try { streamController.error(reason) } catch { /* already closed or errored */ }
+          return
+        }
+        if (done) {
+          finish()
+          if (response.ok) onComplete?.()
+          try { streamController.close() } catch { /* already closed */ }
+          return
+        }
+        streamController.enqueue(value)
+      } catch (error) {
+        finish()
+        const normalized = callerSignal?.aborted
+          ? error
+          : (timedOut || controller.signal.aborted
+            ? timeoutError()
+            : (error instanceof CellUnavailable || error instanceof StudioScopeError
+              ? error
+              : new CellUnavailable(0, undefined, { retryable: true })))
+        streamFailure = normalized
+        try { streamController.error(normalized) } catch { /* already errored */ }
+      }
+    },
+    async cancel(reason) {
+      finish()
+      await reader.cancel(reason).catch(() => {})
+    },
+  })
+
+  const wrapped = new Response(stream, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  })
+  // Chromium's BodyStreamBuffer may rewrite custom ReadableStream errors into generic TypeErrors
+  // during .text()/.json()/.arrayBuffer(); rethrow the exact bound timeout/abort failure instead.
+  const preserveFailure = (error: unknown): never => {
+    if (streamFailure !== undefined) throw streamFailure
+    throw error
+  }
+  const rawText = wrapped.text.bind(wrapped)
+  wrapped.text = () => rawText().catch(preserveFailure)
+  const rawJson = wrapped.json.bind(wrapped)
+  wrapped.json = () => rawJson().catch(preserveFailure)
+  const rawArrayBuffer = wrapped.arrayBuffer.bind(wrapped)
+  wrapped.arrayBuffer = () => rawArrayBuffer().catch(preserveFailure)
+  return wrapped
+}
+
 /** Stable cache key for one server-reported `(orgId, environmentId)` scope. */
 export function studioScopeKey(scope: StudioScope | null | undefined): string {
   return scope == null ? "none" : JSON.stringify([scope.orgId, scope.environmentId])
@@ -108,25 +348,55 @@ export function sameStudioScope(a: StudioScope | null | undefined, b: StudioScop
 
 /** Read the active workspace and its cell from the signed-in server session. */
 export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init), signal?: AbortSignal): Promise<StudioScope | null> {
+  signal?.throwIfAborted()
   let response: Response
-  try { response = await fetcher("/api/me", { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) }) }
-  catch (error) {
-    if (signal?.aborted) throw error
-    throw new CellUnavailable(0)
+  let text: string
+  try {
+    response = await fetchWithTimeout(fetcher, "/api/me", { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) })
+    text = await response.text()
+  } catch (error) {
+    signal?.throwIfAborted()
+    if (error instanceof Error && error.name === "AbortError") throw error
+    if (error instanceof CellUnavailable) throw error
+    throw new CellUnavailable(0, undefined, { retryable: true })
   }
-  if (!response.ok) throw new CellUnavailable(response.status)
-  const parsed = accountScope.safeParse(await response.json().catch(() => null))
+  signal?.throwIfAborted()
+  let body: unknown = null
+  try { body = JSON.parse(text) } catch { body = null }
+  if (!response.ok) {
+    throw new CellUnavailable(response.status, typeof (body as { message?: unknown } | null)?.message === "string" ? (body as { message: string }).message : undefined, parseUnavailableDetail(body))
+  }
+  const parsed = accountScope.safeParse(body)
   if (!parsed.success) throw new StudioScopeError("The server did not report the active workspace scope.")
   const { organization, environmentId } = parsed.data
   return organization === null || environmentId === null ? null : { orgId: organization.id, environmentId }
 }
 
-export function useStudioScope() {
-  return useQuery({ queryKey: ["studio-scope"], queryFn: () => readStudioScope(), retry: false })
+export function studioScopeQuery() {
+  return queryOptions({
+    queryKey: ["studio-scope"],
+    queryFn: ({ signal }) => readStudioScope(undefined, signal),
+    retry: false,
+  })
 }
 
-/** Every scoped host call uses a fresh server-reported scope. The host still authorizes the request. */
-export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: ScopeProvider = () => readStudioScope()): Fetch {
+export function useStudioScope() {
+  return useQuery(studioScopeQuery())
+}
+
+/** The currently cached server-reported workspace scope, without triggering a fetch if absent. */
+export function useCachedStudioScope(): StudioScope | null {
+  const client = use(QueryClientContext)
+  return client?.getQueryData<StudioScope | null>(["studio-scope"]) ?? null
+}
+
+/**
+ * Every scoped host call uses a fresh server-reported scope. The host still authorizes the request.
+ * Idempotent reads (`GET`/`HEAD`/`OPTIONS`) are bounded by the read deadline (`CELL_FETCH_TIMEOUT_MS`
+ * or `init.timeoutMs`) through body completion. Mutating writes (`POST`/`PUT`/`PATCH`/`DELETE`)
+ * are never cut off by the 12 s read deadline and keep their own declared deadline and signal.
+ */
+export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: ScopeProvider = () => readStudioScope()): (input: string, init?: ScopedRequestInit) => Promise<Response> {
   return async (path, init) => {
     const active = await scope()
     if (active === null) throw new StudioScopeError(NO_DATA_CELL)
@@ -134,7 +404,14 @@ export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: Scope
     const query = new URLSearchParams(search)
     query.set("orgId", active.orgId)
     query.set("environmentId", active.environmentId)
-    return fetcher(`${base}${pathname}?${query}`, init)
+    const url = `${base}${pathname}?${query}`
+    const { timeoutMs, ...requestInit } = init ?? {}
+    if (isReadMethod(requestInit.method)) {
+      return fetchWithTimeout(fetcher, url, init === undefined ? undefined : requestInit, timeoutMs ?? CELL_FETCH_TIMEOUT_MS, () => recordCellReachable(active))
+    }
+    const response = await fetcher(url, init === undefined ? undefined : requestInit)
+    if (response.ok) recordCellReachable(active)
+    return response
   }
 }
 const findingsOf = (body: unknown): readonly Finding[] => {
@@ -144,9 +421,24 @@ const findingsOf = (body: unknown): readonly Finding[] => {
 
 /** Thrown when the cell answered with neither a decision nor a refusal it documents: nothing was saved. */
 export class CellUnavailable extends Error {
-  constructor(readonly status: number, message?: string) {
+  readonly code: string | undefined
+  readonly retryable: boolean | undefined
+  readonly explanation: string | undefined
+  readonly incidentId: string | undefined
+  readonly category: string | undefined
+  readonly timedOut: boolean | undefined
+  readonly decidedAt: string | undefined
+
+  constructor(readonly status: number, message?: string, detail: UnavailableDetail = {}) {
     // A 404 is a cell without the definition route yet; anything else is a cell that did not answer. Neither saved nor read anything.
     super(message ?? (status === 401 ? "Sign in again." : status === 403 ? "Your role may not read or change these definitions." : status === 404 ? "The cell's definition route isn't connected yet; nothing was read or saved." : `The cell did not answer (${status || "network"}); nothing was read or saved.`))
+    this.code = detail.code
+    this.retryable = detail.retryable
+    this.explanation = detail.explanation
+    this.incidentId = detail.incidentId
+    this.category = detail.category
+    this.timedOut = detail.timedOut
+    this.decidedAt = detail.decidedAt
   }
 }
 
@@ -187,16 +479,20 @@ export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host", scop
     if (status === 422 && b?.code === "definition.refused") return { installed: false, findings: findingsOf(b) }
     if (status === 409 && b?.code === "definition.version_conflict") return { installed: false, conflict: true }
     if (status === 404) throw new NotConnected()
-    throw new CellUnavailable(status)
+    const detail = parseUnavailableDetail(body)
+    const message = typeof (body as { message?: unknown } | null)?.message === "string" ? (body as { message: string }).message : undefined
+    throw new CellUnavailable(status, message, detail)
   }
   return {
     list: async (cursor) => {
       // A custom method: GET /v1/definitions is the catalog read. The cursor is bound to kind (and include).
       const query = new URLSearchParams({ kind: KIND, limit: "50", ...cursor ? { cursor } : {} })
       const { status, body } = await read(`/v1/definitions:list?${query}`)
-      const b = body as { items?: unknown; definitions?: unknown; cursor?: unknown } | null
+      const b = body as { items?: unknown; definitions?: unknown; cursor?: unknown; message?: unknown } | null
       const rows = Array.isArray(b?.items) ? b.items : Array.isArray(b?.definitions) ? b.definitions : undefined
-      if (status !== 200 || rows === undefined) throw new CellUnavailable(status, status === 404 ? "Dashboards can't be listed yet: the cell has no route to read them back." : undefined)
+      if (status !== 200 || rows === undefined) {
+        throw new CellUnavailable(status, status === 404 ? "Dashboards can't be listed yet: the cell has no route to read them back." : typeof b?.message === "string" ? b.message : undefined, parseUnavailableDetail(body))
+      }
       return {
         items: rows.map((row: { id: string; title?: string; version: number; lifecycle?: string; updatedAtMs?: number }) => ({ id: row.id, title: row.title ?? "", version: row.version, lifecycle: row.lifecycle ?? "", updatedAtMs: row.updatedAtMs ?? 0 })),
         cursor: typeof b?.cursor === "string" ? b.cursor : null,
@@ -204,16 +500,18 @@ export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host", scop
     },
     get: async (id) => {
       const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`)
-      const b = body as { id?: unknown; kind?: unknown; version?: unknown; payload?: unknown; code?: unknown } | null
+      const b = body as { id?: unknown; kind?: unknown; version?: unknown; payload?: unknown; code?: unknown; message?: unknown } | null
       if (status === 404 && b?.code === "definition.not_found") return undefined
-      if (status !== 200 || typeof b?.version !== "number" || !isDashboard(b.payload)) throw new CellUnavailable(status, status === 404 ? "Dashboards can't be reopened yet: the cell has no route to read them back." : undefined)
+      if (status !== 200 || typeof b?.version !== "number" || !isDashboard(b.payload)) {
+        throw new CellUnavailable(status, status === 404 ? "Dashboards can't be reopened yet: the cell has no route to read them back." : typeof b?.message === "string" ? b.message : undefined, parseUnavailableDetail(body))
+      }
       return { id: String(b.id ?? id), version: b.version, dashboard: b.payload }
     },
     admit: async (id, dashboard) => {
       const { status, body } = await post("/v1/definitions:admit", { kind: KIND, id, payload: dashboard })
-      const b = body as { admitted?: unknown } | null
+      const b = body as { admitted?: unknown; message?: unknown } | null
       if (status === 404) throw new NotConnected()
-      if (status !== 200 || typeof b?.admitted !== "boolean") throw new CellUnavailable(status)
+      if (status !== 200 || typeof b?.admitted !== "boolean") throw new CellUnavailable(status, typeof b?.message === "string" ? b.message : undefined, parseUnavailableDetail(body))
       return b.admitted ? { admitted: true } : { admitted: false, findings: findingsOf(b) }
     },
     install: async (id, dashboard, expectedVersion) => installed(await post("/v1/definitions:install", { kind: KIND, id, payload: dashboard, ...expectedVersion === undefined ? {} : { expectedVersion } })),

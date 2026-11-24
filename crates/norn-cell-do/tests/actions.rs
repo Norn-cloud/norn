@@ -45,7 +45,85 @@ const VIEWER: &str = "Bearer fixture:viewer@demo";
 const NAMES: &[(&str, &[&str])] = &[("operator@demo", &["member"]), ("viewer@demo", &["viewer"])];
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 const ROUTE: &str = "/v1/actions/constitution.melt.convert";
-const FIXTURE: &str = include_str!("../../../apps/studio/test/fixtures/action-call.json");
+
+fn fixture_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../apps/studio/test/fixtures/action-call.json")
+}
+
+/// Regenerate `apps/studio/test/fixtures/action-call.json` directly from the
+/// live routes when `NORN_BLESS=1` is set, then load it from disk.
+fn load_or_bless_fixture() -> Value {
+    if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
+        let first = cell();
+        let commit_body = melt_body("melt-1", "12", "10", "4b7a2c1e-0000-4000-8000-000000000001");
+        let (commit_status, committed) = post(&first, Some(OPERATOR), &commit_body);
+        assert_eq!(commit_status, 200, "{committed}");
+        let changed = melt_body("melt-1", "12", "9", "4b7a2c1e-0000-4000-8000-000000000001");
+        let (conflict_status, conflict) = post(&first, Some(OPERATOR), &changed);
+        let (invalid_key_status, invalid_key) = post(
+            &first,
+            Some(OPERATOR),
+            r#"{"input":{},"idempotencyKey":""}"#,
+        );
+
+        let second = cell();
+        let refusal_body = melt_body("melt-4", "12", "10", "refusals");
+        let (denied_status, denied) = post(&second, Some(VIEWER), &refusal_body);
+        let (invalid_input_status, invalid_input) = post(
+            &second,
+            Some(OPERATOR),
+            &melt_body("melt-4", "12,5", "10", "invalid-input"),
+        );
+        let (precondition_status, precondition) = post(
+            &second,
+            Some(OPERATOR),
+            &melt_body("melt-4", "4", "9", "precondition"),
+        );
+        let (stale_status, stale) = send(
+            &second,
+            "POST",
+            ROUTE,
+            "orgId=org_demo&environmentId=dev&version=99",
+            Some(OPERATOR),
+            &refusal_body,
+        );
+        let (route_not_found_status, route_not_found) = send(
+            &second,
+            "GET",
+            "/v1/actions/constitution.melt.convert/history",
+            SCOPE,
+            Some(OPERATOR),
+            "",
+        );
+
+        let document = json!({
+            "committed": normalized(committed),
+            "conflict": conflict,
+            "status": {
+                "conflict": conflict_status,
+                "invalidKey": invalid_key_status,
+                "denied": denied_status,
+                "invalidInput": invalid_input_status,
+                "precondition": precondition_status,
+                "stale": stale_status,
+                "routeNotFound": route_not_found_status,
+            },
+            "denied": denied,
+            "invalidInput": invalid_input,
+            "precondition": precondition,
+            "stale": stale,
+            "routeNotFound": route_not_found,
+            "invalidKey": invalid_key,
+        });
+        let path = fixture_path();
+        let text = format!("{}\n", serde_json::to_string_pretty(&document).unwrap());
+        let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
+        std::fs::write(&tmp, &text).unwrap();
+        std::fs::rename(&tmp, &path).unwrap();
+    }
+    serde_json::from_str(&std::fs::read_to_string(fixture_path()).unwrap()).unwrap()
+}
 
 fn key() -> ScopeKey {
     ScopeKey {
@@ -317,7 +395,7 @@ fn normalized(mut receipt: Value) -> Value {
 
 #[test]
 fn studio_call_commits_replays_and_matches_the_client_contract() {
-    let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+    let fixture = load_or_bless_fixture();
     let cell = cell();
     let body = melt_body("melt-1", "12", "10", "4b7a2c1e-0000-4000-8000-000000000001");
     let (status, committed) = post(&cell, Some(OPERATOR), &body);
@@ -353,7 +431,7 @@ fn served(fixture: &Value, name: &str, (status, document): &(u16, Value)) {
 /// documents, so a change to the route fails here until the fixture follows.
 #[test]
 fn studio_refusals_match_the_client_contract() {
-    let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+    let fixture = load_or_bless_fixture();
     let cell = cell();
     let body = melt_body("melt-4", "12", "10", "refusals");
     // An unknown action, an ungranted caller and a foreign scope: one opaque

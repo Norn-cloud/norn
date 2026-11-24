@@ -480,7 +480,8 @@ impl<'a> TypeCatalog<'a> {
             return Ok(submitted.clone());
         };
 
-        let mut values = submitted.clone();
+        crate::decision_links::check_submitted_link_keys(&effective_link.properties, submitted)?;
+        let mut values = JsonObject::new();
         for property in &effective_link.properties {
             if property.computed {
                 continue;
@@ -2452,13 +2453,10 @@ pub fn prepare_decision<X>(
     prepare_decision_with_source_owned_targets(catalog, slice, turn, output, &BTreeSet::new())
 }
 
-/// Prepares a rule decision while refusing direct fact changes to the
-/// source-owned targets resolved by its host. The protected set is supplied
-/// from persisted observation authority markers and trigger provenance.
-/// Native objects of the same type remain writable.
+/// Prepares a rule decision while refusing direct fact changes to
+/// host-supplied source-owned targets.
 ///
 /// # Errors
-///
 /// Refuses a direct change to a source-owned target, or returns the first
 /// ordinary decision admission refusal.
 pub fn prepare_decision_with_source_owned_targets<X>(
@@ -2480,12 +2478,7 @@ pub fn prepare_decision_with_source_owned_targets<X>(
 
 /// Prepares `output` under the supplied per-decision envelope limits.
 ///
-/// Counts are checked before resolving fact changes or allocating the commit
-/// vectors. Aggregate turn limits are enforced by [`commit_decision_with_meter`]
-/// and [`crate::commit_action_with_meter`].
-///
 /// # Errors
-///
 /// The first refusal, in order: world checks, envelope caps, then each fact
 /// change, commands, and timers.
 pub fn prepare_decision_with_limits<X>(
@@ -2513,6 +2506,7 @@ fn prepare_decision_with_limits_and_source_owned_targets<X>(
     limits: &EnvelopeLimits,
     source_owned_targets: &BTreeSet<FactKey>,
 ) -> Result<PreparedDecision, DecisionRefusal<X>> {
+    crate::decision_links::reject_hostless_links(output)?;
     prepare_decision_with_limits_for(
         catalog,
         slice,
@@ -2521,6 +2515,24 @@ fn prepare_decision_with_limits_and_source_owned_targets<X>(
         limits,
         AdmissionOrigin::Command,
         source_owned_targets,
+    )
+}
+
+pub(crate) fn prepare_decision_with_links_validated<X>(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    output: &DecisionOutput,
+    limits: &EnvelopeLimits,
+) -> Result<PreparedDecision, DecisionRefusal<X>> {
+    prepare_decision_with_limits_for(
+        catalog,
+        slice,
+        turn,
+        output,
+        limits,
+        AdmissionOrigin::Command,
+        &BTreeSet::new(),
     )
 }
 
@@ -2668,6 +2680,29 @@ fn prepare_decision_with_limits_for<X>(
         effects.push(Effect::Schedule(timer(turn, index, record)?));
     }
 
+    let (reads, writes) = partition_reads_and_writes(slice, working);
+    crate::decision_links::validate_decision_links(
+        catalog,
+        slice,
+        &writes,
+        output,
+        events.len(),
+        limits,
+    )?;
+    Ok(CellCommit {
+        consumes: turn.consumes.clone(),
+        reads,
+        writes,
+        events,
+        effects,
+        ..CellCommit::empty()
+    })
+}
+
+fn partition_reads_and_writes(
+    slice: &FactSlice,
+    working: BTreeMap<FactKey, Working>,
+) -> (Vec<FactExpectation>, Vec<FactWrite>) {
     let reads = slice
         .iter()
         .filter(|(key, _)| working.get(*key).is_none_or(|entry| !entry.written))
@@ -2687,14 +2722,7 @@ fn prepare_decision_with_limits_for<X>(
                 .map_or(FactMutation::Delete, |values| FactMutation::Put { values }),
         })
         .collect();
-    Ok(CellCommit {
-        consumes: turn.consumes.clone(),
-        reads,
-        writes,
-        events,
-        effects,
-        ..CellCommit::empty()
-    })
+    (reads, writes)
 }
 
 fn output_envelope_counts(output: &DecisionOutput) -> EnvelopeCounts {
@@ -2791,21 +2819,17 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    let commit = decision_cell_commit::<_, _, _, H::Error>(catalog, slice, turn, output, limits)?;
-    let counts = EnvelopeCounts::new(
-        commit.events.len(),
-        output.commands.len(),
-        output.timers.len(),
-    );
-    if let Some(meter) = meter.as_deref() {
-        meter
-            .check(counts)
-            .map_err(|exceeded| DecisionRefusal::TurnEnvelopeExceeded {
-                kind: exceeded.kind,
-                limit: exceeded.limit,
-                actual: exceeded.actual,
-            })?;
-    }
+    let mut commit = crate::decision_links::build_decision_cell_commit::<_, _, _, H::Error>(
+        catalog, slice, turn, output, limits,
+    )?;
+    let counts = crate::decision_links::finalize_decision_commit(
+        host,
+        catalog,
+        slice,
+        output,
+        meter.as_deref(),
+        &mut commit,
+    )?;
     match host.commit(commit) {
         Ok(receipt) => {
             if let Some(meter) = meter {
@@ -2848,39 +2872,11 @@ where
     C: From<JsonObject>,
     T: From<JsonObject>,
 {
-    let prepared = prepare_decision_with_limits(catalog, slice, turn, output, limits)?;
-    Ok(CellCommit {
-        consumes: prepared.consumes,
-        reads: prepared.reads,
-        writes: prepared.writes,
-        events: prepared.events.into_iter().map(Into::into).collect(),
-        effects: prepared.effects.into_iter().map(widen_effect).collect(),
-        links: Vec::new(),
-        link_reads: Vec::new(),
-        predicate_reads: Vec::new(),
-    })
+    crate::decision_links::reject_hostless_links(output)?;
+    crate::decision_links::build_decision_cell_commit(catalog, slice, turn, output, limits)
 }
 
-pub(crate) fn widen_effect<C: From<JsonObject>, T: From<JsonObject>>(
-    effect: Effect<JsonObject, JsonObject>,
-) -> Effect<C, T> {
-    match effect {
-        Effect::Perform(command) => Effect::Perform(Command {
-            id: command.id,
-            generation: command.generation,
-            idempotency_key: command.idempotency_key,
-            freshness: command.freshness,
-            deadline: command.deadline,
-            payload: command.payload.into(),
-        }),
-        Effect::Schedule(timer) => Effect::Schedule(Timer {
-            id: timer.id,
-            due: timer.due,
-            payload: timer.payload.into(),
-        }),
-        Effect::CancelTimer(id) => Effect::CancelTimer(id),
-    }
-}
+pub(crate) use crate::decision_links::widen_effect;
 
 pub(crate) fn fact_key(change: &FactChange) -> FactKey {
     let (object_type, key) = match change {

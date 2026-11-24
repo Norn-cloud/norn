@@ -9731,7 +9731,7 @@ export interface components {
             optional?: boolean;
         };
         /** @description Where a [`SliceDeclaration`]'s key comes from. */
-        NornIrSliceKey: components["schemas"]["NornIrSliceKeyOneOf0"] | "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf5"] | components["schemas"]["NornIrSliceKeyOneOf6"];
+        NornIrSliceKey: components["schemas"]["NornIrSliceKeyOneOf0"] | "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf5"] | components["schemas"]["NornIrSliceKeyOneOf6"] | components["schemas"]["NornIrSliceKeyOneOf7"];
         /** @description A unique effective parameter selected from an earlier authorized link list. */
         NornIrSliceKeyOneOf0: {
             parameter: components["schemas"]["NornIrSliceKeyOneOf0PropertyParameter"];
@@ -9778,6 +9778,32 @@ export interface components {
             from: string;
             /** @description The link id, declared on that entry's type or a supertype. */
             link: string;
+        };
+        /**
+         * @description Bounded predicate read over stored objects of the entry's type, fenced
+         *     into the commit's `predicate_reads` (`TXN-PHANTOM`, #1586).
+         */
+        NornIrSliceKeyOneOf7: {
+            predicate: components["schemas"]["NornIrSliceKeyOneOf7PropertyPredicate"];
+        };
+        NornIrSliceKeyOneOf7PropertyPredicate: {
+            filter?: components["schemas"]["NornIrSliceKeyOneOf7PropertyPredicatePropertyFilter"];
+            /**
+             * Format: uint32
+             * @description Optional cap on matching objects (further bounded by the limit
+             *     profile's `slice.max_records`). Exceeding refuses; never truncates.
+             */
+            maxItems?: number;
+            /** @description Optional window over one date or timestamp property. */
+            window?: components["schemas"]["NornIrAggregateWindow"];
+        };
+        /**
+         * @description Equality filter: each stored indexed-scalar property must equal the
+         *     named action input field. An empty filter matches every object of
+         *     the type within the bound.
+         */
+        NornIrSliceKeyOneOf7PropertyPredicatePropertyFilter: {
+            [key: string]: string;
         };
         /** @description Bounds on the declared input slice (§1 row 3), enforced while reading. */
         NornIrSliceLimits: {
@@ -12006,6 +12032,8 @@ export interface components {
             additivity: components["schemas"]["NornIrMetricAdditivity"];
             /** @description The denominator metric, for a ratio. */
             denominator: string | null;
+            /** @description Plain-word display name for business views, when declared or derived. */
+            display?: string;
             /** @description The aggregated expression (a property), for a simple metric. */
             expression: string | null;
             /** @description `simple`, `ratio`, `cumulative`, `derived` or `conversion`. */
@@ -12018,22 +12046,11 @@ export interface components {
             numerator: string | null;
             /** @description The concept it aggregates, for a simple metric. */
             objectType: string | null;
-            /**
-             * @description The to-one links from the measured object to the object holding
-             *     [`Self::time_property`] (METRIC-GRAIN-LINK-1: a posting's time is its
-             *     event's); empty when the time is the object's own.
-             */
+            /** @description To-one links to the object holding [`Self::time_property`] (METRIC-GRAIN-LINK-1); empty when local. */
             timeLinks: string[];
-            /**
-             * @description The time property its buckets use, for a simple metric: a property of
-             *     the measured object, or of the object [`Self::time_links`] reach.
-             */
+            /** @description The time property its buckets use, for a simple metric. */
             timeProperty: string | null;
-            /**
-             * @description Properties a question over this metric must group by or fix with an
-             *     `eq` filter (`eq null` included): its unit sources, such as `unit` and
-             *     `currency`. Empty when its values share one unit.
-             */
+            /** @description Unit-source properties a question over this metric must partition or fix (`eq`). */
             unitPartition: string[];
         };
         /** @description One original numeric member; enrichment does not enter this list. */
@@ -13110,6 +13127,11 @@ export interface components {
         };
         /** @description A refused request. */
         Refusal: ({
+            /**
+             * @description The host clock instant (RFC 3339 UTC) at which the cell decided this
+             *     refusal, when the boundary supplied a clock.
+             */
+            decidedAt?: string;
             /**
              * @description INCIDENT-1: the id under which the host logged this internal
              *     refusal's cause. The caller quotes it; the cause is never served.

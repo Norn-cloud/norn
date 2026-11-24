@@ -545,9 +545,9 @@ function RefusalPanel({ phase, action, technical, request, at, guard, top, atFie
   readonly onUse: ((path: string, text: string) => void) | undefined
 }) {
   if (phase.code === "core.laws.violated" && phase.reason !== undefined) {
-    return <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={onUse} request={request} at={at} />
+    return <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={onUse} request={request} at={at} decidedAt={phase.decidedAt} />
   }
-  if (phase.code === "core.laws.violated") return <RedactedLawRefusal code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} at={at} />
+  if (phase.code === "core.laws.violated") return <RedactedLawRefusal code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} at={at} decidedAt={phase.decidedAt} />
   const shown = atFields ? top : phase.diagnostics
   return (
     <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
@@ -555,9 +555,13 @@ function RefusalPanel({ phase, action, technical, request, at, guard, top, atFie
       {guard !== null && <span className="text-sm text-foreground">Requires: {guard}</span>}
       {/* A guard the cell quoted is shown in words above; its declared text stays under Technical. */}
       {(guard === null || technical) && (phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>)}
-      <span className="font-mono text-xs text-muted-foreground">{phase.code}</span>
+      {phase.incidentId && <span className="flex items-center gap-1.5 text-meta text-muted-foreground">Incident <CopyId value={phase.incidentId} /></span>}
       {shown.map((d) => <span key={`${d.pointer}:${d.code}:${d.message}`} className="text-meta text-destructive-text">{d.message}</span>)}
       {atFields && top.length === 0 && phase.diagnostics.length > 0 && <span className="text-meta">Each problem is shown at its field below.</span>}
+      <details open={technical} className="text-meta text-muted-foreground">
+        <summary className="cursor-pointer select-none">Technical</summary>
+        <span className="mt-1 block font-mono text-xs">{phase.code}</span>
+      </details>
     </div>
   )
 }

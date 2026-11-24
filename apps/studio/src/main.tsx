@@ -3,7 +3,10 @@ import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-r
 import { BarChart3, Blend, Bookmark, BookMarked, ChartLine, Columns2, Database, FileDiff, Fingerprint, GitCompareArrows, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode, useMemo } from "react"
 import { Button } from "@/components/ui/button"
+import { CellUnavailable } from "@/lib/definitions"
+import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { endSession, useAccount, type Account } from "@/lib/session"
+import { applyAppearance, storedShellChrome, storedSkin } from "@/lib/appearance"
 import { isSectionVisible, useLearningCapabilities } from "@/lib/learning/capabilities"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
@@ -88,14 +91,26 @@ async function signOut() {
   }
 }
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) => {
+        if (error instanceof NotServed) return false
+        if (error instanceof CellUnavailable && error.retryable === false) return false
+        if (error instanceof CellRefusal && error.retryable === false) return false
+        return failureCount < 3
+      },
+    },
+  },
+})
 const root = createRootRoute({ component: Root })
 const router = createRouter({ routeTree: routeTree(root) })
 
-// Dark and light are peers: follow the reader's system setting.
+// Dark and light are peers: follow the reader's system setting; apply persisted skin & shell before first paint.
 const dark = window.matchMedia("(prefers-color-scheme: dark)")
 const applyScheme = () => document.documentElement.classList.toggle("dark", dark.matches)
 applyScheme()
+applyAppearance(storedSkin(), storedShellChrome())
 dark.addEventListener("change", applyScheme)
 
 // An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.

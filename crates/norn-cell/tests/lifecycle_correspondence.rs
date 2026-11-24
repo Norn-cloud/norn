@@ -74,6 +74,7 @@ fn native(
         &turn,
         &DecisionOutput {
             facts: vec![change],
+            links: vec![],
             commands: vec![],
             timers: vec![],
         },

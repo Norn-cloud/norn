@@ -24,6 +24,8 @@
 pub mod action_set;
 pub mod agent;
 pub mod artifact_set;
+/// Pure admission checks for the `automation` retained-definition kind (`AUTOMATION-1`).
+pub mod automation;
 pub mod classification;
 pub mod codes;
 mod concept_roles;
@@ -31,6 +33,7 @@ pub mod connector_path;
 pub mod consistency;
 /// Conservative action/policy projection for finite control analysis.
 pub mod controls_adapter;
+pub mod decision_links;
 mod defined_concepts;
 pub mod definition_catalog;
 pub mod definitions_diff;
@@ -50,6 +53,8 @@ pub mod flow_performs;
 pub mod flow_source_map;
 pub mod function;
 pub mod graph;
+/// Record-level ZEN guard expression admission and evaluation (`AUTOMATION-1`).
+pub mod guard_expr;
 /// Closure-keyed structural admission evidence reuse.
 pub mod incremental;
 mod inheritance;
@@ -87,6 +92,7 @@ pub mod ontology;
 pub mod parameter;
 mod parameter_window;
 mod predicate_property;
+mod predicate_slice;
 pub mod property_codec;
 pub mod property_types;
 pub mod quantity_ledger;
