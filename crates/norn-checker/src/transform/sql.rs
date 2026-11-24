@@ -1164,7 +1164,7 @@ impl Lowering<'_> {
                         join.at,
                     ));
                 };
-                object
+                let key = object
                     .keys
                     .iter()
                     .find(|key| key.components.len() == 1 && key.components.iter().any(|c| c.as_str() == joined_column))
@@ -1177,7 +1177,18 @@ impl Lowering<'_> {
                             ),
                             join.at,
                         )
-                    })?
+                    })?;
+                // The plan reads a key named `id` as the row's own id.
+                if key == "id" {
+                    return Err(refusal(
+                        format!(
+                            "{}'s key on {joined_column} is named \"id\", which a plan reads as the row id",
+                            join.source.name
+                        ),
+                        join.at,
+                    ));
+                }
+                key
             };
             json!({"key": {"left": [scope.column(Some(&outer), &outer_column, join.at)?], "right": key}})
         };

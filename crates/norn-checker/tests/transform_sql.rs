@@ -313,6 +313,68 @@ fn a_joined_column_is_read_only_from_a_source_that_has_it() {
 }
 
 #[test]
+fn an_unqualified_column_in_a_join_reads_the_one_source_that_has_it() {
+    // #1706 r4: both sources have `id`; it silently read `o.id`.
+    let joined = "FROM \"shop.Order\" o JOIN \"shop.Customer\" c ON o.customer = c.id";
+    refused(&format!("SELECT id AS picked {joined}"), SQL_UNSUPPORTED);
+    refused(
+        &format!("SELECT missing AS picked {joined}"),
+        SQL_UNSUPPORTED,
+    );
+    // Only Customer has `region`: unqualified, it is `c.region`.
+    let (artifact, _) = compile(&format!("SELECT region AS place {joined}")).expect("admitted");
+    let projected = artifact["payload"]["calc"]["nodes"]
+        .as_object()
+        .expect("nodes")
+        .values()
+        .find(|node| node["op"] == "project")
+        .expect("a projection");
+    assert!(
+        projected["columns"]
+            .as_array()
+            .expect("columns")
+            .iter()
+            .any(|column| column["name"] == "place" && column["expression"] == "input.c_region"),
+        "{projected:#}"
+    );
+}
+
+#[test]
+fn a_join_on_a_declared_key_named_id_is_refused() {
+    // #1706 r4: a key named `id` reads as the row id in the plan, so
+    // `ON o.id = c.email` would join on the customer's id instead.
+    let mut pool = pool();
+    pool[0] = entity(
+        "shop.Customer",
+        json!({
+            "properties": [
+                {"id": "email", "type": {"kind": "text"}},
+                {"id": "region", "type": {"kind": "text"}}
+            ],
+            "identity": [{"name": "id", "properties": ["email"]}]
+        }),
+    );
+    let found = sql_artifact(
+        "SELECT o.amount AS amount FROM \"shop.Order\" o JOIN \"shop.Customer\" c ON o.id = c.email",
+        &SqlMeta {
+            id: "shop.sql_view",
+            title: "SQL view",
+            version: "0.1.0",
+            scope: json!({"orgId": "org_demo", "environmentId": "dev"}),
+        },
+        &pool,
+        &BTreeSet::new(),
+    )
+    .expect_err("refused");
+    assert!(
+        found
+            .iter()
+            .any(|d| d.code == SQL_UNSUPPORTED && d.message.contains("named \"id\"")),
+        "{found:#?}"
+    );
+}
+
+#[test]
 fn a_modifier_on_a_group_key_or_coalesce_is_refused_never_dropped() {
     // #1706 r1: `OVER`/`DISTINCT` on a calendar key lowered to plain weekly grouping.
     refused(

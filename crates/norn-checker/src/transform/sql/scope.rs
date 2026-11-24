@@ -4,15 +4,34 @@
 use super::{Ex, Refusal, Scope, refusal, zen_column, zen_number, zen_text};
 
 impl Scope {
-    /// The flat-row name of `alias.column` (the base source's alias when
-    /// `alias` is `None`).
+    /// The flat-row name of `alias.column`; unqualified, the base source's
+    /// column, or in a joined row the one source's that has it.
     pub(super) fn column(
         &self,
         alias: Option<&str>,
         column: &str,
         at: usize,
     ) -> Result<String, Refusal> {
-        let alias = alias.unwrap_or(&self.base);
+        let alias = match alias {
+            Some(alias) => alias,
+            // Unqualified in a joined row: the one source that has it.
+            None if self.aliases.len() > 1 => {
+                let mut owners = self.columns.iter().filter(|(_, has)| has.contains(column));
+                match (owners.next(), owners.next()) {
+                    (Some((only, _)), None) => only.as_str(),
+                    (Some(_), Some(_)) => {
+                        return Err(refusal(
+                            format!("{column:?} is a column of more than one source; qualify it"),
+                            at,
+                        ));
+                    }
+                    (None, _) => {
+                        return Err(refusal(format!("no source has a column {column:?}"), at));
+                    }
+                }
+            }
+            None => &self.base,
+        };
         let (_, prefix) = self
             .aliases
             .get(alias)
