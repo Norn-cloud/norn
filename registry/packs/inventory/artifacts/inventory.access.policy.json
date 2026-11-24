@@ -36,6 +36,7 @@
       },
       {
         "actions": [
+          "inventory.reservation.create",
           "inventory.reservation.consume",
           "inventory.reservation.release"
         ],

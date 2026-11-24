@@ -1,0 +1,165 @@
+{
+  "artifactId": "inventory.reservation.create.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Create stock reservation",
+  "namespace": "inventory",
+  "payload": {
+    "access": {
+      "artifactId": "inventory.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "inventory.reservation.create",
+    "createLinks": [
+      {
+        "link": "resource",
+        "targetIdField": "resourceId",
+        "targetType": "inventory.StockBalance"
+      },
+      {
+        "link": "holder",
+        "targetIdField": "holderId",
+        "targetType": "inventory.Warehouse"
+      }
+    ],
+    "description": "Create a conserved stock hold against an active warehouse, balance, bin, and lot with exact unit match and available unreserved stock.",
+    "effectProgram": {
+      "entityArtifactId": "inventory.StockReservation.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "inventory.StockReservation",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "holderId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "quantity": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "quantity",
+        "unit",
+        "currency",
+        "expires_at",
+        "resourceId",
+        "holderId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.warehouse.status == 'active'",
+      "(slice.resource.unit != null) and (input.unit == (slice.resource.unit ?? ''))",
+      "(input.quantity > 0) and ((slice.resource.quantity - slice.resource.reserved_quantity) >= input.quantity)",
+      "all(slice.bins as bin, bin.status == 'active')",
+      "all(slice.lots as lot, lot.status == 'active')"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "holderId"
+          }
+        },
+        "name": "warehouse",
+        "objectType": "inventory.Warehouse"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "resourceId"
+          }
+        },
+        "name": "resource",
+        "objectType": "inventory.StockBalance"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "resource",
+            "link": "bin"
+          }
+        },
+        "name": "bins",
+        "objectType": "inventory.BinLocation"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "resource",
+            "link": "lot"
+          }
+        },
+        "name": "lots",
+        "objectType": "inventory.LotBatch"
+      }
+    ],
+    "title": "Create stock reservation",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "inventory.StockReservation"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.reservation.create.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

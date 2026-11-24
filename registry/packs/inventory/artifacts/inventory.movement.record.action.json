@@ -29,7 +29,7 @@
         "targetType": "inventory.StockBalance"
       }
     ],
-    "description": "Post a create-only StockMovement verifying the target StockBalance and linking provider, receiver, and resource.",
+    "description": "Post a create-only StockMovement verifying active warehouses, unit match, available unreserved stock on outflows, and active bin/lot state.",
     "effectProgram": {
       "entityArtifactId": "inventory.StockMovement.entity",
       "entityArtifactVersion": "0.1.0",
@@ -82,10 +82,7 @@
           "type": "string"
         },
         "unit": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "unit_cost": {
           "nornType": {
@@ -125,7 +122,12 @@
       "type": "object"
     },
     "preconditions": [
-      "slice.resource.quantity >= 0"
+      "(slice.provider.status == 'active') and (slice.receiver.status == 'active')",
+      "(input.quantity > 0) and (input.unit_cost >= 0)",
+      "(slice.resource.unit != null) and (input.unit == (slice.resource.unit ?? ''))",
+      "(((input.movement_kind != 'issue') and (input.movement_kind != 'transfer')) and (input.movement_kind != 'scrap')) or ((slice.resource.quantity - slice.resource.reserved_quantity) >= input.quantity)",
+      "all(slice.bins as bin, bin.status == 'active')",
+      "all(slice.lots as lot, lot.status == 'active')"
     ],
     "scopeRequired": [
       "orgId",
@@ -161,6 +163,26 @@
         },
         "name": "resource",
         "objectType": "inventory.StockBalance"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "resource",
+            "link": "bin"
+          }
+        },
+        "name": "bins",
+        "objectType": "inventory.BinLocation"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "resource",
+            "link": "lot"
+          }
+        },
+        "name": "lots",
+        "objectType": "inventory.LotBatch"
       }
     ],
     "title": "Record immutable stock movement",

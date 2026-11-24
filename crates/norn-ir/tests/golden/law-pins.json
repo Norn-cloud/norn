@@ -22,9 +22,10 @@
   "registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json#/payload": "sha256:73ed6579985cbd585a92a9e80ee0febcd45e9e93836fdad57aa9417b32138eaa",
   "registry/packs/inventory/artifacts/inventory.CycleCount.variance_conservation.law.json#/payload": "sha256:9bb3d994f8373c66f12d1bf0d6248751da8a5c8108049cb14c2c4d819fe988f5",
   "registry/packs/inventory/artifacts/inventory.Item.non_negative_reorder.law.json#/payload": "sha256:30e30dafb00622d0986fe2665c1371235f19ba946ab70445f557abbadd980b01",
-  "registry/packs/inventory/artifacts/inventory.StockBalance.non_negative_and_reserved_bounded.law.json#/payload": "sha256:94f2e27ef0369e762166f831f1f0be4b7bfa7295780ff6d1476bb7ae58ec96e9",
-  "registry/packs/inventory/artifacts/inventory.StockMovement.positive_quantity.law.json#/payload": "sha256:537b4e7249b169839a61a462b144e8dae4a3a7acb7964bf7c523fef4498e3da7",
-  "registry/packs/inventory/artifacts/inventory.StockReservation.positive_quantity.law.json#/payload": "sha256:68efa64d8d34ab207a68c912f1730ccb21a24ef8f6d88befa5e88ae35c67ac94",
+  "registry/packs/inventory/artifacts/inventory.LotBatch.valid_dates.law.json#/payload": "sha256:cf53c49913f2289e1655a75ae2705ca3ae762d37ca242e694a8decd4d0f8a593",
+  "registry/packs/inventory/artifacts/inventory.StockBalance.non_negative_and_reserved_bounded.law.json#/payload": "sha256:4797c42b78a68fbdb1ea0b2504d1e5f42d160514d926edf773f6e8e6297a6a63",
+  "registry/packs/inventory/artifacts/inventory.StockMovement.positive_quantity.law.json#/payload": "sha256:c6e0fc111b4fa7603a911285c5d8ab3db663b6d35f11c5d87d3a7652d1bb2184",
+  "registry/packs/inventory/artifacts/inventory.StockReservation.positive_quantity.law.json#/payload": "sha256:f88de527a8c60c30c659f6c6b89e0ce0186a9459f359d56153b0d56e7ac5cbcc",
   "registry/packs/inventory/artifacts/inventory.Warehouse.kind_is_organization.law.json#/payload": "sha256:8df7688aa6a7ad1b4e0e2a024e1f58e3ab3d067e3760db6b57e44600d238f39e",
   "registry/packs/ml/artifacts/ml.promotion_policy.law.json#/payload": "sha256:28490dcafd59948a98dcb621e09fe8eb69004c9de0f61ac2ce3402364e76803c"
 }

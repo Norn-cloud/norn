@@ -1,0 +1,51 @@
+{
+  "artifactId": "inventory.LotBatch.valid_dates.law",
+  "dependencies": [
+    {
+      "artifactId": "inventory.LotBatch.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Lot manufacture date does not exceed expiry date",
+  "namespace": "inventory",
+  "payload": {
+    "condition": "self.manufactured_on != null and self.expires_on != null",
+    "id": "inventory.LotBatch.valid_dates",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "inventory",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/inventory/warehouse.ts"
+    },
+    "rationale": "When both manufacture and expiry dates are recorded on a lot, manufactured_on must be on or before expires_on.",
+    "response": {
+      "expression": "date(self.manufactured_on) <= date(self.expires_on)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "inventory.LotBatch"
+      ],
+      "root": {
+        "id": "inventory.LotBatch",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "inventory.LotBatch"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.LotBatch.valid_dates.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

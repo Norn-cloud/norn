@@ -186,7 +186,7 @@ export const CycleCount = Norn.type({
   role: "happening",
   title: "Cycle count",
   version: "0.1.0",
-  description: "Physical inventory count conducted over a half-open UTC TimeInterval with conserved variance and immutable posting.",
+  description: "Physical inventory count conducted over a half-open UTC TimeInterval with conserved variance and immutable approval/posting.",
   implements: [TimeInterval],
   properties: Schema.Struct({
     id: Schema.String,
@@ -221,7 +221,7 @@ export const CycleCount = Norn.type({
       property: "status",
       initial: ["draft"],
       terminal: ["posted"],
-      immutable: ["posted"],
+      immutable: ["approved", "posted"],
       transitions: [
         { id: "submit", from: ["draft"], to: "submitted" },
         { id: "approve", from: ["submitted"], to: "approved" },
@@ -235,7 +235,7 @@ export const CycleCount = Norn.type({
 
 export const StockBalanceNonNegativeAndReservedBounded = Norn.law({
   id: "inventory.StockBalance.non_negative_and_reserved_bounded.law",
-  title: "Stock balance is non-negative and reserved quantity never exceeds on-hand quantity",
+  title: "Stock balance carries a unit, is non-negative, and reserved quantity never exceeds on-hand quantity",
   version: "0.1.0",
   dependencies: [{ artifactId: "inventory.StockBalance.entity", kind: "entity", version: "0.1.0", required: true }],
   law: {
@@ -243,19 +243,19 @@ export const StockBalanceNonNegativeAndReservedBounded = Norn.law({
     id: "inventory.StockBalance.non_negative_and_reserved_bounded",
     owner: "inventory",
     severity: "error",
-    rationale: "Conserved stock on hand and reserved quantities cannot be negative, and reservations may never exceed available stock.",
+    rationale: "Conserved stock balances must carry an explicit UCUM unit, stay non-negative, and never reserve more than on-hand stock.",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/inventory/stock.ts" },
     subject: "inventory.StockBalance",
     scope: { root: { kind: "entity", id: "inventory.StockBalance" }, objectTypes: ["inventory.StockBalance"] },
     modality: { kind: "always" },
     response: {
       kind: "predicate",
-      expression: "self.quantity >= 0 and self.reserved_quantity >= 0 and self.reserved_quantity <= self.quantity",
+      expression: "self.unit != null and self.quantity >= 0 and self.reserved_quantity >= 0 and self.reserved_quantity <= self.quantity",
     },
   },
 })
 
-export const StockBalanceValidHolds = Norn.example("stock balance with reserved within on-hand holds", {
+export const StockBalanceValidHolds = Norn.example("stock balance with unit and reserved within on-hand holds", {
   of: StockBalanceNonNegativeAndReservedBounded,
   given: {
     id: "sb_1",
@@ -297,9 +297,23 @@ export const StockBalanceOverReservedViolated = Norn.example("reserved quantity 
   expect: "violated",
 })
 
+export const StockBalanceUnitlessViolated = Norn.example("unitless stock balance is refused", {
+  of: StockBalanceNonNegativeAndReservedBounded,
+  given: {
+    id: "sb_no_unit",
+    resource_code: "SKU-BEARING-01@WH-CENTRAL-01",
+    quantity: 10,
+    reserved_quantity: 0,
+    unit: null,
+    currency: null,
+    valuation_method: "fifo",
+  },
+  expect: "violated",
+})
+
 export const StockReservationPositiveQuantity = Norn.law({
   id: "inventory.StockReservation.positive_quantity.law",
-  title: "Stock reservation quantity is strictly positive",
+  title: "Stock reservation carries a unit and strictly positive quantity",
   version: "0.1.0",
   dependencies: [{ artifactId: "inventory.StockReservation.entity", kind: "entity", version: "0.1.0", required: true }],
   law: {
@@ -307,16 +321,16 @@ export const StockReservationPositiveQuantity = Norn.law({
     id: "inventory.StockReservation.positive_quantity",
     owner: "inventory",
     severity: "error",
-    rationale: "A stock hold must reserve a strictly positive quantity.",
+    rationale: "A stock hold must carry an explicit UCUM unit and reserve a strictly positive quantity.",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/inventory/stock.ts" },
     subject: "inventory.StockReservation",
     scope: { root: { kind: "entity", id: "inventory.StockReservation" }, objectTypes: ["inventory.StockReservation"] },
     modality: { kind: "always" },
-    response: { kind: "predicate", expression: "self.quantity > 0" },
+    response: { kind: "predicate", expression: "self.unit != null and self.quantity > 0" },
   },
 })
 
-export const StockReservationPositiveHolds = Norn.example("positive stock reservation holds", {
+export const StockReservationPositiveHolds = Norn.example("positive stock reservation with unit holds", {
   of: StockReservationPositiveQuantity,
   given: {
     id: "res_1",
@@ -342,9 +356,22 @@ export const StockReservationZeroViolated = Norn.example("zero stock reservation
   expect: "violated",
 })
 
+export const StockReservationUnitlessViolated = Norn.example("unitless stock reservation is refused", {
+  of: StockReservationPositiveQuantity,
+  given: {
+    id: "res_no_unit",
+    status: "open",
+    quantity: 5,
+    unit: null,
+    currency: null,
+    expires_at: "2026-12-01T00:00:00Z",
+  },
+  expect: "violated",
+})
+
 export const StockMovementPositiveQuantity = Norn.law({
   id: "inventory.StockMovement.positive_quantity.law",
-  title: "Stock movement has strictly positive quantity and non-negative unit cost",
+  title: "Stock movement carries a unit, strictly positive quantity, and non-negative unit cost",
   version: "0.1.0",
   dependencies: [{ artifactId: "inventory.StockMovement.entity", kind: "entity", version: "0.1.0", required: true }],
   law: {
@@ -352,16 +379,16 @@ export const StockMovementPositiveQuantity = Norn.law({
     id: "inventory.StockMovement.positive_quantity",
     owner: "inventory",
     severity: "error",
-    rationale: "Every posted stock movement transfers a strictly positive physical quantity at a non-negative unit cost.",
+    rationale: "Every posted stock movement carries an explicit UCUM unit and transfers a strictly positive physical quantity at a non-negative unit cost.",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/inventory/stock.ts" },
     subject: "inventory.StockMovement",
     scope: { root: { kind: "entity", id: "inventory.StockMovement" }, objectTypes: ["inventory.StockMovement"] },
     modality: { kind: "always" },
-    response: { kind: "predicate", expression: "self.quantity > 0 and self.unit_cost >= 0" },
+    response: { kind: "predicate", expression: "self.unit != null and self.quantity > 0 and self.unit_cost >= 0" },
   },
 })
 
-export const StockMovementValidHolds = Norn.example("positive receipt movement with non-negative unit cost holds", {
+export const StockMovementValidHolds = Norn.example("positive receipt movement with unit and non-negative unit cost holds", {
   of: StockMovementPositiveQuantity,
   given: {
     id: "mov_1",
@@ -405,6 +432,22 @@ export const StockMovementNegativeCostViolated = Norn.example("negative-cost sto
     unit_cost: -1,
     currency: "USD",
     reference_code: "GRN-2026-0003",
+  },
+  expect: "violated",
+})
+
+export const StockMovementUnitlessViolated = Norn.example("unitless stock movement is refused", {
+  of: StockMovementPositiveQuantity,
+  given: {
+    id: "mov_no_unit",
+    action: "transfer_custody",
+    movement_kind: "receipt",
+    occurred_at: "2026-11-23T10:00:00Z",
+    quantity: 10,
+    unit: null,
+    unit_cost: 14.5,
+    currency: "USD",
+    reference_code: "GRN-2026-0004",
   },
   expect: "violated",
 })
@@ -478,11 +521,31 @@ export const CycleCountNegativeCountedViolated = Norn.example("cycle count with 
 
 // ---------------------------------------------------------------- Governed Actions
 
+const MovementPreconditionContext = Schema.Struct({
+  input: Schema.Struct({
+    movement_kind: Schema.String,
+    quantity: Norn.decimal(6),
+    unit: Schema.String,
+    unit_cost: Norn.decimal(6),
+  }),
+  slice: Schema.Struct({
+    provider: Schema.Struct({ status: Schema.String }),
+    receiver: Schema.Struct({ status: Schema.String }),
+    resource: Schema.Struct({
+      quantity: Norn.decimal(6),
+      reserved_quantity: Norn.decimal(6),
+      unit: Schema.NullOr(Schema.String),
+    }),
+    bins: Schema.Array(Schema.Struct({ status: Schema.String })),
+    lots: Schema.Array(Schema.Struct({ status: Schema.String })),
+  }),
+})
+
 export const RecordMovement = Norn.action({
   id: "inventory.movement.record",
   title: "Record immutable stock movement",
   version: "0.1.0",
-  description: "Post a create-only StockMovement verifying the target StockBalance and linking provider, receiver, and resource.",
+  description: "Post a create-only StockMovement verifying active warehouses, unit match, available unreserved stock on outflows, and active bin/lot state.",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -493,7 +556,7 @@ export const RecordMovement = Norn.action({
     movement_kind: Schema.String,
     occurred_at: Schema.String,
     quantity: Norn.decimal(6),
-    unit: Schema.NullOr(Schema.String),
+    unit: Schema.String,
     unit_cost: Norn.decimal(6),
     currency: Schema.NullOr(Schema.String),
     reference_code: Schema.String,
@@ -506,15 +569,37 @@ export const RecordMovement = Norn.action({
     { name: "provider", type: Warehouse, key: { property: { from: "input", property: "providerId" } } },
     { name: "receiver", type: Warehouse, key: { property: { from: "input", property: "receiverId" } } },
     { name: "resource", type: StockBalance, key: { property: { from: "input", property: "resourceId" } } },
+    { name: "bins", type: BinLocation, key: { link: { from: "resource", link: "bin" } } },
+    { name: "lots", type: LotBatch, key: { link: { from: "resource", link: "lot" } } },
   ],
   preconditions: [
     Norn.expression(
-      Schema.Struct({
-        slice: Schema.Struct({
-          resource: Schema.Struct({ quantity: Norn.decimal(6) }),
-        }),
-      }),
-      (ctx) => ctx.slice.resource.quantity >= 0,
+      MovementPreconditionContext,
+      (ctx) => ctx.slice.provider.status === "active" && ctx.slice.receiver.status === "active",
+    ),
+    Norn.expression(
+      MovementPreconditionContext,
+      (ctx) => ctx.input.quantity > 0 && ctx.input.unit_cost >= 0,
+    ),
+    Norn.expression(
+      MovementPreconditionContext,
+      (ctx) => ctx.slice.resource.unit !== null && ctx.input.unit === (ctx.slice.resource.unit ?? ""),
+    ),
+    Norn.expression(
+      MovementPreconditionContext,
+      (ctx) =>
+        (ctx.input.movement_kind !== "issue" &&
+          ctx.input.movement_kind !== "transfer" &&
+          ctx.input.movement_kind !== "scrap") ||
+        ctx.slice.resource.quantity - ctx.slice.resource.reserved_quantity >= ctx.input.quantity,
+    ),
+    Norn.expression(
+      MovementPreconditionContext,
+      (ctx) => ctx.slice.bins.every((bin) => bin.status === "active"),
+    ),
+    Norn.expression(
+      MovementPreconditionContext,
+      (ctx) => ctx.slice.lots.every((lot) => lot.status === "active"),
     ),
   ],
   createLinks: [
@@ -526,6 +611,85 @@ export const RecordMovement = Norn.action({
   effect: {
     kind: "upsert_input_object",
     type: StockMovement,
+    objectIdField: "id",
+    writeMode: { kind: "create_only" },
+  },
+})
+
+const ReservationCreatePreconditionContext = Schema.Struct({
+  input: Schema.Struct({
+    quantity: Norn.decimal(6),
+    unit: Schema.String,
+  }),
+  slice: Schema.Struct({
+    warehouse: Schema.Struct({ status: Schema.String }),
+    resource: Schema.Struct({
+      quantity: Norn.decimal(6),
+      reserved_quantity: Norn.decimal(6),
+      unit: Schema.NullOr(Schema.String),
+    }),
+    bins: Schema.Array(Schema.Struct({ status: Schema.String })),
+    lots: Schema.Array(Schema.Struct({ status: Schema.String })),
+  }),
+})
+
+export const CreateReservation = Norn.action({
+  id: "inventory.reservation.create",
+  title: "Create stock reservation",
+  version: "0.1.0",
+  description: "Create a conserved stock hold against an active warehouse, balance, bin, and lot with exact unit match and available unreserved stock.",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  access: { artifactId: "inventory.access.policy", version: "0.1.0" },
+  input: Schema.Struct({
+    id: Schema.String,
+    quantity: Norn.decimal(6),
+    unit: Schema.String,
+    currency: Schema.NullOr(Schema.String),
+    expires_at: Schema.NullOr(Schema.String),
+    resourceId: Schema.String,
+    holderId: Schema.String,
+  }),
+  output: Schema.Struct({ id: Schema.String }),
+  slice: [
+    { name: "warehouse", type: Warehouse, key: { property: { from: "input", property: "holderId" } } },
+    { name: "resource", type: StockBalance, key: { property: { from: "input", property: "resourceId" } } },
+    { name: "bins", type: BinLocation, key: { link: { from: "resource", link: "bin" } } },
+    { name: "lots", type: LotBatch, key: { link: { from: "resource", link: "lot" } } },
+  ],
+  preconditions: [
+    Norn.expression(
+      ReservationCreatePreconditionContext,
+      (ctx) => ctx.slice.warehouse.status === "active",
+    ),
+    Norn.expression(
+      ReservationCreatePreconditionContext,
+      (ctx) => ctx.slice.resource.unit !== null && ctx.input.unit === (ctx.slice.resource.unit ?? ""),
+    ),
+    Norn.expression(
+      ReservationCreatePreconditionContext,
+      (ctx) =>
+        ctx.input.quantity > 0 &&
+        ctx.slice.resource.quantity - ctx.slice.resource.reserved_quantity >= ctx.input.quantity,
+    ),
+    Norn.expression(
+      ReservationCreatePreconditionContext,
+      (ctx) => ctx.slice.bins.every((bin) => bin.status === "active"),
+    ),
+    Norn.expression(
+      ReservationCreatePreconditionContext,
+      (ctx) => ctx.slice.lots.every((lot) => lot.status === "active"),
+    ),
+  ],
+  createLinks: [
+    { link: "resource", targetType: "inventory.StockBalance", targetIdField: "resourceId" },
+    { link: "holder", targetType: "inventory.Warehouse", targetIdField: "holderId" },
+  ],
+  writes: [{ type: StockReservation, change: "created" }],
+  effect: {
+    kind: "upsert_input_object",
+    type: StockReservation,
     objectIdField: "id",
     writeMode: { kind: "create_only" },
   },

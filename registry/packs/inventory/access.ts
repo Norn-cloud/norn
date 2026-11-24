@@ -8,6 +8,7 @@ import { Norn } from "@norn/authoring"
 import {
   ApproveCycleCount,
   ConsumeReservation,
+  CreateReservation,
   CycleCount,
   PostCycleCount,
   RecordMovement,
@@ -32,7 +33,7 @@ export const InventoryAccess = Norn.access({
     },
     {
       ruleId: "manage_stock_reservation",
-      actions: [ConsumeReservation, ReleaseReservation],
+      actions: [CreateReservation, ConsumeReservation, ReleaseReservation],
       resourceType: StockReservation,
       scope: { dimensions: ["org", "environment"] },
       allOf: [{ role: { anyOf: ["warehouse_clerk", "inventory_manager", "owner"] } }],

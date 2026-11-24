@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Physical inventory count conducted over a half-open UTC TimeInterval with conserved variance and immutable posting.",
+      "description": "Physical inventory count conducted over a half-open UTC TimeInterval with conserved variance and immutable approval/posting.",
       "identity": [
         {
           "name": "primary",
@@ -24,6 +24,7 @@
       "lifecycles": [
         {
           "immutable": [
+            "approved",
             "posted"
           ],
           "initial": [

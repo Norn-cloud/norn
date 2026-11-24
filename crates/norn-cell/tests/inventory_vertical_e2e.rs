@@ -12,9 +12,11 @@
 //! Warehouse Domain Pack (`registry/packs/inventory/`): static admission
 //! against the Core REA + TimeInterval base, real SQLite cell definition
 //! install with checker receipt, law and `core.TimeInterval` refusals,
-//! create-only `StockMovement` immutability, `LotBatch` quarantine -> recall
-//! terminal immutability, `StockReservation` and `CycleCount` lifecycles, and
-//! fail-closed Cedar `AccessIR` role separation.
+//! operational movement/reservation guards (active warehouses/bins/lots,
+//! unit match, unreserved availability), create-only `StockMovement`
+//! immutability, `LotBatch` quarantine -> recall and `CycleCount`
+//! approved/posted immutability, and fail-closed Cedar `AccessIR` role and
+//! scope enforcement.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -26,19 +28,22 @@ use norn_checker::{
     check_artifact_set_with_receipt,
 };
 use norn_ir::{
-    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, InterfaceDef, ObjectTypeDef,
-    PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
+    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, DataQualityRuleRef, DecisionOutput,
+    FactChange, InterfaceDef, InterfaceName, InvariantOwner, ObjectTypeDef, ObjectTypeName,
+    PropertyId, PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
 };
 use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp,
     PdpActionAuthorizer, PrincipalInput, ResourceInput, ScopeKey,
 };
 use norn_kernel::cell_host::JsonObject;
+use norn_kernel::governing_laws::LawEvaluationError;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
     ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionRefusal, CellCommit, CellHost,
-    Command, DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, LinkKey,
-    LinkMutation, LinkWrite, LogicalTime, TypeCatalog, World, commit_action,
+    Command, CommitError, DecisionRefusal, DecisionTurn, FactEvent, FactKey, FactMutation,
+    FactSlice, FactVersion, FactWrite, LinkKey, LinkMutation, LinkWrite, LogicalTime, TypeCatalog,
+    World, commit_action, prepare_decision,
 };
 use serde_json::{Value, json};
 
@@ -195,8 +200,9 @@ impl InventoryPrincipals {
         let compiled = authz::compile_all_projected(&schema, policies, &projection)
             .expect("inventory AccessIR policies compile against projected Cedar schema");
 
-        // Grant every test principal broad action capabilities so that the
-        // compiled Cedar AccessIR policy rules alone decide allow vs deny.
+        // Grant every test principal broad action capabilities scoped strictly
+        // to `ORG_ID`/`ENV_ID` so the compiled Cedar AccessIR policy and scope
+        // checks decide allow vs deny.
         let mut all_capabilities: Vec<String> =
             action_roots.iter().map(|a| a.action_id.clone()).collect();
         all_capabilities.push("norn.read".to_owned());
@@ -486,12 +492,31 @@ impl InventoryFixture {
         actor: &str,
         idempotency_key: &str,
     ) -> Result<ActionOutcome, Box<ActionRefusal<norn_cell::CellError>>> {
+        self.invoke_in_scope(
+            cell,
+            action_id,
+            input,
+            actor,
+            test_scope_map(),
+            idempotency_key,
+        )
+    }
+
+    fn invoke_in_scope(
+        &self,
+        cell: &mut Cell,
+        action_id: &str,
+        input: &Value,
+        actor: &str,
+        scope: BTreeMap<String, String>,
+        idempotency_key: &str,
+    ) -> Result<ActionOutcome, Box<ActionRefusal<norn_cell::CellError>>> {
         let registered = &self.actions[action_id];
         let request = ActionCall {
             action: &registered.root,
             action_artifact_id: &registered.artifact_id,
             action_version: &registered.version,
-            scope: test_scope_map(),
+            scope,
             actor: actor.to_owned(),
             input: decode_json_object(input),
             idempotency_key: idempotency_key.to_owned(),
@@ -502,6 +527,7 @@ impl InventoryFixture {
                 world: World::Main,
                 consumes: None,
             },
+            trace: None,
         };
         commit_action(cell, &self.catalog(), &request, &self.principals).map_err(Box::new)
     }
@@ -515,16 +541,6 @@ fn put_fact(object_type: &str, id: &str, values: &Value) -> FactWrite {
     FactWrite {
         key: FactKey::new(object_type, id),
         expected: FactVersion::ABSENT,
-        mutation: FactMutation::Put {
-            values: decode_json_object(values),
-        },
-    }
-}
-
-fn update_fact(object_type: &str, id: &str, expected: FactVersion, values: &Value) -> FactWrite {
-    FactWrite {
-        key: FactKey::new(object_type, id),
-        expected,
         mutation: FactMutation::Put {
             values: decode_json_object(values),
         },
@@ -555,6 +571,92 @@ fn status_of(cell: &Cell, object_type: &str, id: &str) -> String {
         .to_owned()
 }
 
+fn assert_law_violation<T: std::fmt::Debug>(
+    result: Result<T, CommitError<norn_cell::CellError>>,
+    expected_law_id: &str,
+) {
+    let error = result.expect_err("commit violating governing law must be refused");
+    let CommitError::Law {
+        reason: LawEvaluationError::Violated(failure),
+        ..
+    } = error
+    else {
+        panic!("expected CommitError::Law(Violated({expected_law_id})), got {error:?}");
+    };
+    let DataQualityRuleRef::Law { law_id, .. } = &failure.rule_ref else {
+        panic!(
+            "expected DataQualityRuleRef::Law({expected_law_id}), got {:?}",
+            failure.rule_ref
+        );
+    };
+    assert_eq!(
+        law_id, expected_law_id,
+        "expected law {expected_law_id}, got {law_id}"
+    );
+}
+
+fn assert_proper_interval_violation<T: std::fmt::Debug>(
+    result: Result<T, CommitError<norn_cell::CellError>>,
+) {
+    let error = result.expect_err("commit with improper TimeInterval must be refused");
+    let CommitError::InvariantViolation { owner, id, .. } = error else {
+        panic!(
+            "expected CommitError::InvariantViolation(core.TimeInterval/proper_interval), got {error:?}"
+        );
+    };
+    assert_eq!(
+        owner,
+        InvariantOwner::Interface(InterfaceName("core.TimeInterval".to_owned()))
+    );
+    assert_eq!(id.as_str(), "proper_interval");
+}
+
+fn assert_immutable_state_refusal(
+    fixture: &InventoryFixture,
+    cell: &Cell,
+    object_type: &str,
+    id: &str,
+    property: &str,
+    value: RuntimeValue,
+    expected_state: &str,
+) {
+    let key = FactKey::new(object_type, id);
+    let state = cell
+        .load(&key)
+        .expect("object loads for immutability check");
+    let slice = FactSlice::from([(key, state)]);
+    let output = DecisionOutput {
+        facts: vec![FactChange::Set {
+            object_type: ObjectTypeName(object_type.to_owned()),
+            key: id.to_owned(),
+            property: PropertyId(property.to_owned()),
+            value,
+        }],
+        commands: Vec::new(),
+        timers: Vec::new(),
+    };
+    let turn = DecisionTurn {
+        id: format!("immutable-check:{object_type}:{id}:{expected_state}"),
+        now: LogicalTime::from_millis(KNOWN_AT),
+        world: World::Main,
+        consumes: None,
+    };
+    let outcome =
+        prepare_decision::<std::convert::Infallible>(&fixture.catalog(), &slice, &turn, &output);
+    let Err(DecisionRefusal::ImmutableStateWrite {
+        lifecycle,
+        state: refused_state,
+        ..
+    }) = outcome
+    else {
+        panic!(
+            "expected DecisionRefusal::ImmutableStateWrite(status={expected_state}) on {object_type}/{id}, got {outcome:?}"
+        );
+    };
+    assert_eq!(lifecycle, "status");
+    assert_eq!(refused_state, expected_state);
+}
+
 #[test]
 fn inventory_pack_admits_cleanly_against_core_base() {
     let base = decode_envelopes(&load_core_base_values());
@@ -582,10 +684,11 @@ fn inventory_pack_admits_cleanly_against_core_base() {
         .collect();
     let expected_laws = [
         "inventory.Warehouse.kind_is_organization.law",
+        "inventory.Item.non_negative_reorder.law",
+        "inventory.LotBatch.valid_dates.law",
         "inventory.StockBalance.non_negative_and_reserved_bounded.law",
         "inventory.StockReservation.positive_quantity.law",
         "inventory.StockMovement.positive_quantity.law",
-        "inventory.Item.non_negative_reorder.law",
         "inventory.CycleCount.variance_conservation.law",
     ];
     for expected in expected_laws {
@@ -709,79 +812,54 @@ fn inventory_laws_and_time_interval_enforce_in_real_cell() {
         .dump()
         .expect("snapshot before law refusals");
 
-    // 1. Refusal of negative StockBalance.quantity.
-    let mut neg_balance = CellCommit::empty();
-    neg_balance.writes.push(put_fact(
-        "inventory.StockBalance",
-        "bal_negative",
-        &json!({
-            "id": "bal_negative",
-            "resource_code": "SKU-BEARING-01@WH-CENTRAL-01",
-            "quantity": -1,
-            "reserved_quantity": 0,
-            "unit": "{each}",
-            "currency": null,
-            "valuation_method": "fifo"
-        }),
-    ));
-    neg_balance.links.extend([
-        add_link(
-            "inventory.StockBalance",
-            "bal_negative",
-            "owner",
-            "inventory.Warehouse",
-            "wh_central",
-        ),
-        add_link(
-            "inventory.StockBalance",
-            "bal_negative",
-            "item",
-            "inventory.Item",
-            "item_bearing",
-        ),
-    ]);
-    assert!(
-        cell.commit(neg_balance).is_err(),
-        "negative StockBalance.quantity must be refused by inventory.StockBalance.non_negative_and_reserved_bounded.law"
-    );
-
-    // 2. Refusal of StockBalance with reserved_quantity > quantity.
-    let mut over_reserved_balance = CellCommit::empty();
-    over_reserved_balance.writes.push(put_fact(
-        "inventory.StockBalance",
-        "bal_over_reserved",
-        &json!({
-            "id": "bal_over_reserved",
-            "resource_code": "SKU-BEARING-01@WH-CENTRAL-01",
-            "quantity": 10,
-            "reserved_quantity": 15,
-            "unit": "{each}",
-            "currency": null,
-            "valuation_method": "fifo"
-        }),
-    ));
-    over_reserved_balance.links.extend([
-        add_link(
-            "inventory.StockBalance",
+    // 1. Refusal of negative, over-reserved, and unitless StockBalance.
+    for (bal_id, quantity, reserved_quantity, unit) in [
+        ("bal_negative", -1, 0, Value::String("{each}".to_owned())),
+        (
             "bal_over_reserved",
-            "owner",
-            "inventory.Warehouse",
-            "wh_central",
+            10,
+            15,
+            Value::String("{each}".to_owned()),
         ),
-        add_link(
+        ("bal_unitless", 10, 0, Value::Null),
+    ] {
+        let mut bad_balance = CellCommit::empty();
+        bad_balance.writes.push(put_fact(
             "inventory.StockBalance",
-            "bal_over_reserved",
-            "item",
-            "inventory.Item",
-            "item_bearing",
-        ),
-    ]);
-    assert!(
-        cell.commit(over_reserved_balance).is_err(),
-        "reserved_quantity > quantity must be refused by inventory.StockBalance.non_negative_and_reserved_bounded.law"
-    );
+            bal_id,
+            &json!({
+                "id": bal_id,
+                "resource_code": "SKU-BEARING-01@WH-CENTRAL-01",
+                "quantity": quantity,
+                "reserved_quantity": reserved_quantity,
+                "unit": unit,
+                "currency": null,
+                "valuation_method": "fifo"
+            }),
+        ));
+        bad_balance.links.extend([
+            add_link(
+                "inventory.StockBalance",
+                bal_id,
+                "owner",
+                "inventory.Warehouse",
+                "wh_central",
+            ),
+            add_link(
+                "inventory.StockBalance",
+                bal_id,
+                "item",
+                "inventory.Item",
+                "item_bearing",
+            ),
+        ]);
+        assert_law_violation(
+            cell.commit(bad_balance),
+            "inventory.StockBalance.non_negative_and_reserved_bounded",
+        );
+    }
 
-    // 3. Refusal of Warehouse with kind != "organization".
+    // 2. Refusal of Warehouse with kind != "organization".
     let mut person_warehouse = CellCommit::empty();
     person_warehouse.writes.push(put_fact(
         "inventory.Warehouse",
@@ -794,12 +872,12 @@ fn inventory_laws_and_time_interval_enforce_in_real_cell() {
             "status": "active"
         }),
     ));
-    assert!(
-        cell.commit(person_warehouse).is_err(),
-        "Warehouse with kind != organization must be refused by inventory.Warehouse.kind_is_organization.law"
+    assert_law_violation(
+        cell.commit(person_warehouse),
+        "inventory.Warehouse.kind_is_organization",
     );
 
-    // 4. Refusal of Item with negative reorder_point.
+    // 3. Refusal of Item with negative reorder_point.
     let mut negative_reorder_item = CellCommit::empty();
     negative_reorder_item.writes.push(put_fact(
         "inventory.Item",
@@ -816,10 +894,32 @@ fn inventory_laws_and_time_interval_enforce_in_real_cell() {
             "status": "active"
         }),
     ));
-    assert!(
-        cell.commit(negative_reorder_item).is_err(),
-        "negative Item.reorder_point must be refused by inventory.Item.non_negative_reorder.law"
+    assert_law_violation(
+        cell.commit(negative_reorder_item),
+        "inventory.Item.non_negative_reorder",
     );
+
+    // 4. Refusal of LotBatch with reversed manufactured_on > expires_on.
+    let mut reversed_lot = CellCommit::empty();
+    reversed_lot.writes.push(put_fact(
+        "inventory.LotBatch",
+        "lot_reversed_dates",
+        &json!({
+            "id": "lot_reversed_dates",
+            "lot_code": "LOT-BAD-DATE",
+            "manufactured_on": "2028-11-01",
+            "expires_on": "2026-11-01",
+            "status": "active"
+        }),
+    ));
+    reversed_lot.links.push(add_link(
+        "inventory.LotBatch",
+        "lot_reversed_dates",
+        "item",
+        "inventory.Item",
+        "item_bearing",
+    ));
+    assert_law_violation(cell.commit(reversed_lot), "inventory.LotBatch.valid_dates");
 
     // 5. Refusal of CycleCount with bad variance_quantity.
     let mut bad_variance_count = CellCommit::empty();
@@ -853,9 +953,9 @@ fn inventory_laws_and_time_interval_enforce_in_real_cell() {
             "bal_central_bearing",
         ),
     ]);
-    assert!(
-        cell.commit(bad_variance_count).is_err(),
-        "CycleCount with mismatched variance_quantity must be refused by inventory.CycleCount.variance_conservation.law"
+    assert_law_violation(
+        cell.commit(bad_variance_count),
+        "inventory.CycleCount.variance_conservation",
     );
 
     // 6. Refusal of CycleCount with degenerate or reversed TimeInterval (starts_at >= ends_at).
@@ -902,46 +1002,99 @@ fn inventory_laws_and_time_interval_enforce_in_real_cell() {
                 "bal_central_bearing",
             ),
         ]);
-        assert!(
-            cell.commit(bad_interval_count).is_err(),
-            "CycleCount {count_id} with starts_at >= ends_at must be refused by inherited core.TimeInterval proper_interval invariant"
+        assert_proper_interval_violation(cell.commit(bad_interval_count));
+    }
+
+    // 7. Refusal of zero-quantity and unitless StockReservation.
+    for (res_id, quantity, unit) in [
+        ("res_zero", 0, Value::String("{each}".to_owned())),
+        ("res_unitless", 5, Value::Null),
+    ] {
+        let mut bad_reservation = CellCommit::empty();
+        bad_reservation.writes.push(put_fact(
+            "inventory.StockReservation",
+            res_id,
+            &json!({
+                "id": res_id,
+                "status": "open",
+                "quantity": quantity,
+                "unit": unit,
+                "currency": null,
+                "expires_at": "2026-11-26T00:00:00Z"
+            }),
+        ));
+        bad_reservation.links.extend([
+            add_link(
+                "inventory.StockReservation",
+                res_id,
+                "resource",
+                "inventory.StockBalance",
+                "bal_central_bearing",
+            ),
+            add_link(
+                "inventory.StockReservation",
+                res_id,
+                "holder",
+                "inventory.Warehouse",
+                "wh_central",
+            ),
+        ]);
+        assert_law_violation(
+            cell.commit(bad_reservation),
+            "inventory.StockReservation.positive_quantity",
         );
     }
 
-    // 7. Refusal of StockReservation with zero quantity.
-    let mut zero_reservation = CellCommit::empty();
-    zero_reservation.writes.push(put_fact(
-        "inventory.StockReservation",
-        "res_zero",
-        &json!({
-            "id": "res_zero",
-            "status": "open",
-            "quantity": 0,
-            "unit": "{each}",
-            "currency": null,
-            "expires_at": "2026-11-26T00:00:00Z"
-        }),
-    ));
-    zero_reservation.links.extend([
-        add_link(
-            "inventory.StockReservation",
-            "res_zero",
-            "resource",
-            "inventory.StockBalance",
-            "bal_central_bearing",
-        ),
-        add_link(
-            "inventory.StockReservation",
-            "res_zero",
-            "holder",
-            "inventory.Warehouse",
-            "wh_central",
-        ),
-    ]);
-    assert!(
-        cell.commit(zero_reservation).is_err(),
-        "zero-quantity StockReservation must be refused by inventory.StockReservation.positive_quantity.law"
-    );
+    // 8. Refusal of zero-quantity, negative-cost, and unitless StockMovement.
+    for (mov_id, quantity, unit_cost, unit) in [
+        ("mov_zero", 0, 10, Value::String("{each}".to_owned())),
+        ("mov_neg_cost", 10, -1, Value::String("{each}".to_owned())),
+        ("mov_unitless", 10, 10, Value::Null),
+    ] {
+        let mut bad_movement = CellCommit::empty();
+        bad_movement.writes.push(put_fact(
+            "inventory.StockMovement",
+            mov_id,
+            &json!({
+                "id": mov_id,
+                "action": "transfer_custody",
+                "movement_kind": "receipt",
+                "occurred_at": "2026-11-23T12:00:00Z",
+                "quantity": quantity,
+                "unit": unit,
+                "unit_cost": unit_cost,
+                "currency": "USD",
+                "reference_code": "REF-BAD-001"
+            }),
+        ));
+        bad_movement.links.extend([
+            add_link(
+                "inventory.StockMovement",
+                mov_id,
+                "provider",
+                "inventory.Warehouse",
+                "wh_central",
+            ),
+            add_link(
+                "inventory.StockMovement",
+                mov_id,
+                "receiver",
+                "inventory.Warehouse",
+                "wh_central",
+            ),
+            add_link(
+                "inventory.StockMovement",
+                mov_id,
+                "resource",
+                "inventory.StockBalance",
+                "bal_central_bearing",
+            ),
+        ]);
+        assert_law_violation(
+            cell.commit(bad_movement),
+            "inventory.StockMovement.positive_quantity",
+        );
+    }
 
     // None of the refused writes may have mutated cell state.
     assert_eq!(
@@ -985,6 +1138,41 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
             }),
         ),
         put_fact(
+            "inventory.Warehouse",
+            "wh_frozen",
+            &json!({
+                "id": "wh_frozen",
+                "warehouse_code": "WH-FROZEN-03",
+                "display_name": "Frozen Quarantine Depot",
+                "kind": "organization",
+                "status": "frozen"
+            }),
+        ),
+        put_fact(
+            "inventory.BinLocation",
+            "bin_active",
+            &json!({
+                "id": "bin_active",
+                "bin_code": "B-01-01",
+                "zone": "MAIN",
+                "max_capacity": 1000,
+                "unit": "{each}",
+                "status": "active"
+            }),
+        ),
+        put_fact(
+            "inventory.BinLocation",
+            "bin_quarantined",
+            &json!({
+                "id": "bin_quarantined",
+                "bin_code": "Q-09-01",
+                "zone": "HOLD",
+                "max_capacity": 200,
+                "unit": "{each}",
+                "status": "quarantined"
+            }),
+        ),
+        put_fact(
             "inventory.Item",
             "item_valve",
             &json!({
@@ -1024,15 +1212,16 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
             }),
         ),
         put_fact(
-            "inventory.StockReservation",
-            "res_consume_target",
+            "inventory.StockBalance",
+            "bal_quarantined_bin",
             &json!({
-                "id": "res_consume_target",
-                "status": "open",
-                "quantity": 10,
+                "id": "bal_quarantined_bin",
+                "resource_code": "SKU-VALVE-09@Q-09-01",
+                "quantity": 40,
+                "reserved_quantity": 0,
                 "unit": "{each}",
                 "currency": null,
-                "expires_at": "2026-11-26T00:00:00Z"
+                "valuation_method": "fifo"
             }),
         ),
         put_fact(
@@ -1071,6 +1260,20 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
             "wh_central",
         ),
         add_link(
+            "inventory.BinLocation",
+            "bin_active",
+            "warehouse",
+            "inventory.Warehouse",
+            "wh_central",
+        ),
+        add_link(
+            "inventory.BinLocation",
+            "bin_quarantined",
+            "warehouse",
+            "inventory.Warehouse",
+            "wh_central",
+        ),
+        add_link(
             "inventory.LotBatch",
             "lot_2026_a",
             "item",
@@ -1094,23 +1297,37 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
         add_link(
             "inventory.StockBalance",
             "bal_central_valve",
+            "bin",
+            "inventory.BinLocation",
+            "bin_active",
+        ),
+        add_link(
+            "inventory.StockBalance",
+            "bal_central_valve",
             "lot",
             "inventory.LotBatch",
             "lot_2026_a",
         ),
         add_link(
-            "inventory.StockReservation",
-            "res_consume_target",
-            "resource",
             "inventory.StockBalance",
-            "bal_central_valve",
+            "bal_quarantined_bin",
+            "owner",
+            "inventory.Warehouse",
+            "wh_central",
         ),
         add_link(
-            "inventory.StockReservation",
-            "res_consume_target",
-            "holder",
-            "inventory.Warehouse",
-            "wh_regional",
+            "inventory.StockBalance",
+            "bal_quarantined_bin",
+            "item",
+            "inventory.Item",
+            "item_valve",
+        ),
+        add_link(
+            "inventory.StockBalance",
+            "bal_quarantined_bin",
+            "bin",
+            "inventory.BinLocation",
+            "bin_quarantined",
         ),
         add_link(
             "inventory.StockReservation",
@@ -1142,9 +1359,150 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
         ),
     ]);
     cell.commit(seed)
-        .expect("seed warehouses, item, lot, stock balance, reservations, and cycle count");
+        .expect("seed warehouses, bins, item, lot, stock balances, reservation, and cycle count");
 
-    // 1. StockMovement create-only immutability: first create succeeds with links,
+    // 1. Operational preconditions on `inventory.movement.record`:
+    //    zero/negative quantity, negative unit_cost, frozen warehouse, over-issue
+    //    (> 120 - 30 = 90 available), unit mismatch, and quarantined bin all refuse.
+    let movement_refusals = [
+        (
+            "mov-refuse-zero-qty",
+            json!({
+                "id": "mov_zero_qty",
+                "action": "transfer_custody",
+                "movement_kind": "receipt",
+                "occurred_at": "2026-11-23T12:00:00Z",
+                "quantity": "0",
+                "unit": "{each}",
+                "unit_cost": "14.50",
+                "currency": "USD",
+                "reference_code": "REF-ZERO",
+                "providerId": "wh_central",
+                "receiverId": "wh_regional",
+                "resourceId": "bal_central_valve"
+            }),
+        ),
+        (
+            "mov-refuse-neg-qty",
+            json!({
+                "id": "mov_neg_qty",
+                "action": "transfer_custody",
+                "movement_kind": "receipt",
+                "occurred_at": "2026-11-23T12:00:00Z",
+                "quantity": "-5",
+                "unit": "{each}",
+                "unit_cost": "14.50",
+                "currency": "USD",
+                "reference_code": "REF-NEG-QTY",
+                "providerId": "wh_central",
+                "receiverId": "wh_regional",
+                "resourceId": "bal_central_valve"
+            }),
+        ),
+        (
+            "mov-refuse-neg-cost",
+            json!({
+                "id": "mov_neg_cost",
+                "action": "transfer_custody",
+                "movement_kind": "receipt",
+                "occurred_at": "2026-11-23T12:00:00Z",
+                "quantity": "10",
+                "unit": "{each}",
+                "unit_cost": "-1.00",
+                "currency": "USD",
+                "reference_code": "REF-NEG-COST",
+                "providerId": "wh_central",
+                "receiverId": "wh_regional",
+                "resourceId": "bal_central_valve"
+            }),
+        ),
+        (
+            "mov-refuse-frozen-wh",
+            json!({
+                "id": "mov_frozen_wh",
+                "action": "transfer_custody",
+                "movement_kind": "transfer",
+                "occurred_at": "2026-11-23T12:00:00Z",
+                "quantity": "10",
+                "unit": "{each}",
+                "unit_cost": "14.50",
+                "currency": "USD",
+                "reference_code": "REF-FROZEN",
+                "providerId": "wh_central",
+                "receiverId": "wh_frozen",
+                "resourceId": "bal_central_valve"
+            }),
+        ),
+        (
+            "mov-refuse-over-issue",
+            json!({
+                "id": "mov_over_issue",
+                "action": "transfer_custody",
+                "movement_kind": "issue",
+                "occurred_at": "2026-11-23T12:00:00Z",
+                "quantity": "95",
+                "unit": "{each}",
+                "unit_cost": "14.50",
+                "currency": "USD",
+                "reference_code": "REF-OVER-ISSUE",
+                "providerId": "wh_central",
+                "receiverId": "wh_regional",
+                "resourceId": "bal_central_valve"
+            }),
+        ),
+        (
+            "mov-refuse-unit-mismatch",
+            json!({
+                "id": "mov_unit_mismatch",
+                "action": "transfer_custody",
+                "movement_kind": "transfer",
+                "occurred_at": "2026-11-23T12:00:00Z",
+                "quantity": "10",
+                "unit": "kg",
+                "unit_cost": "14.50",
+                "currency": "USD",
+                "reference_code": "REF-UNIT-MISMATCH",
+                "providerId": "wh_central",
+                "receiverId": "wh_regional",
+                "resourceId": "bal_central_valve"
+            }),
+        ),
+        (
+            "mov-refuse-quarantined-bin",
+            json!({
+                "id": "mov_quarantined_bin",
+                "action": "transfer_custody",
+                "movement_kind": "issue",
+                "occurred_at": "2026-11-23T12:00:00Z",
+                "quantity": "5",
+                "unit": "{each}",
+                "unit_cost": "14.50",
+                "currency": "USD",
+                "reference_code": "REF-QBIN",
+                "providerId": "wh_central",
+                "receiverId": "wh_regional",
+                "resourceId": "bal_quarantined_bin"
+            }),
+        ),
+    ];
+    for (key, payload) in movement_refusals {
+        let refusal = fixture
+            .invoke(
+                &mut cell,
+                "inventory.movement.record",
+                &payload,
+                "principal:warehouse_clerk",
+                key,
+            )
+            .expect_err("invalid stock movement must be refused by preconditions");
+        assert_eq!(
+            refusal.code(),
+            "action.precondition_failed",
+            "expected action.precondition_failed for {key}, got {refusal:?}"
+        );
+    }
+
+    // 2. StockMovement create-only immutability: first create succeeds with links,
     //    exact retry replays, and a distinct call reusing the same ID is refused.
     let movement_input = json!({
         "id": "mov_transfer_001",
@@ -1210,18 +1568,91 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
         .expect_err("duplicate StockMovement ID must be refused by create_only writeMode");
     assert_eq!(duplicate_movement.code(), "action.write_mode_failed");
 
-    // 2. StockReservation lifecycle transitions (consume and release).
+    // 3. Governed `inventory.reservation.create` guards & lifecycle transitions.
+    let reservation_refusals = [
+        (
+            "res-refuse-over-available",
+            json!({
+                "id": "res_over",
+                "quantity": "95",
+                "unit": "{each}",
+                "currency": null,
+                "expires_at": "2026-11-26T00:00:00Z",
+                "resourceId": "bal_central_valve",
+                "holderId": "wh_regional"
+            }),
+        ),
+        (
+            "res-refuse-unit-mismatch",
+            json!({
+                "id": "res_bad_unit",
+                "quantity": "10",
+                "unit": "kg",
+                "currency": null,
+                "expires_at": "2026-11-26T00:00:00Z",
+                "resourceId": "bal_central_valve",
+                "holderId": "wh_regional"
+            }),
+        ),
+        (
+            "res-refuse-frozen-wh",
+            json!({
+                "id": "res_frozen_wh",
+                "quantity": "10",
+                "unit": "{each}",
+                "currency": null,
+                "expires_at": "2026-11-26T00:00:00Z",
+                "resourceId": "bal_central_valve",
+                "holderId": "wh_frozen"
+            }),
+        ),
+    ];
+    for (key, payload) in reservation_refusals {
+        let refusal = fixture
+            .invoke(
+                &mut cell,
+                "inventory.reservation.create",
+                &payload,
+                "principal:warehouse_clerk",
+                key,
+            )
+            .expect_err("invalid stock reservation create must be refused");
+        assert_eq!(refusal.code(), "action.precondition_failed");
+    }
+
+    fixture
+        .invoke(
+            &mut cell,
+            "inventory.reservation.create",
+            &json!({
+                "id": "res_created_001",
+                "quantity": "15",
+                "unit": "{each}",
+                "currency": null,
+                "expires_at": "2026-11-26T00:00:00Z",
+                "resourceId": "bal_central_valve",
+                "holderId": "wh_regional"
+            }),
+            "principal:warehouse_clerk",
+            "res-create-1",
+        )
+        .expect("warehouse clerk creates valid open stock reservation");
+    assert_eq!(
+        status_of(&cell, "inventory.StockReservation", "res_created_001"),
+        "open"
+    );
+
     fixture
         .invoke(
             &mut cell,
             "inventory.reservation.consume",
-            &json!({"reservationId": "res_consume_target"}),
+            &json!({"reservationId": "res_created_001"}),
             "principal:warehouse_clerk",
             "res-consume-1",
         )
         .expect("warehouse clerk consumes open stock reservation");
     assert_eq!(
-        status_of(&cell, "inventory.StockReservation", "res_consume_target"),
+        status_of(&cell, "inventory.StockReservation", "res_created_001"),
         "consumed"
     );
     fixture
@@ -1238,8 +1669,8 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
         "released"
     );
 
-    // 3. LotBatch quarantine -> recall + fail-closed Cedar denial for warehouse_clerk
-    //    + terminal immutability once recalled.
+    // 4. LotBatch quarantine blocks subsequent movements & reservations on linked stock;
+    //    warehouse_clerk is denied recall; quality_inspector recalls into terminal immutable state.
     fixture
         .invoke(
             &mut cell,
@@ -1253,6 +1684,49 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
         status_of(&cell, "inventory.LotBatch", "lot_2026_a"),
         "quarantined"
     );
+
+    let quarantined_lot_mov = fixture
+        .invoke(
+            &mut cell,
+            "inventory.movement.record",
+            &json!({
+                "id": "mov_quarantined_lot",
+                "action": "transfer_custody",
+                "movement_kind": "transfer",
+                "occurred_at": "2026-11-23T12:05:00Z",
+                "quantity": "5",
+                "unit": "{each}",
+                "unit_cost": "14.50",
+                "currency": "USD",
+                "reference_code": "REF-QLOT",
+                "providerId": "wh_central",
+                "receiverId": "wh_regional",
+                "resourceId": "bal_central_valve"
+            }),
+            "principal:warehouse_clerk",
+            "mov-refuse-quarantined-lot",
+        )
+        .expect_err("movement against quarantined lot must be refused");
+    assert_eq!(quarantined_lot_mov.code(), "action.precondition_failed");
+
+    let quarantined_lot_res = fixture
+        .invoke(
+            &mut cell,
+            "inventory.reservation.create",
+            &json!({
+                "id": "res_quarantined_lot",
+                "quantity": "5",
+                "unit": "{each}",
+                "currency": null,
+                "expires_at": "2026-11-26T00:00:00Z",
+                "resourceId": "bal_central_valve",
+                "holderId": "wh_regional"
+            }),
+            "principal:warehouse_clerk",
+            "res-refuse-quarantined-lot",
+        )
+        .expect_err("reservation against quarantined lot must be refused");
+    assert_eq!(quarantined_lot_res.code(), "action.precondition_failed");
 
     let clerk_recall = fixture
         .invoke(
@@ -1283,29 +1757,18 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
         "recalled"
     );
 
-    let recalled_state = cell
-        .load(&FactKey::new("inventory.LotBatch", "lot_2026_a"))
-        .expect("recalled lot loads");
-    let mut mutate_recalled = CellCommit::empty();
-    mutate_recalled.writes.push(update_fact(
+    assert_immutable_state_refusal(
+        &fixture,
+        &cell,
         "inventory.LotBatch",
         "lot_2026_a",
-        recalled_state.version,
-        &json!({
-            "id": "lot_2026_a",
-            "lot_code": "LOT-2026-11-A-TAMPERED",
-            "manufactured_on": "2026-11-01",
-            "expires_on": "2028-11-01",
-            "status": "recalled"
-        }),
-    ));
-    assert!(
-        cell.commit(mutate_recalled).is_err(),
-        "recalled LotBatch must enforce terminal immutability"
+        "lot_code",
+        RuntimeValue::from("LOT-2026-11-A-TAMPERED"),
+        "recalled",
     );
 
-    // 4. CycleCount submit -> approve -> post with fail-closed Cedar checks
-    //    and terminal immutability once posted.
+    // 5. CycleCount submit -> approve -> post with fail-closed Cedar checks,
+    //    immutability enforced once `approved` AND once `posted`.
     fixture
         .invoke(
             &mut cell,
@@ -1362,6 +1825,17 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
         "approved"
     );
 
+    // CycleCount is immutable as soon as it reaches `approved`, before posting.
+    assert_immutable_state_refusal(
+        &fixture,
+        &cell,
+        "inventory.CycleCount",
+        "cc_nov_2026",
+        "timezone",
+        RuntimeValue::from("Europe/London"),
+        "approved",
+    );
+
     let clerk_post = fixture
         .invoke(
             &mut cell,
@@ -1377,6 +1851,77 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
         "approved"
     );
 
+    // 6. Fail-closed cross-scope Cedar denial (wrong orgId, wrong environmentId, missing env).
+    let wrong_org_scope = BTreeMap::from([
+        ("orgId".to_owned(), "org_other_tenant".to_owned()),
+        ("environmentId".to_owned(), ENV_ID.to_owned()),
+    ]);
+    let wrong_org_post = fixture
+        .invoke_in_scope(
+            &mut cell,
+            "inventory.cycle_count.post",
+            &json!({"cycleCountId": "cc_nov_2026"}),
+            "principal:inventory_manager",
+            wrong_org_scope.clone(),
+            "cc-post-wrong-org",
+        )
+        .expect_err("cross-org scope call must be denied by Cedar");
+    assert_eq!(wrong_org_post.code(), "action.permission_denied");
+
+    let wrong_env_scope = BTreeMap::from([
+        ("orgId".to_owned(), ORG_ID.to_owned()),
+        ("environmentId".to_owned(), "prod".to_owned()),
+    ]);
+    let wrong_env_post = fixture
+        .invoke_in_scope(
+            &mut cell,
+            "inventory.cycle_count.post",
+            &json!({"cycleCountId": "cc_nov_2026"}),
+            "principal:inventory_manager",
+            wrong_env_scope,
+            "cc-post-wrong-env",
+        )
+        .expect_err("cross-environment scope call must be denied by Cedar");
+    assert_eq!(wrong_env_post.code(), "action.permission_denied");
+
+    let missing_env_scope = BTreeMap::from([("orgId".to_owned(), ORG_ID.to_owned())]);
+    let missing_env_post = fixture
+        .invoke_in_scope(
+            &mut cell,
+            "inventory.cycle_count.post",
+            &json!({"cycleCountId": "cc_nov_2026"}),
+            "principal:inventory_manager",
+            missing_env_scope,
+            "cc-post-missing-env",
+        )
+        .expect_err("missing environmentId scope dimension must be refused");
+    assert_eq!(missing_env_post.code(), "action.missing_scope");
+
+    let cross_org_movement = fixture
+        .invoke_in_scope(
+            &mut cell,
+            "inventory.movement.record",
+            &json!({
+                "id": "mov_cross_org",
+                "action": "transfer_custody",
+                "movement_kind": "receipt",
+                "occurred_at": "2026-11-23T12:10:00Z",
+                "quantity": "5",
+                "unit": "{each}",
+                "unit_cost": "14.50",
+                "currency": "USD",
+                "reference_code": "REF-XORG",
+                "providerId": "wh_central",
+                "receiverId": "wh_regional",
+                "resourceId": "bal_central_valve"
+            }),
+            "principal:warehouse_clerk",
+            wrong_org_scope,
+            "mov-cross-org-denied",
+        )
+        .expect_err("cross-org slice read must fail closed");
+    assert_eq!(cross_org_movement.code(), "action.target_not_found");
+
     fixture
         .invoke(
             &mut cell,
@@ -1391,28 +1936,14 @@ fn inventory_actions_immutability_and_cedar_access_enforce_in_real_cell() {
         "posted"
     );
 
-    let posted_count_state = cell
-        .load(&FactKey::new("inventory.CycleCount", "cc_nov_2026"))
-        .expect("posted cycle count loads");
-    let mut mutate_posted_count = CellCommit::empty();
-    mutate_posted_count.writes.push(update_fact(
+    assert_immutable_state_refusal(
+        &fixture,
+        &cell,
         "inventory.CycleCount",
         "cc_nov_2026",
-        posted_count_state.version,
-        &json!({
-            "id": "cc_nov_2026",
-            "starts_at": "2026-11-23T08:00:00Z",
-            "ends_at": "2026-11-23T11:30:00Z",
-            "timezone": "UTC",
-            "expected_quantity": 120,
-            "counted_quantity": 120,
-            "variance_quantity": 0,
-            "status": "posted"
-        }),
-    ));
-    assert!(
-        cell.commit(mutate_posted_count).is_err(),
-        "posted CycleCount must enforce terminal immutability"
+        "timezone",
+        RuntimeValue::from("America/New_York"),
+        "posted",
     );
 
     // Durable reopen preserves exact state and hash-chained ledger integrity.

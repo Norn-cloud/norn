@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Stock reservation quantity is strictly positive",
+  "name": "Stock reservation carries a unit and strictly positive quantity",
   "namespace": "inventory",
   "payload": {
     "id": "inventory.StockReservation.positive_quantity",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/inventory/stock.ts"
     },
-    "rationale": "A stock hold must reserve a strictly positive quantity.",
+    "rationale": "A stock hold must carry an explicit UCUM unit and reserve a strictly positive quantity.",
     "response": {
-      "expression": "self.quantity > 0",
+      "expression": "self.unit != null and self.quantity > 0",
       "kind": "predicate"
     },
     "scope": {

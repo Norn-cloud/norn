@@ -1,0 +1,21 @@
+{
+  "sha256": "03182d71636cc2d0cb255acf780ee9820fbd01453af077064a7d7e6e55810eeb",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/inventory/access.ts",
+    "registry/packs/inventory/stock.ts",
+    "registry/packs/inventory/warehouse.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

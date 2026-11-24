@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Stock movement has strictly positive quantity and non-negative unit cost",
+  "name": "Stock movement carries a unit, strictly positive quantity, and non-negative unit cost",
   "namespace": "inventory",
   "payload": {
     "id": "inventory.StockMovement.positive_quantity",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/inventory/stock.ts"
     },
-    "rationale": "Every posted stock movement transfers a strictly positive physical quantity at a non-negative unit cost.",
+    "rationale": "Every posted stock movement carries an explicit UCUM unit and transfers a strictly positive physical quantity at a non-negative unit cost.",
     "response": {
-      "expression": "self.quantity > 0 and self.unit_cost >= 0",
+      "expression": "self.unit != null and self.quantity > 0 and self.unit_cost >= 0",
       "kind": "predicate"
     },
     "scope": {

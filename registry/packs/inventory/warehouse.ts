@@ -234,6 +234,62 @@ export const ItemNegativeReorderViolated = Norn.example("negative reorder point 
   expect: "violated",
 })
 
+export const LotBatchValidDates = Norn.law({
+  id: "inventory.LotBatch.valid_dates.law",
+  title: "Lot manufacture date does not exceed expiry date",
+  version: "0.1.0",
+  dependencies: [{ artifactId: "inventory.LotBatch.entity", kind: "entity", version: "0.1.0", required: true }],
+  law: {
+    lawVersion: "0.1",
+    id: "inventory.LotBatch.valid_dates",
+    owner: "inventory",
+    severity: "error",
+    rationale: "When both manufacture and expiry dates are recorded on a lot, manufactured_on must be on or before expires_on.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/packs/inventory/warehouse.ts" },
+    subject: "inventory.LotBatch",
+    scope: { root: { kind: "entity", id: "inventory.LotBatch" }, objectTypes: ["inventory.LotBatch"] },
+    condition: "self.manufactured_on != null and self.expires_on != null",
+    modality: { kind: "always" },
+    response: { kind: "predicate", expression: "date(self.manufactured_on) <= date(self.expires_on)" },
+  },
+})
+
+export const LotBatchOpenDatesNotApplicable = Norn.example("lot with unset manufacture date is not applicable", {
+  of: LotBatchValidDates,
+  given: {
+    id: "lot_open",
+    lot_code: "LOT-2026-OPEN",
+    manufactured_on: null,
+    expires_on: "2028-11-01",
+    status: "active",
+  },
+  expect: "not_applicable",
+})
+
+export const LotBatchValidDatesHolds = Norn.example("lot with manufactured_on before expires_on holds", {
+  of: LotBatchValidDates,
+  given: {
+    id: "lot_valid",
+    lot_code: "LOT-2026-VALID",
+    manufactured_on: "2026-11-01",
+    expires_on: "2028-11-01",
+    status: "active",
+  },
+  expect: "holds",
+})
+
+export const LotBatchReversedDatesViolated = Norn.example("lot with manufactured_on after expires_on is refused", {
+  of: LotBatchValidDates,
+  given: {
+    id: "lot_bad",
+    lot_code: "LOT-2026-REVERSED",
+    manufactured_on: "2028-11-01",
+    expires_on: "2026-11-01",
+    status: "active",
+  },
+  expect: "violated",
+})
+
 // ---------------------------------------------------------------- Governed Lot Lifecycle Actions
 
 const LotTransitionInput = Schema.Struct({
