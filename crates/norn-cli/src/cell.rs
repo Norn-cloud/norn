@@ -83,6 +83,50 @@ fn artifacts(paths: &[PathBuf]) -> Result<Vec<Artifact>, String> {
     Ok(read)
 }
 
+/// Maximum bytes of retained `*.json` filenames from one pack directory.
+#[cfg(unix)]
+const MAX_DIR_NAME_BYTES: usize = MAX_BODY;
+
+/// Collect `*.json` filenames from an open pack directory within `name_budget`
+/// bytes, refusing before retaining unbounded directory entries in memory.
+#[cfg(unix)]
+fn collect_json_names(
+    dir: &std::fs::File,
+    shown: &Path,
+    name_budget: usize,
+) -> Result<Vec<std::ffi::CString>, String> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let mut names = Vec::new();
+    let mut retained = 0usize;
+    for entry in rustix::fs::Dir::read_from(dir).map_err(|e| format!("{}: {e}", shown.display()))? {
+        let name = entry
+            .map_err(|e| format!("{}: {e}", shown.display()))?
+            .file_name()
+            .to_owned();
+        let json = Path::new(std::ffi::OsStr::from_bytes(name.to_bytes()))
+            .extension()
+            .is_some_and(|ext| ext == "json");
+        if json {
+            let entry_bytes = name
+                .as_bytes()
+                .len()
+                .saturating_add(std::mem::size_of::<std::ffi::CString>());
+            retained = retained
+                .checked_add(entry_bytes)
+                .filter(|&total| total <= name_budget)
+                .ok_or_else(|| {
+                    format!(
+                        "{}: directory listing exceeds {name_budget} bytes of artifact names",
+                        shown.display()
+                    )
+                })?;
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 /// Read one named path: a regular file, or a directory's `*.json` children
 /// in name order. The path is opened once without following a link, and a
 /// directory's children are listed and opened relative to that open
@@ -91,7 +135,9 @@ fn artifacts(paths: &[PathBuf]) -> Result<Vec<Artifact>, String> {
 fn read_path(path: &Path, budget: &mut u64, read: &mut Vec<Artifact>) -> Result<(), String> {
     use std::os::unix::ffi::OsStrExt as _;
     let shown = path.display();
-    let opened = open_no_follow(rustix::fs::CWD, path).map_err(|e| format!("{shown}: {e}"))?;
+    // Strip trailing `/` and `/.` so `O_NOFOLLOW` applies to the named path.
+    let target: PathBuf = path.components().collect();
+    let opened = open_no_follow(rustix::fs::CWD, &target).map_err(|e| format!("{shown}: {e}"))?;
     let kind = opened
         .metadata()
         .map_err(|e| format!("{shown}: {e}"))?
@@ -103,21 +149,7 @@ fn read_path(path: &Path, budget: &mut u64, read: &mut Vec<Artifact>) -> Result<
     if !kind.is_dir() {
         return Err(format!("{shown}: not a regular file or directory"));
     }
-    let mut names = Vec::new();
-    for entry in rustix::fs::Dir::read_from(&opened).map_err(|e| format!("{shown}: {e}"))? {
-        let name = entry
-            .map_err(|e| format!("{shown}: {e}"))?
-            .file_name()
-            .to_owned();
-        let json = Path::new(std::ffi::OsStr::from_bytes(name.to_bytes()))
-            .extension()
-            .is_some_and(|ext| ext == "json");
-        if json {
-            names.push(name);
-        }
-    }
-    names.sort();
-    for name in names {
+    for name in collect_json_names(&opened, path, MAX_DIR_NAME_BYTES)? {
         let child = path.join(std::ffi::OsStr::from_bytes(name.to_bytes()));
         let file = open_no_follow(&opened, name.as_c_str())
             .map_err(|e| format!("{}: {e}", child.display()))?;
@@ -648,6 +680,7 @@ pub(super) fn execute(args: &CellArgs) -> Result<(String, bool), String> {
 #[allow(clippy::unwrap_used, reason = "fixture assertions")]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::path::Path;
 
     #[cfg(unix)]
@@ -674,6 +707,7 @@ mod tests {
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     /// A fresh directory under the system temp dir, unique to this test.
+    #[cfg(unix)]
     fn scratch(name: &str) -> Result<PathBuf, std::io::Error> {
         let dir = std::env::temp_dir().join(format!("norn-cli-cell-{}-{name}", std::process::id()));
         if dir.exists() {
@@ -863,11 +897,29 @@ mod tests {
         std::fs::write(outside.join("a.json"), r#"{"secret":true}"#)?;
         let pack = root.join("pack");
         std::os::unix::fs::symlink(&outside, &pack)?;
-        let Err(refused) = artifacts(std::slice::from_ref(&pack)) else {
-            return Err("a linked pack directory was read".into());
-        };
-        assert!(refused.contains("links are refused"), "{refused}");
+        let slash = PathBuf::from(format!("{}/", pack.display()));
+        for candidate in [pack.clone(), slash, pack.join(".")] {
+            let Err(refused) = artifacts(std::slice::from_ref(&candidate)) else {
+                return Err(format!("linked pack read: {}", candidate.display()).into());
+            };
+            assert!(refused.contains("links are refused"), "{refused}");
+        }
         std::fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_listing_memory_is_bounded_while_enumerating() -> TestResult {
+        let pack = scratch("dir-names")?;
+        std::fs::write(pack.join("alpha.json"), "{}")?;
+        std::fs::write(pack.join("bravo.json"), "{}")?;
+        let dir = open_no_follow(rustix::fs::CWD, &pack)?;
+        let Err(refused) = collect_json_names(&dir, &pack, 16) else {
+            return Err("oversized directory listing was retained".into());
+        };
+        assert!(refused.contains("directory listing exceeds"), "{refused}");
+        std::fs::remove_dir_all(&pack)?;
         Ok(())
     }
 
