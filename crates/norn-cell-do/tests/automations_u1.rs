@@ -3,16 +3,17 @@
 //! automation idempotency key namespace (`AUTOMATION-KEY-1`) end to end
 //! through the hosted fetch dispatch.
 
-#[path = "support/step_cell.rs"]
-mod step_cell;
-
-#[allow(
+#![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::too_many_lines,
     reason = "automation U1 integration tests"
 )]
+
+#[path = "support/step_cell.rs"]
+mod step_cell;
+
 mod cases {
     use std::path::Path;
 
@@ -159,10 +160,10 @@ mod cases {
     }
 
     fn provisioned_tenant(path: &Path, roles: &[&str]) -> TenantCell {
-        provisioned_tenant_with_artifacts(path, melt_artifacts_with_policy(roles))
+        provisioned_tenant_with_artifacts(path, &melt_artifacts_with_policy(roles))
     }
 
-    fn provisioned_tenant_with_artifacts(path: &Path, artifacts: Vec<Value>) -> TenantCell {
+    fn provisioned_tenant_with_artifacts(path: &Path, artifacts: &[Value]) -> TenantCell {
         let file = path.to_owned();
         let tenant = Tenant::open(
             tenant_scope(),
@@ -187,7 +188,7 @@ mod cases {
         cell
     }
 
-    fn automation_payload(title: &str, when: Value) -> Value {
+    fn automation_payload(title: &str, when: &Value) -> Value {
         json!({
             "title": title,
             "enabled": true,
@@ -201,7 +202,7 @@ mod cases {
         })
     }
 
-    fn install_automation<E: SqlEngine>(cell: &Cell<E>, id: &str, payload: Value) {
+    fn install_automation<E: SqlEngine>(cell: &Cell<E>, id: &str, payload: &Value) {
         let mut body = json!({ "kind": "automation", "id": id, "payload": payload });
         let (status, admitted) = call(
             cell,
@@ -261,25 +262,25 @@ mod cases {
         install_automation(
             &cell,
             "ops.on_melt_created",
-            automation_payload(
+            &automation_payload(
                 "On melt created",
-                json!({ "kind": "event", "event": "created" }),
+                &json!({ "kind": "event", "event": "created" }),
             ),
         );
         install_automation(
             &cell,
             "ops.on_melt_action",
-            automation_payload(
+            &automation_payload(
                 "On melt convert action",
-                json!({ "kind": "event", "event": "action", "actionId": MELT_ACTION }),
+                &json!({ "kind": "event", "event": "action", "actionId": MELT_ACTION }),
             ),
         );
         install_automation(
             &cell,
             "ops.on_melt_updated",
-            automation_payload(
+            &automation_payload(
                 "On melt updated",
-                json!({ "kind": "event", "event": "updated" }),
+                &json!({ "kind": "event", "event": "updated" }),
             ),
         );
 
@@ -332,7 +333,7 @@ mod cases {
     }
 
     /// 2. Crash or reopen after commit loses no candidate, and a refused/aborted
-    /// write records none.
+    ///    write records none.
     #[test]
     fn committed_candidate_survives_reopen_and_aborted_write_records_none() {
         let dir = tempfile::tempdir().unwrap();
@@ -344,9 +345,9 @@ mod cases {
             install_automation(
                 &cell,
                 "ops.durable_watch",
-                automation_payload(
+                &automation_payload(
                     "Durable watch",
-                    json!({ "kind": "event", "event": "created" }),
+                    &json!({ "kind": "event", "event": "created" }),
                 ),
             );
 
@@ -392,17 +393,17 @@ mod cases {
         install_automation(
             &cell,
             "ops.flow_watch_created",
-            automation_payload(
+            &automation_payload(
                 "Watch flow created",
-                json!({ "kind": "event", "event": "created" }),
+                &json!({ "kind": "event", "event": "created" }),
             ),
         );
         install_automation(
             &cell,
             "ops.flow_watch_action",
-            automation_payload(
+            &automation_payload(
                 "Watch flow action",
-                json!({ "kind": "event", "event": "action", "actionId": MELT_ACTION }),
+                &json!({ "kind": "event", "event": "action", "actionId": MELT_ACTION }),
             ),
         );
 
@@ -446,7 +447,7 @@ mod cases {
     }
 
     /// 4. Approved proposal parks with 0 candidates and records its candidate
-    /// atomically when the approved call commits.
+    ///    atomically when the approved call commits.
     #[test]
     fn approved_proposal_records_trigger_candidate_only_on_commit() {
         let cell = cell();
@@ -454,9 +455,9 @@ mod cases {
         install_automation(
             &cell,
             "ops.approval_watch",
-            automation_payload(
+            &automation_payload(
                 "Watch approved",
-                json!({ "kind": "event", "event": "created" }),
+                &json!({ "kind": "event", "event": "created" }),
             ),
         );
 
@@ -507,15 +508,15 @@ mod cases {
     }
 
     /// 5. Author without the grant for `then.actionId` is refused at admission
-    /// and install; an author with the grant installs a revocable, server-bound
-    /// authority record.
+    ///    and install; an author with the grant installs a revocable, server-bound
+    ///    authority record.
     #[test]
     fn author_without_grant_is_refused_at_admission_and_install() {
         let dir = tempfile::tempdir().unwrap();
         let mut cell = provisioned_tenant(&dir.path().join("authz.sqlite"), &["owner"]);
         let payload = automation_payload(
             "Owner-only automation",
-            json!({ "kind": "event", "event": "created" }),
+            &json!({ "kind": "event", "event": "created" }),
         );
         let body = json!({
             "kind": "automation",
@@ -580,8 +581,8 @@ mod cases {
         assert_eq!(authority.action_id, MELT_ACTION);
         assert_eq!(authority.object_type, MELT);
         assert!(authority.revocable);
-        assert!(!authority.delegation_id.is_empty());
-        assert!(!authority.action_digest.is_empty());
+        assert_ne!(authority.delegation_id, "");
+        assert_ne!(authority.action_digest, "");
         assert_eq!(
             authority.parent_grant_ids.len(),
             1,
@@ -608,7 +609,7 @@ mod cases {
             "id": "ops.no_borrowing",
             "payload": automation_payload(
                 "No borrowing",
-                json!({ "kind": "event", "event": "created" }),
+                &json!({ "kind": "event", "event": "created" }),
             ),
         });
         for role in ["owner", "admin"] {
@@ -634,7 +635,7 @@ mod cases {
             "id": "ops.no_borrowing",
             "payload": automation_payload(
                 "No borrowing",
-                json!({ "kind": "event", "event": "created" }),
+                &json!({ "kind": "event", "event": "created" }),
             ),
         });
         let admit = shared.call(
@@ -743,13 +744,13 @@ mod cases {
             .unwrap()
             .push(json!({ "resource": { "name": "id", "op": "eq", "value": "m" } }));
         let mut cell =
-            provisioned_tenant_with_artifacts(&dir.path().join("conditional.sqlite"), artifacts);
+            provisioned_tenant_with_artifacts(&dir.path().join("conditional.sqlite"), &artifacts);
         let body = json!({
             "kind": "automation",
             "id": "ops.conditional_denied",
             "payload": automation_payload(
                 "Conditional denied",
-                json!({ "kind": "event", "event": "created" }),
+                &json!({ "kind": "event", "event": "created" }),
             ),
         });
         let refused = cell.call(
@@ -804,14 +805,14 @@ mod cases {
         parent_only_artifacts.push(special_entity.clone());
         let mut parent_only = provisioned_tenant_with_artifacts(
             &dir.path().join("parent-only.sqlite"),
-            parent_only_artifacts,
+            &parent_only_artifacts,
         );
         let watch_parent = json!({
             "kind": "automation",
             "id": "ops.watch_parent",
             "payload": automation_payload(
                 "Watch parent",
-                json!({ "kind": "event", "event": "created" }),
+                &json!({ "kind": "event", "event": "created" }),
             ),
         });
         let refused_parent = parent_only.call(
@@ -849,7 +850,7 @@ mod cases {
             }
         ]);
         let mut both =
-            provisioned_tenant_with_artifacts(&dir.path().join("both.sqlite"), both_artifacts);
+            provisioned_tenant_with_artifacts(&dir.path().join("both.sqlite"), &both_artifacts);
         let admitted = both.call(
             "POST",
             "/v1/definitions:admit",
@@ -901,7 +902,7 @@ mod cases {
     }
 
     /// 7. Public action route unconditionally refuses automation-namespace
-    /// idempotency keys, both ungated and under an active approval gate.
+    ///    idempotency keys, both ungated and under an active approval gate.
     #[test]
     fn public_route_refuses_automation_namespace_idempotency_keys() {
         let cell = cell();
@@ -909,7 +910,7 @@ mod cases {
         install_automation(
             &cell,
             "ops.key_watch",
-            automation_payload("Key watch", json!({ "kind": "event", "event": "created" })),
+            &automation_payload("Key watch", &json!({ "kind": "event", "event": "created" })),
         );
 
         let run_key = automation_run_key("ops.key_watch", 1, 5, MELT, "melt-1", 1).unwrap();
@@ -956,7 +957,7 @@ mod cases {
     }
 
     /// 8. Hidden automations never alter or refuse business writes and never
-    /// leak their existence in ordinary action responses or refusals.
+    ///    leak their existence in ordinary action responses or refusals.
     #[test]
     fn hidden_automations_are_never_disclosed_in_business_write_responses_or_refusals() {
         let dir = tempfile::tempdir().unwrap();
@@ -969,7 +970,7 @@ mod cases {
             "id": "ops.hidden_watch",
             "payload": automation_payload(
                 "Hidden watch",
-                json!({ "kind": "event", "event": "created" }),
+                &json!({ "kind": "event", "event": "created" }),
             ),
         });
         let admit = cell.call(

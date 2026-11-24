@@ -1046,7 +1046,7 @@ mod tests {
         expected_defs_version: u64,
         id: &str,
         object_type: &str,
-        when: serde_json::Value,
+        when: &serde_json::Value,
     ) {
         let payload = serde_json::to_string(&json!({
             "title": id,
@@ -1148,7 +1148,7 @@ mod tests {
             1,
             "ops.on_create",
             "demo.Ticket",
-            json!({ "kind": "event", "event": "created" }),
+            &json!({ "kind": "event", "event": "created" }),
         );
         install_automation_for(
             &mut store,
@@ -1157,7 +1157,7 @@ mod tests {
             2,
             "ops.on_stalled",
             "demo.Ticket",
-            json!({ "kind": "lifecycle_entered", "property": "status", "state": "stalled" }),
+            &json!({ "kind": "lifecycle_entered", "property": "status", "state": "stalled" }),
         );
         (store, model, canonical)
     }
@@ -1378,7 +1378,7 @@ mod tests {
             1,
             "ops.on_receipt_only",
             "demo.Ticket",
-            json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
+            &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
         );
         install_automation_for(
             &mut store,
@@ -1387,7 +1387,7 @@ mod tests {
             2,
             "ops.on_delete",
             "demo.Ticket",
-            json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.remove" }),
+            &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.remove" }),
         );
 
         // 1. Receipt-only call targeting an absent object (no business row write).
@@ -1562,7 +1562,7 @@ mod tests {
             1,
             "ops.on_create",
             "demo.Ticket",
-            json!({ "kind": "event", "event": "created" }),
+            &json!({ "kind": "event", "event": "created" }),
         );
 
         let unrelated = CommitBatch {
@@ -1850,7 +1850,7 @@ mod tests {
                 1_u64.saturating_add(u64::try_from(idx).expect("u64")),
                 id,
                 "demo.Ticket",
-                json!({ "kind": "event", "event": "created" }),
+                &json!({ "kind": "event", "event": "created" }),
             );
         }
         install_automation_for(
@@ -1860,7 +1860,7 @@ mod tests {
             4,
             "ops.a1",
             "demo.Ticket",
-            json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
+            &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
         );
         install_automation_for(
             &mut store,
@@ -1869,7 +1869,7 @@ mod tests {
             5,
             "ops.a2",
             "demo.Ticket",
-            json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
+            &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
         );
 
         // Keyset paging with LIMIT 2 walks all 3 row rules cleanly without duplicates.
@@ -1963,7 +1963,7 @@ mod tests {
             1,
             "ops.b_created",
             "demo.TicketB",
-            json!({ "kind": "event", "event": "created" }),
+            &json!({ "kind": "event", "event": "created" }),
         );
         install_automation_for(
             &mut store,
@@ -1972,7 +1972,7 @@ mod tests {
             2,
             "ops.b_updated",
             "demo.TicketB",
-            json!({ "kind": "event", "event": "updated" }),
+            &json!({ "kind": "event", "event": "updated" }),
         );
         install_automation_for(
             &mut store,
@@ -1981,7 +1981,7 @@ mod tests {
             3,
             "ops.base_updated",
             "demo.Ticket",
-            json!({ "kind": "event", "event": "updated" }),
+            &json!({ "kind": "event", "event": "updated" }),
         );
 
         // Seed live `demo.TicketA` under key `s-1`.
