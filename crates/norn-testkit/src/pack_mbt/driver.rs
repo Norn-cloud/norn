@@ -244,6 +244,23 @@ fn bfs_paths_to_states(lifecycle: &Lifecycle) -> BTreeMap<String, (String, Vec<S
     paths
 }
 
+fn collect_prefix_guards(
+    lifecycle: &Lifecycle,
+    prefix: &[String],
+) -> Vec<norn_kernel::norn_ir::ZenExpression> {
+    let mut guards = Vec::new();
+    for tr_id in prefix {
+        if let Some(tr) = lifecycle
+            .transitions
+            .iter()
+            .find(|t| t.id.as_str() == tr_id)
+        {
+            guards.extend(tr.guards.iter().cloned());
+        }
+    }
+    guards
+}
+
 fn exercise_valid_transitions<H, F>(
     ctx: &LifecycleCtx<'_>,
     paths: &BTreeMap<String, (String, Vec<String>)>,
@@ -266,11 +283,13 @@ where
             *seq = seq.saturating_add(1);
             let mut host = make_host(&format!("lc-{ty_name}-{prop}-{}", *seq))?;
             let id = format!("mbt-{}", *seq);
+            let mut path_guards = collect_prefix_guards(ctx.lifecycle, prefix);
+            path_guards.extend(transition.guards.iter().cloned());
             let mut init_vals = synthesize_guard_satisfying(
                 ctx.pack,
                 ctx.object_type,
                 ctx.lifecycle,
-                &transition.guards,
+                &path_guards,
                 &id,
                 *seq,
             );

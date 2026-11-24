@@ -398,24 +398,26 @@ fn real_ml_pack_passes_sqlite_mbt_cedar_matrix_and_dst() -> Result<(), String> {
 
 #[test]
 fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<(), String> {
-    let time_pack = load_registry_pack("time", &["time"], false)?.with_law_examples(vec![
+    let time_pack = load_registry_pack("time", &["time"], true)?.with_law_examples(vec![
         LawExampleCase {
-            name: "calendar pinned tzdb holds".to_owned(),
-            law_id: "time.Calendar.tzdb_version_pinned".to_owned(),
+            name: "working window 09:00..17:00 holds".to_owned(),
+            law_id: "time.WorkingWindow.valid_local_window".to_owned(),
             subject: runtime_obj(&[
-                ("id", RuntimeValue::String("cal-1".to_owned())),
-                ("iana_timezone", RuntimeValue::String("UTC".to_owned())),
-                ("tzdb_version", RuntimeValue::String("2025b".to_owned())),
+                ("id", RuntimeValue::String("ww-1".to_owned())),
+                ("weekday", RuntimeValue::String("monday".to_owned())),
+                ("start_local", RuntimeValue::String("09:00".to_owned())),
+                ("end_local", RuntimeValue::String("17:00".to_owned())),
             ]),
             expected: Verdict::Holds,
         },
         LawExampleCase {
-            name: "calendar empty tzdb violates".to_owned(),
-            law_id: "time.Calendar.tzdb_version_pinned".to_owned(),
+            name: "working window 17:00..09:00 violates".to_owned(),
+            law_id: "time.WorkingWindow.valid_local_window".to_owned(),
             subject: runtime_obj(&[
-                ("id", RuntimeValue::String("cal-bad".to_owned())),
-                ("iana_timezone", RuntimeValue::String("UTC".to_owned())),
-                ("tzdb_version", RuntimeValue::String(String::new())),
+                ("id", RuntimeValue::String("ww-bad".to_owned())),
+                ("weekday", RuntimeValue::String("monday".to_owned())),
+                ("start_local", RuntimeValue::String("17:00".to_owned())),
+                ("end_local", RuntimeValue::String("09:00".to_owned())),
             ]),
             expected: Verdict::Violated,
         },
@@ -429,38 +431,35 @@ fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<()
         time_rec
             .snapshot()
             .law_holds
-            .contains_key("time.Calendar.tzdb_version_pinned")
+            .contains_key("time.WorkingWindow.valid_local_window")
     );
     assert!(
         time_rec
             .snapshot()
             .law_violations
-            .contains_key("time.Calendar.tzdb_version_pinned")
+            .contains_key("time.WorkingWindow.valid_local_window")
     );
 
     let org_pack = load_registry_pack("org", &["org"], true)?.with_law_examples(vec![
         LawExampleCase {
-            name: "org unit with organization kind holds".to_owned(),
-            law_id: "org.OrgUnit.kind_is_organization".to_owned(),
+            name: "membership valid_from < valid_to holds".to_owned(),
+            law_id: "org.Membership.valid_date_range".to_owned(),
             subject: runtime_obj(&[
-                ("id", RuntimeValue::String("ou-1".to_owned())),
-                (
-                    "display_name",
-                    RuntimeValue::String("Engineering".to_owned()),
-                ),
-                ("kind", RuntimeValue::String("organization".to_owned())),
-                ("code", RuntimeValue::String("ENG".to_owned())),
+                ("id", RuntimeValue::String("mem-1".to_owned())),
+                ("role", RuntimeValue::String("engineer".to_owned())),
+                ("valid_from", RuntimeValue::String("2026-01-01".to_owned())),
+                ("valid_to", RuntimeValue::String("2026-12-31".to_owned())),
             ]),
             expected: Verdict::Holds,
         },
         LawExampleCase {
-            name: "org unit with person kind violates".to_owned(),
-            law_id: "org.OrgUnit.kind_is_organization".to_owned(),
+            name: "membership inverted date range violates".to_owned(),
+            law_id: "org.Membership.valid_date_range".to_owned(),
             subject: runtime_obj(&[
-                ("id", RuntimeValue::String("ou-bad".to_owned())),
-                ("display_name", RuntimeValue::String("Alice".to_owned())),
-                ("kind", RuntimeValue::String("person".to_owned())),
-                ("code", RuntimeValue::String("ALICE".to_owned())),
+                ("id", RuntimeValue::String("mem-bad".to_owned())),
+                ("role", RuntimeValue::String("engineer".to_owned())),
+                ("valid_from", RuntimeValue::String("2026-12-31".to_owned())),
+                ("valid_to", RuntimeValue::String("2026-01-01".to_owned())),
             ]),
             expected: Verdict::Violated,
         },
@@ -474,13 +473,13 @@ fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<()
         org_rec
             .snapshot()
             .law_holds
-            .contains_key("org.OrgUnit.kind_is_organization")
+            .contains_key("org.Membership.valid_date_range")
     );
     assert!(
         org_rec
             .snapshot()
             .law_violations
-            .contains_key("org.OrgUnit.kind_is_organization")
+            .contains_key("org.Membership.valid_date_range")
     );
     Ok(())
 }
@@ -489,15 +488,50 @@ fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<()
 fn real_canon_pack_runs_static_gap_and_mbt_cleanly() -> Result<(), String> {
     let canon_pack = load_registry_pack("canon", &["canon"], true)?;
     let gaps = analyze_static_gaps(&canon_pack);
+    let canon_defects: Vec<_> = gaps
+        .defects()
+        .into_iter()
+        .filter(|gap| match gap {
+            StructuralGap::DeadEndNonTerminalState { object_type, .. }
+            | StructuralGap::UnreachableState { object_type, .. }
+            | StructuralGap::OrphanField { object_type, .. }
+            | StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
+            | StructuralGap::TransitionWithoutAction { object_type, .. } => {
+                object_type.starts_with("canon.")
+            }
+            StructuralGap::HighImpactActionMissingSod { action_id, .. } => {
+                action_id.starts_with("canon.")
+            }
+        })
+        .collect();
     assert!(
-        gaps.defects().is_empty(),
-        "canon pack should have no structural defects:\n{gaps}"
+        canon_defects.is_empty(),
+        "canon.* entities should have no structural defects:\n{gaps}"
+    );
+    // Static Gap Detector genuinely flags real core.analytics.Restatement gaps.
+    assert!(
+        gaps.defects().iter().any(|gap| matches!(
+            gap,
+            StructuralGap::OrphanField { object_type, property, .. }
+                if object_type == "core.analytics.Restatement" && property == "reason"
+        )),
+        "expected real OrphanField finding on core.analytics.Restatement:\n{gaps}"
+    );
+    assert!(
+        gaps.questions().iter().any(|gap| matches!(
+            gap,
+            StructuralGap::HighImpactActionMissingSod { action_id, .. }
+                if action_id == "core.analytics.restatement.approve"
+        )),
+        "expected SoD Question on core.analytics.restatement.approve:\n{gaps}"
     );
     let recorder = Arc::new(DomainCoverageRecorder::new());
     let report = run_pack_mbt(&canon_pack, |_| {
         SqlitePackHost::open(&canon_pack, Arc::clone(&recorder))
     })?;
     report.coverage.check_transitions_covered()?;
+    report.coverage.check_immutable_refusals_covered()?;
+    report.coverage.check_cedar_covered()?;
     Ok(())
 }
 

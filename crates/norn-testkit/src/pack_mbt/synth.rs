@@ -157,6 +157,11 @@ pub fn synthesize_guard_violating(
                 }
             }
             PropertyType::Text { .. } => {
+                let mut empty_candidate = base.clone();
+                empty_candidate.insert(id.to_owned(), JsonValue::String(String::new()));
+                if !guards_hold(guards, &empty_candidate) {
+                    return Some(empty_candidate);
+                }
                 candidate.insert(id.to_owned(), JsonValue::String(format!("mismatch-{id}")));
             }
             PropertyType::Enum { .. }
@@ -273,8 +278,12 @@ fn apply_guard_positive_heuristics(
                     values.insert(id.to_owned(), JsonValue::Number(val));
                 }
             }
-            PropertyType::Text { .. }
-            | PropertyType::Enum { .. }
+            PropertyType::Text { .. } => {
+                if matches!(values.get(id), Some(JsonValue::String(s)) if s.is_empty()) {
+                    values.insert(id.to_owned(), JsonValue::String(format!("nonempty-{id}")));
+                }
+            }
+            PropertyType::Enum { .. }
             | PropertyType::Date {}
             | PropertyType::Duration {}
             | PropertyType::Timestamp { .. }
