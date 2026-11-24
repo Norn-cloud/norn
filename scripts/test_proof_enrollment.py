@@ -37,8 +37,6 @@ def _sibling(name, directory=None):
     return module
 
 coverage_manifest = _sibling("coverage_manifest")
-_test_migrate_registry_pr = _sibling("test_migrate_registry_pr")
-MigrationTests = _test_migrate_registry_pr.MigrationTests
 _proof_enrollment = _sibling("proof_enrollment")
 ROOT = _proof_enrollment.ROOT
 discover_sources = _proof_enrollment.discover_sources
