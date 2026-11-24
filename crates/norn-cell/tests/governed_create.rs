@@ -1403,10 +1403,10 @@ fn a_stamped_create_at_its_event_ceiling_refuses_one_attached_event() {
     ));
 }
 
-/// CREATE-WRITER-1 (Astra round 7): only a valid writer value folds into the
-/// create. An invalid `set` followed by a valid `set` of the same property
-/// stays applied after the create, so the later value cannot mask it and the
-/// whole commit refuses; the valid value alone commits.
+/// CREATE-WRITER-1 (Astra rounds 7 and 8): a writer value is checked against
+/// its property before it folds into the create. An invalid `set` refuses
+/// with the property's own error in either order around a valid `set`, before
+/// preparation or any host commit; the valid value alone commits.
 #[test]
 fn a_create_writer_cannot_mask_an_invalid_value_with_a_later_set() {
     let directory = tempfile::tempdir().unwrap();
@@ -1429,14 +1429,26 @@ fn a_create_writer_cannot_mask_an_invalid_value_with_a_later_set() {
             "{{op: 'patch', objectType: 'ledger.Invoice', key: event.input.invoice_id, patch: {{total: {total}}}}}"
         )
     };
-    for (facts, commits) in [
-        (format!("[{}, {}]", patch("-1"), patch("105")), false),
-        (format!("[{}]", patch("105")), true),
+    for (name, facts, commits) in [
+        (
+            "invalid-first",
+            format!("[{}, {}]", patch("-1"), patch("105")),
+            false,
+        ),
+        (
+            "invalid-last",
+            format!("[{}, {}]", patch("105"), patch("-1")),
+            false,
+        ),
+        ("valid", format!("[{}]", patch("105")), true),
     ] {
         let rules = [writer_emitting(&facts)];
         let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
-        let path = directory.path().join(format!("mask-{commits}.sqlite"));
-        let mut cell = open(&path, &definitions, &[]);
+        let mut cell = open(
+            &directory.path().join(format!("{name}.sqlite")),
+            &definitions,
+            &[],
+        );
         seed_tax_codes(&mut cell);
         let dump = cell.store().read().dump().unwrap();
         let created = call(
@@ -1453,9 +1465,20 @@ fn a_create_writer_cannot_mask_an_invalid_value_with_a_later_set() {
                 105
             );
         } else {
-            assert!(outcome.is_err(), "{outcome:?}");
-            assert_eq!(cell.store().read().dump().unwrap(), dump);
-            assert!(values(&cell, INVOICE, "INV-1").is_none());
+            let refusal = outcome.unwrap_err();
+            assert_eq!(
+                refusal.code(),
+                "decision.invalid_output",
+                "{name}: {refusal}"
+            );
+            assert!(
+                refusal.to_string().starts_with(
+                    "invalid decision output: the effective values for ledger.Invoice/INV-1: property `total` "
+                ),
+                "{name}: {refusal}"
+            );
+            assert_eq!(cell.store().read().dump().unwrap(), dump, "{name}");
+            assert!(values(&cell, INVOICE, "INV-1").is_none(), "{name}");
         }
     }
 }

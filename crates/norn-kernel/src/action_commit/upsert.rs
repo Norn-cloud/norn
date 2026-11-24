@@ -1,10 +1,11 @@
 use std::collections::BTreeSet;
 
+use norn_checker::entity_instance::InstanceError;
 use norn_ir::{ActionRoot, FactChange, ObjectTypeName, ResourceLimitProfile, UpsertWriteMode};
 
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
 use crate::creator_stamp::CreatorStamp;
-use crate::decision_commit::{FactEvent, TypeCatalog};
+use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
 use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::type_series;
@@ -73,17 +74,22 @@ pub(super) fn creator_stamp(
 /// CREATE-WRITER-1: fold the writer's `set`s of ordinary properties of the
 /// created target into its create, so the commit records one `created` event
 /// with the object's final values; the store proves every event of a commit
-/// against that object's one committed snapshot. Only a value that satisfies
-/// the property's effective contract folds. A `set` of a protected,
-/// computed, lifecycle or undeclared property, or of an invalid value, stays
-/// a separate change applied after the create, so a later valid `set` cannot
-/// mask it and preparation or admission refuses the whole commit.
-fn fold_into_create(
+/// against that object's one committed snapshot. Each folded value is checked
+/// against the property's effective contract first, and an invalid one
+/// refuses before preparation, so no later `set` can mask it and nothing
+/// downstream (an approval gate, a dry run) ever sees it. A `set` of a
+/// protected, lifecycle or undeclared property stays a separate change,
+/// which preparation refuses as it refuses any such write.
+///
+/// # Errors
+///
+/// [`DecisionRefusal::InvalidOutput`] for a writer value its property refuses.
+fn fold_into_create<X>(
     catalog: &TypeCatalog<'_>,
     target: &FactKey,
     changes: &mut Vec<FactChange>,
     facts: Vec<FactChange>,
-) {
+) -> Result<(), ActionRefusal<X>> {
     let effective = catalog.effective_type(&target.object_type);
     let lifecycles = catalog.lifecycle_properties(&target.object_type);
     for fact in facts {
@@ -96,21 +102,35 @@ fn fold_into_create(
             && *object_type == target.object_type
             && *key == target.key
             && !lifecycles.contains(property)
-            && effective.is_some_and(|effective| {
-                effective
-                    .property(property.as_str())
-                    .is_some_and(|declared| !declared.protected())
-                    && effective
-                        .check_stored_property_value(property.as_str(), value)
-                        .is_ok()
-            })
+            && let Some(effective) = effective
+            && effective
+                .property(property.as_str())
+                .is_some_and(|declared| !declared.protected())
             && let Some(FactChange::Create { values, .. }) = changes.first_mut()
         {
+            effective
+                .check_stored_property_value(property.as_str(), value)
+                .map_err(|error| {
+                    let detail = match error {
+                        InstanceError::Unsupported(feature) => {
+                            format!("uses unsupported {feature}")
+                        }
+                        InstanceError::TypeMismatch(expected) => format!("expects {expected}"),
+                        InstanceError::ConstraintViolation(reason) => reason,
+                    };
+                    ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                        reason: format!(
+                            "the effective values for {target}: property `{}` {detail}",
+                            property.as_str()
+                        ),
+                    })
+                })?;
             values.insert(property.as_str().to_owned(), value.clone());
             continue;
         }
         changes.push(fact);
     }
+    Ok(())
 }
 
 #[allow(
@@ -379,7 +399,7 @@ where
                 WriterTarget::Created,
                 limits,
             )?;
-            fold_into_create(catalog, &target, &mut changes, facts);
+            fold_into_create::<H::Error>(catalog, &target, &mut changes, facts)?;
             links
         }
         None => Vec::new(),
