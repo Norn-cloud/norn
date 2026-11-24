@@ -2039,6 +2039,7 @@ dependencies = [
  "norn-checker",
  "norn-ir",
  "norn-kernel",
+ "norn-ui-checker",
  "schemars 1.2.3",
  "serde",
  "serde_json",
@@ -2113,6 +2114,7 @@ dependencies = [
  "norn-ir",
  "norn-kernel",
  "norn-projections",
+ "norn-ui-checker",
  "oauth2",
  "percent-encoding",
  "serde",
@@ -2236,6 +2238,16 @@ name = "norn-projections"
 version = "0.1.0"
 dependencies = [
  "norn-ir",
+]
+
+[[package]]
+name = "norn-ui-checker"
+version = "0.2.0"
+dependencies = [
+ "norn-checker",
+ "norn-expr",
+ "norn-ir",
+ "serde_json",
 ]
 
 [[package]]

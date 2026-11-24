@@ -74,6 +74,8 @@ fn dotted_source_literals() -> BTreeMap<String, BTreeSet<String>> {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     rust_files(&src, &mut files);
+    let ui_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../norn-ui-checker/src");
+    rust_files(&ui_src, &mut files);
     assert_ne!(
         files.len(),
         0,
@@ -91,7 +93,8 @@ fn dotted_source_literals() -> BTreeMap<String, BTreeSet<String>> {
         let text = fs::read_to_string(&file).expect("source file should be readable");
         let display = file
             .strip_prefix(&src)
-            .expect("file is under src")
+            .or_else(|_| file.strip_prefix(&ui_src))
+            .expect("file is under checker src")
             .display()
             .to_string();
         for line in text.lines() {

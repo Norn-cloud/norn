@@ -53,9 +53,13 @@ impl LawEnrollment {
     }
 }
 
-pub(crate) fn inherited_laws(
-    base: &[ArtifactEnvelope],
-) -> Result<Vec<LawEnrollment>, ReceiptError> {
+/// Project inherited-law origins from installed composition packs in `base`.
+///
+/// # Errors
+///
+/// Refuses invalid retained law or pack documents, ambiguous retained laws, or
+/// packs that reference missing laws.
+pub fn inherited_laws(base: &[ArtifactEnvelope]) -> Result<Vec<LawEnrollment>, ReceiptError> {
     let invalid = |detail: String| ReceiptError::InvalidStoredReceipt { detail };
     if !base
         .iter()

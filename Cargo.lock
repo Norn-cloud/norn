@@ -2227,6 +2227,7 @@ dependencies = [
  "norn-checker",
  "norn-ir",
  "norn-kernel",
+ "norn-ui-checker",
  "proptest",
  "schemars 1.2.3",
  "serde",
@@ -2319,6 +2320,7 @@ dependencies = [
  "norn-ir",
  "norn-kernel",
  "norn-projections",
+ "norn-ui-checker",
  "oauth2",
  "percent-encoding",
  "serde",
@@ -2360,6 +2362,7 @@ dependencies = [
  "norn-expr",
  "norn-ir",
  "norn-projections",
+ "norn-ui-checker",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -2507,6 +2510,17 @@ dependencies = [
  "proptest-state-machine",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "norn-ui-checker"
+version = "0.2.0"
+dependencies = [
+ "norn-checker",
+ "norn-expr",
+ "norn-ir",
+ "proptest",
+ "serde_json",
 ]
 
 [[package]]
