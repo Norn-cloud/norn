@@ -671,7 +671,7 @@ fn check_lifecycle_initialization<E: 'static, C, T, V: CommitView + ?Sized>(
     trusted_owned_rows: bool,
 ) -> Result<(), CommitError<V::Error>> {
     let authorized = authorization.map(ObservationAuthorization::indexed);
-    let mut recorded: Option<BTreeMap<FactKey, Vec<&crate::decision_commit::FactEvent>>> = None;
+    let mut recorded: Option<BTreeMap<FactKey, Recorded<'_>>> = None;
     for write in &commit.writes {
         let FactMutation::Put { values } = &write.mutation else {
             continue;
@@ -693,13 +693,18 @@ fn check_lifecycle_initialization<E: 'static, C, T, V: CommitView + ?Sized>(
             continue;
         }
         let recorded = recorded.get_or_insert_with(|| recorded_fact_events(commit, model));
-        let events = recorded.get(&canonical).map_or(&[][..], Vec::as_slice);
+        let (events, observed) = recorded
+            .get(&canonical)
+            .map_or((&[][..], None), |recorded| {
+                (recorded.facts.as_slice(), recorded.observed)
+            });
         crate::decision_commit::check_first_write_lifecycles(
             model.catalog,
             &write.key,
             values,
             events,
             trusted_owned_rows,
+            observed,
         )
         .map_err(|refusal| CommitError::LifecycleInitialization {
             key: write.key.clone(),
@@ -709,32 +714,58 @@ fn check_lifecycle_initialization<E: 'static, C, T, V: CommitView + ?Sized>(
     Ok(())
 }
 
-/// The fact events `commit` records for each object, by canonical identity,
-/// in ledger order: the kernel's own fact events, and those an observation
-/// event wraps, since a wrapped fact names the same identity.
+/// What one commit records about one canonical identity.
+#[derive(Default)]
+struct Recorded<'c> {
+    /// The fact events naming it, in ledger order: the kernel's own, and
+    /// those an observation event wraps.
+    facts: Vec<&'c crate::decision_commit::FactEvent>,
+    /// Why an observed lifecycle event names it: an observed transition or
+    /// deletion is history of an object that already existed.
+    observed: Option<&'static str>,
+}
+
+/// What `commit` records for each object, by canonical identity.
 fn recorded_fact_events<'c, E: 'static, C, T>(
     commit: &'c CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
-) -> BTreeMap<FactKey, Vec<&'c crate::decision_commit::FactEvent>> {
+) -> BTreeMap<FactKey, Recorded<'c>> {
     use crate::decision_commit::FactEvent;
     use crate::snapshot_observe::ObservationEvent;
-    let mut recorded: BTreeMap<FactKey, Vec<&FactEvent>> = BTreeMap::new();
+    let mut recorded: BTreeMap<FactKey, Recorded<'c>> = BTreeMap::new();
     // Evidence is identified by type: a host whose ledger events are neither
     // records none, so it creates a lifecycle-bearing object only in an
     // admitted initial state.
-    let fact_events = commit.events.iter().filter_map(|event| {
+    for event in &commit.events {
         let event: &dyn std::any::Any = event;
-        event.downcast_ref::<FactEvent>().or_else(move || {
-            let Some(ObservationEvent::ObservedFact { event, .. }) =
-                event.downcast_ref::<ObservationEvent>()
-            else {
-                return None;
-            };
-            Some(event)
-        })
-    });
-    for event in fact_events {
-        let key = match event {
+        let fact = if let Some(fact) = event.downcast_ref::<FactEvent>() {
+            fact
+        } else {
+            match event.downcast_ref::<ObservationEvent>() {
+                Some(ObservationEvent::ObservedFact { event, .. }) => event,
+                Some(ObservationEvent::ObservedTransition { key, .. }) => {
+                    let entry = recorded.entry(model.canonical(key)).or_default();
+                    if entry.observed.is_none() {
+                        entry.observed =
+                            Some("an observed transition names an unsealed first write");
+                    }
+                    continue;
+                }
+                Some(ObservationEvent::ObservedDeleted { key, .. }) => {
+                    let entry = recorded.entry(model.canonical(key)).or_default();
+                    if entry.observed.is_none() {
+                        entry.observed = Some("an observed deletion names an unsealed first write");
+                    }
+                    continue;
+                }
+                Some(
+                    ObservationEvent::DataQualityFinding { .. }
+                    | ObservationEvent::ObservedRecreated { .. },
+                )
+                | None => continue,
+            }
+        };
+        let key = match fact {
             FactEvent::Created { key, .. }
             | FactEvent::Set { key, .. }
             | FactEvent::Modified { key, .. }
@@ -748,7 +779,8 @@ fn recorded_fact_events<'c, E: 'static, C, T>(
         recorded
             .entry(model.canonical(key))
             .or_default()
-            .push(event);
+            .facts
+            .push(fact);
     }
     recorded
 }

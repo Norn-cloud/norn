@@ -3254,18 +3254,24 @@ fn materialize_lifecycle_defaults<X>(
 /// decision path's own rules ([`FirstWriteReplay`]) and must end in
 /// exactly the written values. `kernel_origin` is the kernel-prepared
 /// owned-row admission, whose creations may initialize rules-only properties
-/// under the kernel's private origin (FA-PROTECT-1).
+/// under the kernel's private origin (FA-PROTECT-1). `observed` is why an
+/// observed transition or deletion names the object: that is history of an
+/// existing object, so it contradicts a first write.
 pub(crate) fn check_first_write_lifecycles(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &JsonObject,
     events: &[&FactEvent],
     kernel_origin: bool,
+    observed: Option<&str>,
 ) -> Result<(), LifecycleInitRefusal> {
     let lifecycle_properties = catalog.lifecycle_properties(&key.object_type);
     let lifecycles = catalog.lifecycles(&key.object_type);
     if lifecycle_properties.is_empty() && lifecycles.is_empty() {
         return Ok(());
+    }
+    if let Some(reason) = observed {
+        return Err(unrecorded(reason));
     }
     if events.is_empty() {
         return with_initial_states::<Infallible>(catalog, key, values)

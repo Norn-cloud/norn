@@ -20,7 +20,9 @@ mod common;
 use norn_cell::SqliteCell;
 use norn_ir::{DecisionOutput, FactChange, ObjectTypeName, PropertyId, TransitionId};
 use norn_kernel::cell_host::JsonObject;
-use norn_kernel::snapshot_observe::{ObservedSnapshot, prepare_observed_snapshot};
+use norn_kernel::snapshot_observe::{
+    ObservationSynthesis, ObservedSnapshot, prepare_observed_snapshot,
+};
 use norn_kernel::{
     CellCommit, CellHost, CommitError, DecisionTurn, EnvelopeLimits, FactEvent, FactKey,
     FactMutation, FactVersion, FactWrite, LifecycleInitRefusal, LogicalTime,
@@ -672,6 +674,17 @@ fn an_empty_observation_authorization_does_not_exempt_a_forged_first_write() {
     assert_eq!(snapshot(&cell, &key), before);
 }
 
+/// The synthetic source snapshot the observation fixtures cite.
+fn source_provenance() -> norn_ir::provenance::InstanceProvenance {
+    serde_json::from_value(json!({
+        "source": { "system": "synthetic", "record": "document/D-1" },
+        "mappingVersion": "fixture.document@1",
+        "recordedAt": "2026-11-01T00:00:00Z",
+        "sourceFields": ["pages"]
+    }))
+    .expect("source provenance")
+}
+
 /// A sealed observation that creates `D-1` with `pages`.
 fn observe_document(
     cell: &ObservedCell,
@@ -683,13 +696,7 @@ fn observe_document(
     let catalog = model.type_catalog();
     let key = document();
     let slice = load_slice(cell, [key.clone()]).expect("slice");
-    let provenance = serde_json::from_value(json!({
-        "source": { "system": "synthetic", "record": "document/D-1" },
-        "mappingVersion": "fixture.document@1",
-        "recordedAt": "2026-11-01T00:00:00Z",
-        "sourceFields": ["pages"]
-    }))
-    .expect("source provenance");
+    let provenance = source_provenance();
     prepare_observed_snapshot(
         &catalog,
         &slice,
@@ -1129,13 +1136,7 @@ fn wrapped_observed_fact_evidence_is_validated_for_an_unsealed_write() {
     let mut cell: ObservedCell = open();
     let key = document();
     let before = snapshot(&cell, &key);
-    let provenance = serde_json::from_value(json!({
-        "source": { "system": "synthetic", "record": "document/D-1" },
-        "mappingVersion": "fixture.document@1",
-        "recordedAt": "2026-11-01T00:00:00Z",
-        "sourceFields": ["pages"]
-    }))
-    .expect("source provenance");
+    let provenance = source_provenance();
     let commit = put(
         &key,
         values(json!({ "status": "draft", "pages": 1 })),
@@ -1157,4 +1158,49 @@ fn wrapped_observed_fact_evidence_is_validated_for_an_unsealed_write() {
         }
     );
     assert_eq!(snapshot(&cell, &key), before);
+}
+
+/// An unsealed first write of `D-1` in its initial state, carrying `event`:
+/// refused for `reason` with no row, version or ledger entry.
+fn refuse_observed_history(event: ObservationEvent, reason: &str) {
+    let mut cell: ObservedCell = open();
+    let key = document();
+    let before = snapshot(&cell, &key);
+    let commit = put(
+        &key,
+        values(json!({ "status": "draft", "pages": 1 })),
+        vec![event],
+    );
+    let (refused, history) = refusal(cell.commit(commit).expect_err("observed history"));
+    assert_eq!(refused, key);
+    assert!(unrecorded_because(&history, reason), "{history:?}");
+    assert_eq!(snapshot(&cell, &key), before);
+}
+
+#[test]
+fn an_observed_transition_cannot_describe_an_unsealed_first_write() {
+    refuse_observed_history(
+        ObservationEvent::ObservedTransition {
+            key: document(),
+            property: PropertyId("status".into()),
+            transition: TransitionId("submit".into()),
+            from: "draft".into(),
+            to: "submitted".into(),
+            synthesized: ObservationSynthesis::SnapshotCatchUp,
+            provenance: source_provenance(),
+        },
+        "an observed transition names an unsealed first write",
+    );
+}
+
+#[test]
+fn an_observed_deletion_cannot_describe_an_unsealed_first_write() {
+    refuse_observed_history(
+        ObservationEvent::ObservedDeleted {
+            key: document(),
+            tombstoned: true,
+            provenance: source_provenance(),
+        },
+        "an observed deletion names an unsealed first write",
+    );
 }

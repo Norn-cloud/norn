@@ -1,9 +1,9 @@
 /**
- * What a released package knows about itself. `generated/build.json` is
- * written by the release assembly (`scripts/release/assemble.py`) and exists
- * only in a built package; a repository checkout has none.
+ * What a released package knows about itself. `generated/build.json` exists
+ * only in a packaged build (packaging is post-beta, #1482); a repository
+ * checkout has none.
  *
- * The version lives in one place, `tools/norn-ts/package.json`; the assembly
+ * The version lives in one place, `tools/norn-ts/package.json`; packaging
  * stamps it here with the commit it built from.
  */
 import { existsSync, readFileSync } from "node:fs"
