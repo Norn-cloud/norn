@@ -2978,7 +2978,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         &mut self,
         mode: crate::link_guard::LinkGuardMode,
     ) -> Result<Vec<LinkedRow>, CellError> {
-        if mode == crate::link_guard::LinkGuardMode::Live {
+        if mode.check_read_markings() {
             crate::link_guard::check_link_read_markings(
                 &self.batch.links,
                 &self.link_read_markings,
@@ -3073,7 +3073,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     Some(to_i64(version, "link version")?),
                 ))
             };
-            if mode != crate::link_guard::LinkGuardMode::RetainedReplay {
+            if mode.check_slot_target() {
                 crate::link_guard::check_slot_target_match(
                     &self.reader(),
                     self.world,

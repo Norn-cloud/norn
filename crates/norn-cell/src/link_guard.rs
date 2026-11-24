@@ -21,17 +21,101 @@ use crate::read::{LinkRecord, StoreReader, decode_row, query_projected};
 use crate::store::LinkChange;
 use crate::system::{LINK_CREATION, LINK_VERSIONS};
 
+/// Unforgeable proof constructed ONLY by [`verify_mapping_links`] inside a
+/// commit transaction after verifying every mapping bundle, exact pending
+/// page/bundle consumption, and exact `mapping_link_plan` equality.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct VerifiedMappingProof(());
+
+impl VerifiedMappingProof {
+    /// Consumes the in-transaction proof to confirm static mapping link exemption.
+    pub(crate) const fn exempt_link_read_markings(self) -> bool {
+        let () = self.0;
+        true
+    }
+}
+
 /// Admission mode for link write guards inside `Writer::apply_links`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum LinkGuardMode {
     /// Ordinary live commit: enforce both IFC read-marking and slot-identity guards.
     Live,
     /// In-transaction guard verified non-empty mapping bundles and exact
     /// `mapping_link_plan` equality: exempt static mapping links from
     /// `check_link_read_markings`, still enforce slot-identity guards.
-    VerifiedMapping,
+    VerifiedMapping(VerifiedMappingProof),
     /// Verified history replay (`restore`): skip live-admission guards.
     RetainedReplay,
+}
+
+impl LinkGuardMode {
+    /// Whether `check_link_read_markings` must run for this commit.
+    pub(crate) const fn check_read_markings(self) -> bool {
+        match self {
+            Self::Live => true,
+            Self::VerifiedMapping(proof) => !proof.exempt_link_read_markings(),
+            Self::RetainedReplay => false,
+        }
+    }
+
+    /// Whether `check_slot_target_match` must run for this commit.
+    pub(crate) const fn check_slot_target(self) -> bool {
+        !matches!(self, Self::RetainedReplay)
+    }
+}
+
+/// Verify mapping bundle evidence, exact pending page/bundle consumption, and
+/// `mapping_link_plan` equality inside the commit transaction. This is the
+/// ONLY constructor of [`VerifiedMappingProof`].
+pub(crate) fn verify_mapping_links<E, C, I, S: SqlEngine>(
+    reader: &StoreReader<'_, S>,
+    commit: &CellCommit<E, C, I>,
+    mapped: &[crate::mapping_bundle::MappingBundle],
+) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
+    // OBS-EVIDENCE-1: preparation cannot authorize a bundle disputed before BEGIN.
+    for bundle in mapped {
+        reader
+            .check_mapping_bundle(bundle)
+            .map_err(CommitError::Host)?;
+    }
+    if let Some(norn_kernel::Consumed::Observation {
+        id: norn_kernel::ObservationId(observation_id),
+    }) = &commit.consumes
+    {
+        // OBS-PAGE-1: a page commit applies exactly its still-pending
+        // members, in page order; a bundle commit exactly its bundle.
+        let applied: Vec<String> = mapped
+            .iter()
+            .map(|b| format!("mapping-bundle:{}", b.digest))
+            .collect();
+        let expected = if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+            reader
+                .pending_page_member_ids(observation_id)
+                .map_err(CommitError::Host)?
+                .ok_or(CommitError::Host(CellError::SourceEvidenceChanged))?
+        } else if mapped.is_empty() {
+            Vec::new()
+        } else {
+            vec![observation_id.clone()]
+        };
+        if applied != expected {
+            return Err(CommitError::Host(CellError::SourceEvidenceChanged));
+        }
+    } else if !mapped.is_empty() {
+        return Err(CommitError::Host(CellError::MappingBundleMismatch));
+    }
+    if mapped.is_empty() {
+        return Ok(None);
+    }
+    if reader
+        .mapping_link_plan(mapped, commit)
+        .map_err(CommitError::Host)?
+        .links
+        != commit.links
+    {
+        return Err(CommitError::Host(CellError::SourceEvidenceChanged));
+    }
+    Ok(Some(VerifiedMappingProof(())))
 }
 
 /// The committed state of link `key` as the kernel sees it (O(1) point lookup).
@@ -350,10 +434,13 @@ fn verify_link_endpoint_tables<S: SqlEngine>(
     }
     let mut probed: BTreeSet<String> = BTreeSet::new();
     for id in endpoints {
-        for column in ["source", "target"] {
+        for (column, index) in [
+            ("source", "_norn_link_version/source_order"),
+            ("target", "_norn_link_version/target_order"),
+        ] {
             let rows = reader.conn.query(
                 &format!(
-                    "SELECT DISTINCT \"link_table\" FROM \"{LINK_VERSIONS}\" WHERE \"world\" = ?1 AND \"{column}\" = ?2"
+                    "SELECT DISTINCT \"link_table\" FROM \"{LINK_VERSIONS}\" INDEXED BY \"{index}\" WHERE \"world\" = ?1 AND \"{column}\" = ?2"
                 ),
                 params![MAIN_WORLD, *id],
             )?;
@@ -475,14 +562,16 @@ pub(crate) fn has_link_source<S: SqlEngine>(
         {
             continue;
         }
-        // Omit `ORDER BY _source` so SQLite seeks the `(_world, _target)` index
-        // directly instead of scanning the primary key by `_world`; sort the
-        // `<= fetch` returned keys in Rust for deterministic witness order.
+        // Pin `INDEXED BY "{table}/target"` (present on both unique `from: one`
+        // and non-unique `from: many` link tables) so SQLite always seeks
+        // `(_world=? AND _target=?)` instead of scanning the PK by `_world`.
+        let target_index = format!("{}/target", table.table);
         let rows = reader.conn.query(
             &format!(
-                "SELECT {} FROM {} WHERE {} = ?1 AND {} = ?2 LIMIT ?3",
+                "SELECT {} FROM {} INDEXED BY {} WHERE {} = ?1 AND {} = ?2 LIMIT ?3",
                 quote_identifier(SOURCE_COLUMN),
                 quote_identifier(&table.table),
+                quote_identifier(&target_index),
                 quote_identifier(WORLD_COLUMN),
                 quote_identifier(TARGET_COLUMN),
             ),

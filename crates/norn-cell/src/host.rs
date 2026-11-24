@@ -1879,47 +1879,7 @@ where
             }
         }
         let guard = |reader: &StoreReader<'_, S>| {
-            // OBS-EVIDENCE-1: preparation cannot authorize a bundle disputed before BEGIN.
-            for bundle in mapped {
-                reader
-                    .check_mapping_bundle(bundle)
-                    .map_err(CommitError::Host)?;
-            }
-            if let Some(Consumed::Observation {
-                id: ObservationId(observation_id),
-            }) = &commit.consumes
-            {
-                // OBS-PAGE-1: a page commit applies exactly its still-pending
-                // members, in page order; a bundle commit exactly its bundle.
-                let applied: Vec<String> = mapped
-                    .iter()
-                    .map(|b| format!("mapping-bundle:{}", b.digest))
-                    .collect();
-                let expected = if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
-                    reader
-                        .pending_page_member_ids(observation_id)
-                        .map_err(CommitError::Host)?
-                        .ok_or(CommitError::Host(CellError::SourceEvidenceChanged))?
-                } else if mapped.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![observation_id.clone()]
-                };
-                if applied != expected {
-                    return Err(CommitError::Host(CellError::SourceEvidenceChanged));
-                }
-            } else if !mapped.is_empty() {
-                return Err(CommitError::Host(CellError::MappingBundleMismatch));
-            }
-            if !mapped.is_empty()
-                && reader
-                    .mapping_link_plan(mapped, &commit)
-                    .map_err(CommitError::Host)?
-                    .links
-                    != commit.links
-            {
-                return Err(CommitError::Host(CellError::SourceEvidenceChanged));
-            }
+            let mapping_proof = crate::link_guard::verify_mapping_links(reader, &commit, mapped)?;
             if authorization.is_none() {
                 for key in commit
                     .reads
@@ -1969,15 +1929,15 @@ where
                 .type_catalog()
                 .with_governing_laws(model.law_artifacts());
             let model = CommitModel::new(&catalog);
-            Proposed::new(&commit)
+            let versions = Proposed::new(&commit)
                 .authorize(authorization, owned_rows)?
                 .check(&model, &GuardView(reader))
-                .map(Checked::into_versions)
+                .map(Checked::into_versions)?;
+            Ok((versions, mapping_proof))
         };
         match self.store.commit_guarded_submitted(
             &batch,
             submitted.as_ref(),
-            verified_mapping_links,
             guard,
             &mut |_point| Ok(()),
         ) {

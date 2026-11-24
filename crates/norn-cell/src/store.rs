@@ -1885,7 +1885,6 @@ type ProvisionIdentity<'a> =
 #[derive(Clone, Copy)]
 enum CommitOrigin<'a> {
     Current,
-    VerifiedMapping,
     Provisioning(&'a str, &'a ProvisionIdentity<'a>),
     Retained(&'a crate::export::ExportRecord),
 }
@@ -2316,7 +2315,7 @@ impl<E: SqlEngine> CellStore<E> {
                 Some(installation),
                 None,
                 CommitOrigin::Provisioning(&identity, &fresh_identity),
-                |_reader| Ok::<(), CellError>(()),
+                |_reader| Ok::<_, CellError>(((), None)),
                 &mut |_point| Ok(()),
             )
             .map_err(|error| match error {
@@ -2913,7 +2912,14 @@ impl<E: SqlEngine> CellStore<E> {
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, None, CommitOrigin::Current, guard, probe)
+        self.commit_guarded_inner(
+            batch,
+            None,
+            None,
+            CommitOrigin::Current,
+            |reader| guard(reader).map(|value| (value, None)),
+            probe,
+        )
     }
 
     // Driver-only input; verified replay uses record-bound input.
@@ -2921,16 +2927,12 @@ impl<E: SqlEngine> CellStore<E> {
         &mut self,
         batch: &CommitBatch,
         submitted: Option<&Value>,
-        verified_mapping_links: bool,
-        guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
+        guard: impl FnOnce(
+            &StoreReader<'_, E>,
+        ) -> Result<(T, Option<crate::link_guard::VerifiedMappingProof>), X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        let origin = if verified_mapping_links {
-            CommitOrigin::VerifiedMapping
-        } else {
-            CommitOrigin::Current
-        };
-        self.commit_guarded_inner(batch, None, submitted, origin, guard, probe)
+        self.commit_guarded_inner(batch, None, submitted, CommitOrigin::Current, guard, probe)
     }
 
     /// The verified-prefix callers compare the full resulting receipt and journal.
@@ -2943,7 +2945,7 @@ impl<E: SqlEngine> CellStore<E> {
             None,
             record.quantity_input.as_ref(),
             CommitOrigin::Retained(record),
-            |_reader| Ok::<(), CellError>(()),
+            |_reader| Ok::<_, CellError>(((), None)),
             &mut |_point| Ok(()),
         ) {
             Ok(((), outcome)) => Ok(outcome),
@@ -3114,7 +3116,7 @@ impl<E: SqlEngine> CellStore<E> {
             Some(install),
             None,
             origin,
-            |_reader| Ok::<(), CellError>(()),
+            |_reader| Ok::<_, CellError>(((), None)),
             &mut |_point| Ok(()),
         );
         match result {
@@ -3182,7 +3184,9 @@ impl<E: SqlEngine> CellStore<E> {
         installation: Option<DefinitionInstallContext<'_>>,
         submitted: Option<&Value>,
         origin: CommitOrigin<'_>,
-        guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
+        guard: impl FnOnce(
+            &StoreReader<'_, E>,
+        ) -> Result<(T, Option<crate::link_guard::VerifiedMappingProof>), X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
         if batch
@@ -3259,7 +3263,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &self.model,
                     install,
                     actual_version,
-                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::VerifiedMapping | CommitOrigin::Provisioning(..) => None },
+                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
                 )?;
                 self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
@@ -3363,7 +3367,7 @@ impl<E: SqlEngine> CellStore<E> {
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
-            let admitted = {
+            let (admitted, mapping_proof) = {
                 // The guard only reads: a plan it proves holds for every
                 // bundle it checks (INGEST-DERIVE-ONCE-1).
                 let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
@@ -3478,12 +3482,10 @@ impl<E: SqlEngine> CellStore<E> {
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
-            let linked = writer.apply_links(match origin {
-                CommitOrigin::Retained(_) => crate::link_guard::LinkGuardMode::RetainedReplay,
-                CommitOrigin::VerifiedMapping => crate::link_guard::LinkGuardMode::VerifiedMapping,
-                CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
-                    crate::link_guard::LinkGuardMode::Live
-                }
+            let linked = writer.apply_links(match (origin, mapping_proof) {
+                (CommitOrigin::Retained(_), _) => crate::link_guard::LinkGuardMode::RetainedReplay,
+                (_, Some(proof)) => crate::link_guard::LinkGuardMode::VerifiedMapping(proof),
+                (_, None) => crate::link_guard::LinkGuardMode::Live,
             })?;
             probe(CommitPoint::LinksApplied)?;
             if let Some(validate) = self.candidate_validator.get() {
@@ -3568,9 +3570,7 @@ impl<E: SqlEngine> CellStore<E> {
                 // A replayed record keeps the version that first wrote it.
                 match origin {
                     CommitOrigin::Retained(record) => record.storage_version,
-                    CommitOrigin::Current
-                    | CommitOrigin::VerifiedMapping
-                    | CommitOrigin::Provisioning(..) => {
+                    CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
@@ -4241,7 +4241,7 @@ mod journal_proof_tests {
             None,
             None,
             CommitOrigin::Current,
-            |_reader| Ok::<(), CellError>(()),
+            |_reader| Ok::<_, CellError>(((), None)),
             &mut rebind,
         );
         assert!(
@@ -4264,7 +4264,7 @@ mod journal_proof_tests {
                 None,
                 None,
                 CommitOrigin::Current,
-                |_reader| Ok::<(), CellError>(()),
+                |_reader| Ok::<_, CellError>(((), None)),
                 &mut |_point| Ok(()),
             )
             .expect("authentic commit");
@@ -4301,7 +4301,7 @@ mod journal_proof_tests {
                 None,
                 None,
                 CommitOrigin::Current,
-                |_reader| Ok::<(), CellError>(()),
+                |_reader| Ok::<_, CellError>(((), None)),
                 &mut |_point| Ok(()),
             )
             .expect("the overlapping event commits");

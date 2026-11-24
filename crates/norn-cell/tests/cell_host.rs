@@ -5310,11 +5310,12 @@ fn r3_blocker5_from_one_cardinality_uses_bounded_sql_proof() {
     let recorded = queries.borrow();
     assert!(
         recorded.iter().any(|sql| {
-            sql.contains("\"_target\" = ?2")
+            sql.contains("INDEXED BY")
+                && sql.contains("\"_target\" = ?2")
                 && sql.contains("LIMIT ?3")
                 && !sql.contains("ORDER BY")
         }),
-        "expected bounded incoming LIMIT query without ORDER BY; got {recorded:?}"
+        "expected indexed bounded incoming LIMIT query without ORDER BY; got {recorded:?}"
     );
     assert!(
         !recorded.iter().any(|sql| {
@@ -5483,24 +5484,31 @@ fn r4_blocker2_tombstoned_physical_slot_rejects_cross_root_reuse_and_prevents_ve
     assert_eq!(receipt_readd.linked[0].version, FactVersion(3));
 }
 
-/// R4 Blocker 3: SQLite `EXPLAIN QUERY PLAN` proves both `verify_link_endpoint_tables`
-/// and incoming `has_link_source` seek directly without full-world prefix scans.
+/// R4/R5 Blocker 3: SQLite `EXPLAIN QUERY PLAN` proves `verify_link_endpoint_tables`
+/// and incoming `has_link_source` seek directly via `INDEXED BY` on BOTH non-unique
+/// (`from: many`) and unique (`from: one`) link tables without full-world scans.
 #[test]
 fn r4_blocker3_explain_query_plan_seeks_directly_without_world_scan() {
     let defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
         {"name": "cap.Slot", "properties": [{"id": "id", "type": {"kind": "text"}}]},
-        {"name": "cap.Owner", "properties": [{"id": "id", "type": {"kind": "text"}}], "links": [{"id": "owns", "target": "cap.Slot", "cardinality": {"to": "many", "from": "one"}}]}
+        {"name": "cap.Owner", "properties": [{"id": "id", "type": {"kind": "text"}}], "links": [
+            {"id": "owns", "target": "cap.Slot", "cardinality": {"to": "many", "from": "one"}},
+            {"id": "watches", "target": "cap.Slot", "cardinality": {"to": "many", "from": "many"}}
+        ]}
     ]))
     .expect("defs");
     let model = common::model_of(&defs);
-    let table_name = model
-        .schema()
-        .link_tables
-        .iter()
-        .find(|t| t.source.as_str() == "cap.Owner" && t.link.as_str() == "owns")
-        .expect("link table")
-        .table
-        .clone();
+    let table_for = |link: &str| {
+        model
+            .schema()
+            .link_tables
+            .iter()
+            .find(|t| t.source.as_str() == "cap.Owner" && t.link.as_str() == link)
+            .expect("link table")
+            .table
+            .clone()
+    };
+    let (unique_table, non_unique_table) = (table_for("owns"), table_for("watches"));
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("eqp.sqlite");
     let store = CellStore::open(&path, model, StoreOptions::default()).expect("store");
@@ -5525,52 +5533,49 @@ fn r4_blocker3_explain_query_plan_seeks_directly_without_world_scan() {
             .join(" | ")
     };
 
-    let src_plan = explain(
-        "SELECT DISTINCT \"link_table\" FROM \"_norn_link_version\" WHERE \"world\" = ?1 AND \"source\" = ?2",
-        &[
-            SqlValue::Text("main".to_owned()),
-            SqlValue::Text("O1".to_owned()),
-        ],
-    );
-    assert!(
-        src_plan.contains("SEARCH _norn_link_version USING")
-            && src_plan.contains("world=? AND source=?")
-            && !src_plan.contains("SCAN"),
-        "expected index seek on (world, source); got: {src_plan}"
-    );
-    let tgt_plan = explain(
-        "SELECT DISTINCT \"link_table\" FROM \"_norn_link_version\" WHERE \"world\" = ?1 AND \"target\" = ?2",
-        &[
-            SqlValue::Text("main".to_owned()),
-            SqlValue::Text("T1".to_owned()),
-        ],
-    );
-    assert!(
-        tgt_plan.contains("SEARCH _norn_link_version USING")
-            && tgt_plan.contains("world=? AND target=?")
-            && !tgt_plan.contains("SCAN"),
-        "expected index seek on (world, target); got: {tgt_plan}"
-    );
-    let probe_plan = explain(&format!("SELECT 1 FROM \"{table_name}\" LIMIT 1"), &[]);
-    assert!(
-        !probe_plan.contains("WHERE") && !probe_plan.contains("TEMP B-TREE"),
-        "expected direct LIMIT 1 table-existence probe; got: {probe_plan}"
-    );
-    let incoming_plan = explain(
-        &format!(
-            "SELECT \"_source\" FROM \"{table_name}\" WHERE \"_world\" = ?1 AND \"_target\" = ?2 LIMIT ?3"
-        ),
-        &[
-            SqlValue::Text("main".to_owned()),
-            SqlValue::Text("T1".to_owned()),
-            SqlValue::Integer(2),
-        ],
-    );
-    assert!(
-        incoming_plan.contains("SEARCH")
-            && incoming_plan.contains("_world=? AND _target=?")
-            && !incoming_plan.contains("SCAN")
-            && !incoming_plan.contains("TEMP B-TREE"),
-        "expected direct (_world, _target) index seek without temp sort; got: {incoming_plan}"
-    );
+    for (col, idx, val) in [
+        ("source", "_norn_link_version/source_order", "O1"),
+        ("target", "_norn_link_version/target_order", "T1"),
+    ] {
+        let plan = explain(
+            &format!(
+                "SELECT DISTINCT \"link_table\" FROM \"_norn_link_version\" INDEXED BY \"{idx}\" WHERE \"world\" = ?1 AND \"{col}\" = ?2"
+            ),
+            &[
+                SqlValue::Text("main".to_owned()),
+                SqlValue::Text(val.to_owned()),
+            ],
+        );
+        assert!(
+            plan.contains("SEARCH _norn_link_version USING COVERING INDEX")
+                && plan.contains(&format!("world=? AND {col}=?"))
+                && !plan.contains("SCAN"),
+            "expected covering index seek on (world, {col}); got: {plan}"
+        );
+    }
+    for table_name in [&non_unique_table, &unique_table] {
+        let probe_plan = explain(&format!("SELECT 1 FROM \"{table_name}\" LIMIT 1"), &[]);
+        assert!(
+            !probe_plan.contains("WHERE") && !probe_plan.contains("TEMP B-TREE"),
+            "{probe_plan}"
+        );
+        let incoming = explain(
+            &format!(
+                "SELECT \"_source\" FROM \"{table_name}\" INDEXED BY \"{table_name}/target\" WHERE \"_world\" = ?1 AND \"_target\" = ?2 LIMIT ?3"
+            ),
+            &[
+                SqlValue::Text("main".to_owned()),
+                SqlValue::Text("T1".to_owned()),
+                SqlValue::Integer(2),
+            ],
+        );
+        assert!(
+            incoming.contains("SEARCH")
+                && incoming.contains(&format!("{table_name}/target"))
+                && incoming.contains("_world=? AND _target=?")
+                && !incoming.contains("SCAN")
+                && !incoming.contains("TEMP B-TREE"),
+            "expected direct target-index seek on {table_name}; got: {incoming}"
+        );
+    }
 }
