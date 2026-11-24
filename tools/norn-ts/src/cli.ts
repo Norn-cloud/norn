@@ -138,10 +138,9 @@ if (command === "compile") {
     const { cliDiagnostic, formatCliDiagnostic, registeredCodes } = await import("./cli-diagnostic.ts")
     const { ProjectError } = await import("./project.ts")
     const detail = (error instanceof Error ? error.message : String(error))
-      .split(/\r?\n/)
-      .filter((line) => !/^\s*at\s/.test(line))
-      .map((line) => line.replace(/[\u0000-\u001f\u007f]+/g, " ").trim())
-      .filter(Boolean)
+      .split(/\r\n|\r|\n|\u0085|\u2028|\u2029/)
+      .map((line) => line.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim())
+      .filter((line) => line.length > 0 && !/^at\s/.test(line))
       .join(" ")
       .replace(/\s+/g, " ")
     const base = registeredCodes().get("cli.setup.checker_unavailable")?.message ?? ""

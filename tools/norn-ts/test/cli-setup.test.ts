@@ -14,7 +14,7 @@ test("check explains missing or incomplete WASM setup without an uncaught stack"
     mkdirSync(brokenPkg)
     writeFileSync(
       join(brokenPkg, "norn_checker_wasm.js"),
-      'export function initSync() { throw new Error("corrupt wasm\\n    at initSync (broken.js:9:3)\\nmore detail") }\n',
+      'export function initSync() { throw new Error("corrupt\\u009bwasm\\r    at initSync (broken.js:9:3)\\nmore detail") }\n',
     )
     writeFileSync(join(brokenPkg, "norn_checker_wasm_bg.wasm"), "")
 
@@ -25,6 +25,10 @@ test("check explains missing or incomplete WASM setup without an uncaught stack"
       {
         pkg: `${join(empty, "bad")}\n    at leakedFrame (fake.ts:1:1)\nsecond-line`,
         detail: `NORN_CHECKER_WASM_PKG=${join(empty, "bad")} second-line holds no norn-checker-wasm package`,
+      },
+      {
+        pkg: `${join(empty, "cr")}\r    at crFrame (fake.ts:2:1)\u2028\u009b31mred`,
+        detail: `NORN_CHECKER_WASM_PKG=${join(empty, "cr")} 31mred holds no norn-checker-wasm package`,
       },
       { pkg: brokenPkg, detail: "corrupt wasm more detail" },
     ]
