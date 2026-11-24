@@ -239,7 +239,8 @@ export interface FormField {
   readonly spec: Spec
 }
 
-const escapePointer = (name: string) => name.replaceAll("~", "~0").replaceAll("/", "~1")
+/** Escape one object member name into an RFC 6901 JSON Pointer segment (`~` → `~0`, `/` → `~1`). */
+export const escapePointer = (name: string) => name.replaceAll("~", "~0").replaceAll("/", "~1")
 const JSON_DOMAIN = ["array", "boolean", "null", "number", "object", "string"]
 
 function specOf(schema: unknown, pointer: string): { spec: Spec; nullable: boolean } {
@@ -706,7 +707,7 @@ export function sectionsOf(fields: readonly FormField[], groups: readonly Group[
   }
   place(fields)
   // The record's id leads the form when it is required and no group places it; declared groups are never regrouped.
-  const id = idField === undefined ? undefined : rest.find((f) => f.pointer === `/${idField}` && f.required)
+  const id = idField === undefined ? undefined : rest.find((f) => f.pointer === `/${escapePointer(idField)}` && f.required)
   const others = id === undefined ? rest : rest.filter((f) => f !== id)
   const sections: Section[] = named.filter((section) => section.fields.length > 0)
   if (others.length > 0) sections.push({ id: null, title: null, fields: others })

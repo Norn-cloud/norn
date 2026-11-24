@@ -25,7 +25,7 @@ export const isEmptyWorkspace = (artifacts: readonly { readonly artifactId: stri
 const CHECKLIST = [
   { step: "1", title: "Add a source", description: "Connect a system or upload data to bring records into this workspace.", to: "/sources", icon: Database },
   { step: "2", title: "Model it", description: "Define your object types, relationships, and transforms.", to: "/transforms", icon: Blend },
-  { step: "3", title: "Rules", description: "Add laws, guarantees, and markings to govern every change.", to: "/guarantees", icon: ShieldCheck },
+  { step: "3", title: "Rules", description: "Add laws, guarantees, and markings to govern every change.", to: "/rules", icon: ShieldCheck },
   { step: "4", title: "Dashboard", description: "Ask questions and pin live numbers from admitted metrics.", to: "/dashboards", icon: LayoutDashboard },
 ] as const
 

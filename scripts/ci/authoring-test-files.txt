@@ -31,6 +31,7 @@ test/jewelry-definitions.test.ts
 test/jewelry-demo.test.ts
 test/labels.test.ts
 test/law.test.ts
+test/local-runtime-setup.test.ts
 test/model.test.ts
 test/new-developer.test.ts
 test/ontology-pack.test.ts
