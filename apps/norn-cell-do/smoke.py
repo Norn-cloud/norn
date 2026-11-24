@@ -12,7 +12,6 @@ import secrets
 import signal
 import statistics
 import subprocess
-import sys
 import time
 import urllib.error
 import urllib.parse
@@ -20,9 +19,8 @@ import urllib.request
 
 ROOT = Path(os.environ["NORN_CELL_DO_PROJECT"]).resolve()
 URL = "http://127.0.0.1:9877"
-RUNTIME = sys.argv[1] if len(sys.argv) > 1 else "celld"
-COMMAND = {"celld": ["celld", "dev", "--port", "9877"],
-           "wrangler": ["wrangler", "dev", "--local", "--port", "9877"]}[RUNTIME]
+RUNTIME = "wrangler"
+COMMAND = ["wrangler", "dev", "--local", "--port", "9877"]
 SCOPE = "orgId=org_demo&environmentId=dev"
 ANALYTICS = "orgId=org_demo&environmentId=analytics"
 ANSWER = "/v1/questions/demo.yield_week/answer"

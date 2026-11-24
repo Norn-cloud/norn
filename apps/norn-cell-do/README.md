@@ -1,7 +1,7 @@
 # norn-cell-do
 
 The Workers/Durable Objects host: one Norn tenant cell per Durable Object
-(#728, #819). It runs unchanged on self-hosted celld, workerd and Cloudflare.
+(#728, #819). It runs unchanged on workerd and Cloudflare.
 
 - `subscribe.mjs`: live reads (`norn.live.v1`). A hibernating WebSocket on
   `/v1/subscribe` names GET routes; after every commit the cell answers each
@@ -92,7 +92,7 @@ cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wake.mjs,connect_vars.mjs,telemet
 cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
 wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
   --target web --out-name norn_cell_do --out-dir "$NORN_CELL_DO_PROJECT/pkg"
-python3 apps/norn-cell-do/smoke.py celld   # or: wrangler
+python3 apps/norn-cell-do/smoke.py   # on `wrangler dev --local`
 ```
 
 The smoke build enables `fixtures` (`Bearer fixture:admin@demo`, `guest@demo`);
@@ -101,7 +101,7 @@ a deployable build omits it and then requires a verified host token. A
 smoke sets it), and `apps/studio/scripts/celld-deploy-cell.ts` refuses to
 deploy one.
 
-Pins: celld v0.6.3 and Wrangler 4.157.0, as in `crates/norn-cell/README.md`.
+Pin: Wrangler 4.157.0, as in `crates/norn-cell/README.md`.
 
 ## Callers
 
@@ -173,9 +173,9 @@ replay that same request until the credential expires (at most two minutes).
 
 ## Host conformance (D122)
 
-`conformance/` checks that a Workers host runs this cell the way native Rust
-does. Customers' cells run on OpenOrange (each Durable Object a Rivet actor on
-a Rivet Engine); celld and Wrangler are the other hosts.
+`conformance/` checks that a cell host runs this cell the way native Rust
+does. The self-hosted host is the native Rivet host (`crates/norn-cell-rivet`,
+D131); a deployed Workers host runs through `--host url`.
 
 - `crates/norn-cell-do/tests/conformance_reference.rs` owns the request
   script and serves it natively through the same tenant dispatch as
@@ -191,10 +191,7 @@ a Rivet Engine); celld and Wrangler are the other hosts.
   `fixtures` build AND `NORN_STAGE=test` AND `NORN_CONFORMANCE=synthetic`.
   The checked-in `conformance/wrangler.json` sets neither and has no
   `workers.dev`, preview or route URL, so a plain `wrangler deploy` of it
-  serves nothing. For a local host the runner copies the project to a fresh
-  temporary directory, sets both values in that copy's `wrangler.json` only,
-  and deletes the copy afterwards: the supplied project is never written. A
-  hosted run supplies them in a separate, untracked config (see
+  serves nothing. A hosted run supplies them in a separate, untracked config (see
   below). Opted in, it serves only the synthetic scope
   `org_demo/analytics` and its probe objects, and refuses everything else.
   The production deploy (`apps/studio/scripts/celld-deploy-cell.ts`) writes its
@@ -243,47 +240,28 @@ a Rivet Engine); celld and Wrangler are the other hosts.
     cell and 100 cells on one host (measured).
 
   Durability evidence is process kills (SIGKILL) against **one** Rivet Engine
-  with its log and objects on local disk, or one `celld dev` process: no
+  with its log and objects on local disk: no
   power loss, torn writes, multi-engine clusters or S3 object storage.
-
-Build the project outside the checkout, then run it on a host:
-
-```sh
-P="${CARGO_TARGET_DIR:?}/norn-cell-conformance"; mkdir -p "$P"
-cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
-wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" --target web --out-name norn_cell_do --out-dir "$P/pkg"
-cargo rustc --locked -p norn-cell --no-default-features --example workers_sql --target wasm32-unknown-unknown --profile wasm-release
-wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/examples/workers_sql.wasm" --target web --out-name workers_sql --out-dir "$P/probe-pkg"
-cp apps/norn-cell-do/{worker.mjs,subscribe.mjs} "$P/"
-cp apps/norn-cell-do/conformance/worker.mjs "$P/conformance.mjs"
-cp apps/norn-cell-do/conformance/wrangler.json "$P/"
-NORN_CELL_DO_CONFORMANCE_OUT="$P/reference.json" cargo test --locked -p norn-cell-do --test suites conformance_reference::
-(cd apps/norn-cell-do/conformance && bun install --frozen-lockfile)   # open-orange 1.0.3, test-only; runs on Node 22+
-python3 apps/norn-cell-do/conformance/conformance.py --reference "$P/reference.json" --host rivet --project "$P"
-```
-
-`python3 -m unittest apps/norn-cell-do/conformance/test_conformance.py`
-checks the runner's own rules with a stub host: the supplied project stays
-byte-identical, a reset without a marker kills nothing, and waitUntil does not
-pass when the reply came after the work.
-
-`--host celld` runs `celld dev --no-watch --logs` (0.6.3). Host state and logs go to a fresh temporary directory (or an empty, real `--state` directory outside the project), never into the project. `--host rivet` runs the Rivet Engine
-(`rivetdev/engine` 3.1.2-rc.1, pinned by digest, in Docker) with two
-`orange serve` runners from the locked install (`conformance/package.json`
-and `bun.lock`, with integrity hashes); `ORANGE` may name another binary, and
-the runner refuses any that is not open-orange 1.0.3. Run it on a Boat VM,
-never a shared host.
 
 `--host rivet-native` runs the native Rivet host (`crates/norn-cell-rivet`,
 D131): Rivet Engine 3.1.1 (`rivetdev/engine`, pinned by digest, in Docker)
 with two `norn-cell-rivet` runners, a `conformance` build named by
-`NORN_CELL_RIVET`. It needs no Worker project:
+`NORN_CELL_RIVET`. Host state and logs go to a fresh temporary directory (or
+an empty, real `--state` directory). Run it on a Boat VM, never a shared host
+(`scripts/ci/core.sh rivet-conformance` runs exactly this):
 
 ```sh
+P="${CARGO_TARGET_DIR:?}/norn-cell-conformance"; mkdir -p "$P"
+NORN_CELL_DO_CONFORMANCE_OUT="$P/reference.json" cargo test --locked -p norn-cell-do --test suites conformance_reference::
 (cd crates/norn-cell-rivet && cargo build --locked --release --features conformance)
 NORN_CELL_RIVET=crates/norn-cell-rivet/target/release/norn-cell-rivet \
   python3 apps/norn-cell-do/conformance/conformance.py --reference "$P/reference.json" --host rivet-native
 ```
+
+`python3 -m unittest apps/norn-cell-do/conformance/test_conformance.py`
+checks the runner's own rules with a stub host: host state is a fresh, real
+directory, a reset without a marker kills nothing, and waitUntil does not
+pass when the reply came after the work.
 
 `--host url --url <base>` runs the tests that need no host control (kills,
 restarts and backups report **not tested**). Point it only at a fresh,
