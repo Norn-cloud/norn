@@ -1777,34 +1777,6 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description One verified approval or assay entry retained on [`super::ActionCallRecord`]. */
-        NornActionActionApprovalEvidenceRecord: {
-            /** @description Authenticated accountable human person id. */
-            accountablePerson: string;
-            /** @description Authenticated acting principal/session/agent id. */
-            actor: string;
-            /** @description Unique evidence identifier. */
-            evidenceId: string;
-            /**
-             * @description Evidence kind (`approval` or `assay`).
-             * @enum {string}
-             */
-            kind: "approval" | "assay";
-        };
-        /** @description Verified independent-person approval receipt retained on [`super::ActionCallRecord`]. */
-        NornActionActionApprovalReceipt: {
-            /** @description Distinct authenticated accountable people who satisfied the policy, sorted canonically. */
-            accountablePeople: string[];
-            /** @description Verified approval/assay evidence entries bound to this commit. */
-            evidence: components["schemas"]["NornActionActionApprovalEvidenceRecord"][];
-            /** @description Canonical SHA-256 digest (`sha256:<64 lower-case hex>`) of the exact prepared intent. */
-            intentDigest: string;
-            /**
-             * Format: uint32
-             * @description Minimum distinct accountable people required by policy.
-             */
-            requiredDistinctPeople: number;
-        };
         /** @description One field produced by an ordered action input derivation. */
         NornActionActionDerivedValue: {
             /** @description The derived field. */
@@ -1848,19 +1820,14 @@ export interface components {
             satisfied: boolean;
         };
         /**
-         * @description Kind of evidence presented for independent-person approval.
-         * @enum {string}
-         */
-        NornActionApprovalEvidenceKind: "approval" | "assay";
-        /**
          * ActionCallRecord
          * @description The idempotency record of a committed call (the values of its
          *     [`ACTION_CALL_TYPE`] object).
          */
         NornActionCallRecord: {
             /**
-             * @description AUTH-INDEPENDENT-PERSON (#618): authenticated accountable person behind
-             *     `actor`, when supplied by the trusted host seam.
+             * @description AUTH-INDEPENDENT-PERSON (#618): the authenticated accountable person
+             *     behind `actor`; absent on records retained before people were bound.
              */
             accountablePerson?: string | null;
             /**
@@ -1877,11 +1844,6 @@ export interface components {
             actionVersion?: string | null;
             /** @description The actor. */
             actor: string;
-            /**
-             * @description AUTH-INDEPENDENT-PERSON (#618): verified independent-person approval
-             *     receipt bound to this call's exact prepared intent.
-             */
-            approvalEvidence?: components["schemas"]["NornActionActionApprovalReceipt"] | null;
             /** @description The values produced by each derivation, in declaration order. */
             derivedValues?: components["schemas"]["NornActionActionDerivedValue"][];
             /**

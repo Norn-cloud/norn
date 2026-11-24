@@ -1184,6 +1184,7 @@ mod tests {
                         actor_kind: "user".to_owned(),
                         roles: vec!["owner".to_owned()],
                         role_table: "demo".to_owned(),
+                        accountable_person: None,
                     },
                     scope: SCOPE.to_owned(),
                     action_id: "demo.ticket.escalate".to_owned(),

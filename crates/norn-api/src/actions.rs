@@ -541,14 +541,6 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
         Gated::Commit(approval) => {
-            let approved_intent = approval
-                .as_deref()
-                .map(|decision| crate::approvals::approved_intent(&mut cell, decision))
-                .transpose()?;
-            let kernel_call = norn_kernel::ActionCall {
-                approved_intent,
-                ..kernel_call
-            };
             let approval = approval.as_deref();
             commit_call(host, &mut cell, &catalog, &kernel_call, approval, attempt)?
         }
@@ -571,6 +563,14 @@ fn commit_call<E: SqlEngine>(
     approval: Option<&str>,
     attempt: Option<&crate::approvals::StepAttempt>,
 ) -> Result<ActionOutcome, Refusal> {
+    // APPROVAL-INTENT-1: an approved call commits only as the commit its
+    // approval was granted for.
+    let kernel_call = &norn_kernel::ActionCall {
+        approved_intent: approval
+            .map(|decision| crate::approvals::approved_intent(cell, decision))
+            .transpose()?,
+        ..kernel_call.clone()
+    };
     let kernel_authorizer = KernelAuthorizer(host.authorizer.as_ref());
     let commit = |cell: &mut crate::host::ActionCell<E>| {
         norn_kernel::commit_action(cell, catalog, kernel_call, &kernel_authorizer).map_err(
@@ -793,36 +793,7 @@ fn through_gate<E: SqlEngine>(
             if approval.is_some() {
                 return Ok(Gated::Commit(approval));
             }
-            // AUTH-INDEPENDENT-PERSON (#618): an approval needs a person
-            // independent of the requester, so a requester no accountable
-            // person stands behind parks nothing anyone could approve.
-            let requester = host
-                .authorizer
-                .verified_principal(&kernel_call.actor)
-                .filter(|requester| requester.verified_accountable_person().is_some())
-                .ok_or_else(action_denied)?;
-            let intent_digest = norn_kernel::prepare_action_intent(
-                &*cell,
-                catalog,
-                kernel_call,
-                &KernelAuthorizer(host.authorizer.as_ref()),
-            )
-            .map_err(|error| kernel_refusal(host, &kernel_call.actor, action_id, &error))?;
-            // S5a: a call parks for a step attempt only while that attempt
-            // still waits on exactly this call, judged under this hold.
-            require_making(cell.store(), attempt, key)?;
-            let parked = crate::approvals::ParkedCall {
-                action: action_id.to_owned(),
-                input: kernel_call.input.clone(),
-                idempotency_key: kernel_call.idempotency_key.clone(),
-                requester,
-                action_digest: action_digest.clone(),
-                definitions_version,
-                // S6b: the step attempt making this call, recorded now.
-                attempt: attempt.cloned(),
-                trace: kernel_call.trace.clone(),
-                intent_digest: Some(intent_digest),
-            };
+            let parked = parked_call(host, cell, catalog, kernel_call, admitted)?;
             Ok(
                 match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {
                     crate::approvals::Held::Pending(pending) => Gated::Pending(pending),
@@ -839,6 +810,47 @@ fn through_gate<E: SqlEngine>(
             ))
         }
     }
+}
+
+/// The call `kernel_call` parks as, past its gate: its requester's verified
+/// principal, which must name the accountable person an approval needs to be
+/// independent of (#618), and the digest of the commit it would make, which
+/// its approval is granted for (APPROVAL-INTENT-1).
+fn parked_call<E: SqlEngine>(
+    host: &DevHost<E>,
+    cell: &crate::host::ActionCell<E>,
+    catalog: &TypeCatalog<'_>,
+    kernel_call: &norn_kernel::ActionCall<'_>,
+    admitted: &Admitted<'_>,
+) -> Result<crate::approvals::ParkedCall, Refusal> {
+    let action_id = kernel_call.action.action_id.as_str();
+    let requester = host
+        .authorizer
+        .verified_principal(&kernel_call.actor)
+        .filter(|requester| requester.verified_accountable_person().is_some())
+        .ok_or_else(action_denied)?;
+    let intent_digest = norn_kernel::prepare_action_intent(
+        cell,
+        catalog,
+        kernel_call,
+        &KernelAuthorizer(host.authorizer.as_ref()),
+    )
+    .map_err(|error| kernel_refusal(host, &kernel_call.actor, action_id, &error))?;
+    // S5a: a call parks for a step attempt only while that attempt
+    // still waits on exactly this call, judged under this hold.
+    require_making(cell.store(), admitted.attempt, &kernel_call.idempotency_key)?;
+    Ok(crate::approvals::ParkedCall {
+        action: action_id.to_owned(),
+        input: kernel_call.input.clone(),
+        idempotency_key: kernel_call.idempotency_key.clone(),
+        requester,
+        action_digest: admitted.action_digest.clone(),
+        definitions_version: admitted.definitions_version,
+        // S6b: the step attempt making this call, recorded now.
+        attempt: admitted.attempt.cloned(),
+        trace: kernel_call.trace.clone(),
+        intent_digest: Some(intent_digest),
+    })
 }
 
 /// The approval a call runs under, if one does: the approver's dispatch's

@@ -6655,80 +6655,6 @@
           }
         }
       },
-      "NornActionActionApprovalEvidenceRecord": {
-        "type": "object",
-        "description": "One verified approval or assay entry retained on [`super::ActionCallRecord`].",
-        "required": [
-          "evidenceId",
-          "kind",
-          "actor",
-          "accountablePerson"
-        ],
-        "properties": {
-          "accountablePerson": {
-            "type": "string",
-            "description": "Authenticated accountable human person id."
-          },
-          "actor": {
-            "type": "string",
-            "description": "Authenticated acting principal/session/agent id."
-          },
-          "evidenceId": {
-            "type": "string",
-            "description": "Unique evidence identifier."
-          },
-          "kind": {
-            "type": "string",
-            "description": "Evidence kind (`approval` or `assay`).",
-            "enum": [
-              "approval",
-              "assay"
-            ],
-            "x-enumDescriptions": [
-              "Human approval of the prepared action intent.",
-              "Independent assay or measurement evidence bound to the prepared intent."
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornActionActionApprovalReceipt": {
-        "type": "object",
-        "description": "Verified independent-person approval receipt retained on [`super::ActionCallRecord`].",
-        "required": [
-          "intentDigest",
-          "requiredDistinctPeople",
-          "accountablePeople",
-          "evidence"
-        ],
-        "properties": {
-          "accountablePeople": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Distinct authenticated accountable people who satisfied the policy, sorted canonically."
-          },
-          "evidence": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornActionActionApprovalEvidenceRecord"
-            },
-            "description": "Verified approval/assay evidence entries bound to this commit."
-          },
-          "intentDigest": {
-            "type": "string",
-            "description": "Canonical SHA-256 digest (`sha256:<64 lower-case hex>`) of the exact prepared intent."
-          },
-          "requiredDistinctPeople": {
-            "type": "integer",
-            "format": "uint32",
-            "description": "Minimum distinct accountable people required by policy.",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
       "NornActionActionDerivedValue": {
         "type": "object",
         "description": "One field produced by an ordered action input derivation.",
@@ -6807,18 +6733,6 @@
         },
         "additionalProperties": false
       },
-      "NornActionApprovalEvidenceKind": {
-        "type": "string",
-        "description": "Kind of evidence presented for independent-person approval.",
-        "enum": [
-          "approval",
-          "assay"
-        ],
-        "x-enumDescriptions": [
-          "Human approval of the prepared action intent.",
-          "Independent assay or measurement evidence bound to the prepared intent."
-        ]
-      },
       "NornActionCallRecord": {
         "type": "object",
         "title": "ActionCallRecord",
@@ -6839,7 +6753,7 @@
               "string",
               "null"
             ],
-            "description": "AUTH-INDEPENDENT-PERSON (#618): authenticated accountable person behind\n`actor`, when supplied by the trusted host seam."
+            "description": "AUTH-INDEPENDENT-PERSON (#618): the authenticated accountable person\nbehind `actor`; absent on records retained before people were bound."
           },
           "actionArtifactId": {
             "type": [
@@ -6862,17 +6776,6 @@
           "actor": {
             "type": "string",
             "description": "The actor."
-          },
-          "approvalEvidence": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NornActionActionApprovalReceipt"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "AUTH-INDEPENDENT-PERSON (#618): verified independent-person approval\nreceipt bound to this call's exact prepared intent."
           },
           "derivedValues": {
             "type": "array",

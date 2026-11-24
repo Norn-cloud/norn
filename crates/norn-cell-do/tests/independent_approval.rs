@@ -29,7 +29,7 @@ const AT: u64 = 1_800_000_000_000;
 fn gate<E: SqlEngine>(cell: &Cell<E>) -> Checked {
     let payload = json!({ "action": MELT_ACTION, "decider": { "roles": ["admin"] },
         "question": "Convert this melt?", "risk": "high" });
-    let body = json!({ "kind": "approval", "id": "ops.melt_approval", "payload": payload });
+    let body = json!({ "kind": "approval", "id": "ops.melt_approval", "payload": &payload });
     let (status, admitted) = call(
         cell,
         "POST",
@@ -42,7 +42,7 @@ fn gate<E: SqlEngine>(cell: &Cell<E>) -> Checked {
         .get("restatementSha256")
         .cloned()
         .ok_or("no restatement")?;
-    let signed = json!({ "kind": "approval", "id": "ops.melt_approval", "payload": body.get("payload"),
+    let signed = json!({ "kind": "approval", "id": "ops.melt_approval", "payload": payload,
         "signoff": { "restatementSha256": restatement } });
     let (status, installed) = call(
         cell,
