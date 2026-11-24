@@ -54,9 +54,13 @@ export function displayOf(field: Field, value: unknown, exact: string): string {
 }
 
 /** The record's own name when its concept declares one, else its identity. */
-export const recordName = (record: ObjectRecord): string => {
-  const name = record.values["label"] ?? record.values["display_name"]
-  return typeof name === "string" ? name : record.id
+export const recordName = (record: { readonly id: string; readonly values?: Readonly<Record<string, unknown>> | null }): string => {
+  const values = record.values ?? undefined
+  const label = values?.["label"]
+  if (typeof label === "string" && label !== "") return label
+  const displayName = values?.["display_name"]
+  if (typeof displayName === "string" && displayName !== "") return displayName
+  return record.id
 }
 
 /** The first failed read's message, exactly as the server or transport gave it; nothing reads as "loading" forever. */

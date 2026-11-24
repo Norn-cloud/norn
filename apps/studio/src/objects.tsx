@@ -21,7 +21,7 @@ import { useViewer } from "@/lib/viewer"
 import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
-import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
+import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
 import { useMode } from "./lib/live-transport.ts"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
@@ -126,7 +126,7 @@ export function ObjectPage() {
             <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={readAgain} title="Read this record from the cell again">
               <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
             </Button>
-            <RecordActions objectType={name} id={id} onDone={readAgain} />
+            <RecordActions objectType={name} id={id} onDone={() => { readAgain(); void review.refetch() }} />
           </div>
         )}
       </header>
@@ -164,7 +164,7 @@ export function ObjectPage() {
               </div>
               <aside className="min-w-0 space-y-6" aria-label="Who can act, rules, changes and links">
                 <WhoCanAct objectType={name} live={live} />
-                <RulesKept rules={concept.rules} title={concept.title} />
+                <RulesKept rules={concept.rules} laws={concept.laws} title={concept.title} />
                 {live && <RecentChanges objectType={name} id={id} actionTitles={actionTitles} onAll={() => document.getElementById("record-history")?.scrollIntoView({ behavior: "smooth", block: "start" })} />}
                 <LinksRail concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} live={live} />
               </aside>
@@ -174,12 +174,40 @@ export function ObjectPage() {
             {lineage && <RecordLineage root={{ objectType: data.object.document.objectType, key: id, version: data.object.document.version }} lineage={lineage} live={live} />}
             <Lineage lineage={lineage} evidence={evidence} actionFor={corrections.actionFor} />
           </TabsContent>
-          <TabsContent value="guarantees" className="pt-4">
-            <Panel icon={ShieldCheck} label="Laws over this object type"><Well className="p-3">
-              {concept.rules.length === 0
-                ? <Empty icon={ShieldCheck} action={<Button asChild variant="outline" size="sm"><Link to="/guarantees">See every guarantee</Link></Button>}>No law is declared over {concept.title.toLowerCase()} records.</Empty>
-                : <ul className="space-y-2 text-sm">{concept.rules.map((rule) => <li key={rule} className="flex gap-2"><ShieldCheck className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />{rule}</li>)}</ul>}
-            </Well></Panel>
+          <TabsContent value="rules" className="pt-4">
+            <Panel icon={ShieldCheck} label="Rules over this object type"
+              action={<Link to="/rules" className="underline-offset-4 hover:underline">All rules</Link>}>
+              <Well className="divide-y">
+                {concept.laws.length === 0 && concept.rules.length === 0
+                  ? <Empty icon={ShieldCheck} action={<Button asChild variant="outline" size="sm"><Link to="/rules">See every rule</Link></Button>}>No rule is declared over {concept.title.toLowerCase()} records.</Empty>
+                  : <>
+                    {concept.laws.map((law) => {
+                      const headline = lawHeadline(law)
+                      return (
+                        <div key={law.id} data-law={law.id} className="flex gap-3 px-4 py-3 text-sm">
+                          <ShieldCheck aria-hidden className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p lang={law.titleLang} className="font-medium text-pretty">{headline}</p>
+                            {headline !== law.rationale && <p className="text-meta text-pretty text-muted-foreground">{law.rationale}</p>}
+                            {view === "technical" && (
+                              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                                <Chip tone="violet" title="The pack or module that owns this rule">{law.owner}</Chip>
+                                <code className="font-mono text-xs text-muted-foreground">{law.id}</code>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {concept.rules.filter((rule) => !concept.laws.some(({ rationale }) => rationale === rule)).map((rule) => (
+                      <div key={rule} className="flex gap-3 px-4 py-3 text-sm">
+                        <ShieldCheck aria-hidden className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />
+                        <p className="min-w-0 flex-1 font-medium text-pretty">{rule}</p>
+                      </div>
+                    ))}
+                  </>}
+              </Well>
+            </Panel>
           </TabsContent>
         </Tabs>
       )}
@@ -188,7 +216,7 @@ export function ObjectPage() {
   )
 }
 
-const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["guarantees", "Guarantees"]] as const
+const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["rules", "Rules"]] as const
 
 /**
  * Which read this page shows: the version and, live, the commit that wrote it and when, from the
