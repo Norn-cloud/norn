@@ -1,0 +1,451 @@
+{
+  "page": {
+    "status": 200,
+    "json": {
+      "items": [
+        {
+          "id": "dec_8568df981c24c55e2cc9c462b3c29284",
+          "run": {
+            "id": "refund-studio",
+            "generation": 1,
+            "state": "awaiting_perform_ask_review"
+          },
+          "flow": {
+            "ruleId": "ops.approve_refund.flow.rule",
+            "version": "1.0.0",
+            "title": "Approve a refund"
+          },
+          "step": {
+            "id": "ask_review",
+            "label": "Review the refund"
+          },
+          "question": "Refund order 1042 in full?",
+          "risk": "high",
+          "options": [
+            {
+              "id": "approve",
+              "label": "Approve the refund",
+              "scope": "This refund only",
+              "effect": {
+                "action": "ops.refund.approve"
+              }
+            },
+            {
+              "id": "reject",
+              "label": "Reject the refund",
+              "scope": "This refund only",
+              "effect": {
+                "action": "ops.refund.reject"
+              }
+            }
+          ],
+          "agentPick": "approve",
+          "requestedAtMs": 1800000000000,
+          "expiresAtMs": 1800086400000,
+          "context": {
+            "subjects": []
+          },
+          "inputSchema": null
+        }
+      ],
+      "total": 1,
+      "nextCursor": null,
+      "serverNowMs": 1800000000000
+    }
+  },
+  "requested": {
+    "status": 200,
+    "json": {
+      "items": [],
+      "serverNowMs": 1800172800000
+    }
+  },
+  "decided": {
+    "status": 200,
+    "json": {
+      "outcome": "decided",
+      "decision": {
+        "id": "dec_8568df981c24c55e2cc9c462b3c29284",
+        "choice": "approve",
+        "note": null,
+        "decidedBy": "you",
+        "decidedAtMs": 1800000000000
+      },
+      "receipt": {
+        "receiptHash": "095bd989806aece1b4353d9093e91e3fd5819f36dac0cbb37a921e9ecdeae8a9",
+        "commitSeq": 5,
+        "recordedAtMs": 1800000000000
+      },
+      "run": {
+        "id": "refund-studio",
+        "state": "completed"
+      }
+    }
+  },
+  "replayed": {
+    "status": 200,
+    "json": {
+      "outcome": "replayed",
+      "decision": {
+        "id": "dec_8568df981c24c55e2cc9c462b3c29284",
+        "choice": "approve",
+        "note": null,
+        "decidedBy": "you",
+        "decidedAtMs": 1800000000000
+      },
+      "receipt": {
+        "receiptHash": "095bd989806aece1b4353d9093e91e3fd5819f36dac0cbb37a921e9ecdeae8a9",
+        "commitSeq": 5,
+        "recordedAtMs": 1800000000000
+      },
+      "run": {
+        "id": "refund-studio",
+        "state": "completed"
+      }
+    }
+  },
+  "decisionDenied": {
+    "status": 403,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "scope.denied",
+      "category": "permission",
+      "message": "the request scope is not authorized",
+      "explanation": "access to the requested scope is denied"
+    }
+  },
+  "invalidBody": {
+    "status": 400,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "request.invalid",
+      "category": "invalid",
+      "message": "the request is malformed",
+      "explanation": "the request body is not a decision: EOF while parsing an object at line 1 column 1"
+    }
+  },
+  "decisionMissing": {
+    "status": 404,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "decision.not_found",
+      "category": "visibility",
+      "message": "no such decision",
+      "explanation": "no open decision with this id is waiting on the caller"
+    }
+  },
+  "resolved": {
+    "status": 409,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "decision.resolved",
+      "category": "conflict",
+      "message": "the decision was already resolved",
+      "explanation": "someone resolved it first",
+      "resolution": {
+        "resolution": "decided",
+        "by": "another decider",
+        "atMs": 1800000000000,
+        "choice": "approve"
+      }
+    }
+  },
+  "expired": {
+    "status": 410,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "decision.expired",
+      "category": "invalid",
+      "message": "the decision expired",
+      "explanation": "its deadline passed before anyone decided"
+    }
+  },
+  "law": {
+    "status": 403,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "decision.law_not_satisfied",
+      "category": "permission",
+      "message": "the decider law is not satisfied",
+      "explanation": "this decision names a law the cell cannot evaluate for the caller"
+    }
+  },
+  "unknownChoice": {
+    "status": 422,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "decision.unknown_choice",
+      "category": "invalid",
+      "message": "choice names no option of this decision",
+      "explanation": "correct the field and decide again",
+      "diagnostics": [
+        {
+          "code": "decision.unknown_choice",
+          "severity": "error",
+          "message": "choice names no option of this decision",
+          "span": {
+            "pointer": "/choice"
+          }
+        }
+      ]
+    }
+  },
+  "noteTooLong": {
+    "status": 422,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "decision.note_too_long",
+      "category": "invalid",
+      "message": "the note is longer than 500 characters",
+      "explanation": "correct the field and decide again",
+      "diagnostics": [
+        {
+          "code": "decision.note_too_long",
+          "severity": "error",
+          "message": "the note is longer than 500 characters",
+          "span": {
+            "pointer": "/note"
+          }
+        }
+      ]
+    }
+  },
+  "invalidKey": {
+    "status": 422,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "request.invalid",
+      "category": "invalid",
+      "message": "idempotencyKey must be 1-128 bytes",
+      "explanation": "correct the field and decide again",
+      "diagnostics": [
+        {
+          "code": "request.invalid",
+          "severity": "error",
+          "message": "idempotencyKey must be 1-128 bytes",
+          "span": {
+            "pointer": "/idempotencyKey"
+          }
+        }
+      ]
+    }
+  },
+  "conflict": {
+    "status": 409,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "decision.idempotency_conflict",
+      "category": "conflict",
+      "message": "the idempotency key was used for another answer",
+      "explanation": "use a new idempotencyKey for a different choice or note"
+    }
+  },
+  "runStarted": {
+    "status": 201,
+    "json": {
+      "id": "refund-studio",
+      "generation": 1,
+      "flow": {
+        "id": "ops.approve_refund",
+        "ruleId": "ops.approve_refund.flow.rule",
+        "version": "1.0.0",
+        "title": "Approve a refund"
+      },
+      "objectType": "ops.ApproveRefundRun",
+      "state": "awaiting_perform_ask_review",
+      "version": 1,
+      "createdAtMs": 1800000000000,
+      "createdCommitSeq": 4,
+      "updatedAtMs": 1800000000000,
+      "updatedCommitSeq": 4,
+      "terminal": false,
+      "steps": [
+        {
+          "id": "ask_review",
+          "label": "Review the refund",
+          "kind": "decide",
+          "status": "waiting",
+          "waitingOn": "decision",
+          "startedAtMs": 1800000000000,
+          "endedAtMs": null,
+          "receipts": [],
+          "error": null
+        }
+      ],
+      "decision": null
+    }
+  },
+  "runReplayed": {
+    "status": 200,
+    "json": {
+      "id": "refund-studio",
+      "generation": 1,
+      "flow": {
+        "id": "ops.approve_refund",
+        "ruleId": "ops.approve_refund.flow.rule",
+        "version": "1.0.0",
+        "title": "Approve a refund"
+      },
+      "objectType": "ops.ApproveRefundRun",
+      "state": "awaiting_perform_ask_review",
+      "version": 1,
+      "createdAtMs": 1800000000000,
+      "createdCommitSeq": 4,
+      "updatedAtMs": 1800000000000,
+      "updatedCommitSeq": 4,
+      "terminal": false,
+      "steps": [
+        {
+          "id": "ask_review",
+          "label": "Review the refund",
+          "kind": "decide",
+          "status": "waiting",
+          "waitingOn": "decision",
+          "startedAtMs": 1800000000000,
+          "endedAtMs": null,
+          "receipts": [],
+          "error": null
+        }
+      ],
+      "decision": null
+    }
+  },
+  "runRead": {
+    "status": 200,
+    "json": {
+      "id": "refund-studio",
+      "generation": 1,
+      "flow": {
+        "id": "ops.approve_refund",
+        "ruleId": "ops.approve_refund.flow.rule",
+        "version": "1.0.0",
+        "title": "Approve a refund"
+      },
+      "objectType": "ops.ApproveRefundRun",
+      "state": "awaiting_perform_ask_review",
+      "version": 1,
+      "createdAtMs": 1800000000000,
+      "createdCommitSeq": 4,
+      "updatedAtMs": 1800000000000,
+      "updatedCommitSeq": 4,
+      "terminal": false,
+      "steps": [
+        {
+          "id": "ask_review",
+          "label": "Review the refund",
+          "kind": "decide",
+          "status": "waiting",
+          "waitingOn": "decision",
+          "startedAtMs": 1800000000000,
+          "endedAtMs": null,
+          "receipts": [],
+          "error": null
+        }
+      ],
+      "decision": {
+        "id": "dec_8568df981c24c55e2cc9c462b3c29284",
+        "expiresAtMs": 1800086400000
+      }
+    }
+  },
+  "runCompleted": {
+    "status": 200,
+    "json": {
+      "id": "refund-studio",
+      "generation": 1,
+      "flow": {
+        "id": "ops.approve_refund",
+        "ruleId": "ops.approve_refund.flow.rule",
+        "version": "1.0.0",
+        "title": "Approve a refund"
+      },
+      "objectType": "ops.ApproveRefundRun",
+      "state": "completed",
+      "version": 2,
+      "createdAtMs": 1800000000000,
+      "createdCommitSeq": 4,
+      "updatedAtMs": 1800000000000,
+      "updatedCommitSeq": 5,
+      "terminal": true,
+      "steps": [
+        {
+          "id": "ask_review",
+          "label": "Review the refund",
+          "kind": "decide",
+          "status": "done",
+          "startedAtMs": 1800000000000,
+          "endedAtMs": 1800000000000,
+          "receipts": [],
+          "error": null
+        },
+        {
+          "id": "succeed",
+          "label": null,
+          "kind": "succeed",
+          "status": "done",
+          "startedAtMs": 1800000000000,
+          "endedAtMs": 1800000000000,
+          "receipts": [],
+          "error": null
+        }
+      ],
+      "decision": null
+    }
+  },
+  "runDenied": {
+    "status": 403,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "scope.denied",
+      "category": "permission",
+      "message": "the request scope is not authorized",
+      "explanation": "access to the requested scope is denied"
+    }
+  },
+  "runStartDenied": {
+    "status": 403,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "authz.denied",
+      "category": "permission",
+      "message": "the run request is not authorized",
+      "explanation": "starting a run of this flow is denied"
+    }
+  },
+  "runMissing": {
+    "status": 404,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "run.not_found",
+      "category": "visibility",
+      "message": "no such run",
+      "explanation": "no run with this id is visible to the caller in this scope"
+    }
+  }
+}
