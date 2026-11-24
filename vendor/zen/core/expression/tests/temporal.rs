@@ -121,9 +121,9 @@ impl TzdbLookup for TestBundle {
 }
 
 fn tzdb_2025b() -> Arc<dyn TzdbLookup> {
-    static BUNDLE: OnceLock<Arc<TestBundle>> = OnceLock::new();
+    static BUNDLE: OnceLock<Arc<dyn TzdbLookup>> = OnceLock::new();
     Arc::clone(BUNDLE.get_or_init(|| {
-        TestBundle::try_from_bytes(include_bytes!(
+        let bundle: Arc<TestBundle> = TestBundle::try_from_bytes(include_bytes!(
             "../../../../../crates/norn-expr/data/tzdb/2025b.tzdb"
         ))
         .unwrap_or_else(|_| {
@@ -131,14 +131,15 @@ fn tzdb_2025b() -> Arc<dyn TzdbLookup> {
                 zones: Vec::new(),
                 parsed: Vec::new(),
             })
-        })
+        });
+        bundle
     }))
 }
 
 fn tzdb_2026c() -> Arc<dyn TzdbLookup> {
-    static BUNDLE: OnceLock<Arc<TestBundle>> = OnceLock::new();
+    static BUNDLE: OnceLock<Arc<dyn TzdbLookup>> = OnceLock::new();
     Arc::clone(BUNDLE.get_or_init(|| {
-        TestBundle::try_from_bytes(include_bytes!(
+        let bundle: Arc<TestBundle> = TestBundle::try_from_bytes(include_bytes!(
             "../../../../../crates/norn-expr/data/tzdb/2026c.tzdb"
         ))
         .unwrap_or_else(|_| {
@@ -146,7 +147,8 @@ fn tzdb_2026c() -> Arc<dyn TzdbLookup> {
                 zones: Vec::new(),
                 parsed: Vec::new(),
             })
-        })
+        });
+        bundle
     }))
 }
 

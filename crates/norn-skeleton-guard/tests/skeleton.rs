@@ -518,14 +518,11 @@ fn pinned_offline_tzdb_bundles_match_headers_digests_and_sources() {
 }
 
 #[test]
-fn guard_detects_corrupted_or_unpinned_tzdb_bundles() -> Result<(), Box<dyn std::error::Error>> {
-    use norn_skeleton_guard::tzdb_pin::{
-        PINNED_TZDB_BUNDLES, check_tzdb_bundles_against, validate_bundle_structure,
-    };
+fn guard_detects_corrupted_tzdb_bundle_structure() -> Result<(), Box<dyn std::error::Error>> {
+    use norn_skeleton_guard::tzdb_pin::{PINNED_TZDB_BUNDLES, validate_bundle_structure};
 
     let root = workspace_root();
     let pin = *PINNED_TZDB_BUNDLES.first().ok_or("missing 2025b pin")?;
-    let pin_26 = *PINNED_TZDB_BUNDLES.get(1).ok_or("missing 2026c pin")?;
     let good_bytes = std::fs::read(root.join(pin.path))?;
     assert_eq!(
         validate_bundle_structure(&good_bytes, pin.release, pin.zone_count),
@@ -577,15 +574,26 @@ fn guard_detects_corrupted_or_unpinned_tzdb_bundles() -> Result<(), Box<dyn std:
         validate_bundle_structure(&factory_bundle, "2025b", 1)
             .is_err_and(|e| e.contains("Factory"))
     );
+    Ok(())
+}
 
-    // 5. Digest drift, source-pin drift, and commented-out Rust hash detected.
-    let dir = tempfile::tempdir()?;
-    let bundle_dest = dir.path().join(pin.path);
-    std::fs::create_dir_all(bundle_dest.parent().ok_or("bundle parent")?)?;
-    let mut tampered = good_bytes;
+#[test]
+fn guard_detects_tzdb_digest_source_and_swapped_rust_pins() -> Result<(), Box<dyn std::error::Error>>
+{
+    use norn_skeleton_guard::tzdb_pin::{PINNED_TZDB_BUNDLES, check_tzdb_bundles_against};
+
+    let root = workspace_root();
+    let pin = *PINNED_TZDB_BUNDLES.first().ok_or("missing 2025b pin")?;
+    let pin_26 = *PINNED_TZDB_BUNDLES.get(1).ok_or("missing 2026c pin")?;
+    let mut tampered = std::fs::read(root.join(pin.path))?;
     if let Some(last) = tampered.last_mut() {
         *last ^= 0xff;
     }
+
+    // 1. Digest drift, source-pin drift, and commented-out Rust hash detected.
+    let dir = tempfile::tempdir()?;
+    let bundle_dest = dir.path().join(pin.path);
+    std::fs::create_dir_all(bundle_dest.parent().ok_or("bundle parent")?)?;
     std::fs::write(&bundle_dest, &tampered)?;
 
     let source_dest = dir.path().join(pin.source_json);
@@ -597,7 +605,6 @@ fn guard_detects_corrupted_or_unpinned_tzdb_bundles() -> Result<(), Box<dyn std:
 
     let rust_dest = dir.path().join("crates/norn-expr/src/tzdb.rs");
     std::fs::create_dir_all(rust_dest.parent().ok_or("rust parent")?)?;
-    // Commented-out hash must NOT satisfy AST pin verification.
     std::fs::write(&rust_dest, format!("// {}\n", pin.sha256))?;
 
     let single = [pin];
@@ -615,7 +622,7 @@ fn guard_detects_corrupted_or_unpinned_tzdb_bundles() -> Result<(), Box<dyn std:
     );
     assert!(rules.contains(&"tzdb-rust-pin"), "{}", render(&violations));
 
-    // 6. Swapped 2025b / 2026c SHA-256 constants in Rust source are rejected even when both hashes appear.
+    // 2. Swapped 2025b / 2026c SHA-256 constants rejected even when both hashes appear.
     let swapped_rust = format!(
         "pub const TZDB_RELEASE_2025B: &str = \"2025b\";\n\
          pub const TZDB_RELEASE_2026C: &str = \"2026c\";\n\
@@ -638,7 +645,7 @@ fn guard_detects_corrupted_or_unpinned_tzdb_bundles() -> Result<(), Box<dyn std:
         render(&swapped_violations)
     );
 
-    // 7. Swapped include_bytes! paths are rejected.
+    // 3. Swapped include_bytes! paths rejected.
     let swapped_paths = format!(
         "pub const TZDB_RELEASE_2025B: &str = \"2025b\";\n\
          pub const TZDB_RELEASE_2026C: &str = \"2026c\";\n\

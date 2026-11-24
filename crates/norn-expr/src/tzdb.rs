@@ -2,11 +2,11 @@
 //!
 //! Each bundle is a deterministic, self-contained binary image (`NTZDB01\0`)
 //! carrying an embedded IANA release identifier, a strictly sorted case-sensitive
-//! zone index sharing deduplicated TZif byte ranges across aliases, and the raw
-//! TZif payload section. The same checked decoder admits both compiled-in
+//! zone index sharing deduplicated `TZif` byte ranges across aliases, and the raw
+//! `TZif` payload section. The same checked decoder admits both compiled-in
 //! bundles (`2025b` and `2026c`) and runtime/cell-installed bundle bytes,
-//! parsing every distinct TZif blob once at admission so evaluation performs
-//! zero TZif decoding.
+//! parsing every distinct `TZif` blob once at admission so evaluation performs
+//! zero `TZif` decoding.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -24,7 +24,7 @@ pub const TZDB_BUNDLE_MAGIC: &[u8; 8] = b"NTZDB01\0";
 /// Maximum admitted byte length of a single tzdb bundle (4 MiB).
 pub const MAX_TZDB_BUNDLE_BYTES: usize = 4_194_304;
 
-/// Maximum admitted byte length of any single distinct TZif zone blob (64 KiB).
+/// Maximum admitted byte length of any single distinct `TZif` zone blob (64 KiB).
 pub const MAX_TZDB_ZONE_BLOB_BYTES: usize = 65_536;
 
 /// Maximum admitted zone entry count in a single tzdb bundle.
@@ -42,7 +42,7 @@ const HEADER_LEN: usize = 24;
 /// Fixed index entry size in bytes (`4 * u32`).
 const ENTRY_LEN: usize = 16;
 
-/// Fixed RFC 8536 TZif header size in bytes.
+/// Fixed RFC 8536 `TZif` header size in bytes.
 const TZIF_HEADER_LEN: usize = 44;
 
 /// Zone identifier from upstream `tzdb` `factory` that Norn never admits.
@@ -148,12 +148,12 @@ pub enum TzdbBundleError {
         /// Offending zone name.
         name: String,
     },
-    /// A name or TZif payload slice is out of bounds or empty.
+    /// A name or `TZif` payload slice is out of bounds or empty.
     OutOfBoundsEntry {
         /// Zero-based index entry position.
         index: usize,
     },
-    /// A single zone's TZif payload exceeds [`MAX_TZDB_ZONE_BLOB_BYTES`].
+    /// A single zone's `TZif` payload exceeds [`MAX_TZDB_ZONE_BLOB_BYTES`].
     ZoneBlobTooLarge {
         /// Offending zone name.
         zone: String,
@@ -164,7 +164,7 @@ pub enum TzdbBundleError {
     },
     /// Distinct payload slices overlap partially or leave unreferenced payload bytes.
     OverlappingOrUnreferencedPayload,
-    /// A zone's TZif payload fails exact RFC 8536 framing or `jiff::tz::TimeZone::tzif` parsing.
+    /// A zone's `TZif` payload fails exact RFC 8536 framing or `jiff::tz::TimeZone::tzif` parsing.
     InvalidTzif {
         /// Zone name whose payload failed validation.
         zone: String,
@@ -426,24 +426,22 @@ fn parse_zone_entries(
             .get(tzif_offset..tzif_end)
             .ok_or(TzdbBundleError::OutOfBoundsEntry { index })?;
 
-        let blob_index = match blob_indices.get(&(tzif_offset, tzif_len)) {
-            Some(&existing) => existing,
-            None => {
-                if !validate_tzif_exact_framing(tzif_bytes) {
-                    return Err(TzdbBundleError::InvalidTzif {
-                        zone: name.to_owned(),
-                    });
-                }
-                let tz = TimeZone::tzif(name, tzif_bytes).map_err(|_err| {
-                    TzdbBundleError::InvalidTzif {
-                        zone: name.to_owned(),
-                    }
-                })?;
-                let next_idx = parsed_zones.len();
-                parsed_zones.push(tz);
-                blob_indices.insert((tzif_offset, tzif_len), next_idx);
-                next_idx
+        let blob_index = if let Some(&existing) = blob_indices.get(&(tzif_offset, tzif_len)) {
+            existing
+        } else {
+            if !validate_tzif_exact_framing(tzif_bytes) {
+                return Err(TzdbBundleError::InvalidTzif {
+                    zone: name.to_owned(),
+                });
             }
+            let tz =
+                TimeZone::tzif(name, tzif_bytes).map_err(|_err| TzdbBundleError::InvalidTzif {
+                    zone: name.to_owned(),
+                })?;
+            let next_idx = parsed_zones.len();
+            parsed_zones.push(tz);
+            blob_indices.insert((tzif_offset, tzif_len), next_idx);
+            next_idx
         };
 
         zones.push(ZoneEntry {
@@ -505,8 +503,8 @@ fn verify_exact_payload_partition(
     Ok(())
 }
 
-/// Validates RFC 8536 TZif framing so zero trailing bytes may hide after the
-/// TZif V1 data block or V2/V3/V4 POSIX TZ footer newline.
+/// Validates RFC 8536 `TZif` framing so zero trailing bytes may hide after the
+/// `TZif` V1 data block or V2/V3/V4 POSIX TZ footer newline.
 fn validate_tzif_exact_framing(data: &[u8]) -> bool {
     let Some((ver, v1_end)) = parse_tzif_block(data, 0, false) else {
         return false;
@@ -577,7 +575,7 @@ impl TzdbBundle {
     /// Performs checked arithmetic, enforces bundle and per-blob size bounds,
     /// checks strictly sorted unique case-sensitive zone names, refuses
     /// `Factory`, verifies exact non-overlapping payload partitioning, checks
-    /// exact RFC 8536 TZif framing, pre-parses every distinct `TZif` blob once
+    /// exact RFC 8536 `TZif` framing, pre-parses every distinct `TZif` blob once
     /// with `jiff::tz::TimeZone::tzif`, and records the exact SHA-256 digest.
     ///
     /// # Errors
@@ -692,7 +690,6 @@ impl TzdbBundle {
     }
 
     /// Iterates over all admitted zone identifiers in sorted order.
-    #[must_use]
     pub fn zone_names(&self) -> impl Iterator<Item = &str> {
         self.inner.zones.iter().map(|entry| entry.name.as_str())
     }
@@ -709,7 +706,7 @@ impl TzdbBundle {
         self.inner.zones.get(idx)
     }
 
-    /// Looks up the raw TZif bytes for an exact case-sensitive IANA zone name.
+    /// Looks up the raw `TZif` bytes for an exact case-sensitive IANA zone name.
     #[must_use]
     pub fn tzif(&self, name: &str) -> Option<&[u8]> {
         let entry = self.zone_entry(name)?;
@@ -725,7 +722,7 @@ impl TzdbBundle {
 
     /// Resolves an offset-free civil local wall time in exact case-sensitive
     /// zone `name` against the timezone pre-parsed at bundle admission (zero
-    /// runtime TZif decoding).
+    /// runtime `TZif` decoding).
     #[must_use]
     pub fn resolve_local_offset(
         &self,
@@ -783,10 +780,10 @@ impl TzdbCatalog {
     #[must_use]
     pub fn builtin() -> Self {
         let mut bundles = BTreeMap::new();
-        let b2025b = TzdbBundle::v2025b().clone();
-        let b2026c = TzdbBundle::v2026c().clone();
-        bundles.insert(b2025b.release().to_owned(), b2025b);
-        bundles.insert(b2026c.release().to_owned(), b2026c);
+        let baseline = TzdbBundle::v2025b().clone();
+        let current = TzdbBundle::v2026c().clone();
+        bundles.insert(baseline.release().to_owned(), baseline);
+        bundles.insert(current.release().to_owned(), current);
         Self { bundles }
     }
 
@@ -840,7 +837,6 @@ impl TzdbCatalog {
     }
 
     /// Iterates over the catalog's release identifiers in sorted order.
-    #[must_use]
     pub fn releases(&self) -> impl Iterator<Item = &str> {
         self.bundles.keys().map(String::as_str)
     }
@@ -848,9 +844,11 @@ impl TzdbCatalog {
     /// Returns the operational default bundle (`2025b`).
     #[must_use]
     pub fn default_bundle(&self) -> &TzdbBundle {
-        self.bundles
-            .get(TZDB_RELEASE_2025B)
-            .unwrap_or_else(TzdbBundle::v2025b)
+        if let Some(bundle) = self.bundles.get(TZDB_RELEASE_2025B) {
+            bundle
+        } else {
+            TzdbBundle::v2025b()
+        }
     }
 }
 

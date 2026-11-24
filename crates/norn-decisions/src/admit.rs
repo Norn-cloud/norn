@@ -73,7 +73,7 @@ pub struct AdmittedDecision {
     assignment_fuel: Vec<norn_expr::graph::BoundAssignment>,
     rule_id: String,
     binding: DecisionBinding,
-    tzdb_sha256: String,
+    pub(crate) tzdb_sha256: String,
     decision: Decision,
     slice_schema: Arc<Schema>,
     event_schema: Arc<Schema>,
@@ -82,68 +82,6 @@ pub struct AdmittedDecision {
 }
 
 impl AdmittedDecision {
-    /// Loads `root` with the sub-decisions it reaches under the operational
-    /// default tzdb bundle (`2025b`). `sub_decisions` is keyed by the
-    /// `decisionNode` key (the sub-decision rule's artifact id) and must be
-    /// exactly the reachable closure.
-    ///
-    /// # Errors
-    ///
-    /// An [`AdmissionError`] when any check above fails.
-    pub fn admit(
-        root: &RuleRoot,
-        sub_decisions: &BTreeMap<String, RuleRoot>,
-        binding: DecisionBinding,
-    ) -> Result<Self, AdmissionError> {
-        Self::admit_in(
-            root,
-            sub_decisions,
-            binding,
-            norn_expr::temporal::TzdbBundle::default_bundle(),
-        )
-    }
-
-    /// [`Self::admit`] against an explicit versioned
-    /// [`TzdbBundle`](norn_expr::temporal::TzdbBundle) (`#1440`).
-    ///
-    /// # Errors
-    ///
-    /// An [`AdmissionError`] when any check above fails.
-    pub fn admit_in(
-        root: &RuleRoot,
-        sub_decisions: &BTreeMap<String, RuleRoot>,
-        binding: DecisionBinding,
-        tzdb: &norn_expr::temporal::TzdbBundle,
-    ) -> Result<Self, AdmissionError> {
-        Self::admit_with_defaults_in(root, sub_decisions, binding, None, tzdb)
-    }
-
-    /// [`Self::admit`], with the rule's `defaults` member as exact runtime
-    /// values parsed from the artifact's source text (#2770). The decoded
-    /// IR defaults carry numbers as `f64`, which cannot recover an authored
-    /// decimal, so a numeric default is admitted only from `exact_defaults`;
-    /// without it a numeric default is refused, as by [`Self::admit`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::admit`]; [`AdmissionError::InvalidDefault`] when a numeric
-    /// default has no exact source value, or the exact value is not the
-    /// decoded one.
-    pub fn admit_with_defaults(
-        root: &RuleRoot,
-        sub_decisions: &BTreeMap<String, RuleRoot>,
-        binding: DecisionBinding,
-        exact_defaults: Option<&RuntimeObject>,
-    ) -> Result<Self, AdmissionError> {
-        Self::admit_with_defaults_in(
-            root,
-            sub_decisions,
-            binding,
-            exact_defaults,
-            norn_expr::temporal::TzdbBundle::default_bundle(),
-        )
-    }
-
     /// [`Self::admit_with_defaults`] against an explicit versioned
     /// [`TzdbBundle`](norn_expr::temporal::TzdbBundle) (`#1440`).
     ///
@@ -248,13 +186,6 @@ impl AdmittedDecision {
             output_schema,
             defaults,
         })
-    }
-
-    /// SHA-256 digest of the [`TzdbBundle`](norn_expr::temporal::TzdbBundle)
-    /// this decision was admitted under.
-    #[must_use]
-    pub fn tzdb_sha256(&self) -> &str {
-        &self.tzdb_sha256
     }
 
     /// Fuel evidence for exact-schema assignments checked at live admission.

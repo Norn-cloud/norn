@@ -4,7 +4,7 @@
 //! `crates/norn-expr/data/tzdb/`, their matching `registry/standards/*.source.json`
 //! provenance files, and the AST-verified `const` / `include_bytes!` / loader
 //! bindings in `crates/norn-expr/src/tzdb.rs` agree on exact bytes, release
-//! headers, sorted unique zone tables, `Factory` exclusion, and TZif headers.
+//! headers, sorted unique zone tables, `Factory` exclusion, and `TZif` headers.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

@@ -339,7 +339,7 @@ fn versioned_tzdb_2025b_and_2026c_edmonton_regression_and_isolation()
         })
         .collect();
     for handle in handles {
-        handle.join().map_err(|_| "worker thread panicked")??;
+        handle.join().map_err(|_panic| "worker thread panicked")??;
     }
 
     // Literal admission honors the explicit bundle (custom subset bundle with only UTC rejects America/Edmonton).

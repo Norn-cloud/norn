@@ -50,11 +50,72 @@ fn engine_tzdb(bundle: &TzdbBundle) -> Arc<dyn TzdbLookup> {
 }
 
 use crate::admit::ENGINE_MAX_DEPTH;
-use norn_ir::{DecisionOutput, FactChange, RuntimeObject, RuntimeValue};
+use norn_ir::{DecisionOutput, FactChange, RuleRoot, RuntimeObject, RuntimeValue};
 
 use crate::convert::{from_variable, to_variable, value_to_runtime};
 use crate::schema::Schema;
-use crate::{AdmittedDecision, DecisionError, StrictSite};
+use crate::{AdmissionError, AdmittedDecision, DecisionBinding, DecisionError, StrictSite};
+
+impl AdmittedDecision {
+    /// Loads `root` with the sub-decisions it reaches under the operational
+    /// default tzdb bundle (`2025b`). `sub_decisions` is keyed by the
+    /// `decisionNode` key (the sub-decision rule's artifact id) and must be
+    /// exactly the reachable closure.
+    ///
+    /// # Errors
+    ///
+    /// An [`AdmissionError`] when any admission check fails.
+    pub fn admit(
+        root: &RuleRoot,
+        sub_decisions: &std::collections::BTreeMap<String, RuleRoot>,
+        binding: DecisionBinding,
+    ) -> Result<Self, AdmissionError> {
+        Self::admit_in(root, sub_decisions, binding, TzdbBundle::default_bundle())
+    }
+
+    /// [`Self::admit`] against an explicit versioned [`TzdbBundle`] (`#1440`).
+    ///
+    /// # Errors
+    ///
+    /// An [`AdmissionError`] when any admission check fails.
+    pub fn admit_in(
+        root: &RuleRoot,
+        sub_decisions: &std::collections::BTreeMap<String, RuleRoot>,
+        binding: DecisionBinding,
+        tzdb: &TzdbBundle,
+    ) -> Result<Self, AdmissionError> {
+        Self::admit_with_defaults_in(root, sub_decisions, binding, None, tzdb)
+    }
+
+    /// [`Self::admit`], with the rule's `defaults` member as exact runtime
+    /// values parsed from the artifact's source text (#2770).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::admit`]; [`AdmissionError::InvalidDefault`] when a numeric
+    /// default has no exact source value, or the exact value is not the
+    /// decoded one.
+    pub fn admit_with_defaults(
+        root: &RuleRoot,
+        sub_decisions: &std::collections::BTreeMap<String, RuleRoot>,
+        binding: DecisionBinding,
+        exact_defaults: Option<&RuntimeObject>,
+    ) -> Result<Self, AdmissionError> {
+        Self::admit_with_defaults_in(
+            root,
+            sub_decisions,
+            binding,
+            exact_defaults,
+            TzdbBundle::default_bundle(),
+        )
+    }
+
+    /// SHA-256 digest of the [`TzdbBundle`] this decision was admitted under.
+    #[must_use]
+    pub fn tzdb_sha256(&self) -> &str {
+        &self.tzdb_sha256
+    }
+}
 
 /// A decision slice validated against one decision's input schema
 /// ([`AdmittedDecision::validate_slice`]).
