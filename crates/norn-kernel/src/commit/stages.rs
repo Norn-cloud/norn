@@ -9,7 +9,7 @@ use super::pre::{
     check_versions,
 };
 use crate::cell_host::{CellCommit, CommitError, CommitVersions, FactKey, LinkKey, LinkMutation};
-use crate::commit_check::{check_invariants, check_link_authority};
+use crate::commit_check::{InvariantAdmissionError, check_invariants, check_link_authority};
 use crate::commit_order::{CommitStage, CommitStages, run_stages};
 use crate::{CommitModel, CommitView, ObservationAuthorization};
 use std::collections::{BTreeMap, BTreeSet};
@@ -99,9 +99,7 @@ impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
             Phase::Post(stages) => {
                 let post = &stages.post;
                 match stage {
-                    CommitStage::LinkAuthority => {
-                        check_link_authority(commit, post.model(), post.before(), authorization)
-                    }
+                    CommitStage::LinkAuthority => check_link_authority(commit, post, authorization),
                     CommitStage::Endpoints => {
                         stages.links = live_links_after(commit, post)?;
                         check_endpoints(commit, post, &stages.links)
@@ -125,7 +123,7 @@ impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
                     CommitStage::RequiredLinks => check_required_links(commit, post, authorization),
                     CommitStage::Acyclic => check_acyclic_links(commit, post),
                     CommitStage::Invariants => check_invariants(commit, post, authorization)
-                        .map_err(|e| e.into_commit_error()),
+                        .map_err(InvariantAdmissionError::into_commit_error),
                     CommitStage::Laws => check_governing_laws(commit, post, authorization),
                     CommitStage::EventLimit
                     | CommitStage::Shape

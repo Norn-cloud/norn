@@ -143,7 +143,7 @@ impl<'m, 'a> CommitModel<'m, 'a> {
     }
 
     pub(crate) fn link_values<X>(
-        &self,
+        self,
         source: &ObjectTypeName,
         key: &LinkKey,
         values: &crate::cell_host::JsonObject,
@@ -1140,10 +1140,11 @@ pub(crate) fn check_invariants<E, C, T, V: CommitView + ?Sized>(
 )]
 pub(crate) fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
-    model: CommitModel<'_, '_>,
-    view: &V,
+    post: &PostState<'_, '_, V>,
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    let model = post.model();
+    let view = post.before();
     // One write index for every claim write (not a scan of the authorized
     // writes per claim).
     let indexed = authorization.map(ObservationAuthorization::indexed);
@@ -1185,18 +1186,15 @@ pub(crate) fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
                 .map(|source| model.canonical(source)),
         )
         .collect();
-    let final_types: BTreeMap<_, _> = commit
-        .writes
-        .iter()
-        .filter(|write| matches!(write.mutation, FactMutation::Put { .. }))
-        .map(|write| (model.canonical(&write.key), &write.key.object_type))
-        .collect();
     for source in sources {
+        // Ownership fences the old identity even when this commit removes the row.
         let concrete = view.concrete(&source).map_err(CommitError::Host)?;
-        let source_type = concrete
-            .as_ref()
-            .or_else(|| final_types.get(&source).copied())
-            .unwrap_or(&source.object_type);
+        let source_type = if let Some(old) = &concrete {
+            old.clone()
+        } else {
+            post.concrete(&source)?
+                .unwrap_or_else(|| source.object_type.clone())
+        };
         let marker = FactKey::new(
             crate::snapshot_observe::SOURCE_OWNERSHIP_TYPE,
             format!("{}/{}", source_type.as_str(), source.key),
@@ -1232,7 +1230,7 @@ pub(crate) fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
                         write,
                     )
             })
-        }) && recreates_observed_source(commit, view, source_type, &source.key)?;
+        }) && recreates_observed_source(commit, view, &source_type, &source.key)?;
         if scopes.any(|(_, other)| other != owner)
             || !commit.reads.contains(scope)
                 && !commit.writes.iter().any(|write| {

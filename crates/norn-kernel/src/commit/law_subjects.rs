@@ -237,18 +237,16 @@ fn law_subjects<E, C, T, V: CommitView + ?Sized>(
         if subjects.direct.contains(&key.target) {
             continue;
         }
-        let source = match post.concrete(&key.source)? {
-            Some(ty) => ty,
-            None => {
-                let Some(old) = post
-                    .before()
-                    .concrete(&key.source)
-                    .map_err(CommitError::Host)?
-                else {
-                    continue;
-                };
-                old
-            }
+        let source = if let Some(ty) = post.concrete(&key.source)? {
+            ty
+        } else if let Some(old) = post
+            .before()
+            .concrete(&key.source)
+            .map_err(CommitError::Host)?
+        {
+            old
+        } else {
+            continue;
         };
         let Some(ty) = post.concrete(&key.target)? else {
             continue;
