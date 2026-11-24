@@ -35,6 +35,7 @@ pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
+pub mod coverage_observer;
 pub mod dataset_laws;
 pub mod dataset_manifest;
 pub mod decision_ledger;
@@ -102,6 +103,9 @@ mod test_door;
 pub mod transparency;
 mod write;
 
+pub use coverage_observer::{
+    CedarRuleKey, DomainCoverageRecorder, DomainCoverageSnapshot, ObservedSqliteCell, TransitionKey,
+};
 pub use error::CellError;
 
 pub use fork::{ForkEngine, ForkPin, StoreImage};

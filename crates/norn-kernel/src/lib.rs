@@ -94,6 +94,10 @@ pub use commit_check::{
     check_commit_owned_rows, check_fact_key_identity, evaluate_invariants,
     invariant_evaluation_budget,
 };
+pub use norn_authz;
+pub use norn_checker;
+pub use norn_expr;
+pub use norn_ir;
 pub use norn_ir::{MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, TraceContext, TraceContextError};
 pub use serde;
 pub use snapshot_observe::{ObservationAuthorization, ObservationEvent, PreparedObservation};

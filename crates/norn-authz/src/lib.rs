@@ -40,6 +40,8 @@ mod request;
 
 /// The `AccessIR` input types of [`compile`], re-exported from `norn-ir`.
 pub use norn_ir::access;
+/// Cedar schema projection helpers re-exported from `norn-projections`.
+pub use norn_projections;
 
 pub use admit::ValidatedPolicySet;
 pub use base::{AuthzSchema, NORN_BASE_SCHEMA};
