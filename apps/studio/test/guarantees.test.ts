@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { cases, field, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "../src/lib/guarantees.ts"
+import { cases, field, heldCountText, heldGroupKey, heldKpiSub, heldRuleTechnicalId, heldRuleTitle, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "../src/lib/guarantees.ts"
+import { draftValueFromJson, suggestedFixInputs, type ActionSummary } from "../src/lib/actions.ts"
 import type { Guarantees } from "../src/lib/transport.ts"
 
 // Recorded model-checker documents (fixtures/demo/guarantees).
@@ -64,4 +65,112 @@ test("heldBy matches on both rule and object type, and lower-bound counts keep t
   expect(recordName({ id: "SCAN-1", values: { label: "", display_name: "Fallback name" } })).toBe("Fallback name")
   expect(recordName({ id: "SCAN-1", values: null })).toBe("SCAN-1")
   expect(recordName({ id: "SCAN-1" })).toBe("SCAN-1")
+})
+
+test("heldRuleTitle keeps authored titles and falls back to plain words for raw engine IDs", () => {
+  expect(heldRuleTitle({
+    ruleRef: { kind: "law", artifactId: "canon.ItemizedDocument.total_matches_lines.law", lawId: "canon.ItemizedDocument.total_matches_lines", version: "1" },
+    title: "An itemized document's total equals the sum of its lines",
+    rationale: null,
+  })).toBe("An itemized document's total equals the sum of its lines")
+  // Law whose title repeats its id falls back to rationale, or humanizes its id when rationale is absent.
+  expect(heldRuleTitle({
+    ruleRef: { kind: "law", artifactId: "docs.ScannedDocument.total_matches_ledger.law", lawId: "docs.ScannedDocument.total_matches_ledger", version: "1" },
+    title: "docs.ScannedDocument.total_matches_ledger",
+    rationale: "Total must match the journal entry.",
+  })).toBe("Total must match the journal entry.")
+  expect(heldRuleTitle({
+    ruleRef: { kind: "law", artifactId: "docs.ScannedDocument.unmatched_check.law", lawId: "docs.ScannedDocument.unmatched_check", version: "1" },
+    title: "docs.ScannedDocument.unmatched_check",
+    rationale: null,
+  })).toBe("Unmatched check")
+  // Built-ins and invariants never leak raw engine IDs in Business view.
+  expect(heldRuleTitle({
+    ruleRef: { kind: "builtin", id: "core.boundary.link_held", version: "1" },
+    title: "core.boundary.link_held",
+    rationale: null,
+  })).toBe("Held link")
+  expect(heldRuleTitle({
+    ruleRef: { kind: "builtin", id: "norn.values.property_validity", version: "1" },
+    title: "norn.values.property_validity",
+    rationale: null,
+  })).toBe("Property validity")
+  expect(heldRuleTitle({
+    ruleRef: { kind: "invariant", invariantId: "non_negative_quantity", owner: { kind: "object", name: "docs.ScannedDocument" }, version: "1" },
+    title: "non_negative_quantity",
+    rationale: null,
+  })).toBe("Non negative quantity")
+  expect(heldRuleTitle({
+    ruleRef: { kind: "invariant", invariantId: "INV1", owner: { kind: "object", name: "docs.ScannedDocument" }, version: "1" },
+    title: "INV1",
+    rationale: null,
+  })).toBe("Type invariant")
+  expect(heldRuleTechnicalId({ kind: "invariant", invariantId: "non_negative_quantity", owner: { kind: "object", name: "docs.ScannedDocument" }, version: "1" })).toBe("non_negative_quantity")
+  expect(heldGroupKey({ objectType: "docs.ScannedDocument", ruleRef: { kind: "invariant", invariantId: "non_negative_quantity", owner: { kind: "object", name: "docs.ScannedDocument" }, version: "1" } }))
+    .toBe("docs.ScannedDocument:invariant:non_negative_quantity")
+})
+
+test("held section summaries distinguish incomplete empty scans, untruncated groups, and server-truncated groups", () => {
+  expect(heldKpiSub({ count: 0, shown: 0, approximate: false }, [], 10000)).toBe("no record held back")
+  expect(heldKpiSub({ count: 0, shown: 0, approximate: true }, [], 10000)).toBe("scan bound (10,000 rows) reached · scan incomplete")
+  expect(heldKpiSub({ count: 6, shown: 2, approximate: false }, [{ count: 5 }, { count: 1 }], 10000)).toBe("showing 2 of 2 type-rule groups")
+  expect(heldKpiSub({ count: 6, shown: 2, approximate: true }, [{ count: 5 }, { count: 1 }], 10000))
+    .toBe("at least · showing 2 of 2+ type-rule groups · scan bound (10,000 rows) reached")
+  expect(heldKpiSub({ count: 600, shown: 2, approximate: false }, [{ count: 500 }, { count: 5 }], 10000)).toBe("showing 505 of 600 in top 2 type-rule groups")
+  expect(heldKpiSub({ count: 600, shown: 2, approximate: true }, [{ count: 500 }, { count: 5 }], 10000))
+    .toBe("at least · showing 505 of 600+ in top 2 type-rule groups · scan bound (10,000 rows) reached")
+  expect(heldTabSummary({ count: 600, shown: 2, approximate: false }, [{ count: 500 }, { count: 5 }], 10000))
+    .toBe("Showing top 2 type-rule groups (505 of 600 per-rule holds; a record held by two rules counts once per rule).")
+  expect(heldTabSummary({ count: 1, shown: 1, approximate: false }, [{ count: 1 }], 10000))
+    .toBe("Showing 1 of 1 type-rule group (1 per-rule hold; a record held by two rules counts once per rule).")
+  expect(heldTabSummary({ count: 509, shown: 6, approximate: true }, [{ count: 500 }, { count: 5 }, { count: 1 }, { count: 1 }, { count: 1 }, { count: 1 }], 10000))
+    .toBe("Showing 6 of 6+ type-rule groups (509+ per-rule holds; a record held by two rules counts once per rule; scan bound (10,000 rows) reached).")
+})
+
+test("suggestedFixInputs locks record identity and seeds editable server arguments for the real action flow", () => {
+  const action: ActionSummary = {
+    actionId: "docs.scanned_document.correct",
+    title: "Correct an extracted total",
+    description: null,
+    objectKind: "docs.ScannedDocument",
+    effect: "upsert_input_object",
+    objectIdField: "id",
+    uiEffects: { irreversible: false, destructive: false, money: ["total"] },
+    inputSchema: {
+      type: "object",
+      required: ["id", "currency", "total", "correction_evidence", "correction_reason"],
+      properties: {
+        id: { type: "string" },
+        currency: { type: "string", enum: ["USD"] },
+        total: { type: "number", nornType: { kind: "decimal", scale: 2 } },
+        correction_evidence: { type: "string" },
+        correction_reason: { type: "string" },
+        verified: { type: "boolean" },
+      },
+    },
+  }
+  const inputs = suggestedFixInputs(action, "SCAN-INV-0042", {
+    actionId: "docs.scanned_document.correct",
+    title: "Correct an extracted total",
+    label: "Use 72.00",
+    property: "total",
+    value: "72.00",
+    arguments: { id: "SCAN-INV-0042", total: "72.00", currency: "USD", correction_evidence: "SCAN-INV-0042~total", verified: true, unknown_field: "ignored" },
+    needs: ["correction_reason"],
+  })
+  expect(inputs.prefill).toEqual({ id: "SCAN-INV-0042" })
+  expect(inputs.defaults).toEqual({ total: "72.00", correction_evidence: "SCAN-INV-0042~total", verified: "true" })
+  // Even when a fixture leaves arguments empty, the expected property/value and record id still seed the form.
+  expect(suggestedFixInputs(action, "SCAN-INV-0042", {
+    actionId: "docs.scanned_document.correct",
+    title: "Correct an extracted total",
+    label: "Use 72.00",
+    property: "total",
+    value: "72.00",
+    arguments: {},
+    needs: ["correction_reason"],
+  })).toEqual({ prefill: { id: "SCAN-INV-0042" }, defaults: { total: "72.00" } })
+  expect(draftValueFromJson(42, { kind: "integer" })).toBe("42")
+  expect(draftValueFromJson(false, { kind: "boolean" })).toBe("false")
+  expect(draftValueFromJson(null, { kind: "text" })).toBeNull()
 })

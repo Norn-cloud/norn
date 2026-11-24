@@ -734,3 +734,75 @@ export const sectionLabel = (all: readonly FormField[], field: FormField): strin
   const parents = parts.slice(0, -1).map((_, i) => known.get(`/${parts.slice(0, i + 1).map((s) => s.replaceAll("~", "~0").replaceAll("/", "~1")).join("/")}`)?.label ?? "")
   return [...parents.filter(Boolean), field.label].join(" › ")
 }
+
+/** A server-derived correction from `GET /v1/inbox`, ready to open in the existing action flow. */
+export interface SuggestedFix {
+  readonly actionId: string
+  readonly title: string
+  readonly label: string
+  readonly property: string
+  readonly value: string
+  readonly arguments: Readonly<Record<string, unknown>>
+  readonly needs: readonly string[]
+}
+
+/** Navigation handoff carrying a server-derived fix to its target record's action flow. */
+export interface SuggestedFixIntent {
+  readonly objectType: string
+  readonly id: string
+  readonly fix: SuggestedFix
+}
+
+/** Convert one JSON argument from the server into a form Draft matching `spec`. */
+export function draftValueFromJson(value: unknown, spec?: Spec): Draft | undefined {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  if (spec?.kind === "json") return typeof value === "string" ? value : JSON.stringify(value)
+  if (typeof value === "string") return value
+  if (typeof value === "number") return String(value)
+  if (typeof value === "boolean") return value ? "true" : "false"
+  if (Array.isArray(value)) {
+    if (spec?.kind === "array") return value.map((item) => draftValueFromJson(item, spec.item) ?? emptyFor(spec.item))
+    return JSON.stringify(value)
+  }
+  if (typeof value === "object") {
+    if (spec?.kind === "object") {
+      const source = value as Readonly<Record<string, unknown>>
+      return Object.fromEntries(spec.fields.map((field) => [
+        field.name,
+        field.name in source ? (draftValueFromJson(source[field.name], field.spec) ?? emptyFor(field.spec)) : emptyFor(field.spec),
+      ]))
+    }
+    return JSON.stringify(value)
+  }
+  return undefined
+}
+
+/**
+ * Derive locked `prefill` (record identity) and editable `defaults` (server-supplied arguments and
+ * expected value) for opening a server-offered `SuggestedFix` on `action`.
+ */
+export function suggestedFixInputs(
+  action: ActionSummary,
+  recordId: string,
+  fix: SuggestedFix,
+): { readonly prefill: Readonly<Record<string, string>>; readonly defaults: Readonly<Record<string, Draft>> } {
+  const fields = new Map(fieldsOf(action.inputSchema).map((field) => [field.name, field] as const))
+  const rawId = fix.arguments[action.objectIdField]
+  const prefill: Record<string, string> = {
+    [action.objectIdField]: typeof rawId === "string" && rawId !== "" ? rawId : recordId,
+  }
+  const merged: Record<string, unknown> = {
+    ...fix.arguments,
+    ...(Object.hasOwn(fix.arguments, fix.property) ? {} : { [fix.property]: fix.value }),
+  }
+  const defaults: Record<string, Draft> = {}
+  for (const [name, raw] of Object.entries(merged)) {
+    if (name === action.objectIdField) continue
+    const field = fields.get(name)
+    if (field === undefined || field.spec.kind === "fixed") continue
+    const converted = draftValueFromJson(raw, field.spec)
+    if (converted !== undefined) defaults[name] = converted
+  }
+  return { prefill, defaults }
+}

@@ -67,7 +67,10 @@ export function routeTree<R extends AnyRootRoute>(root: R) {
     ...Object.keys(MOVED).map((from) => createRoute({
       getParentRoute: () => root,
       path: `${from}/$`,
-      beforeLoad: ({ location }) => { throw redirect({ href: `${movedTo(location.pathname) ?? "/"}${location.searchStr}${location.hash ? `#${location.hash}` : ""}`, replace: true }) },
+      beforeLoad: ({ location }) => {
+        const hash = location.hash ? (location.hash.startsWith("#") ? location.hash : `#${location.hash}`) : ""
+        throw redirect({ href: `${movedTo(location.pathname) ?? "/"}${location.searchStr}${hash}`, replace: true })
+      },
     })),
   ])
 }

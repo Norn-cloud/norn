@@ -123,7 +123,7 @@ export function ObjectPage() {
             <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={readAgain} title="Read this record from the cell again">
               <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
             </Button>
-            <RecordActions objectType={name} id={id} onDone={readAgain} />
+            <RecordActions objectType={name} id={id} onDone={() => { readAgain(); void review.refetch() }} />
           </div>
         )}
       </header>

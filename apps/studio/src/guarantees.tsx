@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useView } from "@/lib/view"
 import { conceptTitle, type Concept } from "./lib/catalog.ts"
-import { cases, field, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "./lib/guarantees.ts"
+import { cases, field, heldKpiSub, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "./lib/guarantees.ts"
 import { transport, type Guarantees } from "./lib/transport.ts"
 import type { MenuEntry } from "./shell.tsx"
 import { ENFORCED, HeldRuleRow, heldCountText, heldGroupKey, LawsPanel, useHeldBack } from "./laws.tsx"
@@ -241,27 +241,31 @@ function LiveRules() {
   const heldTypes = [...new Set(groups.map(({ objectType }) => objectType))]
 
   const businessRuleCount = governed.reduce((sum, concept) => sum + ruleCountOf(concept), 0)
-  const refusingCount = governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "error").length, 0)
+  const errorSeverityCount = governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "error").length, 0)
+  const warningSeverityCount = governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "warning").length, 0)
   const systemRuleCount = system.reduce((sum, concept) => sum + ruleCountOf(concept), 0)
-  const heldBadge = section && section.count > 0 ? heldCountText(section.count, section.approximate) : undefined
+  const heldBadge = section && (section.count > 0 || section.approximate) ? heldCountText(section.count, section.approximate) : undefined
   const technical = view === "technical"
+
+  const unknownTypeHeading = (objectType: string) => (
+    <span className="inline-flex flex-wrap items-baseline gap-2">
+      <Link to="/objects/$type" params={{ type: objectType }} className="underline-offset-4 hover:underline">{conceptTitle(objectType)}</Link>
+      {technical && <code className="font-mono text-xs font-normal text-muted-foreground">{objectType}</code>}
+    </span>
+  )
 
   return (
     <div className="space-y-5">
       {(governed.length > 0 || section !== undefined) && (
         <StatStrip>
           <KpiTile icon={Scale} label="Rules in force" value={businessRuleCount} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
-          <KpiTile icon={ShieldCheck} label="Refuse a breaking write" value={refusingCount} sub="checked on every write" />
+          <KpiTile icon={ShieldCheck} label="Reporting severity" value={`${errorSeverityCount} error`} sub={`${warningSeverityCount} warning · separate from enforcement`} />
           {section !== undefined && (
             <KpiTile
               icon={ShieldAlert}
-              label="Held back now"
+              label="Held back (per rule)"
               value={heldCountText(section.count, section.approximate)}
-              sub={section.approximate
-                ? `at least · scan bound${scanLimit ? ` (${scanLimit.toLocaleString("en-US")} rows)` : ""} reached`
-                : section.count === 0
-                  ? "no record held back"
-                  : `across ${groups.length} ${groups.length === 1 ? "rule" : "rules"}`}
+              sub={heldKpiSub(section, groups, scanLimit)}
             />
           )}
         </StatStrip>
@@ -290,7 +294,7 @@ function LiveRules() {
             return concept
               ? <LawsPanel key={objectType} concept={concept} enforced={false} heldGroups={groups} scanLimit={scanLimit} label={<TypeHeading concept={concept} technical={technical} />} />
               : (
-                <Panel key={objectType} icon={Scale} label={<Link to="/objects/$type" params={{ type: objectType }} className="underline-offset-4 hover:underline">{conceptTitle(objectType)}</Link>}>
+                <Panel key={objectType} icon={Scale} label={unknownTypeHeading(objectType)}>
                   <Well className="divide-y">
                     {groups.filter((group) => group.objectType === objectType).map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={scanLimit} />)}
                   </Well>
@@ -320,17 +324,26 @@ function LiveRules() {
           )}
           {!inbox.isPending && !inbox.isError && heldTypes.length === 0 && (
             <div className="rounded-lg border">
-              <EmptyState icon={ShieldCheck} title="Nothing held back" next={<Button variant="outline" size="sm" onClick={() => setHeldOnly(false)}>Show all rules</Button>}>
-                No rule is holding back records right now.
-              </EmptyState>
+              {section?.approximate ? (
+                <EmptyState icon={ShieldAlert} title="None found within the scan bound" next={<Button variant="outline" size="sm" onClick={() => setHeldOnly(false)}>Show all rules</Button>}>
+                  No held-back record was found within {scanLimit ? `the first ${scanLimit.toLocaleString("en-US")} scanned rows` : "the scan bound"}. More records were not scanned, so other records may still be held back.
+                </EmptyState>
+              ) : (
+                <EmptyState icon={ShieldCheck} title="Nothing held back" next={<Button variant="outline" size="sm" onClick={() => setHeldOnly(false)}>Show all rules</Button>}>
+                  No rule is holding back records right now.
+                </EmptyState>
+              )}
             </div>
+          )}
+          {!inbox.isPending && !inbox.isError && section !== undefined && groups.length > 0 && (
+            <p className="text-meta text-muted-foreground tabular-nums">{heldTabSummary(section, groups, scanLimit)}</p>
           )}
           {heldTypes.map((objectType) => {
             const concept = catalog?.byName.get(objectType)
             return concept
               ? <LawsPanel key={objectType} concept={concept} enforced={false} heldOnly heldGroups={groups} scanLimit={scanLimit} label={<TypeHeading concept={concept} technical={technical} />} />
               : (
-                <Panel key={objectType} icon={Scale} label={<Link to="/objects/$type" params={{ type: objectType }} className="underline-offset-4 hover:underline">{conceptTitle(objectType)}</Link>}>
+                <Panel key={objectType} icon={Scale} label={unknownTypeHeading(objectType)}>
                   <Well className="divide-y">
                     {groups.filter((group) => group.objectType === objectType).map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={scanLimit} />)}
                   </Well>

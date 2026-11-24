@@ -9,26 +9,19 @@ import { useMode } from "@/lib/live-transport"
 import { readProfile } from "@/lib/profile"
 import { useView } from "@/lib/view"
 import { conceptTitle, lawHeadline, type Concept, type Law } from "./lib/catalog.ts"
+import { heldCountText, heldGroupKey, heldRuleTechnicalId, heldRuleTitle } from "./lib/guarantees.ts"
 import { recordName } from "./lib/objects.ts"
 import { RouteLink, useInbox, type Group } from "./inbox.tsx"
 
-/** How the cell holds every admitted law: what the kernel does on a write and on a loaded record. */
-export const ENFORCED = "The cell checks it on every write: a change that would break it is refused, naming the law. A record loaded from a connected system that breaks it is held in quarantine instead of being served."
+export { heldCountText, heldGroupKey, heldRuleTechnicalId, heldRuleTitle }
+
+/** How the cell holds every governing law: enforcement is decided by the cell regardless of reporting severity. */
+export const ENFORCED = "The cell checks governing rules on every write regardless of reporting severity: a change that would break one is refused, naming the rule. A record loaded from a connected system that breaks one is held in quarantine instead of being served."
 
 /** How many example held-back records a rule row shows before linking out to review all of them. */
 export const HELD_EXAMPLES = 3
 
 const FORM: Record<string, string> = { always: "must always hold", never: "must never hold", eventually: "must eventually hold", until: "must hold until" }
-
-/** A held-back count as text, preserving the server's lower-bound `+` when its scan bound was reached. */
-export const heldCountText = (count: number, approximate: boolean): string => `${count}${approximate ? "+" : ""}`
-
-/** Stable key for a held-back group's rule reference. */
-export function heldGroupKey(group: Pick<Group, "objectType" | "ruleRef" | "title">): string {
-  const { ruleRef } = group
-  const id = ruleRef.kind === "law" ? ruleRef.lawId : ruleRef.kind === "builtin" ? ruleRef.id : group.title
-  return `${group.objectType}:${ruleRef.kind}:${id}`
-}
 
 /**
  * The held-back group the inbox reports for `law` over `objectType`: the server groups by rule and
@@ -80,12 +73,14 @@ function HeldRecords({ held }: { readonly held: Group }) {
       {shown.map((record) => {
         const others = record.otherFindings ?? []
         return (
-          <div key={`${record.objectType}:${record.id}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+          <div key={`${record.objectType}:${record.id}`} data-held-record={record.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
             <RouteLink to={record.target} className="font-medium underline-offset-4 hover:underline">{recordName(record)}</RouteLink>
             {record.finding && <span className="min-w-0 flex-1 text-muted-foreground tabular-nums">{record.finding.words}</span>}
             {record.suggestedFix && (
               <Button asChild size="xs" variant="secondary" className="ms-auto" title={record.suggestedFix.title}>
-                <RouteLink to={record.target}><Wand2 aria-hidden />{record.suggestedFix.label}</RouteLink>
+                <RouteLink to={record.target} state={{ suggestedFix: { objectType: record.objectType, id: record.id, fix: record.suggestedFix } }}>
+                  <Wand2 aria-hidden />{record.suggestedFix.label}
+                </RouteLink>
               </Button>
             )}
             {others.length > 0 && (
@@ -121,7 +116,10 @@ function LawRow({ law, held, scanLimit }: { readonly law: Law; readonly held: Gr
         <p lang={law.titleLang} className="font-medium text-pretty">{headline}</p>
         {headline !== law.rationale && <p className="text-meta text-pretty text-muted-foreground">{law.rationale}</p>}
         <div className="flex flex-wrap items-center gap-1.5">
-          <Chip tone={law.severity === "error" ? "red" : "amber"} icon={law.severity === "error" ? ShieldAlert : undefined} dot={law.severity !== "error"}>{law.severity === "error" ? "Refuses a breaking change" : "Warns"}</Chip>
+          <Chip tone={law.severity === "error" ? "red" : "amber"} icon={law.severity === "error" ? ShieldAlert : undefined} dot={law.severity !== "error"}
+            title="Declared reporting severity; does not change how the cell enforces this rule">
+            {law.severity === "error" ? "Error severity" : "Warning severity"}
+          </Chip>
           <Chip tone="gray" title={law.response ? `as a ${law.response}` : undefined}>{FORM[law.modality] ?? law.modality}</Chip>
           {law.inheritedFrom && <Chip tone="gray" title="Declared on a kind of record this one is">from {conceptTitle(law.inheritedFrom)}</Chip>}
           {held && <HeldCountChip held={held} scanLimit={scanLimit} />}
@@ -146,21 +144,24 @@ function LawRow({ law, held, scanLimit }: { readonly law: Law; readonly held: Gr
 /** A held-back group reported by the server for a rule without a matching catalog law (e.g. a built-in rule). */
 export function HeldRuleRow({ held, scanLimit }: { readonly held: Group; readonly scanLimit?: number }) {
   const { view } = useView()
-  const technicalId = held.ruleRef.kind === "law" ? held.ruleRef.lawId : held.ruleRef.kind === "builtin" ? held.ruleRef.id : undefined
+  const technicalId = heldRuleTechnicalId(held.ruleRef)
+  const title = heldRuleTitle(held)
   return (
     <div className="flex gap-3 px-4 py-3 text-sm" data-rule={heldGroupKey(held)}>
       <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-tone-amber/12 text-tone-amber dark:bg-tone-amber/15"><ShieldAlert aria-hidden className="size-4" /></span>
       <div className="min-w-0 flex-1 space-y-1.5">
-        <p className="font-medium text-pretty">{held.title}</p>
-        {held.rationale && held.rationale !== held.title && <p className="text-meta text-pretty text-muted-foreground">{held.rationale}</p>}
+        <p className="font-medium text-pretty">{title}</p>
+        {held.rationale && held.rationale !== title && held.rationale !== technicalId && <p className="text-meta text-pretty text-muted-foreground">{held.rationale}</p>}
         <div className="flex flex-wrap items-center gap-1.5">
+          {held.ruleRef.kind === "builtin" && <Chip tone="gray">Built-in</Chip>}
+          {held.ruleRef.kind === "invariant" && <Chip tone="gray">Invariant</Chip>}
           <HeldCountChip held={held} scanLimit={scanLimit} />
           {held.records.length === 0 && (
             <RouteLink to={held.target} className="text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
               Review {heldCountText(held.count, held.approximate)}
             </RouteLink>
           )}
-          {view === "technical" && technicalId && <code className="font-mono text-xs text-muted-foreground">{technicalId}</code>}
+          {view === "technical" && <code className="font-mono text-xs text-muted-foreground">{technicalId}</code>}
         </div>
         {held.records.length > 0 && <HeldRecords held={held} />}
       </div>
@@ -172,12 +173,28 @@ export function HeldRuleRow({ held, scanLimit }: { readonly held: Group; readonl
 function Quarantined({ objectType }: { readonly objectType: string }) {
   const profile = useQuery({ queryKey: ["profile", objectType], queryFn: () => readProfile(objectType), retry: false })
   if (!profile.data) return null
-  const { quarantinedRows, rows } = profile.data.document
+  const { quarantinedRows, rows, approximate, scanLimit } = profile.data.document
+  const bound = scanLimit > 0 ? ` of ${scanLimit.toLocaleString("en-US")} rows` : ""
+  const quarantinedText = heldCountText(quarantinedRows, approximate)
+  const servedText = heldCountText(rows, approximate)
   return (
-    <div className="flex flex-wrap items-center gap-1.5 bg-surface-subtle px-4 py-2.5 text-meta text-muted-foreground tabular-nums">
-      <Chip tone={quarantinedRows > 0 ? "amber" : "gray"} dot>{quarantinedRows} in quarantine</Chip>
-      <Chip tone="teal" dot>{rows} served</Chip>
-      <span className="sr-only">{quarantinedRows} {quarantinedRows === 1 ? "record is" : "records are"} in quarantine now, beside {rows} served.</span>
+    <div className="flex flex-wrap items-center gap-1.5 bg-surface-subtle px-4 py-2.5 text-meta text-muted-foreground tabular-nums" data-profile-summary={objectType} data-approximate={approximate ? "true" : undefined}>
+      <Chip tone={quarantinedRows > 0 ? "amber" : "gray"} dot data-profile-quarantined={quarantinedRows} data-approximate={approximate ? "true" : undefined}
+        title={approximate ? `At least ${quarantinedRows} in quarantine: the cell reached its scan bound${bound}` : undefined}>
+        {quarantinedText} in quarantine
+      </Chip>
+      <Chip tone="teal" dot data-profile-served={rows} data-approximate={approximate ? "true" : undefined}
+        title={approximate ? `At least ${rows} served: the cell reached its scan bound${bound}` : undefined}>
+        {servedText} served
+      </Chip>
+      {approximate && (
+        <span className="text-meta text-muted-foreground">Lower bound · scan bound{bound} reached</span>
+      )}
+      <span className="sr-only">
+        {approximate
+          ? `At least ${quarantinedRows} ${quarantinedRows === 1 ? "record is" : "records are"} in quarantine and at least ${rows} served (scan bound${bound} reached).`
+          : `${quarantinedRows} ${quarantinedRows === 1 ? "record is" : "records are"} in quarantine now, beside ${rows} served.`}
+      </span>
     </div>
   )
 }

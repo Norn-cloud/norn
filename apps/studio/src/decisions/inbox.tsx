@@ -65,7 +65,7 @@ export function DecisionsPage() {
   const choose = (id: string | undefined) => void navigate({ to: "/decisions", search: id === undefined ? {} : { open: id } as never, replace: true })
   const refresh = () => void client.invalidateQueries({ queryKey: ["decisions"] })
   const { section: heldSection } = useHeldBack()
-  const heldCount = heldSection && heldSection.count > 0 ? heldCountText(heldSection.count, heldSection.approximate) : undefined
+  const heldCount = heldSection && (heldSection.count > 0 || heldSection.approximate) ? heldCountText(heldSection.count, heldSection.approximate) : undefined
 
   const body = (() => {
     if (read.isPending) return <div className="grid gap-2" aria-label="Reading decisions">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
