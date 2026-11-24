@@ -121,6 +121,7 @@ NO_EVIDENCE = {"missing", "deferred"}
 NON_EVIDENCE = NO_EVIDENCE
 SELECTOR = re.compile(r"^(test|theorem|invariant|predicate|harness|fixture|checker):.+$")
 FORMAL_WORKFLOW = ROOT / ".github/workflows/ci-policy.yml"
+TRUSTED_POLICY_WORKFLOW = ROOT / ".github/workflows/trusted-policy.yml"
 CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 CORE_RUNNER = ROOT / "scripts/ci/core.sh"
@@ -553,7 +554,7 @@ PR_CONCURRENCY = (
 # tests to have run and passed.
 PULL_REQUEST_CONCURRENCY_CASES = {
     "codeql.yml as checked in": ["accept", "b9ff70930617fc3d64a9fc05eda0c13bfe8ce57c530923148c6de6654f5d2d27"],
-    "ci-policy.yml as checked in": ["accept", "9f544a43f09451c0ab8052bd1b952241c3566dd7119020574d71b09903b5f3d7"],
+    "ci-policy.yml as checked in": ["accept", "18a88e447d7fe890a05aeac3e9d37ba2e230382a1b80eaa31f12bf625ff94bb2"],
     "folded multi-line group": ["accept", "60e1b9381e3b3cf8a50068f08697d21476530c5e1d0e1f52a5b53245b361dbb3"],
     "out of scope: pull_request_target without concurrency": ["accept", "3782cd52452ef89a759540b54f49d82f2d0799fed2d7862111c7fdad8e139509"],
     "out of scope: pull_request_target with an unconditional cancel": ["accept", "37cde653d1840effad301cb48d5c28de88e1a8a44f944de2ae6596e152c2eaed"],
@@ -613,27 +614,31 @@ def validate_pull_request_concurrency(sources: dict[str, str]) -> None:
 
 
 def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path = FORMAL_WORKFLOW,
+                                trusted_path: Path = TRUSTED_POLICY_WORKFLOW,
                                 workflows: Path = ROOT / ".github/workflows") -> None:
     source = formal_path.read_text(encoding="utf-8")
+    trusted_source = trusted_path.read_text(encoding="utf-8")
     validate_rust_toolchain_steps(formal_path, source)
-    for action in re.findall(r"^\s*- uses: (\S+)", source, re.MULTILINE):
-        require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}", action) is not None, f"workflow action must be content-pinned: {action}")
-    for trigger in ("pull_request", "pull_request_target", "push", "merge_group"):
+    for workflow_text in (source, trusted_source):
+        for action in re.findall(r"^\s*- uses: (\S+)", workflow_text, re.MULTILINE):
+            require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}", action) is not None, f"workflow action must be content-pinned: {action}")
+    for trigger in ("pull_request", "push", "merge_group"):
         require(re.search(rf"^  {trigger}:", source, re.MULTILINE) is not None, f"missing required trigger {trigger}")
     # Bind commands to executable steps and the matrices that cover the plan;
     # comments, environment values and a cheap-only invocation earn no credit.
     workflow = yaml.load(source, Loader=WorkflowLoader)
+    trusted_workflow = yaml.load(trusted_source, Loader=WorkflowLoader)
     validate_pull_request_concurrency({**{f".github/workflows/{path.name}": path.read_text(encoding="utf-8")
                                           for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])},
-                                       ".github/workflows/ci-policy.yml": source})
+                                       ".github/workflows/ci-policy.yml": source,
+                                       ".github/workflows/trusted-policy.yml": trusted_source})
     validate_expression_lengths({formal_path.name: source,
+                                 trusted_path.name: trusted_source,
                                  "trusted-merge-group.yml": (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")})
     require(workflow.get("on", workflow.get(True)) == {
         "pull_request": {"types": ["opened", "synchronize", "reopened", "ready_for_review"]},
-        "pull_request_target": None,
-        "issue_comment": {"types": ["created", "edited", "deleted"]},
         "push": {"branches": ["main"]}, "merge_group": None, "workflow_dispatch": None,
-    }, "workflow must preserve every trigger and admit ready_for_review")
+    }, "workflow must preserve every trigger, admit ready_for_review, and exclude pull_request_target/issue_comment")
     require(workflow.get("concurrency") == {
         "group": "${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
         "cancel-in-progress": "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
@@ -664,12 +669,40 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     require(source.count("steps.sccache-keys.outputs.") == len(SCCACHE_SECRETS) and "secrets.NORN_SCCACHE_" not in source,
             "shared cache keys may appear only in the test sccache start step, from Infisical")
     # The gate plan is a hosted job of its own (no Boat start), so bundles start alongside core.
-    require(set(jobs) == {"plan", "core", "test", "full", "trusted-policy"}, "workflow job inventory changed")
-    check_names = {"core": "core", "full": "full", "trusted-policy": "trusted-policy evaluation"}
+    require(set(jobs) == {"plan", "core", "test", "full"}, "workflow job inventory changed")
+    check_names = {"core": "core", "full": "full"}
     require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
             "control and required check names must remain stable")
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
-    trusted = jobs["trusted-policy"]
+    # Trusted policy runs in its own dedicated workflow so pull_request_target/issue_comment
+    # runs never emit skipped `core` or `full` check-runs on a pull request head.
+    require(trusted_workflow.get("on", trusted_workflow.get(True)) == {
+        "pull_request_target": None,
+        "issue_comment": {"types": ["created", "edited", "deleted"]},
+    }, "trusted-policy workflow must trigger only on pull_request_target and issue_comment")
+    require("concurrency" not in trusted_workflow,
+            "trusted-policy workflow must not define workflow-level concurrency; only the job-level per-PR group applies")
+    require(trusted_workflow.get("permissions") == {"contents": "read"},
+            "trusted-policy workflow: inherited permissions must be contents: read")
+    require(not trusted_workflow.get("env"),
+            "trusted-policy workflow must not inherit an execution environment")
+    trusted_jobs = trusted_workflow.get("jobs") or {}
+    require(set(trusted_jobs) == {"trusted-policy"},
+            "trusted-policy workflow job inventory changed")
+    trusted = trusted_jobs["trusted-policy"]
+    require(trusted.get("name") == "trusted-policy evaluation",
+            "control and required check names must remain stable")
+    require("environment" not in trusted,
+            "trusted-policy: must not name the cache-writer environment")
+    trusted_permissions = trusted.get("permissions") or {}
+    require(trusted_permissions != "write-all" and "id-token" not in trusted_permissions,
+            "trusted-policy: must not mint an OIDC token")
+    require(trusted.get("runs-on") == "ubuntu-24.04",
+            "trusted-policy: runner must stay hosted on ubuntu-24.04")
+    require("secrets.NORN_SCCACHE_" not in trusted_source and all(
+        not any("NORN_SCCACHE_" in f"{key}={value}" for key, value in (step.get("env") or {}).items())
+        for step in trusted.get("steps", [])
+    ), "trusted-policy: must not reference shared cache keys")
     require(trusted.get("concurrency") == {
         "group": "trusted-policy-${{ github.event.pull_request.number || github.event.issue.number }}",
         "cancel-in-progress": True,
@@ -807,11 +840,10 @@ df -h /
 """}
     nextest = {"uses": "taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39",
                "with": {"tool": "nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129"}}
-    candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
     for name, command in required_runs.items():
         job = jobs.get(name, {})
         # A draft head runs core only; its bundles wait until it is ready for review.
-        condition = (candidate_condition if name == "core" else
+        condition = (None if name == "core" else
                      "fromJSON(needs.plan.outputs.plan).bundle[0] != null"
                      " && !(github.event_name == 'pull_request' && github.event.pull_request.draft)")
         require(job.get("if") == condition,
@@ -873,7 +905,7 @@ df -h /
     # The plan job is exactly: the candidate checkout, then the planner, whose output the bundles and
     # the verdict read. Hosted and step-for-step pinned, it runs nothing but core.sh's planner.
     require(json.dumps(jobs["plan"], sort_keys=True) == json.dumps({
-        "if": candidate_condition, "runs-on": "ubuntu-24.04", "timeout-minutes": 10,
+        "runs-on": "ubuntu-24.04", "timeout-minutes": 10,
         "outputs": {"plan": "${{ steps.plan.outputs.plan }}"},
         "steps": [checkout, {"id": "plan", "env": plan_env, "run": plan_command + "\n"}],
     }, sort_keys=True), "plan: the gate plan must be the candidate checkout and the pinned planner only")
@@ -887,7 +919,7 @@ df -h /
     require(full.get("needs") == ["plan", "core", "test"], "full: verdict must depend on every gate")
     require(len(full.get("steps", [])) == 1 and not full.get("env"),
             "full: verdict must be the only step and cannot inherit shell or gate-input overrides")
-    require(" ".join(full.get("if", "").split()) == "always() && " + candidate_condition
+    require(" ".join(full.get("if", "").split()) == "always()"
             + " && !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)"
             and not full.get("continue-on-error"),
             "full: verdict must run and fail closed")
@@ -1202,6 +1234,7 @@ def validate(
     central_obligations_path: Path = CENTRAL_OBLIGATIONS,
     core_physics_obligations_path: Path = CORE_PHYSICS_OBLIGATIONS,
     formal_workflow_path: Path = FORMAL_WORKFLOW,
+    trusted_workflow_path: Path = TRUSTED_POLICY_WORKFLOW,
 ) -> int:
     """Validate canonical inputs, with explicit paths only for in-process canaries.
 
@@ -1259,7 +1292,7 @@ def validate(
             f"invalid evidence root {root}",
         )
         require((ROOT / root).exists(), f"missing evidence root {root}")
-    validate_workflow_integrity(evidence_roots, formal_path=formal_workflow_path)
+    validate_workflow_integrity(evidence_roots, formal_path=formal_workflow_path, trusted_path=trusted_workflow_path)
     central_registry = load(central_obligations_path)
     kernel_registry = {"obligations": []}
     import runpy

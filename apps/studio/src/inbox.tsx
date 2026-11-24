@@ -133,7 +133,7 @@ function HeldBack({ group }: { readonly group: Group }) {
       <GroupHead icon={ShieldAlert} title={heldRuleTitle(group)}
         description={<>{group.count}{group.approximate ? "+" : ""} {conceptTitle(group.objectType).toLowerCase()} {group.count === 1 ? "record" : "records"} held back</>}>
         <Button asChild size="sm" variant="outline"><RouteLink to={group.target}>Review</RouteLink></Button>
-        <CollapsibleTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Show the records" className="data-[state=open]:rotate-90"><ChevronRight /></Button></CollapsibleTrigger>
+        <CollapsibleTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Show the records" className="data-open:rotate-90"><ChevronRight /></Button></CollapsibleTrigger>
       </GroupHead>
       <CollapsibleContent className="pb-1.5">
         {group.records.map((record) => {

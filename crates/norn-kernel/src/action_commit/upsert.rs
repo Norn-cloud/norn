@@ -293,6 +293,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            decision_links: Vec::new(),
             receipt: None,
         },
         envelope,

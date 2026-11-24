@@ -167,6 +167,7 @@ where
             recorded,
             record,
             series_candidate: Some(candidate),
+            decision_links: Vec::new(),
             remaining_fuel: preparation.remaining_fuel,
             receipt: None,
         };

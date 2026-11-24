@@ -952,6 +952,7 @@ pub(super) struct Pending {
     pub(super) recorded: FactState,
     pub(super) record: ActionCallRecord,
     pub(super) series_candidate: Option<SeriesCandidate>,
+    pub(super) decision_links: Vec<norn_ir::LinkChange>,
     /// RECEIPT-EFFECT-1: the receipt delivery this commit consumes.
     pub(super) receipt: Option<crate::result_reconciliation::Acceptance>,
 }

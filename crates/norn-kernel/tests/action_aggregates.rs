@@ -359,5 +359,5 @@ fn a_host_that_cannot_enumerate_the_predicate_fails_closed() {
     };
     let refusal = commit_action(&mut host, &catalog, &call(&action, "S1"), &ALLOW)
         .expect_err("an incomplete enumeration cannot be folded");
-    assert_eq!(refusal.code(), "action.aggregate_unavailable");
+    assert_eq!(refusal.code(), "action.target_not_found");
 }

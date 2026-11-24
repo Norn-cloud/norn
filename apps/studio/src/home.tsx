@@ -1,9 +1,9 @@
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { ArrowRight, ArrowUp, Sigma, Sparkles } from "lucide-react"
+import { ArrowRight, ArrowUp, Blend, Database, LayoutDashboard, ShieldCheck, Sigma, Sparkles } from "lucide-react"
 import { useState } from "react"
 import { useAssistant } from "@/assistant-slot"
-import { EmptyState, PageHeader } from "@/components/panel"
+import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
 import { StatStrip } from "@/components/kpi-tile"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -18,14 +18,54 @@ import { Inbox as InboxPanel } from "./inbox.tsx"
 /** How many key numbers Home asks for: the cell answers each live, one request apiece. */
 const KEY_NUMBERS = 4
 
+/** Whether a live cell holds only the host's trusted base (`core.*`, `std.*`) and no tenant model yet. */
+export const isEmptyWorkspace = (artifacts: readonly { readonly artifactId: string }[]): boolean =>
+  artifacts.every(({ artifactId }) => artifactId.startsWith("core.") || artifactId.startsWith("std."))
+
+const CHECKLIST = [
+  { step: "1", title: "Add a source", description: "Connect a system or upload data to bring records into this workspace.", to: "/sources", icon: Database },
+  { step: "2", title: "Model it", description: "Define your object types, relationships, and transforms.", to: "/transforms", icon: Blend },
+  { step: "3", title: "Rules", description: "Add laws, guarantees, and markings to govern every change.", to: "/rules", icon: ShieldCheck },
+  { step: "4", title: "Dashboard", description: "Ask questions and pin live numbers from admitted metrics.", to: "/dashboards", icon: LayoutDashboard },
+] as const
+
+/** Guided checklist shown on Home for a freshly provisioned cell with no tenant definitions yet. */
+function EmptyWorkspaceChecklist() {
+  return (
+    <Panel icon={Sparkles} label="Get started" action="4 steps">
+      <Well>
+        <ol className="divide-y">
+          {CHECKLIST.map(({ step, title, description, to, icon: Icon }) => (
+            <li key={to}>
+              <Link to={to} className="group flex items-center gap-4 px-4 py-3.5 transition-colors hover:bg-muted/40">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-surface-subtle text-xs font-medium text-muted-foreground tabular-nums">{step}</span>
+                <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-foreground">{title}</span>
+                  <span className="block text-meta text-muted-foreground">{description}</span>
+                </span>
+                <ArrowRight aria-hidden className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </Well>
+    </Panel>
+  )
+}
+
 /** "What do I do now": ask, what needs you, and the numbers that matter, each one click from where to act. */
 export function HomePage() {
+  const mode = useMode()
+  const empty = mode.data?.kind === "live" && Array.isArray(mode.data.catalog?.document) && isEmptyWorkspace(mode.data.catalog.document)
   return (
     <section className="max-w-5xl space-y-8">
-      <PageHeader title="Home" description="What needs you, and the numbers that matter. Every item opens where you act on it." />
+      <PageHeader title="Home" description={empty ? "Your workspace is ready. Follow these steps to bring data in and build your first dashboard." : "What needs you, and the numbers that matter. Every item opens where you act on it."} />
       <AskBar />
-      <InboxPanel />
-      <KeyNumbers />
+      {empty ? <EmptyWorkspaceChecklist /> : <>
+        <InboxPanel />
+        <KeyNumbers />
+      </>}
     </section>
   )
 }
@@ -44,11 +84,11 @@ function AskBar() {
   }
   return (
     <form onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <InputGroup className="h-11 rounded-lg border-border bg-card dark:bg-card">
-        <InputGroupAddon><Sparkles aria-hidden /></InputGroupAddon>
+      <InputGroup className="h-12 rounded-2xl border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) dark:bg-card">
+        <InputGroupAddon><Sparkles aria-hidden className="text-muted-foreground" /></InputGroupAddon>
         <InputGroupInput aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)} />
         <InputGroupAddon align="inline-end">
-          <InputGroupButton type="submit" size="sm" variant="default" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
+          <InputGroupButton type="submit" size="sm" variant="default" className="rounded-full px-3.5" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
     </form>
@@ -97,7 +137,7 @@ function KeyNumbers() {
       <h2 id="key-numbers" className="text-section font-medium">Key numbers</h2>
       {metrics.isPending && <Skeleton className="h-28 rounded-lg" />}
       {metrics.isError && <p className="text-sm text-muted-foreground">{metrics.error.message}</p>}
-      {metrics.data && picked.length === 0 && <div className="rounded-lg border"><EmptyState icon={Sigma}>No admitted measure adds up on its own yet.</EmptyState></div>}
+      {metrics.data && picked.length === 0 && <div className="rounded-xl border border-(--panel-border) bg-card"><EmptyState icon={Sigma}>No admitted measure adds up on its own yet.</EmptyState></div>}
       {shown.length > 0 && (
         <StatStrip>
           {shown.map(({ metric, answer }) => {

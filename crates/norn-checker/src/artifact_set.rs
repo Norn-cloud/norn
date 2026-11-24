@@ -384,6 +384,7 @@ fn check_artifact_set_ring0_phases_using(
                     .chain(check_sub_decision_closures(&norm, &base))
                     .chain(check_action_set(&norm, &ctx))
                     .chain(check_lifecycle_write_set(&norm, &ctx))
+                    .chain(crate::decision_links::check_decision_links_set(&norm, &ctx))
                     .chain(crate::rule_bindings::check_rule_binding_set(&norm, &ctx))
                     .chain(crate::source_commands::check_set(&norm, &ctx))
                     .chain(crate::mapping::check_mapping_artifacts(

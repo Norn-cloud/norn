@@ -3257,6 +3257,24 @@ impl CommitView for ConcurrentState {
     fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Infallible> {
         Ok(Vec::new())
     }
+
+    fn has_link_target(
+        &self,
+        _: &FactKey,
+        _: &str,
+        _: &std::collections::BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, Infallible> {
+        Ok(Some(false))
+    }
+
+    fn has_link_source(
+        &self,
+        _: &FactKey,
+        _: &str,
+        _: &std::collections::BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, Infallible> {
+        Ok(Some(false))
+    }
 }
 
 struct ConcurrentShared {

@@ -27215,6 +27215,9 @@
           },
           {
             "$ref": "#/components/schemas/NornIrSliceKeyOneOf6"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf7"
           }
         ],
         "description": "Where a [`SliceDeclaration`]'s key comes from."
@@ -27366,6 +27369,49 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf7": {
+        "type": "object",
+        "description": "Bounded predicate read over stored objects of the entry's type, fenced\ninto the commit's `predicate_reads` (`TXN-PHANTOM`, #1586).",
+        "required": [
+          "predicate"
+        ],
+        "properties": {
+          "predicate": {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf7PropertyPredicate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf7PropertyPredicate": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf7PropertyPredicatePropertyFilter"
+          },
+          "maxItems": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Optional cap on matching objects (further bounded by the limit\nprofile's `slice.max_records`). Exceeding refuses; never truncates.",
+            "minimum": 1
+          },
+          "window": {
+            "$ref": "#/components/schemas/NornIrAggregateWindow",
+            "description": "Optional window over one date or timestamp property."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf7PropertyPredicatePropertyFilter": {
+        "type": "object",
+        "description": "Equality filter: each stored indexed-scalar property must equal the\nnamed action input field. An empty filter matches every object of\nthe type within the bound.",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
       },
       "NornIrSliceLimits": {
         "type": "object",

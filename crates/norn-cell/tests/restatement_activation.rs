@@ -1090,6 +1090,7 @@ fn approved_candidate_refuses_an_alternate_kernel_writer_before_activation() {
                 property: norn_ir::PropertyId("candidate".into()),
                 value: norn_ir::RuntimeValue::from("unreviewed generation"),
             }],
+            links: vec![],
             commands: vec![],
             timers: vec![],
         };

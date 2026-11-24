@@ -113,6 +113,22 @@ impl PredicateObject {
     }
 }
 
+/// Outcome of an authorized predicate read for an action (`SliceKey::Predicate`
+/// or `ActionAggregate`).
+///
+/// Hosts evaluate the caller's `authorize` callback on every matched row before
+/// surfacing source-identity dispute refusals, count bounds, or byte caps so an
+/// unauthorized disputed or over-bound row is indistinguishable from
+/// `ActionRefusal::TargetNotFound`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PredicateActionRead {
+    /// Every matched row passed `authorize` (at most `max_members + 1` rows).
+    Admitted(Vec<PredicateObject>),
+    /// At least one matched row failed `authorize`, or the host could not
+    /// enumerate the predicate within bounds; fail closed as `TargetNotFound`.
+    Concealed,
+}
+
 /// A complete bounded predicate read, guarded against phantom matches at
 /// commit.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
