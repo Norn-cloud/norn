@@ -1,3 +1,5 @@
+import { defaultFetch, getDisplayedWorkspaceScope, isDefaultFetch, scopeHeaders, type WorkspaceScope } from "./definitions.ts"
+
 /**
  * The Studio Worker's `/api/connectors/*` as the Connections page uses it (#772). The page holds no
  * token and decides nothing: every answer, including whether a verb is allowed, is the server's.
@@ -12,7 +14,14 @@ export type FixAction =
 
 /** A typed refusal from the server. */
 export class ConnectorError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string, readonly action: FixAction | null = null, readonly field: string | null = null) {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly action: FixAction | null = null,
+    readonly field: string | null = null,
+    readonly scope?: WorkspaceScope | null,
+  ) {
     super(message)
   }
 }
@@ -32,20 +41,44 @@ export function fixAction(value: unknown): FixAction | null {
   }
 }
 
-export async function api<T>(path: string, init?: { readonly method: string; readonly body?: unknown }, fetcher: typeof fetch = fetch): Promise<T> {
-  const response = await fetcher(`/api/connectors${path}`, {
+export async function api<T>(
+  path: string,
+  init?: { readonly method?: string; readonly body?: unknown; readonly scope?: WorkspaceScope | null },
+  fetcher: (input: string, init?: RequestInit) => Promise<Response> = defaultFetch,
+): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase()
+  const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
+  const originScope = init?.scope !== undefined ? init.scope : getDisplayedWorkspaceScope()
+  const send = () => fetcher(`/api/connectors${path}`, {
     method: init?.method ?? "GET",
     credentials: "same-origin",
-    headers: init?.body === undefined ? {} : { "content-type": "application/json" },
+    headers: {
+      ...init?.body === undefined ? {} : { "content-type": "application/json" },
+      ...scopeHeaders(originScope),
+    },
     ...init?.body === undefined ? {} : { body: JSON.stringify(init.body) },
   })
-  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  let response = await send()
+  let body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  // Connector GETs are strictly read-only on the server: when an expired gateway token can be
+  // refreshed, trigger the explicit origin-checked POST /refresh once and retry the GET.
+  if (!write && response.status === 401 && body?.code === "connectors.refresh_required") {
+    const refreshed = await fetcher("/api/connectors/refresh", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: scopeHeaders(originScope),
+    })
+    if (refreshed.ok) {
+      response = await send()
+      body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+    }
+  }
   if (!response.ok) {
     const error = typeof body?.error === "string" ? body.error : `The server answered ${response.status}.`
-    throw new ConnectorError(response.status, typeof body?.code === "string" ? body.code : "connectors.unreadable", error, fixAction(body?.action), typeof body?.field === "string" ? body.field : null)
+    throw new ConnectorError(response.status, typeof body?.code === "string" ? body.code : "connectors.unreadable", error, fixAction(body?.action), typeof body?.field === "string" ? body.field : null, originScope)
   }
   // A success that is not a JSON object (an HTML fallback, an empty body) is not the server's answer.
-  if (body === null || typeof body !== "object" || Array.isArray(body)) throw new ConnectorError(response.status, "connectors.unreadable", "The server's answer could not be read.")
+  if (body === null || typeof body !== "object" || Array.isArray(body)) throw new ConnectorError(response.status, "connectors.unreadable", "The server's answer could not be read.", null, null, originScope)
   return body as T
 }
 
@@ -76,6 +109,7 @@ export interface Binding {
   readonly connectorRef: string
   /** The cell definition agents reference; null while the stage keeps bindings in Studio only. */
   readonly definition: { readonly id: string; readonly version: number } | null
+  readonly state?: string
 }
 
 export interface Tool {
@@ -88,7 +122,7 @@ export interface Tool {
   readonly bindings: readonly string[]
 }
 
-type Call = <T>(path: string, init?: { readonly method: string; readonly body?: unknown }) => Promise<T>
+type Call = <T>(path: string, init?: { readonly method?: string; readonly body?: unknown; readonly scope?: WorkspaceScope | null }) => Promise<T>
 const enc = encodeURIComponent
 
 /** Kinds whose fix the page performs itself; `ask_admin` is advice, shown without a button. */
@@ -100,16 +134,17 @@ export const offersButton = (action: FixAction) => (EXECUTABLE_FIXES as readonly
  * fixes it (sign-in, or the account's connection form), or fails with the server's typed error.
  * A reconnect without its app finds the app from the account itself.
  */
-export async function startFix(action: FixAction, call: Call = api): Promise<string> {
+export async function startFix(action: FixAction, call: Call = api, scope?: WorkspaceScope | null): Promise<string> {
+  const scopeOpt = scope === undefined ? {} : { scope }
   switch (action.kind) {
-    case "sign_in_gateway": return (await call<{ url: string }>("/link", { method: "POST" })).url
-    case "connect_account": return (await call<{ url: string }>(`/apps/${enc(action.app)}/accounts/${enc(action.requirement)}/connect`, { method: "POST", body: {} })).url
+    case "sign_in_gateway": return (await call<{ url: string }>("/link", { method: "POST", ...scopeOpt })).url
+    case "connect_account": return (await call<{ url: string }>(`/apps/${enc(action.app)}/accounts/${enc(action.requirement)}/connect`, { method: "POST", body: {}, ...scopeOpt })).url
     case "reconnect_account": {
-      const apps = action.app !== null ? [action.app] : (await call<{ apps: readonly string[] }>(`/accounts/${enc(action.account)}`)).apps
+      const apps = action.app !== null ? [action.app] : (await call<{ apps: readonly string[] }>(`/accounts/${enc(action.account)}`, scope === undefined ? undefined : scopeOpt)).apps
       for (const app of apps) {
-        const { requirements } = await call<{ requirements: readonly Requirement[] }>(`/apps/${enc(app)}/accounts`)
+        const { requirements } = await call<{ requirements: readonly Requirement[] }>(`/apps/${enc(app)}/accounts`, scope === undefined ? undefined : scopeOpt)
         const requirement = requirements.find((entry) => entry.account === action.account)?.requirement
-        if (requirement !== undefined) return (await call<{ url: string }>(`/apps/${enc(app)}/accounts/${enc(requirement)}/connect`, { method: "POST", body: { account: action.account } })).url
+        if (requirement !== undefined) return (await call<{ url: string }>(`/apps/${enc(app)}/accounts/${enc(requirement)}/connect`, { method: "POST", body: { account: action.account }, ...scopeOpt })).url
       }
       throw new ConnectorError(409, "connectors.account_not_linked", "This account is no longer linked to any app; connect it again from its app.")
     }

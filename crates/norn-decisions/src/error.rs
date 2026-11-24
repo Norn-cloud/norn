@@ -247,4 +247,14 @@ pub enum DecisionError {
         /// What is wrong.
         reason: String,
     },
+    /// The decision was admitted under a different tzdb bundle digest than supplied for evaluation.
+    #[error("decision `{decision}` was admitted for tzdb `{admitted}`, not `{evaluated}`")]
+    TzdbMismatch {
+        /// The evaluated decision's rule id.
+        decision: String,
+        /// SHA-256 digest of the tzdb bundle bound at admission.
+        admitted: String,
+        /// SHA-256 digest of the tzdb bundle supplied at evaluation.
+        evaluated: String,
+    },
 }
