@@ -76,7 +76,7 @@ test("map: a capped inbox reads as lower bounds, and a connection id is never ta
   // The failing connection named no mapping, so ERPNext shows no sync error for it, and no island reads clear.
   await expect(erp.getByText(/sync/)).toHaveCount(0)
   await expect(island(page, "Canon").getByText("None in returned slice")).toBeVisible()
-  await expect(page.locator('[data-slot="kpi"]').filter({ hasText: "Inbox alerts" })).toContainText(/\b22(?!\+)\b/)
+  await expect(page.locator('[data-slot="kpi"]').filter({ hasText: "Inbox alerts" }).locator('[data-slot="kpi-well"] > :first-child')).toHaveText("22")
   await shoot(page, info, "overview")
 
   await erp.getByRole("button", { name: "Expand island" }).click()
