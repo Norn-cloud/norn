@@ -656,7 +656,8 @@ class TestCanonicalNorn1AndTsParity(unittest.TestCase):
             actual_pin = f"sha256:{canonical_norn1_sha256(cur)}"
             self.assertEqual(actual_pin, expected_pin, f"Rust Norn1 golden pin mismatch for {ref}")
 
-        # Exact NFD -> NFC + C0 control escape vector from `crates/norn-canonical/src/lib.rs:2468`
+        # Integer-only adaptation of the NFD -> NFC + C0 control escape vector from
+        # `crates/norn-canonical/src/lib.rs:2468` (binary floats are refused in Python by VAL-EXACT-1).
         rust_vec = {
             "z": 0,
             "e": 123,
@@ -830,7 +831,7 @@ class TimeInterval(
                 canonical_norn1_sha256(json.loads(expected_ti)),
             )
 
-    def test_same_pack_ts_vs_python_norn1_bytes_and_sha256_parity(self) -> None:
+    def test_same_pack_ts_vs_python_canonical_json_and_sha256_parity(self) -> None:
         """Paired entity+interface+lifecycle+invariant+marking pack compiled by tools/norn-ts vs tools/norn-py."""
         bun = shutil.which("bun")
         ts_installed = (NORN_TS_ROOT / "node_modules" / "typescript").exists()
