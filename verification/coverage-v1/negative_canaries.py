@@ -1892,7 +1892,7 @@ def workflow_canaries() -> None:
         ("wrong affected base", "github.event_name == 'pull_request' && github.event.pull_request.base.sha", "github.event_name == 'pull_request' && github.sha"),
         ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
         ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
-        ("more bundles than the start budget", "length <= 3 and all(.[];", "length <= 6 and all(.[];"),
+        ("more bundles than the start budget", "length <= 8 and all(.[];", "length <= 10 and all(.[];"),
         ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
         ("forged core verdict", "CORE: ${{ needs.core.result }}", "CORE: success"),
         ("forged planner verdict", "PLANNER: ${{ needs.plan.result }}", "PLANNER: success"),
