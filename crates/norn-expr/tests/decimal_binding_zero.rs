@@ -450,7 +450,7 @@ fn nested_alias_shadowing_isolates_and_restores_bound_scopes() -> TestResult {
     for source in [
         "all(self.others as x, all(self.others as x, x.input == x.output + x.loss))",
         "all(self.others as x, all(self.others as x, x.input == #.output))",
-        "all(self.others as x, (x.input == x.output) and all(self.others as x, x.input == x.loss) and (x.output == x.loss))",
+        "all(self.others as x, (x.input == x.output) and all(self.others as x, x.input == x.loss) and (x.output == #.loss))",
     ] {
         let Err(err) = compile(source)?.check_typed(&conv_env, &Type::Bool) else {
             return Err(format!("{source} is outside exact scaled VM function set").into());
@@ -521,20 +521,32 @@ fn child_redeclaring_inherited_decimal_binding_refuses_and_changes_env_hash() ->
         "core.values.unit_mismatch",
     )?;
 
+    assert_eq!(inherited_env.reference()?.version, 3);
+    assert_eq!(redeclared_env.reference()?.version, 3);
     assert_ne!(
         inherited_env.to_canonical_value(),
         redeclared_env.to_canonical_value(),
-        "canonical env value must include decimal_binding_owners"
+        "norn.expr.env/3 canonical env value must include decimalBindingOwners"
     );
     assert_ne!(
         inherited_env.content_sha256()?,
         redeclared_env.content_sha256()?,
-        "inheriting vs redeclaring an identical DecimalBinding must produce distinct env hashes"
+        "inheriting vs redeclaring an identical DecimalBinding must produce distinct /3 env hashes"
     );
     assert_ne!(
         inherited_env.reference()?,
         redeclared_env.reference()?,
-        "inheriting vs redeclaring an identical DecimalBinding must produce distinct receipt refs"
+        "inheriting vs redeclaring an identical DecimalBinding must produce distinct /3 receipt refs"
+    );
+    assert_eq!(
+        inherited_env.reference_at_version(TypeEnvVersion::V2)?,
+        redeclared_env.reference_at_version(TypeEnvVersion::V2)?,
+        "historical norn.expr.env/2 projection must stay byte-identical without decimalBindingOwners"
+    );
+    let v2_json = String::from_utf8(inherited_env.canonical_json_at_version(TypeEnvVersion::V2)?)?;
+    assert!(
+        !v2_json.contains("decimalBindingOwners"),
+        "historical norn.expr.env/2 preimage must omit decimalBindingOwners"
     );
     assert!(
         inherited_env

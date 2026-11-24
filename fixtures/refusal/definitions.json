@@ -277,11 +277,11 @@
       },
       "typeEnv": {
         "id": "norn.expr.env",
-        "sha256": "308b43508b93ba9583a9829ed7bf2e322102b73eedb561cc674d1609dbb67160",
-        "version": 2
+        "sha256": "0747c32c3e59d565a7852556f3d8e240e17137d5e11acfc6b89df3e0d4982805",
+        "version": 3
       }
     },
-    "receiptSha256": "06760977a7b0411b123b10f7e45414c1c4bf77caefd8d2e0e317ec4bb7bba1d3",
+    "receiptSha256": "e9663a22209ceb725a82302b20c852e6f2766f1446d4628439225bf52c333389",
     "diagnostics": null,
     "registry": [],
     "baseArtifactIds": [

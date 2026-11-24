@@ -3,13 +3,20 @@ mod value_types;
 
 use std::collections::BTreeSet;
 
+use norn_checker::receipt::{
+    ReceiptSources, admission_receipt_sha256, check_artifact_set_with_receipt,
+    verify_admission_receipt,
+};
 use norn_checker::{
     ArtifactValidation, EntityArtifactSetContext, EntityContext, EntityModel, check_artifact_set,
-    check_entity_model, check_property_type_defs, entity_instance::EffectiveProperty,
+    check_entity_model, check_property_type_defs, derive_type_env,
+    entity_instance::EffectiveProperty,
 };
+use norn_expr::env::TypeEnvVersion;
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, ObjectTypeDef, Property, PropertyConstraints, PropertyId,
-    PropertyType, PropertyTypeCatalogRootV2, PropertyTypeDef, PropertyTypeName, RuntimeValue,
+    PropertyType, PropertyTypeCatalogRootV2, PropertyTypeDef, PropertyTypeName,
+    ResourceLimitProfile, RuntimeValue,
 };
 use serde_json::json;
 
@@ -318,5 +325,214 @@ fn single_object_invariant_scope_still_refuses_cross_object_link_reads() -> Test
             && d.message.contains("reads a link or inverse role")),
         "cross-object invariant must remain refused: {findings:?}"
     );
+    Ok(())
+}
+
+fn interface_envelope(
+    artifact_id: &str,
+    name: &str,
+    interface: &serde_json::Value,
+) -> TestResult<ArtifactEnvelope> {
+    Ok(serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "artifactId": artifact_id,
+        "kind": "entity",
+        "namespace": "toy",
+        "name": name,
+        "version": "0.1.0",
+        "lifecycle": "active",
+        "scope": {},
+        "dependencies": [],
+        "provenance": { "source": "authoring_sdk", "sourcePath": "test.ts" },
+        "payload": {
+            "entityVersion": "2.0",
+            "interface": interface
+        }
+    }))?)
+}
+
+fn receipt_sources_for(artifacts: &[ArtifactEnvelope]) -> TestResult<ReceiptSources> {
+    let values = artifacts
+        .iter()
+        .map(|artifact| {
+            let wire = serde_json::to_value(artifact)?;
+            RuntimeValue::from_json(wire).map_err(|err| format!("runtime value: {err:?}").into())
+        })
+        .collect::<TestResult<Vec<_>>>()?;
+    ReceiptSources::new(&values, &[]).map_err(|err| format!("receipt sources: {err:?}").into())
+}
+
+#[test]
+fn retained_env_v2_decimal_binding_receipt_verifies_and_relabelling_to_v3_refuses() -> TestResult {
+    let conversion = interface_envelope(
+        "core.Conversion.interface",
+        "Conversion",
+        &json!({
+            "name": "core.Conversion",
+            "properties": [
+                { "id": "input", "type": { "kind": "decimal-binding", "group": "conversion" } },
+                { "id": "output", "type": { "kind": "decimal-binding", "group": "conversion" } },
+                { "id": "loss", "type": { "kind": "decimal-binding", "group": "conversion" } }
+            ],
+            "invariants": [
+                {
+                    "id": "conserve",
+                    "expression": "self.input == self.output + self.loss",
+                    "message": "conversion balances"
+                }
+            ]
+        }),
+    )?;
+    let artifacts = [conversion];
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
+        base: &[],
+        tenant: None,
+    };
+
+    let checked =
+        check_artifact_set_with_receipt(&receipt_sources_for(&artifacts)?, &context, &limits)?;
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+    let fresh_env = checked
+        .receipt
+        .type_env
+        .as_ref()
+        .ok_or("fresh receipt must carry typeEnv")?;
+    assert_eq!(fresh_env.version, 3);
+    assert_eq!(fresh_env.version, norn_expr::TYPE_ENV_VERSION);
+    let fresh_body = String::from_utf8(checked.receipt.canonical_json()?)?;
+    let fresh_hash = admission_receipt_sha256(&fresh_body)?;
+    verify_admission_receipt(&fresh_body, &fresh_hash, &artifacts, &[], &limits)?;
+
+    // Historical main-era norn.expr.env/2 receipt (without decimalBindingOwners)
+    // must still verify cleanly against the exact same DecimalBinding artifact set.
+    let derived =
+        derive_type_env(&artifacts, &[], &limits).map_err(|err| format!("derive env: {err:?}"))?;
+    let v2_bytes = String::from_utf8(derived.canonical_json_at_version(TypeEnvVersion::V2)?)?;
+    let v3_bytes = String::from_utf8(derived.canonical_json_at_version(TypeEnvVersion::V3)?)?;
+    assert!(!v2_bytes.contains("decimalBindingOwners"));
+    assert!(v3_bytes.contains("decimalBindingOwners"));
+    let v2_ref = derived.reference_at_version(TypeEnvVersion::V2)?;
+    assert_eq!(v2_ref.version, 2);
+    assert_ne!(v2_ref.sha256, fresh_env.sha256);
+
+    let mut retained_v2 = checked.receipt;
+    retained_v2.type_env = Some(v2_ref);
+    let retained_v2_body = String::from_utf8(retained_v2.canonical_json()?)?;
+    let retained_v2_hash = admission_receipt_sha256(&retained_v2_body)?;
+    verify_admission_receipt(
+        &retained_v2_body,
+        &retained_v2_hash,
+        &artifacts,
+        &[],
+        &limits,
+    )?;
+
+    // Relabelling a historical /2 hash as /3 must refuse.
+    let mut relabelled: serde_json::Value = serde_json::from_str(&retained_v2_body)?;
+    if let Some(type_env) = relabelled
+        .get_mut("typeEnv")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        type_env.insert("version".to_owned(), json!(3));
+    }
+    let relabelled_body = String::from_utf8(norn_canonical::canonical_json_of(&relabelled)?)?;
+    let relabelled_hash = admission_receipt_sha256(&relabelled_body)?;
+    assert!(
+        verify_admission_receipt(&relabelled_body, &relabelled_hash, &artifacts, &[], &limits)
+            .is_err(),
+        "relabelled /2 hash claiming /3 must refuse"
+    );
+    Ok(())
+}
+
+#[test]
+fn new_env_v3_receipts_distinguish_inherited_vs_redeclared_decimal_binding_owners() -> TestResult {
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
+        base: &[],
+        tenant: None,
+    };
+    let parent = interface_envelope(
+        "toy.Parent.interface",
+        "Parent",
+        &json!({
+            "name": "toy.Parent",
+            "properties": [
+                { "id": "x", "type": { "kind": "decimal-binding", "group": "g" } },
+                { "id": "y", "type": { "kind": "decimal-binding", "group": "g" } }
+            ]
+        }),
+    )?;
+    let child_inherited = interface_envelope(
+        "toy.Child.interface",
+        "Child",
+        &json!({
+            "name": "toy.Child",
+            "extends": ["toy.Parent"],
+            "properties": []
+        }),
+    )?;
+    let child_redeclared = interface_envelope(
+        "toy.Child.interface",
+        "Child",
+        &json!({
+            "name": "toy.Child",
+            "extends": ["toy.Parent"],
+            "properties": [
+                { "id": "x", "type": { "kind": "decimal-binding", "group": "g" } }
+            ]
+        }),
+    )?;
+
+    let set_inherited = [parent.clone(), child_inherited];
+    let set_redeclared = [parent, child_redeclared];
+    let inherited_checked =
+        check_artifact_set_with_receipt(&receipt_sources_for(&set_inherited)?, &context, &limits)?;
+    let redeclared_checked =
+        check_artifact_set_with_receipt(&receipt_sources_for(&set_redeclared)?, &context, &limits)?;
+    assert!(inherited_checked.receipt.admitted);
+    assert!(redeclared_checked.receipt.admitted);
+
+    let inherited_ref = inherited_checked
+        .receipt
+        .type_env
+        .as_ref()
+        .ok_or("inherited receipt missing typeEnv")?;
+    let redeclared_ref = redeclared_checked
+        .receipt
+        .type_env
+        .as_ref()
+        .ok_or("redeclared receipt missing typeEnv")?;
+    assert_eq!(inherited_ref.version, 3);
+    assert_eq!(redeclared_ref.version, 3);
+    assert_ne!(
+        inherited_ref.sha256, redeclared_ref.sha256,
+        "norn.expr.env/3 receipts must distinguish inherited vs redeclared DecimalBinding owners"
+    );
+
+    let inherited_v2 = derive_type_env(&set_inherited, &[], &limits)
+        .map_err(|err| format!("derive inherited: {err:?}"))?
+        .reference_at_version(TypeEnvVersion::V2)?;
+    let redeclared_v2 = derive_type_env(&set_redeclared, &[], &limits)
+        .map_err(|err| format!("derive redeclared: {err:?}"))?
+        .reference_at_version(TypeEnvVersion::V2)?;
+    assert_eq!(
+        inherited_v2, redeclared_v2,
+        "historical /2 projection stays unchanged without decimalBindingOwners"
+    );
+
+    for (receipt, set) in [
+        (&inherited_checked.receipt, set_inherited.as_slice()),
+        (&redeclared_checked.receipt, set_redeclared.as_slice()),
+    ] {
+        let body = String::from_utf8(receipt.canonical_json()?)?;
+        let hash = admission_receipt_sha256(&body)?;
+        verify_admission_receipt(&body, &hash, set, &[], &limits)?;
+    }
     Ok(())
 }

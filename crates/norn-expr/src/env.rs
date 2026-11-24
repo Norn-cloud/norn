@@ -56,7 +56,7 @@ pub const TYPE_ENV_ID: &str = "norn.expr.env";
 /// Version of the type-environment format. Bump when existing bytes or their
 /// meaning change, not for a canonically defaulted optional field that occurs
 /// only in newly admitted policies.
-pub const TYPE_ENV_VERSION: u32 = 2;
+pub const TYPE_ENV_VERSION: u32 = 3;
 
 mod version;
 pub use version::TypeEnvVersion;
@@ -209,7 +209,7 @@ impl Type {
                         ]),
                     ));
                 }
-                if version == TypeEnvVersion::V2
+                if version != TypeEnvVersion::V1
                     && let Some(source) = currency_source
                 {
                     fields.push((
@@ -229,7 +229,7 @@ impl Type {
                         ]),
                     ));
                 }
-                if version == TypeEnvVersion::V2
+                if version != TypeEnvVersion::V1
                     && let Some(unit) = per_unit
                 {
                     fields.push((
@@ -909,7 +909,7 @@ impl ZenTypeEnv {
     /// The environment as a Norn1 canonical JSON value.
     #[must_use]
     pub fn to_canonical_value(&self) -> JsonValue {
-        self.canonical_value_at_version(TypeEnvVersion::V2)
+        self.canonical_value_at_version(TypeEnvVersion::V3)
     }
 
     fn canonical_value_at_version(&self, version: TypeEnvVersion) -> JsonValue {
@@ -949,7 +949,7 @@ impl ZenTypeEnv {
     /// [`CanonicalJsonError`] if `norn-canonical` rejects the value (not
     /// expected: the value is strings, integers, and booleans).
     pub fn canonical_json(&self) -> Result<Vec<u8>, CanonicalJsonError> {
-        self.canonical_json_at_version(TypeEnvVersion::V2)
+        self.canonical_json_at_version(TypeEnvVersion::V3)
     }
 
     /// VAL-ENV: recompute the selected historical format without upgrading its bytes.
@@ -985,7 +985,7 @@ impl ZenTypeEnv {
     ///
     /// As [`ZenTypeEnv::canonical_json`].
     pub fn reference(&self) -> Result<TypeEnvRef, CanonicalJsonError> {
-        self.reference_at_version(TypeEnvVersion::V2)
+        self.reference_at_version(TypeEnvVersion::V3)
     }
 
     /// A receipt reference using its explicitly selected environment format.

@@ -212,7 +212,7 @@ pub(crate) fn with_decimal_binding_owners(
     version: TypeEnvVersion,
     owners: &BTreeMap<(String, String), String>,
 ) -> JsonValue {
-    if version != TypeEnvVersion::V2 || owners.is_empty() {
+    if version != TypeEnvVersion::V3 || owners.is_empty() {
         return value;
     }
     let mut by_record: BTreeMap<String, BTreeMap<String, JsonValue>> = BTreeMap::new();
