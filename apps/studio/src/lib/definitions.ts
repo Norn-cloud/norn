@@ -94,7 +94,7 @@ export const defaultFetch: Fetch = (input, init) => fetch(input, init)
 export const isDefaultFetch = (fetcher: Fetch): boolean => fetcher === fetch || fetcher === defaultFetch
 export interface WorkspaceScope { readonly orgId: string; readonly environmentId: string | null }
 export interface StudioScope { readonly orgId: string; readonly environmentId: string }
-export type ScopeProvider = () => Promise<StudioScope | null>
+export type ScopeProvider = (signal?: AbortSignal) => Promise<StudioScope | null>
 export const NO_DATA_CELL = "This workspace has no data cell yet."
 export const EXPECTED_ORG_HEADER = "x-norn-expected-org"
 export const EXPECTED_ENV_HEADER = "x-norn-expected-env"
@@ -425,12 +425,15 @@ export async function readAtScope<T>(
   signal?: AbortSignal,
   mismatchMessage = WORKSPACE_CHANGED_MESSAGE,
 ): Promise<T> {
-  const before = await readScope()
+  if (signal?.aborted) throw new StudioScopeError(mismatchMessage)
+  const before = await readScope(signal)
   if (signal?.aborted || !sameStudioScope(before, expectedScope)) {
     throw new StudioScopeError(mismatchMessage)
   }
   const result = await read()
-  if (signal?.aborted || !sameStudioScope(await readScope(), expectedScope)) {
+  if (signal?.aborted) throw new StudioScopeError(mismatchMessage)
+  const after = await readScope(signal)
+  if (signal?.aborted || !sameStudioScope(after, expectedScope)) {
     throw new StudioScopeError(mismatchMessage)
   }
   return result

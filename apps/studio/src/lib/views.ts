@@ -141,14 +141,19 @@ const isSavedView = (value: unknown): value is SavedView =>
 /** The cell's saved views, through the Studio Worker's host route as the signed-in account. */
 export function cellViews(
   fetcher: Fetch = defaultFetch,
-  readScope: ScopeProvider = () => readStudioScope(fetcher),
+  readScope: ScopeProvider = (signal) => readStudioScope(fetcher, signal),
 ) {
   const callWith = (scopedFetch: Fetch) => async (path: string, init?: RequestInit) => {
     const response = await scopedFetch(path, {
       ...init,
       headers: { accept: "application/json", ...init?.body === undefined ? {} : { "content-type": "application/json" } },
     })
-    return { status: response.status, body: await response.json().catch(() => null) as Record<string, unknown> | null }
+    const text = await response.text()
+    let body: Record<string, unknown> | null = null
+    if (text !== "") {
+      try { body = JSON.parse(text) as Record<string, unknown> | null } catch { body = null }
+    }
+    return { status: response.status, body }
   }
   const callAt = (scope: StudioScope) => callWith(scopedHostFetch(fetcher, "/api/host", async () => scope))
   const verifiedWriteCall = async (expectedScope: StudioScope | null | undefined) => {
@@ -169,8 +174,8 @@ export function cellViews(
     throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
   }
 
-  const getWith = (read: ReturnType<typeof callWith>, scope: StudioScope) => async (id: string): Promise<StoredView | undefined> => {
-    const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`)
+  const getWith = (read: ReturnType<typeof callWith>, scope: StudioScope) => async (id: string, signal?: AbortSignal): Promise<StoredView | undefined> => {
+    const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`, signal === undefined ? undefined : { signal })
     if (status === 404 && body?.code === "definition.not_found") return undefined
     if (status !== 200 || typeof body?.version !== "number" || !isSavedView(body.payload)) {
       throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
@@ -261,7 +266,7 @@ export function cellViews(
     get,
     /** Read a definition only while its source workspace is active. */
     getAtScope: (id: string, expectedScope: StudioScope, signal?: AbortSignal) =>
-      readAtScope(expectedScope, readScope, () => getWith(callAt(expectedScope), expectedScope)(id), signal, WORKSPACE_CHANGED_MESSAGE),
+      readAtScope(expectedScope, readScope, () => getWith(callAt(expectedScope), expectedScope)(id, signal), signal, WORKSPACE_CHANGED_MESSAGE),
     /** Read the confirmed server revision and lifecycle for conflict handling in `expectedScope`. */
     currentRevision,
     /** Read a record page bound explicitly to `expectedScope`, refusing on workspace switch before or during fetch. */

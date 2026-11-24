@@ -484,3 +484,36 @@ test("callAction pins submissions to the bound scope without re-reading /api/me 
     diagnostics: [],
   })
 })
+
+test("callAction preserves an explicit null scope pin and notifies onScopeMismatch on 409 workspace.changed without replaying", async () => {
+  // 1. Explicit `{ scope: null }` returns no-cell with zero network calls even if a fetcher would report another scope.
+  let calls = 0
+  const noCell = await callAction(
+    "canon.holding.adjust",
+    "{}",
+    "k-nocell",
+    async () => { calls += 1; return Response.json({}) },
+    { scope: null },
+  )
+  expect(noCell).toEqual({ kind: "no-cell" })
+  expect(calls).toBe(0)
+
+  // 2. On 409 workspace.changed, onScopeMismatch receives the re-read scope and the write is never replayed.
+  let writes = 0
+  const observed: ({ orgId: string; environmentId: string } | null)[] = []
+  const mismatchFetcher = async (input: string) => {
+    const url = new URL(input, "https://studio.test")
+    if (url.pathname === "/api/me") {
+      return Response.json({ organization: { id: "org_new" }, environmentId: "env_new" })
+    }
+    writes += 1
+    return Response.json({ code: "workspace.changed", message: "Workspace changed" }, { status: 409 })
+  }
+  const refused = await callAction("canon.holding.adjust", "{}", "k-learning", mismatchFetcher, {
+    scope: { orgId: "org_old", environmentId: "env_old" },
+    onScopeMismatch: (actual) => { observed.push(actual) },
+  })
+  expect(writes).toBe(1)
+  expect(observed).toEqual([{ orgId: "org_new", environmentId: "env_new" }])
+  expect(refused).toMatchObject({ kind: "refused", status: 409, code: "workspace.changed" })
+})

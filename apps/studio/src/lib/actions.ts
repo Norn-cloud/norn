@@ -90,7 +90,7 @@ export type CatalogRead =
   | { readonly kind: "scope-changed" }
 
 export interface ActionScopeOptions {
-  readonly scope?: StudioScope
+  readonly scope?: StudioScope | null
   readonly signal?: AbortSignal
   readonly onScopeMismatch?: (actual: StudioScope | null) => void
 }
@@ -203,6 +203,7 @@ export async function callAction(
 ): Promise<CallResult> {
   const boundScope = isStudioScopeArg(boundOrOptions) ? boundOrOptions : boundOrOptions?.scope
   const signal = isStudioScopeArg(boundOrOptions) ? undefined : boundOrOptions?.signal
+  const onScopeMismatch = isStudioScopeArg(boundOrOptions) ? undefined : boundOrOptions?.onScopeMismatch
   const scope = await resolveWriteScope(fetcher, boundScope)
   if (scope === null) return { kind: "no-cell" }
   const call = scopedHostFetch(fetcher, "/api/host", async () => scope)
@@ -221,7 +222,13 @@ export async function callAction(
   if (response.ok) return { kind: "receipt", receipt: JSON.parse(text) as ActionReceipt }
   const refusal = refusalOf(text)
   if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
-  if (refusal !== null) return { kind: "refused", status: response.status, ...refusal }
+  if (refusal !== null) {
+    if (response.status === 409 && refusal.code === "workspace.changed" && onScopeMismatch !== undefined) {
+      const actual = await readStudioScope(fetcher, signal).catch(() => null)
+      onScopeMismatch(actual)
+    }
+    return { kind: "refused", status: response.status, ...refusal }
+  }
   throw new CellUnavailable(response.status)
 }
 

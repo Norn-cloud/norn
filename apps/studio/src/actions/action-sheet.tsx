@@ -40,7 +40,7 @@ export function useActions(objectKind: string, objectId?: string, enabled = true
         ? { signal }
         : {
           signal,
-          ...(scopeBinding.scope === null ? {} : { scope: scopeBinding.scope }),
+          scope: scopeBinding.scope,
           ...(scopeBinding.onScopeMismatch === undefined ? {} : { onScopeMismatch: scopeBinding.onScopeMismatch }),
         },
     ),
@@ -88,9 +88,14 @@ export function ActionSheet({ open, onClose, onView, onChanged, scopeBinding }: 
   const { read: catalogRead } = useCatalog()
   const account = useAccount().data
   const pinnedScope = usePinnedScope(open === null ? false : `${open.action.actionId}:${open.prefill?.[open.action.objectIdField] ?? ""}`)
-  const effectiveScope = scopeBinding?.scope !== undefined ? scopeBinding.scope : (pinnedScope ?? scopeFromAccount(account))
+  const effectiveScope: StudioScope | null | undefined =
+    scopeBinding !== undefined
+      ? scopeBinding.scope
+      : pinnedScope !== undefined
+        ? pinnedScope
+        : account === undefined ? undefined : scopeFromAccount(account)
   const boundCall = useMemo(() => {
-    if (effectiveScope == null) return undefined
+    if (effectiveScope === undefined) return undefined
     const onScopeMismatch = scopeBinding?.onScopeMismatch
     return (actionId: string, input: string, key: string) =>
       callAction(actionId, input, key, undefined, { scope: effectiveScope, ...(onScopeMismatch === undefined ? {} : { onScopeMismatch }) })

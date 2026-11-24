@@ -19,9 +19,10 @@ import { NO_DATA_CELL, StudioScopeError, type StudioScope } from "../lib/definit
 import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, recordsQueryPrefix, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-source.ts"
+import { readObjectAtScope } from "../lib/live-transport.ts"
 import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
-import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
+import { ActionSheet, useActions, type ActionScopeBinding, type OpenAction } from "../actions/action-sheet.tsx"
 import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
 import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
@@ -70,7 +71,7 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
 /** The query a grid shows, as a saved view keeps it. */
 export interface GridQuery { readonly filter: Predicate | null; readonly sort: readonly SortKey[]; readonly columns: readonly string[] }
 
-export type DisplayedGridQuery = GridQuery & { readonly initialColumns: readonly string[] }
+export type DisplayedGridQuery = GridQuery & { readonly initialColumns: readonly string[]; readonly scope?: StudioScope }
 
 export function visibleDrawerRow(row: GridRow | null, error: Error | null): GridRow | null {
   return error instanceof StudioScopeError ? null : row
@@ -111,15 +112,16 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
   // Preserve saved column order when configured; fall back to catalog order for default columns.
   const columns = useMemo(() => shownOrder.flatMap((id) => { const f = fieldById.get(id); return f ? [f] : [] }), [shownOrder, fieldById])
   const shownList = useMemo(() => columns.map(({ id }) => id), [columns])
-  const reported = JSON.stringify({ filter, sort, shownList })
-  useEffect(() => { onQuery?.({ filter, sort, columns: shownList, initialColumns }) }, [reported])
+  const reported = JSON.stringify({ filter, sort, shownList, orgId: scope?.orgId, environmentId: scope?.environmentId })
+  useEffect(() => { onQuery?.({ filter, sort, columns: shownList, initialColumns, ...(scope === undefined ? {} : { scope }) }) }, [reported])
   const [active, setActive] = useState(0)
   const [opened, setOpened] = useState<GridRow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [acting, setActing] = useState<OpenAction | null>(null)
   const [viewing, setViewing] = useState<{ readonly id: string; readonly since: number } | null>(null)
   const navigate = useNavigate()
-  const catalog = useActions(name)
+  const actionScope = useMemo<ActionScopeBinding | undefined>(() => scope === undefined ? undefined : { scope }, [scope])
+  const catalog = useActions(name, undefined, true, actionScope)
   const actions = catalog.data?.kind === "catalog" ? catalog.data.items : []
   const creates = actions.filter(writesWhole)
   // Off with the reason while the cell takes no actions; absent when it offers this reader none.
@@ -349,7 +351,7 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
         {shownLifecycle && (
           <div className="grid gap-4" data-testid="records-lifecycle">
             {concept.lifecycles.map((lifecycle) => (
-              <LifecycleView key={`${concept.name}:${lifecycle.property}`} concept={concept} lifecycle={lifecycle} filter={filter} />
+              <LifecycleView key={`${concept.name}:${lifecycle.property}:${scope ? `${scope.orgId}:${scope.environmentId}` : "auto"}`} concept={concept} lifecycle={lifecycle} filter={filter} scope={scope} />
             ))}
           </div>
         )}
@@ -432,9 +434,9 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
         )}
       </div>
       </div>
-      <RecordDrawer concept={concept} fields={fields} row={visibleDrawerRow(opened, result.error)} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
+      <RecordDrawer concept={concept} fields={fields} row={visibleDrawerRow(opened, result.error)} origin={page?.origin} scope={scope} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
         onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
-      <ActionSheet open={acting} onClose={() => setActing(null)} onView={(id) => setViewing({ id, since: Date.now() })} />
+      <ActionSheet open={acting} onClose={() => setActing(null)} onView={(id) => setViewing({ id, since: Date.now() })} scopeBinding={actionScope} />
     </Shell>
   )
 }
@@ -459,18 +461,23 @@ function NewRecord({ title, creates, off, pending, onPick }: {
   )
 }
 
-function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClose, onAction }: {
-  readonly concept: Concept; readonly fields: readonly Field[]; readonly row: GridRow | null; readonly origin: "live" | "recorded" | undefined; readonly onClose: () => void
+function RecordDrawer({ concept, fields, row, origin, scope, actions, actionsOff, onClose, onAction }: {
+  readonly concept: Concept; readonly fields: readonly Field[]; readonly row: GridRow | null; readonly origin: "live" | "recorded" | undefined; readonly scope?: StudioScope; readonly onClose: () => void
   readonly actions: readonly ActionSummary[]; readonly actionsOff: string | undefined; readonly onAction: (action: ActionSummary, id: string) => void
 }) {
   const record = row?.record
   const markings = useMarkingCatalog()
+  const scopeBinding = useMemo<ActionScopeBinding | undefined>(() => scope === undefined ? undefined : { scope }, [scope])
   // What can act on this record now: the cell narrows the type's catalog to the record's state.
-  const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && origin === "live")
+  const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && origin === "live", scopeBinding)
   const offered = recordCatalog(origin === "live", narrowed, actions)
   const object = useQuery({
-    queryKey: ["object", record?.objectType, record?.id],
-    queryFn: () => record ? transport.object(record.objectType, record.id) : null,
+    queryKey: scope === undefined ? ["object", record?.objectType, record?.id] : ["object", record?.objectType, record?.id, scope.orgId, scope.environmentId],
+    queryFn: ({ signal }) => record
+      ? (scope !== undefined && origin === "live"
+        ? readObjectAtScope(record.objectType, record.id, scope, signal)
+        : transport.object(record.objectType, record.id))
+      : null,
     enabled: record !== undefined && row !== null && !isWithheld(row),
   })
   const links = object.data?.links.document.items ?? []

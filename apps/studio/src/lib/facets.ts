@@ -44,13 +44,29 @@ export function facetsPath(objectType: string, filter: Predicate | null, propert
 }
 
 /** The cell's facets for `filter`, of every categorical property or of `properties` only. */
-async function readFacets(objectType: string, filter: Predicate | null, properties: readonly string[] | undefined, scope: StudioScope | undefined, fetcher: Fetch) {
+async function readFacets(
+  objectType: string,
+  filter: Predicate | null,
+  properties: readonly string[] | undefined,
+  scope: StudioScope | undefined,
+  fetcher: Fetch,
+  signal?: AbortSignal,
+) {
   let read: Read<Facets>
   try {
     const path = facetsPath(objectType, filter, properties)
-    const ask = () => cellRead<Facets>(path, "Facets are", { signal: AbortSignal.timeout(FACETS_DEADLINE_MS), timeoutMs: FACETS_DEADLINE_MS }, fetcher, scope)
-    read = scope === undefined ? await ask() : await readAtScope(scope, () => readStudioScope(fetcher), ask, undefined, WORKSPACE_CHANGED_MESSAGE)
+    const ask = () => cellRead<Facets>(
+      path,
+      "Facets are",
+      { ...(signal === undefined ? {} : { signal }), timeoutMs: FACETS_DEADLINE_MS },
+      fetcher,
+      scope,
+    )
+    read = scope === undefined
+      ? await ask()
+      : await readAtScope(scope, (s) => readStudioScope(fetcher, s), ask, signal, WORKSPACE_CHANGED_MESSAGE)
   } catch (error) {
+    if (signal?.aborted) throw error
     if (
       (error instanceof CellUnavailable && error.timedOut === true)
       || (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
@@ -75,7 +91,7 @@ export function facetsQuery({ objectType, filter, scope, property }: {
   const properties = property === undefined ? undefined : [property]
   return queryOptions({
     queryKey: ["facets", objectType, ...scopePrefix, JSON.stringify(filter), ...(properties ?? [])],
-    queryFn: () => readFacets(objectType, filter, properties, scope, fetcher),
+    queryFn: ({ signal }) => readFacets(objectType, filter, properties, scope, fetcher, signal),
     retry: false,
   })
 }
