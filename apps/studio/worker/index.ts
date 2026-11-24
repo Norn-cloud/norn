@@ -1,5 +1,5 @@
 import { forwardToHost, originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
-import { activeMembership, createAuth, DISABLED_ORG_PATHS, issueConsentApproval, verifyMagicLinkOrigin, type Auth, type MagicLinkMail, type ProvisionDb } from "./auth.ts"
+import { activeMembership, createAuth, DISABLED_AUTH_PATHS, DISABLED_ORG_PATHS, issueConsentApproval, verifyMagicLinkOrigin, type Auth, type MagicLinkMail, type ProvisionDb } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 import { clientIpHeader } from "./client-ip.ts"
 import { connectors } from "./connectors.ts"
@@ -419,7 +419,7 @@ const handler = {
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
     if (pluginBillingPath(pathname)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
     const normalizedPath = routePath(pathname)
-    if (normalizedPath.startsWith("/api/auth/") && DISABLED_ORG_PATHS.has(normalizedPath.slice("/api/auth".length))) {
+    if (normalizedPath.startsWith("/api/auth/") && (DISABLED_AUTH_PATHS.has(normalizedPath.slice("/api/auth".length)) || DISABLED_ORG_PATHS.has(normalizedPath.slice("/api/auth".length)))) {
       return Response.json({ code: "NOT_FOUND", message: "No such endpoint." }, { status: 404, headers: { "cache-control": "no-store" } })
     }
     const moved = SPLIT_WRITE_PATHS.get(normalizedPath)

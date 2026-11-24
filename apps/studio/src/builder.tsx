@@ -104,8 +104,9 @@ export function catalogOf(value: unknown): QuestionCatalog | undefined {
 
 const UNAVAILABLE = "The question catalogue is not available on this deployment."
 
-export async function readCatalog(): Promise<QuestionCatalog> {
-  const response = await fetch("/api/questions/catalog", { headers: { accept: "application/json" } })
+export async function readCatalog(boundScope?: StudioScope | null): Promise<QuestionCatalog> {
+  const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
+  const response = await fetch("/api/questions/catalog", { headers: { accept: "application/json", ...scopeHeaders(scope) } })
   if (!response.ok) throw new Error(response.status === 401 ? "Sign in to build questions." : UNAVAILABLE)
   const catalog = catalogOf(await response.json().catch(() => undefined))
   if (catalog === undefined) throw new Error(UNAVAILABLE)
@@ -327,7 +328,7 @@ function Checked({ verdict }: { readonly verdict: QuestionVerdict }) {
  */
 function BuiltAnswer({ question, catalog, title, scope }: { readonly question: QuestionIR; readonly catalog: QuestionCatalog; readonly title: string; readonly scope?: StudioScope | null }) {
   const scopeKey = scope ? `${scope.orgId}:${scope.environmentId}` : ""
-  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: readMetrics, retry: false, staleTime: 60_000 })
+  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: () => readMetrics(scope), retry: false, staleTime: 60_000 })
   const [picked, setPicked] = useState<UnitGroup | null>(null)
   if (metrics.isPending) return <p className="text-sm text-muted-foreground">Asking the cell…</p>
   const partitions = question.aggregate.map(({ metric }) => metrics.data?.document.metrics.find(({ name }) => name === metric)?.unitPartition ?? [])
@@ -335,14 +336,14 @@ function BuiltAnswer({ question, catalog, title, scope }: { readonly question: Q
   const shared = partitions.every((partition) => partition.length === sources.length && partition.every((property, index) => property === sources[index]))
   if (sources.length === 0 || !shared) return <RunQuestion question={question} catalog={catalog} title={title} scope={scope} auto />
   const declared = { metrics: readDocument(JSON.stringify(catalog.declarations.metrics), "live"), objectType: readDocument(JSON.stringify(catalog.declarations.objectType), "live") } as Parameters<typeof UnitGroups>[0]["declared"]
-  return <UnitGroups asked={question as unknown as Question} grain={question.groupBy[0]?.grain ?? "group"} sources={sources} title={title} declared={declared} picked={picked} onPick={setPicked} onSettled={settled} />
+  return <UnitGroups asked={question as unknown as Question} grain={question.groupBy[0]?.grain ?? "group"} sources={sources} title={title} declared={declared} picked={picked} onPick={setPicked} onSettled={settled} scope={scope} />
 }
 const settled = () => {}
 
 export function QuestionBuilderPage() {
   const scope = useStudioScope()
   const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
-  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: readCatalog, enabled: !scope.isPending, retry: false, staleTime: Infinity })
+  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: () => readCatalog(scope.data), enabled: !scope.isPending, retry: false, staleTime: Infinity })
   return (
     <section className="space-y-6">
       <div className="space-y-2">

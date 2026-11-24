@@ -102,14 +102,14 @@ export function DashboardsPage() {
     onSettled: refresh,
   })
   const undo = useMutation({ mutationFn: async (gone: Removed) => settled(await gone.store.install(gone.id, gone.dashboard, gone.version)), onSuccess: () => setRemoved(undefined), onSettled: refresh })
-  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity, enabled: cellAvailable })
+  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: () => readCatalog(scope.data), retry: false, staleTime: Infinity, enabled: cellAvailable })
   return (
     <section className="space-y-6">
       <PageHeader title="Dashboards" description="Saved sets of questions. Each is a definition the cell checks before it is kept."
         primary={<Button disabled={!cellAvailable} onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>} />
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
       {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
-      {catalog.data && <DashboardAssistant catalog={catalog.data} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} />} />}
+      {catalog.data && <DashboardAssistant catalog={catalog.data} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} scope={scope.data} />} />}
       {cellAvailable && dashboards.isPending && <p className="text-muted-foreground">Reading dashboards…</p>}
       {dashboards.isError && <EmptyState icon={LayoutDashboard}>{failure(dashboards.error)}</EmptyState>}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
@@ -264,7 +264,7 @@ export function DashboardEditorPage() {
   const { id } = useParams({ strict: false }) as { id?: string }
   const store = useScopedStore(scope.data)
   const navigate = useNavigate()
-  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: readCatalog, enabled: !scope.isPending, retry: false, staleTime: Infinity })
+  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: () => readCatalog(scope.data), enabled: !scope.isPending, retry: false, staleTime: Infinity })
   // A query may not resolve to undefined: a missing dashboard is null, and a new one reads nothing.
   const stored = useQuery({ queryKey: ["dashboard", id, scope.data?.orgId, scope.data?.environmentId], queryFn: async () => (id === undefined ? null : await store.get(id)) ?? null, enabled: id !== undefined && cellAvailable, retry: false,
     // Only an open (and an explicit reload) reads the dashboard: a background refetch must not replace the draft being edited.
@@ -321,7 +321,7 @@ export function DashboardBoardPage() {
   const store = useScopedStore(scope.data)
   const navigate = useNavigate()
   const client = useQueryClient()
-  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: readCatalog, enabled: !scope.isPending, retry: false, staleTime: Infinity })
+  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: () => readCatalog(scope.data), enabled: !scope.isPending, retry: false, staleTime: Infinity })
   const stored = useQuery({ queryKey: ["dashboard-board", id, scope.data?.orgId, scope.data?.environmentId], queryFn: async () => (await store.get(id)) ?? null, enabled: cellAvailable, retry: false })
   const duplicate = useMutation({
     mutationFn: async (from: StoredDashboard) => {

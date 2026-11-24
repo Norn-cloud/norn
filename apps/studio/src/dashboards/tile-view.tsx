@@ -212,7 +212,7 @@ export function TileAnswer({ tile, catalog, scope }: { readonly tile: Pick<Tile,
             <SheetTitle>{tile.title}</SheetTitle>
             <SheetDescription>Every bucket the cell answered, and the records behind each one.</SheetDescription>
           </SheetHeader>
-          <div className="p-4">{details && <AnswerView read={read} title={tile.title} heading="h3" openBucket={tracing} fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, undefined, scope)} />}</div>
+          <div className="p-4">{details && <AnswerView read={read} title={tile.title} heading="h3" openBucket={tracing} originScope={scope} fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, undefined, scope)} />}</div>
         </SheetContent>
       </Sheet>
     </div>

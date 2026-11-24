@@ -8,6 +8,7 @@ import { StatStrip } from "@/components/kpi-tile"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { conceptTitle } from "./lib/catalog.ts"
+import { useStudioScope } from "./lib/definitions.ts"
 import { evaluateQuestion, type Evaluation } from "./lib/evaluate.ts"
 import { member } from "./lib/exact.ts"
 import { FRESHNESS, groupDigits } from "./lib/format.ts"
@@ -111,16 +112,18 @@ const totalable = (metric: MetricSummary) => metric.timeProperty !== null && (me
 /** The first admitted metrics, each answered live by the cell as one total over the latest 26 weeks. */
 function KeyNumbers() {
   const live = useMode().data?.kind === "live"
-  const metrics = useQuery({ queryKey: ["metrics"], queryFn: readMetrics, retry: false, enabled: live })
+  const scope = useStudioScope()
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: () => readMetrics(scope.data), retry: false, enabled: live && !scope.isPending })
   const picked = (metrics.data?.document.metrics ?? []).filter(totalable).slice(0, KEY_NUMBERS)
   const window = recentWindow(Date.now())
   const answers = useQueries({
     queries: picked.map((metric) => ({
-      queryKey: ["key-number", metric.name, window.start],
+      queryKey: ["key-number", scopeKey, metric.name, window.start],
       queryFn: () => evaluateQuestion({
         irVersion: "0.1", name: "studio.key_number", objectSet: metric.objectType, aggregate: [{ metric: metric.name }],
         window: { start: window.start, end: window.end }, freshness: { kind: "live", maxAgeMs: 60_000 }, calendar: "iso_utc",
-      }),
+      }, undefined, scope.data),
       retry: false,
       staleTime: 60_000,
     })),

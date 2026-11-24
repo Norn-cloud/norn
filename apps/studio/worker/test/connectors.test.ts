@@ -543,9 +543,12 @@ test("a save never ends half-done: each failure point is settled via scoped POST
   expect(one).toMatchObject({ label: "One", state: "ready", definition: { version: 1 } })
   expect(cell.held.size).toBe(1)
 
-  // 2. Edit: the cell installs version 2, then the local write fails. The read adopts version 2 and its fields.
+  // 2. Edit: the cell installs version 2, then the local write fails. During its lease the edit
+  //    stays pending (never adopted prematurely before finishSave); once its lease expires, reconcile adopts v2.
   failures.next = /^UPDATE connector_binding SET label/
   expect((await send(`/bindings/${one?.id}`, { ...body("PATCH", { label: "One, edited" }), cookie: owner }, { host: cell.host })).status).toBe(500)
+  expect((await list())[0]).toMatchObject({ label: "One", state: "pending", definition: { version: 1 } })
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
   expect((await list())[0]).toMatchObject({ label: "One, edited", state: "ready", definition: { version: 2 } })
 
   // 3. Create while the cell is down: the outcome is unknown, so the row stays "creating" and
@@ -703,7 +706,7 @@ test("connector mutations require x-norn-expected-org and x-norn-expected-env an
 })
 
 test("POST /bindings:reconcile requires connector.bind (admin/owner) and stale reconciliation snapshots never overwrite a newer save", async () => {
-  const { send, signUp, cell, db, d1Db } = stage()
+  const { send, signUp, cell, clock, db, d1Db } = stage()
   const owner = await signUp("reconcile-owner@example.com")
   const member = await signUp("reconcile-member@example.com", "member", "reconcile-owner@example.com")
   const viewer = await signUp("reconcile-viewer@example.com", "viewer", "reconcile-owner@example.com")
@@ -726,7 +729,8 @@ test("POST /bindings:reconcile requires connector.bind (admin/owner) and stale r
   const staleAttempt = pendingRow?.pendingAttempt ?? null
   expect(staleAttempt).toBeString()
 
-  // Admin reconciles it to v2 cleanly.
+  // Admin reconciles it to v2 cleanly once its lease expires (fenced during lease).
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
   const reconciled = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
   expect(reconciled.status).toBe(200)
   expect((reconciled.body.bindings as { label: string; state: string; definition: { version: number } }[])[0]).toMatchObject({ label: "Edit v2", state: "ready", definition: { version: 2 } })

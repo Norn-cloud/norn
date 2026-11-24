@@ -724,4 +724,62 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
   const restored = sqlite.query(`select "scopes" from "oauthConsent" where "id" = ?`).get(initialConsent.id) as { scopes: string }
   expect(restored.scopes).toBe(initialConsent.scopes)
   expect(sqlite.query(`select count(*) as n from "verification" where "identifier" glob 'oauth-approval-claimed:*'`).get()).toEqual({ n: 0 })
+
+  // 6. R4-1 & R4-2: Provisional consent is hidden from any other authorization request (even with
+  //    identical session/client/grant/redirect/challenge/state) without the exact `claimId`, AND an
+  //    expired claimed approval blocks direct concurrent claims until atomically rolled back.
+  const signIn6 = await postJson(env, "/api/auth/sign-in/email", { email: "gen-isolation@example.com", password: "correct horse battery" }, { origin: ORIGIN })
+  const cookie6 = cookieOf(signIn6)
+  sqlite.run(`update "session" set "activeOrganizationId" = ? where "userId" = ?`, [org, user])
+  const session6Id = (sqlite.query(`select "id" from "session" where "userId" = ? order by "createdAt" desc limit 1`).get(user) as { id: string }).id
+  const clientC = await register(env)
+  const pkceC = pkce()
+  const authC = await call(env, authorizeUrl(clientC, pkceC.challenge), { headers: { cookie: cookie6 } })
+  const queryC = signedQueryOf(authC.headers.get("location") ?? "")
+  const ctxC = await consentContext(env, cookie6, queryC)
+  expect(ctxC.approvalToken).toBeString()
+  // Simulate an active claimed approval + provisional consent for Client C.
+  sqlite.run(`update "verification" set "identifier" = 'oauth-approval-claimed:' || "id" where "identifier" glob 'oauth-approval:*'`)
+  const claimRow = sqlite.query(`select "id" from "verification" where "identifier" glob 'oauth-approval-claimed:*'`).get() as { id: string }
+  sqlite.run(
+    `insert into "oauthConsent" ("id", "clientId", "userId", "referenceId", "scopes", "createdAt", "updatedAt") values ('prov_c', ?, ?, ?, '["openid","offline_access"]', datetime('now'), datetime('now'))`,
+    [clientC, user, grantRefGen2],
+  )
+  // Another request with IDENTICAL session/client/grant/redirect/challenge/state but NO claimId (or wrong claimId) MUST abort!
+  const stolenCodePayload = {
+    type: "authorization_code",
+    userId: user,
+    sessionId: session6Id,
+    referenceId: grantRefGen2,
+    query: { client_id: clientC, redirect_uri: CLAUDE, code_challenge: pkceC.challenge, state: "st-1" },
+  }
+  expect(() => sqlite.run(
+    `insert into "verification" ("id", "identifier", "value", "expiresAt", "createdAt", "updatedAt") values ('stolen_code', 'stolen_1', ?, datetime('now', '+5 minutes'), datetime('now'), datetime('now'))`,
+    [JSON.stringify(stolenCodePayload)],
+  )).toThrow("oauth.membership_invalid")
+  expect(() => sqlite.run(
+    `insert into "verification" ("id", "identifier", "value", "expiresAt", "createdAt", "updatedAt") values ('stolen_code2', 'stolen_2', ?, datetime('now', '+5 minutes'), datetime('now'), datetime('now'))`,
+    [JSON.stringify({ ...stolenCodePayload, claimId: "wrong-claim-id" })],
+  )).toThrow("oauth.membership_invalid")
+  // Claim row is still intact (not consumed by the rejected request).
+  expect(sqlite.query(`select count(*) as n from "verification" where "id" = ?`).get(claimRow.id)).toEqual({ n: 1 })
+
+  // Expire the claimed approval: a raw concurrent claim MUST still abort (oauth.approval_conflict)
+  // until the expired claim + its provisional consent are atomically rolled back by the successor flow.
+  sqlite.run(`update "verification" set "expiresAt" = datetime('now', '-5 minutes') where "id" = ?`, [claimRow.id])
+  const ctxC2 = await consentContext(env, cookie6, queryC)
+  expect(ctxC2.approvalToken).toBeString()
+  expect(() => sqlite.run(
+    `update "verification" set "identifier" = 'oauth-approval-claimed:' || "id" where "identifier" glob 'oauth-approval:*'`,
+  )).toThrow("oauth.approval_conflict")
+  // Submitting the successor consent sweeps the expired claim + its provisional consent atomically and succeeds cleanly!
+  const successor = await postJson(
+    env,
+    "/api/auth/oauth2/consent",
+    { accept: true, oauth_query: queryC },
+    { cookie: cookie6, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: ctxC2.approvalToken ?? "" },
+  )
+  expect(successor.status).toBe(200)
+  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "id" = 'prov_c'`).get()).toEqual({ n: 0 })
+  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "clientId" = ? and "userId" = ? and "referenceId" = ?`).get(clientC, user, grantRefGen2)).toEqual({ n: 1 })
 })

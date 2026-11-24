@@ -703,4 +703,19 @@ test("S4 null set-active refuses revoked sessions; S5 member/invitation mutation
   expect(bobCancelAbsent.status).toBe(400)
   expect(bobCancelUnpriv.status).toBe(400)
   expect(await bobCancelUnpriv.json()).toEqual(await bobCancelAbsent.json())
+
+  // 5. R4-5: Unused Better Auth GET /api/auth/account-info is disabled (404 NOT_FOUND) so no GET can refresh gateway tokens.
+  for (const path of ["/api/auth/account-info", "/api/auth/account-info/", "/api/auth/Account-Info"]) {
+    const res = await call(env, path, { headers: { cookie: alice.cookie } })
+    expect({ path, status: res.status }).toEqual({ path, status: 404 })
+  }
+
+  // 6. R4-6: cancel-invitation and reject-invitation enforce status = 'pending' atomically at the write
+  //    (even without relying on trigger 0012), leaving an accepted invitation untouched.
+  db.run(`drop trigger if exists "invitation_status_final"`)
+  db.run(`update "invitation" set "status" = 'accepted' where "id" = ?`, [aliceInv.id])
+  const cancelAccepted = await mutate(env, "POST", "/api/auth/organization/cancel-invitation", { invitationId: aliceInv.id }, { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId })
+  expect(cancelAccepted.status).toBe(400)
+  expect(await cancelAccepted.json()).toMatchObject({ code: "INVITATION_NOT_FOUND" })
+  expect(db.query(`select "status" from "invitation" where "id" = ?`).get(aliceInv.id)).toEqual({ status: "accepted" })
 })

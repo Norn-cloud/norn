@@ -148,10 +148,12 @@ test("a live socket (UI-LIVE-1) opens only from the Studio origin with canonical
     if (origin !== undefined) headers.origin = origin
     expect([origin, (await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=analytics`, { headers })).status]).toEqual([origin, 403])
   }
-  // Missing or mismatched scope query params on a WebSocket upgrade are refused before reaching the host.
+  // Missing or mismatched scope query params or conflicting expected-scope headers on a WebSocket upgrade are refused before reaching the host.
   expect((await call(env, "/api/host/v1/subscribe", { headers: { ...handshake, origin: ORIGIN } })).status).toBe(400)
   expect((await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=other`, { headers: { ...handshake, origin: ORIGIN } })).status).toBe(409)
   expect((await call(env, `/api/host/v1/subscribe?orgId=org_other&environmentId=analytics`, { headers: { ...handshake, origin: ORIGIN } })).status).toBe(409)
+  expect((await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=analytics`, { headers: { ...handshake, origin: ORIGIN, [EXPECTED_ORG_HEADER]: "org_other" } })).status).toBe(409)
+  expect((await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=analytics`, { headers: { ...handshake, origin: ORIGIN, [EXPECTED_ENV_HEADER]: "other" } })).status).toBe(409)
   expect(seen).toHaveLength(0)
   await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=analytics`, { headers: { ...handshake, origin: ORIGIN } })
   expect(seen).toHaveLength(1)

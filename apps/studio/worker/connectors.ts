@@ -216,6 +216,9 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   const reconcile = async (binding: Binding): Promise<Binding | null> => {
     if (binding.state !== "pending" || binding.pendingDefinition === null) return binding
     const now = (deps.now ?? Date.now)()
+    // Fence BOTH creates and edits during their active lease so reconciliation never adopts or
+    // abandons an in-flight save before its own finishSave commits.
+    if (binding.pendingStartedAt !== null && now - binding.pendingStartedAt < PENDING_CREATE_LEASE_MS) return binding
     const targetEnv = binding.pendingEnvironmentId ?? environmentId
     if (binding.pendingEnvironmentId !== null && environmentId !== null && binding.pendingEnvironmentId !== environmentId) return binding
     const cell = cellFor(targetEnv)
@@ -228,15 +231,9 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       throw error
     }
     if (held.kind === "found" && (binding.definition === null || held.version > binding.definition.version)) {
-      // Only adopt a committed create after its lease, or any edit whose newer version is already committed.
-      if (binding.pendingSave === "create" && binding.pendingStartedAt !== null && now - binding.pendingStartedAt < PENDING_CREATE_LEASE_MS) return binding
       await adoptCell(db, actor.orgId, binding.id, binding.pendingDefinition, held.version, held.payload, binding.pendingAttempt, binding.definition?.version ?? null)
-    } else {
-      // Never abandon an in-flight create or edit while its lease is active: the cell install may still commit.
-      if (binding.pendingStartedAt !== null && now - binding.pendingStartedAt < PENDING_CREATE_LEASE_MS) return binding
-      if (await abandonSave(db, actor.orgId, binding.id, binding.pendingSave ?? "edit", binding.definition, binding.pendingAttempt) === "deleted") {
-        return null
-      }
+    } else if (await abandonSave(db, actor.orgId, binding.id, binding.pendingSave ?? "edit", binding.definition, binding.pendingAttempt) === "deleted") {
+      return null
     }
     return await getBinding(db, actor.orgId, binding.id)
   }

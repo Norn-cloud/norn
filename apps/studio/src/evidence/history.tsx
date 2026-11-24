@@ -7,6 +7,7 @@ import { HiddenWriter } from "@/components/hidden-writer"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { systemName } from "../lib/catalog.ts"
+import { useStudioScope } from "../lib/definitions.ts"
 import { readMetrics } from "../lib/metrics.ts"
 import { atScale } from "../lib/objects.ts"
 import { readableTime } from "../lib/format.ts"
@@ -41,8 +42,10 @@ type Time = "known" | "valid"
  * cell places this type in time by); filters keep one kind of writer.
  */
 export function History({ objectType, id }: { readonly objectType: string; readonly id: string }) {
-  const read = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id), retry: false })
-  const metrics = useQuery({ queryKey: ["metrics"], queryFn: readMetrics, retry: false, staleTime: 60_000 })
+  const scope = useStudioScope()
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const read = useQuery({ queryKey: ["history", scopeKey, objectType, id], queryFn: () => readHistory(objectType, id), retry: false })
+  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: () => readMetrics(scope.data), enabled: !scope.isPending, retry: false, staleTime: 60_000 })
   const [time, setTime] = useState<Time>("known")
   const [only, setOnly] = useState<WriterKind | null>(null)
   const [open, setOpen] = useState<ReadonlySet<number>>(new Set())

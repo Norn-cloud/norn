@@ -34,8 +34,9 @@ export interface CheckedQuestion { readonly verdict: QuestionVerdict; readonly r
 /** A sign-off: the person read exactly these words (by their hash) and said "This is what I asked for". */
 export interface SignOff { readonly sha256: string; readonly atMs: number; readonly signer?: string; readonly displayName?: string }
 
-async function readRecommendations(): Promise<Recommendations> {
-  const response = await fetch("/api/questions/recommendations", { headers: { accept: "application/json" } })
+async function readRecommendations(boundScope?: StudioScope | null): Promise<Recommendations> {
+  const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
+  const response = await fetch("/api/questions/recommendations", { headers: { accept: "application/json", ...scopeHeaders(scope) } })
   if (!response.ok) throw new Error(response.status === 401 ? "Sign in to build questions." : "The question tree is not available on this deployment.")
   return await response.json() as Recommendations
 }
@@ -366,8 +367,8 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
 export function QuestionTreePage() {
   const scope = useStudioScope()
   const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
-  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: readCatalog, enabled: !scope.isPending, retry: false, staleTime: Infinity })
-  const tree = useQuery({ queryKey: ["question-tree", scope.data?.orgId, scope.data?.environmentId], queryFn: readRecommendations, enabled: !scope.isPending, retry: false, staleTime: 60_000 })
+  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: () => readCatalog(scope.data), enabled: !scope.isPending, retry: false, staleTime: Infinity })
+  const tree = useQuery({ queryKey: ["question-tree", scope.data?.orgId, scope.data?.environmentId], queryFn: () => readRecommendations(scope.data), enabled: !scope.isPending, retry: false, staleTime: 60_000 })
   return (
     <section className="space-y-6">
       <div className="space-y-2">

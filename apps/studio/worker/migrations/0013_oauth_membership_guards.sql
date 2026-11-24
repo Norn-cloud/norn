@@ -1,15 +1,17 @@
--- Commit-time OAuth membership-generation, session, and per-approval guards (S3):
+-- Commit-time OAuth membership-generation, session, and per-claim guards (S3):
 -- Every OAuth grant reference encodes `<organizationId>|<memberId>` (an immutable membership
 -- generation). Legacy bare-org grants without `|<memberId>` are refused by every trigger.
--- 1. Only one claimed consent approval may be active at a time per (userId, clientId, grantRef).
+-- 1. At most one claimed consent approval row may exist per (userId, clientId, grantRef), even
+--    after expiry, until atomically rolled back and deleted.
 -- 2. oauthConsent INSERT/UPDATE requires BOTH an exact ready membership generation AND an active
 --    claimed consent approval for that exact (userId, clientId, grantRef) bound to a live,
 --    unexpired caller session (with a narrow rollback path restoring only the pre-request consent
---    snapshot recorded on the active claimed approval).
+--    snapshot recorded on the claimed approval).
 -- 3. authorization_code INSERT in verification requires an exact ready membership generation,
 --    a live unexpired session, a matching oauthConsent row for (userId, clientId, referenceId),
---    and—when a claimed approval is active for that triple—an exact match on sessionId,
---    redirectUri, codeChallenge, and state; on commit, it consumes ONLY that exact claimed approval.
+--    and—whenever ANY claimed approval exists for that triple (provisional consent)—MUST carry
+--    that exact unexpired claim's `claimId` and match its sessionId, redirectUri, codeChallenge,
+--    and state; on commit, it consumes ONLY that exact `claimId`.
 -- 4. oauthRefreshToken and user oauthAccessToken INSERT require an exact ready membership generation.
 -- 5. Deleting a membership immediately deletes matching consents & unredeemed authorization codes
 --    and revokes matching refresh & access tokens so rejoin can never resurrect prior grants.
@@ -35,7 +37,6 @@ begin
          and json_extract(v."value", '$.userId') = json_extract(new."value", '$.userId')
          and json_extract(v."value", '$.clientId') = json_extract(new."value", '$.clientId')
          and json_extract(v."value", '$.grantRef') = json_extract(new."value", '$.grantRef')
-         and (case when typeof(v."expiresAt") in ('integer', 'real') then v."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(v."expiresAt") > julianday('now') end)
      );
 end;
 
@@ -172,7 +173,10 @@ begin
          and json_extract(v."value", '$.clientId') = json_extract(new."value", '$.query.client_id')
          and json_extract(v."value", '$.grantRef') = json_extract(new."value", '$.referenceId')
          and (
-           json_extract(v."value", '$.sessionId') != json_extract(new."value", '$.sessionId')
+           json_extract(new."value", '$.claimId') is null
+           or v."id" != json_extract(new."value", '$.claimId')
+           or not (case when typeof(v."expiresAt") in ('integer', 'real') then v."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(v."expiresAt") > julianday('now') end)
+           or json_extract(v."value", '$.sessionId') != json_extract(new."value", '$.sessionId')
            or json_extract(v."value", '$.redirectUri') != coalesce(json_extract(new."value", '$.query.redirect_uri'), '')
            or coalesce(json_extract(v."value", '$.codeChallenge'), '') != coalesce(json_extract(new."value", '$.query.code_challenge'), '')
            or coalesce(json_extract(v."value", '$.state'), '') != coalesce(json_extract(new."value", '$.query.state'), '')
@@ -181,19 +185,19 @@ begin
 end;
 
 create trigger "oauth_consume_claimed_approval_on_code" after insert on "verification"
-when json_valid(new."value") and json_extract(new."value", '$.type') = 'authorization_code'
+when json_valid(new."value")
+  and json_extract(new."value", '$.type') = 'authorization_code'
+  and json_extract(new."value", '$.claimId') is not null
 begin
   delete from "verification"
-  where "identifier" glob 'oauth-approval-claimed:*'
+  where "id" = json_extract(new."value", '$.claimId')
+    and "identifier" = 'oauth-approval-claimed:' || "id"
     and json_valid("value")
     and json_extract("value", '$.type') = 'consent_approval'
     and json_extract("value", '$.userId') = json_extract(new."value", '$.userId')
     and json_extract("value", '$.clientId') = json_extract(new."value", '$.query.client_id')
     and json_extract("value", '$.grantRef') = json_extract(new."value", '$.referenceId')
-    and json_extract("value", '$.sessionId') = json_extract(new."value", '$.sessionId')
-    and json_extract("value", '$.redirectUri') = coalesce(json_extract(new."value", '$.query.redirect_uri'), '')
-    and coalesce(json_extract("value", '$.codeChallenge'), '') = coalesce(json_extract(new."value", '$.query.code_challenge'), '')
-    and coalesce(json_extract("value", '$.state'), '') = coalesce(json_extract(new."value", '$.query.state'), '');
+    and json_extract("value", '$.sessionId') = json_extract(new."value", '$.sessionId');
 end;
 
 create trigger "oauth_refresh_requires_ready_member" before insert on "oauthRefreshToken"

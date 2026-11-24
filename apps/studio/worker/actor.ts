@@ -165,9 +165,12 @@ export async function verifyWriteScope(
 
   if (upgrade) {
     // Browser WebSocket upgrades cannot send custom headers, so query scope is validated directly
-    // against the canonical server session workspace/environment and rewritten before forwarding.
+    // against the canonical server session workspace/environment and rewritten before forwarding;
+    // any expected-scope headers that ARE supplied must also match.
     const scope = await cellScope(auth, actor.orgId)
     if (options.requireEnv && scope.environmentId === null) return noCell()
+    if (headerOrg !== null && headerOrg !== actor.orgId) return mismatch()
+    if (headerEnv !== null && scope.environmentId !== headerEnv) return mismatch()
     if (url !== null) {
       const queryOrgs = url.searchParams.getAll("orgId")
       if (actor.actorKind === "user") {
