@@ -431,10 +431,15 @@ fn studio_object_refusals_match_the_served_routes() {
         "cursorInvalid": envelope(bad_cursor),
         "snapshotMoved": envelope(party(&format!("after={cursor}"))),
     });
-    let pinned: Value = serde_json::from_str(include_str!(
-        "../../../apps/studio/test/fixtures/object-query.json"
-    ))
-    .unwrap();
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../apps/studio/test/fixtures/object-query.json");
+    if std::env::var_os("NORN_BLESS").is_some() {
+        let mut rendered = serde_json::to_string_pretty(&actual).unwrap();
+        rendered.push('\n');
+        std::fs::write(&fixture_path, rendered).unwrap();
+    }
+    let pinned: Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture_path).unwrap()).unwrap();
     assert_eq!(actual, pinned);
 }
 

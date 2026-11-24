@@ -34,8 +34,11 @@ const ADMIN: Option<&str> = Some("Bearer fixture:admin@demo");
 const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
 /// The host secret the cell's lineage handle key derives from.
 const HANDLE_KEY: [u8; 32] = [5; 32];
-/// The refusal documents Studio's stand-in (`apps/studio/e2e/question-save.e2e.ts`) serves.
-const FIXTURE: &str = include_str!("../../../apps/studio/test/fixtures/definition-call.json");
+/// Path to the refusal documents Studio's stand-in (`apps/studio/e2e/question-save.e2e.ts`) serves.
+fn fixture_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../apps/studio/test/fixtures/definition-call.json")
+}
 
 /// The keyed receipt handle a reader without whole-world Values sees: the
 /// cell derives its handle key from the host secret and its scope.
@@ -837,31 +840,38 @@ fn served(fixture: &Value, name: &str, (status, document): &(u16, Value)) {
 /// Every refusal Studio's question-save stand-in serves, as the definitions
 /// routes serve it. The stand-in imports these documents, substituting only
 /// the mismatch's restatement and digest, which the cell recomputes from the
-/// caller's own payload.
+/// caller's own payload. `NORN_BLESS=1` regenerates the fixture from the
+/// live routes.
 #[test]
 fn studio_definition_refusals_match_the_client_contract() {
-    let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
     let body = json!({
         "kind": "dashboard", "id": "studio.dashboard.signed", "payload": dashboard("Signed"),
         "signoff": { "restatementSha256": sha256("something else") },
     });
     let unverifiable = cell(DefinitionKinds::default());
-    served(
-        &fixture,
-        "signoffUnavailable",
-        &post(&unverifiable, "/v1/definitions:install", ADMIN, &body),
-    );
+    let signoff_unavailable = post(&unverifiable, "/v1/definitions:install", ADMIN, &body);
     let cell = cell(DefinitionKinds::default().with_restater(stub_restate));
-    served(
-        &fixture,
-        "signoffMismatch",
-        &post(&cell, "/v1/definitions:install", ADMIN, &body),
-    );
-    served(
-        &fixture,
-        "notFound",
-        &get(&cell, "/v1/definitions/studio.dashboard.signed", "", VIEWER),
-    );
+    let signoff_mismatch = post(&cell, "/v1/definitions:install", ADMIN, &body);
+    let not_found = get(&cell, "/v1/definitions/studio.dashboard.signed", "", VIEWER);
+    if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
+        let document = json!({
+            "status": {
+                "signoffUnavailable": signoff_unavailable.0,
+                "signoffMismatch": signoff_mismatch.0,
+                "notFound": not_found.0,
+            },
+            "signoffUnavailable": signoff_unavailable.1,
+            "signoffMismatch": signoff_mismatch.1,
+            "notFound": not_found.1,
+        });
+        let text = format!("{}\n", serde_json::to_string_pretty(&document).unwrap());
+        std::fs::write(fixture_path(), text).unwrap();
+    }
+    let fixture: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture_path()).unwrap()).unwrap();
+    served(&fixture, "signoffUnavailable", &signoff_unavailable);
+    served(&fixture, "signoffMismatch", &signoff_mismatch);
+    served(&fixture, "notFound", &not_found);
 }
 
 #[test]
@@ -1145,6 +1155,7 @@ fn a_binding_retained_before_the_exact_reader_is_revisable_with_its_stored_paylo
                     payload_sha256: payload_sha256(&seeded),
                     payload: seeded,
                     signoff: None,
+                    authority: None,
                 },
                 expected_revision: None,
             };
@@ -1961,6 +1972,7 @@ fn an_existing_reserved_definition_is_read_revised_and_retired() {
                     payload_sha256: payload_sha256(&payload),
                     payload,
                     signoff: None,
+                    authority: None,
                 },
                 expected_revision: None,
             };

@@ -30,6 +30,7 @@
 //!    had the same idempotency key and binding, this one replays after current
 //!    state authorization.
 
+mod automation_input;
 mod input;
 mod owned_rows;
 mod parameter;
@@ -59,6 +60,7 @@ use crate::decision_commit::{
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
 
+pub use automation_input::{AutomationInputViolation, validate_automation_static_input};
 pub use input::{actor_derived_fields, prepare_action_input, prepare_action_input_for_call};
 pub use types::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,

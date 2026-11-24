@@ -1,11 +1,11 @@
 name: Release assets
 # When a `drop-*` release is published, build the files people install from and attach
-# them to that release: the `norn` command line for Linux and macOS on x64 and arm64, the
-# TypeScript SDK as a .tgz, the Python client as a wheel and sdist, install.sh, and
-# SHA256SUMS over all of them. Nothing goes to npm, PyPI or crates.io.
+# them to that release: `norn` and `norn-dev-host` for Linux and macOS on x64 and arm64,
+# `norn-checker-wasm`, the TypeScript SDK as a .tgz, the Python client as a wheel and
+# sdist, install.sh, and SHA256SUMS over all of them. Nothing goes to npm, PyPI or crates.io.
 #
-# Every build runs on a hosted Linux runner and cross-compiles with zig (scripts/release/
-# assets.sh). A failed run is re-run from the Actions page; uploads replace earlier files.
+# Builds run on hosted Linux runners. Native binaries cross-compile with zig through
+# scripts/release/assets.sh. A failed run can be re-run from the Actions page to replace earlier files.
 on:
   release:
     types: [published]
@@ -67,6 +67,73 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  dev-host:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-x64, linux-arm64, macos-arm64, macos-x64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.100.0
+      - name: Install zig and cargo-zigbuild
+        run: scripts/release/assets.sh tools "$RUNNER_TEMP/tools" | tail -n 1 >> "$GITHUB_PATH"
+      - name: Emulator for the arm64 smoke test
+        if: ${{ matrix.platform == 'linux-arm64' }}
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends qemu-user-static
+      - name: Build norn-dev-host
+        run: scripts/release/assets.sh dev-host ${{ matrix.platform }} dist
+      - name: Run it, or for macOS inspect it
+        run: scripts/release/assets.sh smoke-dev-host ${{ matrix.platform }} dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-dev-host-${{ matrix.platform }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  wasm:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.100.0
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: wasm-bindgen@0.2.129
+      - name: Build norn-checker-wasm
+        run: scripts/release/assets.sh wasm dist
+      - name: Load the packaged checker in Node
+        run: |
+          set -euo pipefail
+          dir=$(mktemp -d)
+          trap 'rm -rf "$dir"' EXIT
+          tar -xzf dist/norn-checker-wasm.tar.gz -C "$dir"
+          cd "$dir"
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { initSync } from './norn_checker_wasm.js';
+          initSync({ module: readFileSync('./norn_checker_wasm_bg.wasm') });
+          NODE
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-wasm
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
   sdks:
     needs: plan
     runs-on: ubuntu-24.04
@@ -102,7 +169,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [cli, sdks]
+    needs: [cli, dev-host, wasm, sdks]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

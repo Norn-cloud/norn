@@ -342,3 +342,62 @@ test("the analytics engine answers one call at a time: Studio never sends a seco
   expect(most).toBe(1)
   expect(refusedPending).toBe(1)
 })
+
+test("signed restatement: Business mode keeps canonical checker wording verbatim when user prompt and tile title contain formula-like text, with a separate labelled summary", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
+  await stage(page)
+  const literal = "sum(completed_count); conservation []"
+  const canonicalRestatement = `Refinery overview\nProposed by the assistant (claude-sonnet-5-5) for the request: "Compare ${literal} by metal"\n1. ${literal}: Yield (recovered ÷ input) of demo Conversion records, in total`
+  const proposals: Record<string, unknown>[] = []
+  await page.route("**/api/agent/dashboards**", (route: Route) => {
+    const url = new URL(route.request().url())
+    const path = url.pathname.slice("/api/agent/dashboards".length)
+    if (path === "" && route.request().method() === "GET") {
+      return route.fulfill({ json: { proposals, spentMicroUsd: 21_000, capMicroUsd: 20_000_000, model: "claude-sonnet-5-5" } })
+    }
+    if (path === "" && route.request().method() === "POST") {
+      const { request } = route.request().postDataJSON() as { request: string }
+      const definition = {
+        ...proposed,
+        tiles: [{ ...proposed.tiles[0], title: literal }],
+        origin: { ...proposed.origin, request },
+      }
+      const proposal = {
+        id: "prop_signed_1",
+        request,
+        targetId: "studio.dashboard.signed_exact",
+        targetVersion: null,
+        definition,
+        model: "claude-sonnet-5-5",
+        installed: null,
+        costMicroUsd: 10_000,
+        createdAtMs: Date.now(),
+        state: "pending",
+        verdict: {
+          admitted: true,
+          findings: [],
+          restatement: canonicalRestatement,
+          restatementSha256: "d".repeat(64),
+          note: "Check the exact text before accepting.",
+        },
+      }
+      proposals.push(proposal)
+      return route.fulfill({ json: proposal })
+    }
+    return route.fallback()
+  })
+
+  await page.goto("/dashboards")
+  await page.getByRole("textbox", { name: "Ask for a dashboard" }).fill(`Compare ${literal} by metal`)
+  await page.getByRole("button", { name: "Propose" }).click()
+
+  const card = page.locator("[data-proposal=prop_signed_1]")
+  await expect(card).toBeVisible()
+  // Canonical signed text must be byte-for-byte intact in Business mode — never regex-rewritten.
+  await expect(card.locator("[data-restatement]")).toHaveText(canonicalRestatement)
+  // Separate structured summary is explicitly labelled as a reading aid, distinct from the signed wording.
+  const summary = card.locator("[data-proposal-summary]")
+  await expect(summary).toBeVisible()
+  await expect(summary).toContainText("Summary (for reading — accepting signs the checker's exact words below)")
+  await expect(summary).toContainText(literal)
+})

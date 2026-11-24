@@ -223,6 +223,17 @@ pub fn write_cell(path: &Path) {
     drop(park_and_approve(store));
 }
 
+/// Options for the portable, synthetic checkpoint fixture. This public test
+/// key authenticates fixture rows only.
+pub fn checkpoint_fixture_options() -> StoreOptions {
+    StoreOptions {
+        checkpoint_key: Some(norn_cell::CheckpointKey::from_bytes(
+            *b"norn synthetic fixture key v6...",
+        )),
+        ..StoreOptions::default()
+    }
+}
+
 fn encode(value: &SqlValue) -> Value {
     match value {
         SqlValue::Null => Value::Null,

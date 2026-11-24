@@ -128,6 +128,84 @@ fn an_inline_calculation_is_refused_not_restated_in_part() {
     );
 }
 
+#[test]
+fn derived_metrics_with_display_restate_in_plain_words_without_formula_or_conservation_jargon() {
+    let (cases, _) = fixtures();
+    let metrics: Vec<MetricDefinition> = serde_json::from_value(serde_json::json!([
+        {
+            "name": "derived.completed",
+            "label": "sum(completed_count); conservation []",
+            "display": "total completed count",
+            "type": "simple",
+            "type_params": {
+                "expr": "completed_count",
+                "metric_aggregation_params": {
+                    "semantic_model": "demo.Application",
+                    "agg": "sum",
+                    "agg_time_dimension": "occurred_at"
+                }
+            },
+            "x-norn": {
+                "irVersion": "0.1",
+                "additivity": { "kind": "additive" },
+                "timeDimension": { "property": "occurred_at" },
+                "owner": "ops",
+                "certified": false
+            }
+        },
+        {
+            "name": "derived.applications",
+            "label": "sum(application_count); conservation []",
+            "display": "total application count",
+            "type": "simple",
+            "type_params": {
+                "expr": "application_count",
+                "metric_aggregation_params": {
+                    "semantic_model": "demo.Application",
+                    "agg": "sum",
+                    "agg_time_dimension": "occurred_at"
+                }
+            },
+            "x-norn": {
+                "irVersion": "0.1",
+                "additivity": { "kind": "additive" },
+                "timeDimension": { "property": "occurred_at" },
+                "owner": "ops",
+                "certified": false
+            }
+        },
+        {
+            "name": "derived.completion_rate",
+            "label": "sum(completed_count) / sum(application_count); sum(completion_rate); conservation []",
+            "display": "completion rate",
+            "type": "ratio",
+            "type_params": {
+                "numerator": "derived.completed",
+                "denominator": "derived.applications"
+            },
+            "x-norn": {
+                "irVersion": "0.1",
+                "additivity": { "kind": "non_additive" },
+                "timeDimension": { "property": "occurred_at" },
+                "owner": "ops",
+                "certified": false
+            }
+        }
+    ]))
+    .expect("derived metrics");
+    let mut question = cases["questions"][0]["question"].clone();
+    question["objectSet"] = serde_json::json!("demo.Application");
+    question["aggregate"] = serde_json::json!([{ "metric": "derived.completion_rate" }]);
+    let question: QuestionIR = serde_json::from_value(question).expect("QuestionIR");
+    let text = restate_question(&question, &metrics).expect("restates");
+    assert!(
+        text.starts_with("Completion rate (completed count ÷ application count)"),
+        "expected plain words, got: {text}"
+    );
+    assert!(!text.contains("conservation []"), "{text}");
+    assert!(!text.contains("sum("), "{text}");
+}
+
 /// Questions drawn from small domains, so that two draws often agree on a
 /// field: every semantic field varies, and `name` (which names rather than
 /// means) varies too. Timestamps are drawn in one spelling per instant; the

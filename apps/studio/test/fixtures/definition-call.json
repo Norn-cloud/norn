@@ -11,7 +11,8 @@
     "code": "definition.signoff_unavailable",
     "category": "invalid",
     "message": "the sign-off cannot be verified",
-    "explanation": "this cell has no restatement generator"
+    "explanation": "this cell has no restatement generator",
+    "decidedAt": "2027-01-15T08:00:00Z"
   },
   "signoffMismatch": {
     "format": "norn/refusal@2",
@@ -22,7 +23,8 @@
     "message": "the sign-off does not match the definition",
     "explanation": "the restatement the signer read is not the one this definition restates to; read the returned restatement and sign it",
     "restatement": "A dashboard titled \"Signed\"",
-    "restatementSha256": "e74a23f6a8e4510d1ddeaf5c3eea07ab363f3501ef9f45c2b4fa36a150c3c4a8"
+    "restatementSha256": "e74a23f6a8e4510d1ddeaf5c3eea07ab363f3501ef9f45c2b4fa36a150c3c4a8",
+    "decidedAt": "2027-01-15T08:00:00Z"
   },
   "notFound": {
     "format": "norn/refusal@2",
@@ -31,6 +33,7 @@
     "code": "definition.not_found",
     "category": "visibility",
     "message": "no such definition",
-    "explanation": "no definition (or version of it) with this id is installed in the cell"
+    "explanation": "no definition (or version of it) with this id is installed in the cell",
+    "decidedAt": "2027-01-15T08:00:00Z"
   }
 }

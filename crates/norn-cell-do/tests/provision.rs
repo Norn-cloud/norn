@@ -354,7 +354,8 @@ fn only_the_owner_of_the_scopes_organization_provisions_it() {
         );
         assert_eq!(response, anonymous, "{other}");
     }
-    // An expired owner token is nobody.
+    // An expired owner token is nobody: byte-identical to an anonymous caller
+    // at the same instant, with `decidedAt` reflecting the request clock.
     let late = cell.tenant.handle(
         &cell.tokens,
         &Request {
@@ -366,7 +367,24 @@ fn only_the_owner_of_the_scopes_organization_provisions_it() {
             body: &body,
         },
     );
-    assert_eq!(late, anonymous);
+    let anonymous_late = cell.tenant.handle(
+        &cell.tokens,
+        &Request {
+            method: "POST",
+            path: PROVISION_PATH,
+            query: &query(&scope),
+            authorization: None,
+            now: NOW + 400,
+            body: &body,
+        },
+    );
+    assert_eq!(late, anonymous_late);
+    let mut late_doc = json_of(&late);
+    let mut anon_doc = json_of(&anonymous);
+    assert_ne!(late_doc["decidedAt"], anon_doc["decidedAt"]);
+    late_doc.as_object_mut().unwrap().remove("decidedAt");
+    anon_doc.as_object_mut().unwrap().remove("decidedAt");
+    assert_eq!(late_doc, anon_doc);
     drop(cell);
     // Nothing was written: a restarted host finds the scope vacant, and the
     // owner's provisioning creates the cell (residue would refuse).
