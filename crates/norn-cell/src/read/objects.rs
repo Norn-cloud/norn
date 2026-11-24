@@ -67,6 +67,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         ledger: &str,
         key: &norn_kernel::quantity::QuantityKey,
     ) -> Result<norn_kernel::quantity::QuantityBalance, CellError> {
+        self.check_live()?;
         crate::quantity::balance(self.conn, world, ledger, key)
     }
 
@@ -75,6 +76,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// # Errors
     /// SQL or stored-version errors.
     pub fn quantity_version(&self, world: &str, ledger: &str) -> Result<u64, CellError> {
+        self.check_live()?;
         crate::quantity::version(self.conn, world, ledger)
     }
 
@@ -87,6 +89,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         world: &str,
         request: &norn_ir::quantity_ledger::QuantityRequest,
     ) -> Result<Vec<norn_ir::quantity_ledger::QuantityBalanceVersion>, CellError> {
+        self.check_live()?;
         crate::quantity::balance_versions(self.conn, world, request)
     }
 
@@ -95,6 +98,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// # Errors
     /// Corruption or storage errors.
     pub fn clock_floor(&self) -> Result<u64, CellError> {
+        self.check_live()?;
         crate::quantity::clock_floor(self.conn)
     }
 
@@ -108,6 +112,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         ledger: &str,
         id: &str,
     ) -> Result<Option<norn_kernel::quantity::QuantityReservation>, CellError> {
+        self.check_live()?;
         crate::quantity::reservation(self.conn, world, ledger, id)
     }
 
@@ -121,6 +126,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         ledger: &str,
         id: &str,
     ) -> Result<Option<norn_kernel::quantity::QuantityPosting>, CellError> {
+        self.check_live()?;
         crate::quantity::posting(self.conn, world, ledger, id)
     }
 
@@ -132,6 +138,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         id: &str,
     ) -> Result<Option<(String, String, u64)>, CellError> {
+        self.check_live()?;
         let tables = self.model.tables(object_type)?;
         let Some(root) = tables.first() else {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
@@ -216,6 +223,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
 
     /// The root type of `object_type`'s hierarchy.
     pub(crate) fn root_type(&self, object_type: &str) -> Result<&'a str, CellError> {
+        self.check_live()?;
         self.model
             .chain(object_type)?
             .first()
@@ -266,6 +274,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         id: &str,
     ) -> Result<u64, CellError> {
+        self.check_live()?;
         let version: Option<i64> = self.conn.query_optional(
             &format!(
                 "SELECT \"version\" FROM \"{VERSIONS}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3"
@@ -292,6 +301,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         id: &str,
     ) -> Result<Option<u64>, CellError> {
+        self.check_live()?;
         let rowid: Option<i64> = self.conn.query_optional(
             &format!(
                 "SELECT rowid FROM \"{VERSIONS}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3"
@@ -315,6 +325,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         locator: u64,
     ) -> Result<Option<String>, CellError> {
+        self.check_live()?;
         let locator = to_i64(locator, "identity rowid")?;
         self.conn.query_optional(
             &format!(
@@ -385,6 +396,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         id: &str,
         version: Option<u64>,
     ) -> Result<Option<BTreeMap<String, Vec<String>>>, CellError> {
+        self.check_live()?;
         let current = version.is_none();
         let version = match version {
             Some(version) => version,
@@ -506,6 +518,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         property: &str,
     ) -> Result<Option<BTreeSet<String>>, CellError> {
+        self.check_live()?;
         let tables = self.model.tables(object_type)?;
         let Some(root) = tables.first() else {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
@@ -603,6 +616,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         property: &str,
     ) -> Result<bool, CellError> {
+        self.check_live()?;
         if self.model.tables(object_type)?.is_empty() {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
         }
@@ -659,6 +673,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// # Errors
     /// SQL errors.
     pub fn stores_markings(&self) -> Result<bool, CellError> {
+        self.check_live()?;
         for (table, index) in [
             (MARKING_CURRENT, crate::system::MARKING_CURRENT_NONEMPTY),
             (MARKING_VERSION, crate::system::MARKING_VERSION_NONEMPTY),

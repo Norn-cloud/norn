@@ -724,6 +724,7 @@ fn predicate_objects<S: SqlEngine>(
     limit: usize,
     max_bytes: u64,
 ) -> Result<Option<Vec<PredicateObject>>, CellError> {
+    reader.check_live()?;
     let scan_cap = usize::try_from(
         norn_ir::ResourceLimitProfile::norn_limits_v1()
             .slice

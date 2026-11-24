@@ -148,6 +148,7 @@ pub(crate) fn link_state<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     key: &LinkKey,
 ) -> Result<LinkState, CellError> {
+    reader.check_live()?;
     let source_type = key.source.object_type.as_str();
     let version = reader.link_version(
         MAIN_WORLD,
@@ -277,6 +278,7 @@ pub(crate) fn point_link<E: SqlEngine>(
     target_type: Option<&str>,
     target: &str,
 ) -> Result<Option<LinkRecord>, CellError> {
+    reader.check_live()?;
     let (declaration, table) = reader.model().link(object_type, link)?;
     let version_row = if target_type.is_some() {
         reader.link_version_row(world, &table.table, source, target)?
@@ -524,6 +526,7 @@ pub(crate) fn has_link_target<S: SqlEngine>(
     link: &str,
     excluded: &BTreeSet<FactKey>,
 ) -> Result<Option<bool>, CellError> {
+    reader.check_live()?;
     let Some((source_type, _, _)) =
         reader.root_row(MAIN_WORLD, source.object_type.as_str(), &source.key)?
     else {
@@ -563,6 +566,7 @@ pub(crate) fn has_link_source<S: SqlEngine>(
     link: &str,
     excluded: &BTreeSet<FactKey>,
 ) -> Result<Option<bool>, CellError> {
+    reader.check_live()?;
     let Some((concrete_target, _, _)) =
         reader.root_row(MAIN_WORLD, target.object_type.as_str(), &target.key)?
     else {
@@ -708,6 +712,7 @@ pub(crate) fn predicate_filter_lineage_markings<E: SqlEngine>(
     world: &str,
     predicate_reads: &[(ObjectTypeName, Vec<String>)],
 ) -> Result<BTreeSet<String>, CellError> {
+    reader.check_live()?;
     let mut labels = BTreeSet::new();
     if predicate_reads.is_empty() {
         return Ok(labels);
@@ -854,6 +859,7 @@ pub(crate) fn read_predicate_for_action<S: SqlEngine>(
         u64,
     ) -> Result<Option<Vec<PredicateObject>>, CellError>,
 ) -> Result<PredicateActionRead, CellError> {
+    reader.check_live()?;
     // Pass `usize::MAX` so `select_members` does not truncate away a hidden
     // row past `max_members + 1` before authorization; `load` still bounds the
     // scan by `scan_cap` (`max_records`) and `max_bytes`.

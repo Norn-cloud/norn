@@ -5,16 +5,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::action::ActionCommandRejection;
 use crate::cell_host::{
-    CellCommit, CommitReceipt, FactExpectation, FactKey, FactState, FactWrite, JsonObject,
-    JsonValue, LinkReadExpectation, LinkWrite, PredicateReadExpectation,
+    CellCommit, CommitReceipt, FactExpectation, FactKey, FactState, FactVersion, FactWrite,
+    JsonObject, JsonValue, LinkReadExpectation, LinkWrite, PredicateReadExpectation,
 };
 use crate::decision_commit::{DecisionRefusal, DecisionTurn, FactSlice};
 use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::EnvelopeLimits;
 use crate::naming_series::SeriesCandidate;
 
-/// The object type of the kernel's idempotency records of action calls.
-/// Schema-backed hosts register this internal type before calling [`commit_action`](super::commit_action) (#2911).
+/// Object type of the kernel's idempotency records of action calls (registered by host, #2911).
 pub const ACTION_CALL_TYPE: &str = "norn.ActionCall";
 
 /// Protected per-parent/collection manifest of stable child row ids and order.
@@ -687,6 +686,8 @@ pub enum ActionOutcome {
         receipt: CommitReceipt,
         /// The call's record, as written.
         record: ActionCallRecord,
+        /// Exact target version at `receipt.seq` (written or CAS-verified read).
+        target_version: FactVersion,
     },
     /// An exact retry of a committed call: nothing new was committed.
     Replayed {

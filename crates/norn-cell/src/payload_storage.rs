@@ -11,6 +11,9 @@ use crate::codec::canonical_json;
 use crate::engine::{SqlEngine, params};
 use crate::read::to_i64;
 
+mod cursor;
+pub(crate) use cursor::{ExportDecodeCursor, decode_event_budgeted};
+
 const PREFIX: &str = "norn.cell.payload-storage/1:";
 const MIN_BYTES: usize = 1024;
 
@@ -333,14 +336,14 @@ enum PathPart {
     Index(usize),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AtPath {
     path: Vec<PathPart>,
     reference: Reference,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Packed {
     scope: String,

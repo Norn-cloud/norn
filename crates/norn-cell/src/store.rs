@@ -472,6 +472,10 @@ pub struct StoreOptions {
     /// pages to the file mid-transaction, which the crash simulations use to
     /// exercise hot-journal and WAL recovery.
     pub cache_pages: Option<u32>,
+    /// OPEN-CHECKPOINT-1 (#1551 round 4): the host's open-checkpoint key,
+    /// from its secret store, never from the cell file. `None` opens every
+    /// time from genesis and records no checkpoint.
+    pub checkpoint_key: Option<crate::open_checkpoint::CheckpointKey>,
 }
 
 /// The native page cache a file-backed store keeps when
@@ -1858,6 +1862,9 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// HOST-INSTALL-LIVE-1: how many live objects the last definitions
     /// check or install evaluated under the candidate's governing laws.
     law_checked: Cell<u64>,
+    /// OPEN-CHECKPOINT-1 (#1551 round 4): the history scrub, the reads it
+    /// holds back, and the checkpoint this handle validated.
+    pub(crate) scrub: RefCell<crate::scrub::Scrub>,
 }
 
 #[derive(Clone, Copy)]
@@ -2421,6 +2428,7 @@ impl<E: SqlEngine> CellStore<E> {
             quantity_boundary: Cell::new(None),
             fork: None,
             law_checked: Cell::new(0),
+            scrub: RefCell::default(),
         }
     }
 
@@ -2437,6 +2445,9 @@ impl<E: SqlEngine> CellStore<E> {
         store
             .transparency
             .replace(self.transparency.borrow().clone());
+        // A fork serves what its base serves: the same reads wait, and it
+        // records no checkpoint of its own.
+        store.scrub.replace(self.scrub.borrow().for_fork());
         store.fork = Some(pin);
         store
     }
@@ -2559,27 +2570,25 @@ impl<E: SqlEngine> CellStore<E> {
         // One proof cache for this read-only pass (#1423): receipts and the
         // retained writer models are proven once per pass, not once per event.
         let pass = RefCell::default();
-        let (head, boundary, transparency, fork) = store.conn.transaction(|| {
+        let upgrading = matches!(
+            crate::engine_release::admission(&store.conn)?,
+            crate::engine_release::Admission::Upgrade { .. }
+        );
+        let (verified, fork) = store.conn.transaction(|| {
             Self::init_schema(&store.conn, &store.model, source)?;
             if let Some(expected) = expected {
                 store.require_cell_id(expected)?;
             }
-            crate::cell_identity::verify_history(&store.conn)?;
-            let (head, boundary) = store
-                .read()
-                .with_transaction_verified_receipts(&pass)
-                .verify_ledger_with_boundary(&LedgerHead::genesis())?;
-            store.verify_definition_history()?;
-            store.read().verify_value_history()?;
-            crate::identity::validate(&store.read())?;
-            let transparency = crate::transparency::load(&store.conn)?;
+            let verified = store.verify_history(&pass)?;
             let fork = crate::fork::load_pin(&store.conn)?;
-            refuse_pin_past(fork.as_ref(), head.commits)?;
-            Ok::<_, CellError>((head, boundary, transparency, fork))
+            refuse_pin_past(fork.as_ref(), verified.head.commits)?;
+            // An upgrading open verified from genesis, so record its checkpoint inside this tx.
+            store.finish_open_scrub(upgrading, &verified)?;
+            Ok::<_, CellError>((verified, fork))
         })?;
-        store.verified.replace(head);
-        store.quantity_boundary.set(boundary);
-        store.transparency.replace(transparency);
+        store.verified.replace(verified.head);
+        store.quantity_boundary.set(verified.boundary);
+        store.transparency.replace(verified.transparency);
         store.fork = fork;
         // Only an accepted file takes the requested journal mode (#1504).
         store.conn.admitted()?;
@@ -2601,139 +2610,97 @@ fn refuse_pin_past(
 }
 
 impl<E: SqlEngine> CellStore<E> {
+    pub(crate) fn quantity_boundary_cached(&self) -> Option<crate::quantity::FormatBoundary> {
+        self.quantity_boundary.get()
+    }
+
+    /// The typed install proof of retained definition version
+    /// `versions[index]`, installed by `receipt`: its export record, admission
+    /// receipt, readmission against the version before it, ledger event,
+    /// retained model and governing laws all agree with the retained row.
+    /// Run for every install after an open checkpoint and, on every open,
+    /// for the version active at the checkpoint (S6, #1551 round 2): live
+    /// catalog reads consume its retained set.
     #[allow(
         clippy::too_many_lines,
         reason = "startup validates every retained install before serving the cell"
     )]
-    fn verify_definition_history(&self) -> Result<(), CellError> {
-        let reader = self.read();
-        let versions = reader.installed_definition_versions()?;
-        let receipts = reader.receipt_stream();
-        let mut next_version = 1_u64;
-        let mut version_index = 0_usize;
-        let mut active_version = 0_u64;
-        let mut previous_install_seq = 0_u64;
-
-        for receipt in receipts {
-            let receipt = receipt?;
-            if let Some(version) = versions.get(version_index)
-                && version.commit_seq == receipt.body.commit_seq
+    pub(crate) fn verify_definition_install(
+        versions: &[InstalledDefinitionSet],
+        version_index: usize,
+        receipt: &Receipt,
+        record: &crate::export::ExportRecord,
+        entries: &[crate::read::LedgerEntry],
+    ) -> Result<(), CellError> {
+        let version = versions
+            .get(version_index)
+            .ok_or(CellError::OutOfRange("definition history index"))?;
+        let installation =
+            record
+                .definition_install
+                .as_ref()
+                .ok_or_else(|| CellError::LedgerCorrupt {
+                    seq: version.commit_seq,
+                    reason: "installed definitions have no typed export record".to_owned(),
+                })?;
+        if let Some(receipt_text) = &version.admission_receipt {
+            verify_admission_receipt(receipt_text, &version.receipt_sha256)?;
+        }
+        if let Some(readmission) = &installation.readmission {
+            let previous = version_index
+                .checked_sub(1)
+                .and_then(|index| versions.get(index))
+                .ok_or_else(|| CellError::LedgerCorrupt {
+                    seq: version.commit_seq,
+                    reason: "definition readmission has no prior version".to_owned(),
+                })?;
+            if readmission.previous_receipt_sha256 != previous.receipt_sha256
+                || !readmission_canonical_set_matches(
+                    &previous.canonical_set,
+                    &version.canonical_set,
+                    previous.layout.as_deref(),
+                    version.layout.as_deref(),
+                    previous.layout_revision,
+                    readmission.layout_migration,
+                )?
+                || previous.registry != version.registry
+                || previous.model_hash != version.model_hash
+                || previous.ddl_hash != version.ddl_hash
+                || version.admission_receipt.is_none()
             {
-                if version.version != next_version
-                    || version.commit_seq <= previous_install_seq
-                    || receipt.body.definitions_version != version.version
-                {
-                    return Err(CellError::LedgerCorrupt {
-                        seq: receipt.body.commit_seq,
-                        reason: "definition history version or receipt order is inconsistent"
-                            .to_owned(),
-                    });
-                }
-                let record = self
-                    .local_export_record(version.commit_seq)?
-                    .ok_or_else(|| CellError::LedgerCorrupt {
-                        seq: version.commit_seq,
-                        reason: "installed definitions have no typed export record".to_owned(),
-                    })?;
-                let installation =
-                    record
-                        .definition_install
-                        .as_ref()
-                        .ok_or_else(|| CellError::LedgerCorrupt {
-                            seq: version.commit_seq,
-                            reason: "installed definitions have no typed export record".to_owned(),
-                        })?;
-                if let Some(receipt_text) = &version.admission_receipt {
-                    verify_admission_receipt(receipt_text, &version.receipt_sha256)?;
-                }
-                if let Some(readmission) = &installation.readmission {
-                    let previous = version_index
-                        .checked_sub(1)
-                        .and_then(|index| versions.get(index))
-                        .ok_or_else(|| CellError::LedgerCorrupt {
-                            seq: version.commit_seq,
-                            reason: "definition readmission has no prior version".to_owned(),
-                        })?;
-                    if readmission.previous_receipt_sha256 != previous.receipt_sha256
-                        || !readmission_canonical_set_matches(
-                            &previous.canonical_set,
-                            &version.canonical_set,
-                            previous.layout.as_deref(),
-                            version.layout.as_deref(),
-                            previous.layout_revision,
-                            readmission.layout_migration,
-                        )?
-                        || previous.registry != version.registry
-                        || previous.model_hash != version.model_hash
-                        || previous.ddl_hash != version.ddl_hash
-                        || version.admission_receipt.is_none()
-                    {
-                        return Err(CellError::LedgerCorrupt {
-                            seq: version.commit_seq,
-                            reason: "definition readmission changed its definitions or lost receipt evidence"
-                                .to_owned(),
-                        });
-                    }
-                    validate_readmission_transition(previous, version, readmission)?;
-                }
-                let event = definition_event(
-                    version.version,
-                    (version.version > 1).then_some(version.version.saturating_sub(1)),
-                    &version.receipt_sha256,
-                    &version.registry,
-                    &installation.diff,
-                    installation.readmission.as_ref(),
-                )?;
-                let installed_model = Model::from_retained_snapshot(&installation.model)?;
-                installed_model.check_governing_laws(&version.canonical_set)?;
-                let entries =
-                    reader.ledger_page(receipt.body.first_event_seq.saturating_sub(1), 1)?;
-                if installation.installed != *version
-                    || record.receipt != receipt
-                    || installed_model.model_hash() != version.model_hash
-                    || installed_model.ddl_hash() != version.ddl_hash
-                    || record.model_hash != version.model_hash
-                    || record.ddl_hash != version.ddl_hash
-                    || receipt.body.event_count != 1
-                    || record.batch.events.len() != 1
-                    || record.batch.events.first() != Some(&event)
-                    || record.entries != entries
-                {
-                    return Err(CellError::LedgerCorrupt {
-                        seq: version.commit_seq,
-                        reason: "definition history disagrees with its typed export record"
-                            .to_owned(),
-                    });
-                }
-                active_version = version.version;
-                previous_install_seq = version.commit_seq;
-                next_version = next_version
-                    .checked_add(1)
-                    .ok_or(CellError::OutOfRange("definitions version"))?;
-                version_index = version_index
-                    .checked_add(1)
-                    .ok_or(CellError::OutOfRange("definition history index"))?;
-            } else if receipt.body.definitions_version != active_version {
                 return Err(CellError::LedgerCorrupt {
-                    seq: receipt.body.commit_seq,
-                    reason: "receipt names a definitions version not in force".to_owned(),
+                    seq: version.commit_seq,
+                    reason:
+                        "definition readmission changed its definitions or lost receipt evidence"
+                            .to_owned(),
                 });
             }
+            validate_readmission_transition(previous, version, readmission)?;
         }
-        if version_index != versions.len() {
+        let event = definition_event(
+            version.version,
+            (version.version > 1).then_some(version.version.saturating_sub(1)),
+            &version.receipt_sha256,
+            &version.registry,
+            &installation.diff,
+            installation.readmission.as_ref(),
+        )?;
+        let installed_model = Model::from_retained_snapshot(&installation.model)?;
+        installed_model.check_governing_laws(&version.canonical_set)?;
+        if installation.installed != *version
+            || record.receipt != *receipt
+            || installed_model.model_hash() != version.model_hash
+            || installed_model.ddl_hash() != version.ddl_hash
+            || record.model_hash != version.model_hash
+            || record.ddl_hash != version.ddl_hash
+            || receipt.body.event_count != 1
+            || record.batch.events.len() != 1
+            || record.batch.events.first() != Some(&event)
+            || record.entries != entries
+        {
             return Err(CellError::LedgerCorrupt {
-                seq: versions
-                    .get(version_index)
-                    .map_or(0, |version| version.commit_seq),
-                reason: "definition history extends beyond the receipt ledger".to_owned(),
-            });
-        }
-        let active = active_definition_version(&self.conn)?;
-        if active != (active_version != 0).then_some(active_version) {
-            return Err(CellError::LedgerCorrupt {
-                seq: active_version,
-                reason: "active definitions pointer disagrees with retained commit history"
-                    .to_owned(),
+                seq: version.commit_seq,
+                reason: "definition history disagrees with its typed export record".to_owned(),
             });
         }
         Ok(())
@@ -2749,6 +2716,7 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// [`CellError::BindingMismatch`] when the file is bound to another value.
     pub fn bind(&mut self, key: &str, value: &str) -> Result<(), CellError> {
+        self.check_writable()?;
         if key == crate::cell_identity::FORMAT_KEY {
             if value == crate::cell_identity::FORMAT && self.cell_id()?.is_some() {
                 return Ok(());
@@ -2765,7 +2733,7 @@ impl<E: SqlEngine> CellStore<E> {
             return self.require_cell_id(&id);
         }
         let meta_key = format!("binding:{key}");
-        self.conn.transaction(|| -> Result<(), CellError> {
+        self.write_tx(|| {
             let found: Option<String> = self.conn.query_optional(
                 &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                 params![meta_key],
@@ -2801,6 +2769,12 @@ impl<E: SqlEngine> CellStore<E> {
     /// Committed-state reads.
     #[must_use]
     pub fn read(&self) -> StoreReader<'_, E> {
+        self.served_reader()
+    }
+
+    /// [`Self::read`] without the scrub's history gate: for the
+    /// verification passes themselves.
+    pub(crate) fn verifier(&self) -> StoreReader<'_, E> {
         StoreReader::new(&self.conn, &self.model)
             .with_source_disputes(&self.source_disputes)
             .with_mapping_plans(&self.mapping_plans)
@@ -2829,6 +2803,7 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// [`CellError::LedgerCorrupt`] when the ledger does not verify.
     pub fn verified_head(&self) -> Result<LedgerHead, CellError> {
+        self.check_writable()?;
         let checkpoint = self.verified.borrow().clone();
         let (head, boundary) = match self.read().verify_ledger_with_boundary(&checkpoint) {
             Ok(verified) => verified,
@@ -3152,6 +3127,7 @@ impl<E: SqlEngine> CellStore<E> {
         input: &InstalledDefinitionInput,
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, CellError> {
+        self.read().check_live()?;
         let install = DefinitionInstallContext {
             candidate_model,
             input,
@@ -3190,6 +3166,9 @@ impl<E: SqlEngine> CellStore<E> {
         ) -> Result<(T, Option<crate::link_guard::VerifiedMappingProof>), X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
+        // A fenced cell commits nothing (#1551 round 4).
+        self.persist_pending_fence();
+        self.scrub.borrow().refuse_fenced()?;
         if batch
             .effects
             .iter()
@@ -3220,6 +3199,10 @@ impl<E: SqlEngine> CellStore<E> {
                     // and bring it to this engine's storage version before
                     // any statement below touches it.
                     validate_store_format(&self.conn)?;
+                    let upgrading = matches!(
+                        crate::engine_release::admission(&self.conn)?,
+                        crate::engine_release::Admission::Upgrade { .. }
+                    );
                     crate::engine_release::upgrade(&self.conn)?;
                     // A file provisioned before a system table existed gains it here,
                     // so the next run start or write finds it (idempotent DDL).
@@ -3243,20 +3226,19 @@ impl<E: SqlEngine> CellStore<E> {
                         || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     }
-                    crate::cell_identity::verify_history(&self.conn)?;
                     let pass = RefCell::default();
-                    let (head, boundary) = self.read().with_transaction_verified_receipts(&pass).verify_ledger_with_boundary(&LedgerHead::genesis())?;
-                    self.verify_definition_history()?;
-                    self.read().verify_value_history()?;
-                    crate::identity::validate(&self.read())?;
-                    // FORK-PIN-1: refused before the transaction commits.
-                    refuse_pin_past(self.fork.as_ref(), head.commits)?;
-                    self.verified.replace(head);
-                    admitted_boundary.set(boundary);
-                    let receipt = self.read().receipt_at(1)?.ok_or_else(|| CellError::Engine("missing provisioning receipt".to_owned()))?;
+                    let verified = self.verify_history(&pass)?;
+                    refuse_pin_past(self.fork.as_ref(), verified.head.commits)?;
+                    self.finish_open_scrub(upgrading, &verified)?;
+                    self.transparency.replace(verified.transparency);
+                    self.verified.replace(verified.head);
+                    admitted_boundary.set(verified.boundary);
+                    let receipt = self.verifier().receipt_at(1)?.ok_or_else(|| CellError::Engine("missing provisioning receipt".to_owned()))?;
                     return Ok((T::default(), CommitOutcome::Replayed(receipt)));
                 }
             }
+            // S12: sibling handles fail closed on a durable fence.
+            crate::open_checkpoint::check_fence(&self.conn)?;
             let actual_version = active_definition_version(&self.conn)?;
             let (version, install_record, synthetic_batch) = if let Some(install) = &installation {
                 let preflight = preflight_definition_install(
@@ -3304,6 +3286,13 @@ impl<E: SqlEngine> CellStore<E> {
             let prior_receipt = effective_batch.idempotency_key.as_ref()
                 .map(|key| receipt_by_key(&self.conn, &effective_batch.world, key))
                 .transpose()?.flatten();
+            // S4 (#1551 round 4): a miss is proof of a first commit only once
+            // the scrub has checked every covered receipt's lookup columns
+            // against its hashed body; until then a retry may be hidden, so
+            // the write is refused as retryable rather than committed twice.
+            if prior_receipt.is_none() && effective_batch.idempotency_key.is_some() {
+                self.scrub.borrow().refuse_unproven_miss()?;
+            }
             crate::quantity::clock_floor(&self.conn)?;
             // Reconcile host time only after the transaction-local retry lookup.
             let mut reconciled = effective_batch.clone();
@@ -3592,6 +3581,7 @@ impl<E: SqlEngine> CellStore<E> {
                 } else if let Err(error) = self.refresh_transparency() {
                     tracing::warn!(%error, "committed receipt; transparency cache refresh deferred");
                 }
+                self.checkpoint_after_commit(&receipt);
                 #[cfg(feature = "native")]
                 self.export_notify.notify_one();
                 tracing::debug!(
@@ -3634,7 +3624,7 @@ impl<E: SqlEngine> CellStore<E> {
         generation: u64,
         outcome: &Value,
     ) -> Result<bool, CellError> {
-        self.conn.transaction(|| -> Result<bool, CellError> {
+        self.write_tx(|| {
             let head = StoreReader::new(&self.conn, &self.model)
                 .with_source_disputes(&self.source_disputes)
                 .head_command()?;
@@ -3668,7 +3658,7 @@ impl<E: SqlEngine> CellStore<E> {
         generation: u64,
         outcome: &Value,
     ) -> Result<bool, CellError> {
-        self.conn.transaction(|| -> Result<bool, CellError> {
+        self.write_tx(|| {
             let parked = StoreReader::new(&self.conn, &self.model)
                 .with_source_disputes(&self.source_disputes)
                 .pending_command(command_id)?
@@ -3742,8 +3732,7 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// Serialization, observation-size or queue-position limits, or SQL errors.
     pub fn inject(&mut self, observation_id: &str, observed: &Value) -> Result<bool, CellError> {
-        self.conn
-            .transaction(|| inject_observation(&self.conn, observation_id, observed))
+        self.write_tx(|| inject_observation(&self.conn, observation_id, observed))
     }
 }
 

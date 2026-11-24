@@ -527,3 +527,76 @@ fn a_flow_timer_runs_under_its_runs_pinned_rule() {
         "{charged}"
     );
 }
+
+// --- OPEN-CHECKPOINT-1 (#1551): the history scrub on the due-work clock ---
+
+/// The cell at `path` as a keyed host opens it (the test key).
+fn keyed_store(path: &Path) -> CellStore<NativeEngine> {
+    static KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    let key = *KEY.get_or_init(|| {
+        let mut key = [0_u8; 32];
+        getrandom::fill(&mut key).unwrap();
+        key
+    });
+    let options = StoreOptions {
+        checkpoint_key: Some(norn_cell::CheckpointKey::from_bytes(key)),
+        ..StoreOptions::default()
+    };
+    CellStore::open(path, marker(), options).unwrap()
+}
+
+/// After an open from its checkpoint, the cell's history scrub runs on the
+/// host's due-work clock, as the Durable Object's alarm and the dev host's
+/// loop run it: the cell is due at once while it runs, each wake runs one
+/// bounded step and asks to wake again a moment later, and when it ends the
+/// cell has nothing due.
+#[test]
+fn the_history_scrub_runs_on_the_due_work_clock() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    {
+        let mut cell: SqliteCell<String, String, String, NativeEngine> =
+            SqliteCell::new(keyed_store(&path), dev_scope().key(), |_| String::new()).unwrap();
+        cell.advance_to(at(5));
+        let mut requests = vec![("define".to_owned(), quantity_support::define())];
+        requests.extend((1..=300_u64).map(|n| {
+            (
+                format!("post-{n}"),
+                quantity_support::post(n, &format!("p{n}"), "fund", 1),
+            )
+        }));
+        for (key, mut request) in requests {
+            request.balance_versions = cell
+                .store()
+                .read()
+                .quantity_balance_versions("main", &request)
+                .unwrap();
+            cell.commit_quantity(&request, &key).unwrap();
+        }
+    }
+    let host = DevHost::from_store(keyed_store(&path), dev_scope(), |_| {
+        std::collections::BTreeMap::new()
+    })
+    .unwrap();
+    assert_eq!(
+        next_due(&host).unwrap(),
+        Some(0),
+        "the scrub is due at once"
+    );
+    let mut wakes = 0_u32;
+    while next_due(&host).unwrap() == Some(0) {
+        let work = run_due(&host, at(10)).unwrap();
+        assert!(work.failed.is_empty(), "{work:?}");
+        if next_due(&host).unwrap() == Some(0) {
+            assert_eq!(
+                work.next,
+                Some(10 + norn_api::timers::SCRUB_PAUSE_MS),
+                "a step asks for the next wake a moment later"
+            );
+        }
+        wakes += 1;
+        assert!(wakes < 1_000, "the scrub never ended");
+    }
+    assert!(wakes > 1, "the scrub ran in bounded steps, not one");
+    assert_eq!(next_due(&host).unwrap(), None, "nothing is due after it");
+}

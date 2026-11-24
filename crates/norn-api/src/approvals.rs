@@ -670,7 +670,7 @@ fn park<E: SqlEngine>(
     };
     // Under the cell lock nothing else parks this id: any refusal is the
     // host's.
-    CellHost::commit(cell, commit).map_err(|error| Refusal::host(format!("{error:?}")))?;
+    CellHost::commit(cell, commit).map_err(|error| Refusal::from_commit_host_error(&error))?;
     Ok(())
 }
 
@@ -871,11 +871,7 @@ pub(crate) fn refuse<E: SqlEngine>(
     decision_id: &str,
     refusal: Refusal,
 ) -> Result<Refusal, Refusal> {
-    use crate::refusal::RefusalCategory;
-    if matches!(
-        refusal.category,
-        RefusalCategory::Internal | RefusalCategory::Permission | RefusalCategory::Visibility
-    ) {
+    if refusal.is_unrecorded_approval_refusal() {
         return Ok(refusal);
     }
     // Under the hold the refused try holds, the call's state is read again
@@ -896,7 +892,7 @@ pub(crate) fn refuse<E: SqlEngine>(
     };
     match cell.commit_approval_refusal(&refused) {
         Ok(_receipt) => Ok(refusal),
-        Err(error) => Err(Refusal::host(format!("{error:?}"))),
+        Err(error) => Err(Refusal::from_commit_host_error(&error)),
     }
 }
 

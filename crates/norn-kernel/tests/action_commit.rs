@@ -634,7 +634,10 @@ fn action_commits_once_and_replays_retries() {
 
     let approved =
         commit_action(&mut cell, &catalog, &call(&approve, "SO-1", "k2"), &Allow).unwrap();
-    let ActionOutcome::Committed { receipt, record } = approved else {
+    let ActionOutcome::Committed {
+        receipt, record, ..
+    } = approved
+    else {
         panic!("expected a commit: {approved:?}");
     };
     assert_eq!(
@@ -717,7 +720,10 @@ fn upsert_creates_and_replays_in_one_action_commit() {
     let action_call = call(&action, "SO-CREATE", "create-upsert");
 
     let committed = commit_action(&mut cell, &catalog, &action_call, &Allow).unwrap();
-    let ActionOutcome::Committed { receipt, record } = committed else {
+    let ActionOutcome::Committed {
+        receipt, record, ..
+    } = committed
+    else {
         panic!("expected a commit: {committed:?}");
     };
     assert_eq!(record.effect_kind.as_deref(), Some("upsert_input_object"));
@@ -3865,8 +3871,9 @@ fn owned_rows_preserve_generated_names_but_allow_updates_and_reorders() {
         ]),
     );
     let before = cell.ledger().len();
-    let ActionOutcome::Committed { receipt, record } =
-        commit_action(&mut cell, &catalog, &update, &Allow).unwrap()
+    let ActionOutcome::Committed {
+        receipt, record, ..
+    } = commit_action(&mut cell, &catalog, &update, &Allow).unwrap()
     else {
         panic!("expected existing-row update");
     };
@@ -4650,4 +4657,112 @@ fn trace_context_is_strictly_optional_persists_in_receipts_and_refuses_malformed
         ])),
     );
     assert!(norn_kernel::ActionCallRecord::from_values(&corrupt).is_none());
+}
+
+/// S7/S5b (#1551 round 7): an action addressed via an ancestor type whose
+/// declared slice read retained the target under its concrete subtype must
+/// commit cleanly (not refuse as stale against version 0) and report the
+/// concrete target's post-commit version.
+#[test]
+fn ancestor_addressed_action_with_subtype_slice_read_commits_and_reports_version() {
+    let mut types = order_types();
+    types[0].properties.push(
+        serde_json::from_value(json!({
+            "id": "note",
+            "type": { "kind": "text" },
+            "constraints": { "nullable": true }
+        }))
+        .unwrap(),
+    );
+    let subtype = "commerce.ReviewedOrder";
+    types.push(
+        serde_json::from_value(json!({
+            "name": subtype,
+            "extends": ORDER
+        }))
+        .unwrap(),
+    );
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(types.clone());
+    let concrete = seed(&mut cell, subtype, "SO-sub", "draft");
+
+    // Bump an ordinary non-lifecycle property on the concrete subtype to version 2.
+    let mut bump_payload =
+        fixture("ir/commerce-sales-order-submit-invoice.action.json")["payload"].clone();
+    bump_payload["actionId"] = json!("commerce.bump");
+    bump_payload["inputSchema"] = json!({
+        "type": "object",
+        "properties": { "so_number": { "type": "string" }, "note": { "type": "string" } },
+        "required": ["so_number", "note"],
+        "additionalProperties": false
+    });
+    bump_payload["preconditions"] = json!([]);
+    bump_payload["effectProgram"] = json!({
+        "kind": "upsert_input_object",
+        "objectIdField": "so_number",
+        "objectKind": ORDER,
+        "entityArtifactId": "commerce.SalesOrder.entity",
+        "entityArtifactVersion": "0.1.0",
+        "writeMode": { "kind": "upsert" }
+    });
+    let bump: ActionRoot = serde_json::from_value(bump_payload.clone()).unwrap();
+    let mut bump_call = call(&bump, "SO-sub", "bump-1");
+    bump_call.input =
+        serde_json::from_value(json!({ "so_number": "SO-sub", "note": "ready" })).unwrap();
+    bump_call.object_type = Some(ObjectTypeName(subtype.to_owned()));
+    let ActionOutcome::Committed { target_version, .. } =
+        commit_action(&mut cell, &catalog, &bump_call, &Allow).unwrap()
+    else {
+        panic!("expected bump commit");
+    };
+    assert_eq!(target_version, FactVersion(2));
+    assert_eq!(cell.load(&concrete).unwrap().version, FactVersion(2));
+
+    // Action addressed through ancestor `ORDER` with a declared slice read of
+    // concrete `subtype` and unchanged property values; `upsert_input_object`
+    // emits `FactChange::Set` resolved via `slice_identity` to `subtype` (v2 -> v3).
+    let mut noop_payload = bump_payload;
+    noop_payload["actionId"] = json!("commerce.noop_ancestor");
+    noop_payload["slice"] = json!([{
+        "name": "reviewed",
+        "objectType": subtype,
+        "key": { "property": { "from": "input", "property": "so_number" } }
+    }]);
+    noop_payload["preconditions"] = json!(["slice.reviewed.note == \"ready\""]);
+    let noop: ActionRoot = serde_json::from_value(noop_payload).unwrap();
+    let mut noop_call = call(&noop, "SO-sub", "noop-ancestor-1");
+    noop_call.input =
+        serde_json::from_value(json!({ "so_number": "SO-sub", "note": "ready" })).unwrap();
+    noop_call.object_type = Some(ObjectTypeName(ORDER.to_owned()));
+
+    struct AllowSlice;
+    impl ActionAuthorizer for AllowSlice {
+        fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+        fn authorize_read(
+            &self,
+            _: &norn_kernel::ActionReadAuthzRequest<'_>,
+        ) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+        fn authorize_read_type(
+            &self,
+            _: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+        ) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+    }
+
+    let outcome = commit_action(&mut cell, &catalog, &noop_call, &AllowSlice)
+        .expect("ancestor-addressed action with subtype slice read must not refuse as stale");
+    let ActionOutcome::Committed { target_version, .. } = outcome else {
+        panic!("expected fresh commit");
+    };
+    assert_eq!(target_version, FactVersion(3));
+    assert_eq!(cell.load(&concrete).unwrap().version, FactVersion(3));
+
+    let replayed = commit_action(&mut cell, &catalog, &noop_call, &AllowSlice).unwrap();
+    assert!(matches!(replayed, ActionOutcome::Replayed { .. }));
 }

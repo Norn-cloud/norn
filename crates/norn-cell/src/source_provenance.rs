@@ -65,6 +65,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut DecodeBudget,
         reveal_source: impl FnOnce(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Option<InstanceSourceProvenance>, CellError> {
+        self.check_live()?;
         let invalid = || CellError::MappingBundleMismatch;
         // An exhausted budget is a bound, not corrupt evidence: the route serves
         // it as 413 `core.compute.bound_exceeded`, never a partial trace.

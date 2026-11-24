@@ -442,11 +442,8 @@ pub struct LinkReadPage {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
-    /// The links `link` from `source` (of `object_type`) in `world`, by
-    /// target id.
-    ///
+    /// The links `link` from `source` (of `object_type`) in `world`, by target id.
     /// # Errors
-    ///
     /// Unknown type or link; SQL engine or decode errors.
     pub fn links(
         &self,
@@ -455,6 +452,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         link: &str,
         source: &str,
     ) -> Result<Vec<LinkRecord>, CellError> {
+        self.check_live()?;
         let (_, table) = self.model.link(object_type, link)?;
         let mut columns = vec![(TARGET_COLUMN, false)];
         columns.extend(table.columns.iter().filter_map(|column| {
@@ -512,14 +510,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// The target ids of at most `limit` links `link` from `source` (of
-    /// `object_type`) in `world`, by target id. Their aggregate UTF-8 byte
-    /// length is checked against `max_bytes` before any target strings are
-    /// fetched; `None` means the keys exceed that budget. Only the target
-    /// column is read: a traversal never decodes link properties, and never
-    /// more rows than a caller with a record budget can admit (#3079).
-    ///
+    /// `object_type`) in `world`, by target id, bounded by `max_bytes` (#3079).
     /// # Errors
-    ///
     /// Unknown type or link; SQL engine or decode errors.
     pub fn link_targets(
         &self,
@@ -530,6 +522,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         limit: usize,
         max_bytes: u64,
     ) -> Result<Option<Vec<String>>, CellError> {
+        self.check_live()?;
         let (_, table) = self.model.link(object_type, link)?;
         let from = format!(
             "FROM {} WHERE {} = ?1 AND {} = ?2 ORDER BY {} LIMIT ?3",
@@ -590,6 +583,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         limit: usize,
         max_bytes: u64,
     ) -> Result<Option<Vec<LinkTargetVersion>>, CellError> {
+        self.check_live()?;
         let (_, table) = self.model.link(object_type, link)?;
         let Some(targets) =
             self.link_targets(world, object_type, link, source, limit, max_bytes)?
@@ -663,6 +657,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         target_type: &str,
         target: &str,
     ) -> Result<u64, CellError> {
+        self.check_live()?;
         let root = self.root_type(object_type)?;
         let target_root = self.canonical_type(target_type);
         let mut version = None;
@@ -696,6 +691,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         source: &str,
         target: &str,
     ) -> Result<Option<LinkRecord>, CellError> {
+        self.check_live()?;
         crate::link_guard::point_link(self, world, object_type, link, source, None, target)
     }
 
@@ -767,6 +763,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut DecodeBudget,
         max_candidate_bytes: u64,
     ) -> Result<Option<LinkReadPage>, CellError> {
+        self.check_live()?;
         budget.depend(crate::reactive::Dependency::Object {
             object_type: self.canonical_type(object_type),
             key: id.to_owned(),
@@ -1102,6 +1099,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         links: &[LinkEdgeRecord],
         mut budget: Option<&mut DecodeBudget>,
     ) -> Result<Vec<u64>, CellError> {
+        self.check_live()?;
         let mut recorded = Vec::with_capacity(links.len());
         let mut versions = Vec::new();
         for link in links {
@@ -1369,9 +1367,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// Indexed pending-link record identities for one canonical source output.
-    /// Row and byte budgets are applied before fetching record keys. `None`
-    /// refuses an incomplete result rather than silently dropping intents.
-    ///
+    /// Row and byte budgets apply before fetching record keys.
     /// # Errors
     /// SQL engine or out-of-range length metadata.
     pub fn pending_link_records_from_with_budget(
@@ -1381,6 +1377,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         source_key: &str,
         budget: &mut DecodeBudget,
     ) -> Result<Option<Vec<String>>, CellError> {
+        self.check_live()?;
         let limit = i64::try_from(budget.remaining_rows().saturating_add(1))
             .unwrap_or(MAX_SAFE_INTEGER)
             .min(MAX_SAFE_INTEGER);
@@ -1407,10 +1404,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )?.into_iter().map(|values| SqlRow(values).get::<String>(0)).collect::<Result<Vec<_>, _>>().map(Some)
     }
 
-    /// A bounded prefix of intents indexed by canonical target identity.
-    /// Keys are charged from length metadata before retrieval. The boolean
-    /// requests continuation; deleting consumed intents advances the prefix.
-    ///
+    /// Bounded prefix of intents indexed by canonical target identity.
     /// # Errors
     /// SQL or invalid length metadata.
     pub fn pending_link_records_to_with_budget(
@@ -1421,6 +1415,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         limit: usize,
         budget: &mut DecodeBudget,
     ) -> Result<(Vec<String>, bool), CellError> {
+        self.check_live()?;
         // Charge the lookup itself, including empty target neighborhoods.
         if !budget.charge_rows(1)
             || !budget.charge(

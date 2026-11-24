@@ -1749,7 +1749,7 @@ pub(crate) fn expire<E: SqlEngine>(
         request_hash: None,
     };
     cell.commit_decision_resolution(commit, &resolved)
-        .map_err(|error| Refusal::host(format!("{error:?}")))?;
+        .map_err(|error| Refusal::from_commit_host_error(&error))?;
     Ok(())
 }
 

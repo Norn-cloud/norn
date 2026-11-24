@@ -147,12 +147,63 @@ impl Checkpoint {
 pub(crate) type ReceiptLog = MemoryBackedTree<Sha256, String>;
 
 pub(crate) fn load<E: SqlEngine>(conn: &E) -> Result<ReceiptLog, CellError> {
+    load_bound(conn, None)
+}
+
+/// [`load`], and OPEN-CHECKPOINT-1: the first `checkpoint.head.commits`
+/// receipt digests must rebuild the checkpoint's recorded root, so no
+/// receipt it covers was replaced since it was written.
+///
+/// # Errors
+/// SQL failures, or a root that does not match.
+pub(crate) fn load_bound<E: SqlEngine>(
+    conn: &E,
+    checkpoint: Option<&crate::open_checkpoint::OpenCheckpoint>,
+) -> Result<ReceiptLog, CellError> {
     let mut log = ReceiptLog::new();
+    let check = |log: &ReceiptLog, checkpoint: &crate::open_checkpoint::OpenCheckpoint| {
+        if crate::open_checkpoint::root_hex(log.root().as_bytes()) == checkpoint.receipts_root {
+            Ok(())
+        } else {
+            Err(crate::open_checkpoint::corrupt(
+                checkpoint.head.commits,
+                "the receipts it covers no longer rebuild its root",
+            ))
+        }
+    };
+    if let Some(checkpoint) = checkpoint
+        && checkpoint.head.commits == 0
+    {
+        check(&log, checkpoint)?;
+    }
+    let mut expected = 0_u64;
     for row in conn.query(
-        "SELECT receipt_hash FROM _norn_receipt ORDER BY commit_seq",
+        "SELECT commit_seq, receipt_hash FROM _norn_receipt ORDER BY commit_seq",
         &[],
     )? {
-        log.push(crate::engine::SqlRow(row).get::<String>(0)?);
+        let row = crate::engine::SqlRow(row);
+        let commit = crate::read::to_u64(row.get(0)?, "commit_seq")?;
+        expected = expected
+            .checked_add(1)
+            .ok_or(CellError::OutOfRange("commit_seq"))?;
+        if commit != expected {
+            return Err(CellError::LedgerCorrupt {
+                seq: expected,
+                reason: "receipt commit sequence is not contiguous".to_owned(),
+            });
+        }
+        log.push(row.get::<String>(1)?);
+        if let Some(checkpoint) = checkpoint
+            && log.len() == checkpoint.head.commits
+        {
+            check(&log, checkpoint)?;
+        }
+    }
+    if checkpoint.is_some_and(|checkpoint| log.len() < checkpoint.head.commits) {
+        return Err(crate::open_checkpoint::corrupt(
+            log.len(),
+            "the cell holds fewer receipts than it covers",
+        ));
     }
     Ok(log)
 }
@@ -199,6 +250,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// SQL failures while catching up receipts from another store handle.
     pub fn transparency_checkpoint(&self) -> Result<Checkpoint, CellError> {
         self.refuse_fork_evidence()?;
+        self.read().check_history("transparency reads")?;
         self.refresh_transparency()?;
         Ok(Checkpoint(self.transparency.borrow().root()))
     }
@@ -214,6 +266,7 @@ impl<E: SqlEngine> CellStore<E> {
         index: usize,
     ) -> Result<Option<InclusionProof>, CellError> {
         self.refuse_fork_evidence()?;
+        self.read().check_history("transparency reads")?;
         self.refresh_transparency()?;
         let log = self.transparency.borrow();
         Ok(log
@@ -234,6 +287,7 @@ impl<E: SqlEngine> CellStore<E> {
         old_size: u64,
     ) -> Result<Option<ConsistencyProof>, CellError> {
         self.refuse_fork_evidence()?;
+        self.read().check_history("transparency reads")?;
         self.refresh_transparency()?;
         let log = self.transparency.borrow();
         if old_size == 0 || old_size > log.len() {
