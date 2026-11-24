@@ -1,6 +1,6 @@
 --- a/version_check.rs
 +++ b/version_check.rs
-@@ -31,3 +31,3 @@
+@@ -33,3 +33,3 @@
  pub(crate) const fn checked_next_version(version: u64) -> Option<u64> {
 -    version.checked_add(1)
 +    Some(version.saturating_add(1))

@@ -1,6 +1,7 @@
 """Check the inline version contracts and their verifier-reported outcomes."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -85,12 +86,35 @@ def check_verdict(data, returncode, symbols, mutant=None):
 
 def verify(path, tools, work, symbols, mutant=None):
     # A fresh process per case, with only the pinned solver and library bundle.
+    env = os.environ.copy()
+    for override in ("VARGO_TARGET_DIR", "__VERUS_DRIVER_VIA_CARGO__"):
+        env.pop(override, None)
+    bundle = tools / "verus-x86-linux"
+    env.update(RUSTUP_HOME=str(tools / "rustup"), VERUS_ROOT=str(bundle),
+               VERUS_Z3_PATH=str(bundle / "z3"), VERUS_USE_RUSTUP="1")
+    logs = [] if mutant else ["--log", "vir", "--log", "vir-option=no_span+no_fn_details",
+                              "--log-dir", str(work / "vir")]
     result = subprocess.run([
         tools / "verus-x86-linux/verus", "--crate-name", crate, "--crate-type=lib",
         "--edition=2024", "--no-cheating", "--no-external-by-default", "--num-threads", "1",
-        "-Zcrate-attr=verus::untrusted", "--time", "--output-json", path,
-    ], cwd=work, stdout=subprocess.PIPE, text=True, timeout=120)
+        "-Zcrate-attr=verus::untrusted", "--time", "--output-json", *logs, path,
+    ], cwd=work, env=env, stdout=subprocess.PIPE, text=True, timeout=120)
     check_verdict(json.loads(result.stdout), result.returncode, symbols, mutant)
+
+
+def compare_production_ir(repo, work, symbols):
+    # Use Cargo's production package, features, and normal rustc configuration.
+    # Only the product crate needs access to the pinned compiler's THIR printer.
+    thir = work / "kernel.thir"
+    # A run-specific diagnostic directory forces Cargo to run the printer even
+    # on warm caches, without changing cfgs, codegen options or source paths.
+    with thir.open("w") as dump:
+        subprocess.run(["cargo", "+1.100.0", "rustc", "--locked", "--release", "-p", "norn-kernel",
+                        "--lib", "--", "-Zunpretty=thir-flat", f"-Zdump-mir-dir={work / 'mir'}"],
+                       cwd=repo, env={**os.environ, "RUSTC_BOOTSTRAP": "norn_kernel"},
+                       stdout=dump, check=True)
+    with thir.open() as lines:
+        return _sibling("kernel_verus_ir").compare((work / "vir/crate.vir").read_text(), lines, symbols)
 
 
 def main():
@@ -102,12 +126,15 @@ def main():
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     subprocess.run(["git", "diff", "--exit-code", head, "--", source, patches,
                     "verification/coverage-v1/manifest", "scripts/verify-kernel-inline-verus.sh",
-                    "scripts/kernel_inline_verus.py", "scripts/bootstrap-verification-tools.sh"], check=True)
+                    "scripts/kernel_inline_verus.py", "scripts/kernel_verus_ir.py", "scripts/bootstrap-verification-tools.sh"], check=True)
     require(symbols and {p.stem for p in patches.glob("*.patch")}
             == {item["mutant"] for item in symbols.values()}, "incomplete mutant inventory")
     original = source.read_text()
+    require("#![deny(clippy::default_numeric_fallback)]" in original.splitlines(),
+            "missing module-level default_numeric_fallback denial")
     digests = approved_statements(original, symbols)
     verify(source, tools, work, symbols)
+    compared = compare_production_ir(repo, work, symbols)
     records = []
     for name, contract in symbols.items():
         patch = patches / (contract["mutant"] + ".patch")
@@ -129,6 +156,7 @@ def main():
             "toolDigest": (tools / "verus-install.sha256").read_text().split()[0],
             "sourceDigest": hashlib.sha256(source.read_bytes()).hexdigest(),
             "statementDigest": digests[name],
+            "virThirComparison": {"equal": True, **compared[name]},
             "secondLensGate": contract["secondLensGate"],
             "mutants": [{"id": patch.stem, "killedAt": contract["postcondition"]}],
         })

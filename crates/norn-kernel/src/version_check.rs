@@ -1,5 +1,7 @@
 //! Pure machine-version successor shared by commit admission and proof tools.
 
+#![deny(clippy::default_numeric_fallback)]
+
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 

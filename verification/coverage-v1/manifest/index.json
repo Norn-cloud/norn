@@ -122,13 +122,13 @@
       "checked_next_version": {
         "postcondition": "successor",
         "mutant": "saturating_add",
-        "statementDigest": "0fe750e53a2e371852e251d9173a7c7a2887f7bc02493682ff78d582a76068df",
+        "statementDigest": "a3ed7825fcb2f91f4aecc90d457ece1b46a7f841348e34d7d3df3144f8f704ef",
         "secondLensGate": "kernel-l1-version-correspondence"
       },
       "has_committed_deletion": {
         "postcondition": "deleted",
         "mutant": "zero",
-        "statementDigest": "1598894695a78ab71d53bcb05e3ed424f6deb988eaa64d5202555cc78322d908",
+        "statementDigest": "4ebd1d99570a6f88d71954d7fa3143473d975152f60988bd4449c9fbda0b0269",
         "secondLensGate": "kernel-version-kani"
       }
     }

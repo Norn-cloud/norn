@@ -5,6 +5,7 @@ import unittest
 
 HERE = Path(__file__).resolve().parent
 gate = runpy.run_path(str(HERE / "kernel_inline_verus.py"))
+compare_ir = runpy.run_path(str(HERE / "kernel_verus_ir.py"))["compare"]
 coverage = runpy.run_path(str(HERE / "coverage_manifest.py"))
 
 
@@ -49,6 +50,87 @@ class VersionContracts(unittest.TestCase):
                 rows.pop()
                 with self.assertRaisesRegex(SystemExit, "unexpected executable"):
                     check(data, code, symbols, mutant)
+
+
+
+class CompilerAgreement(unittest.TestCase):
+    # A scalar static call and an unused parameter isolate the three D107 fields.
+    # Preserve both pinned printers' syntax at every field read by the decoders.
+    vir = """(Function
+ (Fun :path norn_kernel_version::probe) :mode Exec :params (
+ (Param :name (VarIdent "x" (VarIdentDisambiguate RustcId 2)) :typ (Typ Int (IntRange U 64))))
+ :ensure () :body (@@ (> Block () (@@ (> Call :target
+ (CallTarget Fun (CallTargetKind Static) (Fun :path core::t%num::impl&%9::min_value) () ()
+ (CallTargetAttrs :autospec (AutospecUsage Final) :const_var false :assume_external_allowed false))
+ :args () :post_args None :body None) (Typ Int (IntRange U 64)))) (Typ Int (IntRange U 64))))
+"""
+    thir = """DefId(0:4 ~ norn_kernel[123a]::version_check::probe):
+Thir {
+    arms: [],
+    blocks: [
+        Block {
+            stmts: [],
+            expr: Some(e1,),
+        },
+    ],
+    exprs: [
+        Expr {
+            kind: ZstLiteral {
+                user_ty: None,
+            },
+            ty: FnDef(DefId(2:11 ~ core[123a]::num::{impl#9}::min_value), Binder { value: [], bound_vars: [], },),
+        },
+        Expr {
+            kind: Call {
+                ty: FnDef(DefId(2:11 ~ core[123a]::num::{impl#9}::min_value), Binder { value: [], bound_vars: [], },),
+                fun: e0,
+                args: [],
+            },
+            ty: u64,
+        },
+        Expr {
+            kind: Block {
+                block: b0,
+            },
+            ty: u64,
+        },
+    ],
+    stmts: [],
+    params: [
+        Param {
+            pat: Some(Pat {
+                    kind: Binding {
+                        name: "x",
+                        var: LocalVarId(HirId(DefId(0:4 ~ norn_kernel[123a]::version_check::probe).2),),
+                        ty: u64,
+                    },
+                }),
+            ty: u64,
+        },
+    ],
+}
+"""
+
+    def test_equal_compiler_views(self):
+        ir = compare_ir(self.vir, self.thir.splitlines(True), ["probe"])["probe"]
+        self.assertEqual(ir["callees"], [(1, "core::num::{impl#9}::min_value")])
+        self.assertEqual(ir["expr_types"], [("Block", "u64", 1), ("call", "u64", 0)])
+        self.assertEqual(ir["local_types"], [("x", "u64")])
+
+    def test_rejects_each_compiler_disagreement(self):
+        exprs, params = self.thir.split("    params:")
+        cases = {
+            "callee": self.thir.replace("impl#9", "impl#8"),
+            "expression": exprs.replace("ty: u64", "ty: u32") + "    params:" + params,
+            "local": exprs + "    params:" + params.replace("ty: u64", "ty: u32"),
+            "missing": self.thir.replace("version_check::probe", "unrelated::probe"),
+            "unknown expression": self.thir.replace("kind: Call", "kind: Other"),
+        }
+        for case, dump in cases.items():
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                compare_ir(self.vir, dump.splitlines(True), ["probe"])
+        with self.assertRaisesRegex(ValueError, "incomplete compiler inventory"):
+            compare_ir("", self.thir.splitlines(True), ["probe"])
 
 
 if __name__ == "__main__":

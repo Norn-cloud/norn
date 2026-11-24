@@ -64,7 +64,7 @@ Every `quint verify --backend apalache` gate runs through `scripts/quint_apalach
 
 Every CI plan also runs the following checks.
 
-- In `guards`: install the pinned Verus bundle with `scripts/bootstrap-verification-tools.sh --verus-only`, then run `bash scripts/verify-kernel-inline-verus.sh all`. The gate checks the approved statement digests before running Verus. Each mutant must fail its own named postcondition. The separate Aeneas successor theorem and Kani harnesses target the ordinary Rust source.
+- In `guards`: install the pinned Verus bundle with `scripts/bootstrap-verification-tools.sh --verus-only`, then run `bash scripts/verify-kernel-inline-verus.sh all`. The gate checks the approved statement digests before running Verus. It compares each checked executable body’s typed operations, resolved callees and local types with the THIR emitted by Cargo for the production kernel library (D107). The decoder accepts the scalar module’s current expression forms and refuses unrecognized constructs. The module denies Clippy’s numeric fallback lint. Each mutant must fail its own named postcondition. The separate Aeneas successor theorem and Kani harnesses target the ordinary Rust source.
 
 - In `cheap`: `scripts/proof_enrollment.py` and its tests (registry checks over the proof sources), and `coverage-v1/negative_canaries.py --workflow-contract`. These check the registries, not the proofs.
 - In the test shards: `crates/norn-cell/tests/kernel_quint.rs` replays the Quint ITF traces committed in `kernel-v2/traces/` against the Rust kernel. It reads the traces; it does not run Quint.
