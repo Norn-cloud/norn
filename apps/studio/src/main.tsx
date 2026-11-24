@@ -10,7 +10,7 @@ import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
 import { useDecisionBadge } from "./decisions/inbox.tsx"
-import { useGuaranteesMenu } from "./guarantees.tsx"
+import { useRulesMenu } from "./guarantees.tsx"
 import { useImportTriageBadge } from "./imports/import-triage-page.tsx"
 import { useQuestionsMenu } from "./questions.tsx"
 import { routeTree } from "./routes.tsx"
@@ -37,7 +37,7 @@ const SECTIONS: readonly Section[] = [
   { path: "/sources", label: "Sources", icon: Database, perspective: "builder", group: "Model", kind: "source", useMenu: useSourcesMenu, paths: ["/objects"] },
   { path: "/transforms", label: "Transforms", icon: Blend, perspective: "builder", group: "Model", kind: "transform" },
   { path: "/canvas", label: "Canvas", icon: Network, perspective: "builder", group: "Logic" },
-  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, perspective: "builder", group: "Logic", kind: "guarantee", useMenu: useGuaranteesMenu },
+  { path: "/rules", label: "Rules", icon: ShieldCheck, perspective: "builder", group: "Logic", kind: "guarantee", useMenu: useRulesMenu },
   { path: "/markings", label: "Markings", icon: Fingerprint, perspective: "builder", group: "Logic" },
   { path: "/connections", label: "Connections", icon: Plug, perspective: "builder", group: "Settings" },
 ]

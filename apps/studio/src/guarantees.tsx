@@ -1,19 +1,24 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
-import { Link, useRouterState } from "@tanstack/react-router"
-import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale, ShieldCheck } from "lucide-react"
+import { Link, useNavigate, useRouterState, useSearch } from "@tanstack/react-router"
+import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale, ShieldAlert, ShieldCheck } from "lucide-react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
-import { PageHeader, Panel, Well } from "@/components/panel"
-import { useMode } from "@/lib/live-transport"
+import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { NotServed, useMode } from "@/lib/live-transport"
 import { TableCard } from "@/components/table-card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { cases, field, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "./lib/guarantees.ts"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useView } from "@/lib/view"
+import { conceptTitle, type Concept } from "./lib/catalog.ts"
+import { cases, field, heldKpiSub, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, uniqueLaws, uniqueRuleCount, verdictWords } from "./lib/guarantees.ts"
 import { transport, type Guarantees } from "./lib/transport.ts"
 import type { MenuEntry } from "./shell.tsx"
-import { ENFORCED, LawsPanel } from "./laws.tsx"
-import { useCatalog } from "./sources.tsx"
+import { ENFORCED, HeldRuleRow, heldCountText, heldGroupKey, LawsPanel, useHeldBack } from "./laws.tsx"
+import { RECORDED_HINT, useCatalog } from "./sources.tsx"
 
 const TITLE: Readonly<Record<string, string>> = {
   original: "As declared",
@@ -40,7 +45,7 @@ function Verdict({ verdict }: { readonly verdict: Guarantees["verdict"] }) {
 function Story({ scenario }: { readonly scenario: NonNullable<Guarantees["goals"][number]["scenario"]> }) {
   return (
     <div className="space-y-2 px-4 py-3 text-sm">
-      <div className="font-medium">{scenario.kind === "counterexample" ? "The model checker found a case that breaks the law" : "A case the law allows, showing it is not vacuous"}</div>
+      <div className="font-medium">{scenario.kind === "counterexample" ? "The model checker found a case that breaks the rule" : "A case the rule allows, showing it is not vacuous"}</div>
       <ol className="space-y-1">
         {scenario.states.map((state, step) => (
           <li key={step} className="tabular-nums">
@@ -77,7 +82,7 @@ function Document({ name, document }: { readonly name: string; readonly document
           <h2 className="text-section font-medium">{TITLE[name] ?? name}</h2>
           <Badge variant="outline" title="A document the model checker produced, replayed exactly. Not a live connection.">Recorded</Badge>
         </div>
-        <p className="text-meta text-muted-foreground">Law {document.lawId} {document.lawVersion} · <Verdict verdict={document.verdict} /></p>
+        <p className="text-meta text-muted-foreground">Rule {document.lawId} {document.lawVersion} · <Verdict verdict={document.verdict} /></p>
       </div>
       <StatStrip>
         <KpiTile icon={CircleCheck} label="Goals discharged" value={`${document.discharged} / ${document.eligible}`} sub="of the goals this checker supports" />
@@ -98,7 +103,7 @@ function Document({ name, document }: { readonly name: string; readonly document
           </TableBody>
         </Table></TableCard>
       </Panel>
-      {/* Every recorded trace: a counterexample that breaks the law, or a witness that shows it is not vacuous. */}
+      {/* Every recorded trace: a counterexample that breaks the rule, or a witness that shows it is not vacuous. */}
       {document.goals.map((goal) => goal.scenario && (
         <Panel key={goal.index} icon={goal.scenario.kind === "counterexample" ? CircleX : CircleCheck}
           label={`${goal.scenario.kind === "counterexample" ? "Counterexample to" : "A case allowed by"} ${field(goal.goalKind)}`}>
@@ -125,12 +130,12 @@ function BeforeAfter({ scenario }: { readonly scenario: Scenario }) {
   const after = scenario.states.at(-1)
   return (
     <div className="grid items-stretch gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1.4fr)]">
-      <div className="flex min-h-24 flex-col justify-center rounded-xl border border-dashed px-4 py-3 text-center">
+      <div className="flex min-h-24 flex-col justify-center rounded-lg border border-dashed px-4 py-3 text-center">
         <div className="text-meta text-muted-foreground">Before</div>
         <div className="pt-1 font-medium">{before?.exists ? Object.entries(before.values).map(([name, value]) => `${field(name)} ${scalar(value)}`).join(" · ") : `No ${scenario.identity} yet`}</div>
       </div>
       <ArrowRight aria-label={`then ${scenario.writerArtifactId} runs`} className="mx-auto size-5 self-center text-muted-foreground max-sm:rotate-90" />
-      <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3">
+      <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3">
         <div className="text-meta text-muted-foreground">After</div>
         <dl className="divide-y divide-destructive/15 pt-1">
           {Object.entries(after?.values ?? {}).map(([name, value]) => (
@@ -145,15 +150,14 @@ function BeforeAfter({ scenario }: { readonly scenario: Scenario }) {
   )
 }
 
-/** The proof story at a glance: the declared law holds on every eligible check; the broken copy is caught by a concrete case. */
+/** The proof story at a glance: the declared rule holds on every eligible check; the broken copy is caught by a concrete case. */
 function Hero({ declared, broken }: { readonly declared: Guarantees; readonly broken: Guarantees | undefined }) {
   const counterexample = broken?.goals.find(({ scenario }) => scenario?.kind === "counterexample")?.scenario
   const unknown = declared.goals.filter(({ verdict }) => verdict.kind === "unknown").length
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-      <section className="enter flex flex-col rounded-2xl border bg-card p-1.5">
-        <h2 className="flex h-9 items-center gap-2 px-2.5 text-sm font-medium"><ShieldCheck aria-hidden className="size-4 text-muted-foreground" />{TITLE.original}</h2>
-        <div className="flex flex-1 flex-col justify-between gap-5 rounded-xl border bg-surface-subtle px-5 py-5">
+      <Panel icon={ShieldCheck} label={TITLE.original}>
+        <Well className="flex flex-col justify-between gap-5 px-5 py-5">
           <div className="space-y-2">
             <div className="flex items-baseline gap-3">
               <CircleCheck aria-hidden className="size-8 shrink-0 self-center text-success" />
@@ -161,7 +165,7 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
             </div>
             <div className="text-lg font-medium">supported checks proven</div>
           </div>
-          <ul className="divide-y rounded-lg border bg-card">
+          <ul className="divide-y rounded-md border">
             {declared.goals.filter(({ verdict }) => verdict.kind !== "unknown").map((goal) => (
               <li key={goal.index} className="flex items-center gap-2.5 px-3 py-2 text-sm" title={verdictWords(goal.verdict)}>
                 <VerdictIcon verdict={goal.verdict} />
@@ -176,32 +180,58 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
             )}
           </ul>
           <p className="text-sm text-muted-foreground">
-            <Verdict verdict={declared.verdict} />{cases(declared.boundsJson) !== undefined && <> · {cases(declared.boundsJson)} cases checked</>} · law <code className="text-meta text-foreground">{declared.lawId}</code>
+            <Verdict verdict={declared.verdict} />{cases(declared.boundsJson) !== undefined && <> · {cases(declared.boundsJson)} cases checked</>} · rule <code className="text-meta text-foreground">{declared.lawId}</code>
           </p>
-        </div>
-      </section>
-      {broken && counterexample && <section style={{ animationDelay: "90ms" }} className="enter flex flex-col rounded-2xl border bg-card p-1.5">
-        <h2 className="flex h-9 items-center gap-2 px-2.5 text-sm font-medium"><CircleX aria-hidden className="size-4 text-destructive" />A deliberately broken copy is caught</h2>
-        <div className="flex flex-1 flex-col gap-4 rounded-xl border bg-surface-subtle px-5 py-5">
-          <p className="text-panel text-pretty">With the loss rule removed, the model checker finds a case that breaks the law:</p>
-          <BeforeAfter scenario={counterexample} />
-          <p className="text-meta text-muted-foreground"><Verdict verdict={broken.verdict} /> · {broken.discharged} of {broken.eligible} supported checks proven · written by <code>{counterexample.writerArtifactId}</code></p>
-        </div>
-      </section>}
+        </Well>
+      </Panel>
+      {broken && counterexample && (
+        <Panel icon={CircleX} label="A deliberately broken copy is caught">
+          <Well className="flex flex-col gap-4 px-5 py-5">
+            <p className="text-panel text-pretty">With the loss rule removed, the model checker finds a case that breaks the rule:</p>
+            <BeforeAfter scenario={counterexample} />
+            <p className="text-meta text-muted-foreground"><Verdict verdict={broken.verdict} /> · {broken.discharged} of {broken.eligible} supported checks proven · written by <code>{counterexample.writerArtifactId}</code></p>
+          </Well>
+        </Panel>
+      )}
     </div>
   )
 }
 
-/** The recorded guarantee documents, for the submenu island. */
-export function useGuaranteesMenu(): readonly MenuEntry[] | undefined {
+/** The recorded proof documents, for the sidebar submenu when no cell is connected. */
+export function useRulesMenu(): readonly MenuEntry[] | undefined {
   const recorded = useMode().data?.kind === "recorded"
   const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees, enabled: recorded })
   return read.data?.map(({ name }) => ({ href: `#guarantee-${name}`, label: TITLE[name] ?? name }))
 }
 
-/** A connected cell's laws, every type's together: what each must keep and how the cell holds it. */
-function LiveLaws() {
+/** A type heading linking to its Workspace records view, with its technical id under Technical view. */
+function TypeHeading({ concept, technical }: { readonly concept: Concept; readonly technical: boolean }) {
+  return (
+    <span className="inline-flex flex-wrap items-baseline gap-2">
+      <Link to="/objects/$type" params={{ type: concept.name }} className="underline-offset-4 hover:underline">{concept.title}</Link>
+      {technical && <code className="font-mono text-xs font-normal text-muted-foreground">{concept.name}</code>}
+    </span>
+  )
+}
+
+/** A connected cell's rules, grouped by type: what each protects, what it holds back now, and the server's fix. */
+function LiveRules() {
   const { read, catalog } = useCatalog()
+  const { groups, section, scanLimit, inbox } = useHeldBack()
+  const { view } = useView()
+  const search = useSearch({ strict: false }) as { view?: string }
+  const navigate = useNavigate()
+  const heldOnly = search.view === "held"
+  const setHeldOnly = (next: boolean) => void navigate({ to: "/rules", search: next ? { view: "held" } as never : {}, replace: true })
+
+  const technical = view === "technical"
+  const unknownTypeHeading = (objectType: string) => (
+    <span className="inline-flex flex-wrap items-baseline gap-2">
+      <Link to="/objects/$type" params={{ type: objectType }} className="underline-offset-4 hover:underline">{conceptTitle(objectType)}</Link>
+      {technical && <code className="font-mono text-xs font-normal text-muted-foreground">{objectType}</code>}
+    </span>
+  )
+
   return (
     <LoadState
       status={read.status}
@@ -210,21 +240,124 @@ function LiveLaws() {
       isFetching={read.isFetching}
       onRetry={() => void read.refetch()}
       skeleton="cards"
-      loadingLabel="Reading guarantees"
-      isEmpty={(data) => data.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type").length === 0}
-      empty={{ icon: Scale, title: "No laws declared", description: "No admitted law governs a type in this cell." }}
+      loadingLabel="Reading rules"
     >
       {(data) => {
-        const governed = data.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type")
+        const all = data.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type")
+        // The platform's own types (core.*) keep rules a business reader never acts on: they fold under System.
+        const governed = all.filter(({ name }) => !name.startsWith("core."))
+        const system = all.filter(({ name }) => name.startsWith("core."))
+        const knownTypes = new Set(all.map(({ name }) => name))
+        // Any type holding back work without a declared catalog law (e.g. a built-in link rule) still surfaces.
+        const extraHeldTypes = [...new Set(groups.map(({ objectType }) => objectType))].filter((type) => !knownTypes.has(type))
+        // In the held-work view, follow the server's inbox order (largest held groups first).
+        const heldTypes = [...new Set(groups.map(({ objectType }) => objectType))]
+
+        const businessLaws = uniqueLaws(governed)
+        const businessRuleCount = uniqueRuleCount(governed)
+        const errorSeverityCount = businessLaws.filter(({ severity }) => severity === "error").length
+        const warningSeverityCount = businessLaws.filter(({ severity }) => severity === "warning").length
+        const systemRuleCount = uniqueRuleCount(system)
+        const heldBadge = section && (section.count > 0 || section.approximate) ? heldCountText(section.count, section.approximate) : undefined
+
         return (
           <div className="space-y-5">
-            <StatStrip>
-              <KpiTile icon={Scale} label="Laws in force" value={governed.reduce((sum, { laws, rules }) => sum + laws.length + rules.filter((rule) => !laws.some(({ rationale }) => rationale === rule)).length, 0)} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
-              <KpiTile icon={ShieldCheck} label="Refuse a breaking write" value={governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "error").length, 0)} sub="checked on every write" />
-            </StatStrip>
-            <p className="flex items-start gap-2 text-meta text-muted-foreground"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />{ENFORCED}</p>
-            {governed.map((concept) => <LawsPanel key={concept.name} concept={concept} enforced={false}
-              label={<Link to="/sources/$concept" params={{ concept: concept.name }} className="underline-offset-4 hover:underline">{concept.title}</Link>} />)}
+            {(governed.length > 0 || section !== undefined) && (
+              <StatStrip>
+                <KpiTile icon={Scale} label="Rules in force" value={businessRuleCount} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
+                <KpiTile icon={ShieldCheck} label="Reporting severity" value={`${errorSeverityCount} error`} sub={`${warningSeverityCount} warning · separate from enforcement`} />
+                {section !== undefined && (
+                  <KpiTile
+                    icon={ShieldAlert}
+                    label="Held back (per rule)"
+                    value={heldCountText(section.count, section.approximate)}
+                    sub={heldKpiSub(section, groups, scanLimit)}
+                  />
+                )}
+              </StatStrip>
+            )}
+            {inbox.isError && !(inbox.error instanceof NotServed) && (
+              <p role="alert" className="text-sm text-destructive">{inbox.error.message}</p>
+            )}
+            <Tabs value={heldOnly ? "held" : "all"} onValueChange={(next) => setHeldOnly(next === "held")}>
+              <TabsList>
+                <TabsTrigger value="all">All rules</TabsTrigger>
+                <TabsTrigger value="held">
+                  Held back{heldBadge !== undefined && <span className="ms-1.5 text-xs text-muted-foreground tabular-nums">{heldBadge}</span>}
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="all" className="space-y-5 pt-3">
+                {all.length === 0 && extraHeldTypes.length === 0 && (
+                  <div className="rounded-lg border"><EmptyState icon={Scale} title="No rules admitted">No admitted rule governs a type in this cell.</EmptyState></div>
+                )}
+                <p className="flex items-start gap-2 text-meta text-muted-foreground"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />{ENFORCED}</p>
+                {governed.map((concept) => (
+                  <LawsPanel key={concept.name} concept={concept} enforced={false} heldGroups={groups} scanLimit={scanLimit}
+                    label={<TypeHeading concept={concept} technical={technical} />} />
+                ))}
+                {extraHeldTypes.map((objectType) => {
+                  const concept = data.byName.get(objectType)
+                  return concept
+                    ? <LawsPanel key={objectType} concept={concept} enforced={false} heldGroups={groups} scanLimit={scanLimit} label={<TypeHeading concept={concept} technical={technical} />} />
+                    : (
+                      <Panel key={objectType} icon={Scale} label={unknownTypeHeading(objectType)}>
+                        <Well className="divide-y">
+                          {groups.filter((group) => group.objectType === objectType).map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={scanLimit} />)}
+                        </Well>
+                      </Panel>
+                    )
+                })}
+                {system.length > 0 && (
+                  <details className="group/system">
+                    <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden">
+                      <ChevronRight aria-hidden className="size-4 transition-transform group-open/system:rotate-90" />
+                      System rules ({systemRuleCount}): how the platform keeps its own records
+                    </summary>
+                    <div className="space-y-4 pt-3">
+                      {system.map((concept) => (
+                        <LawsPanel key={concept.name} concept={concept} enforced={false} heldGroups={groups} scanLimit={scanLimit}
+                          label={<TypeHeading concept={concept} technical={technical} />} />
+                      ))}
+                    </div>
+                  </details>
+                )}
+                <p className="text-meta text-muted-foreground">Proof status per rule (what the model checker proved, within which bounds) is not served by this cell yet.</p>
+              </TabsContent>
+              <TabsContent value="held" className="space-y-5 pt-3">
+                {inbox.isPending && <Skeleton className="h-28 rounded-lg" />}
+                {inbox.isError && inbox.error instanceof NotServed && (
+                  <div className="rounded-lg border"><EmptyState icon={ShieldAlert} title="Not served yet">This cell does not serve held-back work yet.</EmptyState></div>
+                )}
+                {!inbox.isPending && !inbox.isError && heldTypes.length === 0 && (
+                  <div className="rounded-lg border">
+                    {section?.approximate ? (
+                      <EmptyState icon={ShieldAlert} title="None found within the scan bound" next={<Button variant="outline" size="sm" onClick={() => setHeldOnly(false)}>Show all rules</Button>}>
+                        No held-back record was found within {scanLimit ? `the first ${scanLimit.toLocaleString("en-US")} scanned rows` : "the scan bound"}. More records were not scanned, so other records may still be held back.
+                      </EmptyState>
+                    ) : (
+                      <EmptyState icon={ShieldCheck} title="Nothing held back" next={<Button variant="outline" size="sm" onClick={() => setHeldOnly(false)}>Show all rules</Button>}>
+                        No rule is holding back records right now.
+                      </EmptyState>
+                    )}
+                  </div>
+                )}
+                {!inbox.isPending && !inbox.isError && section !== undefined && groups.length > 0 && (
+                  <p className="text-meta text-muted-foreground tabular-nums">{heldTabSummary(section, groups, scanLimit)}</p>
+                )}
+                {heldTypes.map((objectType) => {
+                  const concept = data.byName.get(objectType)
+                  return concept
+                    ? <LawsPanel key={objectType} concept={concept} enforced={false} heldOnly heldGroups={groups} scanLimit={scanLimit} label={<TypeHeading concept={concept} technical={technical} />} />
+                    : (
+                      <Panel key={objectType} icon={Scale} label={unknownTypeHeading(objectType)}>
+                        <Well className="divide-y">
+                          {groups.filter((group) => group.objectType === objectType).map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={scanLimit} />)}
+                        </Well>
+                      </Panel>
+                    )
+                })}
+              </TabsContent>
+            </Tabs>
           </div>
         )
       }}
@@ -232,12 +365,12 @@ function LiveLaws() {
   )
 }
 
-export function GuaranteesPage() {
+export function RulesPage() {
   const mode = useMode()
   if (mode.data?.kind === "live") return (
     <section className="space-y-5">
-      <PageHeader title="Guarantees" description="The laws this cell admitted, type by type. Try to break one: the cell refuses the change and names the law." />
-      <LiveLaws />
+      <PageHeader title="Rules" description="What each rule protects, the records it is holding back right now and the fix the server suggests for each. A change that would break a rule is refused, naming it." />
+      <LiveRules />
     </section>
   )
   // The recording shows only once Studio has decided there is no cell: never while it is still connecting.
@@ -246,10 +379,10 @@ export function GuaranteesPage() {
       ? <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={() => void mode.refetch()} />
       : <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void mode.refetch()}>{() => null}</LoadState>
   }
-  return <RecordedGuarantees />
+  return <RecordedRules />
 }
 
-function RecordedGuarantees() {
+function RecordedRules() {
   const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees })
   const document = (name: string) => read.data?.find((entry) => entry.name === name)?.read.document
   const declared = document("original")
@@ -264,11 +397,9 @@ function RecordedGuarantees() {
   }
   return (
     <section className="space-y-8">
-      <div className="space-y-2">
-        <h1 className="text-title font-semibold tracking-tight">Guarantees</h1>
-        <p className="max-w-2xl text-muted-foreground">The recorded law, and how strongly it is checked. The model checker explores every case within stated bounds; a broken copy of the definition shows it catches a real mistake.</p>
-      </div>
-      {read.isPending && <LoadState status="pending" skeleton="cards" loadingLabel="Reading guarantees" onRetry={() => void read.refetch()}>{() => null}</LoadState>}
+      <PageHeader title="Rules" meta={<Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
+        description="The recorded rule, and how strongly it is checked. The model checker explores every case within stated bounds; a broken copy of the definition shows it catches a real mistake." />
+      {read.isPending && <LoadState status="pending" skeleton="cards" loadingLabel="Reading rules" onRetry={() => void read.refetch()}>{() => null}</LoadState>}
       {read.isError && <LoadState status="error" error={read.error} isFetching={read.isFetching} onRetry={() => void read.refetch()}>{() => null}</LoadState>}
       {declared && <Hero declared={declared} broken={document("mutant")} />}
       {read.data && (

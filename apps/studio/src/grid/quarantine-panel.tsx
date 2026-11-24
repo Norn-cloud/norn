@@ -32,7 +32,11 @@ export function QuarantinePanel({ objectType }: { readonly objectType: string })
   return (
     <Panel icon={ShieldAlert} label="In quarantine">
       <Well className="divide-y">
-        {items.length === 0 && <EmptyState icon={ShieldAlert} title="Nothing held back">No record of this type is in quarantine.</EmptyState>}
+        {items.length === 0 && (
+          approximate
+            ? <EmptyState icon={ShieldAlert} title="None found within the scan bound">No quarantined record was found within the first {scanLimit.toLocaleString("en-US")} scanned rows. More records were not scanned, so other records may still be held back.</EmptyState>
+            : <EmptyState icon={ShieldAlert} title="Nothing held back">No record of this type is in quarantine.</EmptyState>
+        )}
         {items.map(({ id, openFindings }) => (
           <div key={id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
             <Link to="/sources/$concept/$" params={{ concept: objectType, _splat: id }} className="font-mono underline-offset-4 hover:underline">{id}</Link>

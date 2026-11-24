@@ -1,38 +1,50 @@
 import { useQuery } from "@tanstack/react-query"
-import { useRouter } from "@tanstack/react-router"
-import { ChevronRight, CircleAlert, Inbox as InboxIcon, Plug, ShieldAlert, Wand2, type LucideIcon } from "lucide-react"
-import type { MouseEvent, ReactNode } from "react"
+import { Link, useRouter } from "@tanstack/react-router"
+import { ChevronRight, CircleAlert, Inbox as InboxIcon, Plug, ShieldAlert, type LucideIcon } from "lucide-react"
+import type { ComponentProps, MouseEvent, ReactNode } from "react"
 import { LoadState } from "@/components/load-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { conceptTitle } from "./lib/catalog.ts"
+import { heldRuleTitle } from "./lib/guarantees.ts"
 import { cellRead, useMode } from "./lib/live-transport.ts"
+import { recordName } from "./lib/objects.ts"
 import type { Schemas } from "./lib/transport.ts"
 
-type Inbox = Schemas["NornInbox"]
+export type Inbox = Schemas["NornInbox"]
 type Item = Schemas["NornInboxItem"]
-type Group = Extract<Item, { kind: "held_back" }>
+export type Group = Extract<Item, { kind: "held_back" }>
 type Decision = Extract<Item, { kind: "decision" }>
 type Source = Extract<Item, { kind: "source_error" }>
 
 /** A server-given Studio route (it may carry a query), followed in the app; a modified click keeps the browser's own. */
-function RouteLink({ to, children, className }: { readonly to: string; readonly children: ReactNode; readonly className?: string }) {
+export function RouteLink({ to, children, className, ...rest }: {
+  readonly to: string
+  readonly children: ReactNode
+  readonly className?: string
+} & Omit<ComponentProps<"a">, "href" | "onClick" | "children" | "className">) {
   const router = useRouter()
   const follow = (event: MouseEvent<HTMLAnchorElement>) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
     router.history.push(to)
   }
-  return <a href={to} onClick={follow} className={className}>{children}</a>
+  return <a {...rest} href={to} onClick={follow} className={className}>{children}</a>
 }
 
 const text = (value: unknown) => typeof value === "string" && value !== "" ? value : undefined
 
+/** The cell's scoped inbox (`GET /v1/inbox`), shared by Home, Inbox and Rules. */
+export function useInbox() {
+  const live = useMode().data?.kind === "live"
+  return useQuery({ queryKey: ["inbox"], queryFn: () => cellRead<Inbox>("/v1/inbox", "The inbox is"), retry: false, enabled: live, staleTime: 30_000 })
+}
+
 /** The cell's work queue for this caller (`GET /v1/inbox`): what needs them, each item one click from where to act. */
 export function Inbox() {
   const live = useMode().data?.kind === "live"
-  const inbox = useQuery({ queryKey: ["inbox"], queryFn: () => cellRead<Inbox>("/v1/inbox", "The inbox is"), retry: false, enabled: live, staleTime: 30_000 })
+  const inbox = useInbox()
   if (!live) return null
   const document = inbox.data?.document
   const groups = document?.items.filter((item): item is Group => item.kind === "held_back") ?? []
@@ -40,11 +52,13 @@ export function Inbox() {
   const sources = document?.items.filter((item): item is Source => item.kind === "source_error") ?? []
   const section = (kind: Schemas["NornInboxKind"]) => document?.sections.find((entry) => entry.kind === kind)
   const total = (document?.sections ?? []).reduce((sum, entry) => sum + entry.count, 0)
+  const anyApproximate = document?.sections.some((entry) => entry.approximate) ?? false
   return (
     <section aria-labelledby="needs-attention" className="space-y-3">
-      <div className="flex items-baseline gap-2">
+      <div className="flex flex-wrap items-baseline gap-2">
         <h2 id="needs-attention" className="text-section font-medium">Needs attention</h2>
-        {document && total > 0 && <span className="text-meta text-muted-foreground tabular-nums">{total}{document.sections.some((entry) => entry.approximate) ? "+" : ""}</span>}
+        {document && (total > 0 || anyApproximate) && <span className="text-meta text-muted-foreground tabular-nums">{total}{anyApproximate ? "+" : ""}</span>}
+        <Link to="/rules" search={{ view: "held" } as never} className="ms-auto text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">Held by rules</Link>
       </div>
       <LoadState
         status={inbox.status}
@@ -55,12 +69,18 @@ export function Inbox() {
         skeleton="list"
         loadingLabel="Reading what needs attention"
         isEmpty={() => total === 0}
-        empty={{
-          icon: InboxIcon,
-          title: "Nothing needs you",
-          description: "No record is held back, no decision waits on you, and every source synced.",
-          next: <Button asChild size="sm" variant="outline"><RouteLink to="/sources">Browse sources and records</RouteLink></Button>,
-        }}
+        empty={anyApproximate
+          ? {
+              icon: ShieldAlert,
+              title: "None found within the scan bound",
+              description: `No held-back record, waiting decision or sync error was found before the scan bound${document?.scanLimit ? ` (${document.scanLimit.toLocaleString("en-US")} rows)` : ""} was reached. More records were not scanned.`,
+            }
+          : {
+              icon: InboxIcon,
+              title: "Nothing needs you",
+              description: "No record is held back, no decision waits on you, and every source synced.",
+              next: <Button asChild size="sm" variant="outline"><RouteLink to="/sources">Browse sources and records</RouteLink></Button>,
+            }}
         notServed={{ icon: InboxIcon, title: "Not served yet", description: "This cell does not serve a work queue yet." }}
       >
         {() => (
@@ -118,20 +138,20 @@ function GroupHead({ icon: Icon, title, count, description, children }: { readon
   )
 }
 
-/** One law and the records it holds back: open it for each record, its finding in words and the fix the server suggests. */
+/** One law and the records it holds back: open it for each record, its finding in words and a link to review the record. */
 function HeldBack({ group }: { readonly group: Group }) {
   return (
     <Collapsible defaultOpen={group.records.length <= 3}>
-      <GroupHead icon={ShieldAlert} title={group.title}
+      <GroupHead icon={ShieldAlert} title={heldRuleTitle(group)}
         description={<>{group.count}{group.approximate ? "+" : ""} {conceptTitle(group.objectType).toLowerCase()} {group.count === 1 ? "record" : "records"} held back</>}>
         <Button asChild size="sm" variant="outline"><RouteLink to={group.target}>Review</RouteLink></Button>
         <CollapsibleTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Show the records" className="data-[state=open]:rotate-90"><ChevronRight /></Button></CollapsibleTrigger>
       </GroupHead>
       <CollapsibleContent className="pb-1.5">
         {group.records.map((record) => {
-          const name = text(record.values?.label) ?? text(record.values?.display_name) ?? text(record.values?.title) ?? record.id
+          const name = recordName(record)
           // The record's other open findings, or laws a fix would break: the server offers no fix then.
-          const others = (record as { readonly otherFindings?: readonly Schemas["NornInboxFinding"][] }).otherFindings ?? []
+          const others = record.otherFindings ?? []
           return (
             <div key={`${record.objectType}:${record.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1 ps-11 text-sm">
               <RouteLink to={record.target} className="font-medium underline-offset-4 hover:underline">{name}</RouteLink>
@@ -143,8 +163,8 @@ function HeldBack({ group }: { readonly group: Group }) {
                 </div>
               )}
               {record.suggestedFix && (
-                <Button asChild size="xs" variant="secondary" className="ms-auto" title={record.suggestedFix.title}>
-                  <RouteLink to={record.target}><Wand2 aria-hidden />{record.suggestedFix.label}</RouteLink>
+                <Button asChild size="xs" variant="secondary" className="ms-auto">
+                  <RouteLink to={record.target}>Review fix</RouteLink>
                 </Button>
               )}
             </div>

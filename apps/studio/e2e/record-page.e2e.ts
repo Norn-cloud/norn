@@ -231,5 +231,5 @@ test("rules: the rail lists the rules the type keeps, and All rules opens the ru
   await expect(page.getByRole("heading", { name: "Rules it keeps" })).toBeVisible()
   await shoot(page, "holding-admin")
   await page.getByRole("link", { name: "All rules" }).click()
-  await expect(page).toHaveURL(/\/guarantees$/)
+  await expect(page).toHaveURL(/\/rules$/)
 })
