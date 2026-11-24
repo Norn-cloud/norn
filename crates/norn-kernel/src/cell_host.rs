@@ -1330,15 +1330,22 @@ pub trait CellHost {
         self.commit(commit)
     }
 
-    /// ACTOR-STAMP-1: a stamped create; the default's plain admission refuses the stamp.
+    /// ACTOR-STAMP-1: a stamped create, with its quantity posting if any, in
+    /// one transaction; the default's plain admission refuses the stamp.
     /// # Errors
     /// A commit refusal; nothing was applied.
     fn commit_stamped(
         &mut self,
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
         _proof: crate::CreatorStampProof,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        self.commit(commit)
+        match quantity {
+            Some((request, key)) => {
+                self.commit_action_quantity(commit, std::slice::from_ref(request), key)
+            }
+            None => self.commit(commit),
+        }
     }
 
     /// Commit a snapshot prepared by the kernel's observation reconciler.

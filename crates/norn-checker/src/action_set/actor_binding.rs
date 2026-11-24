@@ -233,6 +233,8 @@ pub(super) fn writer_protected_findings(
 
 /// A transition one action guards with `independentOf`.
 struct Guard<'a> {
+    /// The guarding action's artifact; `None` when it is already installed.
+    artifact: Option<&'a ArtifactEnvelope>,
     action: &'a str,
     kind: &'a str,
     lifecycle: &'a str,
@@ -251,91 +253,139 @@ fn related(model: &Model<'_>, left: &str, right: &str) -> bool {
     extends(left, right) || extends(right, left)
 }
 
-/// ACTOR-INDEPENDENT-1 over the whole action set (Astra ruling on #1101): a
-/// guarded effective transition is guarded for every caller. Every action
-/// that fires a guarded transition of a related type declares each guarded
-/// property, and no synchronous writer may fire a guarded transition, so a
-/// sibling action or a writer cannot route around the check.
+/// The guard `root` declares, if it fires a transition with `independentOf`.
+fn guard_of<'a>(artifact: Option<&'a ArtifactEnvelope>, root: &'a ActionRoot) -> Option<Guard<'a>> {
+    match &root.effect_program {
+        Some(ActionEffectProgram::FireTransition {
+            object_kind,
+            lifecycle,
+            transition,
+            ..
+        }) if !root.independent_of.is_empty() => Some(Guard {
+            artifact,
+            action: root.action_id.as_str(),
+            kind: object_kind.as_str(),
+            lifecycle: lifecycle.as_str(),
+            transition: transition.as_str(),
+            properties: &root.independent_of,
+        }),
+        Some(_) | None => None,
+    }
+}
+
+/// ACTOR-INDEPENDENT-1 over the whole effective action set (Astra ruling on
+/// #1101): a guarded effective transition is guarded for every caller. Every
+/// action that fires a guarded transition of a related type declares each
+/// guarded property, and no synchronous writer may fire a guarded
+/// transition. Candidate and installed actions are checked against every
+/// guard in both directions, so the admission order cannot route around it:
+/// a conflict is reported on the candidate side (the unguarded candidate, or
+/// the candidate guard that an installed action or writer would bypass).
 pub(super) fn transition_guard_findings(
     actions: &[(&ArtifactEnvelope, ActionRoot)],
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
     model: &Model<'_>,
 ) -> Vec<Diagnostic> {
-    let installed: Vec<ActionRoot> = base.iter().filter_map(decode_action).collect();
-    let guards: Vec<Guard<'_>> = actions
+    let installed: Vec<(&ArtifactEnvelope, ActionRoot)> = base
         .iter()
-        .map(|(_, root)| root)
-        .chain(&installed)
-        .filter_map(|root| match &root.effect_program {
-            Some(ActionEffectProgram::FireTransition {
-                object_kind,
-                lifecycle,
-                transition,
-                ..
-            }) if !root.independent_of.is_empty() => Some(Guard {
-                action: root.action_id.as_str(),
-                kind: object_kind.as_str(),
-                lifecycle: lifecycle.as_str(),
-                transition: transition.as_str(),
-                properties: &root.independent_of,
-            }),
-            Some(_) | None => None,
-        })
+        .filter_map(|artifact| decode_action(artifact).map(|root| (artifact, root)))
+        .collect();
+    // Every action with its artifact, and whether it is a candidate.
+    let all: Vec<(&ArtifactEnvelope, &ActionRoot, bool)> = actions
+        .iter()
+        .map(|(artifact, root)| (*artifact, root, true))
+        .chain(
+            installed
+                .iter()
+                .map(|(artifact, root)| (*artifact, root, false)),
+        )
+        .collect();
+    let guards: Vec<Guard<'_>> = all
+        .iter()
+        .filter_map(|(artifact, root, candidate)| guard_of(candidate.then_some(*artifact), root))
         .collect();
     let mut findings = Vec::new();
-    if guards.is_empty() {
-        return findings;
-    }
-    for (artifact, root) in actions {
-        if let Some(ActionEffectProgram::FireTransition {
-            object_kind,
-            lifecycle,
-            transition,
-            ..
-        }) = &root.effect_program
-        {
-            for guard in guards.iter().filter(|guard| {
-                guard.lifecycle == lifecycle.as_str()
-                    && guard.transition == transition.as_str()
-                    && related(model, guard.kind, object_kind)
-            }) {
-                for property in guard
-                    .properties
-                    .iter()
-                    .filter(|property| !root.independent_of.contains(property))
-                {
-                    findings.push(finding(
-                        codes::INDEPENDENT_ACTOR,
-                        format!(
-                            "{object_kind:?} transition {:?} is guarded by independentOf {:?} on action {:?}; every action firing it declares the same guard",
-                            guard.transition,
-                            property.as_str(),
-                            guard.action
-                        ),
-                        artifact,
-                        "/payload/independentOf",
-                    ));
-                }
+    for (artifact, root, candidate) in &all {
+        let fired: Vec<&Guard<'_>> = guards
+            .iter()
+            .filter(|guard| fires_unguarded(root, guard, model))
+            .collect();
+        for guard in fired {
+            let message = format!(
+                "action {:?} fires {:?} transition {:?} without independentOf {:?}, which action {:?} guards; every action firing it declares the same guard",
+                root.action_id, guard.kind, guard.transition, guard.properties, guard.action
+            );
+            if let Some(at) = attribution(*candidate, artifact, guard) {
+                findings.push(finding(
+                    codes::INDEPENDENT_ACTOR,
+                    message,
+                    at,
+                    "/payload/independentOf",
+                ));
             }
         }
-        findings.extend(writer_guard_findings(
-            artifact, root, &guards, artifacts, base, model,
-        ));
+        for guard in writer_fired_guards(root, &guards, artifacts, base, model) {
+            let message = format!(
+                "action {:?} has a synchronousRule that may fire {:?} transition {:?}, which action {:?} guards with independentOf; a writer cannot fire a guarded transition",
+                root.action_id, guard.kind, guard.transition, guard.action
+            );
+            let pointer = if *candidate {
+                "/payload/synchronousRule"
+            } else {
+                "/payload/independentOf"
+            };
+            if let Some(at) = attribution(*candidate, artifact, guard) {
+                findings.push(finding(codes::INDEPENDENT_ACTOR, message, at, pointer));
+            }
+        }
     }
     findings
 }
 
-/// ACTOR-INDEPENDENT-1: no synchronous writer of `root` may fire a guarded transition.
-fn writer_guard_findings(
-    artifact: &ArtifactEnvelope,
+/// The candidate artifact a conflict between `root` and `guard` is reported
+/// on: `root` itself when it is a candidate, else the candidate guard. Two
+/// installed sides were admitted together already.
+fn attribution<'a>(
+    candidate: bool,
+    artifact: &'a ArtifactEnvelope,
+    guard: &Guard<'a>,
+) -> Option<&'a ArtifactEnvelope> {
+    if candidate {
+        Some(artifact)
+    } else {
+        guard.artifact
+    }
+}
+
+/// Whether `root` fires the transition `guard` guards without every guarded property.
+fn fires_unguarded(root: &ActionRoot, guard: &Guard<'_>, model: &Model<'_>) -> bool {
+    let Some(ActionEffectProgram::FireTransition {
+        object_kind,
+        lifecycle,
+        transition,
+        ..
+    }) = &root.effect_program
+    else {
+        return false;
+    };
+    guard.lifecycle == lifecycle.as_str()
+        && guard.transition == transition.as_str()
+        && related(model, guard.kind, object_kind)
+        && guard
+            .properties
+            .iter()
+            .any(|property| !root.independent_of.contains(property))
+}
+
+/// The guards a synchronous writer of `root` may fire.
+fn writer_fired_guards<'g, 'a>(
     root: &ActionRoot,
-    guards: &[Guard<'_>],
+    guards: &'g [Guard<'a>],
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
     model: &Model<'_>,
-) -> Vec<Diagnostic> {
-    let mut findings = Vec::new();
+) -> Vec<&'g Guard<'a>> {
     let Some(writer) = synchronous_writer_payload(root, artifacts, base) else {
         return Vec::new();
     };
@@ -348,27 +398,18 @@ fn writer_guard_findings(
     let kinds = enum_strings(item, "/objectType/enum").unwrap_or_default();
     let lifecycles = enum_strings(item, "/lifecycle/enum");
     let transitions = enum_strings(item, "/transition/enum");
-    for guard in guards {
-        let fires = kinds.iter().any(|kind| related(model, guard.kind, kind))
-            && lifecycles
-                .as_ref()
-                .is_none_or(|names| names.contains(&guard.lifecycle))
-            && transitions
-                .as_ref()
-                .is_none_or(|names| names.contains(&guard.transition));
-        if fires {
-            findings.push(finding(
-                codes::INDEPENDENT_ACTOR,
-                format!(
-                    "synchronousRule may fire {:?} transition {:?}, which action {:?} guards with independentOf; a writer cannot fire a guarded transition",
-                    guard.kind, guard.transition, guard.action
-                ),
-                artifact,
-                "/payload/synchronousRule",
-            ));
-        }
-    }
-    findings
+    guards
+        .iter()
+        .filter(|guard| {
+            kinds.iter().any(|kind| related(model, guard.kind, kind))
+                && lifecycles
+                    .as_ref()
+                    .is_none_or(|names| names.contains(&guard.lifecycle))
+                && transitions
+                    .as_ref()
+                    .is_none_or(|names| names.contains(&guard.transition))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -719,6 +760,60 @@ mod tests {
                 codes::INDEPENDENT_ACTOR.to_owned(),
                 "/payload/independentOf".to_owned()
             )]
+        );
+    }
+
+    /// ACTOR-INDEPENDENT-1 (Astra round 2): admission order cannot route
+    /// around a guard. A guard added after an unguarded sibling, or after a
+    /// writer that may fire it, refuses on the guarding candidate.
+    #[test]
+    fn a_guard_added_after_an_installed_sibling_or_writer_refuses() {
+        let artifacts = artifacts();
+        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let (approve_artifact, approve) = root(&artifacts, "ledger.invoice.approve.action");
+        let mut sibling = serde_json::to_value(&approve_artifact).expect("envelope");
+        sibling["artifactId"] = serde_json::json!("ledger.invoice.fast_approve.action");
+        sibling["payload"]["actionId"] = serde_json::json!("ledger.invoice.fast_approve");
+        sibling["payload"]
+            .as_object_mut()
+            .expect("payload")
+            .remove("independentOf");
+        let installed: Vec<ArtifactEnvelope> =
+            vec![serde_json::from_value(sibling).expect("installed sibling")];
+        let candidates = vec![(&approve_artifact, approve.clone())];
+        let findings = transition_guard_findings(&candidates, &artifacts, &installed, &model);
+        assert_eq!(
+            codes_at(&findings),
+            [(
+                codes::INDEPENDENT_ACTOR.to_owned(),
+                "/payload/independentOf".to_owned()
+            )]
+        );
+        assert_eq!(
+            findings[0].artifact_id.as_deref(),
+            Some("ledger.invoice.approve.action")
+        );
+
+        let widened = mutated(|documents| {
+            let item = &mut document(documents, "ledger.payable.match_writer.rule")["payload"]["outputSchema"]
+                ["properties"]["facts"]["items"]["properties"];
+            item["objectType"]["enum"] =
+                serde_json::json!(["ledger.GoodsReceipt", "ledger.Invoice"]);
+            item["transition"]["enum"] = serde_json::json!(["match", "approve"]);
+        });
+        let (raise, _) = root(&widened, "ledger.payable.raise.action");
+        let findings =
+            transition_guard_findings(&candidates, &widened, std::slice::from_ref(&raise), &model);
+        assert_eq!(
+            codes_at(&findings),
+            [(
+                codes::INDEPENDENT_ACTOR.to_owned(),
+                "/payload/independentOf".to_owned()
+            )]
+        );
+        assert_eq!(
+            findings[0].artifact_id.as_deref(),
+            Some("ledger.invoice.approve.action")
         );
     }
 

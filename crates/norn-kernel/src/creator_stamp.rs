@@ -12,8 +12,9 @@
 use std::collections::BTreeSet;
 
 use crate::cell_host::{
-    Admission, Authorized, CellCommit, CommitError, CommitVersions, FactKey, FactMutation,
-    JsonObject, JsonValue, OwnedRowsCommitProof, Proposed,
+    Admission, Authorized, CellCommit, CommitError, CommitVersions, Consumed, FactExpectation,
+    FactKey, FactMutation, FactWrite, JsonObject, JsonValue, LinkReadExpectation, ObjectTypeName,
+    OwnedRowsCommitProof, PredicateReadExpectation, Proposed,
 };
 use crate::commit_check::{CommitModel, CommitView};
 use crate::snapshot_observe::ObservationAuthorization;
@@ -49,12 +50,80 @@ impl CreatorStamp {
 /// kernel creates it only after it has prepared and authorized the create,
 /// and host admission consumes it ([`check_commit_stamped`]).
 #[derive(Debug)]
-pub struct CreatorStampProof(CreatorStamp);
+pub struct CreatorStampProof {
+    stamp: CreatorStamp,
+    consumes: Option<Consumed>,
+    reads: Vec<FactExpectation>,
+    writes: Vec<FactWrite>,
+    link_reads: Vec<LinkReadExpectation>,
+    predicate_reads: Vec<PredicateReadExpectation>,
+}
 
 impl CreatorStampProof {
-    pub(crate) const fn new(stamp: CreatorStamp) -> Self {
-        Self(stamp)
+    /// Bind `stamp` to the exact prepared transaction: its writes, read and
+    /// version fences, consumed delivery and link and predicate reads.
+    pub(crate) fn new<E, C, T>(stamp: CreatorStamp, commit: &CellCommit<E, C, T>) -> Self {
+        Self {
+            stamp,
+            consumes: commit.consumes.clone(),
+            reads: commit.reads.clone(),
+            writes: commit.writes.clone(),
+            link_reads: commit.link_reads.clone(),
+            predicate_reads: commit.predicate_reads.clone(),
+        }
     }
+
+    /// Whether `commit` is the transaction this proof was issued for. A
+    /// perimeter adapter may add reads, never drop or change a sealed one.
+    fn binds<E, C, T, X>(
+        &self,
+        commit: &CellCommit<E, C, T>,
+        model: CommitModel<'_, '_>,
+    ) -> Result<bool, CommitError<X>> {
+        if self.consumes != commit.consumes
+            || self.reads.iter().any(|read| !commit.reads.contains(read))
+            || self.link_reads != commit.link_reads
+            || self.predicate_reads != commit.predicate_reads
+            || self.writes.len() != commit.writes.len()
+        {
+            return Ok(false);
+        }
+        Ok(canonical_writes::<X>(model, &self.writes)? == commit.writes)
+    }
+}
+
+/// Kernel-prepared writes as host admission sees them: each `Put` through
+/// the effective-value builder. Shared by the owned-row and stamp proofs.
+///
+/// # Errors
+///
+/// [`CommitError::EffectiveValues`] when a prepared value is invalid.
+pub(crate) fn canonical_writes<X>(
+    model: CommitModel<'_, '_>,
+    writes: &[FactWrite],
+) -> Result<Vec<FactWrite>, CommitError<X>> {
+    writes
+        .iter()
+        .map(|write| {
+            let mutation = match &write.mutation {
+                FactMutation::Put { values } => FactMutation::Put {
+                    values: model
+                        .catalog
+                        .effective_object_values(&write.key.object_type, values)
+                        .map_err(|error| CommitError::EffectiveValues {
+                            key: write.key.clone(),
+                            reason: error.to_string(),
+                        })?,
+                },
+                FactMutation::Delete => FactMutation::Delete,
+            };
+            Ok(FactWrite {
+                key: write.key.clone(),
+                expected: write.expected,
+                mutation,
+            })
+        })
+        .collect()
 }
 
 impl<'c, E, C, T> Proposed<'c, E, C, T> {
@@ -136,7 +205,9 @@ impl KernelTrust<'_> {
 
 /// Check a kernel-prepared governed create under its creator stamp: the
 /// ordinary admission, except that the one stamped protected value of the
-/// created object is admitted.
+/// created object is admitted when the commit is exactly the transaction the
+/// proof was issued for. Any other commit gets the plain admission, which
+/// refuses the stamped value.
 ///
 /// # Errors
 ///
@@ -147,13 +218,12 @@ pub fn check_commit_stamped<E, C, T, V: CommitView + ?Sized>(
     view: &V,
     proof: &CreatorStampProof,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
-    crate::commit_check::check_commit_inner(
-        commit,
-        *model,
-        view,
-        None,
-        KernelTrust::Stamped(&proof.0),
-    )
+    let trust = if proof.binds::<E, C, T, V::Error>(commit, *model)? {
+        KernelTrust::Stamped(&proof.stamp)
+    } else {
+        KernelTrust::Plain
+    };
+    crate::commit_check::check_commit_inner(commit, *model, view, None, trust)
 }
 
 /// ACTOR-STAMP-1 / FA-PROTECT-1 at shared admission. For every written object
@@ -182,11 +252,14 @@ pub(crate) fn check_protected<E, C, T, V: CommitView + ?Sized>(
     };
     for write in &commit.writes {
         let key = model.canonical(&write.key);
+        // A stale write (a concurrent create or update won) is the retryable
+        // `Conflict` the version check reports, never a protected refusal.
+        if view.version(&key).map_err(CommitError::Host)? != write.expected {
+            continue;
+        }
         let live = view.concrete(&key).map_err(CommitError::Host)?;
-        let Some(effective) = model
-            .catalog
-            .effective_type(live.as_ref().unwrap_or(&write.key.object_type))
-        else {
+        let object_type = live.as_ref().unwrap_or(&write.key.object_type);
+        let Some(effective) = model.catalog.effective_type(object_type) else {
             continue;
         };
         let protected: Vec<&norn_checker::EffectiveProperty> = effective
@@ -218,7 +291,7 @@ pub(crate) fn check_protected<E, C, T, V: CommitView + ?Sized>(
             let admitted = before.as_ref().map_or_else(
                 || {
                     value.is_none_or(|value| {
-                        is_default(property, value)
+                        is_default(model, object_type, property, value)
                             || stamp.is_some_and(|stamp| stamp.permits(&write.key, id, value))
                     })
                 },
@@ -239,11 +312,27 @@ fn present<'v>(values: &'v JsonObject, property: &str) -> Option<&'v JsonValue> 
         .filter(|value| !matches!(value, JsonValue::Null))
 }
 
-/// Whether `value` is the property's declared default.
-fn is_default(property: &norn_checker::EffectiveProperty, value: &JsonValue) -> bool {
+/// Whether `value` is the property's declared default, both compared as the
+/// effective-value builder canonicalizes them (a timestamp's offset, an
+/// exact decimal's scale), as hosts store them.
+fn is_default(
+    model: CommitModel<'_, '_>,
+    object_type: &ObjectTypeName,
+    property: &norn_checker::EffectiveProperty,
+    value: &JsonValue,
+) -> bool {
+    let id = property.id.as_str();
+    let canonical = |value: JsonValue| {
+        model
+            .catalog
+            .effective_object_values(object_type, &JsonObject::from([(id.to_owned(), value)]))
+            .ok()
+            .and_then(|mut values| values.remove(id))
+    };
     property
         .default
         .as_ref()
         .and_then(|default| property.runtime_default_literal(&default.0).ok())
-        .is_some_and(|default| default == *value)
+        .and_then(canonical)
+        .is_some_and(|default| Some(default) == canonical(value.clone()))
 }

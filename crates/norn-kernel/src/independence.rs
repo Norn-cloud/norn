@@ -65,14 +65,12 @@ fn guards_on<'g>(
         lineage.contains(&guard.object_type)
             || catalog.lineage(&guard.object_type).contains(object_type)
     };
-    let lifecycle = lifecycle.clone();
-    let transition = transition.clone();
     catalog
         .transition_guards
         .unwrap_or_default()
         .iter()
         .filter(move |guard| {
-            guard.lifecycle == lifecycle && guard.transition == transition && related(*guard)
+            guard.lifecycle == *lifecycle && guard.transition == *transition && related(guard)
         })
 }
 
@@ -111,6 +109,20 @@ pub(crate) fn check_independent_actor<X>(
             .flat_map(|guard| &guard.independent_of),
     );
     let effective = catalog.effective_type(&target.object_type);
+    // Guards live only on protected actors. Without bound guards a type with
+    // protected properties fails closed: sibling guards are unknown, not absent.
+    if catalog.transition_guards.is_none()
+        && effective.is_some_and(|effective| {
+            effective
+                .properties
+                .iter()
+                .any(norn_checker::EffectiveProperty::protected)
+        })
+    {
+        return Err(ActionRefusal::PermissionDenied {
+            reason: "ACTOR-INDEPENDENT-1: transition guards are not bound for a type with protected actors".to_owned(),
+        });
+    }
     let lifecycles = catalog.lifecycle_properties(&target.object_type);
     for property in properties {
         let stampable = effective

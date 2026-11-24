@@ -30,11 +30,11 @@ use norn_ir::{
 };
 
 use crate::cell_host::{
-    CellCommit, CommitError, CommitVersions, Consumed, FactKey, FactMutation, FactVersion,
-    FactWrite, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkWrite,
-    OwnedRowsCommitProof, PredicateQuery, PredicateReadMember, WrittenLinkVersion, WrittenVersion,
+    CellCommit, CommitError, CommitVersions, Consumed, FactKey, FactMutation, FactVersion, LinkKey,
+    LinkMutation, LinkReadExpectation, LinkReadTarget, LinkWrite, OwnedRowsCommitProof,
+    PredicateQuery, PredicateReadMember, WrittenLinkVersion, WrittenVersion,
 };
-use crate::creator_stamp::{KernelTrust as Trust, check_protected};
+use crate::creator_stamp::{KernelTrust as Trust, canonical_writes, check_protected};
 
 /// Maximum complete outgoing link targets a turn may bind as one adjacency
 /// read. This is the current `norn.limits/1` slice-record ceiling.
@@ -445,29 +445,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
     {
         false
     } else {
-        let canonical_writes = proof
-            .writes()
-            .iter()
-            .map(|write| {
-                let mutation = match &write.mutation {
-                    FactMutation::Put { values } => FactMutation::Put {
-                        values: model
-                            .catalog
-                            .effective_object_values(&write.key.object_type, values)
-                            .map_err(|error| CommitError::EffectiveValues {
-                                key: write.key.clone(),
-                                reason: error.to_string(),
-                            })?,
-                    },
-                    FactMutation::Delete => FactMutation::Delete,
-                };
-                Ok(FactWrite {
-                    key: write.key.clone(),
-                    expected: write.expected,
-                    mutation,
-                })
-            })
-            .collect::<Result<Vec<_>, CommitError<V::Error>>>()?;
+        let canonical_writes = canonical_writes::<V::Error>(*model, proof.writes())?;
         let canonical_links = proof
             .links()
             .iter()

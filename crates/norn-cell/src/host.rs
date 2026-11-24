@@ -2258,12 +2258,13 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
         proof: norn_kernel::CreatorStampProof,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         self.commit_with_authorization(
             commit,
             None,
             None,
-            None,
+            quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
             &[],
             &[],
             &[],

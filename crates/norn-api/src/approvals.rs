@@ -1182,6 +1182,7 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
         &mut self,
         commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
         _proof: norn_kernel::CreatorStampProof,
+        _quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         self.stop(commit)
     }

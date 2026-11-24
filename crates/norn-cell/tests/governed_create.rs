@@ -9,6 +9,8 @@
 //! transfer requester and releasing custodian. The fixture is generated from
 //! `tools/norn-ts/fixtures/decisions/governed-create.source.ts`.
 
+mod quantity_support;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
@@ -34,6 +36,7 @@ const TAX_CODE: &str = "ledger.TaxCode";
 const TRANSFER: &str = "supply.Transfer";
 const PAYABLE: &str = "ledger.Payable";
 const RECEIPT: &str = "ledger.GoodsReceipt";
+const GUARDED: &str = "a writer cannot fire a transition guarded by independentOf";
 const SUBMITTER: &str = "person:submitter";
 const APPROVER: &str = "person:approver";
 const INVOICE_WRITER: &str = "ledger.invoice.writer.rule";
@@ -378,9 +381,14 @@ fn submitter_creates_and_only_an_independent_approver_decides() {
     let definitions = types();
     let rules = [writer()];
     let artifacts = artifacts();
-    let catalog = TypeCatalog::new(&definitions)
+    let guards = guards();
+    let unbound = TypeCatalog::new(&definitions)
         .with_action_rules(&rules)
         .with_governing_laws(&artifacts);
+    let catalog = TypeCatalog::new(&definitions)
+        .with_action_rules(&rules)
+        .with_governing_laws(&artifacts)
+        .with_transition_guards(&guards);
     let mut cell = open(
         &directory.path().join("ledger.sqlite"),
         &definitions,
@@ -433,6 +441,12 @@ fn submitter_creates_and_only_an_independent_approver_decides() {
         json!({"invoice_id": "INV-1"}),
         "a-1",
     );
+    // An embedded caller that bound no transition guards fails closed on a
+    // type with protected actors: sibling guards are unknown, not absent.
+    let refusal = commit_action(&mut cell, &unbound, &independent, &members).unwrap_err();
+    assert_eq!(refusal.code(), "action.permission_denied", "{refusal}");
+    assert!(refusal.to_string().contains("not bound"), "{refusal}");
+    assert_eq!(cell.store().read().dump().unwrap(), dump);
     assert!(matches!(
         commit_action(&mut cell, &catalog, &independent, &members).unwrap(),
         ActionOutcome::Committed { .. }
@@ -619,7 +633,8 @@ fn custodian_authority_is_current_at_commit_and_independent_of_the_requester() {
     const CUSTODIAN: &str = "person:custodian";
     let directory = tempfile::tempdir().unwrap();
     let definitions = types();
-    let catalog = TypeCatalog::new(&definitions);
+    let guards = guards();
+    let catalog = TypeCatalog::new(&definitions).with_transition_guards(&guards);
     let mut cell = open(&directory.path().join("supply.sqlite"), &definitions, &[]);
     let members = Members::of(&[REQUESTER, CUSTODIAN]);
     let request_action = action("supply.transfer.request");
@@ -886,5 +901,203 @@ fn guarded_transition_holds_for_writers_and_sibling_actions() {
     );
     let refusal = commit_action(&mut cell, &catalog, &routed, &members).unwrap_err();
     assert_eq!(refusal.code(), "core.txn.unchecked_writer", "{refusal}");
+    assert!(refusal.to_string().contains(GUARDED), "{refusal}");
+    assert_eq!(cell.store().read().dump().unwrap(), dump);
+
+    // The same guard on an object the writer captured in its slice: the
+    // refusal is the guard's, not an out-of-slice write.
+    let rules = [admit_rule(&rule_document(
+        "ledger.payable.match_writer.rule",
+    ))];
+    let guarded = [TransitionGuard {
+        object_type: norn_ir::ObjectTypeName(RECEIPT.into()),
+        lifecycle: norn_ir::PropertyId("status".into()),
+        transition: norn_ir::TransitionId("match".into()),
+        independent_of: vec![norn_ir::PropertyId("receipt_id".into())],
+    }];
+    let catalog = TypeCatalog::new(&definitions)
+        .with_action_rules(&rules)
+        .with_transition_guards(&guarded);
+    seed_receipt(&mut cell);
+    let dump = cell.store().read().dump().unwrap();
+    let raise = action("ledger.payable.raise");
+    let input = json!({"payable_id": "PAY-1", "receipt_id": "GR-1", "amount": 50});
+    let request = call(&raise, SUBMITTER, input, "p-1");
+    let refusal = commit_action(&mut cell, &catalog, &request, &members).unwrap_err();
+    assert_eq!(refusal.code(), "core.txn.unchecked_writer", "{refusal}");
+    assert!(refusal.to_string().contains(GUARDED), "{refusal}");
+    assert_eq!(cell.store().read().dump().unwrap(), dump);
+}
+
+/// ACTOR-STAMP-1 with a quantity effect (Astra round 2): the stamped create
+/// and its posting commit in one transaction under the stamp's admission.
+#[test]
+fn stamped_create_with_a_quantity_effect_commits_atomically() {
+    use norn_ir::quantity_ledger::{QuantityOperation, QuantityResolution};
+    let directory = tempfile::tempdir().unwrap();
+    let mut definitions = types();
+    let transfer = definitions
+        .iter_mut()
+        .find(|definition| definition.name.as_str() == TRANSFER)
+        .unwrap();
+    transfer.properties.extend(
+        serde_json::from_value::<Vec<norn_ir::Property>>(json!([
+            {"id": "reservation_id", "type": {"kind": "text"}},
+            {"id": "posting_id", "type": {"kind": "text"}}
+        ]))
+        .unwrap(),
+    );
+    let catalog = TypeCatalog::new(&definitions);
+    let mut cell = open(&directory.path().join("quantity.sqlite"), &definitions, &[]);
+    let mut request_action = action("supply.transfer.request");
+    request_action.quantity_effect = Some(norn_ir::ActionQuantityEffect {
+        ledger_id: "stock".into(),
+        balance_versions_field: "balance_versions".into(),
+        operation: norn_ir::ActionQuantityOperation::PostReservation {
+            reservation_id_field: "reservation_id".into(),
+            posting_id_field: "posting_id".into(),
+        },
+    });
+    let mut schema = serde_json::to_value(&request_action.input_schema).unwrap();
+    schema["properties"]["reservation_id"] = json!({"type": "string"});
+    schema["properties"]["posting_id"] = json!({"type": "string"});
+    schema["properties"]["balance_versions"] = json!({"type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "properties": {"account": {"type": "string"}, "unit": {"type": "string"},
+            "layer": {"type": "string"}, "version": {"type": "integer"}},
+        "required": ["account", "unit", "layer", "version"]}});
+    for field in ["reservation_id", "posting_id", "balance_versions"] {
+        schema["required"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(field));
+    }
+    request_action.input_schema = serde_json::from_value(schema).unwrap();
+    for (key, mut request) in [
+        ("define", quantity_support::define()),
+        ("fund", quantity_support::post(0, "fund", "fund", 20)),
+        ("reserve", quantity_support::reserve(0, "r", 10, 100)),
+    ] {
+        request.balance_versions = cell
+            .store()
+            .read()
+            .quantity_balance_versions("main", &request)
+            .unwrap();
+        cell.commit_with_partition_postings(CellCommit::empty(), &[request], key)
+            .unwrap();
+    }
+    let posting = quantity_support::request(
+        0,
+        QuantityOperation::PostReservation {
+            reservation_id: "r".into(),
+            posting_id: "shipment".into(),
+            resolution: QuantityResolution::All,
+        },
+    );
+    let fences = cell
+        .store()
+        .read()
+        .quantity_balance_versions("main", &posting)
+        .unwrap();
+    let requested = call(
+        &request_action,
+        "person:requester",
+        json!({"transfer_id": "TR-1", "sku": "SKU-7", "quantity": 12,
+            "reservation_id": "r", "posting_id": "shipment", "balance_versions": fences}),
+        "q-1",
+    );
+    let members = Members::of(&["person:requester"]);
+    assert!(matches!(
+        commit_action(&mut cell, &catalog, &requested, &members).unwrap(),
+        ActionOutcome::Committed { .. }
+    ));
+    let transfer = values(&cell, TRANSFER, "TR-1").expect("created transfer");
+    assert_eq!(text(&transfer, "requested_by"), Some("person:requester"));
+    assert!(
+        cell.store()
+            .read()
+            .quantity_posting("main", "stock", "shipment")
+            .unwrap()
+            .is_some()
+    );
+}
+
+/// ACTOR-STAMP-1 (Astra round 2): a protected default is compared as hosts
+/// store it, so an ordinary create of a type with a protected timestamp
+/// default given with an offset admits its canonical UTC value.
+#[test]
+fn protected_default_is_compared_in_its_canonical_form() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut definitions = types();
+    definitions.push(
+        serde_json::from_value(json!({"name": "ledger.AuditNote", "properties": [
+            {"id": "note_id", "type": {"kind": "text"}},
+            {"id": "recorded_at", "type": {"kind": "timestamp", "timezone": "utc"},
+                "protected": true, "default": "2026-01-01T02:00:00+02:00"}
+        ]}))
+        .unwrap(),
+    );
+    let mut cell = open(&directory.path().join("note.sqlite"), &definitions, &[]);
+    for (key, recorded_at) in [
+        ("N-1", "2026-01-01T00:00:00Z"),
+        ("N-2", "2026-01-01T02:00:00+02:00"),
+    ] {
+        let mut proposal = CellCommit::empty();
+        proposal.writes.push(FactWrite {
+            key: FactKey::new("ledger.AuditNote", key),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(json!({"note_id": key, "recorded_at": recorded_at}))
+                    .unwrap(),
+            },
+        });
+        cell.commit(proposal).unwrap();
+    }
+    let mut forged = CellCommit::empty();
+    forged.writes.push(FactWrite {
+        key: FactKey::new("ledger.AuditNote", "N-3"),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: serde_json::from_value(
+                json!({"note_id": "N-3", "recorded_at": "2026-01-02T00:00:00Z"}),
+            )
+            .unwrap(),
+        },
+    });
+    let refusal = cell.commit(forged).unwrap_err();
+    assert_eq!(refusal.code(), "commit.immutable_object", "{refusal}");
+}
+
+/// ACTOR-STAMP-1 ordering (Astra round 2): a create that lost a race to a
+/// concurrent create by another principal is the retryable version
+/// `Conflict`, never a permanent protected refusal.
+#[test]
+fn a_create_that_lost_a_race_is_a_conflict() {
+    let directory = tempfile::tempdir().unwrap();
+    let definitions = types();
+    let rules = [writer()];
+    let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
+    let mut cell = open(&directory.path().join("race.sqlite"), &definitions, &[]);
+    seed_tax_codes(&mut cell);
+    let members = Members::of(&[SUBMITTER]);
+    let submit_action = action("ledger.invoice.submit");
+    let created = call(
+        &submit_action,
+        SUBMITTER,
+        submit("INV-1", "STD", 100),
+        "s-1",
+    );
+    commit_action(&mut cell, &catalog, &created, &members).unwrap();
+    let dump = cell.store().read().dump().unwrap();
+    let mut late = values(&cell, INVOICE, "INV-1").unwrap();
+    late.insert("submitted_by".into(), RuntimeValue::String(APPROVER.into()));
+    let mut proposal = CellCommit::empty();
+    proposal.writes.push(FactWrite {
+        key: FactKey::new(INVOICE, "INV-1"),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put { values: late },
+    });
+    let refusal = cell.commit(proposal).unwrap_err();
+    assert_eq!(refusal.code(), "commit.conflict", "{refusal}");
     assert_eq!(cell.store().read().dump().unwrap(), dump);
 }

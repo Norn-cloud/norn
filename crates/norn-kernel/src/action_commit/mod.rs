@@ -561,7 +561,14 @@ where
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
-    let result = if let Some((request, key)) = quantity {
+    // ACTOR-STAMP-1: the proof binds this exact transaction; only it admits the stamp.
+    let stamp = creator_stamp.map(|stamp| crate::CreatorStampProof::new(stamp, &commit));
+    let result = if let Some(proof) = stamp {
+        let quantity = quantity
+            .as_ref()
+            .map(|(request, key)| (request, key.as_str()));
+        host.commit_stamped(commit, proof, quantity)
+    } else if let Some((request, key)) = quantity {
         if let Some(proof) = reference_reads {
             host.commit_action_references(commit, proof, Some((&request, &key)))
         } else {
@@ -569,9 +576,6 @@ where
         }
     } else if let Some(proof) = reference_reads {
         host.commit_action_references(commit, proof, None)
-    } else if let Some(stamp) = creator_stamp {
-        // ACTOR-STAMP-1: only this kernel-issued proof admits the stamp.
-        host.commit_stamped(commit, crate::CreatorStampProof::new(stamp))
     } else {
         host.commit(commit)
     };
