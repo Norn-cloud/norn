@@ -562,7 +562,15 @@ fn a_sync_that_skips_commits_is_refused() {
 /// refused before any row is applied or the frontier moves.
 #[test]
 fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::error::Error>> {
-    let (_dir, engine) = engine();
+    let (dir, mut engine) = engine();
+    let reopen = || -> Result<Engine, Box<dyn std::error::Error>> {
+        Ok(Engine::new(Settings {
+            root: dir.path().to_path_buf(),
+            memory_limit: "256MB".into(),
+            threads: 1,
+        })?)
+    };
+    let database = dir.path().join(format!("{}.duckdb", tenant().as_str()));
     let (mut store, _plan, _context) = by_metal(true, 100);
     commit(
         &mut store,
@@ -572,52 +580,36 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
     let initial = engine.frontier(&mirror).map_err(|r| r.detail)?;
     let batch = store.analytics_delta(&tenant(), WORLD, 0, 3)?.request;
     assert!(!batch.rows.is_empty());
-    let refuses = |request: &SyncRequest| {
-        matches!(
-            engine.sync(request),
+    let assert_refused_and_empty = |eng: Engine,
+                                    request: &SyncRequest,
+                                    frontier_req: &norn_cell::analytics::FrontierRequest,
+                                    expected: &norn_cell::analytics::FrontierResponse|
+     -> Result<Engine, Box<dyn std::error::Error>> {
+        assert!(matches!(
+            eng.sync(request),
             Err(refused) if refused.code == "core.compute.stale_input"
-        )
-    };
-    let assert_unchanged = |frontier_req: &norn_cell::analytics::FrontierRequest,
-                            expected: &norn_cell::analytics::FrontierResponse|
-     -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(
-            engine.frontier(frontier_req).map_err(|r| r.detail)?,
-            *expected
-        );
-        let profile = engine
-            .profile(&norn_cell::analytics::ProfileRequest {
-                tenant: tenant(),
-                source: Source::Mirror {
-                    world: WORLD.into(),
-                    table: TYPE.into(),
-                    frontier: expected.frontier,
-                    scope: "synthetic".into(),
-                    excluded: Vec::new(),
-                    model: None,
-                },
-                columns: vec!["recovered".to_owned()],
-                model_pin: frontier_req.model_pin.clone(),
-                cell_revision: String::new(),
-            })
-            .map_err(|r| r.detail)?;
-        assert_eq!(profile.rows, 0);
-        Ok(())
+        ));
+        assert_eq!(eng.frontier(frontier_req).map_err(|r| r.detail)?, *expected);
+        drop(eng);
+        let conn = ::duckdb::Connection::open(&database)?;
+        let rows: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM \"m:{TYPE}\""), [], |r| {
+            r.get(0)
+        })?;
+        assert_eq!(rows, 0);
+        drop(conn);
+        reopen()
     };
     let mut other_schema = batch.clone();
     for pin in other_schema.schema_pins.values_mut() {
         pin.push('x');
     }
-    assert!(refuses(&other_schema));
-    assert_unchanged(&mirror, &initial)?;
+    engine = assert_refused_and_empty(engine, &other_schema, &mirror, &initial)?;
     let mut missing_pin = batch.clone();
     missing_pin.schema_pins.clear();
-    assert!(refuses(&missing_pin));
-    assert_unchanged(&mirror, &initial)?;
+    engine = assert_refused_and_empty(engine, &missing_pin, &mirror, &initial)?;
     mirror.model_pin = "another model".into();
     let reset = engine.frontier(&mirror).map_err(|r| r.detail)?;
-    assert!(refuses(&batch));
-    assert_unchanged(&mirror, &reset)?;
+    let _engine = assert_refused_and_empty(engine, &batch, &mirror, &reset)?;
     Ok(())
 }
 

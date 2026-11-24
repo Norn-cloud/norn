@@ -2226,8 +2226,10 @@ fn profile_exchange<E: SqlEngine>(
     decode(&answer.body).map_err(engine_failure)
 }
 
-/// HOST-READ-5 on the engine (D102/D136): column profile over the caller's
-/// authorized snapshot. Errors: 403, 404, 409 (stale provenance), or 500.
+/// HOST-READ-5 on the engine (D102/D136): authorized column profile.
+///
+/// # Errors
+/// Denied (403), marked column (403), unknown type (404), stale (409), or engine error.
 pub fn profile_objects<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -2248,10 +2250,12 @@ pub fn profile_objects<E: SqlEngine>(
     };
     if {
         let guard = host.cell()?;
-        matches!(
-            decide_profile(host, &guard.store().read(), object_type)?,
-            ProfilePlan::Native
-        )
+        let r = guard.store().read();
+        r.dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+            .map_err(Refusal::host)?
+            .is_none()
+            && !host.marking_catalog(&r)?.is_empty()
+            && !unlabeled(&r, object_type)
     } {
         return native();
     }
