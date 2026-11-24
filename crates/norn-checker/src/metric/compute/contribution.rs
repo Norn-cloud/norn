@@ -162,6 +162,73 @@ fn project_row(
     }))
 }
 
+/// Pure proleptic-Gregorian UTC civil date for whole Unix `seconds`,
+/// restricted to four-digit years `0000..=9999` (Howard Hinnant's
+/// civil-from-days algorithm, zero IANA tzdb dependency).
+fn utc_civil_date(seconds: i64) -> Result<(u16, u8, u8), &'static str> {
+    // 0000-01-01T00:00:00Z through 9999-12-31T23:59:59Z.
+    const MIN_UTC_SECONDS: i64 = -62_167_219_200;
+    const MAX_UTC_SECONDS: i64 = 253_402_300_799;
+    if !(MIN_UTC_SECONDS..=MAX_UTC_SECONDS).contains(&seconds) {
+        return Err(UNSUPPORTED_ENGINE);
+    }
+    let days = seconds.div_euclid(86_400);
+    // Shift epoch from 1970-01-01 to 0000-03-01 (719,468 days earlier).
+    let shifted = days.checked_add(719_468).ok_or(UNSUPPORTED_ENGINE)?;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted.rem_euclid(146_097);
+    let year_of_era = day_of_era
+        .checked_sub(day_of_era.div_euclid(1_460))
+        .and_then(|value| value.checked_add(day_of_era.div_euclid(36_524)))
+        .and_then(|value| value.checked_sub(day_of_era.div_euclid(146_096)))
+        .ok_or(UNSUPPORTED_ENGINE)?
+        .div_euclid(365);
+    let year_march = year_of_era
+        .checked_add(era.checked_mul(400).ok_or(UNSUPPORTED_ENGINE)?)
+        .ok_or(UNSUPPORTED_ENGINE)?;
+    let day_of_year = day_of_era
+        .checked_sub(
+            year_of_era
+                .checked_mul(365)
+                .and_then(|value| value.checked_add(year_of_era.div_euclid(4)))
+                .and_then(|value| value.checked_sub(year_of_era.div_euclid(100)))
+                .ok_or(UNSUPPORTED_ENGINE)?,
+        )
+        .ok_or(UNSUPPORTED_ENGINE)?;
+    let march_month = day_of_year
+        .checked_mul(5)
+        .and_then(|value| value.checked_add(2))
+        .ok_or(UNSUPPORTED_ENGINE)?
+        .div_euclid(153);
+    let day = day_of_year
+        .checked_sub(
+            march_month
+                .checked_mul(153)
+                .and_then(|value| value.checked_add(2))
+                .ok_or(UNSUPPORTED_ENGINE)?
+                .div_euclid(5),
+        )
+        .and_then(|value| value.checked_add(1))
+        .ok_or(UNSUPPORTED_ENGINE)?;
+    let month = if march_month < 10 {
+        march_month.checked_add(3)
+    } else {
+        march_month.checked_sub(9)
+    }
+    .ok_or(UNSUPPORTED_ENGINE)?;
+    let year = year_march
+        .checked_add(i64::from(month <= 2))
+        .ok_or(UNSUPPORTED_ENGINE)?;
+    if !(0..=9_999).contains(&year) {
+        return Err(UNSUPPORTED_ENGINE);
+    }
+    Ok((
+        u16::try_from(year).map_err(|_err| UNSUPPORTED_ENGINE)?,
+        u8::try_from(month).map_err(|_err| UNSUPPORTED_ENGINE)?,
+        u8::try_from(day).map_err(|_err| UNSUPPORTED_ENGINE)?,
+    ))
+}
+
 /// The first day of the UTC civil `grain` period holding `seconds`, as
 /// `YYYY-MM-DD`. Periods are half-open: a period's first instant is in it and
 /// the next period's first instant is not. Weeks are ISO weeks, from Monday.
@@ -170,13 +237,6 @@ fn project_row(
 /// # Errors
 /// An instant outside the calendar's range.
 pub fn period_start(seconds: i64, grain: TimeGrain) -> Result<String, &'static str> {
-    let day_of = |seconds: i64| {
-        norn_expr::temporal::naming_series_date_at(
-            seconds.checked_mul(1000).ok_or(UNSUPPORTED_ENGINE)?,
-            "UTC",
-        )
-        .map_err(|_date| UNSUPPORTED_ENGINE)
-    };
     let (year, month, day) = match grain {
         TimeGrain::Week => {
             // 1970-01-05 (345,600 s after the epoch) is a Monday.
@@ -187,28 +247,24 @@ pub fn period_start(seconds: i64, grain: TimeGrain) -> Result<String, &'static s
                 .checked_mul(604_800)
                 .and_then(|s| s.checked_add(345_600))
                 .ok_or(UNSUPPORTED_ENGINE)?;
-            let date = day_of(monday)?;
-            (date.year, date.month, date.day)
+            utc_civil_date(monday)?
         }
-        TimeGrain::Day => {
-            let date = day_of(seconds)?;
-            (date.year, date.month, date.day)
-        }
+        TimeGrain::Day => utc_civil_date(seconds)?,
         TimeGrain::Month => {
-            let date = day_of(seconds)?;
-            (date.year, date.month, 1)
+            let (year, month, _) = utc_civil_date(seconds)?;
+            (year, month, 1)
         }
         TimeGrain::Quarter => {
-            let date = day_of(seconds)?;
-            let first = match date.month {
+            let (year, month, _) = utc_civil_date(seconds)?;
+            let first = match month {
                 1..=3 => 1,
                 4..=6 => 4,
                 7..=9 => 7,
                 _ => 10,
             };
-            (date.year, first, 1)
+            (year, first, 1)
         }
-        TimeGrain::Year => (day_of(seconds)?.year, 1, 1),
+        TimeGrain::Year => (utc_civil_date(seconds)?.0, 1, 1),
     };
     Ok(format!("{year:04}-{month:02}-{day:02}"))
 }
@@ -502,5 +558,91 @@ mod tests {
             period_start(1_735_603_200, TimeGrain::Week).expect("week"),
             "2024-12-30"
         );
+    }
+
+    #[test]
+    fn utc_period_start_matches_naming_series_date_at_across_bounds_and_leap_years() {
+        let grains = [
+            TimeGrain::Day,
+            TimeGrain::Week,
+            TimeGrain::Month,
+            TimeGrain::Quarter,
+            TimeGrain::Year,
+        ];
+        // Boundary instants, leap days, non-leap centuries, negative timestamps, and 2026c Edmonton anchor.
+        let samples = [
+            i64::MIN,
+            -62_167_219_201, // -0001-12-31T23:59:59Z (out of range)
+            -62_167_219_200, // 0000-01-01T00:00:00Z (Saturday: week falls in year -1 -> Err)
+            -62_167_046_400, // 0000-01-03T00:00:00Z (Monday of first full week in year 0000)
+            -62_162_121_600, // 0000-02-29T00:00:00Z (year 0000 leap day)
+            -62_135_596_800, // 0001-01-01T00:00:00Z
+            -2_208_988_800,  // 1900-01-01T00:00:00Z (non-leap century)
+            -2_203_977_600,  // 1900-02-28T00:00:00Z
+            -2_203_891_200,  // 1900-03-01T00:00:00Z
+            -86_401,         // 1969-12-30T23:59:59Z
+            -86_400,         // 1969-12-31T00:00:00Z
+            -1,              // 1969-12-31T23:59:59Z
+            0,               // 1970-01-01T00:00:00Z (Thursday -> week 1969-12-29)
+            345_599,         // 1970-01-04T23:59:59Z (Sunday -> week 1969-12-29)
+            345_600,         // 1970-01-05T00:00:00Z (Monday -> week 1970-01-05)
+            951_782_400,     // 2000-02-29T00:00:00Z (quadricentennial leap day)
+            1_798_785_000,   // 2027-01-01T06:30:00Z (UTC is tzdb-independent)
+            4_107_542_400,   // 2100-03-01T00:00:00Z (non-leap century)
+            253_402_300_799, // 9999-12-31T23:59:59Z (upper bound)
+            253_402_300_800, // 10000-01-01T00:00:00Z (out of range)
+            i64::MAX,
+        ];
+        for seconds in samples {
+            for grain in grains {
+                let reference = |secs: i64| -> Result<String, &'static str> {
+                    let day_of = |s: i64| {
+                        norn_expr::temporal::naming_series_date_at(
+                            s.checked_mul(1_000).ok_or("oob")?,
+                            "UTC",
+                        )
+                        .map_err(|_err| "oob")
+                    };
+                    let (y, m, d) = match grain {
+                        TimeGrain::Week => {
+                            let monday = secs
+                                .checked_sub(345_600)
+                                .ok_or("oob")?
+                                .div_euclid(604_800)
+                                .checked_mul(604_800)
+                                .and_then(|s| s.checked_add(345_600))
+                                .ok_or("oob")?;
+                            let dt = day_of(monday)?;
+                            (dt.year, dt.month, dt.day)
+                        }
+                        TimeGrain::Day => {
+                            let dt = day_of(secs)?;
+                            (dt.year, dt.month, dt.day)
+                        }
+                        TimeGrain::Month => {
+                            let dt = day_of(secs)?;
+                            (dt.year, dt.month, 1)
+                        }
+                        TimeGrain::Quarter => {
+                            let dt = day_of(secs)?;
+                            let first = match dt.month {
+                                1..=3 => 1,
+                                4..=6 => 4,
+                                7..=9 => 7,
+                                _ => 10,
+                            };
+                            (dt.year, first, 1)
+                        }
+                        TimeGrain::Year => (day_of(secs)?.year, 1, 1),
+                    };
+                    Ok(format!("{y:04}-{m:02}-{d:02}"))
+                };
+                assert_eq!(
+                    period_start(seconds, grain).ok(),
+                    reference(seconds).ok(),
+                    "seconds={seconds} grain={grain:?}"
+                );
+            }
+        }
     }
 }
