@@ -1865,6 +1865,22 @@ where
         // RUN-LEDGER-1 / DECISION-LEDGER-1: the store records the run start
         // or the decision's resolution in this commit's transaction; S6c,
         // S5a: else the events attached for it.
+        // ACTOR-STAMP-1: attached and bookkeeping events count against the
+        // stamped envelope with the commit's events and created links.
+        if let Some(proof) = &stamp {
+            let attached = if bookkeeping.is_some() {
+                1
+            } else {
+                self.attached.len()
+            };
+            proof.check_events::<CellError>(
+                commit
+                    .events
+                    .len()
+                    .saturating_add(commit.links.len())
+                    .saturating_add(attached),
+            )?;
+        }
         match bookkeeping {
             Some(event) => batch.events.push(event),
             None => batch.events.append(&mut self.attached),

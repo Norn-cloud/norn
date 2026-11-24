@@ -23,7 +23,8 @@ use norn_kernel::{
     ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellCommit, CellHost, Command,
     DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, LogicalTime,
     SynchronousRule, TransitionGuard, TypeCatalog, World, actor_derived_fields, commit_action,
-    commit_action_with_preparation, prepare_action_input_for_call, transition_guards,
+    commit_action_with_limits, commit_action_with_preparation, prepare_action_input_for_call,
+    transition_guards,
 };
 use serde_json::{Value, json};
 
@@ -1295,4 +1296,80 @@ fn a_base_transition_on_a_subtype_with_a_protected_actor_refuses_bound_or_unboun
         );
         assert_eq!(cell.store().read().dump().unwrap(), dump);
     }
+}
+
+/// ACTOR-STAMP-1 (Astra round 4): the stamped envelope counts the commit's
+/// events, its created links and every event the host attaches to the same
+/// transaction. A linked stamped create at the exact event ceiling commits;
+/// the same create with one attached audit event refuses atomically.
+#[test]
+fn a_stamped_create_at_its_event_ceiling_refuses_one_attached_event() {
+    let directory = tempfile::tempdir().unwrap();
+    let definitions = types();
+    let rules = [admit_rule(&rule_document(
+        "ledger.payable.match_writer.rule",
+    ))];
+    let guards = guards();
+    let catalog = TypeCatalog::new(&definitions)
+        .with_action_rules(&rules)
+        .with_transition_guards(&guards);
+    let members = Members::of(&[SUBMITTER]);
+    let raise = action("ledger.payable.raise");
+    let request = call(
+        &raise,
+        SUBMITTER,
+        json!({"payable_id": "PAY-1", "receipt_id": "GR-1", "amount": 50}),
+        "p-1",
+    );
+    let limits = |max_events: u32| norn_ir::EnvelopeLimits {
+        max_events,
+        ..norn_ir::EnvelopeLimits::V1
+    };
+    // The exact ceiling: the smallest event limit the linked create commits under.
+    let ceiling = (1..=norn_ir::EnvelopeLimits::V1.max_events)
+        .find(|max_events| {
+            let path = directory.path().join(format!("probe-{max_events}.sqlite"));
+            let mut cell = open(&path, &definitions, &[]);
+            seed_receipt(&mut cell);
+            commit_action_with_limits(
+                &mut cell,
+                &catalog,
+                &request,
+                &members,
+                &limits(*max_events),
+            )
+            .is_ok()
+        })
+        .expect("the linked create commits within the V1 envelope");
+    assert!(ceiling > 1);
+
+    let mut cell = open(&directory.path().join("attached.sqlite"), &definitions, &[]);
+    seed_receipt(&mut cell);
+    let dump = cell.store().read().dump().unwrap();
+    let audit = norn_cell::decision_ledger::ApprovalConsumed {
+        decision_id: "audit".into(),
+    }
+    .event()
+    .unwrap();
+    let refused = cell.attributed(vec![audit], |cell| {
+        commit_action_with_limits(cell, &catalog, &request, &members, &limits(ceiling))
+    });
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(cell.store().read().dump().unwrap(), dump);
+    assert!(values(&cell, PAYABLE, "PAY-1").is_none());
+    assert!(
+        !cell
+            .load_link(&norn_kernel::LinkKey::new(
+                FactKey::new(PAYABLE, "PAY-1"),
+                "receipt",
+                FactKey::new(RECEIPT, "GR-1"),
+            ))
+            .unwrap()
+            .exists()
+    );
+    assert!(matches!(
+        commit_action_with_limits(&mut cell, &catalog, &request, &members, &limits(ceiling))
+            .unwrap(),
+        ActionOutcome::Committed { .. }
+    ));
 }

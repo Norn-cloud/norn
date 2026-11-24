@@ -82,6 +82,24 @@ impl CreatorStampProof {
         }
     }
 
+    /// ACTOR-STAMP-1: refuse a final ledger payload above the admitted event
+    /// ceiling. `events` counts the commit's events, its created links (as
+    /// the action's envelope charges them) and every event the host attaches
+    /// to the same transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`CommitError::EventLimitExceeded`] when `events` exceeds the ceiling.
+    pub fn check_events<X>(&self, events: usize) -> Result<(), CommitError<X>> {
+        if u32::try_from(events).map_or(true, |actual| actual > self.max_events) {
+            return Err(CommitError::EventLimitExceeded {
+                limit: self.max_events,
+                actual: events,
+            });
+        }
+        Ok(())
+    }
+
     /// Whether `commit` is the transaction this proof was issued for. A
     /// perimeter adapter may add reads, never drop or change a sealed one.
     fn binds<E, C, T, V: CommitView + ?Sized>(
@@ -247,14 +265,9 @@ pub fn check_commit_stamped<E, C, T, V: CommitView + ?Sized>(
     view: &V,
     proof: &CreatorStampProof,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
-    // Perimeter adapters may append audit events after action preparation.
-    // Recheck the final ledger payload against the admitted envelope.
-    if u32::try_from(commit.events.len()).map_or(true, |actual| actual > proof.max_events) {
-        return Err(CommitError::EventLimitExceeded {
-            limit: proof.max_events,
-            actual: commit.events.len(),
-        });
-    }
+    // Recheck the final ledger payload against the admitted envelope; a host
+    // that attaches events checks them too (`CreatorStampProof::check_events`).
+    proof.check_events::<V::Error>(commit.events.len().saturating_add(commit.links.len()))?;
     let trust = if proof.binds(commit, *model, view)? {
         KernelTrust::Stamped(&proof.stamp)
     } else {
