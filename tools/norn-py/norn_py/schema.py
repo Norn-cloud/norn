@@ -1256,7 +1256,7 @@ def _extract_property_and_meta(
 ) -> tuple[PropertyTypeSpec | LinkSpec, bool, tuple[str, ...], FieldMeta]:
     unwrapped, nullable = _unwrap_nullable(annotation)
     markings: list[str] = []
-    meta = FieldMeta()
+    explicit_meta: FieldMeta | None = None
     explicit_prop: PropertyTypeSpec | None = None
     explicit_link: LinkSpec | None = None
 
@@ -1283,7 +1283,13 @@ def _extract_property_and_meta(
                     )
                 explicit_link = extra
             elif isinstance(extra, FieldMeta):
-                meta = extra
+                if explicit_meta is not None:
+                    raise NornTracingError(
+                        "NORN-PY-SCHEMA",
+                        f"field {field_name!r} declares multiple FieldMeta annotations",
+                        span,
+                    )
+                explicit_meta = extra
             else:
                 raise NornTracingError(
                     "NORN-PY-TYPE-MISMATCH",
@@ -1295,6 +1301,8 @@ def _extract_property_and_meta(
         nullable = nullable or inner_nullable
     else:
         base = unwrapped
+
+    meta = explicit_meta if explicit_meta is not None else FieldMeta()
 
     base, field_nullable = _unwrap_field_wrapper(base)
     nullable = nullable or field_nullable

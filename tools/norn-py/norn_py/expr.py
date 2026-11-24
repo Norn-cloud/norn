@@ -942,26 +942,37 @@ def _find_callback_node(fn: Callable[..., object], span: SourceSpan | None) -> t
         if len(candidates) == 1:
             return filename, candidates[0]
         if len(candidates) > 1:
-            # Disambiguate multiple lambdas on one line using Python 3.11+ co_positions.
-            pos_cols = {
-                col
-                for lineno, _end_line, col, _end_col in code.co_positions()
-                if lineno == first_line and col is not None
-            }
-            matched = [
-                cand
-                for cand in candidates
-                if cand.col_offset in pos_cols
-                or any(
-                    cand.col_offset <= col <= (cand.end_col_offset or cand.col_offset)
-                    for col in pos_cols
-                )
+            # Disambiguate multiple lambdas starting on `first_line` using full (line, col)
+            # bytecode spans (skipping synthetic zero-width RESUME entries like (line, line, 0, 0)).
+            pos_spans = [
+                ((lineno, col), (end_line, end_col))
+                for lineno, end_line, col, end_col in code.co_positions()
+                if lineno is not None
+                and end_line is not None
+                and col is not None
+                and end_col is not None
+                and (lineno, col) < (end_line, end_col)
             ]
+            matched = (
+                [
+                    cand
+                    for cand in candidates
+                    if cand.end_lineno is not None
+                    and cand.end_col_offset is not None
+                    and all(
+                        (cand.lineno, cand.col_offset) <= pos_start
+                        and pos_end <= (cand.end_lineno, cand.end_col_offset)
+                        for pos_start, pos_end in pos_spans
+                    )
+                ]
+                if pos_spans
+                else []
+            )
             if len(matched) == 1:
                 return filename, matched[0]
             raise NornTracingError(
                 "NORN-PY-AMBIGUOUS-CALLBACK",
-                f"multiple lambdas share line {first_line} in {filename} and bytecode positions "
+                f"multiple lambdas share line {first_line} in {filename} and bytecode spans "
                 f"matched {len(matched)} candidates (expected exactly 1); place each callback on its own line",
                 span or SourceSpan(filename, first_line),
             )

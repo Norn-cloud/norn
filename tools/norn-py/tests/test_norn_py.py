@@ -23,6 +23,7 @@ Covers all 6 Sol blocking review findings:
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -94,6 +95,7 @@ from norn_py import (
     validate_callback_ast,
     verify_deterministic_elaboration,
 )
+from norn_py.expr import _find_callback_node
 from norn_py.sandbox import (
     MAX_SOURCE_BYTES,
     _apply_posix_resource_limits,
@@ -309,14 +311,39 @@ class TestPreTracingCallbackValidation(unittest.TestCase):
         self.assertIn(ctx_lam.exception.code, ("NORN-PY-AMBIGUOUS-CALLBACK", "NORN-PY-FORBIDDEN-CALL"))
 
     def test_ambiguous_multi_lambda_line_fails_closed(self) -> None:
-        # Outer lambda spans the inner lambda on the same line, matching 2 AST candidates -> fail closed.
-        ambiguous_nested = lambda s: (lambda y: y)(s.a)  # noqa: E731
-        with self.assertRaises(NornTracingError) as ctx_nested:
-            validate_callback_ast(ambiguous_nested)
-        self.assertEqual(ctx_nested.exception.code, "NORN-PY-AMBIGUOUS-CALLBACK")
+        # Multiline outer lambda (whose closing line col < opening col) + inner lambda on line 1:
+        # Full (line, col) span check MUST resolve `outer` to the outer AST Lambda (not inner!),
+        # and then reject the nested lambda inside `outer`'s body.
+        outer_multiline = (  # noqa: E731
+            lambda s: (lambda y: y)(
+                s.a
+            )
+        )
+        _fname, outer_node = _find_callback_node(outer_multiline, None)
+        assert isinstance(outer_node, ast.Lambda)
+        self.assertGreater(outer_node.end_lineno or 0, outer_node.lineno)
+        with self.assertRaises(NornTracingError) as ctx_outer:
+            validate_callback_ast(outer_multiline)
+        self.assertEqual(ctx_outer.exception.code, "NORN-PY-FORBIDDEN-CALL")
 
-        # Two sibling lambdas on one line whose synthetic code object lacks column positions -> fail closed.
-        f1, _f2 = (lambda s: s.a > 0, lambda s: s.a < 10)  # noqa: E731
+        # Inner lambda returned from a multiline outer lambda starting on the SAME line:
+        # inner's span is contained in BOTH outer and inner candidates -> fails closed as ambiguous!
+        inner_builder: Any = (  # noqa: E731
+            lambda _s: (lambda y: y)
+            if True
+            else None
+        )
+        inner_fn = inner_builder(None)
+        assert callable(inner_fn)
+        with self.assertRaises(NornTracingError) as ctx_inner:
+            validate_callback_ast(inner_fn)
+        self.assertEqual(ctx_inner.exception.code, "NORN-PY-AMBIGUOUS-CALLBACK")
+
+        # Two distinct sibling lambdas on one line disambiguate cleanly via full (line, col) spans,
+        # while stripping bytecode positions fails closed with NORN-PY-AMBIGUOUS-CALLBACK.
+        f1, f2 = (lambda s: s.a > 0, lambda s: s.a < 10)  # noqa: E731
+        validate_callback_ast(f1)
+        validate_callback_ast(f2)
         stripped_code = f1.__code__.replace(co_linetable=b"")
         f1_no_pos = types.FunctionType(stripped_code, f1.__globals__, f1.__name__)
         with self.assertRaises(NornTracingError) as ctx_no_pos:
@@ -518,6 +545,22 @@ class TestNoSilentDropsAndClosedIR(unittest.TestCase):
             _BadLinkMeta.lower(opts, globalns={"_Node": _Node})
         self.assertEqual(c_meta.exception.code, "NORN-PY-SCHEMA")
 
+        # Duplicate FieldMeta on a property (e.g. trailing empty FieldMeta()) MUST fail closed
+        class _BadDupPropMeta(Concept, name="test.BadDupPropMeta", title="Bad dup meta", version="0.1.0"):
+            name: Annotated[Field[str], FieldMeta(description="first", default="a"), FieldMeta()]
+
+        with self.assertRaises(NornTracingError) as c_dup_prop:
+            _BadDupPropMeta.lower(opts, globalns={"_Node": _Node})
+        self.assertEqual(c_dup_prop.exception.code, "NORN-PY-SCHEMA")
+
+        # Duplicate FieldMeta on a link MUST also fail closed
+        class _BadDupLinkMeta(Concept, name="test.BadDupLinkMeta", title="Bad dup link", version="0.1.0"):
+            parent: Annotated[Field[Link[_Node]], link(_Node), FieldMeta(description="x"), FieldMeta()]
+
+        with self.assertRaises(NornTracingError) as c_dup_link:
+            _BadDupLinkMeta.lower(opts, globalns={"_Node": _Node})
+        self.assertEqual(c_dup_link.exception.code, "NORN-PY-SCHEMA")
+
 
 # ------------------------------------------------------------------ 4. Real Determinism
 
@@ -591,6 +634,52 @@ class TestRealDeterminism(unittest.TestCase):
 
 
 class TestCanonicalNorn1AndTsParity(unittest.TestCase):
+    def test_rust_norn1_golden_pins_and_unicode_order_conformance(self) -> None:
+        """Cross-verify Python Norn1 canonical bytes & hashes directly against Rust golden pins.
+
+        Checks:
+        1. Every Rust-generated Norn1 pin in `crates/norn-ir/tests/golden/law-pins.json` (all 22).
+        2. NFD -> NFC + control-character normalization vector from `crates/norn-canonical/src/lib.rs`.
+        3. UTF-16 (`canonical_json`, matching TS) vs Unicode code-point (`canonical_norn1_bytes`,
+           matching Rust `norn-canonical`) ordering divergence between U+E000 and U+10000.
+        """
+        law_pins_path = REPO_ROOT / "crates" / "norn-ir" / "tests" / "golden" / "law-pins.json"
+        pins: dict[str, str] = json.loads(law_pins_path.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(pins), 20)
+
+        for ref, expected_pin in pins.items():
+            rel_file, pointer = ref.split("#", 1)
+            doc: Any = json.loads((REPO_ROOT / rel_file).read_text(encoding="utf-8"))
+            cur: Any = doc
+            for seg in pointer.lstrip("/").split("/"):
+                cur = cur[int(seg)] if isinstance(cur, list) else cur[seg]
+            actual_pin = f"sha256:{canonical_norn1_sha256(cur)}"
+            self.assertEqual(actual_pin, expected_pin, f"Rust Norn1 golden pin mismatch for {ref}")
+
+        # Exact NFD -> NFC + C0 control escape vector from `crates/norn-canonical/src/lib.rs:2468`
+        rust_vec = {
+            "z": 0,
+            "e": 123,
+            "decomposed": "e\u0301",
+            "control": "\u0000\n\t",
+            "nested": {"b": 1, "a": 0},
+        }
+        self.assertEqual(
+            canonical_norn1_bytes(rust_vec),
+            '{"control":"\\u0000\\n\\t","decomposed":"\u00e9","e":123,"nested":{"a":0,"b":1},"z":0}'.encode(),
+        )
+
+        # UTF-16 vs Unicode scalar value ordering: U+E000 (0xE000) vs U+10000 (surrogate 0xD800 0xDC00).
+        # Rust Norn1 sorts by Unicode code point (U+E000 < U+10000);
+        # TS `canonicalJson` sorts by UTF-16 code unit (0xD800 < 0xE000).
+        pair = {"\U00010000": "supp", "\ue000": "bmp"}
+        self.assertEqual(
+            canonical_norn1_bytes(pair),
+            '{"\ue000":"bmp","\U00010000":"supp"}'.encode(),
+        )
+        ts_pretty = canonical_json(pair)
+        self.assertLess(ts_pretty.index("\U00010000"), ts_pretty.index("\ue000"))
+
     def test_norn1_compact_bytes_nfc_and_duplicate_rejection(self) -> None:
         # Zero whitespace, code-point sorted keys, NFC string normalization
         nfd = "e\u0301"  # decomposed é
@@ -1012,33 +1101,30 @@ class Booking(
             )
             self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
 
-            # Compute canonical JSON, compact Norn1 bytes, and Norn1 SHA-256 on the TypeScript side
-            # using `tools/norn-ts/src/canonical.ts` + Node crypto (never Python hashing both sides!).
+            # Compute TS `canonicalJson` golden-file text and its SHA-256 on the TypeScript side
+            # using `tools/norn-ts/src/canonical.ts` + Node crypto (this checks exact TS `canonicalJson`
+            # parity; authoritative Rust Norn1 conformance is verified against `law-pins.json` above).
             ts_hash_script = """
 import { readFileSync } from "node:fs"
 import { createHash } from "node:crypto"
-import { canonicalJson, toJson } from "./src/canonical.ts"
+import { canonicalJson } from "./src/canonical.ts"
 
-const DOMAIN = Buffer.from("norn.canonical.json/norn1\\0", "utf8")
-const norn1Sha = (bytes: Buffer) => createHash("sha256").update(DOMAIN).update(bytes).digest("hex")
+const sha = (text: string) => createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex")
 
 const artifacts = JSON.parse(readFileSync(process.env.NORN_TS_OUT!, "utf8"))
 const canonicalText = canonicalJson(artifacts)
-const compactBytes = Buffer.from(JSON.stringify(toJson(artifacts)), "utf8")
 const perArtifact = artifacts.map((a: unknown) => {
-  const b = Buffer.from(JSON.stringify(toJson(a)), "utf8")
+  const text = canonicalJson(a)
   return {
-    canonicalText: canonicalJson(a),
-    compactUtf8: b.toString("utf8"),
-    norn1Sha256: norn1Sha(b),
+    canonicalText: text,
+    canonicalSha256: sha(text),
   }
 })
 process.stdout.write(JSON.stringify({
   sourcePath: artifacts[0].provenance.sourcePath,
   count: artifacts.length,
   canonicalText,
-  compactUtf8: compactBytes.toString("utf8"),
-  norn1Sha256: norn1Sha(compactBytes),
+  canonicalSha256: sha(canonicalText),
   perArtifact,
 }))
 """
@@ -1059,16 +1145,20 @@ process.stdout.write(JSON.stringify({
                 source_path=str(ts_digest["sourcePath"]),
             )
 
+            import hashlib
+
             self.assertEqual(len(py_result.artifacts), ts_digest["count"])
             self.assertEqual(py_result.canonical_text, ts_digest["canonicalText"])
-            self.assertEqual(py_result.norn1_bytes, ts_digest["compactUtf8"].encode())
-            self.assertEqual(py_result.norn1_sha256, ts_digest["norn1Sha256"])
+            self.assertEqual(
+                hashlib.sha256(py_result.canonical_text.encode()).hexdigest(),
+                ts_digest["canonicalSha256"],
+            )
 
-            # Assert per-artifact parity against TS's own canonicalizer & SHA-256 digest
+            # Assert per-artifact TS `canonicalJson` byte & SHA-256 parity
             for py_art, ts_entry in zip(py_result.artifacts, ts_digest["perArtifact"], strict=True):
-                self.assertEqual(canonical_json(py_art), ts_entry["canonicalText"])
-                self.assertEqual(canonical_norn1_bytes(py_art), ts_entry["compactUtf8"].encode())
-                self.assertEqual(canonical_norn1_sha256(py_art), ts_entry["norn1Sha256"])
+                py_text = canonical_json(py_art)
+                self.assertEqual(py_text, ts_entry["canonicalText"])
+                self.assertEqual(hashlib.sha256(py_text.encode()).hexdigest(), ts_entry["canonicalSha256"])
 
     def test_hr_pilot_admitted_by_rust_checker_wasm_when_available(self) -> None:
         """Run real `checker.checkArtifactSet` via Bun/WASM when norn-checker-wasm is installed."""
