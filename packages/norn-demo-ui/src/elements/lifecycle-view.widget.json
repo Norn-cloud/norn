@@ -1,0 +1,312 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "norn.studio.lifecycle-view.widget",
+  "kind": "widget",
+  "namespace": "norn",
+  "name": "Lifecycle view",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk"
+  },
+  "payload": {
+    "widgetVersion": "0.1",
+    "widgetId": "norn.studio.lifecycle-view",
+    "dataDependencies": [],
+    "viewStates": [
+      {
+        "stateId": "ready",
+        "kind": "ready"
+      }
+    ],
+    "actionBindings": [],
+    "permissions": [],
+    "ux": {
+      "uxVersion": "0.1",
+      "pages": [
+        {
+          "pageId": "lifecycle",
+          "name": "Lifecycle",
+          "contextParams": [],
+          "root": {
+            "nodeId": "lifecycle-view",
+            "component": {
+              "kind": "section",
+              "section": {
+                "sectionId": "lifecycle",
+                "kind": "section",
+                "label": {
+                  "en": "Lifecycle",
+                  "ar": "دورة الحياة"
+                },
+                "fields": [],
+                "order": 0
+              }
+            },
+            "children": [
+              {
+                "nodeId": "retry-button",
+                "component": {
+                  "kind": "control",
+                  "label": {
+                    "en": "Try again",
+                    "ar": "حاول مرة أخرى"
+                  },
+                  "input": "trigger"
+                },
+                "children": []
+              }
+            ]
+          },
+          "machine": {
+            "machineVersion": "0.1",
+            "initialStateId": "opening",
+            "fields": [],
+            "events": [
+              {
+                "eventId": "opened",
+                "source": {
+                  "kind": "page_opened"
+                }
+              },
+              {
+                "eventId": "retry",
+                "source": {
+                  "kind": "user",
+                  "nodeId": "retry-button"
+                }
+              },
+              {
+                "eventId": "changed",
+                "source": {
+                  "kind": "subscription",
+                  "bindingId": "subject"
+                }
+              },
+              {
+                "eventId": "again",
+                "source": {
+                  "kind": "timer",
+                  "afterMs": 10000
+                }
+              },
+              {
+                "eventId": "accepted",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "accepted"
+                }
+              },
+              {
+                "eventId": "refused",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "refused"
+                }
+              },
+              {
+                "eventId": "pending-approval",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "pending_approval"
+                }
+              },
+              {
+                "eventId": "network-failure",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "network_failure"
+                }
+              },
+              {
+                "eventId": "timed-out",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "timeout"
+                }
+              }
+            ],
+            "states": [
+              {
+                "stateId": "opening",
+                "role": "idle"
+              },
+              {
+                "stateId": "reading",
+                "role": "pending",
+                "awaits": {
+                  "kind": "operation",
+                  "operationId": "facetObjects"
+                },
+                "deadlineMs": 15000
+              },
+              {
+                "stateId": "showing",
+                "role": "idle"
+              },
+              {
+                "stateId": "refused",
+                "role": "idle"
+              },
+              {
+                "stateId": "unavailable",
+                "role": "error"
+              }
+            ],
+            "transitions": [
+              {
+                "transitionId": "open",
+                "from": "opening",
+                "on": "opened",
+                "target": "reading",
+                "effects": [
+                  {
+                    "kind": "start",
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "facetObjects"
+                    }
+                  }
+                ]
+              },
+              {
+                "transitionId": "read",
+                "from": "reading",
+                "on": "accepted",
+                "target": "showing"
+              },
+              {
+                "transitionId": "read-refused",
+                "from": "reading",
+                "on": "refused",
+                "target": "refused"
+              },
+              {
+                "transitionId": "read-pending",
+                "from": "reading",
+                "on": "pending-approval",
+                "target": "unavailable"
+              },
+              {
+                "transitionId": "read-failed",
+                "from": "reading",
+                "on": "network-failure",
+                "target": "unavailable"
+              },
+              {
+                "transitionId": "read-timeout",
+                "from": "reading",
+                "on": "timed-out",
+                "target": "unavailable"
+              },
+              {
+                "transitionId": "changed",
+                "from": "showing",
+                "on": "changed",
+                "target": "reading",
+                "effects": [
+                  {
+                    "kind": "start",
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "facetObjects"
+                    }
+                  }
+                ]
+              },
+              {
+                "transitionId": "refused-changed",
+                "from": "refused",
+                "on": "changed",
+                "target": "reading",
+                "effects": [
+                  {
+                    "kind": "start",
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "facetObjects"
+                    }
+                  }
+                ]
+              },
+              {
+                "transitionId": "refused-retry",
+                "from": "refused",
+                "on": "retry",
+                "target": "reading",
+                "effects": [
+                  {
+                    "kind": "start",
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "facetObjects"
+                    }
+                  }
+                ]
+              },
+              {
+                "transitionId": "unavailable-retry",
+                "from": "unavailable",
+                "on": "retry",
+                "target": "reading",
+                "effects": [
+                  {
+                    "kind": "start",
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "facetObjects"
+                    }
+                  }
+                ]
+              },
+              {
+                "transitionId": "unavailable-again",
+                "from": "unavailable",
+                "on": "again",
+                "target": "reading",
+                "effects": [
+                  {
+                    "kind": "start",
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "facetObjects"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "dataBindings": [
+        {
+          "bindingId": "subject",
+          "object": {
+            "id": "norn.studio.lifecycle-subject.entity",
+            "version": "0.1.0"
+          },
+          "query": {
+            "kind": "object_list",
+            "filters": [],
+            "sort": [],
+            "page": {
+              "size": 1,
+              "maxSize": 1
+            }
+          }
+        }
+      ],
+      "actionBindings": [],
+      "fields": [],
+      "forms": [],
+      "actionPlacements": [],
+      "navigationItems": [],
+      "overrides": []
+    }
+  }
+}

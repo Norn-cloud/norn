@@ -21,7 +21,7 @@ for (const [scheme, suffix] of [["light", ""], ["dark", ".dark"]] as const) for 
 for (const [scheme, suffix] of [["light", ""], ["dark", ".dark"]] as const) test(`sheet${suffix}: all states on one page`, async ({ page }) => {
   await page.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" })
   await page.goto("/sheet.html")
-  await expect(page.locator("[data-state]")).toHaveCount(SHEET.length)
+  await expect(page.locator("main > section[data-state]")).toHaveCount(SHEET.length)
   await shown(page.locator("main"))
   await page.waitForTimeout(800)
   // The sheet element, not a full-page capture: Chrome can refuse a very tall page capture under load.

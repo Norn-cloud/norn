@@ -1,6 +1,6 @@
 import { useQueryClient, type QueryKey } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { LiveClient } from "../../../../packages/norn-demo-ui/src/live/client.ts"
+import { LiveClient, type LiveRefusal } from "../../../../packages/norn-demo-ui/src/live/client.ts"
 import { type StudioScope, useStudioScope } from "./definitions.ts"
 
 /**
@@ -48,4 +48,23 @@ export function useLiveRefresh(path: string | null, queryKey: QueryKey): void {
     })
     // The key's value, not its identity, decides the subscription.
   }, [path, scope?.orgId, scope?.environmentId, key])
+}
+
+/**
+ * Listen to the cell's own answer to `path` (status and body, as the subscriber, now): for views
+ * that show exactly what the cell answers, such as a lifecycle's facet counts. Returns the
+ * unsubscribe; without a socket it never calls `listener`.
+ */
+export function liveAnswer(
+  path: string,
+  scope: StudioScope,
+  listener: (answer: { readonly status: number; readonly body: unknown; readonly digest?: string }) => void,
+  onRefused?: (refusal: LiveRefusal) => void,
+): () => void {
+  if (typeof WebSocket === "undefined") return () => {}
+  return live(scope).subscribe(
+    scopedPath(path, scope),
+    (snapshot) => listener({ status: snapshot.status, body: snapshot.body, digest: snapshot.digest }),
+    onRefused ? { onRefused } : undefined,
+  )
 }

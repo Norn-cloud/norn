@@ -26,6 +26,7 @@ import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, Withhe
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
 import { RecordsTimeline } from "./records-timeline.tsx"
+import { LifecycleView } from "@/components/lifecycle-view"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { TIMELINE_MAX_USER_CLAUSES, stepAnchor, tryWindowQuery, windowOf, type Zoom } from "../lib/timeline.ts"
 
@@ -125,11 +126,19 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
     : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE : catalog.data?.kind === "refused" ? catalog.data.message : undefined
   const [filterOpen, setFilterOpen] = useState(false)
   const client = useQueryClient()
+  const hasLifecycle = concept.lifecycles.length > 0
   // The Timeline reads the window's records: the reader's filter and the window's clauses, in start order, a full page at a time.
-  const [layout, setLayout] = useState<"table" | "timeline">("table")
+  // A type with a declared lifecycle also offers the type-wide Lifecycle view (UI-LIFECYCLE-2).
+  const [layout, setLayout] = useState<"table" | "timeline" | "lifecycle">(() => {
+    if (!hasLifecycle || typeof location === "undefined") return "table"
+    const requested = location.hash === "#lifecycle" || new URLSearchParams(location.search).get("view") === "lifecycle"
+    return requested ? "lifecycle" : "table"
+  })
   const [zoom, setZoom] = useState<Zoom>("week")
   const [anchor, setAnchor] = useState(() => new Date())
   const shownTimeline = timeline && layout === "timeline"
+  const shownLifecycle = hasLifecycle && layout === "lifecycle"
+  const hasViewModes = timeline || hasLifecycle
   const span = useMemo(() => windowOf(zoom, anchor), [zoom, anchor])
   const windowed = shownTimeline ? tryWindowQuery(span, filter) : null
   const filterOverflow = windowed?.kind === "too_many" ? windowed.overflow : 0
@@ -254,12 +263,22 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          {timeline && (
-            <ToggleGroup type="single" variant="outline" size="sm" aria-label="Show as" value={layout} disabled={!canQuery && layout === "table"}
-              title={!canQuery ? off : undefined}
-              onValueChange={(next) => { if (next === "table" || next === "timeline") { setLayout(next); restart(); setNotice(null) } }}>
+          {hasViewModes && (
+            <ToggleGroup type="single" variant="outline" size="sm" aria-label="Show as" value={layout}
+              onValueChange={(next) => {
+                if (next === "table" || (next === "timeline" && timeline && canQuery) || (next === "lifecycle" && hasLifecycle)) {
+                  setLayout(next)
+                  if (next !== "lifecycle") {
+                    if (typeof location !== "undefined" && typeof history !== "undefined" && location.hash === "#lifecycle") {
+                      history.replaceState(null, "", `${location.pathname}${location.search}`)
+                    }
+                    restart(); setNotice(null)
+                  }
+                }
+              }}>
               <ToggleGroupItem value="table" className="px-3">Table</ToggleGroupItem>
-              <ToggleGroupItem value="timeline" className="px-3">Timeline</ToggleGroupItem>
+              {timeline && <ToggleGroupItem value="timeline" className="px-3" disabled={!canQuery && layout !== "timeline"} title={!canQuery ? off : undefined}>Timeline</ToggleGroupItem>}
+              {hasLifecycle && <ToggleGroupItem value="lifecycle" className="px-3">Lifecycle</ToggleGroupItem>}
             </ToggleGroup>
           )}
           <div role="toolbar" aria-label="Records" className="flex w-max flex-nowrap items-center gap-0.5">
@@ -274,36 +293,40 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
                 <FilterEditor fields={fields} draft={draft} onDraft={setDraft} onApply={applyFilter} onClear={clearFilter} applied={applied} diagnostics={refused?.diagnostics ?? []} maxClauses={shownTimeline ? TIMELINE_MAX_USER_CLAUSES : LIMITS.clauses} />
               </PopoverContent>
             </Popover>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className={pill}><Columns3 /> Columns</Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto rounded-node border-node-border shadow-float">
-                <DropdownMenuLabel>Show columns</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {fields.map((field) => (
-                  <DropdownMenuCheckboxItem key={field.id} checked={shown.has(field.id)} disabled={shown.has(field.id) && shown.size === 1}
-                    onSelect={(event) => event.preventDefault()}
-                    onCheckedChange={(checked) => setShownOrder((current) => checked ? (current.includes(field.id) ? current : [...current, field.id]) : current.filter((id) => id !== field.id))}>
-                    {field.id.replaceAll("_", " ")}
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <span className="mx-0.5 h-5 w-px bg-node-border" aria-hidden />
-            <label className="flex items-center gap-1.5 px-1.5 text-meta text-muted-foreground">
-              Per page
-              <select className="h-7 rounded-md border border-node-border bg-background px-1.5 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" value={limit} disabled={!canQuery || shownTimeline} title={shownTimeline ? "The timeline reads up to 200 records per window." : off}
-                onChange={(event) => changeQuery({ limit: Number(event.target.value) })}>
-                {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
-              </select>
-            </label>
-            {sort.length > 0 && !shownTimeline && <Button variant="ghost" size="sm" className={pill} onClick={() => changeQuery({ sort: [] })}>Clear sort</Button>}
+            {!shownLifecycle && <>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className={pill}><Columns3 /> Columns</Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto rounded-node border-node-border shadow-float">
+                  <DropdownMenuLabel>Show columns</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {fields.map((field) => (
+                    <DropdownMenuCheckboxItem key={field.id} checked={shown.has(field.id)} disabled={shown.has(field.id) && shown.size === 1}
+                      onSelect={(event) => event.preventDefault()}
+                      onCheckedChange={(checked) => setShownOrder((current) => checked ? (current.includes(field.id) ? current : [...current, field.id]) : current.filter((id) => id !== field.id))}>
+                      {field.id.replaceAll("_", " ")}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <span className="mx-0.5 h-5 w-px bg-node-border" aria-hidden />
+              <label className="flex items-center gap-1.5 px-1.5 text-meta text-muted-foreground">
+                Per page
+                <select className="h-7 rounded-md border border-node-border bg-background px-1.5 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" value={limit} disabled={!canQuery || shownTimeline} title={shownTimeline ? "The timeline reads up to 200 records per window." : off}
+                  onChange={(event) => changeQuery({ limit: Number(event.target.value) })}>
+                  {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </label>
+              {sort.length > 0 && !shownTimeline && <Button variant="ghost" size="sm" className={pill} onClick={() => changeQuery({ sort: [] })}>Clear sort</Button>}
+            </>}
           </div>
           <span className="flex-1" />
           {page?.origin === "recorded" && <Badge variant="outline" className="border-node-border" title={RECORDED}>Recorded</Badge>}
           <NewRecord title={concept.title} creates={creates} off={actionsOff} pending={catalog.isPending} onPick={(action) => setActing({ action })} />
-          <span className="text-meta tabular-nums text-muted-foreground" aria-live="polite">
-            {page?.total ? totalText(page.total) : page ? `${rows.length} on this page` : ""}
-          </span>
+          {!shownLifecycle && (
+            <span className="text-meta tabular-nums text-muted-foreground" aria-live="polite">
+              {page?.total ? totalText(page.total) : page ? `${rows.length} on this page` : ""}
+            </span>
+          )}
         </div>
         {off !== undefined && page !== undefined && <p className="text-meta text-muted-foreground">{off}</p>}
         <FilterChips filter={filter} fields={fields} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
@@ -324,7 +347,14 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
               onOpen={(row) => setOpened(row)} />
           )
         })()}
-        <div className={cn("relative overflow-hidden rounded-lg border bg-card", shownTimeline && "hidden")}>
+        {shownLifecycle && (
+          <div className="grid gap-4" data-testid="records-lifecycle">
+            {concept.lifecycles.map((lifecycle) => (
+              <LifecycleView key={`${concept.name}:${lifecycle.property}`} concept={concept} lifecycle={lifecycle} filter={filter} />
+            ))}
+          </div>
+        )}
+        <div className={cn("relative overflow-hidden rounded-lg border bg-card", (shownTimeline || shownLifecycle) && "hidden")}>
           <div ref={scroller} role="grid" tabIndex={0} aria-label={`${concept.title} records`} aria-rowcount={rows.length + 1} aria-colcount={columns.length + 1}
             aria-busy={result.isFetching} aria-activedescendant={rows.length > 0 ? `row-${active}` : undefined} onKeyDown={onKey} onScroll={measureEdges}
             className={cn("max-h-[60vh] overflow-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset", result.isFetching && "opacity-70")}>
@@ -381,12 +411,14 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
           {edges.right && <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-30 w-12 bg-gradient-to-l from-card to-transparent" />}
         </div>
 
-        <nav className="flex items-center justify-end gap-2 text-meta text-muted-foreground" aria-label="Pages">
-          <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={pageIndex === 0} onClick={() => { setPageIndex(pageIndex - 1); setActive(0) }}>Previous</Button>
-          <span className="tabular-nums">Page {pageIndex + 1}</span>
-          <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={page?.next === undefined || result.isFetching}
-            onClick={() => { const next = page?.next; if (next === undefined) return; setCursors([...cursors.slice(0, pageIndex + 1), next]); setPageIndex(pageIndex + 1); setActive(0) }}>Next</Button>
-        </nav>
+        {!shownLifecycle && (
+          <nav className="flex items-center justify-end gap-2 text-meta text-muted-foreground" aria-label="Pages">
+            <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={pageIndex === 0} onClick={() => { setPageIndex(pageIndex - 1); setActive(0) }}>Previous</Button>
+            <span className="tabular-nums">Page {pageIndex + 1}</span>
+            <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={page?.next === undefined || result.isFetching}
+              onClick={() => { const next = page?.next; if (next === undefined) return; setCursors([...cursors.slice(0, pageIndex + 1), next]); setPageIndex(pageIndex + 1); setActive(0) }}>Next</Button>
+          </nav>
+        )}
       </div>
       </div>
       <RecordDrawer concept={concept} fields={fields} row={visibleDrawerRow(opened, result.error)} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
