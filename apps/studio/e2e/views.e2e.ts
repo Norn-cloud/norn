@@ -462,3 +462,98 @@ test("views (second domain): create and open an Equipment Fleet Tickets view in 
   await expect(sheet.getByRole("status")).toContainText("tkt-1")
   await sheet.getByRole("button", { name: "Done" }).click()
 })
+
+const refocus = (page: Page) => page.evaluate(() => {
+  for (const visibility of ["hidden", "visible"]) {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: visibility })
+    window.dispatchEvent(new Event("visibilitychange"))
+  }
+})
+
+const savedView = (title: string) => ({
+  kind: "view" as const, version: 1, retired: false, updatedAtMs: Date.now(),
+  payload: { title, objectType: "funnel.Application", columns: ["applicant_name", "stage", "score"] },
+})
+
+// #1700 B2: the drawer shows the record as the latest read serves it, and closes when that read drops it.
+test("views: an open record drawer follows the latest read and closes when the record is no longer served", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.drawer"
+  cell.defs.set(id, savedView("Drawer view"))
+  await page.goto(`/views/${id}`)
+  const grid = page.getByRole("grid", { name: "Application records" })
+  await grid.getByText("Ben Park").click()
+  const drawer = page.getByRole("dialog", { name: "app-2" })
+  await expect(drawer).toContainText("Ben Park")
+
+  const ben = cell.records.find((record) => record.id === "app-2")!
+  ben.values.applicant_name = "Ben Parker"
+  await Promise.all([page.waitForResponse(/\/v1\/objects\/funnel\.Application\?/), refocus(page)])
+  await expect(drawer).toContainText("Ben Parker")
+  await shoot(page, "views-drawer-follows-read")
+
+  cell.records.splice(cell.records.indexOf(ben), 1)
+  await Promise.all([page.waitForResponse(/\/v1\/objects\/funnel\.Application\?/), refocus(page)])
+  await expect(grid).not.toContainText("Ben Parker")
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+})
+
+// #1700 B1: an action opened from a saved view commits only in the view's workspace.
+test("views: an action opened from a saved view is sent to its workspace and refused after a session switch", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.act"
+  cell.defs.set(id, savedView("Action view"))
+  await page.goto(`/views/${id}`)
+  await page.getByRole("grid", { name: "Application records" }).getByText("Ben Park").click()
+  await page.getByRole("dialog", { name: "app-2" }).getByRole("button", { name: "Offer assistance" }).click()
+  const sheet = page.getByRole("dialog", { name: "Offer assistance" })
+  await sheet.getByLabel("Outreach note").fill("Called applicant")
+
+  // Another tab moves the session to another workspace just before submit.
+  cell.switchScope("org_other", "prod")
+  await sheet.getByRole("button", { name: "Offer assistance" }).click()
+  await expect(sheet.getByRole("alert").or(sheet.getByRole("status")).first()).toBeVisible()
+  expect(cell.actionCalls).toHaveLength(1)
+  expect(cell.actionCalls[0]).toMatchObject({ orgId: "org_demo", expectedOrg: "org_demo", workspaceChanged: true })
+  expect(cell.records.find((record) => record.id === "app-2")?.values.stage).not.toBe("assisted")
+  await shoot(page, "views-action-workspace-changed")
+})
+
+// #1700 S6: only a `view` definition opens as a view.
+test("views: a definition of another kind never opens as a view or offers Delete", async ({ page }) => {
+  const cell = await workspaceCell(page)
+  const id = "ops.automation.restock"
+  cell.defs.set(id, { kind: "automation", version: 1, retired: false, updatedAtMs: Date.now(), payload: { title: "Restock", objectType: "funnel.Application" } })
+  await page.goto(`/views/${id}`)
+  await expect(page.getByText(`No view ${id} is saved.`)).toBeVisible()
+  await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0)
+})
+
+// #1700 S7: each deletion keeps its own Undo, across navigation.
+test("views: two deletions keep two Undos across navigation, and undoing one leaves the other", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  cell.defs.set("studio.view.funnel_application.first", savedView("First view"))
+  cell.defs.set("studio.view.funnel_application.second", savedView("Second view"))
+  await page.goto("/views")
+  const panel = (title: string) => page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: title, exact: true }) })
+  await panel("First view").getByRole("button", { name: "Delete" }).click()
+  await expect(page.getByText(/Deleted “First view”/)).toBeVisible()
+  await panel("Second view").getByRole("button", { name: "Delete" }).click()
+  await expect(page.getByText(/Deleted “Second view”/)).toBeVisible()
+  await expect(page.getByText(/Deleted “First view”/)).toBeVisible()
+
+  await page.getByRole("button", { name: "New view" }).first().click()
+  await expect(page).toHaveURL(/\/views\/new$/)
+  await page.goBack()
+  await expect(page.getByText(/Deleted “First view”/)).toBeVisible()
+  await expect(page.getByText(/Deleted “Second view”/)).toBeVisible()
+  await shoot(page, "views-two-deletion-receipts")
+
+  await page.getByRole("status").filter({ hasText: "Deleted “First view”" }).getByRole("button", { name: "Undo" }).click()
+  await expect(page.getByText(/Deleted “First view”/)).toHaveCount(0)
+  await expect(page.getByText(/Deleted “Second view”/)).toBeVisible()
+  await expect(page.getByRole("heading", { name: "First view", exact: true })).toBeVisible()
+})

@@ -730,3 +730,48 @@ test.describe("Records page Lifecycle view mode", () => {
     await expect(view.locator("[data-current]")).toHaveCount(0)
   })
 })
+
+// #1700 S10: the arrows are drawn for sight; a screen reader reads every transition from a list.
+test("a11y: the transitions the arrows draw are readable as a list", async ({ page }) => {
+  const view = await specimen(page, "lifecycle-view/counts")
+  await expect(card(view, "draft").locator("[data-count]")).toHaveText("12")
+  const transitions = view.getByRole("list", { name: "Transitions" })
+  const items = transitions.getByRole("listitem")
+  expect(await items.count()).toBeGreaterThan(0)
+  await expect(items.first()).toHaveText(/^.+: from .+ to .+$/)
+  // Read by assistive technology, not drawn: it takes no space on the board.
+  const box = await transitions.boundingBox()
+  expect((box?.width ?? 0) <= 1 && (box?.height ?? 0) <= 1).toBe(true)
+})
+
+// #1700 S9: a live connection that cannot be restored says so and offers Refresh, never stale counts as live.
+test("records page: a lost live connection shows the counts as the last read and Refresh reads again", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "uses the lifecycle stand-in cell")
+  test.setTimeout(90_000)
+  // Every socket fails before it opens, so the client exhausts its reconnects (about 15 s of backoff).
+  await page.addInitScript(() => {
+    class DeadSocket extends EventTarget {
+      readyState = 0
+      constructor(readonly url: string) {
+        super()
+        setTimeout(() => { this.readyState = 3; this.dispatchEvent(new CloseEvent("close", { code: 1006 })) }, 0)
+      }
+      send() {}
+      close() {}
+    }
+    Object.defineProperty(window, "WebSocket", { configurable: true, value: DeadSocket })
+  })
+  const cell = await lifecycleCell(page, { status: okFacets("status", { draft: 3 }) }, { includeWidget: false })
+  await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+  const view = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+  const count = card(view, "draft").locator("[data-count]")
+  await expect(count).toHaveText("3")
+  const banner = view.locator('[data-region="live-off"]')
+  await expect(banner).toBeVisible({ timeout: 40_000 })
+  await expect(banner).toContainText("Live updates are off; counts show the last read.")
+  await expect(view.locator('[data-live-refusal-code="live.unavailable"]')).toHaveCount(1)
+  await shoot(page, "records-live-lost")
+  cell.setFacets("status", okFacets("status", { draft: 4 }))
+  await view.getByRole("button", { name: "Refresh" }).click()
+  await expect(count).toHaveText("4")
+})

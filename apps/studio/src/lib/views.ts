@@ -177,6 +177,9 @@ export function cellViews(
   const getWith = (read: ReturnType<typeof callWith>, scope: StudioScope) => async (id: string, signal?: AbortSignal): Promise<StoredView | undefined> => {
     const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`, signal === undefined ? undefined : { signal })
     if (status === 404 && body?.code === "definition.not_found") return undefined
+    // Only a `view` definition is a view: another kind under this id (an automation, a dashboard)
+    // never opens here, so its controls are never wired to this route's retire and save.
+    if (status === 200 && body?.kind !== KIND) return undefined
     if (status !== 200 || typeof body?.version !== "number" || !isSavedView(body.payload)) {
       throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
     }
@@ -233,7 +236,10 @@ export function cellViews(
     const pinnedGet = getWith(pinnedCall, active)
     const ids: { readonly id: string; readonly updatedAtMs?: number }[] = []
     let cursor: string | null = null
-    for (let page = 0; page < 10; page += 1) {
+    // Follow the cell's cursor to the end: a list that stopped early would report success while
+    // leaving views out. A cursor the cell already sent is a broken listing, never a silent stop.
+    const seen = new Set<string>()
+    for (;;) {
       const params = new URLSearchParams({ kind: KIND, limit: "50", ...(cursor ? { cursor } : {}) })
       const { status, body } = await pinnedCall(`/v1/definitions:list?${params}`)
       const items = Array.isArray(body?.items) ? body.items as { id?: unknown; updatedAtMs?: unknown }[] : undefined
@@ -247,6 +253,8 @@ export function cellViews(
       }
       cursor = typeof body?.cursor === "string" ? body.cursor : null
       if (cursor === null) break
+      if (seen.has(cursor)) throw new CellUnavailable(status, "The cell's view list repeated a page; not every view could be read.")
+      seen.add(cursor)
     }
     const read = await Promise.all(ids.map(async ({ id, updatedAtMs }) => {
       // Only explicit 404 definition.not_found (or retired) returns undefined; transport/5xx errors propagate.

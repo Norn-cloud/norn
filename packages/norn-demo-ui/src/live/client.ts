@@ -65,6 +65,13 @@ interface Entry {
   refused: LiveRefusal | undefined
 }
 
+/**
+ * Told to every subscriber once the client gives up reconnecting (and to any that subscribes after):
+ * the cell's answers are no longer followed, so a view must say its numbers are the last read and
+ * offer to read again, never keep showing them as live.
+ */
+export const LIVE_UNAVAILABLE: LiveRefusal = { code: "live.unavailable", message: "the live connection was lost; answers are no longer followed" }
+
 const OPEN = 1
 /** The cell closes a socket with 1009 on any client frame larger than 4096 bytes. */
 const MAX_MESSAGE = 4096
@@ -111,6 +118,7 @@ export class LiveClient {
     entry.subscribers.add(subscriber)
     if (entry.last) listener(entry.last)
     if (entry.refused) subscriber.onRefused?.(entry.refused)
+    else if (this.#state === "unavailable") queueMicrotask(() => { if (entry.subscribers.has(subscriber)) subscriber.onRefused?.(LIVE_UNAVAILABLE) })
     if (isNew) this.#sendSubscribe(entry)
     this.#ensure()
     const held = entry
@@ -135,6 +143,11 @@ export class LiveClient {
     if (this.#state === state) return
     this.#state = state
     this.#options.onState?.(state)
+    if (state !== "unavailable") return
+    for (const entry of this.#entries.values()) {
+      if (entry.refused !== undefined) continue
+      for (const subscriber of entry.subscribers) subscriber.onRefused?.(LIVE_UNAVAILABLE)
+    }
   }
 
   #send(message: unknown) {

@@ -37,7 +37,7 @@ mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport
 const { invalidateActionReads } = await import("../src/actions/action-sheet.tsx")
 const { RecordsGrid, visibleDrawerRow } = await import("../src/grid/records-grid.tsx")
 const { deletedViewNotice, updateGridView } = await import("../src/grid/views-bar.tsx")
-const { reloadConflictingView, scopedDeletedView, selectViewSpace, viewEditorDraft, ViewConflictBanner, ViewDetail, ViewEditor } = await import("../src/views.tsx")
+const { deletionReceipts, reloadConflictingView, scopedDeletedView, selectViewSpace, viewEditorDraft, ViewConflictBanner, ViewDetail, ViewEditor } = await import("../src/views.tsx")
 
 const SCOPE_A: StudioScope = { orgId: "org_a", environmentId: "prod" }
 const SCOPE_B: StudioScope = { orgId: "org_b", environmentId: "prod" }
@@ -135,10 +135,10 @@ test("views list and get pin one scope, attach loaded scope, skip retired defs, 
       }), { status: 200 })
     }
     if (parsed.pathname.endsWith("/v1/definitions/studio.view.a")) {
-      return new Response(JSON.stringify({ id: "studio.view.a", version: 1, lifecycle: "active", payload: SAMPLE_VIEW }), { status: 200 })
+      return new Response(JSON.stringify({ id: "studio.view.a", kind: "view", version: 1, lifecycle: "active", payload: SAMPLE_VIEW }), { status: 200 })
     }
     if (parsed.pathname.endsWith("/v1/definitions/studio.view.retired")) {
-      return new Response(JSON.stringify({ id: "studio.view.retired", version: 2, lifecycle: "retired", payload: SAMPLE_VIEW }), { status: 200 })
+      return new Response(JSON.stringify({ id: "studio.view.retired", kind: "view", version: 2, lifecycle: "retired", payload: SAMPLE_VIEW }), { status: 200 })
     }
     return new Response(JSON.stringify({ code: "host.unavailable", message: "down" }), { status: 503 })
   }
@@ -237,7 +237,7 @@ test("overwrite after a version conflict sends the confirmed current revision as
       return new Response(JSON.stringify({ installed: true, id: body.id, version: serverVersion }), { status: 200 })
     }
     if (parsed.pathname.endsWith("/v1/definitions/studio.view.v1")) {
-      return new Response(JSON.stringify({ id: "studio.view.v1", version: serverVersion, lifecycle: "active", payload: SAMPLE_VIEW }), { status: 200 })
+      return new Response(JSON.stringify({ id: "studio.view.v1", kind: "view", version: serverVersion, lifecycle: "active", payload: SAMPLE_VIEW }), { status: 200 })
     }
     return new Response(JSON.stringify({ code: "not_found" }), { status: 404 })
   }
@@ -542,7 +542,7 @@ test("conflict-after-delete reports deletion, hides dead Reload/Overwrite button
       return Response.json({ installed: true, id: body.id, version: 1 })
     }
     if (parsed.pathname.endsWith("/v1/definitions/studio.view.deleted_by_other")) {
-      return Response.json({ id: "studio.view.deleted_by_other", version: 2, lifecycle: "retired", payload: SAMPLE_VIEW })
+      return Response.json({ id: "studio.view.deleted_by_other", kind: "view", version: 2, lifecycle: "retired", payload: SAMPLE_VIEW })
     }
     return Response.json({ code: "definition.not_found" }, { status: 404 })
   }
@@ -781,14 +781,25 @@ test("ViewsBar keeps Undo available when restoration fails and clears it only af
   expect(restored).toEqual([{ id: "studio.view.v1", version: 3, scope: SCOPE_A, view: SAMPLE_VIEW }])
 })
 
-test("a scope error blocks the open drawer, and a successful refetch still uses the open row", () => {
-  const opened = {
-    record: { objectType: "canon.Item", id: "a", scope: "s", version: 1, values: { label: "Alpha" }, withheld: false },
+test("the drawer shows the opened record as the latest page serves it, and closes when that page withholds the read", () => {
+  const row = (values: Record<string, unknown>, withheld = false, id = "a") => ({
+    record: { objectType: "canon.Item", id, scope: "s", version: 1, values, withheld },
     at: "/records/0",
     numbers: new Map<string, string>(),
-  }
-  expect(visibleDrawerRow(opened, new StudioScopeError(WORKSPACE_CHANGED_MESSAGE))).toBeNull()
-  expect(visibleDrawerRow(opened, null)).toBe(opened)
+  })
+  const first = row({ label: "Alpha" })
+  expect(visibleDrawerRow("a", [first], null)).toBe(first)
+  // A later read withholds the row: the drawer shows the withheld row, never the values first opened.
+  const withheld = row({}, true)
+  expect(visibleDrawerRow("a", [withheld], null)).toBe(withheld)
+  // A later read changes a value: the drawer shows the new value.
+  const changed = row({ label: "Alpha (renamed)" })
+  expect(visibleDrawerRow("a", [changed], null)?.record.values).toEqual({ label: "Alpha (renamed)" })
+  // The record is gone from the page, the read was refused, or the workspace changed: the drawer closes.
+  expect(visibleDrawerRow("a", [row({ label: "Beta" }, false, "b")], null)).toBeNull()
+  expect(visibleDrawerRow("a", [first], null, true)).toBeNull()
+  expect(visibleDrawerRow("a", [first], new StudioScopeError(WORKSPACE_CHANGED_MESSAGE))).toBeNull()
+  expect(visibleDrawerRow(null, [first], null)).toBeNull()
 })
 
 test("a detail definition read stays pinned before dispatch and discards a late result from its former workspace", async () => {
@@ -798,7 +809,7 @@ test("a detail definition read stays pinned before dispatch and discards a late 
     const url = new URL(String(input), "https://studio.test")
     fetched.push(url.searchParams.get("orgId"))
     active = SCOPE_B
-    return Response.json({ version: 1, payload: SAMPLE_VIEW })
+    return Response.json({ kind: "view", version: 1, payload: SAMPLE_VIEW })
   }, async () => active)
   const id = "studio.view.shared"
   await expect(store.getAtScope(id, SCOPE_A)).rejects.toThrow(WORKSPACE_CHANGED_MESSAGE)
@@ -884,7 +895,7 @@ test("scoped reads thread AbortSignal to network fetches, reject abort during fi
   const controller = new AbortController()
   const seenProbeSignals: (AbortSignal | null | undefined)[] = []
   const store = cellViews(
-    async () => Response.json({ id: "studio.view.v1", version: 1, lifecycle: "active", payload: SAMPLE_VIEW }),
+    async () => Response.json({ id: "studio.view.v1", kind: "view", version: 1, lifecycle: "active", payload: SAMPLE_VIEW }),
     async (signal) => {
       seenProbeSignals.push(signal)
       probeCount += 1
@@ -948,4 +959,52 @@ test("scoped reads thread AbortSignal to network fetches, reject abort during fi
   expect((facetErr as Error).name).toBe("AbortError")
   expect(facetSignals.length).toBeGreaterThanOrEqual(2)
   expect(facetSignals.every((s) => s !== undefined)).toBe(true)
+})
+
+// #1700 S6: only a `view` definition opens as a view; another kind under that id is not one.
+test("a definition of another kind is not a view, so the detail never wires its controls to it", async () => {
+  const store = cellViews(async () => Response.json({ id: "ops.automation.a", kind: "automation", version: 1, lifecycle: "active", payload: { title: "Restock", objectType: "demo.Record" } }))
+  expect(await store.get("ops.automation.a", SCOPE_A)).toBeUndefined()
+})
+
+// #1700 S8: the list follows the cell's cursor past ten pages; a repeated cursor is an error, not success.
+test("listAll follows the cursor to the end and refuses a listing that repeats a page", async () => {
+  const pages = 12
+  const listCalls: (string | null)[] = []
+  const fetcher = (repeat: boolean): Fetch => async (input) => {
+    const url = new URL(String(input), "https://studio.test")
+    if (url.pathname.endsWith("/v1/definitions:list")) {
+      const cursor = url.searchParams.get("cursor")
+      listCalls.push(cursor)
+      const index = cursor === null ? 0 : Number(cursor.slice(1))
+      const next = repeat ? "p1" : index + 1 < pages ? `p${index + 1}` : null
+      return Response.json({ items: [{ id: `studio.view.${index}` }], cursor: next })
+    }
+    const id = decodeURIComponent(url.pathname.split("/v1/definitions/")[1] ?? "")
+    return Response.json({ id, kind: "view", version: 1, lifecycle: "active", payload: { ...SAMPLE_VIEW, title: id } })
+  }
+  const listed = await cellViews(fetcher(false)).listAll(SCOPE_A)
+  expect(listed).toHaveLength(pages)
+  expect(listCalls).toHaveLength(pages)
+  listCalls.length = 0
+  await expect(cellViews(fetcher(true)).listAll(SCOPE_A)).rejects.toBeInstanceOf(CellUnavailable)
+  expect(listCalls).toEqual([null, "p1", "p1"])
+})
+
+// #1700 S7: each deletion keeps its own receipt, by reader, workspace and view id.
+test("a second deletion keeps the first one's receipt, and receipts never cross readers or workspaces", () => {
+  deletionReceipts.clear()
+  const gone = (id: string, scope: StudioScope, reader = "alice") => ({ id, version: 2, scope, view: { ...SAMPLE_VIEW, title: id }, reader })
+  deletionReceipts.add(gone("studio.view.a", SCOPE_A))
+  deletionReceipts.add(gone("studio.view.b", SCOPE_A))
+  deletionReceipts.add(gone("studio.view.c", SCOPE_B))
+  deletionReceipts.add(gone("studio.view.d", SCOPE_A, "bob"))
+  expect(deletionReceipts.of("alice", SCOPE_A).map(({ id }) => id)).toEqual(["studio.view.a", "studio.view.b"])
+  expect(deletionReceipts.of("alice", SCOPE_B).map(({ id }) => id)).toEqual(["studio.view.c"])
+  expect(deletionReceipts.of("bob", SCOPE_A).map(({ id }) => id)).toEqual(["studio.view.d"])
+  // Restoring one leaves the others, and a second deletion of the same view replaces only its own receipt.
+  deletionReceipts.remove({ reader: "alice", scope: SCOPE_A, id: "studio.view.a" })
+  deletionReceipts.add({ ...gone("studio.view.b", SCOPE_A), version: 4 })
+  expect(deletionReceipts.of("alice", SCOPE_A).map(({ id, version }) => [id, version])).toEqual([["studio.view.b", 4]])
+  deletionReceipts.clear()
 })

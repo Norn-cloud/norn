@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 // @ts-expect-error: the host module is plain JavaScript without declarations.
 import * as hostLive from "../../../apps/norn-cell-do/subscribe.mjs"
-import { LiveClient, type LiveClientRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../src/live/client.ts"
+import { LIVE_UNAVAILABLE, LiveClient, type LiveClientRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../src/live/client.ts"
 
 type Listener = (event: { code?: number; data?: unknown }) => void
 
@@ -279,4 +279,26 @@ test("same-tick subscribers to a locally refused path each receive the refusal o
   expect(refusals).toHaveLength(1)
   stopFirst()
   stopSecond()
+})
+
+// #1700 S9: once the client stops reconnecting, every subscriber is told, and so is any that subscribes after.
+test("losing the live connection for good tells each subscriber, so a view can offer to read again", async () => {
+  const { client, sockets, timers, flush } = harness()
+  const told: LiveRefusal[] = []
+  const stop = client.subscribe("/v1/objects/a:facets", () => {}, { onRefused: (refusal) => told.push(refusal) })
+  await flush()
+  sockets[0]!.emit("open")
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    sockets.at(-1)!.emit("close", { code: 1006 })
+    timers.shift()?.()
+    await flush()
+  }
+  expect(client.state).toBe("unavailable")
+  expect(told).toEqual([LIVE_UNAVAILABLE])
+  const later: LiveRefusal[] = []
+  const stopLater = client.subscribe("/v1/objects/b:facets", () => {}, { onRefused: (refusal) => later.push(refusal) })
+  await flush()
+  expect(later).toEqual([LIVE_UNAVAILABLE])
+  stopLater()
+  stop()
 })

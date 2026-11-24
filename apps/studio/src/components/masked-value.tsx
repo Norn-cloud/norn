@@ -1,13 +1,21 @@
 import { Eye, EyeOff, Fingerprint, Loader2, ShieldCheck } from "lucide-react"
-import { useState } from "react"
+import { createContext, useContext, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { CopyId } from "./copy-id.tsx"
 import { TINTED, tintOf } from "./safe-prompt.tsx"
-import { maskHint, revealContext, revealProperty, shownReveal, type Masked, type Revealed } from "../lib/privacy.ts"
-import { usePinnedScope } from "../lib/session.ts"
+import { studioScopeKey, type StudioScope } from "../lib/definitions.ts"
+import { maskHint, revealContext, revealKeys, revealProperty, shownReveal, type Masked, type Revealed } from "../lib/privacy.ts"
+import { usePinnedScope, useReaderKey } from "../lib/session.ts"
+
+/**
+ * The workspace the surrounding records were read from (a scope-bound grid or drawer). A reveal
+ * inside it is sent to that workspace, never to whichever one the session shows at click time.
+ */
+export const RevealScope = createContext<StudioScope | undefined>(undefined)
+
 
 /** The projection as text: what the server sent in the value's place. */
 const projection = (masked: Masked, projected: unknown): string =>
@@ -31,7 +39,11 @@ const valueText = (value: unknown): string => (typeof value === "string" ? value
 export function MaskedValue(props: MaskedValueProps) {
   const { objectType, id, version, property, masked } = props
   const context = revealContext(version, masked)
-  return <Reveal key={JSON.stringify([objectType, id, property, context])} {...props} context={context} />
+  const rowScope = useContext(RevealScope)
+  // A new reader or workspace is a new instance too: a value revealed to one reader, or an answer
+  // still on its way, never shows for the next.
+  const reader = useReaderKey()
+  return <Reveal key={JSON.stringify([reader, rowScope === undefined ? null : studioScopeKey(rowScope), objectType, id, property, context])} {...props} context={context} rowScope={rowScope} />
 }
 
 interface MaskedValueProps {
@@ -48,8 +60,10 @@ interface MaskedValueProps {
 }
 
 /** One reveal context's instance; it never outlives its context (see [`MaskedValue`]). */
-function Reveal({ objectType, id, property, masked, projected, className, compact = false, context }: MaskedValueProps & { readonly context: string }) {
+function Reveal({ objectType, id, property, masked, projected, className, compact = false, context, rowScope }: MaskedValueProps & { readonly context: string; readonly rowScope: StudioScope | undefined }) {
   const pinnedScope = usePinnedScope(`${objectType}:${id}:${property}:${context}`)
+  const boundScope = rowScope ?? pinnedScope
+  const keys = useRef(revealKeys())
   const [revealed, setRevealed] = useState<Revealed | null>(null)
   const [open, setOpen] = useState(false)
   const [purpose, setPurpose] = useState("")
@@ -85,12 +99,14 @@ function Reveal({ objectType, id, property, masked, projected, className, compac
 
   const reveal = async () => {
     setState({ kind: "busy" })
-    const result = await revealProperty(objectType, id, property, purpose, undefined, undefined, pinnedScope)
+    // A retry after the cell did not answer is the same request: the same key, so at most one receipt.
+    const result = await revealProperty(objectType, id, property, purpose, keys.current.for(purpose), undefined, boundScope)
     // This instance is this context's alone: once the context changes it is unmounted, and its
     // state (this answer included) is gone.
+    if (result.kind !== "unavailable") keys.current.settle()
     if (result.kind === "revealed") { setRevealed({ value: result.value, receipt: result.receipt, context }); setOpen(false); setState({ kind: "idle" }); return }
     setRevealed(null)
-    setState({ kind: "error", message: result.kind === "refused" ? result.message : "The cell is not reachable." })
+    setState({ kind: "error", message: result.kind === "refused" ? result.message : "The cell is not reachable. Try again." })
   }
 
   return (

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { ArrowDown, ArrowUp, Bookmark, Copy, Eye, Pencil, Plus, Shapes, Trash2, Undo2 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react"
 import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, PageHeader, Panel } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
@@ -16,6 +16,7 @@ import type { Concept } from "./lib/catalog.ts"
 import { NO_DATA_CELL, StudioScopeError, useStudioScope, type Finding, type StudioScope } from "./lib/definitions.ts"
 import type { Issue } from "./lib/editor.ts"
 import { useMode } from "./lib/live-transport.ts"
+import { useReaderKey } from "./lib/session.ts"
 import { recordName } from "./lib/objects.ts"
 import { LIMITS, propertyWithheld, recordsQueryPrefix, sortable, totalText, type RecordsQuery, type SortKey } from "./lib/records-query.ts"
 import { offersTimeline } from "./lib/timeline.ts"
@@ -63,14 +64,52 @@ export interface RemovedView {
   readonly view: SavedView
 }
 
+/** A deleted view's receipt: the view as it was, and the reader who deleted it. */
+export interface DeletionReceipt extends RemovedView { readonly reader: string }
+
+/**
+ * Deletion receipts, kept above the routes so each deletion keeps its own Undo across navigation,
+ * keyed by reader, workspace and view id: a second deletion never replaces the first, and one
+ * reader's or workspace's receipt never shows for another. Memory only, like kept drafts.
+ */
+const receiptKey = ({ reader, scope, id }: Pick<DeletionReceipt, "reader" | "scope" | "id">) => JSON.stringify([reader, scope.orgId, scope.environmentId, id])
+let receiptList: readonly DeletionReceipt[] = []
+const receiptListeners = new Set<() => void>()
+const publishReceipts = (next: readonly DeletionReceipt[]) => { receiptList = next; for (const listener of receiptListeners) listener() }
+export const deletionReceipts = {
+  add(receipt: DeletionReceipt): void {
+    const key = receiptKey(receipt)
+    publishReceipts([...receiptList.filter((kept) => receiptKey(kept) !== key), receipt])
+  },
+  remove(receipt: Pick<DeletionReceipt, "reader" | "scope" | "id">): void {
+    const key = receiptKey(receipt)
+    publishReceipts(receiptList.filter((kept) => receiptKey(kept) !== key))
+  },
+  /** The receipts this reader made in this workspace, oldest first. */
+  of(reader: string, scope: StudioScope | null): readonly DeletionReceipt[] {
+    return receiptList.filter((kept) => kept.reader === reader && sameScope(kept.scope, scope))
+  },
+  subscribe(listener: () => void): () => void { receiptListeners.add(listener); return () => { receiptListeners.delete(listener) } },
+  snapshot: (): readonly DeletionReceipt[] => receiptList,
+  clear(): void { publishReceipts([]) },
+}
+
+/** This reader's deletion receipts in `scope`, re-rendered as receipts are added or restored. */
+function useDeletionReceipts(scope: StudioScope | null): { readonly reader: string; readonly receipts: readonly DeletionReceipt[] } {
+  const reader = useReaderKey()
+  const all = useSyncExternalStore(deletionReceipts.subscribe, deletionReceipts.snapshot, deletionReceipts.snapshot)
+  const receipts = useMemo(() => all.filter((kept) => kept.reader === reader && sameScope(kept.scope, scope)), [all, reader, scope?.orgId, scope?.environmentId])
+  return { reader, receipts }
+}
+
 export type ReloadViewOutcome = "reloaded" | "deleted" | "failed"
 
 /** Scope a deleted-view banner to the exact route view id and active workspace scope. */
-export const scopedDeletedView = (
-  removed: RemovedView | undefined,
+export const scopedDeletedView = <T extends RemovedView>(
+  removed: T | undefined,
   id: string,
   activeScope: StudioScope | null,
-): RemovedView | undefined =>
+): T | undefined =>
   removed !== undefined && removed.id === id && sameScope(removed.scope, activeScope) ? removed : undefined
 
 /**
@@ -156,6 +195,19 @@ export function ViewConflictBanner({
       {reloadError && <p className="basis-full text-destructive">{reloadError}</p>}
     </div>
   )
+}
+
+/** One deletion's notice with its own Undo: restoring one never touches another's. */
+function DeletionReceiptNotice({ receipt, store, onRestored }: {
+  readonly receipt: DeletionReceipt
+  readonly store: Pick<ViewsClient, "save">
+  readonly onRestored: () => void
+}) {
+  const undo = useMutation({
+    mutationFn: async (gone: DeletionReceipt) => settled(await store.save(gone.id, gone.view, gone.version, gone.scope)),
+    onSuccess: (_saved, gone) => { deletionReceipts.remove(gone); onRestored() },
+  })
+  return <UndoDeleteView removed={receipt} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(receipt)} />
 }
 
 function UndoDeleteView({ removed, pending, error, onUndo }: {
@@ -251,7 +303,7 @@ export function ViewsPage() {
     retry: false,
   })
   const refresh = () => client.invalidateQueries({ queryKey: ["views"] })
-  const [removed, setRemoved] = useState<RemovedView>()
+  const { reader, receipts } = useDeletionReceipts(activeScope)
 
   const duplicate = useMutation({
     mutationFn: async (stored: StoredView) => {
@@ -267,13 +319,7 @@ export function ViewsPage() {
       const retired = settled(await views.retire(stored.id, stored.version, stored.scope))
       return retired.saved ? { id: stored.id, version: retired.version, scope: stored.scope, view: stored.view } : undefined
     },
-    onSuccess: setRemoved,
-    onSettled: refresh,
-  })
-
-  const undo = useMutation({
-    mutationFn: async (gone: RemovedView) => settled(await views.save(gone.id, gone.view, gone.version, gone.scope)),
-    onSuccess: () => setRemoved(undefined),
+    onSuccess: (gone) => { if (gone !== undefined) deletionReceipts.add({ ...gone, reader }) },
     onSettled: refresh,
   })
 
@@ -312,7 +358,7 @@ export function ViewsPage() {
       {list.isError && <EmptyState icon={Bookmark}>{failure(list.error)}</EmptyState>}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
-      {removed && <UndoDeleteView removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
+      {receipts.map((receipt) => <DeletionReceiptNotice key={receipt.id} receipt={receipt} store={views} onRestored={() => void refresh()} />)}
       {list.data?.length === 0 && (
         <EmptyState
           icon={Bookmark}
@@ -363,16 +409,14 @@ export function ViewsPage() {
 
 /** `/views/$id`: open a saved view with its filtered list, record drawer and action sheet. */
 export function ViewDetail(props: {
-  readonly initialRemoved?: RemovedView
   readonly store?: ViewsClient
 }) {
   const { id = "" } = useParams({ strict: false }) as { id?: string }
   return <ScopedViewDetail key={id} id={id} {...props} />
 }
 
-function ScopedViewDetail({ id, initialRemoved, store = views }: {
+function ScopedViewDetail({ id, store = views }: {
   readonly id: string
-  readonly initialRemoved?: RemovedView
   readonly store?: ViewsClient
 }) {
   const scope = useStudioScope()
@@ -393,7 +437,7 @@ function ScopedViewDetail({ id, initialRemoved, store = views }: {
   if (sourceScope === null && stored.data != null) setSourceScope(stored.data.scope)
   const detailScopeMismatch = scopeMismatch
     || (stored.error instanceof StudioScopeError && stored.error.message === WORKSPACE_CHANGED_MESSAGE)
-  const [removed, setRemoved] = useState<RemovedView | undefined>(initialRemoved)
+  const { reader, receipts } = useDeletionReceipts(activeScope)
   const invalidate = () => {
     void client.invalidateQueries({ queryKey: ["views"] })
     void client.invalidateQueries({ queryKey: ["view", id] })
@@ -417,12 +461,7 @@ function ScopedViewDetail({ id, initialRemoved, store = views }: {
       const retired = settled(await store.retire(from.id, from.version, from.scope))
       return retired.saved ? { id: from.id, version: retired.version, scope: from.scope, view: from.view } : undefined
     },
-    onSuccess: (gone) => { setRemoved(gone); void client.invalidateQueries({ queryKey: ["views"] }) },
-  })
-
-  const undo = useMutation({
-    mutationFn: async (gone: RemovedView) => settled(await store.save(gone.id, gone.view, gone.version, gone.scope)),
-    onSuccess: () => { setRemoved(undefined); invalidate(); void stored.refetch() },
+    onSuccess: (gone) => { if (gone !== undefined) deletionReceipts.add({ ...gone, reader }); void client.invalidateQueries({ queryKey: ["views"] }) },
   })
 
   const rename = async (from: StoredView, title: string): Promise<string | null> => {
@@ -436,7 +475,7 @@ function ScopedViewDetail({ id, initialRemoved, store = views }: {
     }
   }
 
-  const deleted = detailScopeMismatch ? undefined : scopedDeletedView(removed, id, activeScope)
+  const deleted = detailScopeMismatch ? undefined : scopedDeletedView(receipts.find((receipt) => receipt.id === id), id, activeScope)
   const active = deleted || detailScopeMismatch ? undefined : stored.data
   const loaded = stored.data
   useEffect(() => {
@@ -483,7 +522,7 @@ function ScopedViewDetail({ id, initialRemoved, store = views }: {
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
       {!detailScopeMismatch && (scope.isPending || (cellAvailable && stored.isPending)) && <p className="text-muted-foreground">Reading view…</p>}
       {!detailScopeMismatch && stored.isError && <EmptyState icon={Bookmark}>{failure(stored.error)}</EmptyState>}
-      {deleted && <UndoDeleteView removed={deleted} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(deleted)} />}
+      {deleted && <DeletionReceiptNotice receipt={deleted} store={store} onRestored={() => { invalidate(); void stored.refetch() }} />}
       {deleted && <Button asChild variant="ghost" size="sm"><Link to="/views">Back to views</Link></Button>}
       {stored.isSuccess && active === null && <EmptyState icon={Bookmark}>No view {id} is saved.</EmptyState>}
       {active && concept === undefined && catalog && (
