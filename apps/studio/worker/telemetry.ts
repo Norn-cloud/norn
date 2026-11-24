@@ -38,7 +38,6 @@ export const STUDIO_ROUTES = [
   "/api/auth/*",
   "/api/workspaces",
   "/api/workspaces/invitations/accept",
-  "/api/workspaces/{workspace}/activate",
   "/api/questions/check",
   "/api/questions/catalog",
   "/api/questions/recommendations",

@@ -3,10 +3,11 @@ import { expect, test } from "bun:test"
 import { createHash, randomBytes } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { assistantCallback, cimdAllowed, createAuth, fetchClientMetadata, ORG_CLAIM } from "../auth.ts"
+import { assistantCallback, cimdAllowed, fetchClientMetadata } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
-import { EXPECTED_ORG_HEADER, hostToken } from "../actor.ts"
-import { grantActor, retried } from "../mcp.ts"
+import { hostToken } from "../actor.ts"
+import { retried } from "../mcp.ts"
+import { createAuth } from "../auth.ts"
 
 /**
  * An assistant connecting to Norn end to end, as Claude and ChatGPT do it: discovery, client
@@ -307,98 +308,4 @@ test("a store read that fails once is tried again before it counts as unavailabl
   reads = 0
   await expect(retried(async () => { reads += 1; throw new Error("down") }, [1, 1])).rejects.toThrow("down")
   expect(reads).toBe(3)
-})
-
-test("consent binds to the ready workspace /api/me displays even when raw session.activeOrganizationId is null, and rejects mismatched expected org", async () => {
-  const env = stage()
-  const { cookie, user, org } = await person(env, "null-active@example.com")
-  // Simulate a session row whose raw activeOrganizationId is null: /api/me still resolves the earliest ready workspace.
-  db(env).run(`update "session" set "activeOrganizationId" = null where "userId" = ?`, [user])
-  const me = (await (await call(env, "/api/me", { headers: { cookie } })).json()) as { organization: { id: string } | null }
-  expect(me.organization?.id).toBe(org)
-
-  const clientId = await register(env)
-  const { verifier, challenge } = pkce()
-  const authorize = await call(env, authorizeUrl(clientId, challenge), { headers: { cookie } })
-  expect(authorize.status).toBe(302)
-  const consentPage = authorize.headers.get("location") ?? ""
-  expect(new URL(consentPage, ORIGIN).pathname).toBe("/oauth/consent")
-
-  // If the consent screen displayed another workspace (switched in another tab), accepting must be refused.
-  const wrongWorkspace = await postJson(
-    env,
-    "/api/auth/oauth2/consent",
-    { accept: true, oauth_query: signedQueryOf(consentPage) },
-    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: "org_different" },
-  )
-  expect(wrongWorkspace.status).toBe(409)
-  expect(await wrongWorkspace.json()).toMatchObject({ code: "WORKSPACE_CHANGED" })
-
-  // Accepting with the displayed workspace binds consent & access token to `org` (never unscoped).
-  const consent = await postJson(
-    env,
-    "/api/auth/oauth2/consent",
-    { accept: true, oauth_query: signedQueryOf(consentPage) },
-    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org },
-  )
-  expect(consent.status).toBe(200)
-  const callback = new URL(((await consent.json()) as { url: string }).url)
-  const token = await call(env, "/api/auth/oauth2/token", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body: new URLSearchParams({ grant_type: "authorization_code", code: callback.searchParams.get("code") ?? "", redirect_uri: CLAUDE, client_id: clientId, code_verifier: verifier, resource: RESOURCE }),
-  })
-  expect(token.status).toBe(200)
-  const accessToken = ((await token.json()) as { access_token: string }).access_token
-  const claims = JSON.parse(Buffer.from(accessToken.split(".")[1] ?? "", "base64url").toString()) as Record<string, unknown>
-  expect(claims[ORG_CLAIM]).toBe(org)
-  expect((await mcp(env, accessToken, INIT)).status).toBe(200)
-  expect(new URL(env.forwarded.at(-1)?.url ?? "").searchParams.get("orgId")).toBe(org)
-})
-
-test("consent refuses without a ready workspace, and /mcp rejects unscoped or revoked-workspace tokens without falling back", async () => {
-  const env = stage()
-  const { cookie, user, org } = await person(env, "scoped@example.com")
-  // Add a second workspace so any fallback to "first membership" would be caught.
-  db(env).run(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values ('org_second', 'Second', 'second', '{"environmentId":"analytics"}', ?)`, [new Date(Date.now() + 1000).toISOString()])
-  db(env).run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_second', 'org_second', ?, 'owner', ?)`, [user, new Date(Date.now() + 1000).toISOString()])
-
-  // Grant scoped to `org`; once membership in `org` is removed, the token must fail 401 even though `org_second` remains.
-  const { accessToken } = await grant(env, cookie)
-  expect((await mcp(env, accessToken, INIT)).status).toBe(200)
-  db(env).run(`delete from "member" where "userId" = ? and "organizationId" = ?`, [user, org])
-  expect((await mcp(env, accessToken, INIT)).status).toBe(401)
-
-  // Unscoped tokens (no ORG_CLAIM) are rejected both by grantActor and by /mcp JWT verification.
-  const auth = createAuth({ clientIpHeader: "cf-connecting-ip", database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, mcp: true })
-  expect(await grantActor(auth, { sub: user })).toBeNull()
-  expect(await grantActor(auth, { sub: user, [ORG_CLAIM]: "" })).toBeNull()
-  const now = Math.floor(Date.now() / 1000)
-  const { token: unscopedJwt } = await auth.api.signJWT({
-    body: { payload: { iss: ORIGIN, aud: RESOURCE, azp: "client_test", sub: user, iat: now, exp: now + 300 } },
-  })
-  expect((await mcp(env, unscopedJwt, INIT)).status).toBe(401)
-
-  // Switch the session to org_second, then mark org_second provisioning -> user has no ready workspace:
-  // /authorize immediately refuses 409 NO_ACTIVE_WORKSPACE.
-  db(env).run(`update "session" set "activeOrganizationId" = 'org_second' where "userId" = ?`, [user])
-  db(env).run(`update "organization" set "metadata" = '{"norn.provisioning":true}' where "id" = 'org_second'`)
-  const clientId = await register(env)
-  const blockedAuth = await call(env, authorizeUrl(clientId, pkce().challenge), { headers: { cookie } })
-  expect(blockedAuth.status).toBe(409)
-  expect(await blockedAuth.json()).toMatchObject({ code: "NO_ACTIVE_WORKSPACE" })
-
-  // If the org turns provisioning between /authorize and /oauth2/consent, accepting is still refused 409 NO_ACTIVE_WORKSPACE,
-  // while denying consent still completes cleanly with error=access_denied.
-  db(env).run(`update "organization" set "metadata" = '{"environmentId":"analytics"}' where "id" = 'org_second'`)
-  const authorize = await call(env, authorizeUrl(clientId, pkce().challenge), { headers: { cookie } })
-  expect(authorize.status).toBe(302)
-  const consentPage = authorize.headers.get("location") ?? ""
-  db(env).run(`update "organization" set "metadata" = '{"norn.provisioning":true}' where "id" = 'org_second'`)
-  const accepted = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: signedQueryOf(consentPage) }, { cookie, origin: ORIGIN })
-  expect(accepted.status).toBe(409)
-  expect(await accepted.json()).toMatchObject({ code: "NO_ACTIVE_WORKSPACE" })
-  const denied = await postJson(env, "/api/auth/oauth2/consent", { accept: false, oauth_query: signedQueryOf(consentPage) }, { cookie, origin: ORIGIN })
-  expect(denied.status).toBe(200)
-  expect(new URL(((await denied.json()) as { url: string }).url).searchParams.get("error")).toBe("access_denied")
 })

@@ -1,14 +1,20 @@
-import { activeMembership, atomically, isProvisioningMetadata, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
+import { activeMembership, atomically, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
 import { admitCell, admitMember, entitlementOf, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
 
 /**
- * Studio's workspace routes: listing the signed-in user's workspaces for the honest switcher,
- * switching the session's active workspace, and atomic workspace creation / invitation acceptance
- * for billing enforcement (migration 0011).
+ * Creating a workspace and accepting an invitation, each as one database transaction. Better Auth's
+ * own routes write the workspace and its owner (or the accepted invitation and the member) in separate
+ * statements, so an interruption or a plan-limit refusal between them leaves half a change: a workspace
+ * without its owner holding a payer's cell, or an accepted invitation without its member that can never
+ * be retried. With billing on, the Worker refuses those routes (index.ts) and serves these instead.
+ * Also serves the read-only `GET /api/workspaces` document for Studio's workspace switcher.
  *
- * Self-serve workspace creation with host cell provisioning, archiving, deletion, and workspace
- * requests live in the follow-up lifecycle work (tracked on #1414). On deployments connected to a
- * Norn host (`NORN_HOST`), `POST /api/workspaces` refuses rather than creating an unprovisioned org.
+ * Authorization is Better Auth's, unchanged: its session, and for an invitation the same checks its
+ * accept route makes (pending and unexpired, addressed to the session's email, verified address,
+ * membership limit). Each check is made again inside the write, against the rows and the database's
+ * clock at commit, so nothing that changes between the checks and the write (an expiry, a changed or
+ * unverified address, a concurrent acceptance) can pass. The database enforces the plan limits
+ * (migration 0011) inside the transaction, so a refusal rolls the whole change back.
  */
 
 export interface WorkspaceContext {
@@ -16,7 +22,6 @@ export interface WorkspaceContext {
   readonly db: D1Database
   readonly billing: BillingSettings | undefined
   readonly baseURL: string
-  readonly host?: Fetcher
 }
 
 export interface WorkspaceItem {
@@ -66,26 +71,20 @@ async function body(request: Request): Promise<Record<string, unknown> | null> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
 }
 
-type SqlResult = { first<T>(): Promise<T | null>; all<T>(): Promise<{ results: T[] }>; run(): Promise<unknown> }
-type QueryableStatement = { bind?: (...params: (string | null)[]) => SqlResult; get?: (...params: (string | null)[]) => unknown; all?: (...params: (string | null)[]) => unknown[]; run?: (...params: (string | null)[]) => unknown }
+type SqlResult = { first<T>(): Promise<T | null>; all<T>(): Promise<{ results: T[] }> }
+type QueryableStatement = { bind?: (...params: string[]) => SqlResult; get?: (...params: string[]) => unknown; all?: (...params: string[]) => unknown[] }
 type QueryableDb = { prepare(sql: string): QueryableStatement }
 
-async function first<T>(db: D1Database | ProvisionDb, sql: string, ...params: (string | null)[]): Promise<T | null> {
+async function first<T>(db: D1Database | ProvisionDb, sql: string, ...params: string[]): Promise<T | null> {
   const statement = (db as unknown as QueryableDb).prepare(sql)
   if (statement.bind) return statement.bind(...params).first<T>()
   return (statement.get?.(...params) as T | undefined) ?? null
 }
 
-async function all<T>(db: D1Database | ProvisionDb, sql: string, ...params: (string | null)[]): Promise<T[]> {
+async function all<T>(db: D1Database | ProvisionDb, sql: string, ...params: string[]): Promise<T[]> {
   const statement = (db as unknown as QueryableDb).prepare(sql)
   if (statement.bind) return (await statement.bind(...params).all<T>()).results
   return (statement.all?.(...params) ?? []) as T[]
-}
-
-async function run(db: D1Database | ProvisionDb, sql: string, ...params: (string | null)[]): Promise<void> {
-  const statement = (db as unknown as QueryableDb).prepare(sql)
-  if (statement.bind) await statement.bind(...params).run()
-  else statement.run?.(...params)
 }
 
 /** Make the new workspace the session's active one, as Better Auth's routes do. */
@@ -94,10 +93,7 @@ async function activate(auth: Auth, token: string, organizationId: string): Prom
   await context.internalAdapter.updateSession(token, { activeOrganizationId: organizationId })
 }
 
-/** SQL predicate confirming an organization row is not marked `norn.provisioning`. */
-const READY_ORG_SQL = `(o."metadata" is null or not json_valid(o."metadata") or coalesce(json_extract(o."metadata", '$."norn.provisioning"'), 0) != 1)`
-
-/** GET /api/workspaces: the signed-in user's ready workspaces and current plan label. */
+/** GET /api/workspaces: read-only listing of the signed-in user's workspaces and current plan label. */
 export async function listWorkspaces(request: Request, context: WorkspaceContext): Promise<Response> {
   const session = await context.auth.api.getSession({ headers: request.headers })
   if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
@@ -111,18 +107,14 @@ export async function listWorkspaces(request: Request, context: WorkspaceContext
      order by m."createdAt" asc, o."id" asc`,
     session.user.id)
 
-  const workspaces: WorkspaceItem[] = []
-  for (const row of rows) {
-    if (isProvisioningMetadata(row.metadata)) continue
-    workspaces.push({
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      role: row.role,
-      active: active?.organizationId === row.id,
-      hasCell: environmentOf(row.metadata) !== null,
-    })
-  }
+  const workspaces: WorkspaceItem[] = rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    role: row.role,
+    active: active?.organizationId === row.id,
+    hasCell: environmentOf(row.metadata) !== null,
+  }))
 
   let planLabel: string | null = null
   if (context.billing !== undefined) {
@@ -134,48 +126,10 @@ export async function listWorkspaces(request: Request, context: WorkspaceContext
   return json(document)
 }
 
-/** POST /api/workspaces/:id/activate: switch the session's active workspace, enforcing membership and readiness at commit. */
-export async function activateWorkspace(request: Request, context: WorkspaceContext, organizationId: string): Promise<Response> {
-  const session = await context.auth.api.getSession({ headers: request.headers })
-  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
-  const membership = await first<{ role: string; name: string; metadata: string | null }>(context.db,
-    `select m."role", o."name", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."organizationId" = ? and m."userId" = ?`,
-    organizationId, session.user.id)
-  if (membership === null) return failure(403, "FORBIDDEN", "You are not a member of this workspace.")
-  if (isProvisioningMetadata(membership.metadata)) return failure(409, "WORKSPACE_PROVISIONING", "This workspace is still being provisioned.")
-  const at = new Date().toISOString()
-  await run(context.db,
-    `update "session" set "activeOrganizationId" = ?, "updatedAt" = ?
-     where "token" = ? and "userId" = ?
-       and exists (select 1 from "member" m join "organization" o on o."id" = m."organizationId"
-                   where m."organizationId" = ? and m."userId" = ? and ${READY_ORG_SQL})`,
-    organizationId, at, session.session.token, session.user.id, organizationId, session.user.id)
-  const confirmed = await first<{ activeOrganizationId: string | null }>(context.db,
-    `select "activeOrganizationId" from "session" where "token" = ? and "userId" = ?`,
-    session.session.token, session.user.id)
-  if (confirmed?.activeOrganizationId !== organizationId) {
-    const current = await first<{ metadata: string | null }>(context.db,
-      `select o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."organizationId" = ? and m."userId" = ?`,
-      organizationId, session.user.id)
-    if (current === null) return failure(403, "FORBIDDEN", "You are not a member of this workspace.")
-    if (isProvisioningMetadata(current.metadata)) return failure(409, "WORKSPACE_PROVISIONING", "This workspace is still being provisioned.")
-    return failure(403, "FORBIDDEN", "Could not activate this workspace.")
-  }
-  return json({ activeOrganizationId: organizationId, name: membership.name, role: membership.role, hasCell: environmentOf(membership.metadata) !== null })
-}
-
-/**
- * POST /api/workspaces { name, slug, logo?, metadata?, keepCurrentActiveOrganization? }:
- * On deployments connected to a Norn host, self-serve workspace creation is disabled until host-side
- * cell lifecycle provisioning lands (#1414). On non-host stages (billing enforcement), creates the
- * workspace and its owner in one transaction so a plan-limit refusal rolls both back.
- */
+/** POST /api/workspaces { name, slug, logo?, metadata?, keepCurrentActiveOrganization? }: the workspace and its owner in one transaction. */
 export async function createWorkspace(request: Request, context: WorkspaceContext): Promise<Response> {
   const session = await context.auth.api.getSession({ headers: request.headers })
   if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
-  if (context.host !== undefined) {
-    return failure(403, "WORKSPACE_CREATION_UNAVAILABLE", "Self-serve workspace creation is not enabled on this deployment.")
-  }
   const input = await body(request)
   const name = typeof input?.name === "string" ? input.name.trim() : ""
   const slug = typeof input?.slug === "string" ? input.slug.trim() : ""
@@ -221,22 +175,20 @@ export async function acceptWorkspaceInvitation(request: Request, context: Works
   if (invitation === null || !(expiry(invitation.expiresAt) > Date.now()) || invitation.status !== "pending") return failure(400, "INVITATION_NOT_FOUND", INVITATION_GONE)
   if (invitation.email.toLowerCase() !== session.user.email.toLowerCase()) return failure(403, "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION", "You are not the recipient of the invitation")
   if (!session.user.emailVerified) return failure(403, "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION", "Email verification required before accepting or rejecting invitation")
-  const org = await first<{ metadata: string | null }>(context.db, `select "metadata" from "organization" where "id" = ?`, invitation.organizationId)
-  if (org === null) return failure(400, "ORGANIZATION_NOT_FOUND", "Organization not found")
-  if (isProvisioningMetadata(org.metadata)) return failure(409, "WORKSPACE_PROVISIONING", "This workspace is still being provisioned.")
+  if (await first(context.db, `select 1 as "found" from "organization" where "id" = ?`, invitation.organizationId) === null) return failure(400, "ORGANIZATION_NOT_FOUND", "Organization not found")
   const count = await first<{ n: number }>(context.db, `select count(*) as "n" from "member" where "organizationId" = ?`, invitation.organizationId)
   if ((count?.n ?? 0) >= MEMBERSHIP_LIMIT) return failure(403, "ORGANIZATION_MEMBERSHIP_LIMIT_REACHED", "Organization membership limit reached")
   const member = { id: crypto.randomUUID(), organizationId: invitation.organizationId, userId: session.user.id, role: invitation.role ?? "member", createdAt: new Date().toISOString() }
   try {
     // The invitation turns accepted only if, at the write, it is still pending and unexpired (the
     // database's clock), the session's user still has a verified address it was sent to, its workspace
-    // exists and is ready, and holds fewer than the membership limit; the member is inserted only
-    // if that update happened. A transaction is serialized, so two acceptances cannot both count 99 members.
+    // exists and holds fewer than the membership limit; the member is inserted only if that update
+    // happened. A transaction is serialized, so two acceptances cannot both count 99 members.
     await atomically(context.db as unknown as ProvisionDb, [
       { sql: `update "invitation" set "status" = 'accepted' where "id" = ? and "status" = 'pending'
         and (case when typeof("expiresAt") in ('integer', 'real') then "expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday("expiresAt") > julianday('now') end)
         and exists (select 1 from "user" u where u."id" = ? and u."emailVerified" = 1 and lower(u."email") = lower("invitation"."email"))
-        and exists (select 1 from "organization" o where o."id" = "invitation"."organizationId" and ${READY_ORG_SQL})
+        and exists (select 1 from "organization" o where o."id" = "invitation"."organizationId")
         and (select count(*) from "member" m where m."organizationId" = "invitation"."organizationId") < ${MEMBERSHIP_LIMIT}`, params: [invitationId, session.user.id] },
       { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, ?, ? where changes() = 1`, params: [member.id, member.organizationId, member.userId, member.role, member.createdAt] },
     ])
@@ -248,8 +200,6 @@ export async function acceptWorkspaceInvitation(request: Request, context: Works
   }
   if (await first(context.db, `select 1 as "joined" from "member" where "id" = ?`, member.id) === null) {
     // Refused at the write: say which check failed, read again now.
-    const latestOrg = await first<{ metadata: string | null }>(context.db, `select "metadata" from "organization" where "id" = ?`, invitation.organizationId)
-    if (latestOrg !== null && isProvisioningMetadata(latestOrg.metadata)) return failure(409, "WORKSPACE_PROVISIONING", "This workspace is still being provisioned.")
     const now = await first<{ n: number }>(context.db, `select count(*) as "n" from "member" where "organizationId" = ?`, invitation.organizationId)
     if ((now?.n ?? 0) >= MEMBERSHIP_LIMIT) return failure(403, "ORGANIZATION_MEMBERSHIP_LIMIT_REACHED", "Organization membership limit reached")
     return failure(400, "INVITATION_NOT_FOUND", INVITATION_GONE)

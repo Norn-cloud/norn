@@ -5,8 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useView } from "@/lib/view"
 import { conceptTitle } from "../lib/catalog.ts"
-import { callAction, listActions, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
-import { scopeFromAccount, type StudioScope } from "../lib/definitions.ts"
+import { listActions, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
 import { useAccount } from "../lib/session.ts"
 import { ActionForm } from "./action-form.tsx"
 import { keptDrafts, sessionKey } from "./kept-drafts.ts"
@@ -39,20 +38,7 @@ export interface OpenAction {
 export function ActionSheet({ open, onClose, onView }: { readonly open: OpenAction | null; readonly onClose: () => void; readonly onView?: (objectId: string) => void }) {
   const { view } = useView()
   // Kept drafts belong to the session that wrote them (#1469 S6).
-  const account = useAccount().data
-  const session = sessionKey(account)
-  // Bind submissions to the exact workspace scope displayed when this form was opened, so a
-  // workspace switch in another tab cannot redirect this stale form into another workspace.
-  const pinnedScopeRef = useRef<StudioScope | null | undefined>(undefined)
-  const prevOpenRef = useRef<OpenAction | null>(null)
-  if (open !== prevOpenRef.current) {
-    prevOpenRef.current = open
-    pinnedScopeRef.current = open === null || account === undefined ? undefined : scopeFromAccount(account)
-  } else if (open !== null && pinnedScopeRef.current === undefined && account !== undefined) {
-    pinnedScopeRef.current = scopeFromAccount(account)
-  }
-  const pinnedScope = pinnedScopeRef.current
-  const scopedCall = (actionId: string, input: string, key: string) => callAction(actionId, input, key, undefined, pinnedScope)
+  const session = sessionKey(useAccount().data)
   const kept = { get: (k: string) => keptDrafts.get(session, k), set: (k: string, d: Draft) => keptDrafts.set(session, k, d), delete: (k: string) => keptDrafts.delete(session, k) }
   const technical = view === "technical"
   const [dirty, setDirty] = useState(false)
@@ -133,7 +119,7 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
                 parked={parked} runNow={open.runNow === true && parked === open.parked}
                 onParked={(call) => parkedCalls.set(session, draftKey(open), call)} onUnparked={() => parkedCalls.delete(session, draftKey(open))}
                 onChanged={() => invalidate(open.action.objectKind)}
-                technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close} call={scopedCall}
+                technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />
             </div>
           </>}

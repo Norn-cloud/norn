@@ -1,7 +1,6 @@
 import { client, type SessionNotification } from "@agentclientprotocol/sdk"
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client"
 import type { ToolResult } from "@/widget/bridge"
-import { EXPECTED_ORG_HEADER, getDisplayedScope } from "../lib/definitions.ts"
 
 /**
  * Sidekick's connection: Studio as an Agent Client Protocol client.
@@ -48,12 +47,7 @@ export async function sidekickServed(fetcher: typeof fetch = fetch, signal?: Abo
 
 /** The Worker's grant for the signed-in person; the reason in words when it refuses. */
 export async function fetchGrant(fetcher: typeof fetch = fetch): Promise<Grant> {
-  const displayed = fetcher === fetch ? getDisplayedScope() : undefined
-  const response = await fetcher("/api/sidekick/grant", {
-    method: "POST",
-    headers: { accept: "application/json", ...displayed ? { [EXPECTED_ORG_HEADER]: displayed.orgId } : {} },
-    credentials: "same-origin",
-  })
+  const response = await fetcher("/api/sidekick/grant", { method: "POST", headers: { accept: "application/json" }, credentials: "same-origin" })
   const body = (await response.json().catch(() => null)) as { token?: unknown; expiresAt?: unknown; error?: unknown } | null
   if (!response.ok || typeof body?.token !== "string" || typeof body.expiresAt !== "number") {
     throw new Error(typeof body?.error === "string" ? body.error : "Studio did not grant Sidekick access.")

@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { EXPECTED_ORG_HEADER } from "@/lib/definitions"
 import nornMark from "@/assets/norn-mark.webp"
 
 /**
@@ -35,8 +34,8 @@ export function nextUrl(body: unknown, origin: string): string | null {
   }
 }
 
-async function post(path: string, body: Record<string, unknown>, extraHeaders: HeadersInit = {}): Promise<{ readonly ok: boolean; readonly body: unknown; readonly status: number }> {
-  const response = await fetch(`/api/auth${path}`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json", ...extraHeaders }, body: JSON.stringify(body) })
+async function post(path: string, body: Record<string, unknown>): Promise<{ readonly ok: boolean; readonly body: unknown; readonly status: number }> {
+  const response = await fetch(`/api/auth${path}`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
   return { ok: response.ok, status: response.status, body: await response.json().catch(() => null) }
 }
 
@@ -101,7 +100,7 @@ export function OAuthSignIn() {
 }
 
 interface Requester { readonly name: string; readonly site: string | null }
-interface Workspace { readonly user: string; readonly organizationId: string | null; readonly organization: string | null }
+interface Workspace { readonly user: string; readonly organization: string | null }
 
 /** What the person is agreeing to: the client's name, where the answer goes, and the workspace it acts in. */
 export function consentFacts(search: string, client: { readonly client_name?: unknown; readonly client_uri?: unknown } | null): { readonly requester: Requester; readonly callbackHost: string | null } {
@@ -128,40 +127,30 @@ export function OAuthConsent() {
     void fetch("/api/me", { headers: { accept: "application/json" } })
       .then(async (response) => {
         if (!response.ok) { setWorkspace(null); return }
-        const me = await response.json() as { user: { email: string }; organization: { id: string; name: string } | null }
-        setWorkspace({ user: me.user.email, organizationId: me.organization?.id ?? null, organization: me.organization?.name ?? null })
+        const me = await response.json() as { user: { email: string }; organization: { name: string } | null }
+        setWorkspace({ user: me.user.email, organization: me.organization?.name ?? null })
       })
       .catch(() => setWorkspace(null))
   }, [clientId])
 
   async function decide(accept: boolean) {
-    if (accept && workspace?.organizationId == null) {
-      setFailure("Select an active workspace in Studio before authorizing an assistant.")
-      return
-    }
     setPending(true)
     setFailure(null)
-    const headers: HeadersInit = accept && workspace?.organizationId != null ? { [EXPECTED_ORG_HEADER]: workspace.organizationId } : {}
-    const answer = await post("/oauth2/consent", { accept, oauth_query: query }, headers).catch(() => null)
+    const answer = await post("/oauth2/consent", { accept, oauth_query: query }).catch(() => null)
     const next = answer?.ok === true ? nextUrl(answer.body, window.location.origin) : null
     if (next !== null) {
       window.location.assign(next)
       return
     }
     setPending(false)
-    const serverMessage = (answer?.body as { message?: unknown } | null)?.message
-    setFailure(typeof serverMessage === "string" && serverMessage !== "" ? serverMessage : "The decision was not recorded. Start connecting again from your assistant.")
+    setFailure("The decision was not recorded. Start connecting again from your assistant.")
   }
 
   if (query === undefined || clientId === null) return <Frame title="Link expired" description="Start connecting Norn again from your assistant."><CardContent /></Frame>
   if (client === undefined || workspace === undefined) return null
   const { requester, callbackHost } = consentFacts(window.location.search, client)
-  const readyWorkspace = workspace?.organizationId != null && workspace.organization != null
   return (
-    <Frame
-      title={`Allow ${requester.name} to use Norn?`}
-      description={readyWorkspace ? `It will act as ${workspace.user} in ${workspace.organization}.` : "You do not have an active workspace to connect right now."}
-    >
+    <Frame title={`Allow ${requester.name} to use Norn?`} description={workspace?.organization == null ? "It will act as you." : `It will act as ${workspace.user} in ${workspace.organization}.`}>
       <CardContent className="grid gap-3 text-sm">
         <p>It can read what you may read and ask Norn to run actions you may run. Norn's rules decide every request, exactly as they do in Studio, and refuse anything you could not do yourself.</p>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
@@ -173,7 +162,7 @@ export function OAuthConsent() {
       </CardContent>
       <CardFooter className="flex gap-2 pt-4">
         <Button variant="outline" className="flex-1" disabled={pending} onClick={() => void decide(false)}>Deny</Button>
-        <Button className="flex-1" disabled={pending || !readyWorkspace} onClick={() => void decide(true)}>Allow</Button>
+        <Button className="flex-1" disabled={pending} onClick={() => void decide(true)}>Allow</Button>
       </CardFooter>
     </Frame>
   )

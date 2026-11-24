@@ -92,37 +92,8 @@ type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 export interface StudioScope { readonly orgId: string; readonly environmentId: string }
 export type ScopeProvider = () => Promise<StudioScope | null>
 export const NO_DATA_CELL = "This workspace has no data cell yet."
-export const EXPECTED_ORG_HEADER = "x-norn-expected-org"
-export const EXPECTED_ENV_HEADER = "x-norn-expected-env"
 export class StudioScopeError extends Error {}
 const accountScope = z.object({ organization: z.object({ id: z.string().min(1) }).nullable(), environmentId: z.string().min(1).nullable() })
-
-/**
- * The workspace scope currently displayed by this tab, populated whenever `accountQuery` loads or
- * refreshes `/api/me`. Undefined until a browser session loads (so isolated unit tests passing
- * custom fetchers keep calling `readStudioScope(fetcher)`). Writes stay bound to this displayed
- * scope and send it explicitly so a workspace switch in another tab cannot redirect a stale form.
- */
-let currentDisplayedScope: StudioScope | null | undefined
-
-export function getDisplayedScope(): StudioScope | null | undefined {
-  return currentDisplayedScope
-}
-
-export function setDisplayedScope(scope: StudioScope | null | undefined): void {
-  currentDisplayedScope = scope
-}
-
-export function scopeFromAccount(account: {
-  readonly organization?: { readonly id: string } | null
-  readonly environmentId?: string | null
-} | null | undefined): StudioScope | null {
-  const orgId = account?.organization?.id
-  const environmentId = account?.environmentId
-  return typeof orgId === "string" && orgId !== "" && typeof environmentId === "string" && environmentId !== ""
-    ? { orgId, environmentId }
-    : null
-}
 
 /** Read the active workspace and its cell from the signed-in server session. */
 export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<StudioScope | null> {
@@ -140,35 +111,15 @@ export function useStudioScope() {
   return useQuery({ queryKey: ["studio-scope"], queryFn: () => readStudioScope(), retry: false })
 }
 
-const isWriteMethod = (method?: string): boolean => {
-  const upper = (method ?? "GET").toUpperCase()
-  return upper !== "GET" && upper !== "HEAD" && upper !== "OPTIONS"
-}
-
-/**
- * Every scoped host call carries `orgId` and `environmentId`. Writes also carry
- * `x-norn-expected-org` and `x-norn-expected-env` bound to the displayed scope so the Worker
- * refuses stale-tab submissions if the session's active workspace changed elsewhere.
- */
-export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope?: ScopeProvider): Fetch {
+/** Every scoped host call uses a fresh server-reported scope. The host still authorizes the request. */
+export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: ScopeProvider = () => readStudioScope()): Fetch {
   return async (path, init) => {
-    const write = isWriteMethod(init?.method)
-    const active = scope !== undefined
-      ? await scope()
-      : write && fetcher === fetch && currentDisplayedScope !== undefined
-        ? currentDisplayedScope
-        : await readStudioScope()
+    const active = await scope()
     if (active === null) throw new StudioScopeError(NO_DATA_CELL)
     const [pathname, search] = path.split("?", 2)
     const query = new URLSearchParams(search)
     query.set("orgId", active.orgId)
     query.set("environmentId", active.environmentId)
-    if (write) {
-      const headers = new Headers(init?.headers)
-      headers.set(EXPECTED_ORG_HEADER, active.orgId)
-      headers.set(EXPECTED_ENV_HEADER, active.environmentId)
-      return fetcher(`${base}${pathname}?${query}`, { ...init, headers })
-    }
     return fetcher(`${base}${pathname}?${query}`, init)
   }
 }

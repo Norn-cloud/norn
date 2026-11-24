@@ -1,5 +1,4 @@
-import { activeMembership, isProvisioningMetadata, type Auth } from "./auth.ts"
-import { cellScope } from "./scope.ts"
+import { activeMembership, type Auth } from "./auth.ts"
 
 /**
  * Who a request acts as, resolved on the server from the verified session or
@@ -23,10 +22,6 @@ export interface NornActor {
 export const SERVICE_ROLES = ["viewer", "member"] as const
 /** Host tokens live five minutes, the most the host admits. */
 export const HOST_TOKEN_SECONDS = 300
-/** Client-asserted displayed scope headers for stale-tab write protection (never grants access). */
-export const EXPECTED_ORG_HEADER = "x-norn-expected-org"
-export const EXPECTED_ENV_HEADER = "x-norn-expected-env"
-export const WORKSPACE_CHANGED_MESSAGE = "Your active workspace changed. Reload the page before submitting."
 
 const USER_METHODS = new Set(["password", "magic_link"])
 
@@ -40,9 +35,6 @@ export async function resolveActor(request: Request, auth: Auth): Promise<NornAc
   if (key !== null) {
     const verified = await auth.api.verifyApiKey({ body: { key } })
     if (!verified.valid || verified.key === null) return null
-    const { adapter } = await auth.$context
-    const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: verified.key.referenceId }] })
-    if (org === null || isProvisioningMetadata(org.metadata)) return null
     const requested = (verified.key.metadata as { role?: unknown } | null)?.role ?? "viewer"
     if (!SERVICE_ROLES.some((role) => role === requested)) return null
     return { actorKind: "service", subjectId: verified.key.id, orgId: verified.key.referenceId, role: String(requested), authMethod: "api_key" }
@@ -72,37 +64,6 @@ export async function hostToken(auth: Auth, actor: NornActor, now = Math.floor(D
 }
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
-
-/**
- * Verify that a user-session write still targets the workspace the tab displayed.
- * Checks `x-norn-expected-org` (and `orgId` query param on `/api/host/*`) against `actor.orgId`,
- * plus `x-norn-expected-env` (when sent) against the active org's server-resolved environment.
- * Refuses stale-tab writes with 409 `workspace.changed` before reaching any host or database mutation.
- */
-export async function verifyWriteScope(
-  request: Request,
-  auth: Auth,
-  actor: NornActor,
-  options: { readonly checkHostQuery?: boolean } = {},
-): Promise<Response | null> {
-  if (actor.actorKind !== "user" || SAFE_METHODS.has(request.method)) return null
-  const mismatch = () => Response.json(
-    { code: "workspace.changed", message: WORKSPACE_CHANGED_MESSAGE, error: WORKSPACE_CHANGED_MESSAGE },
-    { status: 409, headers: { "cache-control": "no-store" } },
-  )
-  const headerOrg = request.headers.get(EXPECTED_ORG_HEADER)
-  if (headerOrg !== null && headerOrg !== actor.orgId) return mismatch()
-  if (options.checkHostQuery) {
-    const queryOrg = new URL(request.url).searchParams.get("orgId")
-    if (queryOrg !== null && queryOrg !== actor.orgId) return mismatch()
-  }
-  const headerEnv = request.headers.get(EXPECTED_ENV_HEADER)
-  if (headerEnv !== null) {
-    const scope = await cellScope(auth, actor.orgId)
-    if (scope.environmentId !== headerEnv) return mismatch()
-  }
-  return null
-}
 
 /**
  * Whether a request may reach the host as its actor. A cookie-authenticated

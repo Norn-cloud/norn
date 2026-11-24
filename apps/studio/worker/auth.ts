@@ -2,7 +2,7 @@ import { apiKey } from "@better-auth/api-key"
 import { cimd } from "@better-auth/cimd"
 import { mcp } from "@better-auth/mcp"
 import { betterAuth, getCurrentAdapter, type BetterAuthOptions } from "better-auth"
-import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api"
+import { APIError, createAuthMiddleware } from "better-auth/api"
 import { createAccessControl } from "better-auth/plugins/access"
 import { genericOAuth } from "better-auth/plugins/generic-oauth"
 import { jwt } from "better-auth/plugins/jwt"
@@ -137,12 +137,8 @@ export async function fetchClientMetadata(input: RequestInfo | URL, init?: Reque
  * rest of this file: the token names a person and the organization they consented for; Norn's
  * policy on the server decides every call. Sign-in is Studio's own, and nothing here signs anyone
  * up. A person sees who is asking and for which workspace before any grant.
- *
- * Consent and issued access tokens always bind to the exact ready workspace resolved by
- * `activeMembershipWithAdapter` (the same resolver `/api/me` displays); never to a raw session
- * field, and never unscoped.
  */
-const assistantAuthorization = (baseURL: string, self: Self) => [
+const assistantAuthorization = (baseURL: string) => [
   mcp({
     resource: mcpResource(baseURL),
     loginPage: "/oauth/sign-in",
@@ -156,27 +152,16 @@ const assistantAuthorization = (baseURL: string, self: Self) => [
     clientRegistrationDefaultApplicationType: "infer",
     validateRedirectUri: (uri: string, _registered: readonly string[], matched: boolean) => matched && assistantCallback(uri),
     accessTokenExpiresIn: 15 * MINUTE,
-    // The consent is recorded against the exact ready workspace `/api/me` resolves for this session.
+    // The consent is recorded against the organization the person is working in.
     postLogin: {
       page: "/oauth/consent",
-      consentReferenceId: async ({ user, session }) => {
-        const adapter = (await self.auth?.$context)?.adapter as AdapterLike | undefined
-        if (adapter === undefined) throw new APIError("INTERNAL_SERVER_ERROR", { message: "Auth context unavailable." })
-        const rawOrg = (session as { activeOrganizationId?: unknown }).activeOrganizationId
-        const member = await activeMembershipWithAdapter(adapter, user.id, nonEmptyString(rawOrg))
-        if (member === null) {
-          throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
-        }
-        return member.organizationId
+      consentReferenceId: ({ session }) => {
+        const org = (session as { activeOrganizationId?: unknown }).activeOrganizationId
+        return typeof org === "string" && org !== "" ? org : undefined
       },
       shouldRedirect: () => false,
     },
-    customAccessTokenClaims: ({ referenceId }) => {
-      if (typeof referenceId !== "string" || referenceId === "") {
-        throw new APIError("FORBIDDEN", { code: "WORKSPACE_REQUIRED", message: "Assistant access requires a workspace-scoped grant." })
-      }
-      return { [ORG_CLAIM]: referenceId }
-    },
+    customAccessTokenClaims: ({ referenceId }) => referenceId === undefined || referenceId === "" ? {} : { [ORG_CLAIM]: referenceId },
   }),
   cimd({ fetchClientMetadataResource: (input, init) => fetchClientMetadata(input, init), isMetadataDocumentUrlAllowed: cimdAllowed }),
 ]
@@ -269,20 +254,8 @@ export async function verifyMagicLinkOrigin(request: Request, secret: string, tr
 }
 
 
-/** Minimal adapter surface used by hooks and membership resolution without creating a circular Auth type. */
-interface AdapterLike {
-  findOne<T>(args: { model: string; where: { field: string; value: string }[] }): Promise<T | null>
-  findMany<T>(args: { model: string; where: { field: string; value: string }[]; sortBy?: { field: string; direction: "asc" | "desc" }; limit?: number }): Promise<T[]>
-}
-
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
-
-const nonEmptyString = (value: unknown): string | null =>
-  typeof value === "string" && value.trim() !== "" ? value : null
-
-const hasOrgRole = (role: string | null | undefined, allowed: readonly string[]): boolean =>
-  typeof role === "string" && role.split(",").map((part) => part.trim()).some((part) => allowed.includes(part))
 
 type SqlParam = string | null
 export type SqlStatement = { readonly sql: string; readonly params: readonly SqlParam[] }
@@ -346,8 +319,6 @@ export const signUpAllowed = (allowlist: readonly string[] | undefined, email: s
 export const BILLING_PAYER = "norn.billingPayer"
 /** Set on workspaces created while billing is on: only those are limited (migration 0011). */
 export const BILLED = "norn.billed"
-/** Set while a newly created workspace's cell is still provisioning on NORN_HOST (excluded from opening until ready). */
-export const PROVISIONING = "norn.provisioning"
 /** Reserved metadata is assigned only by server-side provisioning. */
 const reservedMetadata = (key: string) => key === "environmentId" || key.startsWith("norn.")
 function metadataObject(value: unknown): Record<string, unknown> {
@@ -355,7 +326,6 @@ function metadataObject(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 export const publicMetadata = (value: unknown) => Object.fromEntries(Object.entries(metadataObject(value)).filter(([key]) => !reservedMetadata(key)))
-export const isProvisioningMetadata = (value: unknown): boolean => metadataObject(value)[PROVISIONING] === true
 
 export function authOptions(config: AuthConfig, self: Self = {}) {
   return {
@@ -436,39 +406,22 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     plugins: [
       // Only a verified address may accept an invitation (GHSA-fmh4-wcc4-5jm3): until a mail
       // sender verifies addresses, nobody can join an organization by claiming an invited email.
-      // Direct organization creation and deletion through Better Auth are disabled for normal users
-      // so no org can be created without cell provisioning or deleted without full revocation.
-      organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: false, disableOrganizationDeletion: true, requireEmailVerificationOnInvitation: true,
+      organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true,
         organizationHooks: {
-          beforeCreateOrganization: async () => {
-            throw new APIError("FORBIDDEN", { code: "ORGANIZATION_CREATE_DISABLED", message: "Direct workspace creation is disabled on this deployment." })
-          },
+          // Clients cannot set "norn." keys. With billing on, the HTTP route is refused (index.ts) and
+          // workspaces.ts creates workspaces; a server-side creation is billed to its creator the same way.
+          beforeCreateOrganization: async ({ organization, user }) =>
+            ({ data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...await billingModeOn(config.database as unknown as BillingDb) ? { [BILLING_PAYER]: user.id, [BILLED]: true } : {} } } }),
           // Advisory: an admin is told before inviting someone the workspace could not take (members and
           // pending invitations). Invitations hold nothing; the member limit is enforced when one joins.
-          beforeCreateInvitation: async ({ organization, inviter }) => {
-            if (isProvisioningMetadata(organization.metadata)) {
-              throw new APIError("CONFLICT", { code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." })
-            }
-            enforce(await admitMember(config.database as unknown as BillingDb, await billingOf(config.database as unknown as BillingDb, settingsOf(config.billing?.config)), config.baseURL, organization.id, inviter.id, true))
-          },
-          beforeAcceptInvitation: async ({ organization }) => {
-            if (isProvisioningMetadata(organization.metadata)) {
-              throw new APIError("CONFLICT", { code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." })
-            }
-          },
+          beforeCreateInvitation: async ({ organization, inviter }) => enforce(await admitMember(config.database as unknown as BillingDb, await billingOf(config.database as unknown as BillingDb, settingsOf(config.billing?.config)), config.baseURL, organization.id, inviter.id, true)),
           beforeUpdateOrganization: async ({ organization, member }) => {
+            if (organization.metadata === undefined) return
             const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
             const stored = await adapter.findOne<{ metadata?: string | null }>({ model: "organization", where: [{ field: "id", value: member.organizationId }] })
             if (stored === null) throw new Error("Organization no longer exists")
-            if (isProvisioningMetadata(stored.metadata)) {
-              throw new APIError("CONFLICT", { code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." })
-            }
-            if (organization.metadata === undefined) return
             const protectedFields = Object.fromEntries(Object.entries(metadataObject(stored.metadata)).filter(([key]) => reservedMetadata(key)))
             return { data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...protectedFields } } }
-          },
-          beforeDeleteOrganization: async () => {
-            throw new APIError("FORBIDDEN", { code: "ORGANIZATION_DELETE_DISABLED", message: "Direct workspace deletion is disabled on this deployment." })
           },
         },
       }),
@@ -497,103 +450,18 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       // Short-lived tokens the Worker mints for the Norn host (#817); the host verifies them against /api/auth/jwks.
       jwt({ jwt: { issuer: config.baseURL, audience: "norn-host", expirationTime: "5m" } }),
       ...config.gateway === undefined ? [] : [gatewayLink(config.gateway)],
-      ...config.mcp === true ? assistantAuthorization(config.baseURL, self) : [],
+      ...config.mcp === true ? assistantAuthorization(config.baseURL) : [],
       ...config.billing === undefined ? [] : [polarPlugin(config.billing, config.baseURL)],
     ],
     hooks: {
-      // Runs after Better Auth's origin check and rate limit, before endpoint execution:
-      // - invite-only sign-up refusal (403 INVITE_ONLY),
-      // - unconditional disable of direct organization create/delete through Better Auth,
-      // - set-active validation across both organizationId and organizationSlug,
-      // - API-key creation authorization and workspace-readiness enforcement,
-      // - MCP OAuth consent workspace-binding verification.
+      // Runs after Better Auth's origin check and rate limit, before sign-up execution:
+      // refuses non-allowlisted sign-up on invite-only deployments with 403 INVITE_ONLY and zero DB writes.
       before: createAuthMiddleware(async (ctx) => {
         const path = ctx.path.replace(/\/+$/, "").toLowerCase()
         if (path === "/sign-up/email" && config.signUpEmails !== undefined) {
           const body = ctx.body as { email?: unknown } | undefined
           if (typeof body?.email === "string" && body.email.trim() !== "" && !signUpAllowed(config.signUpEmails, body.email)) {
             throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
-          }
-          return
-        }
-        if (path === "/organization/create") {
-          throw new APIError("FORBIDDEN", { code: "ORGANIZATION_CREATE_DISABLED", message: "Direct workspace creation is disabled on this deployment." })
-        }
-        if (path === "/organization/delete") {
-          throw new APIError("FORBIDDEN", { code: "ORGANIZATION_DELETE_DISABLED", message: "Direct workspace deletion is disabled on this deployment." })
-        }
-        if (path === "/organization/set-active") {
-          const session = await getSessionFromCtx(ctx, { disableCookieCache: true })
-          if (session === null) return
-          const body = ctx.body as { organizationId?: unknown; organizationSlug?: unknown } | undefined
-          if (body?.organizationId === null) return
-          const requestedId = nonEmptyString(body?.organizationId)
-          const requestedSlug = nonEmptyString(body?.organizationSlug)
-          const currentOrgId = nonEmptyString((session.session as { activeOrganizationId?: unknown }).activeOrganizationId)
-          const adapter = await getCurrentAdapter(ctx.context.adapter) as unknown as AdapterLike
-          let org: { id: string; slug: string; metadata?: unknown } | null = null
-          if (requestedId !== null) {
-            org = await adapter.findOne<{ id: string; slug: string; metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: requestedId }] })
-            if (requestedSlug !== null && org !== null && org.slug !== requestedSlug) {
-              throw new APIError("BAD_REQUEST", { code: "ORGANIZATION_NOT_FOUND", message: "Organization not found" })
-            }
-          } else if (requestedSlug !== null) {
-            org = await adapter.findOne<{ id: string; slug: string; metadata?: unknown }>({ model: "organization", where: [{ field: "slug", value: requestedSlug }] })
-          } else if (currentOrgId !== null) {
-            org = await adapter.findOne<{ id: string; slug: string; metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: currentOrgId }] })
-          }
-          if (org === null) return
-          const member = await adapter.findOne<{ id: string }>({ model: "member", where: [{ field: "userId", value: session.user.id }, { field: "organizationId", value: org.id }] })
-          if (member === null) return
-          if (isProvisioningMetadata(org.metadata)) {
-            throw new APIError("CONFLICT", { code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." })
-          }
-          return
-        }
-        if (path === "/api-key/create") {
-          const body = ctx.body as { organizationId?: unknown; referenceId?: unknown; userId?: unknown } | undefined
-          const session = await getSessionFromCtx(ctx, { disableCookieCache: true })
-          const isClientRequest = ctx.request !== undefined || ctx.headers !== undefined
-          const userId = session?.user.id ?? (isClientRequest ? null : nonEmptyString(body?.userId))
-          if (userId === null) return
-          const orgId = nonEmptyString(body?.organizationId)
-          if (body?.referenceId !== undefined && body.referenceId !== orgId) {
-            throw new APIError("BAD_REQUEST", { code: "INVALID_ORGANIZATION", message: "Use organizationId to scope a workspace API key." })
-          }
-          if (orgId === null) {
-            if (body?.organizationId !== undefined) {
-              throw new APIError("BAD_REQUEST", { code: "ORGANIZATION_ID_REQUIRED", message: "A workspace id is required to create an API key." })
-            }
-            return
-          }
-          const adapter = await getCurrentAdapter(ctx.context.adapter) as unknown as AdapterLike
-          const member = await adapter.findOne<{ role: string }>({ model: "member", where: [{ field: "userId", value: userId }, { field: "organizationId", value: orgId }] })
-          if (member === null || !hasOrgRole(member.role, ["owner", "admin"])) {
-            throw new APIError("FORBIDDEN", { code: "FORBIDDEN", message: "You do not have permission to create an API key for this workspace." })
-          }
-          const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: orgId }] })
-          if (org === null) {
-            throw new APIError("FORBIDDEN", { code: "FORBIDDEN", message: "You do not have permission to create an API key for this workspace." })
-          }
-          if (isProvisioningMetadata(org.metadata)) {
-            throw new APIError("CONFLICT", { code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." })
-          }
-          return
-        }
-        if (path === "/oauth2/consent") {
-          const body = ctx.body as { accept?: unknown } | undefined
-          if (body?.accept !== true) return
-          const session = await getSessionFromCtx(ctx, { disableCookieCache: true })
-          if (session === null) return
-          const adapter = await getCurrentAdapter(ctx.context.adapter) as unknown as AdapterLike
-          const rawOrg = (session.session as { activeOrganizationId?: unknown }).activeOrganizationId
-          const member = await activeMembershipWithAdapter(adapter, session.user.id, nonEmptyString(rawOrg))
-          if (member === null) {
-            throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
-          }
-          const expectedOrg = (ctx.headers ?? ctx.request?.headers)?.get("x-norn-expected-org") ?? null
-          if (expectedOrg !== null && expectedOrg !== member.organizationId) {
-            throw new APIError("CONFLICT", { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload this page and approve again for the workspace you intend." })
           }
         }
       }),
@@ -620,30 +488,21 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           before: async (session, ctx) => {
             const method = ctx === null ? undefined : AUTH_METHODS[ctx.path as keyof typeof AUTH_METHODS]
             const adapter = ctx === null ? undefined : await getCurrentAdapter(ctx.context.adapter)
-            const db = config.database as unknown as ProvisionDb
-            if (adapter !== undefined && await stateOf(db, session.userId) === "pending") {
+            if (adapter !== undefined && await stateOf(config.database as unknown as ProvisionDb, session.userId) === "pending") {
               const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
               if (user === null) throw new Error("Cannot provision a workspace for a missing user")
-              await provisionWorkspace(db, config.secret, user, config.defaultEnvironmentId, await billingModeOn(config.database as unknown as BillingDb))
+              await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, await billingModeOn(config.database as unknown as BillingDb))
             }
-            const pick = async (where: { field: string; value: string }[]) => {
-              if (adapter === undefined) return undefined
-              const rows = await adapter.findMany<{ organizationId: string }>({
-                model: "member",
-                where: [{ field: "userId", value: session.userId }, ...where],
-                sortBy: { field: "createdAt", direction: "asc" },
-                limit: 100,
-              })
-              for (const row of rows) {
-                const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: row.organizationId }] })
-                if (org !== null && !isProvisioningMetadata(org.metadata)) return row
-              }
-              return undefined
-            }
-            // The stage's default organization when the user belongs to it, else the earliest ready membership
+            const first = (where: { field: string; value: string }[]) => adapter === undefined ? Promise.resolve([]) : adapter.findMany<{ organizationId: string }>({
+              model: "member",
+              where: [{ field: "userId", value: session.userId }, ...where],
+              sortBy: { field: "createdAt", direction: "asc" },
+              limit: 1,
+            })
+            // The stage's default organization when the user belongs to it, else the earliest membership
             // (the same rule activeMembership uses when a session has none).
-            const preferred = config.defaultOrganizationId === undefined ? undefined : await pick([{ field: "organizationId", value: config.defaultOrganizationId }])
-            const member = preferred ?? await pick([])
+            const preferred = config.defaultOrganizationId === undefined ? [] : await first([{ field: "organizationId", value: config.defaultOrganizationId }])
+            const [member] = preferred.length > 0 ? preferred : await first([])
             return { data: { ...session, authMethod: method ?? null, activeOrganizationId: member?.organizationId ?? null } }
           },
         },
@@ -663,40 +522,20 @@ export interface Membership {
   readonly environmentId: string | null
 }
 
-async function activeMembershipWithAdapter(
-  adapter: AdapterLike,
-  userId: string,
-  activeOrganizationId: string | null | undefined,
-): Promise<Membership | null> {
-  const where = [{ field: "userId", value: userId }, ...activeOrganizationId == null ? [] : [{ field: "organizationId", value: activeOrganizationId }]]
-  const rows = await adapter.findMany<{ organizationId: string; role: string }>({
-    model: "member",
-    where,
-    sortBy: { field: "createdAt", direction: "asc" },
-    limit: activeOrganizationId == null ? 100 : 1,
-  })
-  let member: { organizationId: string; role: string } | undefined
-  let org: { name: string; metadata?: unknown } | null = null
-  for (const candidate of rows) {
-    const found = await adapter.findOne<{ name: string; metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: candidate.organizationId }] })
-    if (found === null || isProvisioningMetadata(found.metadata)) continue
-    member = candidate
-    org = found
-    break
-  }
-  if (member === undefined || org === null) return null
-  const environmentId = metadataObject(org.metadata).environmentId
-  return { organizationId: member.organizationId, organizationName: org.name, role: member.role, environmentId: typeof environmentId === "string" && environmentId.trim() !== "" ? environmentId : null }
-}
-
 /**
  * The organization a session acts in: its active organization, or (for a
  * session created before its user's first organization existed, as at sign-up)
- * the user's earliest ready membership. Null when the user belongs to none.
+ * the user's earliest membership. Null when the user belongs to none.
  */
 export async function activeMembership(auth: Auth, userId: string, activeOrganizationId: string | null | undefined): Promise<Membership | null> {
   const { adapter } = await auth.$context
-  return activeMembershipWithAdapter(adapter as unknown as AdapterLike, userId, activeOrganizationId)
+  const where = [{ field: "userId", value: userId }, ...activeOrganizationId == null ? [] : [{ field: "organizationId", value: activeOrganizationId }]]
+  const [member] = await adapter.findMany<{ organizationId: string; role: string }>({ model: "member", where, sortBy: { field: "createdAt", direction: "asc" }, limit: 1 })
+  if (member === undefined) return null
+  const org = await adapter.findOne<{ name: string; metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: member.organizationId }] })
+  if (org === null) return null
+  const environmentId = metadataObject(org.metadata).environmentId
+  return { organizationId: member.organizationId, organizationName: org.name, role: member.role, environmentId: typeof environmentId === "string" && environmentId.trim() !== "" ? environmentId : null }
 }
 
 export function createAuth(config: AuthConfig) {

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, HOST_TOKEN_SECONDS, WORKSPACE_CHANGED_MESSAGE, hostToken, resolveActor } from "../actor.ts"
+import { HOST_TOKEN_SECONDS, hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
 
@@ -212,66 +212,4 @@ test("a streamed definition read is served without cloning, signed or not", asyn
   const unsigned = await read()
   expect(unsigned.status).toBe(200)
   expect(await unsigned.json() as Record<string, unknown>).toEqual(document)
-})
-
-test("stale-tab writes carrying another workspace's scope are refused with 409 workspace.changed before reaching the host", async () => {
-  const { env, db, seen, auth } = stage(() => new Response(null, { status: 202 }))
-  const cookie = await signUp(env, "tabs@example.com")
-  const actor1 = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
-  if (!actor1) throw new Error("no actor")
-  const org1 = actor1.orgId
-  const org2 = "org_second_tab"
-  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "env_1" }), org1])
-  db.run(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values (?, 'Second', 'second', ?, ?)`, [org2, JSON.stringify({ environmentId: "env_2" }), new Date().toISOString()])
-  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_tabs_2', ?, ?, 'owner', ?)`, [org2, actor1.subjectId, new Date().toISOString()])
-  // Tab B switches the session to org2.
-  db.run(`update "session" set "activeOrganizationId" = ? where "userId" = ?`, [org2, actor1.subjectId])
-
-  // Stale Tab A submits with org1 in x-norn-expected-org and query params -> 409 workspace.changed, never forwarded.
-  const staleHeaders = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org1}&environmentId=env_1`, {
-    method: "POST",
-    headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org1, [EXPECTED_ENV_HEADER]: "env_1" },
-    body: JSON.stringify({ input: {}, idempotencyKey: "k1" }),
-  })
-  expect(staleHeaders.status).toBe(409)
-  expect(await staleHeaders.json()).toMatchObject({ code: "workspace.changed", message: WORKSPACE_CHANGED_MESSAGE })
-
-  // Even without x-norn-expected-org, a stale orgId query param on a /api/host write is refused 409.
-  const staleQuery = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org1}&environmentId=env_1`, {
-    method: "POST",
-    headers: { cookie, origin: ORIGIN, "content-type": "application/json" },
-    body: JSON.stringify({ input: {}, idempotencyKey: "k2" }),
-  })
-  expect(staleQuery.status).toBe(409)
-  expect(await staleQuery.json()).toMatchObject({ code: "workspace.changed" })
-
-  // Matching org2 with a stale x-norn-expected-env (env_1 != env_2) is also refused 409.
-  const staleEnv = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org2}&environmentId=env_2`, {
-    method: "POST",
-    headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org2, [EXPECTED_ENV_HEADER]: "env_1" },
-    body: JSON.stringify({ input: {}, idempotencyKey: "k3" }),
-  })
-  expect(staleEnv.status).toBe(409)
-  expect(await staleEnv.json()).toMatchObject({ code: "workspace.changed" })
-
-  // Other write endpoints (/api/questions/check, /api/sidekick/grant, /api/agent/dashboards/propose) also refuse stale org headers.
-  const mcpEnv: Env = { ...env, STUDIO_MCP: "on" }
-  for (const path of ["/api/questions/check", "/api/sidekick/grant", "/api/agent/dashboards/propose"]) {
-    const res = await call(mcpEnv, path, {
-      method: "POST",
-      headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org1 },
-      body: "{}",
-    })
-    expect({ path, status: res.status }).toEqual({ path, status: 409 })
-  }
-  expect(seen).toHaveLength(0)
-
-  // A fresh write bound to org2 / env_2 goes through cleanly.
-  const fresh = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org2}&environmentId=env_2`, {
-    method: "POST",
-    headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org2, [EXPECTED_ENV_HEADER]: "env_2" },
-    body: JSON.stringify({ input: {}, idempotencyKey: "k4" }),
-  })
-  expect(fresh.status).toBe(202)
-  expect(seen).toHaveLength(1)
 })

@@ -1,4 +1,4 @@
-import { forwardToHost, originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
+import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
 import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 import { clientIpHeader } from "./client-ip.ts"
@@ -8,12 +8,7 @@ import { cellFor } from "./cell.ts"
 import { questions } from "./questions.ts"
 import { billingDocument, entitlementOf, limitRaised, subscribed, billingOf, type BillingDb, type BillingSettings } from "./billing.ts"
 import { polarConfig, settingsOf } from "./polar-config.ts"
-import {
-  acceptWorkspaceInvitation,
-  activateWorkspace,
-  createWorkspace,
-  listWorkspaces,
-} from "./workspaces.ts"
+import { acceptWorkspaceInvitation, createWorkspace, listWorkspaces } from "./workspaces.ts"
 import { cellScope } from "./scope.ts"
 import { instrumented } from "./telemetry.ts"
 
@@ -155,45 +150,30 @@ export const SPLIT_WRITE_PATHS: ReadonlyMap<string, string> = new Map([
 /** Matched as Better Auth's router could: any case, with or without a trailing slash. */
 const routePath = (pathname: string) => pathname.toLowerCase().replace(/\/+$/, "")
 
-/** Studio's governed workspace routes: GET for reads; POST/PATCH/DELETE require a trusted origin. */
+/** Studio's workspace routes: read-only GET /api/workspaces for the switcher, and POST writes from a trusted origin. */
 async function workspaceRoute(request: Request, env: Env, pathname: string): Promise<Response> {
-  const clean = pathname.replace(/\/+$/, "")
-  const tail = clean.slice("/api/workspaces".length)
-  const segments = tail === "" ? [] : tail.slice(1).split("/")
-  const decoded: string[] = []
-  for (const segment of segments) {
-    try { decoded.push(decodeURIComponent(segment)) } catch { return refuse(400, "Invalid path encoding.") }
-  }
-  const write = request.method !== "GET"
-  if (write) {
-    const origin = request.headers.get("origin")
-    if (origin === null || !trustedOrigins(env).includes(origin)) return refuse(403, "Cross-origin request refused.")
-  }
-  const context = {
-    auth: auth(env),
-    db: env.AUTH_DB,
-    billing: await billingSettings(env),
-    baseURL: env.BETTER_AUTH_URL,
-    ...env.NORN_HOST === undefined ? {} : { host: env.NORN_HOST },
-  }
-  const run = async (): Promise<Response> => {
-    if (decoded.length === 0) {
-      if (request.method === "GET") return listWorkspaces(request, context)
-      if (request.method === "POST") return createWorkspace(request, context)
-      return refuse(405, "GET or POST only.", { allow: "GET, POST" })
+  const clean = routePath(pathname)
+  if (clean === "/api/workspaces" && request.method === "GET") {
+    const context = { auth: auth(env), db: env.AUTH_DB, billing: await billingSettings(env), baseURL: env.BETTER_AUTH_URL }
+    try {
+      return await listWorkspaces(request, context)
+    } catch (error) {
+      console.error(error)
+      return new Response(null, { status: 500, statusText: "Internal Server Error" })
     }
-    if (decoded.length === 2 && decoded[0] === "invitations" && decoded[1] === "accept") {
-      if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
-      return acceptWorkspaceInvitation(request, context)
-    }
-    if (decoded.length === 2 && decoded[0] !== "" && decoded[1] === "activate") {
-      if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
-      return activateWorkspace(request, context, decoded[0]!)
-    }
-    return refuse(404, "No such endpoint.")
   }
+  if (request.method !== "POST") {
+    return clean === "/api/workspaces"
+      ? refuse(405, "GET or POST only.", { allow: "GET, POST" })
+      : refuse(405, "POST only.", { allow: "POST" })
+  }
+  const origin = request.headers.get("origin")
+  if (origin === null || !trustedOrigins(env).includes(origin)) return refuse(403, "Cross-origin request refused.")
+  const context = { auth: auth(env), db: env.AUTH_DB, billing: await billingSettings(env), baseURL: env.BETTER_AUTH_URL }
+  const handle = pathname === "/api/workspaces" ? createWorkspace : pathname === "/api/workspaces/invitations/accept" ? acceptWorkspaceInvitation : undefined
+  if (handle === undefined) return refuse(404, "No such endpoint.")
   try {
-    return await run()
+    return await handle(request, context)
   } catch (error) {
     // Rolled back whole (workspaces.ts); a bare 500, as Better Auth answers a database failure.
     console.error(error)
@@ -378,8 +358,6 @@ const handler = {
       const actor = await resolveActor(request, auth(env))
       if (actor === null) return refuse(401, "Sign in first.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
-      const mismatch = await verifyWriteScope(request, auth(env), actor, { checkHostQuery: true })
-      if (mismatch !== null) return mismatch
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length))
     }
@@ -388,8 +366,6 @@ const handler = {
       const actor = await resolveActor(request, auth(env))
       if (actor === null) return refuse(401, "Sign in first.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
-      const mismatch = await verifyWriteScope(request, auth(env), actor)
-      if (mismatch !== null) return mismatch
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return questions(request, cellFor(env.NORN_HOST, auth(env), actor), pathname.slice("/api/questions".length))
     }
@@ -401,8 +377,6 @@ const handler = {
       if (actor === null) return refuse(401, "Sign in first.")
       if (actor.actorKind !== "user") return refuse(403, "Sidekick acts for a signed-in person only.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
-      const mismatch = await verifyWriteScope(request, auth(env), actor)
-      if (mismatch !== null) return mismatch
       if ((await cellScope(auth(env), actor.orgId)).environmentId === null) return refuse(409, "This workspace has no data cell yet.")
       const { grantAllowed, sidekickGrant } = await import("./sidekick.ts")
       if (!grantAllowed(actor.subjectId)) return refuse(429, "Too many Sidekick grants; wait a few minutes.", { "retry-after": "60" })
@@ -414,8 +388,6 @@ const handler = {
       if (actor === null) return refuse(401, "Sign in first.")
       if (actor.actorKind !== "user") return refuse(403, "The assistant acts for a signed-in person only.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
-      const mismatch = await verifyWriteScope(request, auth(env), actor)
-      if (mismatch !== null) return mismatch
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       const scope = await cellScope(auth(env), actor.orgId)
       if (scope.environmentId === null) return refuse(409, "This workspace has no data cell yet.")

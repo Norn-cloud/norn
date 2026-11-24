@@ -4,7 +4,8 @@ import { refreshMode } from "./live-transport.ts"
 import { forgetReads } from "./session.ts"
 
 /**
- * Client bindings for Studio's workspace listing and switcher activation (`/api/workspaces`).
+ * Client bindings for Studio's read-only workspace listing (`/api/workspaces`) and Better Auth's
+ * active-workspace switcher (`/api/auth/organization/set-active`).
  * Display and invocation only: every permission decision lives on the server.
  */
 
@@ -80,7 +81,7 @@ async function mutate<T>(path: string, method: "POST", payload: unknown, fetcher
 }
 
 export const workspaceApi = {
-  activate: (id: string, fetcher?: Fetch) => mutate<{ readonly activeOrganizationId: string }>(`/api/workspaces/${encodeURIComponent(id)}/activate`, "POST", {}, fetcher),
+  activate: (id: string, fetcher?: Fetch) => mutate<unknown>("/api/auth/organization/set-active", "POST", { organizationId: id }, fetcher),
 }
 
 /**

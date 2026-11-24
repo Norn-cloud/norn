@@ -38,15 +38,13 @@ export function challenge(baseURL: string, error?: "invalid_token"): Response {
 /**
  * The person the token was granted by, in the organization they consented for, with their
  * current role there (read now, not from the token): a removed membership stops working at
- * once. Grants without a bound workspace claim are always rejected (never resolved against
- * a fallback membership). Null when the token names nobody or no valid ready workspace.
+ * once. Null when the token names nobody this deployment knows.
  */
 export async function grantActor(auth: Auth, claims: { readonly sub?: unknown; readonly [ORG_CLAIM]?: unknown }): Promise<(NornActor & { readonly environmentId: string | null }) | null> {
   if (typeof claims.sub !== "string" || claims.sub === "") return null
   const org = typeof claims[ORG_CLAIM] === "string" && claims[ORG_CLAIM] !== "" ? claims[ORG_CLAIM] : null
-  if (org === null) return null
   const member = await activeMembership(auth, claims.sub, org)
-  if (member === null || member.organizationId !== org) return null
+  if (member === null || (org !== null && member.organizationId !== org)) return null
   return { actorKind: "user", subjectId: claims.sub, orgId: member.organizationId, role: member.role, authMethod: "oauth", environmentId: member.environmentId }
 }
 
@@ -85,7 +83,7 @@ async function verifiedClaims(auth: Auth, baseURL: string, authorization: string
   try {
     const claims = await verifyJwsAccessToken(token, {
       jwksFetch: async () => jwks as never,
-      verifyOptions: { issuer: baseURL, audience: mcpResource(baseURL), requiredClaims: ["azp", "sub", "exp", ORG_CLAIM] },
+      verifyOptions: { issuer: baseURL, audience: mcpResource(baseURL), requiredClaims: ["azp", "sub", "exp"] },
     })
     // A sender-constrained (DPoP) token is not accepted as a plain bearer token.
     return "cnf" in claims ? null : claims
