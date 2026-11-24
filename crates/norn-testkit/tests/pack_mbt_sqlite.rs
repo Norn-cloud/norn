@@ -294,6 +294,12 @@ fn load_registry_pack(
     let mut seen_ids = BTreeSet::new();
     if include_core {
         for env in load_envelopes_from_dir(&root.join("registry/core/artifacts"))? {
+            if matches!(
+                env.artifact_id.as_str(),
+                "location.Region.entity" | "location.Space.entity"
+            ) {
+                continue;
+            }
             if seen_ids.insert(env.artifact_id.clone()) {
                 envelopes.push(env);
             }
