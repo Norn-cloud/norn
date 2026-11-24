@@ -81,7 +81,10 @@ export function BoneSkeleton({
         color="var(--muted)"
         darkColor="var(--well)"
         animate={resolvedAnimate}
-        fallback={fallback}
+        // boneyard-js scales captured bones to the container's first measured height. Rendering the
+        // fallback before it picks a breakpoint would lock that height to the fallback's (#1705), so
+        // a captured skeleton gets no fallback and opens at its own captured height.
+        fallback={STUDIO_BONES[name] === undefined ? fallback : undefined}
         fixture={fixture}
         select="viewport"
       >

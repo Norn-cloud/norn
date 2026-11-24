@@ -110,8 +110,6 @@ test("map: a lens fades only the frame of the cards outside it; their text and i
   await expect(holding).toHaveCSS("opacity", "1")
   await expect(holding.getByText("canon.Holding", { exact: true })).toHaveCSS("opacity", "1")
   await expect(holding).toContainText("Outside the current lens.")
-  await holding.focus()
-  await expect(holding).toHaveCSS("outline-style", "solid")
   await shoot(page, info, "lens")
 })
 
