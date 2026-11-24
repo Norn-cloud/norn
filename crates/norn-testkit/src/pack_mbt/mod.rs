@@ -30,19 +30,19 @@ pub(crate) mod cedar;
 pub mod coverage;
 pub mod driver;
 pub mod dst;
+pub(crate) mod law_parity;
 pub mod static_gaps;
 pub mod synth;
 
 use std::collections::BTreeMap;
 
 use norn_kernel::cell_host::{JsonObject, JsonValue};
-use norn_kernel::norn_checker::law_examples::Verdict;
-use norn_kernel::norn_ir::access::{AccessIr, PolicyRoot};
-use norn_kernel::norn_ir::{
-    ActionRoot, ArtifactEnvelope, ArtifactPayload, EntityRoot, InterfaceDef, LawIR, ObjectTypeDef,
-    PropertyTypeDef,
+use norn_kernel::pack_mbt_support::{
+    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactPayload, EntityRoot, InterfaceDef,
+    LawExampleVerdict as Verdict, LawIR, ObjectTypeDef, ObjectTypeName, PolicyRoot, Property,
+    PropertyConstraints, PropertyId, PropertyType, PropertyTypeDef, ResourceStatus,
 };
-use norn_kernel::{CellHost, FactEvent, LogicalTime, TypeCatalog};
+use norn_kernel::{CellHost, DecisionRefusal, FactEvent, LogicalTime, TypeCatalog};
 
 /// Honest evidence classification for verification outputs (`AGENTS.md`, `#1656`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -51,6 +51,8 @@ pub enum EvidenceLevel {
     Structural,
     /// Exhaustively covers a finite declared graph or policy/role matrix.
     ExhaustiveFinite,
+    /// Bounded exploration where some declared targets could not be witnessed.
+    Bounded,
     /// Verified by executing the real runtime commit path.
     RuntimeEnforced,
     /// Explored through seeded randomized multi-entity walks.
@@ -64,6 +66,7 @@ impl EvidenceLevel {
         match self {
             Self::Structural => "structural",
             Self::ExhaustiveFinite => "exhaustive-finite",
+            Self::Bounded => "bounded",
             Self::RuntimeEnforced => "runtime-enforced",
             Self::Sampled => "sampled",
         }
@@ -257,40 +260,51 @@ pub trait PackHost: CellHost<Event = FactEvent, Command = JsonObject, Input = Js
     /// Returns a description if the host's ledger integrity check fails.
     fn verify_ledger(&self) -> Result<(), String>;
 
-    /// Simulates a process crash by closing and reopening durable storage,
-    /// then verifying the ledger hash chain.
+    /// Performs a clean close and reopen of durable storage, then verifies the
+    /// ledger hash chain (clean-reopen persistence + integrity check).
     ///
     /// # Errors
     ///
     /// Returns a description if reopening or ledger verification fails.
-    fn crash_and_reopen(&mut self) -> Result<(), String>;
+    fn reopen(&mut self) -> Result<(), String>;
+
+    /// Feeds a typed pre-commit [`DecisionRefusal`] (such as
+    /// `ImmutableStateWrite` or `NotFromState`) into the host's domain-coverage
+    /// recorder when attached.
+    fn record_decision_refusal(&self, _refusal: &DecisionRefusal<Self::Error>) {}
+
+    /// Reads the host's cell-level observed domain coverage when attached, so
+    /// MBT reports consume one unified observer rather than a disconnected tally.
+    fn read_observed_coverage(&self) -> Option<coverage::DomainCoverage> {
+        None
+    }
 }
 
 /// Builds the platform's synthetic `norn.ActionCall` object type required by
 /// `commit_action` idempotency records.
 #[must_use]
 pub fn action_call_object_type() -> ObjectTypeDef {
-    let text = |id: &str, nullable: bool| norn_kernel::norn_ir::Property {
+    let text = |id: &str, nullable: bool| Property {
         protected: false,
-        id: norn_kernel::norn_ir::PropertyId(id.to_owned()),
+        id: PropertyId(id.to_owned()),
         description: None,
-        property_type: norn_kernel::norn_ir::PropertyType::Text { format: None },
-        constraints: norn_kernel::norn_ir::PropertyConstraints {
+        property_type: PropertyType::Text { format: None },
+        constraints: PropertyConstraints {
             nullable,
-            ..norn_kernel::norn_ir::PropertyConstraints::default()
+            ..PropertyConstraints::default()
         },
         default: None,
         markings: Vec::new(),
         computed: None,
     };
-    let json_ext = |id: &str| norn_kernel::norn_ir::Property {
+    let json_ext = |id: &str| Property {
         protected: false,
-        id: norn_kernel::norn_ir::PropertyId(id.to_owned()),
+        id: PropertyId(id.to_owned()),
         description: None,
-        property_type: norn_kernel::norn_ir::PropertyType::JsonExt { schema: None },
-        constraints: norn_kernel::norn_ir::PropertyConstraints {
+        property_type: PropertyType::JsonExt { schema: None },
+        constraints: PropertyConstraints {
             nullable: true,
-            ..norn_kernel::norn_ir::PropertyConstraints::default()
+            ..PropertyConstraints::default()
         },
         default: None,
         markings: Vec::new(),
@@ -322,10 +336,10 @@ pub fn action_call_object_type() -> ObjectTypeDef {
     }
     ObjectTypeDef {
         immutable: false,
-        name: norn_kernel::norn_ir::ObjectTypeName(norn_kernel::ACTION_CALL_TYPE.to_owned()),
+        name: ObjectTypeName(norn_kernel::ACTION_CALL_TYPE.to_owned()),
         role: None,
         description: None,
-        status: norn_kernel::norn_ir::ResourceStatus::Active {},
+        status: ResourceStatus::Active {},
         extends: None,
         implements: Vec::new(),
         properties,

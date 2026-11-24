@@ -94,10 +94,27 @@ pub use commit_check::{
     check_commit_owned_rows, check_fact_key_identity, evaluate_invariants,
     invariant_evaluation_budget,
 };
-pub use norn_authz;
-pub use norn_checker;
-pub use norn_expr;
-pub use norn_ir;
+#[doc(hidden)]
+pub mod pack_mbt_support {
+    pub use norn_authz::ValidatedPolicySet;
+    pub use norn_authz::cedar_projection;
+    pub use norn_checker::law_examples::{
+        Verdict as LawExampleVerdict, evaluate_runtime as evaluate_law_example_runtime,
+    };
+    pub use norn_expr::{EvaluationBudget, Expression, Value as ExprValue, expression_read_paths};
+    pub use norn_ir::access::{
+        AccessCondition, AccessIr, AccessLiteral, AccessRule, PolicyRoot, ResourceCompareOp,
+        ResourceCondition, ResourceOperand, ScopeDimension,
+    };
+    pub use norn_ir::{
+        ActionEffectProgram, ActionRoot, ActionUiEffect, ArtifactEnvelope, ArtifactPayload,
+        DataQualityOutcome, DataQualityRuleRef, Decimal, DecisionOutput, EntityRoot, FactChange,
+        InterfaceDef, JsonValue as IrJsonValue, LawIR, LawModality, LawResponse, Lifecycle,
+        ObjectTypeDef, ObjectTypeName, Property, PropertyConstraints, PropertyId, PropertyType,
+        PropertyTypeDef, RecordMember, ResourceStatus, SliceKey, Transition, TransitionId,
+        WriteChange, ZenExpression, lifecycle_codes,
+    };
+}
 pub use norn_ir::{MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, TraceContext, TraceContextError};
 pub use serde;
 pub use snapshot_observe::{ObservationAuthorization, ObservationEvent, PreparedObservation};

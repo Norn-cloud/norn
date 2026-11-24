@@ -12,10 +12,10 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use norn_kernel::authz::{AccessRequest, Pdp, PdpDecision};
-use norn_kernel::norn_ir::LawResponse;
+use norn_kernel::pack_mbt_support::LawResponse;
 use norn_kernel::{ActionAuthorizer, ActionAuthzRequest, ActionDenial};
 
-use super::AdmittedPack;
+use super::{AdmittedPack, action_call_object_type};
 
 /// Key for one expected or observed lifecycle transition.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -24,19 +24,26 @@ pub struct DomainTransition {
     pub object_type: String,
     /// Lifecycle property name.
     pub lifecycle: String,
+    /// Declared transition id.
+    pub transition: String,
     /// Source state.
     pub from: String,
     /// Target state.
     pub to: String,
 }
 
-/// Key for one immutable target `(object_type, state_or_marker)`.
+/// Key for one immutable target `(object_type, lifecycle, state)`.
+///
+/// For entity-level `immutable: true` types, `lifecycle` is `"<object>"` and
+/// `state` is `"<immutable_object>"`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ImmutableTarget {
     /// Owning object type name.
     pub object_type: String,
+    /// Lifecycle property name, or `"<object>"` for entity-level immutability.
+    pub lifecycle: String,
     /// Immutable lifecycle state name, or `"<immutable_object>"` for entity-level immutability.
-    pub target: String,
+    pub state: String,
 }
 
 /// Key for one `AccessIR` rule `(policy_id, rule_id)`.
@@ -48,12 +55,13 @@ pub struct PolicyRuleTarget {
     pub rule_id: String,
 }
 
-/// Expected coverage targets derived mechanically from an [`AdmittedPack`].
+/// Expected coverage targets derived mechanically from an [`AdmittedPack`]'s
+/// resolved [`norn_kernel::TypeCatalog`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DomainCoveragePlan {
-    /// All declared `(object_type, lifecycle, from -> to)` edges.
+    /// All effective `(object_type, lifecycle, transition, from -> to)` edges.
     pub transitions: BTreeSet<DomainTransition>,
-    /// All declared immutable lifecycle states and immutable entity types.
+    /// All effective immutable lifecycle states and immutable entity types.
     pub immutable_targets: BTreeSet<ImmutableTarget>,
     /// All governing predicate/invariant law ids.
     pub laws: BTreeSet<String>,
@@ -62,24 +70,28 @@ pub struct DomainCoveragePlan {
 }
 
 impl DomainCoveragePlan {
-    /// Builds the expected coverage plan from `pack`.
+    /// Builds the expected coverage plan from `pack`'s resolved effective catalog.
     #[must_use]
     pub fn from_pack(pack: &AdmittedPack) -> Self {
         let mut plan = Self::default();
+        let extra = [action_call_object_type()];
+        let catalog = pack.type_catalog(&extra);
         for object_type in &pack.object_types {
             let ty = object_type.name.as_str();
             if object_type.immutable {
                 plan.immutable_targets.insert(ImmutableTarget {
                     object_type: ty.to_owned(),
-                    target: "<immutable_object>".to_owned(),
+                    lifecycle: "<object>".to_owned(),
+                    state: "<immutable_object>".to_owned(),
                 });
             }
-            for lifecycle in &object_type.lifecycles {
+            for lifecycle in catalog.lifecycles(&object_type.name).into_values() {
                 let prop = lifecycle.property.as_str();
                 for state in &lifecycle.immutable {
                     plan.immutable_targets.insert(ImmutableTarget {
                         object_type: ty.to_owned(),
-                        target: state.clone(),
+                        lifecycle: prop.to_owned(),
+                        state: state.clone(),
                     });
                 }
                 for transition in &lifecycle.transitions {
@@ -87,6 +99,7 @@ impl DomainCoveragePlan {
                         plan.transitions.insert(DomainTransition {
                             object_type: ty.to_owned(),
                             lifecycle: prop.to_owned(),
+                            transition: transition.id.as_str().to_owned(),
                             from: from.clone(),
                             to: transition.to.clone(),
                         });
@@ -148,13 +161,15 @@ impl DomainCoverage {
     pub fn hit_immutable_refusal(
         &mut self,
         object_type: impl Into<String>,
-        target: impl Into<String>,
+        lifecycle: impl Into<String>,
+        state: impl Into<String>,
     ) {
         bump(
             &mut self.immutable_refusals,
             ImmutableTarget {
                 object_type: object_type.into(),
-                target: target.into(),
+                lifecycle: lifecycle.into(),
+                state: state.into(),
             },
         );
     }

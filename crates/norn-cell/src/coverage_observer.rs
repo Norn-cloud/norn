@@ -2,20 +2,29 @@
 //!
 //! [`ObservedSqliteCell`] wraps a [`SqliteCell`] without adding fields or runtime
 //! overhead to production cells. Whenever a test drives commits through it, the
-//! attached [`DomainCoverageRecorder`] tallies every committed lifecycle
-//! transition `(object_type, lifecycle, from -> to)`, every immutable-object
-//! refusal, and every governing law (`holds` and `violated`) evaluated on the
-//! cell's admitted model.
+//! attached [`DomainCoverageRecorder`] tallies:
+//! - exact committed lifecycle transitions from ledger events (`FactEvent::Transitioned`
+//!   and `ObservationEvent::ObservedTransition`, preserving self-loops and
+//!   multi-transition commits and never mis-crediting creations),
+//! - typed immutable refusals (`CommitError::ImmutableObject` and
+//!   `DecisionRefusal::ImmutableStateWrite`),
+//! - evaluated governing-law holds (only when `norn_checker::law_examples::evaluate_runtime`
+//!   returns `Verdict::Holds` and no observed finding violated the law) and exact
+//!   `DataQualityOutcome::NotSatisfied` law/invariant violations (both native
+//!   refusals and observed `DataQualityFinding` ledger events).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use norn_ir::{ObjectTypeName, RuntimeValue};
+use norn_checker::law_examples::{Verdict, evaluate_runtime};
+use norn_ir::{
+    DataQualityFinding, DataQualityOutcome, DataQualityRuleRef, LawIR, ObjectTypeName, RuntimeValue,
+};
 use norn_kernel::cell_host::{FactKey, FactMutation, FactState};
 use norn_kernel::{
-    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, LinkKey,
-    LinkReadTarget, LinkState, ObservationAuthorization, ObservationEvent, Observed,
-    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery,
+    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DecisionRefusal, DueTimer,
+    FactEvent, LinkKey, LinkReadTarget, LinkState, ObservationAuthorization, ObservationEvent,
+    Observed, OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -25,17 +34,33 @@ use crate::error::CellError;
 use crate::host::SqliteCell;
 use crate::store::MAIN_WORLD;
 
-/// One observed lifecycle transition `(object_type, lifecycle, from, to)`.
+/// One observed lifecycle transition `(object_type, lifecycle, transition, from, to)`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TransitionKey {
     /// Concrete object type name.
     pub object_type: String,
     /// Lifecycle property name.
     pub lifecycle: String,
-    /// State before the write (`"<initial>"` for creation).
+    /// Declared transition id.
+    pub transition: String,
+    /// State left by the transition.
     pub from: String,
-    /// State after the write.
+    /// State entered by the transition.
     pub to: String,
+}
+
+/// One observed immutable refusal `(object_type, lifecycle, state)`.
+///
+/// For entity-level `immutable: true` refusals, `lifecycle` is `"<object>"` and
+/// `state` is `"<immutable_object>"`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ImmutableRefusalKey {
+    /// Concrete object type name.
+    pub object_type: String,
+    /// Lifecycle property name, or `"<object>"` for entity-level immutability.
+    pub lifecycle: String,
+    /// Immutable state name, or `"<immutable_object>"` for entity-level immutability.
+    pub state: String,
 }
 
 /// One observed Cedar rule key `(policy_id, rule_id)`.
@@ -50,15 +75,15 @@ pub struct CedarRuleKey {
 /// Immutable snapshot of all domain-model coverage counters recorded so far.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DomainCoverageSnapshot {
-    /// Committed lifecycle transitions and creations.
+    /// Committed lifecycle transitions (never object creations).
     pub transitions: BTreeMap<TransitionKey, u64>,
     /// Disallowed lifecycle transitions refused before or at commit.
     pub disallowed_transitions: BTreeMap<TransitionKey, u64>,
-    /// Refusals on immutable states or immutable object types `(object_type, target)`.
-    pub immutable_refusals: BTreeMap<(String, String), u64>,
-    /// Governing laws that held on a committed write.
+    /// Refusals on immutable states or immutable object types.
+    pub immutable_refusals: BTreeMap<ImmutableRefusalKey, u64>,
+    /// Governing laws that actively held (`Verdict::Holds`) on a committed write.
     pub law_holds: BTreeMap<String, u64>,
-    /// Governing laws that refused a write.
+    /// Governing laws or invariants that evaluated `NotSatisfied` (refusal or finding).
     pub law_violations: BTreeMap<String, u64>,
     /// Cedar rules that allowed an authorization request.
     pub cedar_allows: BTreeMap<CedarRuleKey, u64>,
@@ -66,7 +91,8 @@ pub struct DomainCoverageSnapshot {
     pub cedar_denies: BTreeMap<CedarRuleKey, u64>,
 }
 
-/// Shared, thread-safe recorder attached to an [`ObservedSqliteCell`].
+/// Shared, thread-safe recorder attached to an [`ObservedSqliteCell`] and shared
+/// across decision/action/Cedar verification boundaries.
 #[derive(Debug, Default)]
 pub struct DomainCoverageRecorder {
     inner: Mutex<DomainCoverageSnapshot>,
@@ -88,6 +114,22 @@ impl DomainCoverageRecorder {
         }
     }
 
+    /// Merges all counters from `other` into this recorder.
+    pub fn merge_snapshot(&self, other: &DomainCoverageSnapshot) {
+        self.with_lock(|snap| {
+            merge_map(&mut snap.transitions, &other.transitions);
+            merge_map(
+                &mut snap.disallowed_transitions,
+                &other.disallowed_transitions,
+            );
+            merge_map(&mut snap.immutable_refusals, &other.immutable_refusals);
+            merge_map(&mut snap.law_holds, &other.law_holds);
+            merge_map(&mut snap.law_violations, &other.law_violations);
+            merge_map(&mut snap.cedar_allows, &other.cedar_allows);
+            merge_map(&mut snap.cedar_denies, &other.cedar_denies);
+        });
+    }
+
     /// Records one committed lifecycle transition.
     pub fn record_transition(&self, key: TransitionKey) {
         self.with_lock(|snap| bump(&mut snap.transitions, key));
@@ -99,25 +141,49 @@ impl DomainCoverageRecorder {
     }
 
     /// Records one immutable-state or immutable-object refusal.
-    pub fn record_immutable_refusal(
-        &self,
-        object_type: impl Into<String>,
-        state: impl Into<String>,
-    ) {
-        self.with_lock(|snap| {
-            bump(
-                &mut snap.immutable_refusals,
-                (object_type.into(), state.into()),
-            );
-        });
+    pub fn record_immutable_refusal(&self, key: ImmutableRefusalKey) {
+        self.with_lock(|snap| bump(&mut snap.immutable_refusals, key));
     }
 
-    /// Records that a governing law held on a committed object write.
+    /// Records typed pre-commit [`DecisionRefusal`] outcomes (such as
+    /// [`DecisionRefusal::ImmutableStateWrite`] or [`DecisionRefusal::NotFromState`])
+    /// that fail inside `commit_decision` before reaching `CellHost::commit`.
+    pub fn record_decision_refusal<X>(&self, refusal: &DecisionRefusal<X>) {
+        if let DecisionRefusal::ImmutableStateWrite {
+            key,
+            lifecycle,
+            state,
+        } = refusal
+        {
+            self.record_immutable_refusal(ImmutableRefusalKey {
+                object_type: key.object_type.as_str().to_owned(),
+                lifecycle: lifecycle.clone(),
+                state: state.clone(),
+            });
+        } else if let DecisionRefusal::NotFromState {
+            lifecycle,
+            key,
+            transition,
+            current,
+            ..
+        } = refusal
+        {
+            self.record_disallowed_transition(TransitionKey {
+                object_type: key.object_type.as_str().to_owned(),
+                lifecycle: lifecycle.clone(),
+                transition: transition.clone(),
+                from: current.clone().unwrap_or_else(|| "<unset>".to_owned()),
+                to: "<refused>".to_owned(),
+            });
+        }
+    }
+
+    /// Records that a governing law actively held on a committed object write.
     pub fn record_law_hold(&self, law_id: impl Into<String>) {
         self.with_lock(|snap| bump(&mut snap.law_holds, law_id.into()));
     }
 
-    /// Records that a governing law refused a proposed write.
+    /// Records that a governing law or invariant evaluated `NotSatisfied`.
     pub fn record_law_violation(&self, law_id: impl Into<String>) {
         self.with_lock(|snap| bump(&mut snap.law_violations, law_id.into()));
     }
@@ -162,12 +228,17 @@ fn bump<K: Ord>(map: &mut BTreeMap<K, u64>, key: K) {
     *entry = entry.saturating_add(1);
 }
 
-/// Pre-commit snapshot of lifecycle property values for one written object.
-struct PreWriteObservation {
-    object_type: String,
-    before_states: BTreeMap<String, String>,
-    after_states: BTreeMap<String, String>,
-    governing_law_ids: BTreeSet<String>,
+fn merge_map<K: Ord + Clone>(dst: &mut BTreeMap<K, u64>, src: &BTreeMap<K, u64>) {
+    for (key, count) in src {
+        let entry = dst.entry(key.clone()).or_insert(0);
+        *entry = entry.saturating_add(*count);
+    }
+}
+
+/// Written object snapshot captured before commit for post-commit law accounting.
+struct WrittenObjectSnapshot {
+    key: FactKey,
+    values: BTreeMap<String, RuntimeValue>,
 }
 
 /// Test-mode wrapper around [`SqliteCell`] that records domain-model coverage
@@ -179,7 +250,7 @@ pub struct ObservedSqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
 }
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
-    /// Wraps this cell in an [`ObservedSqliteCell`] that tallies lifecycle
+    /// Wraps this cell in an [`ObservedSqliteCell`] that tallies committed
     /// transitions, immutable refusals, and governing-law outcomes into
     /// `recorder`.
     #[must_use]
@@ -221,79 +292,46 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
         &self.recorder
     }
 
-    fn capture_pre_commit<Ev, Cmd, Inp>(
-        &self,
+    fn capture_written_objects<Ev, Cmd, Inp>(
         commit: &CellCommit<Ev, Cmd, Inp>,
-    ) -> Vec<PreWriteObservation> {
-        let model = self.inner.store().model();
-        let reader = self.inner.store().read();
-        let mut captured = Vec::new();
-        for write in &commit.writes {
-            let FactMutation::Put { values } = &write.mutation else {
-                continue;
-            };
-            let type_name = write.key.object_type.as_str();
-            let lifecycle_props = lifecycle_properties_for(model, &write.key.object_type);
-            let before_obj = reader
-                .object(MAIN_WORLD, type_name, &write.key.key)
-                .ok()
-                .flatten();
-            let before_states =
-                extract_states(before_obj.as_ref().map(|r| &r.values), &lifecycle_props);
-            let after_states = extract_states(Some(values), &lifecycle_props);
-            let governing_law_ids = governing_law_ids_for(model, type_name);
-            captured.push(PreWriteObservation {
-                object_type: type_name.to_owned(),
-                before_states,
-                after_states,
-                governing_law_ids,
-            });
-        }
-        captured
+    ) -> Vec<WrittenObjectSnapshot> {
+        commit
+            .writes
+            .iter()
+            .filter_map(|write| match &write.mutation {
+                FactMutation::Put { values } => Some(WrittenObjectSnapshot {
+                    key: write.key.clone(),
+                    values: values.clone(),
+                }),
+                FactMutation::Delete => None,
+            })
+            .collect()
     }
 
     fn record_commit_outcome(
         &self,
-        captured: &[PreWriteObservation],
+        written: &[WrittenObjectSnapshot],
+        is_observed: bool,
         result: &Result<CommitReceipt, CommitError<CellError>>,
     ) {
         match result {
-            Ok(_) => {
-                for obs in captured {
-                    for (prop, after) in &obs.after_states {
-                        let from = obs
-                            .before_states
-                            .get(prop)
-                            .cloned()
-                            .unwrap_or_else(|| "<initial>".to_owned());
-                        if from != *after {
-                            self.recorder.record_transition(TransitionKey {
-                                object_type: obs.object_type.clone(),
-                                lifecycle: prop.clone(),
-                                from,
-                                to: after.clone(),
-                            });
-                        }
-                    }
-                    for law_id in &obs.governing_law_ids {
-                        self.recorder.record_law_hold(law_id.clone());
-                    }
-                }
+            Ok(receipt) => {
+                let finding_violated = self.record_committed_ledger_events(receipt.seq.0);
+                self.record_active_law_holds(written, is_observed, &finding_violated);
             }
             Err(CommitError::ImmutableObject { key }) => {
-                self.recorder
-                    .record_immutable_refusal(key.object_type.as_str(), "<immutable_object>");
+                self.recorder.record_immutable_refusal(ImmutableRefusalKey {
+                    object_type: key.object_type.as_str().to_owned(),
+                    lifecycle: "<object>".to_owned(),
+                    state: "<immutable_object>".to_owned(),
+                });
             }
             Err(CommitError::Law { reason, .. }) => {
-                if let norn_kernel::governing_laws::LawEvaluationError::Violated(failure) = reason {
-                    let rule_id = match &failure.rule_ref {
-                        norn_ir::DataQualityRuleRef::Law { law_id, .. } => law_id.clone(),
-                        norn_ir::DataQualityRuleRef::Invariant { invariant_id, .. } => {
-                            invariant_id.as_str().to_owned()
-                        }
-                        norn_ir::DataQualityRuleRef::Builtin { id, .. } => id.clone(),
-                    };
-                    self.recorder.record_law_violation(rule_id);
+                if let norn_kernel::governing_laws::LawEvaluationError::Violated(failure) = reason
+                    && failure.outcome == DataQualityOutcome::NotSatisfied
+                {
+                    self.recorder
+                        .record_law_violation(rule_ref_id(&failure.rule_ref));
                 }
             }
             Err(CommitError::InvariantViolation { id, .. }) => {
@@ -336,50 +374,195 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
             ) => {}
         }
     }
-}
 
-fn lifecycle_properties_for(
-    model: &crate::model::Model,
-    object_type: &ObjectTypeName,
-) -> Vec<String> {
-    let catalog = model.type_catalog();
-    catalog
-        .lifecycles(object_type)
-        .into_keys()
-        .map(|prop| prop.as_str().to_owned())
-        .collect()
-}
+    /// Reads the exact ledger events appended by commit `commit_seq`, recording
+    /// every committed transition (including self-loops and multi-transition
+    /// commits) and every `DataQualityFinding` violation. Returns the set of
+    /// `(object_type, key, rule_id)` pairs that recorded a finding violation.
+    fn record_committed_ledger_events(
+        &self,
+        commit_seq: u64,
+    ) -> BTreeSet<(String, String, String)> {
+        let mut violated = BTreeSet::new();
+        let reader = self.inner.store().read();
+        let Ok(Some(receipt)) = reader.receipt_at(commit_seq) else {
+            return violated;
+        };
+        let count = usize::try_from(receipt.body.event_count).unwrap_or(0);
+        if count == 0 {
+            return violated;
+        }
+        let after = receipt.body.first_event_seq.saturating_sub(1);
+        let Ok(entries) = reader.ledger_page(after, count) else {
+            return violated;
+        };
+        for entry in entries {
+            if entry.commit_seq != commit_seq {
+                continue;
+            }
+            self.observe_ledger_event(&entry.event, &mut violated);
+        }
+        violated
+    }
 
-fn extract_states(
-    values: Option<&BTreeMap<String, RuntimeValue>>,
-    lifecycle_props: &[String],
-) -> BTreeMap<String, String> {
-    let Some(values) = values else {
-        return BTreeMap::new();
-    };
-    let mut out = BTreeMap::new();
-    for prop in lifecycle_props {
-        if let Some(RuntimeValue::String(state)) = values.get(prop) {
-            out.insert(prop.clone(), state.clone());
+    fn observe_ledger_event(
+        &self,
+        event: &RuntimeValue,
+        violated: &mut BTreeSet<(String, String, String)>,
+    ) {
+        // Dispatch internally-tagged `ObservationEvent` variants directly from
+        // the `RuntimeValue` object so `DataQualityFinding` (which embeds
+        // `RuntimeValue` / `RawValue` fields) is never buffered through serde's
+        // `#[serde(tag = "op")]` `Content` deserializer.
+        if let RuntimeValue::Object(obj) = event
+            && let Some(op) = obj.get("op").and_then(RuntimeValue::as_str)
+        {
+            match op {
+                "data_quality_finding" => {
+                    if let Some(fact_val) = obj.get("fact")
+                        && let Ok(fact_json) = serde_json::to_string(fact_val)
+                        && let Ok(fact) = serde_json::from_str::<DataQualityFinding>(&fact_json)
+                    {
+                        self.record_finding_violation(&fact, violated);
+                    }
+                    return;
+                }
+                "observed_fact" => {
+                    if let Some(inner_event) = obj.get("event") {
+                        self.observe_ledger_event(inner_event, violated);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+        let Ok(json_text) = serde_json::to_string(event) else {
+            return;
+        };
+        if let Ok(fact_event) = serde_json::from_str::<FactEvent>(&json_text) {
+            if let FactEvent::Transitioned {
+                key,
+                lifecycle,
+                transition,
+                from,
+                to,
+            } = fact_event
+            {
+                self.recorder.record_transition(TransitionKey {
+                    object_type: key.object_type.as_str().to_owned(),
+                    lifecycle: lifecycle.as_str().to_owned(),
+                    transition: transition.as_str().to_owned(),
+                    from,
+                    to,
+                });
+            }
+            return;
+        }
+        if let Ok(obs_event) = serde_json::from_str::<ObservationEvent>(&json_text) {
+            match obs_event {
+                ObservationEvent::ObservedTransition {
+                    key,
+                    property,
+                    transition,
+                    from,
+                    to,
+                    ..
+                } => {
+                    self.recorder.record_transition(TransitionKey {
+                        object_type: key.object_type.as_str().to_owned(),
+                        lifecycle: property.as_str().to_owned(),
+                        transition: transition.as_str().to_owned(),
+                        from,
+                        to,
+                    });
+                }
+                ObservationEvent::DataQualityFinding { fact } => {
+                    self.record_finding_violation(&fact, violated);
+                }
+                ObservationEvent::ObservedFact { .. }
+                | ObservationEvent::ObservedDeleted { .. }
+                | ObservationEvent::ObservedRecreated { .. } => {}
+            }
         }
     }
-    out
+
+    fn record_finding_violation(
+        &self,
+        finding: &DataQualityFinding,
+        violated: &mut BTreeSet<(String, String, String)>,
+    ) {
+        let rule_id = rule_ref_id(&finding.rule_ref);
+        if finding.outcome == DataQualityOutcome::NotSatisfied {
+            self.recorder.record_law_violation(rule_id.clone());
+        }
+        for subject in &finding.subjects {
+            violated.insert((
+                subject.object_type.as_str().to_owned(),
+                subject.key.clone(),
+                rule_id.clone(),
+            ));
+        }
+    }
+
+    fn record_active_law_holds(
+        &self,
+        written: &[WrittenObjectSnapshot],
+        is_observed: bool,
+        finding_violated: &BTreeSet<(String, String, String)>,
+    ) {
+        let model = self.inner.store().model();
+        let reader = self.inner.store().read();
+        for item in written {
+            let ty_name = item.key.object_type.as_str();
+            let laws = governing_laws_for(model, &item.key.object_type);
+            if laws.is_empty() {
+                continue;
+            }
+            let effective_values = reader
+                .object(MAIN_WORLD, ty_name, &item.key.key)
+                .ok()
+                .flatten()
+                .map_or_else(|| item.values.clone(), |record| record.values);
+            let subject_val = RuntimeValue::Object(effective_values);
+            for law in laws {
+                if !law.exceptions.is_empty() {
+                    continue;
+                }
+                if is_observed
+                    && finding_violated.contains(&(
+                        ty_name.to_owned(),
+                        item.key.key.clone(),
+                        law.id.clone(),
+                    ))
+                {
+                    continue;
+                }
+                if matches!(evaluate_runtime(&law, &subject_val), Ok(Verdict::Holds)) {
+                    self.recorder.record_law_hold(law.id);
+                }
+            }
+        }
+    }
 }
 
-fn governing_law_ids_for(model: &crate::model::Model, object_type: &str) -> BTreeSet<String> {
+fn rule_ref_id(rule_ref: &DataQualityRuleRef) -> String {
+    match rule_ref {
+        DataQualityRuleRef::Law { law_id, .. } => law_id.clone(),
+        DataQualityRuleRef::Invariant { invariant_id, .. } => invariant_id.as_str().to_owned(),
+        DataQualityRuleRef::Builtin { id, .. } => id.clone(),
+    }
+}
+
+fn governing_laws_for(model: &crate::model::Model, object_type: &ObjectTypeName) -> Vec<LawIR> {
     model
-        .governing_laws(object_type)
+        .governing_laws(object_type.as_str())
         .map_or_default(|artifacts| {
             artifacts
                 .into_iter()
                 .filter_map(|artifact| {
-                    artifact
-                        .payload
-                        .to_json_value()
-                        .as_object()
-                        .and_then(|obj| obj.get("id"))
-                        .and_then(norn_ir::JsonValue::as_string)
-                        .map(str::to_owned)
+                    serde_json::to_string(&artifact.payload.to_json_value())
+                        .ok()
+                        .and_then(|text| serde_json::from_str::<LawIR>(&text).ok())
                 })
                 .collect()
         })
@@ -448,9 +631,9 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let captured = self.capture_pre_commit(&commit);
+        let written = Self::capture_written_objects(&commit);
         let result = self.inner.commit(commit);
-        self.record_commit_outcome(&captured, &result);
+        self.record_commit_outcome(&written, false, &result);
         result
     }
 
@@ -460,9 +643,9 @@ where
         proof: norn_kernel::action_commit::ActionReferenceReads,
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let captured = self.capture_pre_commit(&commit);
+        let written = Self::capture_written_objects(&commit);
         let result = self.inner.commit_action_references(commit, proof, quantity);
-        self.record_commit_outcome(&captured, &result);
+        self.record_commit_outcome(&written, false, &result);
         result
     }
 
@@ -472,11 +655,11 @@ where
         requests: &[norn_ir::quantity_ledger::QuantityRequest],
         idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let captured = self.capture_pre_commit(&commit);
+        let written = Self::capture_written_objects(&commit);
         let result = self
             .inner
             .commit_action_quantity(commit, requests, idempotency_key);
-        self.record_commit_outcome(&captured, &result);
+        self.record_commit_outcome(&written, false, &result);
         result
     }
 
@@ -485,9 +668,9 @@ where
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let captured = self.capture_pre_commit(&commit);
+        let written = Self::capture_written_objects(&commit);
         let result = self.inner.commit_owned_rows(commit, proof);
-        self.record_commit_outcome(&captured, &result);
+        self.record_commit_outcome(&written, false, &result);
         result
     }
 
@@ -499,9 +682,9 @@ where
     where
         E: From<ObservationEvent>,
     {
-        let captured = self.capture_pre_commit(&commit);
+        let written = Self::capture_written_objects(&commit);
         let result = self.inner.commit_observed(commit, authorization);
-        self.record_commit_outcome(&captured, &result);
+        self.record_commit_outcome(&written, true, &result);
         result
     }
 

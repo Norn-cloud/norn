@@ -1,26 +1,37 @@
 //! Seeded multi-entity stateful DST over any admitted pack (#1656, #181, #176).
 //!
 //! Generates seeded, shrinkable operation sequences (`Create`, `Transition`,
-//! `MutateNonLifecycle`, `AdvanceClock`, `CrashAndReopen`) via `proptest`,
-//! drives a real [`PackHost`] (such as file-backed `SqliteCell`), compares every
-//! step against an independent reference model, enforces zero ledger writes on
-//! refusals, and runs `verify_ledger()` after every crash/reopen and at run end.
+//! `MutateNonLifecycle`, `AdvanceClock`, `CleanReopen`) via `proptest`, drives
+//! a real [`PackHost`] (such as file-backed `ObservedSqliteCell`), independently
+//! predicts guard, immutability, and governing-law outcomes, asserts complete
+//! persisted facts, versions, links, and absences after **every** step, asserts
+//! exact virtual-clock advancement, and runs `verify_ledger()` on clean reopen
+//! and at run end.
 //! Evidence level: [`EvidenceLevel::Sampled`].
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use norn_kernel::cell_host::{FactKey, JsonObject, JsonValue};
-use norn_kernel::norn_ir::{
-    DecisionOutput, FactChange, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyId, TransitionId,
-    lifecycle_codes,
+use norn_kernel::cell_host::{
+    FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey,
 };
-use norn_kernel::{DecisionTurn, TypeCatalog, World, commit_decision, load_slice};
+use norn_kernel::pack_mbt_support::{
+    DecisionOutput, FactChange, LawExampleVerdict as Verdict, Lifecycle, ObjectTypeDef,
+    ObjectTypeName, PropertyId, Transition, TransitionId,
+    evaluate_law_example_runtime as evaluate_law_example,
+};
+use norn_kernel::{
+    CellCommit, CommitError, DecisionRefusal, DecisionTurn, TypeCatalog, World, commit_decision,
+    load_slice,
+};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, TestError, TestRng, TestRunner};
 
 use super::coverage::{DomainCoverage, DomainTransition};
-use super::synth::{pick_non_lifecycle_mutation, synthesize_guard_satisfying};
+use super::synth::{
+    GuardEval, collect_required_link_graph, evaluate_guards, pick_non_lifecycle_mutation,
+    synthesize_guard_satisfying,
+};
 use super::{AdmittedPack, EvidenceLevel, PackHost, action_call_object_type};
 
 /// Configuration for a seeded multi-entity DST run over an [`AdmittedPack`].
@@ -41,65 +52,70 @@ impl Default for PackDstConfig {
         Self {
             seed: [0xA5; 32],
             cases: 24,
-            max_steps: 20,
+            max_steps: 24,
             entities_per_type: 2,
         }
     }
 }
 
-/// One generated operation in a shrinkable multi-entity DST trace.
+/// One shrinkable operation step in a multi-entity DST sequence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackDstStep {
-    /// Create entity `(type_index, slot)`.
+    /// Create entity `(type_idx, slot)` in its initial lifecycle state.
     Create {
-        /// Index into the pack's lifecycle-bearing types.
+        /// Index into the pack's lifecycle-bearing object types.
         type_idx: usize,
-        /// Entity slot index.
+        /// Instance slot id.
         slot: u8,
-    },
-    /// Fire a declared transition `(type_index, slot, transition_index)`.
-    FireTransition {
-        /// Index into the pack's lifecycle-bearing types.
-        type_idx: usize,
-        /// Entity slot index.
-        slot: u8,
-        /// Index into the lifecycle's transitions.
-        transition_idx: usize,
-    },
-    /// Attempt a non-lifecycle property mutation on `(type_index, slot)`.
-    MutateNonLifecycle {
-        /// Index into the pack's lifecycle-bearing types.
-        type_idx: usize,
-        /// Entity slot index.
-        slot: u8,
-        /// Deterministic value nonce.
+        /// Deterministic synthesis nonce.
         nonce: u64,
     },
-    /// Advance the virtual cell clock (`#176`).
+    /// Attempt to fire `transition_idx` on entity `(type_idx, slot)`.
+    FireTransition {
+        /// Index into the pack's lifecycle-bearing object types.
+        type_idx: usize,
+        /// Instance slot id.
+        slot: u8,
+        /// Index into the lifecycle's declared transitions.
+        transition_idx: usize,
+        /// Deterministic turn nonce.
+        nonce: u64,
+    },
+    /// Attempt a non-lifecycle property mutation on `(type_idx, slot)`.
+    MutateNonLifecycle {
+        /// Index into the pack's lifecycle-bearing object types.
+        type_idx: usize,
+        /// Instance slot id.
+        slot: u8,
+        /// Deterministic mutation nonce.
+        nonce: u64,
+    },
+    /// Advance the cell's virtual clock by `delta_millis` (`#176`).
     AdvanceClock {
         /// Milliseconds to advance.
         delta_millis: u64,
     },
-    /// Close and reopen durable storage, verifying `verify_ledger()`.
-    CrashAndReopen,
+    /// Perform a clean close and reopen of durable storage, verify the ledger,
+    /// and re-check all persisted facts, versions, and links.
+    CleanReopen,
 }
 
-/// Summary of one completed seeded DST run.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Summary of a seeded multi-entity DST execution.
+#[derive(Debug, Clone)]
 pub struct PackDstReport {
-    /// Evidence classification (`sampled`).
+    /// Honest evidence label ([`EvidenceLevel::Sampled`]).
     pub evidence: EvidenceLevel,
-    /// Cases executed.
+    /// Number of proptest cases completed.
     pub cases_run: u32,
     /// Total steps executed across all cases.
     pub steps_run: usize,
-    /// Total crash/reopen + `verify_ledger()` cycles verified.
-    pub crashes_recovered: usize,
-    /// Domain coverage hits accumulated during random walks.
+    /// Total clean-reopen + ledger-verification cycles executed.
+    pub reopens_verified: usize,
+    /// Aggregate domain coverage hit during random walks.
     pub coverage: DomainCoverage,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct TargetSpec<'a> {
     object_type: &'a ObjectTypeDef,
     lifecycle: Lifecycle,
@@ -109,16 +125,48 @@ struct TargetSpec<'a> {
 struct RefEntity {
     state: String,
     values: JsonObject,
+    version: FactVersion,
+    required_links: Vec<LinkKey>,
 }
 
-struct DstCaseState<'a, H> {
+struct DstCaseState<'a, H: PackHost> {
     pack: &'a AdmittedPack,
     catalog: &'a TypeCatalog<'a>,
     targets: &'a [TargetSpec<'a>],
+    entities_per_type: u8,
     host: &'a mut H,
     model: BTreeMap<(usize, u8), RefEntity>,
     coverage: DomainCoverage,
-    crashes: usize,
+    reopens: usize,
+}
+
+struct CreateStepOutcome<'a> {
+    id_pair: (usize, u8),
+    ty_name: &'a str,
+    key: &'a FactKey,
+    init_state: &'a str,
+    values: JsonObject,
+    required_links: Vec<LinkKey>,
+    already_exists: bool,
+    before: usize,
+}
+
+struct TransitionCheck<'a> {
+    id_pair: (usize, u8),
+    ty_name: &'a str,
+    prop: &'a str,
+    key: &'a FactKey,
+    transition: &'a Transition,
+    entry: RefEntity,
+    before: usize,
+}
+
+#[derive(Default)]
+struct DstRunAccum {
+    cases_run: u32,
+    steps_run: usize,
+    reopens_verified: usize,
+    coverage: DomainCoverage,
 }
 
 /// Runs seeded, shrinkable multi-entity stateful DST on `pack`.
@@ -159,7 +207,7 @@ where
             evidence: EvidenceLevel::Sampled,
             cases_run: 0,
             steps_run: 0,
-            crashes_recovered: 0,
+            reopens_verified: 0,
             coverage: DomainCoverage::default(),
         });
     }
@@ -187,15 +235,16 @@ where
             pack,
             catalog: &catalog,
             targets: &targets,
+            entities_per_type: config.entities_per_type,
             host: &mut host,
             model: BTreeMap::new(),
             coverage: DomainCoverage::default(),
-            crashes: 0,
+            reopens: 0,
         };
         state.execute_all(&steps).map_err(TestCaseError::fail)?;
         let mut acc = accum.borrow_mut();
         acc.steps_run = acc.steps_run.saturating_add(steps.len());
-        acc.crashes_recovered = acc.crashes_recovered.saturating_add(state.crashes);
+        acc.reopens_verified = acc.reopens_verified.saturating_add(state.reopens);
         acc.coverage.merge(&state.coverage);
         Ok(())
     });
@@ -206,7 +255,7 @@ where
             evidence: EvidenceLevel::Sampled,
             cases_run: acc.cases_run,
             steps_run: acc.steps_run,
-            crashes_recovered: acc.crashes_recovered,
+            reopens_verified: acc.reopens_verified,
             coverage: acc.coverage,
         }),
         Err(TestError::Fail(reason, minimal_steps)) => Err(format!(
@@ -220,14 +269,6 @@ where
     }
 }
 
-#[derive(Default)]
-struct DstRunAccum {
-    cases_run: u32,
-    steps_run: usize,
-    crashes_recovered: usize,
-    coverage: DomainCoverage,
-}
-
 fn dst_sequence_strategy(
     targets: &[TargetSpec<'_>],
     entities_per_type: u8,
@@ -236,70 +277,81 @@ fn dst_sequence_strategy(
     let type_count = targets.len();
     let max_transitions = targets
         .iter()
-        .map(|t| t.lifecycle.transitions.len())
+        .map(|spec| spec.lifecycle.transitions.len())
         .max()
-        .unwrap_or(1);
+        .unwrap_or(1)
+        .max(1);
     let slots = entities_per_type.max(1);
-    let step = prop_oneof![
-        3 => (0..type_count, 0..slots).prop_map(|(type_idx, slot)| PackDstStep::Create { type_idx, slot }),
-        5 => (0..type_count, 0..slots, 0..max_transitions).prop_map(|(type_idx, slot, transition_idx)| {
-            PackDstStep::FireTransition { type_idx, slot, transition_idx }
+
+    let step_strat = prop_oneof![
+        3 => (0..type_count, 0..slots, 1u64..10_000u64).prop_map(|(type_idx, slot, nonce)| {
+            PackDstStep::Create { type_idx, slot, nonce }
         }),
-        2 => (0..type_count, 0..slots, 1u64..1000u64).prop_map(|(type_idx, slot, nonce)| {
+        5 => (0..type_count, 0..slots, 0..max_transitions, 1u64..10_000u64).prop_map(
+            |(type_idx, slot, transition_idx, nonce)| PackDstStep::FireTransition {
+                type_idx,
+                slot,
+                transition_idx,
+                nonce,
+            },
+        ),
+        3 => (0..type_count, 0..slots, 1u64..10_000u64).prop_map(|(type_idx, slot, nonce)| {
             PackDstStep::MutateNonLifecycle { type_idx, slot, nonce }
         }),
-        1 => (1_000u64..600_000u64).prop_map(|delta_millis| PackDstStep::AdvanceClock { delta_millis }),
-        1 => Just(PackDstStep::CrashAndReopen),
+        1 => (1_000u64..86_400_000u64).prop_map(|delta_millis| PackDstStep::AdvanceClock {
+            delta_millis,
+        }),
+        1 => Just(PackDstStep::CleanReopen),
     ];
-    proptest::collection::vec(step, 1..=max_steps.max(1)).boxed()
+
+    prop::collection::vec(step_strat, 1..=max_steps.max(1)).boxed()
 }
 
 impl<H: PackHost> DstCaseState<'_, H> {
     fn execute_all(&mut self, steps: &[PackDstStep]) -> Result<(), String> {
-        for (step_idx, step) in steps.iter().enumerate() {
-            let nonce = u64::try_from(step_idx).unwrap_or(0).saturating_add(1);
+        for (idx, step) in steps.iter().enumerate() {
+            let step_nonce = u64::try_from(idx).unwrap_or(0).saturating_add(1);
             match step {
-                PackDstStep::Create { type_idx, slot } => {
-                    self.step_create(*type_idx, *slot, nonce)?;
-                }
+                PackDstStep::Create {
+                    type_idx,
+                    slot,
+                    nonce,
+                } => self.step_create(*type_idx, *slot, nonce.wrapping_add(step_nonce))?,
                 PackDstStep::FireTransition {
                     type_idx,
                     slot,
                     transition_idx,
-                } => {
-                    self.step_transition(*type_idx, *slot, *transition_idx, nonce)?;
-                }
+                    nonce,
+                } => self.step_transition(
+                    *type_idx,
+                    *slot,
+                    *transition_idx,
+                    nonce.wrapping_add(step_nonce),
+                )?,
                 PackDstStep::MutateNonLifecycle {
                     type_idx,
                     slot,
-                    nonce: val_nonce,
-                } => {
-                    self.step_mutate(*type_idx, *slot, *val_nonce, nonce)?;
-                }
+                    nonce,
+                } => self.step_mutate(*type_idx, *slot, nonce.wrapping_add(step_nonce))?,
                 PackDstStep::AdvanceClock { delta_millis } => {
-                    let before = self.host.logical_now();
+                    let before = self.host.logical_now().as_millis();
                     self.host.advance_clock(*delta_millis);
-                    if self.host.logical_now() < before {
-                        return Err("virtual clock moved backwards".to_owned());
-                    }
-                }
-                PackDstStep::CrashAndReopen => {
-                    let before_ledger = self.host.ledger_len();
-                    self.host.crash_and_reopen()?;
-                    self.host.verify_ledger()?;
-                    if self.host.ledger_len() != before_ledger {
+                    let after = self.host.logical_now().as_millis();
+                    let expected = before.saturating_add(*delta_millis);
+                    if after != expected {
                         return Err(format!(
-                            "ledger length changed across crash/reopen: before={before_ledger}, after={}",
-                            self.host.ledger_len()
+                            "virtual clock did not advance by exact delta {delta_millis}: before={before}, after={after}, expected={expected}"
                         ));
                     }
-                    self.verify_model_matches_host()?;
-                    self.crashes = self.crashes.saturating_add(1);
+                }
+                PackDstStep::CleanReopen => {
+                    self.host.reopen()?;
+                    self.reopens = self.reopens.saturating_add(1);
                 }
             }
+            self.assert_complete_model_matches()?;
         }
-        self.host.verify_ledger()?;
-        self.verify_model_matches_host()
+        self.host.verify_ledger()
     }
 
     fn step_create(&mut self, type_idx: usize, slot: u8, nonce: u64) -> Result<(), String> {
@@ -329,40 +381,177 @@ impl<H: PackHost> DstCaseState<'_, H> {
         values.insert(prop.to_owned(), JsonValue::String(init_state.clone()));
 
         let key = FactKey::new(ty_name, &id);
-        let slice = load_slice(self.host, [key]).map_err(|e| format!("load_slice: {e}"))?;
-        let output = DecisionOutput {
-            facts: vec![FactChange::Create {
-                object_type: target.object_type.name.clone(),
-                key: id,
-                values: values.clone(),
-            }],
-            commands: Vec::new(),
-            timers: Vec::new(),
-        };
-        let turn = DecisionTurn {
-            id: format!("dst-create-{nonce}"),
-            now: self.host.logical_now(),
-            world: World::Main,
-            consumes: None,
-        };
+        let graph = collect_required_link_graph(self.pack, target.object_type, &key, nonce)?;
         let before = self.host.ledger_len();
-        let res = commit_decision(self.host, self.catalog, &slice, &turn, &output);
         let already_exists = self.model.contains_key(&(type_idx, slot));
-        match (already_exists, res) {
-            (false, Ok(_)) => {
-                if self.host.ledger_len() != before.saturating_add(1) {
-                    return Err("create did not append 1 ledger entry".to_owned());
+
+        if graph.direct_links.is_empty() {
+            let slice =
+                load_slice(self.host, [key.clone()]).map_err(|e| format!("load_slice: {e}"))?;
+            let output = DecisionOutput {
+                facts: vec![FactChange::Create {
+                    object_type: target.object_type.name.clone(),
+                    key: id,
+                    values: values.clone(),
+                }],
+                commands: Vec::new(),
+                timers: Vec::new(),
+            };
+            let turn = DecisionTurn {
+                id: format!("dst-create-{nonce}"),
+                now: self.host.logical_now(),
+                world: World::Main,
+                consumes: None,
+            };
+            let res = commit_decision(self.host, self.catalog, &slice, &turn, &output);
+            return self.finish_create_step(
+                CreateStepOutcome {
+                    id_pair: (type_idx, slot),
+                    ty_name,
+                    key: &key,
+                    init_state,
+                    values,
+                    required_links: Vec::new(),
+                    already_exists,
+                    before,
+                },
+                res.map(|_| ()),
+            );
+        }
+
+        self.step_create_linked(
+            CreateStepOutcome {
+                id_pair: (type_idx, slot),
+                ty_name,
+                key: &key,
+                init_state,
+                values,
+                required_links: Vec::new(),
+                already_exists,
+                before,
+            },
+            graph,
+        )
+    }
+
+    fn step_create_linked(
+        &mut self,
+        meta: CreateStepOutcome<'_>,
+        mut graph: super::synth::RequiredLinkGraph,
+    ) -> Result<(), String> {
+        let CreateStepOutcome {
+            id_pair,
+            ty_name,
+            key,
+            init_state,
+            values,
+            already_exists,
+            before,
+            ..
+        } = meta;
+        if already_exists {
+            let loaded = self.host.load(key).map_err(|e| format!("load: {e}"))?;
+            let res = self.host.commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put { values },
+                }],
+                ..CellCommit::empty()
+            });
+            return match res {
+                Err(CommitError::Conflict { .. }) => {
+                    if !loaded.exists() {
+                        return Err(format!("expected {key} to exist on duplicate create"));
+                    }
+                    ensure_unchanged(self.host, before, "duplicate linked create refusal")
                 }
+                other => Err(format!(
+                    "duplicate linked create for {ty_name} returned {other:?}"
+                )),
+            };
+        }
+
+        let direct_link_keys: Vec<LinkKey> =
+            graph.direct_links.iter().map(|lw| lw.key.clone()).collect();
+        graph.setup_writes.push(FactWrite {
+            key: key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: values.clone(),
+            },
+        });
+        graph.setup_links.extend(graph.direct_links);
+        let res = self.host.commit(CellCommit {
+            writes: graph.setup_writes,
+            links: graph.setup_links,
+            ..CellCommit::empty()
+        });
+        match res {
+            Ok(_) => {
+                if self.host.ledger_len() != before.saturating_add(1) {
+                    return Err("linked create did not append 1 ledger entry".to_owned());
+                }
+                let persisted = self.host.load(key).map_err(|e| format!("load: {e}"))?;
                 self.model.insert(
-                    (type_idx, slot),
+                    id_pair,
                     RefEntity {
-                        state: init_state.clone(),
-                        values,
+                        state: init_state.to_owned(),
+                        values: persisted.values.unwrap_or(values),
+                        version: persisted.version,
+                        required_links: direct_link_keys,
                     },
                 );
                 Ok(())
             }
-            (true, Err(refusal)) if refusal.code() == "decision.object_exists" => {
+            Err(err) => Err(format!("linked create for {ty_name} failed: {err}")),
+        }
+    }
+
+    fn finish_create_step(
+        &mut self,
+        meta: CreateStepOutcome<'_>,
+        res: Result<(), DecisionRefusal<H::Error>>,
+    ) -> Result<(), String> {
+        let CreateStepOutcome {
+            id_pair,
+            ty_name,
+            key,
+            init_state,
+            values,
+            required_links,
+            already_exists,
+            before,
+        } = meta;
+        match (already_exists, res) {
+            (false, Ok(())) => {
+                if self.host.ledger_len() != before.saturating_add(1) {
+                    return Err("create did not append 1 ledger entry".to_owned());
+                }
+                let persisted = self.host.load(key).map_err(|e| format!("load: {e}"))?;
+                let persisted_values = persisted
+                    .values
+                    .ok_or_else(|| format!("created object {key} missing immediately after Ok"))?;
+                for (k, v) in &values {
+                    if persisted_values.get(k) != Some(v) {
+                        return Err(format!(
+                            "created {key}.{k} mismatch: expected {v:?}, got {:?}",
+                            persisted_values.get(k)
+                        ));
+                    }
+                }
+                self.model.insert(
+                    id_pair,
+                    RefEntity {
+                        state: init_state.to_owned(),
+                        values: persisted_values,
+                        version: persisted.version,
+                        required_links,
+                    },
+                );
+                Ok(())
+            }
+            (true, Err(DecisionRefusal::ObjectExists { .. })) => {
                 ensure_unchanged(self.host, before, "duplicate create refusal")
             }
             (exists, other) => Err(format!(
@@ -392,7 +581,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
         let prop = target.lifecycle.property.as_str();
         let id = entity_id(type_idx, slot);
         let key = FactKey::new(ty_name, &id);
-        let slice = load_slice(self.host, [key]).map_err(|e| format!("load_slice: {e}"))?;
+        let slice = load_slice(self.host, [key.clone()]).map_err(|e| format!("load_slice: {e}"))?;
         let output = DecisionOutput {
             facts: vec![FactChange::Transition {
                 object_type: ObjectTypeName(ty_name.to_owned()),
@@ -411,175 +600,323 @@ impl<H: PackHost> DstCaseState<'_, H> {
         };
         let before = self.host.ledger_len();
         let res = commit_decision(self.host, self.catalog, &slice, &turn, &output);
-        let current = self.model.get(&(type_idx, slot)).map(|e| e.state.clone());
+        let current = self.model.get(&(type_idx, slot)).cloned();
 
-        match current {
-            None => match res {
-                Err(refusal) if refusal.code() == "decision.object_missing" => {
+        let Some(entry) = current else {
+            return match res {
+                Err(DecisionRefusal::ObjectMissing { .. }) => {
                     ensure_unchanged(self.host, before, "transition on missing entity")
                 }
                 other => Err(format!(
-                    "expected object_missing on absent {ty_name}: {other:?}"
+                    "expected ObjectMissing on absent {ty_name}: {other:?}"
                 )),
-            },
-            Some(from_state) => {
-                let allowed_from = transition.from.iter().any(|src| src == &from_state);
-                match (allowed_from, res) {
-                    (true, Ok(_)) => {
-                        if self.host.ledger_len() != before.saturating_add(1) {
-                            return Err("valid transition did not append 1 ledger entry".to_owned());
-                        }
-                        if let Some(entry) = self.model.get_mut(&(type_idx, slot)) {
-                            entry.state.clone_from(&transition.to);
-                            entry
-                                .values
-                                .insert(prop.to_owned(), JsonValue::String(transition.to.clone()));
-                        }
-                        self.coverage.hit_transition(DomainTransition {
-                            object_type: ty_name.to_owned(),
-                            lifecycle: prop.to_owned(),
-                            from: from_state,
-                            to: transition.to.clone(),
-                        });
-                        Ok(())
-                    }
-                    (false, Err(refusal))
-                        if refusal.code() == lifecycle_codes::UNDECLARED_WRITE =>
-                    {
-                        self.coverage.hit_disallowed_transition(DomainTransition {
-                            object_type: ty_name.to_owned(),
-                            lifecycle: prop.to_owned(),
-                            from: from_state,
-                            to: transition.to.clone(),
-                        });
-                        ensure_unchanged(self.host, before, "disallowed transition")
-                    }
-                    (true, Err(refusal)) if refusal.code().starts_with("decision.guard") => {
-                        ensure_unchanged(self.host, before, "guard refusal")
-                    }
-                    (allowed, other) => Err(format!(
-                        "transition mismatch for {ty_name}.{prop}.{} from '{from_state}' (allowed={allowed}): {other:?}",
-                        transition.id.as_str()
-                    )),
+            };
+        };
+
+        let allowed_from = transition.from.iter().any(|src| src == &entry.state);
+        if !allowed_from {
+            return match res {
+                Err(refusal @ DecisionRefusal::NotFromState { .. }) => {
+                    self.host.record_decision_refusal(&refusal);
+                    ensure_unchanged(self.host, before, "disallowed transition")?;
+                    self.coverage.hit_disallowed_transition(DomainTransition {
+                        object_type: ty_name.to_owned(),
+                        lifecycle: prop.to_owned(),
+                        transition: transition.id.as_str().to_owned(),
+                        from: entry.state,
+                        to: transition.to.clone(),
+                    });
+                    Ok(())
                 }
+                other => Err(format!(
+                    "expected NotFromState for {ty_name} '{}' from '{}': {other:?}",
+                    transition.id.as_str(),
+                    entry.state
+                )),
+            };
+        }
+
+        self.verify_transition_outcome(
+            TransitionCheck {
+                id_pair: (type_idx, slot),
+                ty_name,
+                prop,
+                key: &key,
+                transition,
+                entry,
+                before,
+            },
+            res.map(|_| ()),
+        )
+    }
+
+    fn verify_transition_outcome(
+        &mut self,
+        check: TransitionCheck<'_>,
+        res: Result<(), DecisionRefusal<H::Error>>,
+    ) -> Result<(), String> {
+        let TransitionCheck {
+            id_pair,
+            ty_name,
+            prop,
+            key,
+            transition,
+            entry,
+            before,
+        } = check;
+        let guard_eval = evaluate_guards(&transition.guards, &entry.values);
+        let mut proposed_values = entry.values.clone();
+        proposed_values.insert(prop.to_owned(), JsonValue::String(transition.to.clone()));
+        let expected_law_violation = self.predict_law_violation(ty_name, &proposed_values);
+
+        match (guard_eval, expected_law_violation, res) {
+            (GuardEval::False, _, Err(DecisionRefusal::GuardFalse { .. })) => {
+                ensure_unchanged(self.host, before, "guard false refusal")
             }
+            (GuardEval::Error(_), _, Err(DecisionRefusal::GuardError { .. })) => {
+                ensure_unchanged(self.host, before, "guard error refusal")
+            }
+            (
+                GuardEval::True,
+                true,
+                Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }),
+            ) => ensure_unchanged(self.host, before, "post-transition law refusal"),
+            (GuardEval::True, false, Ok(())) => {
+                if self.host.ledger_len() != before.saturating_add(1) {
+                    return Err("valid transition did not append 1 ledger entry".to_owned());
+                }
+                let persisted = self.host.load(key).map_err(|e| format!("load: {e}"))?;
+                if persisted.version.0 != entry.version.0.saturating_add(1) {
+                    return Err(format!(
+                        "transition did not bump version of {key}: before={:?}, after={:?}",
+                        entry.version, persisted.version
+                    ));
+                }
+                if let Some(slot_entry) = self.model.get_mut(&id_pair) {
+                    slot_entry.state.clone_from(&transition.to);
+                    slot_entry.values = proposed_values;
+                    slot_entry.version = persisted.version;
+                }
+                self.coverage.hit_transition(DomainTransition {
+                    object_type: ty_name.to_owned(),
+                    lifecycle: prop.to_owned(),
+                    transition: transition.id.as_str().to_owned(),
+                    from: entry.state,
+                    to: transition.to.clone(),
+                });
+                Ok(())
+            }
+            (guard, law_viol, other) => Err(format!(
+                "transition oracle mismatch for {ty_name} '{}' from '{}' (guard={guard:?}, law_violated={law_viol}): {other:?}",
+                transition.id.as_str(),
+                entry.state
+            )),
         }
     }
 
-    fn step_mutate(
-        &mut self,
-        type_idx: usize,
-        slot: u8,
-        val_nonce: u64,
-        nonce: u64,
-    ) -> Result<(), String> {
+    fn step_mutate(&mut self, type_idx: usize, slot: u8, nonce: u64) -> Result<(), String> {
         let Some(target) = self.targets.get(type_idx) else {
             return Ok(());
         };
         let Some(existing) = self.model.get(&(type_idx, slot)).cloned() else {
             return Ok(());
         };
-        let Some((prop_name, new_val)) =
-            pick_non_lifecycle_mutation(self.pack, target.object_type, &existing.values, val_nonce)
+        let Some((mut_prop, mut_val)) =
+            pick_non_lifecycle_mutation(self.pack, target.object_type, &existing.values, nonce)
         else {
             return Ok(());
         };
         let ty_name = target.object_type.name.as_str();
+        let lc_prop = target.lifecycle.property.as_str();
         let id = entity_id(type_idx, slot);
         let key = FactKey::new(ty_name, &id);
-        let slice = load_slice(self.host, [key]).map_err(|e| format!("load_slice: {e}"))?;
+        let slice = load_slice(self.host, [key.clone()]).map_err(|e| format!("load_slice: {e}"))?;
         let output = DecisionOutput {
             facts: vec![FactChange::Set {
                 object_type: ObjectTypeName(ty_name.to_owned()),
                 key: id,
-                property: PropertyId(prop_name.clone()),
-                value: new_val.clone(),
+                property: PropertyId(mut_prop.clone()),
+                value: mut_val.clone(),
             }],
             commands: Vec::new(),
             timers: Vec::new(),
         };
         let turn = DecisionTurn {
-            id: format!("dst-set-{nonce}"),
+            id: format!("dst-mut-{nonce}"),
             now: self.host.logical_now(),
             world: World::Main,
             consumes: None,
         };
         let before = self.host.ledger_len();
         let res = commit_decision(self.host, self.catalog, &slice, &turn, &output);
-        let immutable_states: BTreeSet<&str> = target
+        let is_immutable = target
             .lifecycle
             .immutable
             .iter()
-            .map(String::as_str)
-            .collect();
-        let is_immutable =
-            target.object_type.immutable || immutable_states.contains(existing.state.as_str());
+            .any(|state| state == &existing.state);
+        let mut proposed_values = existing.values.clone();
+        proposed_values.insert(mut_prop.clone(), mut_val.clone());
+        let expected_law_violation = self.predict_law_violation(ty_name, &proposed_values);
 
-        match (is_immutable, res) {
-            (true, Err(refusal))
-                if refusal.code() == lifecycle_codes::IMMUTABLE_STATE_WRITE
-                    || refusal.code() == "commit.immutable_object" =>
-            {
-                self.coverage.hit_immutable_refusal(ty_name, existing.state);
-                ensure_unchanged(self.host, before, "immutable state mutation")
+        match (is_immutable, expected_law_violation, res) {
+            (true, _, Err(refusal @ DecisionRefusal::ImmutableStateWrite { .. })) => {
+                self.host.record_decision_refusal(&refusal);
+                ensure_unchanged(self.host, before, "immutable state mutation refusal")?;
+                self.coverage
+                    .hit_immutable_refusal(ty_name, lc_prop, existing.state);
+                Ok(())
             }
-            (false, Ok(_)) => {
+            (
+                false,
+                true,
+                Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }),
+            ) => ensure_unchanged(self.host, before, "law/invariant violation on mutate"),
+            (false, false, Ok(_)) => {
                 if self.host.ledger_len() != before.saturating_add(1) {
                     return Err("valid mutation did not append 1 ledger entry".to_owned());
                 }
+                let persisted = self.host.load(&key).map_err(|e| format!("load: {e}"))?;
+                if persisted.version.0 != existing.version.0.saturating_add(1) {
+                    return Err(format!(
+                        "mutation did not bump version of {key}: before={:?}, after={:?}",
+                        existing.version, persisted.version
+                    ));
+                }
+                let actual_val = persisted
+                    .values
+                    .as_ref()
+                    .and_then(|vals| vals.get(&mut_prop));
+                if actual_val != Some(&mut_val) {
+                    return Err(format!(
+                        "mutation of {key}.{mut_prop} did not persist: expected {mut_val:?}, got {actual_val:?}"
+                    ));
+                }
                 if let Some(entry) = self.model.get_mut(&(type_idx, slot)) {
-                    entry.values.insert(prop_name, new_val);
+                    entry.values = proposed_values;
+                    entry.version = persisted.version;
                 }
                 Ok(())
             }
-            (false, Err(refusal)) if refusal.code() == "core.laws.violated" => {
-                ensure_unchanged(self.host, before, "law refusal on random mutation")
-            }
-            (imm, other) => Err(format!(
-                "mutation mismatch for {ty_name} in state '{}' (immutable={imm}): {other:?}",
-                existing.state
+            (imm, law_viol, other) => Err(format!(
+                "mutation oracle mismatch for {ty_name}.{mut_prop} (immutable={imm}, law_violated={law_viol}): {other:?}"
             )),
         }
     }
 
-    fn verify_model_matches_host(&self) -> Result<(), String> {
-        for (&(type_idx, slot), expected) in &self.model {
-            let Some(target) = self.targets.get(type_idx) else {
-                continue;
-            };
+    fn predict_law_violation(&self, ty_name: &str, proposed: &JsonObject) -> bool {
+        let obj_val = JsonValue::Object(proposed.clone());
+        let mut walk_ty = self
+            .pack
+            .object_types
+            .iter()
+            .find(|ty| ty.name.as_str() == ty_name);
+        while let Some(def) = walk_ty {
+            for invariant in &def.invariants {
+                if evaluate_guards(std::slice::from_ref(&invariant.expression), proposed)
+                    == GuardEval::False
+                {
+                    return true;
+                }
+            }
+            for iface_name in &def.implements {
+                if let Some(iface) = self
+                    .pack
+                    .interfaces
+                    .iter()
+                    .find(|i| i.name.as_str() == iface_name.as_str())
+                {
+                    for invariant in &iface.invariants {
+                        if evaluate_guards(std::slice::from_ref(&invariant.expression), proposed)
+                            == GuardEval::False
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            walk_ty = def.extends.as_ref().and_then(|parent| {
+                self.pack
+                    .object_types
+                    .iter()
+                    .find(|ty| ty.name.as_str() == parent.as_str())
+            });
+        }
+        for law in &self.pack.laws {
+            if law.subject == ty_name
+                && law.exceptions.is_empty()
+                && matches!(evaluate_law_example(law, &obj_val), Ok(Verdict::Violated))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn assert_complete_model_matches(&self) -> Result<(), String> {
+        let slots = self.entities_per_type.max(1);
+        for (type_idx, target) in self.targets.iter().enumerate() {
             let ty_name = target.object_type.name.as_str();
-            let prop = target.lifecycle.property.as_str();
-            let id = entity_id(type_idx, slot);
-            let loaded = self
-                .host
-                .load(&FactKey::new(ty_name, &id))
-                .map_err(|e| format!("load {ty_name}/{id}: {e}"))?;
-            let actual_state = loaded
-                .values
-                .as_ref()
-                .and_then(|vals| vals.get(prop))
-                .and_then(JsonValue::as_str);
-            if actual_state != Some(expected.state.as_str()) {
-                return Err(format!(
-                    "refinement divergence on {ty_name}/{id}: model='{}', host={actual_state:?}",
-                    expected.state
-                ));
+            for slot in 0..slots {
+                let id = entity_id(type_idx, slot);
+                let key = FactKey::new(ty_name, &id);
+                let loaded = self
+                    .host
+                    .load(&key)
+                    .map_err(|err| format!("load {key}: {err}"))?;
+                match self.model.get(&(type_idx, slot)) {
+                    None => {
+                        if loaded.exists() {
+                            return Err(format!(
+                                "oracle divergence: {key} unexpectedly exists in host (version={:?})",
+                                loaded.version
+                            ));
+                        }
+                    }
+                    Some(expected) => {
+                        if !loaded.exists() {
+                            return Err(format!("oracle divergence: {key} disappeared from host"));
+                        }
+                        if loaded.version != expected.version {
+                            return Err(format!(
+                                "oracle divergence on {key} version: expected {:?}, got {:?}",
+                                expected.version, loaded.version
+                            ));
+                        }
+                        if loaded.values.as_ref() != Some(&expected.values) {
+                            return Err(format!(
+                                "oracle divergence on {key} values: expected {:?}, got {:?}",
+                                expected.values, loaded.values
+                            ));
+                        }
+                        for link_key in &expected.required_links {
+                            let link_state = self
+                                .host
+                                .load_link(link_key)
+                                .map_err(|err| format!("load_link {link_key}: {err}"))?;
+                            if !link_state.exists() {
+                                return Err(format!(
+                                    "oracle divergence: required link {link_key} missing from host"
+                                ));
+                            }
+                        }
+                    }
+                }
             }
         }
         Ok(())
     }
 }
 
-fn ensure_unchanged<H: PackHost>(host: &H, before: usize, what: &str) -> Result<(), String> {
-    if host.ledger_len() != before {
+fn entity_id(type_idx: usize, slot: u8) -> String {
+    format!("dst-t{type_idx}-s{slot}")
+}
+
+fn ensure_unchanged<H: PackHost>(host: &H, before: usize, context: &str) -> Result<(), String> {
+    let after = host.ledger_len();
+    if after != before {
         return Err(format!(
-            "{what}: expected zero ledger writes, grew from {before} to {}",
-            host.ledger_len()
+            "{context}: expected zero ledger writes, ledger grew from {before} to {after}"
         ));
     }
     Ok(())
-}
-
-fn entity_id(type_idx: usize, slot: u8) -> String {
-    format!("dst-t{type_idx}-e{slot}")
 }

@@ -9,14 +9,14 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
-use norn_kernel::norn_expr::expression_read_paths;
-use norn_kernel::norn_ir::access::{AccessCondition, AccessIr, ResourceCompareOp, ResourceOperand};
-use norn_kernel::norn_ir::{
-    ActionEffectProgram, ActionUiEffect, LawResponse, Lifecycle, ObjectTypeDef, PropertyType,
-    WriteChange,
+use norn_kernel::TypeCatalog;
+use norn_kernel::pack_mbt_support::{
+    AccessCondition, AccessIr, ActionEffectProgram, ActionRoot, ActionUiEffect, IrJsonValue,
+    LawResponse, Lifecycle, ObjectTypeDef, PropertyType, ResourceCompareOp, ResourceOperand,
+    WriteChange, expression_read_paths,
 };
 
-use super::{AdmittedPack, EvidenceLevel};
+use super::{AdmittedPack, EvidenceLevel, action_call_object_type};
 
 /// Severity of a detected structural gap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -58,16 +58,27 @@ pub enum StructuralGap {
         /// Declarations that reference this field.
         referenced_in: Vec<String>,
     },
-    /// An immutable financial/ledger object type with no compensating or
-    /// reversal action declared in the pack.
+    /// An immutable financial/ledger object type with no resolved compensating
+    /// action declared in the pack.
     ImmutableFinancialMissingReversal {
         /// Owning object type.
         object_type: String,
         /// Why the detector classified this type as immutable financial/ledger.
         reason: String,
     },
+    /// An immutable financial/ledger object type with a reversal-like action
+    /// name but no explicit `compensation` declaration resolving to it.
+    ImmutableFinancialUnverifiedReversal {
+        /// Owning object type.
+        object_type: String,
+        /// Candidate action id matched only by name heuristic.
+        candidate_action_id: String,
+        /// Why manual confirmation or explicit `compensation` metadata is needed.
+        reason: String,
+    },
     /// A high-impact action whose `AccessIR` policy lacks an explicit
-    /// separation-of-duties (`requester != caller`) resource predicate.
+    /// separation-of-duties (`requester != caller`) resource predicate across
+    /// all permit paths.
     HighImpactActionMissingSod {
         /// Action id.
         action_id: String,
@@ -97,7 +108,8 @@ impl StructuralGap {
             | Self::OrphanField { .. }
             | Self::ImmutableFinancialMissingReversal { .. }
             | Self::TransitionWithoutAction { .. } => GapSeverity::Defect,
-            Self::HighImpactActionMissingSod { .. } => GapSeverity::Question,
+            Self::HighImpactActionMissingSod { .. }
+            | Self::ImmutableFinancialUnverifiedReversal { .. } => GapSeverity::Question,
         }
     }
 
@@ -110,6 +122,7 @@ impl StructuralGap {
             }
             Self::OrphanField { .. }
             | Self::ImmutableFinancialMissingReversal { .. }
+            | Self::ImmutableFinancialUnverifiedReversal { .. }
             | Self::HighImpactActionMissingSod { .. }
             | Self::TransitionWithoutAction { .. } => EvidenceLevel::Structural,
         }
@@ -168,20 +181,19 @@ impl fmt::Display for StaticGapReport {
     }
 }
 
-/// Runs all static structural gap detectors on `pack`.
+/// Runs all static structural gap detectors on `pack`'s resolved effective catalog.
 #[must_use]
 pub fn analyze_static_gaps(pack: &AdmittedPack) -> StaticGapReport {
     let mut gaps = Vec::new();
+    let extra = [action_call_object_type()];
+    let catalog = pack.type_catalog(&extra);
     let written_fields = collect_action_written_fields(pack);
     let transition_actions = collect_transition_actions(pack);
-    let has_any_actions = !pack.actions.is_empty();
 
     for object_type in &pack.object_types {
-        detect_lifecycle_gaps(object_type, &transition_actions, has_any_actions, &mut gaps);
-        if has_any_actions {
-            detect_orphan_fields(pack, object_type, &written_fields, &mut gaps);
-        }
-        detect_immutable_financial_reversal_gap(pack, object_type, &mut gaps);
+        detect_lifecycle_gaps(&catalog, object_type, &transition_actions, &mut gaps);
+        detect_orphan_fields(pack, &catalog, object_type, &written_fields, &mut gaps);
+        detect_immutable_financial_reversal_gap(pack, &catalog, object_type, &mut gaps);
     }
     detect_high_impact_sod_questions(pack, &mut gaps);
 
@@ -236,16 +248,16 @@ fn reachable_states(lifecycle: &Lifecycle) -> BTreeSet<String> {
 }
 
 fn detect_lifecycle_gaps(
+    catalog: &TypeCatalog<'_>,
     object_type: &ObjectTypeDef,
     transition_actions: &BTreeSet<(String, String, String)>,
-    has_any_actions: bool,
     out: &mut Vec<StructuralGap>,
 ) {
     let type_name = object_type.name.as_str();
-    for lifecycle in &object_type.lifecycles {
+    for lifecycle in catalog.lifecycles(&object_type.name).into_values() {
         let prop = lifecycle.property.as_str();
         let all_states = enum_states_for(object_type, prop);
-        let reachable = reachable_states(lifecycle);
+        let reachable = reachable_states(&lifecycle);
         let terminal: BTreeSet<&str> = lifecycle.terminal.iter().map(String::as_str).collect();
 
         for state in &all_states {
@@ -269,20 +281,18 @@ fn detect_lifecycle_gaps(
             }
         }
 
-        if has_any_actions {
-            for transition in &lifecycle.transitions {
-                let key = (
-                    type_name.to_owned(),
-                    prop.to_owned(),
-                    transition.id.as_str().to_owned(),
-                );
-                if transition.trigger.is_none() && !transition_actions.contains(&key) {
-                    out.push(StructuralGap::TransitionWithoutAction {
-                        object_type: type_name.to_owned(),
-                        lifecycle: prop.to_owned(),
-                        transition_id: transition.id.as_str().to_owned(),
-                    });
-                }
+        for transition in &lifecycle.transitions {
+            let key = (
+                type_name.to_owned(),
+                prop.to_owned(),
+                transition.id.as_str().to_owned(),
+            );
+            if transition.trigger.is_none() && !transition_actions.contains(&key) {
+                out.push(StructuralGap::TransitionWithoutAction {
+                    object_type: type_name.to_owned(),
+                    lifecycle: prop.to_owned(),
+                    transition_id: transition.id.as_str().to_owned(),
+                });
             }
         }
     }
@@ -322,7 +332,7 @@ fn collect_action_written_fields(pack: &AdmittedPack) -> BTreeMap<String, BTreeS
                     .root
                     .input_schema
                     .get("properties")
-                    .and_then(norn_kernel::norn_ir::JsonValue::as_object)
+                    .and_then(IrJsonValue::as_object)
                 {
                     for field in props.keys() {
                         entry.insert(field.clone());
@@ -350,11 +360,11 @@ fn collect_action_written_fields(pack: &AdmittedPack) -> BTreeMap<String, BTreeS
                     .root
                     .input_schema
                     .get("properties")
-                    .and_then(norn_kernel::norn_ir::JsonValue::as_object)
+                    .and_then(IrJsonValue::as_object)
                     .and_then(|props| props.get(parent_values_field))
-                    .and_then(norn_kernel::norn_ir::JsonValue::as_object)
+                    .and_then(IrJsonValue::as_object)
                     .and_then(|schema| schema.get("properties"))
-                    .and_then(norn_kernel::norn_ir::JsonValue::as_object)
+                    .and_then(IrJsonValue::as_object)
                 {
                     for field in parent_props.keys() {
                         entry.insert(field.clone());
@@ -368,6 +378,7 @@ fn collect_action_written_fields(pack: &AdmittedPack) -> BTreeMap<String, BTreeS
 
 fn collect_referenced_fields(
     pack: &AdmittedPack,
+    catalog: &TypeCatalog<'_>,
     object_type: &ObjectTypeDef,
 ) -> BTreeMap<String, Vec<String>> {
     let mut refs: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -381,7 +392,7 @@ fn collect_referenced_fields(
         }
     };
 
-    for lifecycle in &object_type.lifecycles {
+    for lifecycle in catalog.lifecycles(&object_type.name).into_values() {
         for transition in &lifecycle.transitions {
             for guard in &transition.guards {
                 record(
@@ -395,11 +406,38 @@ fn collect_referenced_fields(
             }
         }
     }
-    for invariant in &object_type.invariants {
-        record(
-            invariant.expression.as_str(),
-            format!("invariant:{}", invariant.id.as_str()),
-        );
+    let mut seen_invariants = BTreeSet::new();
+    let mut walk_ty = Some(object_type);
+    while let Some(def) = walk_ty {
+        for invariant in &def.invariants {
+            if seen_invariants.insert(invariant.id.as_str().to_owned()) {
+                record(
+                    invariant.expression.as_str(),
+                    format!("invariant:{}", invariant.id.as_str()),
+                );
+            }
+        }
+        for iface_name in &def.implements {
+            if let Some(iface) = pack
+                .interfaces
+                .iter()
+                .find(|i| i.name.as_str() == iface_name.as_str())
+            {
+                for invariant in &iface.invariants {
+                    if seen_invariants.insert(invariant.id.as_str().to_owned()) {
+                        record(
+                            invariant.expression.as_str(),
+                            format!("invariant:{}", invariant.id.as_str()),
+                        );
+                    }
+                }
+            }
+        }
+        walk_ty = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
     }
     for law in &pack.laws {
         if law.subject != object_type.name.as_str() {
@@ -417,19 +455,19 @@ fn collect_referenced_fields(
 
 fn detect_orphan_fields(
     pack: &AdmittedPack,
+    catalog: &TypeCatalog<'_>,
     object_type: &ObjectTypeDef,
     written_fields: &BTreeMap<String, BTreeSet<String>>,
     out: &mut Vec<StructuralGap>,
 ) {
     let type_name = object_type.name.as_str();
-    let Some(written) = written_fields.get(type_name) else {
-        return;
-    };
-    let refs = collect_referenced_fields(pack, object_type);
-    let lifecycle_props: BTreeSet<&str> = object_type
-        .lifecycles
-        .iter()
-        .map(|lc| lc.property.as_str())
+    let empty = BTreeSet::new();
+    let written = written_fields.get(type_name).unwrap_or(&empty);
+    let refs = collect_referenced_fields(pack, catalog, object_type);
+    let lifecycle_props: BTreeSet<String> = catalog
+        .lifecycles(&object_type.name)
+        .into_keys()
+        .map(|prop| prop.as_str().to_owned())
         .collect();
 
     for prop in &object_type.properties {
@@ -483,51 +521,72 @@ fn is_financial_or_ledger_type(object_type: &ObjectTypeDef) -> Option<String> {
     None
 }
 
-fn has_reversal_or_compensation(pack: &AdmittedPack, object_type: &str) -> bool {
+enum ReversalCoverage {
+    VerifiedCompensation,
+    NameHeuristicOnly(String),
+    Missing,
+}
+
+fn action_touches_type(action: &ActionRoot, object_type: &str) -> bool {
+    action
+        .writes
+        .iter()
+        .any(|write| write.entity_kind == object_type)
+        || action
+            .effect_program
+            .as_ref()
+            .is_some_and(|eff| eff.target().object_kind == object_type)
+}
+
+fn classify_reversal_coverage(pack: &AdmittedPack, object_type: &str) -> ReversalCoverage {
+    let mut heuristic_candidate = None;
     for action in &pack.actions {
-        let touches_type = action
-            .root
-            .writes
-            .iter()
-            .any(|write| write.entity_kind == object_type)
-            || action
-                .root
-                .effect_program
-                .as_ref()
-                .is_some_and(|eff| eff.target().object_kind == object_type);
-        if !touches_type {
+        if !action_touches_type(&action.root, object_type) {
             continue;
         }
-        if action.root.compensation.is_some() {
-            return true;
+        if let Some(comp) = &action.root.compensation
+            && let Some(target_action) = pack
+                .actions
+                .iter()
+                .find(|candidate| candidate.root.action_id == comp.action_id)
+            && (action_touches_type(&target_action.root, object_type)
+                || !target_action.root.writes.is_empty()
+                || target_action.root.effect_program.is_some())
+        {
+            return ReversalCoverage::VerifiedCompensation;
         }
         let lower_id = action.root.action_id.to_ascii_lowercase();
-        if [
-            "reverse",
-            "reversal",
-            "void",
-            "compensat",
-            "refund",
-            "credit_note",
-            "storno",
-        ]
-        .iter()
-        .any(|kw| lower_id.contains(kw))
+        if heuristic_candidate.is_none()
+            && [
+                "reverse",
+                "reversal",
+                "void",
+                "compensat",
+                "refund",
+                "credit_note",
+                "storno",
+            ]
+            .iter()
+            .any(|kw| lower_id.contains(kw))
         {
-            return true;
+            heuristic_candidate = Some(action.root.action_id.clone());
         }
     }
-    false
+    match heuristic_candidate {
+        Some(action_id) => ReversalCoverage::NameHeuristicOnly(action_id),
+        None => ReversalCoverage::Missing,
+    }
 }
 
 fn detect_immutable_financial_reversal_gap(
     pack: &AdmittedPack,
+    catalog: &TypeCatalog<'_>,
     object_type: &ObjectTypeDef,
     out: &mut Vec<StructuralGap>,
 ) {
-    let has_immutable_lifecycle_state = object_type
-        .lifecycles
-        .iter()
+    let has_immutable_lifecycle_state = catalog
+        .lifecycles(&object_type.name)
+        .values()
         .any(|lc| !lc.immutable.is_empty());
     if !object_type.immutable && !has_immutable_lifecycle_state {
         return;
@@ -535,17 +594,29 @@ fn detect_immutable_financial_reversal_gap(
     let Some(financial_reason) = is_financial_or_ledger_type(object_type) else {
         return;
     };
-    if !has_reversal_or_compensation(pack, object_type.name.as_str()) {
-        out.push(StructuralGap::ImmutableFinancialMissingReversal {
-            object_type: object_type.name.as_str().to_owned(),
-            reason: format!(
-                "immutable financial/ledger type ({financial_reason}) has no declared compensating or reversal action"
-            ),
-        });
+    match classify_reversal_coverage(pack, object_type.name.as_str()) {
+        ReversalCoverage::VerifiedCompensation => {}
+        ReversalCoverage::NameHeuristicOnly(candidate_action_id) => {
+            out.push(StructuralGap::ImmutableFinancialUnverifiedReversal {
+                object_type: object_type.name.as_str().to_owned(),
+                candidate_action_id,
+                reason: format!(
+                    "immutable financial/ledger type ({financial_reason}) has a reversal-named action but no explicit resolved `compensation` declaration; confirm reversal semantics"
+                ),
+            });
+        }
+        ReversalCoverage::Missing => {
+            out.push(StructuralGap::ImmutableFinancialMissingReversal {
+                object_type: object_type.name.as_str().to_owned(),
+                reason: format!(
+                    "immutable financial/ledger type ({financial_reason}) has no declared compensating action resolving in the pack"
+                ),
+            });
+        }
     }
 }
 
-fn high_impact_reason(action: &norn_kernel::norn_ir::ActionRoot) -> Option<String> {
+fn high_impact_reason(action: &ActionRoot) -> Option<String> {
     let ui_effects = action.effective_ui_effects();
     if ui_effects.contains(&ActionUiEffect::Irreversible) {
         return Some("declared irreversible uiEffect".to_owned());
@@ -576,20 +647,65 @@ fn high_impact_reason(action: &norn_kernel::norn_ir::ActionRoot) -> Option<Strin
     None
 }
 
-fn action_has_sod_policy(policies: &[AccessIr], action_id: &str) -> bool {
-    policies.iter().any(|policy| {
-        policy.rules.iter().any(|rule| {
-            rule.actions.iter().any(|act| act == action_id)
-                && rule.all_of.iter().any(|cond| {
-                    matches!(
-                        cond,
-                        AccessCondition::Resource(res)
-                            if res.op == ResourceCompareOp::Ne
-                                && matches!(res.value, ResourceOperand::PrincipalAttribute(_))
+fn is_actor_resource_field(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [
+        "requester",
+        "requestor",
+        "creator",
+        "created_by",
+        "author",
+        "authored_by",
+        "submitter",
+        "submitted_by",
+        "initiator",
+        "initiated_by",
+        "owner",
+        "actor",
+        "preparer",
+        "prepared_by",
+    ]
+    .iter()
+    .any(|kw| lower.contains(kw))
+}
+
+fn is_principal_identity_attr(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "id" | "subject_id"
+            | "subjectid"
+            | "actor_id"
+            | "actorid"
+            | "user_id"
+            | "userid"
+            | "principal_id"
+    )
+}
+
+fn rule_enforces_sod(rule: &norn_kernel::pack_mbt_support::AccessRule) -> bool {
+    rule.all_of.iter().any(|cond| {
+        matches!(
+            cond,
+            AccessCondition::Resource(res)
+                if res.op == ResourceCompareOp::Ne
+                    && is_actor_resource_field(&res.name)
+                    && matches!(
+                        &res.value,
+                        ResourceOperand::PrincipalAttribute(pa)
+                            if is_principal_identity_attr(&pa.principal_attribute)
                     )
-                })
-        })
+        )
     })
+}
+
+fn action_has_sod_policy(policies: &[AccessIr], action_id: &str) -> bool {
+    let matching_rules: Vec<_> = policies
+        .iter()
+        .flat_map(|policy| policy.rules.iter())
+        .filter(|rule| rule.actions.iter().any(|act| act == action_id))
+        .collect();
+    !matching_rules.is_empty() && matching_rules.iter().all(|rule| rule_enforces_sod(rule))
 }
 
 fn detect_high_impact_sod_questions(pack: &AdmittedPack, out: &mut Vec<StructuralGap>) {

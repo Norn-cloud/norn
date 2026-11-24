@@ -1,9 +1,10 @@
-//! Deterministic IR-driven value and object synthesizer (#1656).
+//! Deterministic IR-driven value, object, and required-link graph synthesizer (#1656).
 //!
-//! Synthesizes well-typed [`JsonObject`] values directly from an
-//! [`ObjectTypeDef`] and its shared [`PropertyTypeDef`] catalog, respecting
-//! property types, defaults, enum sets, exact decimal scales, dates, and simple
-//! lifecycle guard predicates.
+//! Synthesizes well-typed [`JsonObject`] values directly from effective
+//! [`ObjectTypeDef`], [`InterfaceDef`], and shared [`PropertyTypeDef`]
+//! contracts, respecting property types, defaults, enum sets, exact decimal
+//! scales (including scale 0), recursive record members, cycle-safe required
+//! link graphs, and transition guard predicates.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,12 +12,24 @@ use norn_kernel::cell_host::{
     FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey, LinkMutation,
     LinkWrite,
 };
-use norn_kernel::norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
-use norn_kernel::norn_ir::{
-    Decimal, Lifecycle, ObjectTypeDef, Property, PropertyType, PropertyTypeDef,
+use norn_kernel::pack_mbt_support::{
+    Decimal, EvaluationBudget, ExprValue, Expression, IrJsonValue, Lifecycle, ObjectTypeDef,
+    Property, PropertyId, PropertyType, PropertyTypeDef, ZenExpression,
 };
 
 use super::AdmittedPack;
+
+/// Three-valued guard evaluation outcome — never conflates evaluation errors
+/// with a genuine boolean `false`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuardEval {
+    /// Every guard evaluated cleanly to `true`.
+    True,
+    /// At least one guard evaluated cleanly to `false` (and none errored before it).
+    False,
+    /// A guard failed to compile, errored during evaluation, or returned a non-boolean.
+    Error(String),
+}
 
 /// Synthesized target objects and links required to satisfy all
 /// `cardinality.required` links of a root object before/during its creation.
@@ -30,8 +43,12 @@ pub struct RequiredLinkGraph {
     pub direct_links: Vec<LinkWrite>,
 }
 
-/// Collects synthesized target objects and link writes for every
-/// `cardinality.required` link declared on `object_type` (recursively).
+/// Collects synthesized target objects and link writes for every effective
+/// `cardinality.required` link on `object_type` (recursively and cycle-safely).
+///
+/// When a required-link cycle returns to a type already created in the same
+/// atomic fixture, the edge reuses that compatible fixture node instead of
+/// allocating an orphaned object with unsatisfied required links.
 ///
 /// # Errors
 ///
@@ -43,11 +60,13 @@ pub fn collect_required_link_graph(
     source_key: &FactKey,
     seed: u64,
 ) -> Result<RequiredLinkGraph, String> {
+    let mut nodes_by_type = BTreeMap::new();
+    nodes_by_type.insert(object_type.name.as_str().to_owned(), source_key.clone());
     let mut state = LinkWalkState {
         pack,
         seed,
         counter: 0,
-        visiting: BTreeSet::from([object_type.name.as_str().to_owned()]),
+        nodes_by_type,
         graph: RequiredLinkGraph::default(),
     };
     collect_required_links_recursive(&mut state, object_type, source_key, true)?;
@@ -58,7 +77,7 @@ struct LinkWalkState<'a> {
     pack: &'a AdmittedPack,
     seed: u64,
     counter: u64,
-    visiting: BTreeSet<String>,
+    nodes_by_type: BTreeMap<String, FactKey>,
     graph: RequiredLinkGraph,
 }
 
@@ -68,52 +87,64 @@ fn collect_required_links_recursive(
     source_key: &FactKey,
     is_root: bool,
 ) -> Result<(), String> {
-    let shared: BTreeMap<&str, &PropertyTypeDef> = state
-        .pack
-        .property_types
-        .iter()
-        .map(|def| (def.name.as_str(), def))
-        .collect();
-    for link in &object_type.links {
-        if !link.cardinality.required {
-            continue;
-        }
-        let target_ty = resolve_concrete_link_target(state.pack, link.target.as_str()).ok_or_else(
+    let shared = shared_property_map(state.pack);
+    let required_links = effective_required_links(state.pack, object_type);
+
+    for (link_id, target_name, link_props) in required_links {
+        let target_ty = resolve_concrete_link_target(state.pack, &target_name).ok_or_else(
             || {
                 format!(
-                    "required link '{}.{}' targets '{}', which has no concrete ObjectTypeDef in pack '{}'",
+                    "required link '{}.{link_id}' targets '{target_name}', which has no concrete ObjectTypeDef in pack '{}'",
                     object_type.name.as_str(),
-                    link.id.as_str(),
-                    link.target.as_str(),
                     state.pack.name
                 )
             },
         )?;
-        state.counter = state.counter.saturating_add(1);
-        let target_id = format!("req-{}-{}-{}", link.id.as_str(), state.seed, state.counter);
-        let target_key = FactKey::new(target_ty.name.as_str(), &target_id);
-        let target_values = synthesize_object(
-            state.pack,
-            target_ty,
-            &target_id,
-            state.seed.wrapping_add(state.counter),
-        );
-        state.graph.setup_writes.push(FactWrite {
-            key: target_key.clone(),
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: target_values,
-            },
-        });
+        let ty_key = target_ty.name.as_str().to_owned();
+        let (target_key, needs_recurse) = if let Some(existing) =
+            state.nodes_by_type.get(&ty_key).cloned()
+            && existing != *source_key
+        {
+            (existing, false)
+        } else {
+            state.counter = state.counter.saturating_add(1);
+            let target_id = format!("req-{link_id}-{}-{}", state.seed, state.counter);
+            let key = FactKey::new(target_ty.name.as_str(), &target_id);
+            let target_values = synthesize_object(
+                state.pack,
+                target_ty,
+                &target_id,
+                state.seed.wrapping_add(state.counter),
+            );
+            state.graph.setup_writes.push(FactWrite {
+                key: key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: target_values,
+                },
+            });
+            state
+                .nodes_by_type
+                .entry(ty_key)
+                .or_insert_with(|| key.clone());
+            (key, true)
+        };
+
         let mut link_values = JsonObject::new();
-        for prop in &link.properties {
+        for prop in &link_props {
             if !prop.is_read_only() {
-                let val = synthesize_property_value(prop, &shared, &target_id, state.seed);
+                let val = synthesize_type_value(
+                    &prop.property_type,
+                    prop.id.as_str(),
+                    &shared,
+                    &target_key.key,
+                    state.seed,
+                );
                 link_values.insert(prop.id.as_str().to_owned(), val);
             }
         }
         let link_write = LinkWrite {
-            key: LinkKey::new(source_key.clone(), link.id.as_str(), target_key.clone()),
+            key: LinkKey::new(source_key.clone(), link_id, target_key.clone()),
             expected: FactVersion::ABSENT,
             mutation: LinkMutation::Add {
                 values: link_values,
@@ -124,12 +155,46 @@ fn collect_required_links_recursive(
         } else {
             state.graph.setup_links.push(link_write);
         }
-        if state.visiting.insert(target_ty.name.as_str().to_owned()) {
+        if needs_recurse {
             collect_required_links_recursive(state, target_ty, &target_key, false)?;
-            state.visiting.remove(target_ty.name.as_str());
         }
     }
     Ok(())
+}
+
+fn effective_required_links(
+    pack: &AdmittedPack,
+    object_type: &ObjectTypeDef,
+) -> Vec<(String, String, Vec<Property>)> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for link in &object_type.links {
+        if link.cardinality.required && seen.insert(link.id.as_str().to_owned()) {
+            out.push((
+                link.id.as_str().to_owned(),
+                link.target.as_str().to_owned(),
+                link.properties.clone(),
+            ));
+        }
+    }
+    for iface_name in &object_type.implements {
+        if let Some(iface) = pack
+            .interfaces
+            .iter()
+            .find(|i| i.name.as_str() == iface_name.as_str())
+        {
+            for link in &iface.links {
+                if link.cardinality.required && seen.insert(link.id.as_str().to_owned()) {
+                    out.push((
+                        link.id.as_str().to_owned(),
+                        link.target.as_str().to_owned(),
+                        Vec::new(),
+                    ));
+                }
+            }
+        }
+    }
+    out
 }
 
 fn resolve_concrete_link_target<'a>(
@@ -150,7 +215,7 @@ fn resolve_concrete_link_target<'a>(
 
 /// Synthesizes a valid object instance for `object_type` with identity `key`
 /// and optional `seed` variation, choosing the first declared initial state for
-/// every lifecycle property.
+/// every lifecycle property and including inherited interface properties.
 #[must_use]
 pub fn synthesize_object(
     pack: &AdmittedPack,
@@ -158,11 +223,7 @@ pub fn synthesize_object(
     key: &str,
     seed: u64,
 ) -> JsonObject {
-    let shared: BTreeMap<&str, &PropertyTypeDef> = pack
-        .property_types
-        .iter()
-        .map(|def| (def.name.as_str(), def))
-        .collect();
+    let shared = shared_property_map(pack);
     let initial_by_prop: BTreeMap<&str, &str> = object_type
         .lifecycles
         .iter()
@@ -172,15 +233,13 @@ pub fn synthesize_object(
                 .map(|state| (lc.property.as_str(), state.as_str()))
         })
         .collect();
-    let key_props: BTreeSet<&str> = object_type.identity.first().map_or_default(|spec| {
-        spec.properties
-            .iter()
-            .map(norn_kernel::norn_ir::PropertyId::as_str)
-            .collect()
-    });
+    let key_props: BTreeSet<&str> = object_type
+        .identity
+        .first()
+        .map_or_default(|spec| spec.properties.iter().map(PropertyId::as_str).collect());
 
     let mut values = JsonObject::new();
-    for prop in &object_type.properties {
+    for prop in effective_properties(pack, object_type) {
         if prop.is_read_only() {
             continue;
         }
@@ -193,13 +252,13 @@ pub fn synthesize_object(
             values.insert(id.to_owned(), JsonValue::String(key.to_owned()));
             continue;
         }
-        if let Some(default) = &prop.default
-            && let Some(converted) = json_default_to_runtime(&default.0, prop, &shared)
+        if let Some(default) = prop.default
+            && let Some(converted) = json_default_to_runtime(default, &prop, &shared)
         {
             values.insert(id.to_owned(), converted);
             continue;
         }
-        let synthesized = synthesize_property_value(prop, &shared, key, seed);
+        let synthesized = synthesize_property_value(&prop, &shared, key, seed);
         values.insert(id.to_owned(), synthesized);
     }
     values
@@ -207,13 +266,13 @@ pub fn synthesize_object(
 
 /// Synthesizes an object that satisfies all declared `guards` for `lifecycle`
 /// when possible using deterministic candidate perturbations (booleans, equal
-/// string pairs, positive integers/decimals).
+/// string pairs, non-empty strings, positive integers/decimals).
 #[must_use]
 pub fn synthesize_guard_satisfying(
     pack: &AdmittedPack,
     object_type: &ObjectTypeDef,
     lifecycle: &Lifecycle,
-    guards: &[norn_kernel::norn_ir::ZenExpression],
+    guards: &[ZenExpression],
     key: &str,
     seed: u64,
 ) -> JsonObject {
@@ -221,12 +280,11 @@ pub fn synthesize_guard_satisfying(
     if guards.is_empty() || guards_hold(guards, &base) {
         return base;
     }
-    apply_guard_positive_heuristics(&mut base, object_type, lifecycle, guards);
+    apply_guard_positive_heuristics(pack, &mut base, object_type, lifecycle, guards);
     if guards_hold(guards, &base) {
         return base;
     }
-    // Try flipping every non-lifecycle boolean property on/off as a small finite search.
-    let bool_props = non_lifecycle_bool_properties(object_type, lifecycle);
+    let bool_props = non_lifecycle_bool_properties(pack, object_type, lifecycle);
     let combos = 1usize
         .checked_shl(u32::try_from(bool_props.len().min(6)).unwrap_or(0))
         .unwrap_or(1);
@@ -243,74 +301,93 @@ pub fn synthesize_guard_satisfying(
     base
 }
 
-/// Attempts to produce a valuation of `object_type` where at least one guard in
-/// `guards` evaluates to `false` (for negative guard-refusal verification).
+/// Attempts to produce a valuation of `object_type` at `source_state` where at
+/// least one guard in `guards` cleanly evaluates to [`GuardEval::False`] (never
+/// [`GuardEval::Error`]). Returns the full violating object plus the single
+/// non-lifecycle property mutation that caused the guard to become false when
+/// starting from a valid base.
 #[must_use]
-pub fn synthesize_guard_violating(
+pub fn synthesize_guard_violating_at_state(
     pack: &AdmittedPack,
     object_type: &ObjectTypeDef,
     lifecycle: &Lifecycle,
-    guards: &[norn_kernel::norn_ir::ZenExpression],
+    source_state: &str,
+    guards: &[ZenExpression],
     key: &str,
     seed: u64,
-) -> Option<JsonObject> {
+) -> Option<(JsonObject, Option<(String, JsonValue)>)> {
     if guards.is_empty() {
         return None;
     }
-    let mut base = synthesize_object(pack, object_type, key, seed);
-    if !guards_hold(guards, &base) {
-        return Some(base);
+    let shared = shared_property_map(pack);
+    let mut base = synthesize_guard_satisfying(pack, object_type, lifecycle, guards, key, seed);
+    base.insert(
+        lifecycle.property.as_str().to_owned(),
+        JsonValue::String(source_state.to_owned()),
+    );
+    if evaluate_guards(guards, &base) == GuardEval::False {
+        return Some((base, None));
     }
-    let lifecycle_props: BTreeSet<&str> = object_type
-        .lifecycles
-        .iter()
-        .map(|lc| lc.property.as_str())
-        .collect();
-    for prop in &object_type.properties {
+    let lifecycle_props = lifecycle_property_names(object_type, lifecycle);
+    for prop in effective_properties(pack, object_type) {
         let id = prop.id.as_str();
         if prop.is_read_only() || lifecycle_props.contains(id) {
             continue;
         }
-        let mut candidate = base.clone();
-        match &prop.property_type {
-            PropertyType::Boolean {} => {
-                let flipped = !matches!(base.get(id), Some(JsonValue::Bool(true)));
-                candidate.insert(id.to_owned(), JsonValue::Bool(flipped));
+        let resolved = resolve_property_type(prop.property_type, &shared);
+        for candidate_val in guard_violating_candidates(resolved, base.get(id), id) {
+            let mut candidate = base.clone();
+            candidate.insert(id.to_owned(), candidate_val.clone());
+            if evaluate_guards(guards, &candidate) == GuardEval::False {
+                return Some((candidate, Some((id.to_owned(), candidate_val))));
             }
-            PropertyType::Integer { .. } => {
-                candidate.insert(id.to_owned(), JsonValue::from(0_i64));
-            }
-            PropertyType::Decimal { .. } => {
-                if let Ok(zero) = Decimal::parse_wire("0") {
-                    candidate.insert(id.to_owned(), JsonValue::Number(zero));
-                }
-            }
-            PropertyType::Text { .. } => {
-                let mut empty_candidate = base.clone();
-                empty_candidate.insert(id.to_owned(), JsonValue::String(String::new()));
-                if !guards_hold(guards, &empty_candidate) {
-                    return Some(empty_candidate);
-                }
-                candidate.insert(id.to_owned(), JsonValue::String(format!("mismatch-{id}")));
-            }
-            PropertyType::Enum { .. }
-            | PropertyType::Date {}
-            | PropertyType::Duration {}
-            | PropertyType::Timestamp { .. }
-            | PropertyType::DecimalBinding { .. }
-            | PropertyType::Record { .. }
-            | PropertyType::JsonExt { .. }
-            | PropertyType::Ref { .. } => continue,
-        }
-        if !guards_hold(guards, &candidate) {
-            return Some(candidate);
         }
     }
-    // Also try flipping all booleans to false together.
-    for prop_id in non_lifecycle_bool_properties(object_type, lifecycle) {
-        base.insert(prop_id, JsonValue::Bool(false));
+    let mut all_false = base;
+    for prop_id in non_lifecycle_bool_properties(pack, object_type, lifecycle) {
+        all_false.insert(prop_id, JsonValue::Bool(false));
     }
-    (!guards_hold(guards, &base)).then_some(base)
+    (evaluate_guards(guards, &all_false) == GuardEval::False).then_some((all_false, None))
+}
+
+fn guard_violating_candidates(
+    ty: &PropertyType,
+    current: Option<&JsonValue>,
+    id: &str,
+) -> Vec<JsonValue> {
+    match ty {
+        PropertyType::Boolean {} => {
+            let flipped = !matches!(current, Some(JsonValue::Bool(true)));
+            vec![JsonValue::Bool(flipped)]
+        }
+        PropertyType::Integer { .. } => vec![JsonValue::from(0_i64), JsonValue::from(-1_i64)],
+        PropertyType::Decimal { scale, .. } => {
+            let mut vals = Vec::new();
+            if let Ok(zero) = Decimal::parse_wire(&format_zero_decimal(scale.0)) {
+                vals.push(JsonValue::Number(zero));
+            }
+            if let Ok(neg) = Decimal::parse_wire(&format_decimal(-1, scale.0, false)) {
+                vals.push(JsonValue::Number(neg));
+            }
+            vals
+        }
+        PropertyType::Text { .. } => vec![
+            JsonValue::String(String::new()),
+            JsonValue::String(format!("mismatch-{id}")),
+        ],
+        PropertyType::Enum { values } => values
+            .iter()
+            .filter(|v| current.and_then(JsonValue::as_str) != Some(v.value.as_str()))
+            .map(|v| JsonValue::String(v.value.clone()))
+            .collect(),
+        PropertyType::Date {}
+        | PropertyType::Duration {}
+        | PropertyType::Timestamp { .. }
+        | PropertyType::DecimalBinding { .. }
+        | PropertyType::Record { .. }
+        | PropertyType::JsonExt { .. }
+        | PropertyType::Ref { .. } => Vec::new(),
+    }
 }
 
 /// Picks a writable, non-lifecycle, non-key property and produces an alternate
@@ -323,11 +400,7 @@ pub fn pick_non_lifecycle_mutation(
     current: &JsonObject,
     nonce: u64,
 ) -> Option<(String, JsonValue)> {
-    let shared: BTreeMap<&str, &PropertyTypeDef> = pack
-        .property_types
-        .iter()
-        .map(|def| (def.name.as_str(), def))
-        .collect();
+    let shared = shared_property_map(pack);
     let lifecycle_props: BTreeSet<&str> = object_type
         .lifecycles
         .iter()
@@ -336,74 +409,90 @@ pub fn pick_non_lifecycle_mutation(
     let key_props: BTreeSet<&str> = object_type
         .identity
         .iter()
-        .flat_map(|spec| {
-            spec.properties
-                .iter()
-                .map(norn_kernel::norn_ir::PropertyId::as_str)
-        })
+        .flat_map(|spec| spec.properties.iter().map(PropertyId::as_str))
         .collect();
 
-    for prop in &object_type.properties {
+    for prop in effective_properties(pack, object_type) {
         let id = prop.id.as_str();
         if prop.is_read_only() || lifecycle_props.contains(id) || key_props.contains(id) {
             continue;
         }
-        let resolved = resolve_property_type(&prop.property_type, &shared);
-        let alt = alternate_value(resolved, current.get(id), id, nonce);
-        if let Some(value) = alt {
+        let resolved = resolve_property_type(prop.property_type, &shared);
+        if let Some(value) = alternate_value(resolved, &shared, current.get(id), id, nonce)
+            && current.get(id) != Some(&value)
+        {
             return Some((id.to_owned(), value));
         }
     }
     None
 }
 
-/// Evaluates whether all `guards` return `true` on `values`.
+/// Evaluates all `guards` on `values`, separating [`GuardEval::True`],
+/// [`GuardEval::False`], and [`GuardEval::Error`].
 #[must_use]
-pub fn guards_hold(guards: &[norn_kernel::norn_ir::ZenExpression], values: &JsonObject) -> bool {
-    let Ok(self_val) = ExprValue::try_from(&JsonValue::Object(values.clone())) else {
-        return false;
+pub fn evaluate_guards(guards: &[ZenExpression], values: &JsonObject) -> GuardEval {
+    let self_val = match ExprValue::try_from(&JsonValue::Object(values.clone())) {
+        Ok(val) => val,
+        Err(err) => return GuardEval::Error(format!("self conversion failed: {err}")),
     };
     let context = ExprValue::object([("self", self_val)]);
     for guard in guards {
-        let Ok(compiled) = Expression::compile(guard.as_str()) else {
-            return false;
+        let compiled = match Expression::compile(guard.as_str()) {
+            Ok(expr) => expr,
+            Err(err) => return GuardEval::Error(format!("compile `{}`: {err}", guard.as_str())),
         };
-        let Ok(evaluated) = compiled.evaluate(&context, EvaluationBudget::default()) else {
-            return false;
+        let evaluated = match compiled.evaluate(&context, EvaluationBudget::default()) {
+            Ok(res) => res,
+            Err(err) => return GuardEval::Error(format!("eval `{}`: {err}", guard.as_str())),
         };
-        if !matches!(evaluated.value(), ExprValue::Bool(true)) {
-            return false;
+        match evaluated.value() {
+            ExprValue::Bool(true) => {}
+            ExprValue::Bool(false) => return GuardEval::False,
+            other @ (ExprValue::Null
+            | ExprValue::Number(_)
+            | ExprValue::String(_)
+            | ExprValue::Array(_)
+            | ExprValue::Object(_)) => {
+                return GuardEval::Error(format!(
+                    "guard `{}` returned non-boolean {other:?}",
+                    guard.as_str()
+                ));
+            }
         }
     }
-    true
+    GuardEval::True
+}
+
+/// Evaluates whether all `guards` cleanly return `true` on `values`.
+#[must_use]
+pub fn guards_hold(guards: &[ZenExpression], values: &JsonObject) -> bool {
+    evaluate_guards(guards, values) == GuardEval::True
 }
 
 fn apply_guard_positive_heuristics(
+    pack: &AdmittedPack,
     values: &mut JsonObject,
     object_type: &ObjectTypeDef,
     lifecycle: &Lifecycle,
-    guards: &[norn_kernel::norn_ir::ZenExpression],
+    guards: &[ZenExpression],
 ) {
-    let lifecycle_props: BTreeSet<&str> = object_type
-        .lifecycles
-        .iter()
-        .map(|lc| lc.property.as_str())
-        .chain(std::iter::once(lifecycle.property.as_str()))
-        .collect();
-    for prop in &object_type.properties {
+    let shared = shared_property_map(pack);
+    let lifecycle_props = lifecycle_property_names(object_type, lifecycle);
+    for prop in effective_properties(pack, object_type) {
         let id = prop.id.as_str();
         if prop.is_read_only() || lifecycle_props.contains(id) {
             continue;
         }
-        match &prop.property_type {
+        let resolved = resolve_property_type(prop.property_type, &shared);
+        match resolved {
             PropertyType::Boolean {} => {
                 values.insert(id.to_owned(), JsonValue::Bool(true));
             }
             PropertyType::Integer { .. } => {
                 values.insert(id.to_owned(), JsonValue::from(100_i64));
             }
-            PropertyType::Decimal { .. } => {
-                if let Ok(val) = Decimal::parse_wire("100") {
+            PropertyType::Decimal { scale, .. } => {
+                if let Ok(val) = Decimal::parse_wire(&format_decimal(100, scale.0, false)) {
                     values.insert(id.to_owned(), JsonValue::Number(val));
                 }
             }
@@ -422,7 +511,6 @@ fn apply_guard_positive_heuristics(
             | PropertyType::Ref { .. } => {}
         }
     }
-    // Equalize string pairs compared with `self.a == self.b` inside guards.
     for guard in guards {
         let text = guard.as_str();
         if let Some((lhs, rhs)) = extract_self_equality_pair(text)
@@ -453,17 +541,98 @@ fn extract_self_equality_pair(expr: &str) -> Option<(String, String)> {
     (!lhs_name.is_empty() && !rhs_name.is_empty()).then_some((lhs_name, rhs_name))
 }
 
+fn shared_property_map(pack: &AdmittedPack) -> BTreeMap<&str, &PropertyTypeDef> {
+    pack.property_types
+        .iter()
+        .map(|def| (def.name.as_str(), def))
+        .collect()
+}
+
+fn lifecycle_property_names<'a>(
+    object_type: &'a ObjectTypeDef,
+    lifecycle: &'a Lifecycle,
+) -> BTreeSet<&'a str> {
+    object_type
+        .lifecycles
+        .iter()
+        .map(|lc| lc.property.as_str())
+        .chain(std::iter::once(lifecycle.property.as_str()))
+        .collect()
+}
+
+struct EffectiveProp<'a> {
+    id: &'a PropertyId,
+    property_type: &'a PropertyType,
+    read_only: bool,
+    default: Option<&'a IrJsonValue>,
+}
+
+impl EffectiveProp<'_> {
+    fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+}
+
+fn effective_properties<'a>(
+    pack: &'a AdmittedPack,
+    object_type: &'a ObjectTypeDef,
+) -> Vec<EffectiveProp<'a>> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    let mut walk = Some(object_type);
+    while let Some(def) = walk {
+        for prop in &def.properties {
+            if seen.insert(prop.id.as_str()) {
+                out.push(EffectiveProp {
+                    id: &prop.id,
+                    property_type: &prop.property_type,
+                    read_only: prop.is_read_only(),
+                    default: prop.default.as_ref().map(|d| &d.0),
+                });
+            }
+        }
+        for iface_name in &def.implements {
+            if let Some(iface) = pack
+                .interfaces
+                .iter()
+                .find(|i| i.name.as_str() == iface_name.as_str())
+            {
+                for prop in &iface.properties {
+                    if seen.insert(prop.id.as_str()) {
+                        out.push(EffectiveProp {
+                            id: &prop.id,
+                            property_type: &prop.property_type,
+                            read_only: false,
+                            default: None,
+                        });
+                    }
+                }
+            }
+        }
+        walk = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    out
+}
+
 fn non_lifecycle_bool_properties(
+    pack: &AdmittedPack,
     object_type: &ObjectTypeDef,
     lifecycle: &Lifecycle,
 ) -> Vec<String> {
-    object_type
-        .properties
-        .iter()
+    let shared = shared_property_map(pack);
+    effective_properties(pack, object_type)
+        .into_iter()
         .filter(|prop| {
             !prop.is_read_only()
                 && prop.id.as_str() != lifecycle.property.as_str()
-                && matches!(prop.property_type, PropertyType::Boolean {})
+                && matches!(
+                    resolve_property_type(prop.property_type, &shared),
+                    PropertyType::Boolean {}
+                )
         })
         .map(|prop| prop.id.as_str().to_owned())
         .collect()
@@ -492,38 +661,66 @@ fn resolve_property_type<'a>(
 }
 
 fn json_default_to_runtime(
-    raw: &norn_kernel::norn_ir::JsonValue,
-    prop: &Property,
+    raw: &IrJsonValue,
+    prop: &EffectiveProp<'_>,
     shared: &BTreeMap<&str, &PropertyTypeDef>,
 ) -> Option<JsonValue> {
-    let resolved = resolve_property_type(&prop.property_type, shared);
+    let resolved = resolve_property_type(prop.property_type, shared);
     match (resolved, raw) {
         (
             PropertyType::Integer { .. } | PropertyType::Decimal { .. },
-            norn_kernel::norn_ir::JsonValue::String(text),
+            IrJsonValue::String(text),
         ) => Decimal::parse_wire(text).ok().map(JsonValue::Number),
-        (_, norn_kernel::norn_ir::JsonValue::Bool(b)) => Some(JsonValue::Bool(*b)),
-        (_, norn_kernel::norn_ir::JsonValue::String(s)) => Some(JsonValue::String(s.clone())),
-        (_, norn_kernel::norn_ir::JsonValue::Number(n)) => Decimal::parse_wire(&n.to_string())
+        (_, IrJsonValue::Bool(b)) => Some(JsonValue::Bool(*b)),
+        (_, IrJsonValue::String(s)) => Some(JsonValue::String(s.clone())),
+        (_, IrJsonValue::Number(n)) => Decimal::parse_wire(&n.to_string())
             .ok()
             .map(JsonValue::Number),
-        (
-            _,
-            norn_kernel::norn_ir::JsonValue::Null
-            | norn_kernel::norn_ir::JsonValue::Array(_)
-            | norn_kernel::norn_ir::JsonValue::Object(_),
-        ) => None,
+        (_, IrJsonValue::Null | IrJsonValue::Array(_) | IrJsonValue::Object(_)) => None,
     }
 }
 
+fn format_zero_decimal(scale: u64) -> String {
+    if scale == 0 {
+        return "0".to_owned();
+    }
+    let digits = usize::try_from(scale.min(28)).unwrap_or(2);
+    format!("0.{}", "0".repeat(digits))
+}
+
+fn format_decimal(whole: i64, scale: u64, with_fraction: bool) -> String {
+    if scale == 0 {
+        return whole.to_string();
+    }
+    let digits = usize::try_from(scale.min(28)).unwrap_or(2);
+    if !with_fraction {
+        return format!("{whole}.{}", "0".repeat(digits));
+    }
+    let mut frac = String::with_capacity(digits);
+    frac.push('5');
+    for _ in 1..digits {
+        frac.push('0');
+    }
+    format!("{whole}.{frac}")
+}
+
 fn synthesize_property_value(
-    prop: &Property,
+    prop: &EffectiveProp<'_>,
     shared: &BTreeMap<&str, &PropertyTypeDef>,
     key: &str,
     seed: u64,
 ) -> JsonValue {
-    let id = prop.id.as_str();
-    let resolved = resolve_property_type(&prop.property_type, shared);
+    synthesize_type_value(prop.property_type, prop.id.as_str(), shared, key, seed)
+}
+
+fn synthesize_type_value(
+    ty: &PropertyType,
+    id: &str,
+    shared: &BTreeMap<&str, &PropertyTypeDef>,
+    key: &str,
+    seed: u64,
+) -> JsonValue {
+    let resolved = resolve_property_type(ty, shared);
     match resolved {
         PropertyType::Text { .. } | PropertyType::Ref { .. } => {
             if id.contains("currency") {
@@ -550,9 +747,15 @@ fn synthesize_property_value(
             let n = i64::try_from(seed % 100).unwrap_or(0).saturating_add(10);
             JsonValue::from(n)
         }
-        PropertyType::Decimal { .. } | PropertyType::DecimalBinding { .. } => {
-            let text = format!("{}.50", (seed % 100).saturating_add(10));
-            Decimal::parse_wire(&text).map_or_else(|_| JsonValue::from(10_i64), JsonValue::Number)
+        PropertyType::Decimal { scale, .. } => {
+            let whole = i64::try_from(seed % 100).unwrap_or(0).saturating_add(10);
+            let text = format_decimal(whole, scale.0, true);
+            Decimal::parse_wire(&text).map_or_else(|_| JsonValue::from(whole), JsonValue::Number)
+        }
+        PropertyType::DecimalBinding { .. } => {
+            let whole = i64::try_from(seed % 100).unwrap_or(0).saturating_add(10);
+            Decimal::parse_wire(&whole.to_string())
+                .map_or_else(|_| JsonValue::from(whole), JsonValue::Number)
         }
         PropertyType::Boolean {} => JsonValue::Bool(true),
         PropertyType::Enum { values } => JsonValue::String(
@@ -569,14 +772,27 @@ fn synthesize_property_value(
         }
         PropertyType::Duration {} => JsonValue::String("PT1H".to_owned()),
         PropertyType::Timestamp { .. } => JsonValue::String("2026-01-15T12:00:00Z".to_owned()),
-        PropertyType::Record { .. } | PropertyType::JsonExt { .. } => {
-            JsonValue::Object(JsonObject::new())
+        PropertyType::Record { members } => {
+            let mut obj = JsonObject::new();
+            for member in members {
+                let val = synthesize_type_value(
+                    &member.property_type,
+                    member.id.as_str(),
+                    shared,
+                    key,
+                    seed,
+                );
+                obj.insert(member.id.as_str().to_owned(), val);
+            }
+            JsonValue::Object(obj)
         }
+        PropertyType::JsonExt { .. } => JsonValue::Object(JsonObject::new()),
     }
 }
 
 fn alternate_value(
     ty: &PropertyType,
+    shared: &BTreeMap<&str, &PropertyTypeDef>,
     current: Option<&JsonValue>,
     prop_id: &str,
     nonce: u64,
@@ -591,9 +807,20 @@ fn alternate_value(
                 .saturating_add(101);
             Some(JsonValue::from(next))
         }
-        PropertyType::Decimal { .. } | PropertyType::DecimalBinding { .. } => {
-            let text = format!("{}.25", (nonce % 10_000).saturating_add(101));
+        PropertyType::Decimal { scale, .. } => {
+            let whole = i64::try_from(nonce % 10_000)
+                .unwrap_or(0)
+                .saturating_add(101);
+            let text = format_decimal(whole, scale.0, true);
             Decimal::parse_wire(&text).ok().map(JsonValue::Number)
+        }
+        PropertyType::DecimalBinding { .. } => {
+            let whole = i64::try_from(nonce % 10_000)
+                .unwrap_or(0)
+                .saturating_add(101);
+            Decimal::parse_wire(&whole.to_string())
+                .ok()
+                .map(JsonValue::Number)
         }
         PropertyType::Boolean {} => {
             let flipped = !matches!(current, Some(JsonValue::Bool(true)));
@@ -608,7 +835,21 @@ fn alternate_value(
         PropertyType::Timestamp { .. } => {
             Some(JsonValue::String("2026-06-20T15:30:00Z".to_owned()))
         }
-        PropertyType::Record { .. } | PropertyType::JsonExt { .. } => {
+        PropertyType::Record { members } => {
+            let mut obj = JsonObject::new();
+            for member in members {
+                let val = synthesize_type_value(
+                    &member.property_type,
+                    member.id.as_str(),
+                    shared,
+                    "mut",
+                    nonce.saturating_add(7),
+                );
+                obj.insert(member.id.as_str().to_owned(), val);
+            }
+            Some(JsonValue::Object(obj))
+        }
+        PropertyType::JsonExt { .. } => {
             let mut obj = JsonObject::new();
             obj.insert(
                 "nonce".to_owned(),

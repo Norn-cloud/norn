@@ -1,21 +1,23 @@
 //! Generic IR-driven Model-Based Testing (MBT) driver (#1656).
 //!
 //! Given *any* [`AdmittedPack`] and a [`PackHost`] factory (for example, a real
-//! `SqliteCell` on disk), executes:
-//! 1. **All-states & all-transitions lifecycle walk** (`exhaustive-finite`):
-//!    reaches every reachable state and executes every valid transition, plus
-//!    verifies false guards refuse with zero ledger writes.
+//! `ObservedSqliteCell` on disk), executes:
+//! 1. **All-states & all-transitions lifecycle walk** (`exhaustive-finite` when
+//!    every transition and guard witness is covered, else `bounded`): reaches
+//!    every reachable state, executes every valid transition, and verifies
+//!    false guards refuse strictly with `DecisionRefusal::GuardFalse` + zero
+//!    ledger writes.
 //! 2. **Disallowed transitions & immutable state/entity refusals**
-//!    (`exhaustive-finite`): asserts `UNDECLARED_WRITE`, `DIRECT_WRITE`,
-//!    `IMMUTABLE_STATE_WRITE`, and `commit.immutable_object` with zero ledger
-//!    writes.
-//! 3. **Full Cedar authorization & `SoD` matrix** (`exhaustive-finite`): compiles
-//!    `AccessIR` via real `norn-authz` Cedar PDP and tests authorized actors,
-//!    unauthorized roles, foreign scopes, and self-approvers (`PermissionDenied`
-//!    + zero ledger writes).
+//!    (`exhaustive-finite` when every immutable target is covered): asserts
+//!    `NotFromState`, `LifecyclePropertySet`, `ImmutableStateWrite`, and
+//!    `CommitError::ImmutableObject` with zero ledger writes.
+//! 3. **Full Cedar authorization & `SoD` matrix** (`exhaustive-finite` when
+//!    every rule is covered): runs authorized controls plus unauthorized-role,
+//!    foreign-scope, and self-approver denials through real `commit_action`.
 //! 4. **`LAW-EXAMPLE-1` → real cell runtime parity** (`runtime-enforced`):
 //!    replays every `LawExampleCase` through both `norn_checker::law_examples`
-//!    and real `PackHost::commit`, asserting 100% agreement.
+//!    and real `PackHost::commit`, matching exact law pin, subject, and
+//!    `DataQualityOutcome::NotSatisfied`.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -23,10 +25,9 @@ use std::sync::{Arc, Mutex};
 use norn_kernel::cell_host::{
     FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue,
 };
-use norn_kernel::norn_checker::law_examples::{Verdict, evaluate_runtime as evaluate_law_example};
-use norn_kernel::norn_ir::{
-    DecisionOutput, FactChange, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyId, TransitionId,
-    lifecycle_codes,
+use norn_kernel::pack_mbt_support::{
+    DecisionOutput, FactChange, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyId, Transition,
+    TransitionId, ZenExpression,
 };
 use norn_kernel::{
     CellCommit, CommitError, DecisionRefusal, DecisionTurn, TypeCatalog, World, commit_decision,
@@ -35,30 +36,34 @@ use norn_kernel::{
 
 use super::cedar::run_cedar_and_sod_phase;
 use super::coverage::{DomainCoverage, DomainCoveragePlan, DomainCoverageReport, DomainTransition};
+use super::law_parity::run_law_example_parity_phase;
 use super::synth::{
     collect_required_link_graph, pick_non_lifecycle_mutation, synthesize_guard_satisfying,
-    synthesize_guard_violating, synthesize_object,
+    synthesize_guard_violating_at_state, synthesize_object,
 };
-use super::{AdmittedPack, EvidenceLevel, LawExampleCase, PackHost, action_call_object_type};
+use super::{AdmittedPack, EvidenceLevel, PackHost, action_call_object_type};
 
 /// Summary of one full IR-driven MBT execution against a [`PackHost`].
 #[derive(Debug, Clone)]
 pub struct PackMbtReport {
     /// Pack identifier.
     pub pack_name: String,
-    /// Evidence levels achieved across executed phases.
+    /// Honest evidence levels achieved across executed phases.
     pub evidence: Vec<(&'static str, EvidenceLevel)>,
     /// Number of valid lifecycle transitions executed.
     pub valid_transitions_run: usize,
-    /// Number of disallowed transitions verified to refuse with zero ledger writes.
+    /// Number of disallowed transitions and guard refusals verified with zero ledger writes.
     pub disallowed_transitions_checked: usize,
     /// Number of immutable-state and immutable-entity refusals verified.
     pub immutable_refusals_checked: usize,
-    /// Number of Cedar allow/deny/SoD matrix checks executed.
+    /// Number of Cedar allow/deny/`SoD` matrix checks executed through `commit_action`.
     pub cedar_checks_run: usize,
     /// Number of `LAW-EXAMPLE-1` examples replayed for checker-vs-runtime parity.
     pub law_examples_checked: usize,
-    /// Structured domain-model coverage report.
+    /// Guarded transitions for which no valid false-guard witness at the source
+    /// state could be constructed (withholds `exhaustive-finite` when non-empty).
+    pub uncovered_guard_refusals: Vec<String>,
+    /// Unified domain-model coverage report.
     pub coverage: DomainCoverageReport,
 }
 
@@ -67,6 +72,7 @@ struct LifecycleStats {
     valid: usize,
     disallowed: usize,
     immutable: usize,
+    uncovered_guard_refusals: Vec<String>,
 }
 
 struct LifecycleCtx<'a> {
@@ -77,43 +83,68 @@ struct LifecycleCtx<'a> {
     coverage: &'a Arc<Mutex<DomainCoverage>>,
 }
 
+struct GuardCheckSpec<'a> {
+    transition: &'a Transition,
+    from_state: &'a str,
+    init_state: &'a str,
+    prefix: &'a [String],
+    id: &'a str,
+    seq: u64,
+}
+
 /// Runs the complete generic IR-driven MBT suite on `pack` using `make_host` to
 /// open fresh isolated cells per verification phase.
 ///
 /// # Errors
 ///
-/// Returns a detailed error if any lifecycle walk, refusal invariant, Cedar/SoD
-/// check, ledger-zero-write check, `verify_ledger()`, or `LAW-EXAMPLE-1` parity
-/// assertion fails.
+/// Returns a detailed error if any lifecycle walk, guard refusal, immutability
+/// invariant, Cedar/`SoD` action check, ledger-zero-write check, `verify_ledger()`,
+/// or `LAW-EXAMPLE-1` parity assertion fails.
 pub fn run_pack_mbt<H, F>(pack: &AdmittedPack, mut make_host: F) -> Result<PackMbtReport, String>
 where
     H: PackHost,
     F: FnMut(&str) -> Result<H, String>,
 {
     let plan = DomainCoveragePlan::from_pack(pack);
-    let coverage = Arc::new(Mutex::new(DomainCoverage::default()));
+    let driver_cov = Arc::new(Mutex::new(DomainCoverage::default()));
     let extra = [action_call_object_type()];
     let catalog = pack.type_catalog(&extra);
 
-    let lc = run_lifecycle_and_immutability_phase(pack, &catalog, &mut make_host, &coverage)?;
-    let cedar_checks_run = run_cedar_and_sod_phase(pack, &catalog, &mut make_host, &coverage)?;
-    let law_examples_checked = run_law_example_parity_phase(pack, &mut make_host, &coverage)?;
+    let lc = run_lifecycle_and_immutability_phase(pack, &catalog, &mut make_host, &driver_cov)?;
+    let cedar_checks_run = run_cedar_and_sod_phase(pack, &catalog, &mut make_host, &driver_cov)?;
+    let law_examples_checked =
+        run_law_example_parity_phase(pack, &catalog, &mut make_host, &driver_cov)?;
 
-    let snapshot = match coverage.lock() {
-        Ok(guard) => guard.clone(),
-        Err(poisoned) => poisoned.into_inner().clone(),
+    // Prefer the host's unified cell-level observer (ObservedSqliteCell +
+    // record_decision_refusal) when attached, combining with Cedar PDP hits.
+    let probe_host = make_host("coverage-probe")?;
+    let unified = build_unified_coverage(&driver_cov, probe_host.read_observed_coverage());
+    let report = unified.report(pack.name.clone(), &plan);
+
+    let lc_evidence =
+        if report.uncovered_transitions.is_empty() && lc.uncovered_guard_refusals.is_empty() {
+            EvidenceLevel::ExhaustiveFinite
+        } else {
+            EvidenceLevel::Bounded
+        };
+    let imm_evidence = if report.uncovered_immutable_refusals.is_empty() {
+        EvidenceLevel::ExhaustiveFinite
+    } else {
+        EvidenceLevel::Bounded
     };
-    let report = snapshot.report(pack.name.clone(), &plan);
+    let cedar_evidence =
+        if report.uncovered_cedar_allows.is_empty() && report.uncovered_cedar_denies.is_empty() {
+            EvidenceLevel::ExhaustiveFinite
+        } else {
+            EvidenceLevel::Bounded
+        };
 
     Ok(PackMbtReport {
         pack_name: pack.name.clone(),
         evidence: vec![
-            (
-                "lifecycle_walks_and_refusals",
-                EvidenceLevel::ExhaustiveFinite,
-            ),
-            ("immutable_state_refusals", EvidenceLevel::ExhaustiveFinite),
-            ("cedar_and_sod_matrix", EvidenceLevel::ExhaustiveFinite),
+            ("lifecycle_walks_and_refusals", lc_evidence),
+            ("immutable_state_refusals", imm_evidence),
+            ("cedar_and_sod_matrix", cedar_evidence),
             ("law_example_runtime_parity", EvidenceLevel::RuntimeEnforced),
         ],
         valid_transitions_run: lc.valid,
@@ -121,8 +152,33 @@ where
         immutable_refusals_checked: lc.immutable,
         cedar_checks_run,
         law_examples_checked,
+        uncovered_guard_refusals: lc.uncovered_guard_refusals,
         coverage: report,
     })
+}
+
+fn build_unified_coverage(
+    driver_cov: &Arc<Mutex<DomainCoverage>>,
+    host_observed: Option<DomainCoverage>,
+) -> DomainCoverage {
+    let driver_snap = match driver_cov.lock() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    let Some(mut observed) = host_observed else {
+        return driver_snap;
+    };
+    // Cedar allow/deny decisions are recorded at the ActionAuthorizer boundary
+    // (ObservedPdpAuthorizer); merge them into the single host observer report.
+    for (rule, count) in driver_snap.cedar_allows {
+        let entry = observed.cedar_allows.entry(rule).or_insert(0);
+        *entry = entry.saturating_add(count);
+    }
+    for (rule, count) in driver_snap.cedar_denies {
+        let entry = observed.cedar_denies.entry(rule).or_insert(0);
+        *entry = entry.saturating_add(count);
+    }
+    observed
 }
 
 fn run_lifecycle_and_immutability_phase<H, F>(
@@ -136,25 +192,22 @@ where
     F: FnMut(&str) -> Result<H, String>,
 {
     let mut totals = LifecycleStats::default();
+    let mut seq = 0u64;
     for object_type in &pack.object_types {
         if object_type.immutable {
-            verify_immutable_entity(pack, object_type, make_host, coverage)?;
+            seq = seq.saturating_add(1);
+            verify_immutable_entity(pack, object_type, make_host, coverage, seq)?;
             totals.immutable = totals.immutable.saturating_add(1);
         }
-        let lifecycles: Vec<Lifecycle> = catalog
-            .lifecycles(&object_type.name)
-            .into_values()
-            .collect();
-        for lifecycle in &lifecycles {
+        for lifecycle in catalog.lifecycles(&object_type.name).into_values() {
+            let paths = bfs_paths_to_states(&lifecycle);
             let ctx = LifecycleCtx {
                 pack,
                 catalog,
                 object_type,
-                lifecycle,
+                lifecycle: &lifecycle,
                 coverage,
             };
-            let paths = bfs_paths_to_states(lifecycle);
-            let mut seq = 0u64;
             exercise_valid_transitions(&ctx, &paths, make_host, &mut seq, &mut totals)?;
             exercise_negative_and_immutable(&ctx, &paths, make_host, &mut seq, &mut totals)?;
         }
@@ -167,34 +220,41 @@ fn verify_immutable_entity<H, F>(
     object_type: &ObjectTypeDef,
     make_host: &mut F,
     coverage: &Arc<Mutex<DomainCoverage>>,
+    seq: u64,
 ) -> Result<(), String>
 where
     H: PackHost,
     F: FnMut(&str) -> Result<H, String>,
 {
     let ty_name = object_type.name.as_str();
-    let mut host = make_host(&format!("immutable-entity-{ty_name}"))?;
-    let key = FactKey::new(ty_name, "imm-obj-1");
-    let values = synthesize_object(pack, object_type, "imm-obj-1", 1);
-    let create_commit = CellCommit {
-        writes: vec![FactWrite {
-            key: key.clone(),
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: values.clone(),
-            },
-        }],
+    let mut host = make_host(&format!("immutable-entity-{ty_name}-{seq}"))?;
+    let id = format!("imm-entity-{seq}");
+    let values = synthesize_object(pack, object_type, &id, seq);
+    let key = FactKey::new(ty_name, &id);
+    let mut graph = collect_required_link_graph(pack, object_type, &key, seq)?;
+    graph.setup_writes.push(FactWrite {
+        key: key.clone(),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: values.clone(),
+        },
+    });
+    graph.setup_links.extend(graph.direct_links);
+    host.commit(CellCommit {
+        writes: graph.setup_writes,
+        links: graph.setup_links,
         ..CellCommit::empty()
-    };
-    if host.commit(create_commit).is_err() {
-        return Ok(());
-    }
-    let ledger_before = host.ledger_len();
-    let loaded = host.load(&key).map_err(|err| format!("{err}"))?;
+    })
+    .map_err(|err| format!("immutable entity {ty_name}: seed commit failed: {err}"))?;
+
     let mut mutated = values;
-    if let Some((prop, val)) = pick_non_lifecycle_mutation(pack, object_type, &mutated, 7) {
-        mutated.insert(prop, val);
+    if let Some((prop_id, alt)) = pick_non_lifecycle_mutation(pack, object_type, &mutated, seq) {
+        mutated.insert(prop_id, alt);
     }
+    let loaded = host
+        .load(&key)
+        .map_err(|err| format!("load immutable entity {ty_name}: {err}"))?;
+    let ledger_before = host.ledger_len();
     let update_commit = CellCommit {
         writes: vec![FactWrite {
             key,
@@ -207,7 +267,7 @@ where
         Err(CommitError::ImmutableObject { .. }) => {
             assert_zero_ledger_writes(&host, ledger_before, ty_name, "immutable entity write")?;
             with_cov(coverage, |cov| {
-                cov.hit_immutable_refusal(ty_name, "<immutable_object>");
+                cov.hit_immutable_refusal(ty_name, "<object>", "<immutable_object>");
             });
             host.verify_ledger()
         }
@@ -217,7 +277,9 @@ where
     }
 }
 
-fn bfs_paths_to_states(lifecycle: &Lifecycle) -> BTreeMap<String, (String, Vec<String>)> {
+pub(crate) fn bfs_paths_to_states(
+    lifecycle: &Lifecycle,
+) -> BTreeMap<String, (String, Vec<String>)> {
     let mut paths: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
     let mut queue = VecDeque::new();
     for init in &lifecycle.initial {
@@ -244,10 +306,10 @@ fn bfs_paths_to_states(lifecycle: &Lifecycle) -> BTreeMap<String, (String, Vec<S
     paths
 }
 
-fn collect_prefix_guards(
+pub(crate) fn collect_prefix_guards(
     lifecycle: &Lifecycle,
     prefix: &[String],
-) -> Vec<norn_kernel::norn_ir::ZenExpression> {
+) -> Vec<ZenExpression> {
     let mut guards = Vec::new();
     for tr_id in prefix {
         if let Some(tr) = lifecycle
@@ -307,6 +369,7 @@ where
                 cov.hit_transition(DomainTransition {
                     object_type: ty_name.to_owned(),
                     lifecycle: prop.to_owned(),
+                    transition: transition.id.as_str().to_owned(),
                     from: from.clone(),
                     to: transition.to.clone(),
                 });
@@ -315,6 +378,7 @@ where
             host.verify_ledger()?;
             let spec = GuardCheckSpec {
                 transition,
+                from_state: from,
                 init_state,
                 prefix,
                 id: &id,
@@ -324,14 +388,6 @@ where
         }
     }
     Ok(())
-}
-
-struct GuardCheckSpec<'a> {
-    transition: &'a norn_kernel::norn_ir::Transition,
-    init_state: &'a str,
-    prefix: &'a [String],
-    id: &'a str,
-    seq: u64,
 }
 
 fn exercise_guard_refusal<H, F>(
@@ -347,26 +403,45 @@ where
     if spec.transition.guards.is_empty() {
         return Ok(());
     }
-    let Some(mut bad_values) = synthesize_guard_violating(
+    let ty_name = ctx.object_type.name.as_str();
+    let prop = ctx.lifecycle.property.as_str();
+    let tr_id = spec.transition.id.as_str();
+    let label = format!("{ty_name}.{prop}.{tr_id}@{}", spec.from_state);
+
+    let Some((mut bad_values, single_mutation)) = synthesize_guard_violating_at_state(
         ctx.pack,
         ctx.object_type,
         ctx.lifecycle,
+        spec.from_state,
         &spec.transition.guards,
         spec.id,
         spec.seq,
     ) else {
+        totals.uncovered_guard_refusals.push(label);
         return Ok(());
     };
-    let ty_name = ctx.object_type.name.as_str();
-    let prop = ctx.lifecycle.property.as_str();
-    bad_values.insert(
-        prop.to_owned(),
-        JsonValue::String(spec.init_state.to_owned()),
-    );
+
     let mut neg_host = make_host(&format!("lc-guard-{ty_name}-{}", spec.seq))?;
-    if seed_and_walk(&mut neg_host, ctx, spec.id, bad_values, spec.prefix).is_err() {
+    if spec.prefix.is_empty() {
+        bad_values.insert(
+            prop.to_owned(),
+            JsonValue::String(spec.init_state.to_owned()),
+        );
+        if !seed_and_walk_law_aware(&mut neg_host, ctx, spec.id, bad_values, &[])? {
+            totals.uncovered_guard_refusals.push(label);
+            return Ok(());
+        }
+    } else if !reach_guard_violating_source_state(
+        &mut neg_host,
+        ctx,
+        spec,
+        &bad_values,
+        single_mutation.as_ref(),
+    )? {
+        totals.uncovered_guard_refusals.push(label);
         return Ok(());
     }
+
     let before = neg_host.ledger_len();
     let res = fire_transition_decision(
         &mut neg_host,
@@ -374,16 +449,84 @@ where
         ty_name,
         prop,
         spec.id,
-        spec.transition.id.as_str(),
+        tr_id,
         spec.seq.saturating_add(2000),
     );
-    if let Err(refusal) = res
-        && refusal.code().starts_with("decision.guard")
-    {
-        assert_zero_ledger_writes(&neg_host, before, ty_name, "guard refusal")?;
-        totals.disallowed = totals.disallowed.saturating_add(1);
+    match res {
+        Err(DecisionRefusal::GuardFalse { .. }) => {
+            assert_zero_ledger_writes(&neg_host, before, ty_name, "guard refusal")?;
+            totals.disallowed = totals.disallowed.saturating_add(1);
+            neg_host.verify_ledger()
+        }
+        Err(other) => Err(format!(
+            "{label}: expected typed DecisionRefusal::GuardFalse, got {other:?}"
+        )),
+        Ok(()) => Err(format!(
+            "{label}: transition unexpectedly committed despite false guard witness"
+        )),
     }
-    Ok(())
+}
+
+fn reach_guard_violating_source_state<H: PackHost>(
+    host: &mut H,
+    ctx: &LifecycleCtx<'_>,
+    spec: &GuardCheckSpec<'_>,
+    bad_values: &JsonObject,
+    single_mutation: Option<&(String, JsonValue)>,
+) -> Result<bool, String> {
+    let ty_name = ctx.object_type.name.as_str();
+    let prop = ctx.lifecycle.property.as_str();
+    let is_immutable_source = ctx
+        .lifecycle
+        .immutable
+        .iter()
+        .any(|state| state == spec.from_state);
+
+    let prefix_guards = collect_prefix_guards(ctx.lifecycle, spec.prefix);
+    let mut seed_bad = bad_values.clone();
+    seed_bad.insert(
+        prop.to_owned(),
+        JsonValue::String(spec.init_state.to_owned()),
+    );
+    if (prefix_guards.is_empty() || super::synth::guards_hold(&prefix_guards, &seed_bad))
+        && seed_and_walk_law_aware(host, ctx, spec.id, seed_bad, spec.prefix)?
+    {
+        return Ok(true);
+    }
+    if is_immutable_source {
+        return Ok(false);
+    }
+    let Some((mut_prop, mut_val)) = single_mutation else {
+        return Ok(false);
+    };
+    let mut good_init = synthesize_guard_satisfying(
+        ctx.pack,
+        ctx.object_type,
+        ctx.lifecycle,
+        &prefix_guards,
+        spec.id,
+        spec.seq,
+    );
+    good_init.insert(
+        prop.to_owned(),
+        JsonValue::String(spec.init_state.to_owned()),
+    );
+    seed_and_walk(host, ctx, spec.id, good_init, spec.prefix)?;
+    match set_property_decision(
+        host,
+        ctx.catalog,
+        ty_name,
+        spec.id,
+        mut_prop,
+        mut_val.clone(),
+        spec.seq.saturating_add(1500),
+    ) {
+        Ok(()) => Ok(true),
+        Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }) => Ok(false),
+        Err(err) => Err(format!(
+            "failed setting guard-violating property {ty_name}.{mut_prop}: {err}"
+        )),
+    }
 }
 
 fn exercise_negative_and_immutable<H, F>(
@@ -458,12 +601,14 @@ fn check_disallowed_transitions<H: PackHost>(
             seq.saturating_add(3000),
         );
         match result {
-            Err(refusal) if refusal.code() == lifecycle_codes::UNDECLARED_WRITE => {
+            Err(refusal @ DecisionRefusal::NotFromState { .. }) => {
+                host.record_decision_refusal(&refusal);
                 assert_zero_ledger_writes(host, before, ty_name, "disallowed transition")?;
                 with_cov(ctx.coverage, |cov| {
                     cov.hit_disallowed_transition(DomainTransition {
                         object_type: ty_name.to_owned(),
                         lifecycle: prop.to_owned(),
+                        transition: transition.id.as_str().to_owned(),
                         from: state.to_owned(),
                         to: transition.to.clone(),
                     });
@@ -502,7 +647,7 @@ fn check_direct_lifecycle_write<H: PackHost>(
         seq.saturating_add(4000),
     );
     match direct {
-        Err(refusal) if refusal.code() == lifecycle_codes::DIRECT_WRITE => {
+        Err(DecisionRefusal::LifecyclePropertySet { .. }) => {
             assert_zero_ledger_writes(host, before, ty_name, "direct lifecycle set")?;
             totals.disallowed = totals.disallowed.saturating_add(1);
             Ok(())
@@ -527,9 +672,11 @@ fn check_immutable_state_write<H: PackHost>(
     let Some((mut_prop, mut_val)) =
         pick_non_lifecycle_mutation(ctx.pack, ctx.object_type, init_values, seq)
     else {
-        return Ok(());
+        return Err(format!(
+            "{ty_name}.{prop}: immutable state '{state}' has no writable non-lifecycle property to verify IMMUTABLE_STATE_WRITE"
+        ));
     };
-    let before_imm = host.ledger_len();
+    let before = host.ledger_len();
     let res = set_property_decision(
         host,
         ctx.catalog,
@@ -540,10 +687,11 @@ fn check_immutable_state_write<H: PackHost>(
         seq.saturating_add(5000),
     );
     match res {
-        Err(refusal) if refusal.code() == lifecycle_codes::IMMUTABLE_STATE_WRITE => {
-            assert_zero_ledger_writes(host, before_imm, ty_name, "immutable state write")?;
+        Err(refusal @ DecisionRefusal::ImmutableStateWrite { .. }) => {
+            host.record_decision_refusal(&refusal);
+            assert_zero_ledger_writes(host, before, ty_name, "immutable state write")?;
             with_cov(ctx.coverage, |cov| {
-                cov.hit_immutable_refusal(ty_name, state.to_owned());
+                cov.hit_immutable_refusal(ty_name, prop, state);
             });
             totals.immutable = totals.immutable.saturating_add(1);
             Ok(())
@@ -554,6 +702,16 @@ fn check_immutable_state_write<H: PackHost>(
     }
 }
 
+pub(crate) struct SeedWalkSpec<'a> {
+    pub(crate) pack: &'a AdmittedPack,
+    pub(crate) catalog: &'a TypeCatalog<'a>,
+    pub(crate) object_type: &'a ObjectTypeDef,
+    pub(crate) prop: &'a str,
+    pub(crate) id: &'a str,
+    pub(crate) values: JsonObject,
+    pub(crate) path: &'a [String],
+}
+
 fn seed_and_walk<H: PackHost>(
     host: &mut H,
     ctx: &LifecycleCtx<'_>,
@@ -561,15 +719,41 @@ fn seed_and_walk<H: PackHost>(
     values: JsonObject,
     path: &[String],
 ) -> Result<(), String> {
-    let ty_name = ctx.object_type.name.as_str();
-    let prop = ctx.lifecycle.property.as_str();
+    seed_and_walk_object(
+        host,
+        SeedWalkSpec {
+            pack: ctx.pack,
+            catalog: ctx.catalog,
+            object_type: ctx.object_type,
+            prop: ctx.lifecycle.property.as_str(),
+            id,
+            values,
+            path,
+        },
+    )
+}
+
+pub(crate) fn seed_and_walk_object<H: PackHost>(
+    host: &mut H,
+    spec: SeedWalkSpec<'_>,
+) -> Result<(), String> {
+    let SeedWalkSpec {
+        pack,
+        catalog,
+        object_type,
+        prop,
+        id,
+        values,
+        path,
+    } = spec;
+    let ty_name = object_type.name.as_str();
     let key = FactKey::new(ty_name, id);
-    let mut graph = collect_required_link_graph(ctx.pack, ctx.object_type, &key, 1)?;
+    let mut graph = collect_required_link_graph(pack, object_type, &key, 1)?;
     if graph.direct_links.is_empty() {
         let slice = load_slice(host, [key]).map_err(|err| format!("load_slice: {err}"))?;
         let create = DecisionOutput {
             facts: vec![FactChange::Create {
-                object_type: ctx.object_type.name.clone(),
+                object_type: object_type.name.clone(),
                 key: id.to_owned(),
                 values,
             }],
@@ -582,7 +766,7 @@ fn seed_and_walk<H: PackHost>(
             world: World::Main,
             consumes: None,
         };
-        commit_decision(host, ctx.catalog, &slice, &turn, &create)
+        commit_decision(host, catalog, &slice, &turn, &create)
             .map_err(|err| format!("seed {ty_name}/{id}: {err}"))?;
     } else {
         graph.setup_writes.push(FactWrite {
@@ -600,7 +784,73 @@ fn seed_and_walk<H: PackHost>(
     }
     for (step_idx, transition_id) in path.iter().enumerate() {
         let turn_nonce = u64::try_from(step_idx).unwrap_or(0).saturating_add(1);
-        fire_transition_decision(
+        fire_transition_decision(host, catalog, ty_name, prop, id, transition_id, turn_nonce)
+            .map_err(|err| format!("walk {ty_name}/{id} via {transition_id}: {err}"))?;
+    }
+    Ok(())
+}
+
+/// Seeds and walks a guard-violating witness, returning `Ok(false)` when a
+/// governing law or entity invariant legitimately forbids entering the witness
+/// state (reported in `uncovered_guard_refusals`), while failing hard on every
+/// other error.
+fn seed_and_walk_law_aware<H: PackHost>(
+    host: &mut H,
+    ctx: &LifecycleCtx<'_>,
+    id: &str,
+    values: JsonObject,
+    path: &[String],
+) -> Result<bool, String> {
+    let ty_name = ctx.object_type.name.as_str();
+    let prop = ctx.lifecycle.property.as_str();
+    let key = FactKey::new(ty_name, id);
+    let mut graph = collect_required_link_graph(ctx.pack, ctx.object_type, &key, 1)?;
+    if graph.direct_links.is_empty() {
+        let slice = load_slice(host, [key]).map_err(|err| format!("load_slice: {err}"))?;
+        let create = DecisionOutput {
+            facts: vec![FactChange::Create {
+                object_type: ctx.object_type.name.clone(),
+                key: id.to_owned(),
+                values,
+            }],
+            commands: Vec::new(),
+            timers: Vec::new(),
+        };
+        let turn = DecisionTurn {
+            id: format!("seed-neg-{id}"),
+            now: host.logical_now(),
+            world: World::Main,
+            consumes: None,
+        };
+        match commit_decision(host, ctx.catalog, &slice, &turn, &create) {
+            Ok(_) => {}
+            Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }) => {
+                return Ok(false);
+            }
+            Err(err) => return Err(format!("seed {ty_name}/{id}: {err}")),
+        }
+    } else {
+        graph.setup_writes.push(FactWrite {
+            key,
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put { values },
+        });
+        graph.setup_links.extend(graph.direct_links);
+        match host.commit(CellCommit {
+            writes: graph.setup_writes,
+            links: graph.setup_links,
+            ..CellCommit::empty()
+        }) {
+            Ok(_) => {}
+            Err(CommitError::Law { .. } | CommitError::InvariantViolation { .. }) => {
+                return Ok(false);
+            }
+            Err(err) => return Err(format!("seed {ty_name}/{id} with required links: {err}")),
+        }
+    }
+    for (step_idx, transition_id) in path.iter().enumerate() {
+        let turn_nonce = u64::try_from(step_idx).unwrap_or(0).saturating_add(1);
+        match fire_transition_decision(
             host,
             ctx.catalog,
             ty_name,
@@ -608,10 +858,17 @@ fn seed_and_walk<H: PackHost>(
             id,
             transition_id,
             turn_nonce,
-        )
-        .map_err(|err| format!("walk {ty_name}/{id} via {transition_id}: {err}"))?;
+        ) {
+            Ok(()) => {}
+            Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }) => {
+                return Ok(false);
+            }
+            Err(err) => {
+                return Err(format!("walk {ty_name}/{id} via {transition_id}: {err}"));
+            }
+        }
     }
-    Ok(())
+    Ok(true)
 }
 
 fn fire_transition_expect_ok<H: PackHost>(
@@ -714,134 +971,6 @@ fn set_property_decision<H: PackHost>(
         consumes: None,
     };
     commit_decision(host, catalog, &slice, &turn, &output).map(|_| ())
-}
-
-fn run_law_example_parity_phase<H, F>(
-    pack: &AdmittedPack,
-    make_host: &mut F,
-    coverage: &Arc<Mutex<DomainCoverage>>,
-) -> Result<usize, String>
-where
-    H: PackHost,
-    F: FnMut(&str) -> Result<H, String>,
-{
-    let mut checked = 0usize;
-    for (idx, example) in pack.law_examples.iter().enumerate() {
-        verify_single_law_example(pack, example, idx, make_host, coverage)?;
-        checked = checked.saturating_add(1);
-    }
-    Ok(checked)
-}
-
-fn setup_required_link_targets<H: PackHost>(
-    host: &mut H,
-    pack: &AdmittedPack,
-    subject_type: &str,
-    key: &FactKey,
-    seed: u64,
-    context: &str,
-) -> Result<Vec<norn_kernel::cell_host::LinkWrite>, String> {
-    let Some(subject_ty) = pack
-        .object_types
-        .iter()
-        .find(|ty| ty.name.as_str() == subject_type)
-    else {
-        return Ok(Vec::new());
-    };
-    let graph = collect_required_link_graph(pack, subject_ty, key, seed)?;
-    if !graph.setup_writes.is_empty() {
-        host.commit(CellCommit {
-            writes: graph.setup_writes,
-            links: graph.setup_links,
-            ..CellCommit::empty()
-        })
-        .map_err(|err| format!("{context}: required link target setup failed: {err}"))?;
-    }
-    Ok(graph.direct_links)
-}
-
-fn verify_single_law_example<H, F>(
-    pack: &AdmittedPack,
-    example: &LawExampleCase,
-    idx: usize,
-    make_host: &mut F,
-    coverage: &Arc<Mutex<DomainCoverage>>,
-) -> Result<(), String>
-where
-    H: PackHost,
-    F: FnMut(&str) -> Result<H, String>,
-{
-    let law = pack
-        .laws
-        .iter()
-        .find(|law| law.id == example.law_id)
-        .ok_or_else(|| {
-            format!(
-                "LAW-EXAMPLE-1 '{}': unknown law '{}'",
-                example.name, example.law_id
-            )
-        })?;
-    let checker_verdict = evaluate_law_example(law, &JsonValue::Object(example.subject.clone()))
-        .map_err(|err| format!("LAW-EXAMPLE-1 '{}': checker error: {err}", example.name))?;
-    if checker_verdict != example.expected {
-        return Err(format!(
-            "LAW-EXAMPLE-1 '{}': expected {:?}, checker returned {:?}",
-            example.name, example.expected, checker_verdict
-        ));
-    }
-
-    let mut host = make_host(&format!("law-example-{idx}"))?;
-    let key = FactKey::new(law.subject.as_str(), format!("law-ex-{idx}"));
-    let direct_links = setup_required_link_targets(
-        &mut host,
-        pack,
-        law.subject.as_str(),
-        &key,
-        u64::try_from(idx).unwrap_or(0).saturating_add(1),
-        &format!("LAW-EXAMPLE-1 '{}'", example.name),
-    )?;
-    let ledger_before = host.ledger_len();
-    let commit = CellCommit {
-        writes: vec![FactWrite {
-            key,
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: example.subject.clone(),
-            },
-        }],
-        links: direct_links,
-        ..CellCommit::empty()
-    };
-    let runtime_result = host.commit(commit);
-    match (&checker_verdict, runtime_result) {
-        (Verdict::Holds | Verdict::NotApplicable, Ok(_)) => {
-            if host.ledger_len() != ledger_before.saturating_add(1) {
-                return Err(format!(
-                    "LAW-EXAMPLE-1 '{}': accepted commit did not advance ledger",
-                    example.name
-                ));
-            }
-            with_cov(coverage, |cov| cov.hit_law_hold(law.id.clone()));
-            host.verify_ledger()
-        }
-        (Verdict::Violated, Err(CommitError::Law { .. })) => {
-            assert_zero_ledger_writes(&host, ledger_before, &example.name, "law violation")?;
-            with_cov(coverage, |cov| cov.hit_law_violation(law.id.clone()));
-            host.verify_ledger()
-        }
-        (Verdict::Excepted { .. }, Ok(_)) => {
-            with_cov(coverage, |cov| cov.hit_law_hold(law.id.clone()));
-            host.verify_ledger()
-        }
-        (Verdict::Excepted { .. }, Err(CommitError::Law { .. })) => {
-            assert_zero_ledger_writes(&host, ledger_before, &example.name, "excepted fail-closed")?;
-            host.verify_ledger()
-        }
-        (verdict, outcome) => Err(format!(
-            "LAW-EXAMPLE-1 '{}' parity mismatch: checker={verdict:?}, runtime={outcome:?}",
-            example.name
-        )),
-    }
 }
 
 pub(crate) fn assert_zero_ledger_writes<H: PackHost>(

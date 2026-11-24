@@ -104,7 +104,8 @@ pub mod transparency;
 mod write;
 
 pub use coverage_observer::{
-    CedarRuleKey, DomainCoverageRecorder, DomainCoverageSnapshot, ObservedSqliteCell, TransitionKey,
+    CedarRuleKey, DomainCoverageRecorder, DomainCoverageSnapshot, ImmutableRefusalKey,
+    ObservedSqliteCell, TransitionKey,
 };
 pub use error::CellError;
 

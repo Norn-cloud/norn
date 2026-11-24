@@ -4,7 +4,7 @@
 //!
 //! Exercises real `origin/main` registry packs (`ml`, `tracking`, `canon`,
 //! `time`, `org`) plus an Order-to-Cash `SoD` & immutable-terminal pack against
-//! file-backed [`ObservedSqliteCell`] with crash/reopen and `verify_ledger()`.
+//! file-backed [`ObservedSqliteCell`] with clean reopen and `verify_ledger()`.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -12,27 +12,33 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use norn_cell::{
-    CellError, DomainCoverageRecorder, Model, ObservedSqliteCell, SqliteCell, StoreOptions,
+    CellError, DomainCoverageRecorder, DomainCoverageSnapshot, Model, ObservedSqliteCell,
+    SqliteCell, StoreOptions,
 };
 use norn_ir::{ArtifactEnvelope, Decimal, RuntimeObject, RuntimeValue};
 use norn_kernel::cell_host::{FactKey, FactState, JsonObject};
-use norn_kernel::norn_checker::law_examples::Verdict;
+use norn_kernel::pack_mbt_support::LawExampleVerdict as Verdict;
 use norn_kernel::{
-    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactEvent, LinkKey,
-    LinkReadTarget, LinkState, LogicalTime, Observed, OwnedRowsCommitProof, Performed,
-    PredicateObject, PredicateQuery,
+    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DecisionRefusal, DueTimer,
+    FactEvent, LinkKey, LinkReadTarget, LinkState, LogicalTime, Observed, OwnedRowsCommitProof,
+    Performed, PredicateObject, PredicateQuery,
+};
+use norn_testkit::pack_mbt::coverage::{
+    DomainCoverage, DomainTransition, ImmutableTarget, PolicyRuleTarget,
 };
 use norn_testkit::pack_mbt::driver::run_pack_mbt;
 use norn_testkit::pack_mbt::dst::{PackDstConfig, run_pack_dst};
-use norn_testkit::pack_mbt::static_gaps::{GapSeverity, StructuralGap, analyze_static_gaps};
-use norn_testkit::pack_mbt::{AdmittedPack, LawExampleCase, PackHost, action_call_object_type};
+use norn_testkit::pack_mbt::static_gaps::{StructuralGap, analyze_static_gaps};
+use norn_testkit::pack_mbt::{
+    AdmittedPack, EvidenceLevel, LawExampleCase, PackHost, action_call_object_type,
+};
 use serde_json::json;
 use tempfile::TempDir;
 
 type BaseCell = SqliteCell<FactEvent, JsonObject, JsonObject>;
 
 /// File-backed [`ObservedSqliteCell`] implementing [`PackHost`] with real
-/// SQLite crash/reopen and `verify_ledger()` integrity verification.
+/// SQLite clean reopen and `verify_ledger()` integrity verification.
 struct SqlitePackHost {
     _dir: TempDir,
     db_path: PathBuf,
@@ -238,9 +244,8 @@ impl PackHost for SqlitePackHost {
             .map_err(|err| format!("verify_ledger failed: {err}"))
     }
 
-    fn crash_and_reopen(&mut self) -> Result<(), String> {
+    fn reopen(&mut self) -> Result<(), String> {
         let prev_now = self.logical_now();
-        // Drop the live SqliteCell handle cleanly (closing SQLite) and reopen from disk.
         self.cell = None;
         let mut reopened = BaseCell::open(
             &self.db_path,
@@ -249,7 +254,7 @@ impl PackHost for SqlitePackHost {
             self.scope.clone(),
             |cmd| cmd.payload.clone(),
         )
-        .map_err(|err| format!("reopen after crash failed: {err}"))?;
+        .map_err(|err| format!("clean reopen failed: {err}"))?;
         reopened.advance_to(prev_now);
         reopened
             .store()
@@ -258,6 +263,93 @@ impl PackHost for SqlitePackHost {
             .map_err(|err| format!("verify_ledger after reopen failed: {err}"))?;
         self.cell = Some(reopened.into_observed(Arc::clone(&self.recorder)));
         Ok(())
+    }
+
+    fn record_decision_refusal(&self, refusal: &DecisionRefusal<Self::Error>) {
+        self.recorder.record_decision_refusal(refusal);
+    }
+
+    fn read_observed_coverage(&self) -> Option<DomainCoverage> {
+        Some(snapshot_to_domain_coverage(&self.recorder.snapshot()))
+    }
+}
+
+fn snapshot_to_domain_coverage(snap: &DomainCoverageSnapshot) -> DomainCoverage {
+    DomainCoverage {
+        transitions: snap
+            .transitions
+            .iter()
+            .map(|(k, v)| {
+                (
+                    DomainTransition {
+                        object_type: k.object_type.clone(),
+                        lifecycle: k.lifecycle.clone(),
+                        transition: k.transition.clone(),
+                        from: k.from.clone(),
+                        to: k.to.clone(),
+                    },
+                    *v,
+                )
+            })
+            .collect(),
+        disallowed_transitions: snap
+            .disallowed_transitions
+            .iter()
+            .map(|(k, v)| {
+                (
+                    DomainTransition {
+                        object_type: k.object_type.clone(),
+                        lifecycle: k.lifecycle.clone(),
+                        transition: k.transition.clone(),
+                        from: k.from.clone(),
+                        to: k.to.clone(),
+                    },
+                    *v,
+                )
+            })
+            .collect(),
+        immutable_refusals: snap
+            .immutable_refusals
+            .iter()
+            .map(|(k, v)| {
+                (
+                    ImmutableTarget {
+                        object_type: k.object_type.clone(),
+                        lifecycle: k.lifecycle.clone(),
+                        state: k.state.clone(),
+                    },
+                    *v,
+                )
+            })
+            .collect(),
+        law_holds: snap.law_holds.clone(),
+        law_violations: snap.law_violations.clone(),
+        cedar_allows: snap
+            .cedar_allows
+            .iter()
+            .map(|(k, v)| {
+                (
+                    PolicyRuleTarget {
+                        policy_id: k.policy_id.clone(),
+                        rule_id: k.rule_id.clone(),
+                    },
+                    *v,
+                )
+            })
+            .collect(),
+        cedar_denies: snap
+            .cedar_denies
+            .iter()
+            .map(|(k, v)| {
+                (
+                    PolicyRuleTarget {
+                        policy_id: k.policy_id.clone(),
+                        rule_id: k.rule_id.clone(),
+                    },
+                    *v,
+                )
+            })
+            .collect(),
     }
 }
 
@@ -494,21 +586,31 @@ fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<()
 fn real_canon_pack_runs_static_gap_and_mbt_cleanly() -> Result<(), String> {
     let canon_pack = load_registry_pack("canon", &["canon"], true)?;
     let gaps = analyze_static_gaps(&canon_pack);
-    let has_canon_defect = gaps.defects().into_iter().any(|gap| match gap {
+    let has_canon_lifecycle_or_reversal_defect = gaps.defects().into_iter().any(|gap| match gap {
         StructuralGap::DeadEndNonTerminalState { object_type, .. }
         | StructuralGap::UnreachableState { object_type, .. }
-        | StructuralGap::OrphanField { object_type, .. }
         | StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
+        | StructuralGap::ImmutableFinancialUnverifiedReversal { object_type, .. }
         | StructuralGap::TransitionWithoutAction { object_type, .. } => {
             object_type.starts_with("canon.")
         }
-        StructuralGap::HighImpactActionMissingSod { action_id, .. } => {
-            action_id.starts_with("canon.")
+        StructuralGap::OrphanField { .. } | StructuralGap::HighImpactActionMissingSod { .. } => {
+            false
         }
     });
     assert!(
-        !has_canon_defect,
-        "canon.* entities should have no structural defects:\n{gaps}"
+        !has_canon_lifecycle_or_reversal_defect,
+        "canon.* entities should have no lifecycle or missing-reversal defects:\n{gaps}"
+    );
+    // `canon` declares entities with invariants and zero actions, so OrphanField
+    // must report invariant-referenced fields even when the writer set is empty.
+    assert!(
+        gaps.defects().iter().any(|gap| matches!(
+            gap,
+            StructuralGap::OrphanField { object_type, property, .. }
+                if object_type == "canon.Delivery" && property == "quantity"
+        )),
+        "expected OrphanField on action-less canon.Delivery.quantity:\n{gaps}"
     );
     // Static Gap Detector genuinely flags real core.analytics.Restatement gaps.
     assert!(
@@ -596,7 +698,7 @@ fn o2c_invoice_entity_and_law() -> Vec<serde_json::Value> {
                 "provenance": {"source": "authoring_sdk"},
                 "scope": {"root": {"kind": "entity", "id": "o2c.Invoice"}, "objectTypes": ["o2c.Invoice"]},
                 "subject": "o2c.Invoice",
-                "condition": "self.status != 'cancelled'",
+                "condition": "self.status == 'submitted' or self.status == 'approved' or self.status == 'posted'",
                 "modality": {"kind": "always"},
                 "response": {"kind": "predicate", "expression": "self.amount > 0"}
             }
@@ -667,6 +769,39 @@ fn o2c_actions_and_policy() -> Vec<serde_json::Value> {
                 "compensation": {"actionId": "o2c.invoice.reverse"}
             }
         }),
+    ]
+}
+
+fn o2c_reverse_and_policy() -> Vec<serde_json::Value> {
+    vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "o2c.invoice.reverse.action", "version": "1.0.0",
+            "kind": "action", "namespace": "o2c", "name": "Reverse invoice", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "actionId": "o2c.invoice.reverse",
+                "scopeRequired": ["orgId", "environmentId"],
+                "idempotent": true,
+                "ledgered": true,
+                "inputSchema": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {"invoice_id": {"type": "string"}},
+                    "required": ["invoice_id"]
+                },
+                "outputSchema": {"type": "object", "additionalProperties": false, "properties": {"invoice_id": {"type": "string"}}, "required": ["invoice_id"]},
+                "effectProgram": {
+                    "kind": "fire_transition",
+                    "objectIdField": "invoice_id",
+                    "objectKind": "o2c.Invoice",
+                    "entityArtifactId": "o2c.Invoice.entity",
+                    "entityArtifactVersion": "1.0.0",
+                    "lifecycle": "status",
+                    "transition": "cancel"
+                },
+                "writes": [{"entityKind": "o2c.Invoice", "change": "modified"}]
+            }
+        }),
         json!({
             "irVersion": "0.1", "artifactId": "o2c.access.policy", "version": "1.0.0",
             "kind": "policy", "namespace": "o2c", "name": "Invoice access & SoD", "lifecycle": "active",
@@ -694,34 +829,47 @@ fn o2c_actions_and_policy() -> Vec<serde_json::Value> {
 fn build_o2c_sod_pack() -> Result<AdmittedPack, String> {
     let mut raw_envelopes = o2c_invoice_entity_and_law();
     raw_envelopes.extend(o2c_actions_and_policy());
+    raw_envelopes.extend(o2c_reverse_and_policy());
     let envelopes: Vec<ArtifactEnvelope> = raw_envelopes
         .into_iter()
         .map(|val| serde_json::from_value(val).map_err(|err| format!("envelope: {err}")))
         .collect::<Result<Vec<_>, _>>()?;
     let pack = AdmittedPack::from_envelopes("o2c_sod", &envelopes)?.with_law_examples(vec![
         LawExampleCase {
-            name: "positive invoice holds".to_owned(),
+            name: "positive submitted invoice holds".to_owned(),
             law_id: "o2c.Invoice.positive_amount".to_owned(),
             subject: runtime_obj(&[
                 ("invoice_id", RuntimeValue::String("INV-1".to_owned())),
                 ("requester", RuntimeValue::String("alice".to_owned())),
                 ("amount", dec("250.00")?),
                 ("memo", RuntimeValue::String("Q4 services".to_owned())),
-                ("status", RuntimeValue::String("draft".to_owned())),
+                ("status", RuntimeValue::String("submitted".to_owned())),
             ]),
             expected: Verdict::Holds,
         },
         LawExampleCase {
-            name: "zero amount invoice violates".to_owned(),
+            name: "zero amount submitted invoice violates".to_owned(),
             law_id: "o2c.Invoice.positive_amount".to_owned(),
             subject: runtime_obj(&[
                 ("invoice_id", RuntimeValue::String("INV-2".to_owned())),
                 ("requester", RuntimeValue::String("alice".to_owned())),
                 ("amount", dec("0.00")?),
                 ("memo", RuntimeValue::String("invalid".to_owned())),
-                ("status", RuntimeValue::String("draft".to_owned())),
+                ("status", RuntimeValue::String("submitted".to_owned())),
             ]),
             expected: Verdict::Violated,
+        },
+        LawExampleCase {
+            name: "zero amount draft invoice is not applicable".to_owned(),
+            law_id: "o2c.Invoice.positive_amount".to_owned(),
+            subject: runtime_obj(&[
+                ("invoice_id", RuntimeValue::String("INV-3".to_owned())),
+                ("requester", RuntimeValue::String("alice".to_owned())),
+                ("amount", dec("0.00")?),
+                ("memo", RuntimeValue::String("draft".to_owned())),
+                ("status", RuntimeValue::String("draft".to_owned())),
+            ]),
+            expected: Verdict::NotApplicable,
         },
     ]);
     Ok(pack)
@@ -740,11 +888,15 @@ fn o2c_sod_pack_achieves_100_percent_domain_coverage_with_crash_reopen_dst() -> 
     mbt.coverage.check_immutable_refusals_covered()?;
     mbt.coverage.check_cedar_covered()?;
     mbt.coverage.check_laws_covered()?;
+    assert_eq!(mbt.uncovered_guard_refusals, Vec::<String>::new());
+    assert!(mbt.evidence.contains(&(
+        "lifecycle_walks_and_refusals",
+        EvidenceLevel::ExhaustiveFinite
+    )));
     assert!(mbt.immutable_refusals_checked >= 1);
     assert!(mbt.cedar_checks_run >= 4);
-    assert_eq!(mbt.law_examples_checked, 2);
+    assert_eq!(mbt.law_examples_checked, 3);
 
-    // Seeded multi-entity DST with virtual clock steps and real SQLite crash/reopen + verify_ledger().
     let dst = run_pack_dst(
         &pack,
         PackDstConfig {
@@ -757,12 +909,19 @@ fn o2c_sod_pack_achieves_100_percent_domain_coverage_with_crash_reopen_dst() -> 
     )?;
     assert_eq!(dst.cases_run, 24);
     assert!(
-        dst.crashes_recovered >= 1,
-        "expected at least one SQLite crash/reopen cycle"
+        dst.reopens_verified >= 1,
+        "expected at least one SQLite clean-reopen + verify_ledger cycle"
     );
 
-    // Verify Static Gap Detector confirms approve action DOES have SoD (not flagged).
     let gaps = analyze_static_gaps(&pack);
+    assert!(
+        !gaps.defects().iter().any(|g| matches!(
+            g,
+            StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
+                if object_type == "o2c.Invoice"
+        )),
+        "o2c.Invoice has a resolved compensating action:\n{gaps}"
+    );
     assert!(
         !gaps.questions().iter().any(|g| matches!(
             g,
@@ -771,116 +930,6 @@ fn o2c_sod_pack_achieves_100_percent_domain_coverage_with_crash_reopen_dst() -> 
         )),
         "o2c.invoice.approve already has SoD policy:\n{gaps}"
     );
-    Ok(())
-}
-
-fn build_gap_pack() -> Result<AdmittedPack, String> {
-    let raw_envelopes = vec![
-        json!({
-            "irVersion": "0.1", "artifactId": "gap.JournalEntry.entity", "version": "1.0.0",
-            "kind": "entity", "namespace": "gap", "name": "JournalEntry", "lifecycle": "active",
-            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
-            "payload": {
-                "entityVersion": "2.0",
-                "objectType": {
-                    "name": "gap.JournalEntry",
-                    "immutable": true,
-                    "properties": [
-                        {"id": "entry_id", "type": {"kind": "text"}},
-                        {"id": "orphan_flag", "type": {"kind": "boolean"}},
-                        {
-                            "id": "status",
-                            "default": "open",
-                            "type": {
-                                "kind": "enum",
-                                "values": [
-                                    {"value": "open"},
-                                    {"value": "stuck"},
-                                    {"value": "ghost"},
-                                    {"value": "closed"}
-                                ]
-                            }
-                        }
-                    ],
-                    "lifecycles": [{
-                        "property": "status",
-                        "initial": ["open"],
-                        "terminal": ["closed"],
-                        "immutable": ["closed"],
-                        "transitions": [
-                            {"id": "stall", "from": ["open"], "to": "stuck", "guards": ["self.orphan_flag"]},
-                            {"id": "close", "from": ["open"], "to": "closed"}
-                        ]
-                    }]
-                }
-            }
-        }),
-        json!({
-            "irVersion": "0.1", "artifactId": "gap.journal.post.action", "version": "1.0.0",
-            "kind": "action", "namespace": "gap", "name": "Post journal", "lifecycle": "active",
-            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
-            "payload": {
-                "actionId": "gap.journal.post",
-                "scopeRequired": ["orgId"],
-                "idempotent": true,
-                "ledgered": true,
-                "inputSchema": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {"entry_id": {"type": "string"}},
-                    "required": ["entry_id"]
-                },
-                "outputSchema": {"type": "object", "additionalProperties": false, "properties": {"entry_id": {"type": "string"}}, "required": ["entry_id"]},
-                "effectProgram": {
-                    "kind": "upsert_input_object",
-                    "objectIdField": "entry_id",
-                    "objectKind": "gap.JournalEntry",
-                    "entityArtifactId": "gap.JournalEntry.entity",
-                    "entityArtifactVersion": "1.0.0",
-                    "writeMode": {"kind": "create_only"}
-                },
-                "writes": [{"entityKind": "gap.JournalEntry", "change": "created"}]
-            }
-        }),
-    ];
-    let envelopes: Vec<ArtifactEnvelope> = raw_envelopes
-        .into_iter()
-        .map(|val| serde_json::from_value(val).map_err(|err| format!("envelope: {err}")))
-        .collect::<Result<Vec<_>, _>>()?;
-    AdmittedPack::from_envelopes("gap_pack", &envelopes)
-}
-
-#[test]
-fn static_gap_detector_catches_every_structural_gap_class() -> Result<(), String> {
-    let pack = build_gap_pack()?;
-    let report = analyze_static_gaps(&pack);
-
-    assert!(report.gaps.iter().any(|g| matches!(
-        g,
-        StructuralGap::DeadEndNonTerminalState { state, .. } if state == "stuck"
-    )));
-    assert!(report.gaps.iter().any(|g| matches!(
-        g,
-        StructuralGap::UnreachableState { state, .. } if state == "ghost"
-    )));
-    assert!(report.gaps.iter().any(|g| matches!(
-        g,
-        StructuralGap::OrphanField { property, .. } if property == "orphan_flag"
-    )));
-    assert!(report.gaps.iter().any(|g| matches!(
-        g,
-        StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
-            if object_type == "gap.JournalEntry"
-    )));
-    assert!(report.gaps.iter().any(|g| matches!(
-        g,
-        StructuralGap::HighImpactActionMissingSod { action_id, .. }
-            if action_id == "gap.journal.post" && g.severity() == GapSeverity::Question
-    )));
-    assert!(report.gaps.iter().any(|g| matches!(
-        g,
-        StructuralGap::TransitionWithoutAction { transition_id, .. } if transition_id == "close"
-    )));
     Ok(())
 }
 
@@ -895,7 +944,7 @@ fn law_example_parity_catches_wrong_expectation() -> Result<(), String> {
             ("requester", RuntimeValue::String("alice".to_owned())),
             ("amount", dec("0.00")?),
             ("memo", RuntimeValue::String("bad".to_owned())),
-            ("status", RuntimeValue::String("draft".to_owned())),
+            ("status", RuntimeValue::String("submitted".to_owned())),
         ]),
         expected: Verdict::Holds,
     }];
