@@ -243,6 +243,10 @@ function IslandExpansion({
                   <Badge variant="destructive" className="shrink-0 tabular-nums">
                     {node.ruleHoldings}{node.ruleHoldingsApproximate ? "+" : ""} {node.ruleHoldings === 1 ? "holding" : "holdings"}
                   </Badge>
+                ) : node.sourceErrors > 0 ? (
+                  <Badge variant="destructive" className="shrink-0 tabular-nums">
+                    {node.sourceErrors} sync
+                  </Badge>
                 ) : (
                   <span
                     aria-hidden

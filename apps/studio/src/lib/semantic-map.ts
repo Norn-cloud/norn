@@ -46,6 +46,8 @@ export interface SemanticNode {
   /** Sum of per-rule holding counts reported for this type (one record held by two rules appears in both rules). */
   readonly ruleHoldings: number
   readonly ruleHoldingsApproximate: boolean
+  /** Count of feeding systems (primary or secondary) on this type reporting a live source sync error. */
+  readonly sourceErrors: number
   readonly attention: MapAttentionTone
   readonly concept: Concept
 }
@@ -80,6 +82,8 @@ export interface SemanticIsland {
   readonly ruleHoldings: number
   readonly ruleHoldingsApproximate: boolean
   readonly sourceErrors: number
+  /** Names and mapping ids of feeding systems on this island currently reporting a live source sync error. */
+  readonly errorSystems: readonly string[]
   readonly attention: MapAttentionTone
 }
 
@@ -288,6 +292,8 @@ export function buildSemanticMap(
   const nodesById = new Map<string, SemanticNode>()
   const islands: SemanticIsland[] = []
 
+  const lawIdentity = (law: Law) => (law.artifactId ? `${law.artifactId}:${law.id}` : law.id)
+
   for (const bucket of [...islandBuckets.values()].sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === "system" ? -1 : b.kind === "system" ? 1 : a.kind === "namespace" ? -1 : 1
     return a.title.localeCompare(b.title) || a.id.localeCompare(b.id)
@@ -296,11 +302,22 @@ export function buildSemanticMap(
       const markings = [...new Set(concept.fields.flatMap((field) => field.markings ?? []))]
       const feeds = [...new Set(concept.feeds.map((feed) => feed.system))]
       const held = holdingsByType.get(concept.name) ?? { count: 0, approximate: false }
+      const nodeSystemIds = new Set<string>()
+      for (const feed of concept.feeds) {
+        const matched = resolveSystem(feed.mappingId, feed.system)
+        if (matched) nodeSystemIds.add(matched.id)
+      }
+      let nodeSourceErrors = 0
+      for (const sysId of nodeSystemIds) {
+        nodeSourceErrors += sourceErrorsBySystemId.get(sysId) ?? 0
+      }
+      // Use `inboxBounded` (both held-back and source-error bounds) so a node never paints green
+      // when any section of the inbox is approximate or truncated.
       const nodeAttention: MapAttentionTone = !liveInbox
         ? "unknown"
-        : held.count > 0
+        : (held.count > 0 || nodeSourceErrors > 0)
           ? "critical"
-          : holdingsBounded
+          : inboxBounded
             ? "unknown"
             : "none"
       const node: SemanticNode = {
@@ -312,13 +329,14 @@ export function buildSemanticMap(
         summary: concept.summary,
         fieldCount: concept.fields.length,
         relationshipCount: concept.relationships.length,
-        lawCount: concept.laws.length,
+        lawCount: new Set(concept.laws.map(lawIdentity)).size,
         lifecycleCount: concept.lifecycles.length,
         markingCount: markings.length,
         markings,
         feeds,
         ruleHoldings: held.count,
         ruleHoldingsApproximate: held.approximate,
+        sourceErrors: nodeSourceErrors,
         attention: nodeAttention,
         concept,
       }
@@ -326,23 +344,29 @@ export function buildSemanticMap(
       return node
     })
 
-    const lawCount = nodes.reduce((sum, node) => sum + node.lawCount, 0)
+    const lawCount = new Set(nodes.flatMap((node) => node.concept.laws.map(lawIdentity))).size
     const markingCount = new Set(nodes.flatMap((node) => node.markings)).size
     const ruleHoldings = nodes.reduce((sum, node) => sum + node.ruleHoldings, 0)
     const ruleHoldingsApproximate = nodes.some((node) => node.ruleHoldingsApproximate)
     // Count sync errors from the island's primary system AND any secondary feeding systems on its concepts
     // (deduplicated by system id so a failed secondary feed never disappears from Attention).
-    const islandSystemIds = new Set<string>()
-    if (bucket.system) islandSystemIds.add(bucket.system.id)
+    const islandSystems = new Map<string, SourceSystem>()
+    if (bucket.system) islandSystems.set(bucket.system.id, bucket.system)
     for (const concept of bucket.concepts) {
       for (const feed of concept.feeds) {
         const matched = resolveSystem(feed.mappingId, feed.system)
-        if (matched) islandSystemIds.add(matched.id)
+        if (matched) islandSystems.set(matched.id, matched)
       }
     }
     let sourceErrors = 0
-    for (const sysId of islandSystemIds) {
-      sourceErrors += sourceErrorsBySystemId.get(sysId) ?? 0
+    const errorSystems = new Set<string>()
+    for (const [sysId, sys] of islandSystems) {
+      const count = sourceErrorsBySystemId.get(sysId) ?? 0
+      if (count > 0) {
+        sourceErrors += count
+        errorSystems.add(sys.name)
+        errorSystems.add(sys.id)
+      }
     }
     const islandAttention: MapAttentionTone = !liveInbox
       ? "unknown"
@@ -369,6 +393,7 @@ export function buildSemanticMap(
       ruleHoldings,
       ruleHoldingsApproximate,
       sourceErrors,
+      errorSystems: [...errorSystems],
       attention: islandAttention,
     })
   }
@@ -423,6 +448,10 @@ export function buildSemanticMap(
       }
     : null
 
+  const distinctLaws = new Set(
+    [...nodesById.values()].flatMap((node) => node.concept.laws.map(lawIdentity)),
+  ).size
+
   return {
     attentionStatus: attention.kind,
     islands,
@@ -434,7 +463,7 @@ export function buildSemanticMap(
       objectTypes: nodesById.size,
       bridges: bridges.length,
       links: totalLinks,
-      laws: islands.reduce((sum, island) => sum + island.lawCount, 0),
+      laws: distinctLaws,
       alerts,
     },
   }
@@ -453,7 +482,9 @@ export function nodeMatchesLens(node: SemanticNode, lens: SemanticLens): boolean
 /** Whether an island has any matching node OR an island-level sync error under the active lens. */
 export function islandMatchesLens(island: SemanticIsland, lens: SemanticLens, query: string): boolean {
   const q = query.trim().toLowerCase()
-  const queryMatchesIsland = q === "" || island.title.toLowerCase().includes(q)
+  const queryMatchesIsland = q === ""
+    || island.title.toLowerCase().includes(q)
+    || island.errorSystems.some((name) => name.toLowerCase().includes(q))
   if (lens === "attention" && island.sourceErrors > 0 && queryMatchesIsland) return true
   return island.nodes.some((node) => nodeMatchesLens(node, lens) && nodeMatchesQuery(node, query))
 }

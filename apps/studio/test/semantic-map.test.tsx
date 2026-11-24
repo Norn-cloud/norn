@@ -79,6 +79,7 @@ function sampleCatalog(): Catalog {
     laws: [
       {
         id: "law.item_positive",
+        artifactId: "law:item_positive",
         title: "Item quantity must stay positive",
         subject: "app.Item",
         rationale: "Negative quantities cannot be committed.",
@@ -97,6 +98,20 @@ function sampleCatalog(): Catalog {
     name: "app.Batch",
     title: "Batch",
     fields: [{ id: "batch_id", type: "text", optional: false, decimal: undefined, scalar: { kind: "text" } }],
+    // Shares the same admitted law artifact (e.g. inherited from an interface) to verify deduplicated KPI counts.
+    laws: [
+      {
+        id: "law.item_positive",
+        artifactId: "law:item_positive",
+        title: "Item quantity must stay positive",
+        subject: "app.Item",
+        rationale: "Negative quantities cannot be committed.",
+        severity: "error",
+        modality: "always",
+        response: "invariant",
+        owner: "ops",
+      },
+    ],
     feeds: [{ system: "Shared Connector", mappingId: "mapping.alpha_primary", dataset: "alpha_items", facts: new Map(), ignored: [] }],
   })
   const site = concept({
@@ -104,7 +119,10 @@ function sampleCatalog(): Catalog {
     title: "Site",
     summary: "Physical location node",
     fields: [{ id: "label", type: "text", optional: false, decimal: undefined, scalar: { kind: "text" } }],
-    feeds: [{ system: "Shared Connector", mappingId: "mapping.beta_secondary", dataset: "beta_sites", facts: new Map(), ignored: [] }],
+    feeds: [
+      { system: "Shared Connector", mappingId: "mapping.beta_secondary", dataset: "beta_sites", facts: new Map(), ignored: [] },
+      { system: "Gamma Feed", mappingId: "mapping.gamma_secondary", dataset: "gamma_sites", facts: new Map(), ignored: [] },
+    ],
   })
   const unmapped = concept({
     name: "core.Note",
@@ -146,12 +164,14 @@ test("buildSemanticMap preserves distinct same-named mappings by mappingId, bund
   })
 })
 
-test("buildSemanticMap reflects server rule-holding sums, avoids false green on bounded inbox slices, surfaces secondary feed sync errors, and excludes nested empty mappings", () => {
-  const inbox = {
+test("buildSemanticMap reflects server rule-holding sums, avoids false green on bounded inbox slices, surfaces secondary feed sync errors, deduplicates shared laws, and excludes nested empty mappings", () => {
+  // Strictly typed against `Inbox` (`Schemas["NornInbox"]`) — no cast through `unknown`.
+  const inbox: Inbox = {
     scanLimit: 500,
     sections: [
-      { kind: "held_back", count: 3, approximate: true },
-      { kind: "source_error", count: 2, approximate: false },
+      { kind: "held_back", count: 3, shown: 2, approximate: true },
+      { kind: "decision", count: 0, shown: 0, approximate: false },
+      { kind: "source_error", count: 2, shown: 2, approximate: false },
     ],
     items: [
       {
@@ -161,8 +181,11 @@ test("buildSemanticMap reflects server rule-holding sums, avoids false green on 
         approximate: false,
         title: "Rule A",
         target: "/objects/app.Item?population=held_back",
-        ruleRef: { kind: "law", id: "law.a" },
-        records: [],
+        ruleRef: { kind: "law", artifactId: "law:item_positive", lawId: "law.a", version: "sha256:aaa" },
+        records: [
+          { id: "item-1", objectType: "app.Item", target: "/objects/app.Item/item-1" },
+          { id: "item-2", objectType: "app.Item", target: "/objects/app.Item/item-2" },
+        ],
       },
       {
         kind: "held_back",
@@ -171,8 +194,10 @@ test("buildSemanticMap reflects server rule-holding sums, avoids false green on 
         approximate: false,
         title: "Rule B",
         target: "/objects/app.Item?population=held_back",
-        ruleRef: { kind: "law", id: "law.b" },
-        records: [],
+        ruleRef: { kind: "law", artifactId: "law:item_code", lawId: "law.b", version: "sha256:bbb" },
+        records: [
+          { id: "item-1", objectType: "app.Item", target: "/objects/app.Item/item-1" },
+        ],
       },
       {
         kind: "source_error",
@@ -187,9 +212,11 @@ test("buildSemanticMap reflects server rule-holding sums, avoids false green on 
         values: { mapping_id: "mapping.gamma_secondary", system: "Gamma Feed", status: "failed" },
       },
     ],
-  } as unknown as Inbox
+  }
 
   const projection = buildSemanticMap(sampleCatalog(), { kind: "live", inbox })
+  // One admitted law governing both app.Item and app.Batch counts once in both island and workspace totals.
+  expect(projection.totals.laws).toBe(1)
   // Workspace alert summary comes from server sections (rule holdings, explicitly flagged as bounded).
   expect(projection.totals.alerts).toEqual({
     ruleHoldings: 3,
@@ -204,18 +231,49 @@ test("buildSemanticMap reflects server rule-holding sums, avoids false green on 
   const beta = projection.islandsById.get("system:mapping.beta_secondary")!
   const core = projection.islandsById.get("core:model")!
 
+  expect(alpha.lawCount).toBe(1)
   expect(alpha.ruleHoldings).toBe(3)
   // Secondary feed mapping.gamma_secondary feeds app.Item inside alpha's island, so its sync error surfaces on alpha.
   expect(alpha.sourceErrors).toBe(1)
   expect(alpha.attention).toBe("critical")
-  expect(beta.sourceErrors).toBe(1)
+  // Beta has both primary beta_secondary and secondary gamma_secondary failing, and zero rule holdings.
+  expect(beta.ruleHoldings).toBe(0)
+  expect(beta.sourceErrors).toBe(2)
   expect(beta.attention).toBe("critical")
-  // Bounded inbox must NEVER mark unseen islands green ("none"); core stays "unknown".
+  // Bounded inbox must NEVER mark unseen islands or unseen nodes green ("none"); core & its node stay "unknown".
   expect(core.attention).toBe("unknown")
+  expect(projection.nodesById.get("core.Note")!.attention).toBe("unknown")
 
-  // Attention lens must NOT dim beta even though beta's only alert is a source sync error.
+  // Attention lens must NOT dim beta when searching by primary title OR by failed secondary feed ("Gamma Feed").
   expect(islandMatchesLens(beta, "attention", "")).toBe(true)
+  expect(islandMatchesLens(beta, "attention", "Gamma Feed")).toBe(true)
   expect(islandMatchesLens(core, "attention", "")).toBe(false)
+
+  // Source-only bounded inbox (even with scanLimit absent) must keep unseen nodes "unknown", never green ("none").
+  const sourceBoundedInbox: Inbox = {
+    scanLimit: undefined as unknown as number,
+    sections: [
+      { kind: "held_back", count: 0, shown: 0, approximate: false },
+      { kind: "decision", count: 0, shown: 0, approximate: false },
+      { kind: "source_error", count: 2, shown: 1, approximate: true },
+    ],
+    items: [
+      {
+        kind: "source_error",
+        id: "conn_gamma_only",
+        target: "/connections",
+        values: { mapping_id: "mapping.gamma_secondary", system: "Gamma Feed", status: "failed" },
+      },
+    ],
+  }
+  const sourceBoundedMap = buildSemanticMap(sampleCatalog(), { kind: "live", inbox: sourceBoundedInbox })
+  expect(sourceBoundedMap.islandsById.get("core:model")!.attention).toBe("unknown")
+  expect(sourceBoundedMap.nodesById.get("core.Note")!.attention).toBe("unknown")
+  // Beta has zero rule holdings and only secondary feed Gamma Feed failing: searching "Gamma Feed" keeps beta lit under Attention.
+  const betaSecondaryOnly = sourceBoundedMap.islandsById.get("system:mapping.beta_secondary")!
+  expect(betaSecondaryOnly.ruleHoldings).toBe(0)
+  expect(betaSecondaryOnly.sourceErrors).toBe(1)
+  expect(islandMatchesLens(betaSecondaryOnly, "attention", "Gamma Feed")).toBe(true)
 
   const item = projection.nodesById.get("app.Item")!
   expect(nodeMatchesLens(item, "governance")).toBe(true)

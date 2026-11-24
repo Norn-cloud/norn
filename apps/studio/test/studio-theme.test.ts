@@ -138,6 +138,17 @@ test("parseStudioTheme enforces WCAG AA contrast across text, hover buttons, pop
   })
   expect(whiteCanvasDark.ok).toBe(false)
   if (!whiteCanvasDark.ok) expect(whiteCanvasDark.issues.some((i) => i.path.includes("foreground"))).toBe(true)
+
+  // Forced dark theme with white popover & dark popover-foreground still leaves foreground/muted-foreground unreadable inside popovers/dialogs.
+  const whitePopoverDark = parseStudioTheme({
+    version: 1,
+    name: "White Popover Dark",
+    baseSkin: "polar",
+    appearance: "dark",
+    colors: { popover: "#ffffff", "popover-foreground": "#111113" },
+  })
+  expect(whitePopoverDark.ok).toBe(false)
+  if (!whitePopoverDark.ok) expect(whitePopoverDark.issues.some((i) => i.path.includes("on popover"))).toBe(true)
 })
 
 test("forced appearance and omitted baseSkin use the exact same scheme and skin for validation and rendering", () => {
