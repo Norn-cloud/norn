@@ -47,6 +47,7 @@ pub mod export;
 mod export_journal;
 pub mod flow_run;
 pub mod fork;
+pub mod function_receipt;
 mod history;
 mod history_selection;
 pub mod host;

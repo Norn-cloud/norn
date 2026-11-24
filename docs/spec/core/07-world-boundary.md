@@ -436,7 +436,13 @@ only by its content digest (`FunctionReceipt::content_digest` under
 `action.receipt_body_forbidden` or `action.receipt_reference_invalid`. The cell
 host resolves the digest within its scope, world and the declared manifest, and
 re-runs RECEIPT-AUTH-BIND-1 against the persisted reconciliation acceptance. A
-host without receipt support refuses `action.receipt_effect_unsupported`.
+host without receipt support refuses `action.receipt_effect_unsupported`. The
+durable host (`SqliteCell`, and every host serving actions over it) resolves
+only evidence retained by RECEIPT-STORE-1 (Core 04) and re-reconciles it at its
+current clock and state: a re-issued, cancelled or expired command, or a moved
+relevant-state pin, refuses `action.receipt_not_accepted`; a consumed delivery
+refuses `action.receipt_replayed`. The command state's version joins the
+reconciliation pins as a compare-and-swap read.
 
 The kernel then checks the pins it can see. The receipt's manifest equals the
 declaration's. Its `run.id` equals the action's target object (RUN-BIND-1), and
@@ -468,7 +474,13 @@ and the consumption as one ledger commit and replays an exact retry;
 with no commit; **RECEIPT-CONSUME-RUN** refuses a receipt of another run or
 generation with the delivery still pending; **RECEIPT-CONSUME-ATOMIC** shows no
 transition without consumption and no consumption without transition
-(`crates/norn-kernel/tests/receipt_effect.rs`).
+(`crates/norn-kernel/tests/receipt_effect.rs`). On the durable host,
+**RECEIPT-CONSUME-DURABLE** covers retained intake, atomic consumption across a
+crash and reopen, exact-retry replay, foreign scope or world, wrong manifest,
+invocation, run or recorded result, stale and expired evidence, one winner of
+concurrent consumers, laws and caller authority still deciding publication, and
+a host without receipt storage failing closed
+(`crates/norn-cell/tests/receipt_consume.rs`).
 
 ## Observed canonical relation claims (#823)
 

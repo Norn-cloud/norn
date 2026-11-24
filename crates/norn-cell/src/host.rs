@@ -164,6 +164,11 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         }
     }
 
+    /// The tenant scope this cell is bound to.
+    pub(crate) fn bound_scope(&self) -> &str {
+        &self.scope
+    }
+
     /// The store, for in-crate captures the cell makes itself
     /// (MAP-REPROCESS-1).
     pub(crate) const fn store_mut(&mut self) -> &mut CellStore<S> {
@@ -2081,6 +2086,20 @@ where
         };
         reader.refuse_disputed_subject(key)?;
         Ok(Some(state))
+    }
+
+    /// RECEIPT-CONSUME-1: retained Function evidence, re-reconciled under
+    /// this cell's scope, `main` and current clock ([`crate::function_receipt`]).
+    fn resolve_accepted_receipt(
+        &self,
+        reference: &norn_kernel::receipt_binding::ReceiptReference,
+        manifest: &norn_ir::function::Digest,
+    ) -> Result<
+        Option<norn_kernel::receipt_binding::ReceiptBinding<JsonObject>>,
+        norn_kernel::receipt_binding::ReceiptBindingError<CellError>,
+    > {
+        crate::function_receipt::resolve(&self.store, &self.scope, self.now, reference, manifest)
+            .map(Some)
     }
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {

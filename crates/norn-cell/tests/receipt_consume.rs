@@ -1,8 +1,12 @@
-//! RECEIPT-CONSUME-1 on the durable host: a receipt's delivery is consumed in
-//! the transition's own SQLite commit. A crash before that commit leaves the
-//! delivery pending and the run waiting; after it, a reopened cell holds the
-//! transition and refuses a second consumption. The in-memory host's tests
-//! live in `norn-kernel/tests/receipt_effect.rs`.
+//! RECEIPT-STORE-1 and RECEIPT-CONSUME-1 on the durable host. A carrier
+//! delivery confirmation runs as a `norn.function/v1` command; its recorded
+//! receipt is retained only through authenticated reconciliation
+//! (`SqliteCell::retain_function_receipt`), and `SqliteCell` itself resolves
+//! it for an action that names the receipt's digest. The delivery is
+//! consumed in the transition's own SQLite commit: a crash before that
+//! commit leaves the delivery pending and the run waiting; after it, a
+//! reopened cell holds the transition and refuses a second consumption. The
+//! in-memory host's tests live in `norn-kernel/tests/receipt_effect.rs`.
 #![cfg(feature = "native")]
 #![allow(
     clippy::expect_used,
@@ -10,83 +14,103 @@
     clippy::panic,
     clippy::indexing_slicing,
     missing_docs,
-    reason = "durable parity assertions"
+    reason = "durable receipt scenarios"
 )]
 
 mod common;
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use norn_cell::function_receipt::{
+    FUNCTION_COMMAND_TYPE, FUNCTION_PAYLOAD_TYPE, ReceiptIntakeError,
+};
 use norn_cell::{CellError, Model, SqliteCell, StoreOptions};
 use norn_ir::function::{
-    CacheOrigin, Digest, ExecutionProvenance, FunctionOutcome, FunctionReceipt, ResourceUse,
-    RunRef, SuccessOutcome,
+    CacheOrigin, Digest, ExecutionProvenance, FunctionInvocation, FunctionOutcome, FunctionReceipt,
+    ResourceUse, SuccessOutcome,
 };
 use norn_ir::{ActionRoot, ObjectTypeDef, RuntimeValue};
 use norn_kernel::cell_host::{JsonObject, JsonValue};
-use norn_kernel::receipt_binding::{
-    AcceptedReceiptStore, ReceiptBinding, ReceiptBindingError, ReceiptReference, ReceiptResolution,
-    bind_receipt,
+use norn_kernel::receipt_binding::{ReceiptBinding, ReceiptBindingError, ReceiptReference};
+use norn_kernel::result_reconciliation::{
+    CommandState, Completion, DispatchedCommand, InvalidReceipt, ReceiptValidator, RefusalReason,
+    ResultAuthorizer, ResultAuthzRequest, ResultChecks, ResultDenial,
 };
-use norn_kernel::result_reconciliation::{Acceptance, AcceptedResult, CommandState, ResultRecord};
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome, CellCommit,
-    CellHost, Command, CommandId, CommitError, CommitReceipt, Consumed, DecisionTurn, DueTimer,
-    Effect, FactEvent, FactKey, FactMutation, FactState, FactVersion, FactWrite, FreshnessPolicy,
-    Generation, IdempotencyKey, LinkKey, LinkState, LogicalTime, Observed, Performed, TypeCatalog,
-    World, commit_action,
+    CellHost, Command, CommitError, CommitReceipt, DecisionTurn, DueTimer, Effect, FactEvent,
+    FactKey, FactMutation, FactState, FactVersion, FactWrite, IdempotencyKey, LinkKey, LinkState,
+    LogicalTime, Observed, Performed, TypeCatalog, World, commit_action,
 };
 use serde_json::json;
 
-const RUN: &str = "flow.DecisionRun";
+const RUN: &str = "flow.DeliveryCheck";
+const SHIPMENT: &str = "flow.Shipment";
 const SCOPE: &str = "org_demo/dev";
+const OTHER_SCOPE: &str = "org_other/dev";
+const EXECUTOR: &str = "pool.carrier-confirmations";
+const DEADLINE: u64 = 1_000_000;
+const PAST_DEADLINE: u64 = 1_000_001;
 
 type Sqlite = SqliteCell<FactEvent, JsonObject, JsonObject>;
 
-fn manifest() -> Digest {
-    Digest(format!("sha256:{}", "d".repeat(64)))
+fn sha(fill: char) -> Digest {
+    Digest(format!("sha256:{}", fill.to_string().repeat(64)))
 }
 
+fn manifest() -> Digest {
+    sha('d')
+}
+
+fn text(id: &str, nullable: bool) -> serde_json::Value {
+    if nullable {
+        json!({"id": id, "type": {"kind": "text"}, "constraints": {"nullable": true}})
+    } else {
+        json!({"id": id, "type": {"kind": "text"}})
+    }
+}
+
+/// The confirmation run, under a governing law: a held delivery is never
+/// published.
 fn run_types() -> Vec<ObjectTypeDef> {
     vec![
         serde_json::from_value(json!({
             "name": RUN,
             "identity": [{ "name": "primary", "properties": ["run_id"] }],
             "properties": [
-                { "id": "run_id", "type": { "kind": "text" } },
+                text("run_id", false),
                 { "id": "status", "type": { "kind": "enum", "values": [
-                    { "value": "started" }, { "value": "awaiting_perform_ask" }, { "value": "decided" }
+                    { "value": "started" }, { "value": "awaiting_perform_confirm" },
+                    { "value": "confirmed" }
                 ] }, "default": "started" },
-                { "id": "choice", "type": { "kind": "text" }, "constraints": { "nullable": true } },
-                { "id": "receipt", "type": { "kind": "text" }, "constraints": { "nullable": true } }
+                text("outcome", true),
+                text("receipt", true)
             ],
-            "lifecycles": [{ "property": "status", "initial": ["started"], "terminal": ["decided"],
+            "lifecycles": [{ "property": "status", "initial": ["started"], "terminal": ["confirmed"],
                 "transitions": [
-                    { "id": "ask", "from": ["started"], "to": "awaiting_perform_ask" },
-                    { "id": "decide", "from": ["awaiting_perform_ask"], "to": "decided" }
-                ] }]
+                    { "id": "ask", "from": ["started"], "to": "awaiting_perform_confirm" },
+                    { "id": "confirm", "from": ["awaiting_perform_confirm"], "to": "confirmed" }
+                ] }],
+            "invariants": [{
+                "id": "never_publish_held",
+                "expression": "(self.outcome ?? '') != 'held'",
+                "message": "a held delivery is never published"
+            }]
         }))
         .unwrap(),
     ]
 }
 
-/// The run type and the kernel's action-call record type, which every
-/// durable action commit writes (as `tests/synchronous_action.rs` declares it).
+/// The run type, the shipment its result is pinned to, the Function command
+/// state, and the kernel's action-call record type, which every durable
+/// action commit writes.
 fn definitions() -> Vec<ObjectTypeDef> {
-    let text = |nullable: bool| {
-        move |id: &&str| {
-            if nullable {
-                json!({"id": id, "type": {"kind": "text"}, "constraints": {"nullable": true}})
-            } else {
-                json!({"id": id, "type": {"kind": "text"}})
-            }
-        }
-    };
     let mut fields: Vec<serde_json::Value> =
         ["actionId", "actor", "turn", "transition", "from", "to"]
             .iter()
-            .map(text(false))
+            .map(|id| text(id, false))
             .collect();
     fields.extend(
         [
@@ -96,7 +120,7 @@ fn definitions() -> Vec<ObjectTypeDef> {
             "ruleBinding",
         ]
         .iter()
-        .map(text(true)),
+        .map(|id| text(id, true)),
     );
     fields.extend(
         [
@@ -113,19 +137,22 @@ fn definitions() -> Vec<ObjectTypeDef> {
         ),
     );
     let mut definitions = run_types();
-    definitions.push(
-        serde_json::from_value(
+    definitions.extend(
+        [
+            json!({"name": SHIPMENT, "properties": [text("note", true)]}),
+            json!({"name": FUNCTION_COMMAND_TYPE, "properties": [{"id": "state", "type": {"kind": "json-ext"}}]}),
             json!({"name": norn_kernel::ACTION_CALL_TYPE, "properties": fields}),
-        )
-        .unwrap(),
+        ]
+        .into_iter()
+        .map(|definition| serde_json::from_value::<ObjectTypeDef>(definition).unwrap()),
     );
     definitions
 }
 
-fn decide_action() -> ActionRoot {
+fn confirm_action(manifest: &Digest) -> ActionRoot {
     serde_json::from_value(json!({
-        "actionId": "flow.decision_run.decide",
-        "title": "Decide",
+        "actionId": "flow.delivery_check.confirm",
+        "title": "Confirm delivery",
         "scopeRequired": ["orgId", "environmentId"],
         "idempotent": false,
         "ledgered": true,
@@ -136,11 +163,11 @@ fn decide_action() -> ActionRoot {
         "writes": [{ "entityKind": RUN, "change": "modified" }],
         "effectProgram": {
             "kind": "fire_transition", "objectIdField": "run_id", "objectKind": RUN,
-            "entityArtifactId": "flow.DecisionRun.entity", "entityArtifactVersion": "1.0.0",
-            "lifecycle": "status", "transition": "decide",
+            "entityArtifactId": "flow.DeliveryCheck.entity", "entityArtifactVersion": "1.0.0",
+            "lifecycle": "status", "transition": "confirm",
             "acceptReceipt": {
-                "referenceField": "receipt", "manifestDigest": manifest().0,
-                "digestProperty": "receipt", "resultBindings": { "choice": "choice" }
+                "referenceField": "receipt", "manifestDigest": manifest.0,
+                "digestProperty": "receipt", "resultBindings": { "outcome": "outcome" }
             }
         }
     }))
@@ -155,226 +182,261 @@ impl ActionAuthorizer for Allow {
     }
 }
 
-/// The issued receipt and its acceptance, as the cell's receipt store keeps
-/// them; consumption is the durable cell's own pending-delivery state.
-struct Issued {
-    receipt: FunctionReceipt,
-    acceptance: Acceptance,
-}
+/// The caller no longer holds authority over the run.
+struct Deny;
 
-struct DurableReceiptCell {
-    cell: Sqlite,
-    issued: BTreeMap<String, Issued>,
-}
-
-struct Store<'a>(&'a DurableReceiptCell, &'a Digest);
-
-impl AcceptedReceiptStore for Store<'_> {
-    type Error = CellError;
-    fn resolve(&self, reference: &Digest) -> Result<ReceiptResolution<'_>, CellError> {
-        Ok(match self.0.issued.get(&reference.0) {
-            Some(issued) if &issued.receipt.manifest == self.1 => ReceiptResolution::Accepted {
-                acceptance: &issued.acceptance,
-                receipt: &issued.receipt,
-            },
-            _ => ReceiptResolution::Unknown,
-        })
+impl ActionAuthorizer for Deny {
+    fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        Err(ActionDenial::Invisible)
     }
 }
 
-impl CellHost for DurableReceiptCell {
-    type Event = FactEvent;
-    type Command = JsonObject;
-    type Input = JsonObject;
-    type Error = CellError;
+/// The receipt contract and the command authority's recheck at intake.
+struct Contract;
 
-    fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
-        self.cell.load(key)
+impl ResultAuthorizer for Contract {
+    fn authorize(&self, request: &ResultAuthzRequest<'_>) -> Result<(), ResultDenial> {
+        if request.authority.id == "svc.delivery-confirmation" {
+            Ok(())
+        } else {
+            Err(ResultDenial {
+                reason: "authority revoked".to_owned(),
+            })
+        }
     }
-    // The durable host's own read and commit paths, forwarded unchanged.
-    fn supports_reference_reads(&self) -> bool {
-        self.cell.supports_reference_reads()
-    }
-    fn load_reference(
+}
+
+impl ReceiptValidator for Contract {
+    fn validate(
         &self,
-        key: &FactKey,
-        max_bytes: u64,
-    ) -> Result<Option<norn_kernel::BoundedFact>, CellError> {
-        self.cell.load_reference(key, max_bytes)
-    }
-    fn load_bounded(
-        &self,
-        key: &FactKey,
-        max_bytes: u64,
-    ) -> Result<Option<norn_kernel::BoundedFact>, CellError> {
-        self.cell.load_bounded(key, max_bytes)
-    }
-    fn commit_action_references(
-        &mut self,
-        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-        proof: norn_kernel::action_commit::ActionReferenceReads,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.cell.commit_action_references(commit, proof, quantity)
-    }
-    fn resolve_accepted_receipt(
-        &self,
-        reference: &ReceiptReference,
-        manifest: &Digest,
-    ) -> Result<Option<ReceiptBinding<JsonObject>>, ReceiptBindingError<CellError>> {
-        bind_receipt(&Store(self, manifest), reference).map(Some)
-    }
-    fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
-        self.cell.load_link(key)
-    }
-    fn commit(
-        &mut self,
-        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.cell.commit(commit)
-    }
-    fn perform(&mut self) -> Result<Option<Performed<JsonObject>>, CellError> {
-        self.cell.perform()
-    }
-    fn observe(&mut self) -> Result<Option<Observed<JsonObject>>, CellError> {
-        self.cell.observe()
-    }
-    fn clock(&mut self) -> Result<Option<DueTimer<JsonObject>>, CellError> {
-        self.cell.clock()
-    }
-    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), CellError> {
-        self.cell.publish(receipt)
+        _dispatched: &DispatchedCommand,
+        receipt: &FunctionReceipt,
+    ) -> Result<(), InvalidReceipt> {
+        if receipt.attempt == 1 && matches!(receipt.outcome, FunctionOutcome::Success(_)) {
+            Ok(())
+        } else {
+            Err(InvalidReceipt {
+                reason: "receipt contract".to_owned(),
+            })
+        }
     }
 }
 
-fn open(path: &Path, issued: BTreeMap<String, Issued>) -> DurableReceiptCell {
-    let cell = Sqlite::open(
-        path,
-        Model::from_definitions(&definitions(), &[]).expect("models the run type"),
-        StoreOptions::default(),
-        SCOPE,
-        |command: &Command<JsonObject>| command.payload.clone(),
-    )
-    .expect("opens the durable cell");
-    DurableReceiptCell { cell, issued }
-}
-
-/// A run waiting on its performed `ask` command (its result delivery pending).
-fn waiting_run(cell: &mut DurableReceiptCell, run: &str) {
-    cell.cell
-        .commit(CellCommit {
-            writes: vec![FactWrite {
-                key: FactKey::new(RUN, run),
-                expected: FactVersion::ABSENT,
-                mutation: FactMutation::Put {
-                    values: JsonObject::from([
-                        ("run_id".to_owned(), JsonValue::String(run.to_owned())),
-                        (
-                            "status".to_owned(),
-                            JsonValue::String("awaiting_perform_ask".to_owned()),
-                        ),
-                    ]),
-                },
-            }],
-            effects: vec![Effect::Perform(Command {
-                id: CommandId(format!("{run}/ask")),
-                generation: Generation(1),
-                idempotency_key: IdempotencyKey(format!("{run}/ask/1")),
-                freshness: FreshnessPolicy::AppendOnly,
-                deadline: None,
-                payload: JsonObject::new(),
-            })],
-            ..CellCommit::empty()
-        })
-        .unwrap();
-    assert!(cell.cell.perform().unwrap().is_some());
-}
-
-/// An accepted generation-1 decision receipt for `run`'s `ask` command.
-fn issue(run: &str, choice: &str) -> (String, Issued) {
-    let summary = BTreeMap::from([("choice".to_owned(), RuntimeValue::String(choice.to_owned()))]);
-    let receipt = FunctionReceipt {
-        command_id: format!("{run}/ask"),
-        run: RunRef {
-            id: run.to_owned(),
-            generation: 1,
+/// A dispatch of the confirmation Function for `run`, pinned to `ship-1`
+/// at version 1, under `tenant` and `world`.
+fn dispatch(run: &str, tenant: &str, world: &str) -> DispatchedCommand {
+    let invocation: FunctionInvocation = serde_json::from_value(json!({
+        "tenant": tenant,
+        "world": world,
+        "authority": { "id": "svc.delivery-confirmation", "kind": "service" },
+        "commandId": format!("{run}/confirm"),
+        "run": { "id": run, "generation": 1 },
+        "manifest": manifest().0,
+        "inputs": { "trackingRef": format!("TRK-{run}") },
+        "blobs": {},
+        "provenanceCommit": 1,
+        "dependency": {
+            "facts": [{ "objectType": SHIPMENT, "key": "ship-1", "version": 1 }],
+            "predicates": [],
+            "collections": []
         },
+        "freshness": "relevant_state",
+        "destination": null,
+        "deadlineMillis": DEADLINE,
+        "retry": { "maxAttempts": 2, "maxCostUnits": 100 },
+        "fencing": { "cancellationGeneration": 0, "token": format!("fence-{run}") }
+    }))
+    .unwrap();
+    DispatchedCommand::pin(invocation, sha('7')).unwrap()
+}
+
+/// The performer's receipt for `dispatched`, reporting `outcome`.
+fn receipt_for(dispatched: &DispatchedCommand, outcome: &str) -> FunctionReceipt {
+    let summary = BTreeMap::from([(
+        "outcome".to_owned(),
+        RuntimeValue::String(outcome.to_owned()),
+    )]);
+    FunctionReceipt {
+        command_id: dispatched.invocation.command_id.clone(),
+        run: dispatched.invocation.run.clone(),
         attempt: 1,
-        dispatch: Digest(format!("sha256:{}", "1".repeat(64))),
-        manifest: manifest(),
-        execution_profile: Digest(format!("sha256:{}", "2".repeat(64))),
-        input_identity: Digest(format!("sha256:{}", "3".repeat(64))),
-        dependency_token: Digest(format!("sha256:{}", "4".repeat(64))),
+        dispatch: dispatched.dispatch.clone(),
+        manifest: dispatched.invocation.manifest.clone(),
+        execution_profile: dispatched.execution_profile.clone(),
+        input_identity: dispatched.input_identity.clone(),
+        dependency_token: dispatched.dependency_token.clone(),
         outcome: FunctionOutcome::Success(SuccessOutcome {
             output_manifest: norn_ir::function::output_manifest_digest(&[], &summary).unwrap(),
             outputs: Vec::new(),
             summary,
         }),
         provenance: ExecutionProvenance {
-            executor: "cell".to_owned(),
-            placement: "cell".to_owned(),
-            runtime: Digest(format!("sha256:{}", "5".repeat(64))),
+            executor: EXECUTOR.to_owned(),
+            placement: "carrier-pool/node-1".to_owned(),
+            runtime: sha('5'),
         },
         resources: ResourceUse {
-            cpu_millis: 0,
-            wall_millis: 0,
+            cpu_millis: 1,
+            wall_millis: 1,
             peak_memory_bytes: 0,
             output_bytes: 0,
             fuel: None,
         },
         cache: CacheOrigin::Miss {},
+    }
+}
+
+fn object(receipt: &FunctionReceipt) -> JsonObject {
+    let JsonValue::Object(object) = norn_ir::runtime::encode(receipt).unwrap() else {
+        panic!("a receipt encodes as an object");
     };
-    let digest = receipt.content_digest().unwrap();
-    let result_identity = receipt.result_identity().unwrap();
-    let acceptance = Acceptance {
-        consumed: Consumed::Result {
-            command: CommandId(format!("{run}/ask")),
-            generation: Generation(1),
+    object
+}
+
+/// A cell whose outside world answers each command with its receipt.
+fn open(path: &Path, scope: &str, performed: &[&FunctionReceipt]) -> Sqlite {
+    let answers: BTreeMap<String, JsonObject> = performed
+        .iter()
+        .map(|receipt| (receipt.command_id.clone(), object(receipt)))
+        .collect();
+    Sqlite::open(
+        path,
+        Model::from_definitions(&definitions(), &[]).expect("models the run"),
+        StoreOptions::default(),
+        scope,
+        move |command: &Command<JsonObject>| {
+            answers
+                .get(&command.id.0)
+                .cloned()
+                .unwrap_or_else(|| panic!("no answer for {}", command.id.0))
         },
-        reads: Vec::new(),
-        destination: None,
-        requires_cell_lane: false,
-        record: ResultRecord {
-            command: CommandId(format!("{run}/ask")),
-            generation: Generation(1),
-            attempt: 1,
-            receipt: digest.clone(),
-            result_identity: result_identity.clone(),
-            classification: None,
-            reason: None,
+    )
+    .expect("opens the durable cell")
+}
+
+fn put(key: FactKey, expected: FactVersion, values: &[(&str, &str)]) -> FactWrite {
+    FactWrite {
+        key,
+        expected,
+        mutation: FactMutation::Put {
+            values: values
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), JsonValue::String((*value).to_owned())))
+                .collect(),
         },
-        state: CommandState {
-            generation: Generation(1),
-            cancelled: false,
-            accepted: Some(AcceptedResult {
-                generation: Generation(1),
-                result_identity,
-                receipt: digest.clone(),
-            }),
-            reschedules: 0,
-        },
-    };
-    (
-        digest.0,
-        Issued {
+    }
+}
+
+/// The pinned shipment and runs waiting on their confirmation.
+fn seed(cell: &mut Sqlite, runs: &[&str]) {
+    let mut writes = vec![put(
+        FactKey::new(SHIPMENT, "ship-1"),
+        FactVersion::ABSENT,
+        &[("note", "in transit")],
+    )];
+    writes.extend(runs.iter().map(|&run| {
+        put(
+            FactKey::new(RUN, run),
+            FactVersion::ABSENT,
+            &[("run_id", run), ("status", "awaiting_perform_confirm")],
+        )
+    }));
+    cell.commit(CellCommit {
+        writes,
+        ..CellCommit::empty()
+    })
+    .unwrap();
+}
+
+/// Enqueue `dispatched` as a `norn.function/v1` command with its command
+/// state, then perform it: its receipt becomes the pending delivery.
+fn perform(cell: &mut Sqlite, dispatched: &DispatchedCommand) {
+    let state = norn_ir::runtime::encode(&CommandState::dispatched(dispatched)).unwrap();
+    let invocation = norn_ir::runtime::encode(&dispatched.invocation).unwrap();
+    cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new(
+                FUNCTION_COMMAND_TYPE,
+                dispatched.invocation.command_id.as_str(),
+            ),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: JsonObject::from([("state".to_owned(), state)]),
+            },
+        }],
+        effects: vec![Effect::Perform(Command {
+            id: dispatched.command_id(),
+            generation: dispatched.generation(),
+            idempotency_key: IdempotencyKey(format!("{}/1", dispatched.invocation.command_id)),
+            freshness: dispatched.freshness().unwrap(),
+            deadline: None,
+            payload: JsonObject::from([
+                (
+                    "type".to_owned(),
+                    JsonValue::String(FUNCTION_PAYLOAD_TYPE.to_owned()),
+                ),
+                ("invocation".to_owned(), invocation),
+            ]),
+        })],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    assert!(cell.perform().unwrap().is_some());
+}
+
+fn retain(
+    cell: &mut Sqlite,
+    dispatched: &DispatchedCommand,
+    receipt: &FunctionReceipt,
+) -> Result<Digest, ReceiptIntakeError> {
+    let command = dispatched.command_id();
+    cell.retain_function_receipt(
+        dispatched,
+        &Completion {
             receipt,
-            acceptance,
+            command: &command,
+            generation: dispatched.generation(),
+            authenticated_executor: Some(EXECUTOR),
+        },
+        &ResultChecks {
+            authorizer: &Contract,
+            validator: &Contract,
         },
     )
 }
 
-fn decide<'a>(action: &'a ActionRoot, receipt: &str, key: &str) -> ActionCall<'a> {
+/// One run, its pending confirmation and its performer's receipt.
+struct Fixture {
+    cell: Sqlite,
+    dispatched: DispatchedCommand,
+    receipt: FunctionReceipt,
+}
+
+fn fixture(path: &Path, outcome: &str) -> Fixture {
+    let dispatched = dispatch("run-1", SCOPE, "main");
+    let receipt = receipt_for(&dispatched, outcome);
+    let mut cell = open(path, SCOPE, &[&receipt]);
+    seed(&mut cell, &["run-1"]);
+    perform(&mut cell, &dispatched);
+    Fixture {
+        cell,
+        dispatched,
+        receipt,
+    }
+}
+
+fn confirm<'a>(action: &'a ActionRoot, run: &str, receipt: &str, key: &str) -> ActionCall<'a> {
     ActionCall {
         action,
-        action_artifact_id: "flow.decision_run.decide.action",
+        action_artifact_id: "flow.delivery_check.confirm.action",
         action_version: "1.0.0",
         scope: BTreeMap::from([
             ("orgId".to_owned(), "org_demo".to_owned()),
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
-        actor: "user:ada".to_owned(),
+        actor: "user:dispatcher".to_owned(),
         input: JsonObject::from([
-            ("run_id".to_owned(), JsonValue::String("run-1".to_owned())),
+            ("run_id".to_owned(), JsonValue::String(run.to_owned())),
             ("receipt".to_owned(), JsonValue::String(receipt.to_owned())),
         ]),
         idempotency_key: key.to_owned(),
@@ -389,9 +451,12 @@ fn decide<'a>(action: &'a ActionRoot, receipt: &str, key: &str) -> ActionCall<'a
     }
 }
 
-fn status(cell: &DurableReceiptCell) -> (Option<JsonValue>, Option<JsonValue>) {
+fn status<H: CellHost<Error = CellError>>(
+    cell: &H,
+    run: &str,
+) -> (Option<JsonValue>, Option<JsonValue>) {
     let values = cell
-        .load(&FactKey::new(RUN, "run-1"))
+        .load(&FactKey::new(RUN, run))
         .unwrap()
         .values
         .unwrap_or_default();
@@ -399,102 +464,645 @@ fn status(cell: &DurableReceiptCell) -> (Option<JsonValue>, Option<JsonValue>) {
         values.get("status").cloned(),
         // The durable host stores an unset nullable property as null.
         values
-            .get("choice")
+            .get("outcome")
             .cloned()
-            .filter(|choice| *choice != JsonValue::Null),
+            .filter(|outcome| *outcome != JsonValue::Null),
     )
 }
 
 fn waiting() -> (Option<JsonValue>, Option<JsonValue>) {
     (
-        Some(JsonValue::String("awaiting_perform_ask".to_owned())),
+        Some(JsonValue::String("awaiting_perform_confirm".to_owned())),
         None,
     )
 }
 
-fn decided() -> (Option<JsonValue>, Option<JsonValue>) {
+fn confirmed() -> (Option<JsonValue>, Option<JsonValue>) {
     (
-        Some(JsonValue::String("decided".to_owned())),
-        Some(JsonValue::String("approve".to_owned())),
+        Some(JsonValue::String("confirmed".to_owned())),
+        Some(JsonValue::String("delivered".to_owned())),
+    )
+}
+
+fn reference(digest: &Digest) -> ReceiptReference {
+    ReceiptReference::parse(&JsonValue::String(digest.0.clone())).unwrap()
+}
+
+/// Whether every commit after the first `base` consumed and wrote nothing.
+fn effect_free_since(cell: &Sqlite, base: usize) -> bool {
+    cell.commits().unwrap()[base..].iter().all(|commit| {
+        commit.consumed.is_none() && commit.written.is_empty() && commit.linked.is_empty()
+    })
+}
+
+/// Whether the delivery is still pending and its evidence still accepted.
+fn still_accepted(cell: &Sqlite, digest: &Digest) -> bool {
+    matches!(
+        cell.resolve_accepted_receipt(&reference(digest), &manifest()),
+        Ok(Some(_))
     )
 }
 
 #[test]
-fn receipt_consumption_is_atomic_across_a_crash_and_a_reopen() {
+fn retained_receipt_commits_its_transition_and_consumption_atomically_across_a_crash() {
     let types = run_types();
     let catalog = TypeCatalog::new(&types);
-    let action = decide_action();
+    let action = confirm_action(&manifest());
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("cell.sqlite");
     let before_dir = tempfile::tempdir().expect("tempdir");
     let before = before_dir.path().join("cell.sqlite");
     let after_dir = tempfile::tempdir().expect("tempdir");
     let after = after_dir.path().join("cell.sqlite");
-    let (digest, _) = issue("run-1", "approve");
-    let store = || BTreeMap::from([issue("run-1", "approve")]);
-
-    let mut cell = open(&path, store());
-    waiting_run(&mut cell, "run-1");
-    let base = cell.cell.commits().unwrap().len();
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&path, "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).expect("intake accepts the receipt");
+    assert_eq!(digest, receipt.content_digest().unwrap());
+    // An exact intake retry is a no-op that names the same evidence.
+    assert_eq!(retain(&mut cell, &dispatched, &receipt).unwrap(), digest);
+    let base = cell.commits().unwrap().len();
     // The disk image a crash just before the consuming commit leaves.
     common::crash_image(&path, &before);
-    let outcome = commit_action(&mut cell, &catalog, &decide(&action, &digest, "k1"), &Allow)
-        .unwrap_or_else(|refusal| panic!("error: the accepted receipt commits: {refusal:?}"));
+    let call = confirm(&action, "run-1", &digest.0, "k1");
+    let outcome = commit_action(&mut cell, &catalog, &call, &Allow)
+        .unwrap_or_else(|refusal| panic!("the accepted receipt commits: {refusal:?}"));
     assert!(matches!(outcome, ActionOutcome::Committed { .. }));
+    assert_eq!(status(&cell, "run-1"), confirmed());
+    let values = cell
+        .load(&FactKey::new(RUN, "run-1"))
+        .unwrap()
+        .values
+        .unwrap();
+    assert_eq!(
+        values.get("receipt"),
+        Some(&JsonValue::String(digest.0.clone()))
+    );
+    assert_eq!(
+        cell.commits().unwrap().len(),
+        base + 1,
+        "one consuming commit"
+    );
+    // RECEIPT-CONSUME-ONCE: a lost acknowledgement's exact retry replays the
+    // original outcome and consumes nothing.
+    let retried = commit_action(&mut cell, &catalog, &call, &Allow).expect("exact retry");
+    assert!(matches!(retried, ActionOutcome::Replayed { .. }));
+    assert_eq!(cell.commits().unwrap().len(), base + 1);
     // The disk image a crash just after it leaves (WAL included).
     common::crash_image(&path, &after);
     drop(cell);
 
-    // Before the commit: neither the transition nor the consumption survived,
-    // so the same receipt still resolves the run exactly once.
-    let mut crashed = open(&before, store());
-    assert_eq!(status(&crashed), waiting());
-    assert_eq!(crashed.cell.commits().unwrap().len(), base);
-    commit_action(
-        &mut crashed,
-        &catalog,
-        &decide(&action, &digest, "k1"),
-        &Allow,
-    )
-    .expect("the pending delivery is consumed after recovery");
-    assert_eq!(status(&crashed), decided());
+    // Before the commit: neither the transition nor the consumption
+    // survived, and the retained evidence still resolves the run once.
+    let mut crashed = open(&before, SCOPE, &[&receipt]);
+    assert_eq!(status(&crashed, "run-1"), waiting());
+    assert_eq!(crashed.commits().unwrap().len(), base);
+    commit_action(&mut crashed, &catalog, &call, &Allow)
+        .expect("the pending delivery is consumed after recovery");
+    assert_eq!(status(&crashed, "run-1"), confirmed());
 
-    // After the commit, crashed or cleanly closed: both effects survived, and
-    // a second consumption is refused by the durable delivery fence.
+    // After the commit, crashed or cleanly closed: both effects survived,
+    // and a second consumption under a new key is refused.
     for image in [&after, &path] {
-        let mut reopened = open(image, store());
-        assert_eq!(status(&reopened), decided(), "{}", image.display());
-        let commits = reopened.cell.commits().unwrap().len();
+        let mut reopened = open(image, SCOPE, &[&receipt]);
+        assert_eq!(
+            status(&reopened, "run-1"),
+            confirmed(),
+            "{}",
+            image.display()
+        );
+        let commits = reopened.commits().unwrap().len();
         assert_eq!(commits, base + 1, "one consuming commit");
         // Put the run back in its waiting state: only the fence stops a replay.
         let version = reopened.load(&FactKey::new(RUN, "run-1")).unwrap().version;
         reopened
-            .cell
             .commit(CellCommit {
-                writes: vec![FactWrite {
-                    key: FactKey::new(RUN, "run-1"),
-                    expected: version,
-                    mutation: FactMutation::Put {
-                        values: JsonObject::from([
-                            ("run_id".to_owned(), JsonValue::String("run-1".to_owned())),
-                            (
-                                "status".to_owned(),
-                                JsonValue::String("awaiting_perform_ask".to_owned()),
-                            ),
-                        ]),
-                    },
-                }],
+                writes: vec![put(
+                    FactKey::new(RUN, "run-1"),
+                    version,
+                    &[("run_id", "run-1"), ("status", "awaiting_perform_confirm")],
+                )],
                 ..CellCommit::empty()
             })
             .unwrap();
         let refused = commit_action(
             &mut reopened,
             &catalog,
-            &decide(&action, &digest, "k2"),
+            &confirm(&action, "run-1", &digest.0, "k2"),
             &Allow,
         )
         .unwrap_err();
-        assert_eq!(refused.code(), "action.receipt_not_pending", "{refused}");
-        assert_eq!(status(&reopened), waiting());
+        assert_eq!(refused.code(), "action.receipt_replayed", "{refused}");
+        assert_eq!(status(&reopened, "run-1"), waiting());
+        assert_eq!(reopened.commits().unwrap().len(), commits + 1);
     }
+}
+
+#[test]
+fn foreign_scope_or_world_evidence_is_never_retained_or_resolved() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    for (tenant, world) in [(OTHER_SCOPE, "main"), (SCOPE, "fork-1")] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dispatched = dispatch("run-1", tenant, world);
+        let receipt = receipt_for(&dispatched, "delivered");
+        let mut cell = open(&dir.path().join("cell.sqlite"), SCOPE, &[&receipt]);
+        seed(&mut cell, &["run-1"]);
+        perform(&mut cell, &dispatched);
+        let base = cell.commits().unwrap().len();
+        let refused = retain(&mut cell, &dispatched, &receipt).unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                ReceiptIntakeError::Refused {
+                    reason: RefusalReason::OutOfScope { .. },
+                    ..
+                }
+            ),
+            "{tenant} {world}: {refused:?}"
+        );
+        let digest = receipt.content_digest().unwrap();
+        let refused = commit_action(
+            &mut cell,
+            &catalog,
+            &confirm(&action, "run-1", &digest.0, "k1"),
+            &Allow,
+        )
+        .unwrap_err();
+        assert_eq!(refused.code(), "action.receipt_unknown", "{refused}");
+        assert_eq!(status(&cell, "run-1"), waiting());
+        assert_eq!(cell.commits().unwrap().len(), base);
+    }
+
+    // Evidence retained by one tenant's cell is invisible to another's.
+    let home_dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&home_dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let foreign_dir = tempfile::tempdir().expect("tempdir");
+    let foreign_dispatch = dispatch("run-1", OTHER_SCOPE, "main");
+    let foreign_receipt = receipt_for(&foreign_dispatch, "delivered");
+    let mut foreign = open(
+        &foreign_dir.path().join("cell.sqlite"),
+        OTHER_SCOPE,
+        &[&foreign_receipt],
+    );
+    seed(&mut foreign, &["run-1"]);
+    perform(&mut foreign, &foreign_dispatch);
+    let base = foreign.commits().unwrap().len();
+    let refused = commit_action(
+        &mut foreign,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_unknown", "{refused}");
+    assert_eq!(status(&foreign, "run-1"), waiting());
+    assert_eq!(foreign.commits().unwrap().len(), base);
+    assert!(still_accepted(&cell, &digest));
+}
+
+#[test]
+fn wrong_manifest_invocation_or_tampered_bindings_refuse_without_effects() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    cell.commit(CellCommit {
+        writes: vec![put(
+            FactKey::new(RUN, "run-2"),
+            FactVersion::ABSENT,
+            &[("run_id", "run-2"), ("status", "awaiting_perform_confirm")],
+        )],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    let base = cell.commits().unwrap().len();
+
+    // Another invocation than the one enqueued, and pins that do not
+    // re-derive from the enqueued invocation.
+    let mut other = dispatched.invocation.clone();
+    other.inputs.insert(
+        "trackingRef".to_owned(),
+        RuntimeValue::String("TRK-x".to_owned()),
+    );
+    let other = DispatchedCommand::pin(other, dispatched.execution_profile.clone()).unwrap();
+    assert!(matches!(
+        retain(&mut cell, &other, &receipt_for(&other, "delivered")),
+        Err(ReceiptIntakeError::DispatchMismatch)
+    ));
+    let mut forged = dispatched.clone();
+    forged.input_identity = sha('9');
+    assert!(matches!(
+        retain(&mut cell, &forged, &receipt),
+        Err(ReceiptIntakeError::DispatchMismatch)
+    ));
+    // A result other than the one the cell recorded.
+    let tampered = receipt_for(&dispatched, "delivered-elsewhere");
+    assert!(matches!(
+        retain(&mut cell, &dispatched, &tampered),
+        Err(ReceiptIntakeError::DispatchMismatch)
+    ));
+    let tampered_digest = tampered.content_digest().unwrap();
+    let action = confirm_action(&manifest());
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &tampered_digest.0, "k-tampered"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_unknown", "{refused}");
+
+    // Accepted evidence under another declared manifest is not visible.
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let elsewhere = confirm_action(&sha('e'));
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&elsewhere, "run-1", &digest.0, "k-manifest"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_unknown", "{refused}");
+    // RUN-BIND-1: the receipt resolves only the run it was dispatched under.
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-2", &digest.0, "k-run"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_run_mismatch", "{refused}");
+    assert_eq!(status(&cell, "run-2"), waiting());
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert_eq!(cell.commits().unwrap().len(), base);
+    assert!(still_accepted(&cell, &digest));
+}
+
+#[test]
+fn a_performer_reporting_other_inputs_is_never_retained() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    let dispatched = dispatch("run-1", SCOPE, "main");
+    let tampered_dir = tempfile::tempdir().expect("tempdir");
+    let mut inputs_differ = receipt_for(&dispatched, "delivered");
+    inputs_differ.input_identity = sha('8');
+    let mut cell = open(
+        &tampered_dir.path().join("cell.sqlite"),
+        SCOPE,
+        &[&inputs_differ],
+    );
+    seed(&mut cell, &["run-1"]);
+    perform(&mut cell, &dispatched);
+    let refused = retain(&mut cell, &dispatched, &inputs_differ).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            ReceiptIntakeError::Refused {
+                reason: RefusalReason::InputsDiffer,
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(
+            &action,
+            "run-1",
+            &inputs_differ.content_digest().unwrap().0,
+            "k1",
+        ),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_unknown", "{refused}");
+    assert_eq!(status(&cell, "run-1"), waiting());
+}
+
+#[test]
+fn stale_or_expired_evidence_refuses_and_leaves_the_delivery_pending() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+
+    // Stale: the pinned shipment moved after the result was accepted.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    cell.commit(CellCommit {
+        writes: vec![put(
+            FactKey::new(SHIPMENT, "ship-1"),
+            FactVersion(1),
+            &[("note", "rerouted")],
+        )],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    let base = cell.commits().unwrap().len();
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_not_accepted", "{refused}");
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert_eq!(cell.commits().unwrap().len(), base);
+    assert_eq!(
+        cell.pending_commands().unwrap().len(),
+        1,
+        "the delivery stays pending"
+    );
+    assert!(!still_accepted(&cell, &digest));
+
+    // Expired: the cell's clock passed the dispatch deadline.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    assert!(still_accepted(&cell, &digest));
+    cell.advance_to(LogicalTime::from_millis(PAST_DEADLINE));
+    let base = cell.commits().unwrap().len();
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_not_accepted", "{refused}");
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert_eq!(cell.commits().unwrap().len(), base);
+    assert_eq!(
+        cell.pending_commands().unwrap().len(),
+        1,
+        "the delivery stays pending"
+    );
+}
+
+/// A host over the durable cell. `wired: false` declares no receipt
+/// support; `race` commits a competing action between this call's
+/// resolution and its commit.
+struct Host<'a> {
+    cell: RefCell<Sqlite>,
+    wired: bool,
+    race: RefCell<Option<Race<'a>>>,
+}
+
+/// A competing consumer that commits first.
+type Race<'a> = Box<dyn FnOnce(&mut Sqlite) + 'a>;
+
+impl CellHost for Host<'_> {
+    type Event = FactEvent;
+    type Command = JsonObject;
+    type Input = JsonObject;
+    type Error = CellError;
+
+    fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
+        self.cell.borrow().load(key)
+    }
+    // The durable host's own read and commit paths, forwarded unchanged.
+    fn supports_reference_reads(&self) -> bool {
+        self.cell.borrow().supports_reference_reads()
+    }
+    fn load_reference(
+        &self,
+        key: &FactKey,
+        max_bytes: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, CellError> {
+        self.cell.borrow().load_reference(key, max_bytes)
+    }
+    fn load_bounded(
+        &self,
+        key: &FactKey,
+        max_bytes: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, CellError> {
+        self.cell.borrow().load_bounded(key, max_bytes)
+    }
+    fn commit_action_references(
+        &mut self,
+        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+        proof: norn_kernel::action_commit::ActionReferenceReads,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.cell
+            .get_mut()
+            .commit_action_references(commit, proof, quantity)
+    }
+    fn resolve_accepted_receipt(
+        &self,
+        reference: &ReceiptReference,
+        manifest: &Digest,
+    ) -> Result<Option<ReceiptBinding<JsonObject>>, ReceiptBindingError<CellError>> {
+        if !self.wired {
+            return Ok(None);
+        }
+        let binding = self
+            .cell
+            .borrow()
+            .resolve_accepted_receipt(reference, manifest);
+        let race = self.race.borrow_mut().take();
+        if let Some(race) = race {
+            race(&mut *self.cell.borrow_mut());
+        }
+        binding
+    }
+    fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
+        self.cell.borrow().load_link(key)
+    }
+    fn commit(
+        &mut self,
+        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.cell.get_mut().commit(commit)
+    }
+    fn perform(&mut self) -> Result<Option<Performed<JsonObject>>, CellError> {
+        self.cell.get_mut().perform()
+    }
+    fn observe(&mut self) -> Result<Option<Observed<JsonObject>>, CellError> {
+        self.cell.get_mut().observe()
+    }
+    fn clock(&mut self) -> Result<Option<DueTimer<JsonObject>>, CellError> {
+        self.cell.get_mut().clock()
+    }
+    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), CellError> {
+        self.cell.get_mut().publish(receipt)
+    }
+}
+
+#[test]
+fn concurrent_consumptions_have_exactly_one_winner() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let base = cell.commits().unwrap().len();
+    let winner = confirm(&action, "run-1", &digest.0, "winner");
+    let race: Race<'_> = Box::new(|cell: &mut Sqlite| {
+        let outcome = commit_action(cell, &catalog, &winner, &Allow)
+            .unwrap_or_else(|refusal| panic!("the first consumer commits: {refusal:?}"));
+        assert!(matches!(outcome, ActionOutcome::Committed { .. }));
+    });
+    let mut host = Host {
+        cell: RefCell::new(cell),
+        wired: true,
+        race: RefCell::new(Some(race)),
+    };
+    // Both calls resolved the same pending delivery; the loser's commit
+    // finds it consumed and applies nothing.
+    let refused = commit_action(
+        &mut host,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "loser"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_not_pending", "{refused}");
+    let mut cell = host.cell.into_inner();
+    assert_eq!(status(&cell, "run-1"), confirmed());
+    assert_eq!(
+        cell.commits().unwrap().len(),
+        base + 1,
+        "exactly one winner"
+    );
+    // The winner's exact retry still replays its own outcome.
+    let retried = commit_action(&mut cell, &catalog, &winner, &Allow).unwrap();
+    assert!(matches!(retried, ActionOutcome::Replayed { .. }));
+    assert_eq!(cell.commits().unwrap().len(), base + 1);
+}
+
+#[test]
+fn governing_law_and_caller_authority_still_decide_publication() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+
+    // An accepted, authentic receipt reporting a held delivery.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "held");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let base = cell.commits().unwrap().len();
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert!(!refused.code().starts_with("action.receipt_"), "{refused}");
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert!(effect_free_since(&cell, base), "only a refusal record");
+    assert!(still_accepted(&cell, &digest), "the delivery stays pending");
+
+    // A caller without authority over the run publishes nothing either.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let base = cell.commits().unwrap().len();
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Deny,
+    )
+    .unwrap_err();
+    assert!(!refused.code().starts_with("action.receipt_"), "{refused}");
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert!(effect_free_since(&cell, base));
+    assert!(still_accepted(&cell, &digest));
+    commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k2"),
+        &Allow,
+    )
+    .expect("an authorized caller publishes the same evidence");
+    assert_eq!(status(&cell, "run-1"), confirmed());
+}
+
+#[test]
+fn a_host_without_receipt_storage_stays_fail_closed() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let base = cell.commits().unwrap().len();
+    let mut host = Host {
+        cell: RefCell::new(cell),
+        wired: false,
+        race: RefCell::new(None),
+    };
+    let refused = commit_action(
+        &mut host,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(
+        refused.code(),
+        "action.receipt_effect_unsupported",
+        "{refused}"
+    );
+    let cell = host.cell.into_inner();
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert_eq!(cell.commits().unwrap().len(), base);
+    assert!(still_accepted(&cell, &digest));
+    // The intake itself refuses unqualified freshness pins.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut destination = dispatch("run-1", SCOPE, "main").invocation;
+    destination.freshness = norn_ir::function::FreshnessMode::DestinationCas;
+    let destination = DispatchedCommand::pin(destination, sha('7')).unwrap();
+    let mut cell = open(&dir.path().join("cell.sqlite"), SCOPE, &[]);
+    assert!(matches!(
+        retain(
+            &mut cell,
+            &destination,
+            &receipt_for(&destination, "delivered")
+        ),
+        Err(ReceiptIntakeError::Unsupported)
+    ));
 }

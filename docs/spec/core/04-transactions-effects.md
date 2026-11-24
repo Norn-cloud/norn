@@ -73,6 +73,16 @@ Only the cell host resolves authenticated, scoped evidence; unsupported hosts re
 Execution is open only on the single-commit path of Core 07 RECEIPT-CONSUME-1:
 consumption and effects commit atomically, with no partial persistence on refusal.
 
+RECEIPT-STORE-1: only authenticated reconciliation of the cell's own recorded,
+still-pending `norn.function/v1` delivery, under the cell's scope, `main` and
+clock, retains a receipt as action evidence. Intake re-derives the dispatch pins
+from the enqueued invocation, reads the command's persisted state, commits no
+ledger effect and grants no authority. Unknown, forged, foreign-scope or
+foreign-world results, other inputs and other recorded results refuse with
+nothing retained; an exact intake retry is a no-op. Predicate, collection and
+written-destination freshness pins refuse closed. Generic event export never
+restores retained evidence, and a fork never resolves it.
+
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 
 ### TXN-CELL-1 — single-cell execution profile
