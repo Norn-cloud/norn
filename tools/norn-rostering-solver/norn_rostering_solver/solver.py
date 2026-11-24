@@ -36,7 +36,15 @@ from zoneinfo import ZoneInfo
 
 from ortools.sat.python import cp_model
 
-from .boundary import ModelInvalidError, format_utc, minor_units_to_decimal, minutes_to_hours, sha256_digest
+from .boundary import (
+    MAX_CONFLICT_CONSTRAINTS,
+    LimitExceededError,
+    ModelInvalidError,
+    format_utc,
+    minor_units_to_decimal,
+    minutes_to_hours,
+    sha256_digest,
+)
 from .models import (
     CONTRACT_ID,
     Assignment,
@@ -169,14 +177,36 @@ def _add_statutory_temporal_constraints(
     max_daily_min = profile.max_daily_minutes
     max_consec = profile.max_consecutive_days
 
-    # Precompute pairwise shift conflicts (overlap OR gap < min_rest_min).
+    # Deterministic sweep-line over shifts sorted by `starts_at`:
+    # Two shifts `s1 = shifts[i]`, `s2 = shifts[j]` (with `s2.starts_at >= s1.starts_at`) conflict
+    # iff `s2.starts_at < s1.ends_at + min_rest_min`. As soon as `s2.starts_at >= cutoff`, no
+    # later shift can conflict with `s1`, so we break immediately and enforce `MAX_CONFLICT_CONSTRAINTS`
+    # BEFORE instantiating CP-SAT constraints.
+    emps_by_shift: list[set[int]] = [set() for _ in range(len(shifts))]
+    for e_idx, s_idx in x:
+        emps_by_shift[s_idx].add(e_idx)
+
+    min_rest_delta = timedelta(minutes=min_rest_min)
     conflict_pairs: list[tuple[int, int]] = []
+    total_conflict_constraints = 0
     for i in range(len(shifts)):
+        emps_i = emps_by_shift[i]
+        if not emps_i:
+            continue
+        cutoff = shifts[i].ends_at + min_rest_delta
         for j in range(i + 1, len(shifts)):
-            s1 = shifts[i]
-            s2 = shifts[j]
-            if s1.window.overlaps(s2.window) or s1.window.gap_minutes(s2.window) < min_rest_min:
-                conflict_pairs.append((i, j))
+            if shifts[j].starts_at >= cutoff:
+                break
+            shared_count = len(emps_i & emps_by_shift[j])
+            if shared_count == 0:
+                continue
+            total_conflict_constraints += shared_count
+            if total_conflict_constraints > MAX_CONFLICT_CONSTRAINTS:
+                raise LimitExceededError(
+                    f"pairwise conflict constraints ({total_conflict_constraints}) exceed "
+                    f"MAX_CONFLICT_CONSTRAINTS ({MAX_CONFLICT_CONSTRAINTS})"
+                )
+            conflict_pairs.append((i, j))
 
     # Precompute exact local calendar day minute splits for every shift.
     day_contributions: dict[date, list[tuple[int, int]]] = defaultdict(list)

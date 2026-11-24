@@ -16,6 +16,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from .boundary import (
+    MAX_ASSIGNMENT_VARS,
     MAX_EMPLOYEES,
     MAX_HORIZON_DAYS,
     MAX_LEAVE_BLOCKS,
@@ -62,44 +63,56 @@ def _parse_priority(raw: Any, path: str) -> Priority:
     raise SolverContractError("NORN-SOLVER-SCHEMA", f"{path} must be 'low', 'medium', or 'high', got {raw!r}")
 
 
-def _next_local_midnight_utc(cur_utc: datetime, tz: ZoneInfo) -> datetime:
-    """Return the exact UTC instant when the local calendar date in `tz` advances past `cur_utc`'s date."""
-    cur_local = cur_utc.astimezone(tz)
-    local_day = cur_local.date()
-    next_day = local_day + timedelta(days=1)
+_EPOCH_UTC = datetime(1970, 1, 1, tzinfo=UTC)
 
-    for fold in (0, 1):
-        candidate = datetime(next_day.year, next_day.month, next_day.day, 0, 0, tzinfo=tz, fold=fold).astimezone(UTC)
-        if candidate > cur_utc and candidate.astimezone(tz).date() >= next_day:
-            return candidate
 
-    # Defensive fallback for theoretical pathological offset jumps: advance hour-by-hour until date changes.
-    probe = cur_utc + timedelta(minutes=1)
-    while probe.astimezone(tz).date() == local_day:
-        probe += timedelta(minutes=1)
-    return probe
+def _local_day_and_offset(epoch_minute: int, tz: ZoneInfo) -> tuple[date, timedelta | None]:
+    local_dt = (_EPOCH_UTC + timedelta(minutes=epoch_minute)).astimezone(tz)
+    return local_dt.date(), local_dt.utcoffset()
 
 
 def split_interval_by_local_day(starts_at: datetime, ends_at: datetime, tz: ZoneInfo) -> dict[date, int]:
     """Split a half-open UTC interval `[starts_at, ends_at)` into exact integer minutes per local calendar day.
 
-    Preserves exact minute conservation across midnight and DST transitions:
-    `sum(result.values()) == timedelta_exact_minutes(ends_at - starts_at)`.
+    Steps strictly in UTC instants using 60-minute chunks with exact binary search on
+    any local-date or UTC-offset transition, so every UTC minute `[t, t+60s)` is attributed
+    identically to `t.astimezone(tz).date()` — including midnight DST rollbacks where local
+    time returns to the previous calendar day (e.g. `America/St_Johns` 00:01 -> 23:01).
     """
-    cur_utc = starts_at.astimezone(UTC)
+    start_utc = starts_at.astimezone(UTC)
     end_utc = ends_at.astimezone(UTC)
-    if end_utc <= cur_utc:
+    if end_utc <= start_utc:
         raise SolverContractError("NORN-SOLVER-INTERVAL", "interval ends_at must be strictly after starts_at")
 
+    start_min = timedelta_exact_minutes(start_utc - _EPOCH_UTC, "interval_start")
+    end_min = timedelta_exact_minutes(end_utc - _EPOCH_UTC, "interval_end")
+
     by_day: dict[date, int] = {}
-    while cur_utc < end_utc:
-        local_day = cur_utc.astimezone(tz).date()
-        next_mid_utc = _next_local_midnight_utc(cur_utc, tz)
-        seg_end_utc = end_utc if end_utc < next_mid_utc else next_mid_utc
-        seg_minutes = timedelta_exact_minutes(seg_end_utc - cur_utc, "local_day_split")
-        if seg_minutes > 0:
-            by_day[local_day] = by_day.get(local_day, 0) + seg_minutes
-        cur_utc = seg_end_utc
+    cur = start_min
+    while cur < end_min:
+        cur_day, cur_offset = _local_day_and_offset(cur, tz)
+        chunk_end = cur + 60 if cur + 60 < end_min else end_min
+        last_day, last_offset = _local_day_and_offset(chunk_end - 1, tz)
+
+        if last_day == cur_day and last_offset == cur_offset:
+            # Uniform local day & UTC offset across `[cur, chunk_end)`.
+            seg_end = chunk_end
+        else:
+            # Bisect for the exact first UTC minute in `(cur, chunk_end)` where `(date, utcoffset)` changes.
+            lo = cur
+            hi = chunk_end
+            while lo + 1 < hi:
+                mid = (lo + hi) // 2
+                m_day, m_offset = _local_day_and_offset(mid, tz)
+                if m_day == cur_day and m_offset == cur_offset:
+                    lo = mid
+                else:
+                    hi = mid
+            seg_end = hi
+
+        seg_minutes = seg_end - cur
+        by_day[cur_day] = by_day.get(cur_day, 0) + seg_minutes
+        cur = seg_end
     return by_day
 
 
@@ -501,6 +514,11 @@ class SolveRequest:
         if len(self.shifts) > MAX_SHIFTS:
             raise LimitExceededError(
                 f"shifts count ({len(self.shifts)}) exceeds MAX_SHIFTS ({MAX_SHIFTS})"
+            )
+        if len(self.employees) * len(self.shifts) > MAX_ASSIGNMENT_VARS:
+            raise LimitExceededError(
+                f"employee*shift variable grid ({len(self.employees)} * {len(self.shifts)} = "
+                f"{len(self.employees) * len(self.shifts)}) exceeds MAX_ASSIGNMENT_VARS ({MAX_ASSIGNMENT_VARS})"
             )
         total_leave = sum(len(e.approved_leave) for e in self.employees)
         if total_leave > MAX_LEAVE_BLOCKS:

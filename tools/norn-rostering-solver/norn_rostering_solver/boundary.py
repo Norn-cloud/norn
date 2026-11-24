@@ -37,15 +37,20 @@ _CAMEL_BOUNDARY_1 = re.compile(r"([a-z0-9])([A-Z])")
 _CAMEL_BOUNDARY_2 = re.compile(r"([A-Z]+)([A-Z][a-z])")
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
-# Strict pre-model cardinality bounds (enforced before CP-SAT construction).
+# Strict pre-model cardinality and complexity bounds (enforced before CP-SAT construction).
 MAX_EMPLOYEES = 250
 MAX_SHIFTS = 1_000
 MAX_HORIZON_DAYS = 62
 MAX_LEAVE_BLOCKS = 2_000
+MAX_ASSIGNMENT_VARS = 10_000
+MAX_CONFLICT_CONSTRAINTS = 50_000
 
-# Upper bound on exact decimal magnitude / exponent to prevent Decimal DoS / InvalidOperation.
-_MAX_DECIMAL_ABS = Decimal("1000000000000")
+# Upper bound on exact decimal magnitude / exponent to prevent Decimal DoS / context rounding.
+_MAX_DECIMAL_ABS_INT = 1_000_000_000_000
 _MAX_DECIMAL_TEXT_LEN = 64
+_MAX_DECIMAL_DIGITS = 64
+_MIN_DECIMAL_EXP = -64
+_MAX_DECIMAL_EXP = 12
 
 
 def normalize_field_key(key: str) -> str:
@@ -416,14 +421,18 @@ def parse_strict_json(raw: str | bytes) -> Any:
     return parsed
 
 
-def parse_exact_decimal(
+def _parse_exact_decimal_parts(
     raw: Any,
     path: str,
     *,
     allow_negative: bool = False,
-    max_scale: int | None = None,
-) -> Decimal:
-    """Parse an exact Decimal from Decimal, int, or str without silent rounding; refuse floats and bools."""
+) -> tuple[int, int, int]:
+    """Parse `raw` into exact canonical integer components `(sign, coeff, exp)` WITHOUT Decimal context rounding.
+
+    Represents `(-1)**sign * coeff * 10**exp` where `coeff >= 0` has no trailing base-10 zeros
+    (or `coeff == 0, exp == 0, sign == 0`). Never invokes context-rounded Decimal multiplication
+    or `Decimal.normalize()`.
+    """
     if isinstance(raw, float):
         raise FloatRefusalError(path, raw)
     if isinstance(raw, bool):
@@ -448,43 +457,85 @@ def parse_exact_decimal(
 
     if not val.is_finite():
         raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} must be finite, got {val!r}")
-    if val != 0 and (val.adjusted() > 12 or val.adjusted() < -12):
+
+    sign, digits, exp = val.as_tuple()
+    if not isinstance(exp, int):
+        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} must be finite, got {val!r}")
+    if len(digits) > _MAX_DECIMAL_DIGITS or exp < _MIN_DECIMAL_EXP or exp > _MAX_DECIMAL_EXP:
         raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} exceeds bounded decimal magnitude/scale: {raw!r}")
-    try:
-        if not allow_negative and val < Decimal("0"):
-            raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} must be non-negative, got {val}")
-        if abs(val) > _MAX_DECIMAL_ABS:
+
+    # Strip exact leading & trailing zeros in pure Python integer space (zero Decimal context rounding).
+    start = 0
+    while start < len(digits) and digits[start] == 0:
+        start += 1
+    if start == len(digits):
+        return 0, 0, 0
+    end = len(digits)
+    while end > start and digits[end - 1] == 0:
+        end -= 1
+        exp += 1
+    trimmed = digits[start:end]
+
+    if sign and not allow_negative:
+        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} must be non-negative, got {raw!r}")
+
+    # Exact magnitude check: adjusted exponent of `coeff * 10**exp` is `(len(trimmed) - 1) + exp`.
+    coeff = int("".join(str(d) for d in trimmed))
+    adjusted = (len(trimmed) - 1) + exp
+    if adjusted > 12:
+        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} exceeds bounded decimal magnitude: {raw!r}")
+    if exp >= 0:
+        if coeff * (10**exp) > _MAX_DECIMAL_ABS_INT:
+            raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} exceeds bounded decimal magnitude: {raw!r}")
+    else:
+        if coeff > _MAX_DECIMAL_ABS_INT * (10 ** (-exp)):
             raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} exceeds bounded decimal magnitude: {raw!r}")
 
-        if max_scale is not None:
-            scaled = val * (Decimal(10) ** max_scale)
-            is_exact = scaled == scaled.to_integral_value()
-            if not is_exact:
-                raise SolverContractError(
-                    "NORN-SOLVER-DECIMAL",
-                    f"{path} must have at most {max_scale} decimal place(s) (no silent rounding), got {raw!r}",
-                )
-    except DecimalException as exc:
-        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} decimal arithmetic error: {raw!r}") from exc
-    return val
+    return sign, coeff, exp
+
+
+def parse_exact_decimal(
+    raw: Any,
+    path: str,
+    *,
+    allow_negative: bool = False,
+    max_scale: int | None = None,
+) -> Decimal:
+    """Parse an exact Decimal from Decimal, int, or str without silent rounding; refuse floats and bools."""
+    sign, coeff, exp = _parse_exact_decimal_parts(raw, path, allow_negative=allow_negative)
+    if max_scale is not None and exp < -max_scale:
+        raise SolverContractError(
+            "NORN-SOLVER-DECIMAL",
+            f"{path} must have at most {max_scale} decimal place(s) (no silent rounding), got {raw!r}",
+        )
+    if coeff == 0:
+        return Decimal("0")
+    digits_tuple = tuple(int(ch) for ch in str(coeff))
+    return Decimal((sign, digits_tuple, exp))
 
 
 def parse_decimal(raw: Any, path: str, *, allow_negative: bool = False) -> Decimal:
     """Parse an exact scale-2 Decimal without silent rounding; refuses over-scale strings (> 2 decimal places)."""
-    val = parse_exact_decimal(raw, path, allow_negative=allow_negative, max_scale=2)
-    try:
-        return val.quantize(Decimal("0.01"))
-    except DecimalException as exc:
-        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} cannot be represented at scale 2: {raw!r}") from exc
+    minor = parse_money_to_minor_units(raw, path, allow_negative=allow_negative)
+    return minor_units_to_decimal(minor)
 
 
 def parse_money_to_minor_units(raw: Any, path: str, *, allow_negative: bool = False) -> int:
-    """Parse an exact currency amount (at most 2 decimal places) directly to integer minor units."""
-    val = parse_exact_decimal(raw, path, allow_negative=allow_negative, max_scale=2)
-    try:
-        return int(val * Decimal(100))
-    except DecimalException as exc:
-        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} cannot be converted to minor units: {raw!r}") from exc
+    """Parse an exact currency amount (at most 2 decimal places) directly to integer minor units.
+
+    Validates `exponent >= -2` directly on the exact digit tuple BEFORE any arithmetic,
+    then computes integer minor units in pure Python `int` arithmetic (immune to Decimal
+    context precision rounding).
+    """
+    sign, coeff, exp = _parse_exact_decimal_parts(raw, path, allow_negative=allow_negative)
+    if exp < -2:
+        raise SolverContractError(
+            "NORN-SOLVER-DECIMAL",
+            f"{path} must have at most 2 decimal places (no silent rounding), got {raw!r}",
+        )
+    scale_pow: int = int(10 ** (2 + exp))
+    minor: int = coeff * scale_pow
+    return -minor if sign else minor
 
 
 def decimal_to_minor_units(value: Decimal, path: str) -> int:
@@ -498,19 +549,20 @@ def minor_units_to_decimal(minor: int) -> Decimal:
 
 
 def parse_hours_to_minutes(raw: Any, path: str) -> int:
-    """Parse exact hours (Decimal, int, or decimal string) to exact integer minutes (refuses fractional minutes)."""
-    val = parse_exact_decimal(raw, path, allow_negative=False)
-    try:
-        scaled = val * Decimal(60)
-        is_exact = scaled == scaled.to_integral_value()
-    except DecimalException as exc:
-        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} cannot be converted to minutes: {raw!r}") from exc
-    if not is_exact:
+    """Parse exact hours (Decimal, int, or decimal string) to exact integer minutes using pure integer arithmetic."""
+    _sign, coeff, exp = _parse_exact_decimal_parts(raw, path, allow_negative=False)
+    if coeff == 0:
+        return 0
+    if exp >= 0:
+        return coeff * 60 * int(10**exp)
+    denom: int = int(10 ** (-exp))
+    num: int = coeff * 60
+    if num % denom != 0:
         raise SolverContractError(
             "NORN-SOLVER-DECIMAL",
             f"{path} must correspond to an exact whole number of minutes, got {raw!r}h",
         )
-    return int(scaled)
+    return num // denom
 
 
 def hours_to_minutes(hours: Decimal, path: str) -> int:
@@ -755,6 +807,7 @@ def validate_solve_request_payload(
         parse_str_list(obj["authorized_transfer_employee_ids"], f"{path}.authorized_transfer_employee_ids")
     if "profile" in obj:
         validate_preference_profile_payload(obj["profile"], f"{path}.profile", _skip_pii_scan=True)
+    emp_count = 0
     if "employees" in obj:
         raw_employees = obj["employees"]
         if not isinstance(raw_employees, list):
@@ -762,9 +815,10 @@ def validate_solve_request_payload(
                 "NORN-SOLVER-SCHEMA",
                 f"{path}.employees must be a list, got {type(raw_employees).__name__}",
             )
-        if len(raw_employees) > MAX_EMPLOYEES:
+        emp_count = len(raw_employees)
+        if emp_count > MAX_EMPLOYEES:
             raise LimitExceededError(
-                f"{path}.employees has {len(raw_employees)} entries, exceeding MAX_EMPLOYEES ({MAX_EMPLOYEES})"
+                f"{path}.employees has {emp_count} entries, exceeding MAX_EMPLOYEES ({MAX_EMPLOYEES})"
             )
         total_leave_blocks = 0
         for idx, emp in enumerate(raw_employees):
@@ -780,9 +834,15 @@ def validate_solve_request_payload(
                 "NORN-SOLVER-SCHEMA",
                 f"{path}.shifts must be a list, got {type(raw_shifts).__name__}",
             )
-        if len(raw_shifts) > MAX_SHIFTS:
+        shift_count = len(raw_shifts)
+        if shift_count > MAX_SHIFTS:
             raise LimitExceededError(
-                f"{path}.shifts has {len(raw_shifts)} entries, exceeding MAX_SHIFTS ({MAX_SHIFTS})"
+                f"{path}.shifts has {shift_count} entries, exceeding MAX_SHIFTS ({MAX_SHIFTS})"
+            )
+        if emp_count * shift_count > MAX_ASSIGNMENT_VARS:
+            raise LimitExceededError(
+                f"{path} employee*shift variable grid ({emp_count} * {shift_count} = {emp_count * shift_count}) "
+                f"exceeds MAX_ASSIGNMENT_VARS ({MAX_ASSIGNMENT_VARS})"
             )
         for idx, sh in enumerate(raw_shifts):
             validate_shift_payload(sh, f"{path}.shifts[{idx}]", _skip_pii_scan=True)

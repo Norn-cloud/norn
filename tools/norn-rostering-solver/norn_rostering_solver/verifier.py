@@ -20,9 +20,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
-from .boundary import PostVerificationError, format_utc
+from .boundary import PostVerificationError, format_utc, timedelta_exact_minutes
 from .models import (
     Assignment,
     EmployeeInput,
@@ -79,6 +80,32 @@ class VerificationResult:
             checks_run=self.checks_run,
             violation_count=len(self.violations),
         )
+
+
+_EPOCH_UTC = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _count_shift_local_minutes_direct(
+    starts_at: datetime,
+    ends_at: datetime,
+    tz: ZoneInfo,
+) -> tuple[dict[date, int], dict[tuple[int, int], int]]:
+    """Independently attribute every single UTC minute `[t, t+60s)` directly to its local calendar day & ISO week.
+
+    Intentionally does NOT share `models.split_interval_by_local_day` so the independent
+    post-verifier can never share a calendar/DST splitting bug with the solver.
+    """
+    start_min = timedelta_exact_minutes(starts_at.astimezone(UTC) - _EPOCH_UTC, "verifier_start")
+    end_min = timedelta_exact_minutes(ends_at.astimezone(UTC) - _EPOCH_UTC, "verifier_end")
+    daily: dict[date, int] = defaultdict(int)
+    for epoch_min in range(start_min, end_min):
+        local_day = (_EPOCH_UTC + timedelta(minutes=epoch_min)).astimezone(tz).date()
+        daily[local_day] += 1
+    weekly: dict[tuple[int, int], int] = defaultdict(int)
+    for work_day, mins in daily.items():
+        iso = work_day.isocalendar()
+        weekly[(iso.year, iso.week)] += mins
+    return dict(daily), dict(weekly)
 
 
 def _max_consecutive_working_days(days: set[date]) -> int:
@@ -234,13 +261,14 @@ def verify_roster(
                             )
                         )
 
-        # Exact overnight splitting across local calendar days & ISO weeks in `request.iana_timezone`
+        # Exact independent minute-by-minute UTC attribution across local calendar days & ISO weeks
         daily_minutes: dict[date, int] = defaultdict(int)
         weekly_minutes: dict[tuple[int, int], int] = defaultdict(int)
         for sh in emp_shifts:
-            for work_day, day_mins in sh.daily_minutes(tz).items():
+            sh_daily, sh_weekly = _count_shift_local_minutes_direct(sh.starts_at, sh.ends_at, tz)
+            for work_day, day_mins in sh_daily.items():
                 daily_minutes[work_day] += day_mins
-            for week_key, week_mins in sh.weekly_minutes(tz).items():
+            for week_key, week_mins in sh_weekly.items():
                 weekly_minutes[week_key] += week_mins
 
         for work_day, mins in sorted(daily_minutes.items()):

@@ -8,21 +8,37 @@ Unmarked Slice Execution Contract:
   containing ONLY opaque identifiers, exact integer/decimal quantities, and pinned
   `iana_timezone`) to `POST /v1/functions/norn.solver.rostering/invoke`.
 
-Endpoints (stdlib `http.server.ThreadingHTTPServer`, bounded concurrency & timeouts):
+`FunctionManifest` Admission Semantics (`crates/norn-checker/src/function.rs`):
+  `crates/norn-checker/src/function.rs` reserves `implementation.format == "host"` strictly
+  for compiled-in engine built-ins (`function.manifest.authored_host`). External solver
+  workers therefore declare `implementation.format == "oci_image"` with
+  `determinism.effectful` (`cache: "none"`, `capabilities: []`).
+  - In production container deployment, set `NORN_SOLVER_OCI_IMAGE_DIGEST` (exact OCI
+    image manifest digest `sha256:<64 hex>`) and optionally `NORN_SOLVER_OCI_IMAGE_REF`
+    (plain registry reference, e.g. `ghcr.io/norn-cloud/norn-rostering-solver`).
+  - In local development/test mode (no published OCI image), `implementation.digest` is a
+    deterministic local bundle digest over `source_digest` + `dependencyClosure`, and
+    `implementation.locator` is `null` (never fabricating a fake registry URL).
+
+Endpoints (stdlib `http.server.ThreadingHTTPServer`, bounded threads, concurrency & timeouts):
 - `GET /health` — liveness + operational metadata (`source_digest`, `manifest_digest`, `endpoints`).
 - `GET /manifest` — strict canonical `FunctionManifest` JSON matching
   `crates/norn-ir/src/function.rs` (`#[serde(deny_unknown_fields)]`, exact 16 fields,
-  zero extra keys; `implementation.format == "host"` pinned by source-tree digest).
-- `POST /v1/functions/norn.solver.rostering/invoke` — duplicate-key-proof strict UTF-8
-  JSON boundary -> cardinality bounds -> deterministic OR-Tools CP-SAT -> independent
-  hard-law post-verifier -> full-payload canonical receipt.
+  zero extra keys) and passing every rule in `crates/norn-checker/src/function.rs`.
+- `POST /v1/functions/norn.solver.rostering/invoke` — semaphore admission BEFORE reading
+  request body -> duplicate-key-proof strict UTF-8 JSON boundary -> pre-model cardinality
+  and complexity bounds -> deterministic OR-Tools CP-SAT -> independent hard-law
+  post-verifier -> full-payload canonical receipt (+ `comparison_digest` when `what_if`
+  is requested).
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import platform
+import re
 import sys
 import threading
 from decimal import DecimalException
@@ -49,6 +65,7 @@ from .models import (
     PreferenceProfileInput,
     SolveRequest,
 )
+from .receipts import compute_comparison_digest
 from .solver import compare_what_if, solve_roster
 
 FUNCTION_ABI_V1 = "norn.function-abi/1"
@@ -62,6 +79,9 @@ DEFAULT_ACQUIRE_TIMEOUT_SECONDS = 0.05
 _MANIFEST_DOMAIN = b"norn.function/manifest/v1\0"
 _DEPENDENCY_CLOSURE_DOMAIN = b"norn.function/dependency-closure/v1\0"
 _SOURCE_TREE_DOMAIN = b"norn.function/source-tree/v1\0"
+_LOCAL_OCI_BUNDLE_DOMAIN = b"norn.function/local-oci-bundle/v1\0"
+
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 _BAD_REQUEST_CODES: frozenset[str] = frozenset(
     {
@@ -70,6 +90,20 @@ _BAD_REQUEST_CODES: frozenset[str] = frozenset(
         "NORN-SOLVER-JSON",
     }
 )
+
+
+def _is_well_formed_digest(value: str) -> bool:
+    return bool(_DIGEST_RE.match(value))
+
+
+def _is_plain_reference(reference: str) -> bool:
+    """Matches `plain_reference` in `crates/norn-checker/src/function.rs`."""
+    return (
+        bool(reference)
+        and "://" not in reference
+        and not any(ch in reference for ch in ("@", "?", "#"))
+        and not any(ch.isspace() for ch in reference)
+    )
 
 
 def package_source_digest() -> str:
@@ -188,13 +222,26 @@ def _error_schema_doc() -> dict[str, object]:
     }
 
 
-def build_function_manifest() -> dict[str, object]:
+def build_function_manifest(
+    *,
+    oci_image_digest: str | None = None,
+    oci_image_ref: str | None = None,
+) -> dict[str, object]:
     """Build the strict canonical `FunctionManifest` for `norn.solver.rostering`.
 
     Emits ONLY the exact 16 camelCase fields accepted by `FunctionManifest`
-    (`crates/norn-ir/src/function.rs`, `#[serde(deny_unknown_fields)]`):
-    uses `implementation.format = "host"` pinned by the Python package `source_digest`
-    and `determinism.effectful` (never faking an OCI image or hermetic container claim).
+    (`crates/norn-ir/src/function.rs`, `#[serde(deny_unknown_fields)]`) and satisfies
+    every admission check in `crates/norn-checker/src/function.rs`:
+    - `implementation.format == "oci_image"` (required for non-builtin functions; `host`
+      is reserved for compiled-in engine built-ins and refused with `authored_host`).
+    - When `oci_image_digest` (or `NORN_SOLVER_OCI_IMAGE_DIGEST`) is supplied, uses that
+      exact OCI image manifest digest (and pins `locator = "<ref>@<digest>"` if
+      `oci_image_ref` / `NORN_SOLVER_OCI_IMAGE_REF` is provided).
+    - When running locally without a published OCI image, derives a deterministic local
+      bundle digest over `source_digest` + `dependencyClosure` and leaves `locator: null`
+      (never fabricating a fake registry URL).
+    - Uses `determinism.effectful` (`maxAttempts: 1`, `providerIdempotency: true`,
+      `cache: "none"`, `capabilities: []`) so no unverified container-isolation claim is made.
     """
     source_digest = package_source_digest()
     ortools_ver = _ortools_version()
@@ -204,8 +251,13 @@ def build_function_manifest() -> dict[str, object]:
     out_doc = _output_schema_doc()
     err_doc = _error_schema_doc()
 
-    # Dependency closure entries MUST be strictly sorted by `name` (Core 07).
+    # Dependency closure entries MUST be non-empty for `oci_image` and strictly sorted by `name` (Core 07).
     dep_entries: list[dict[str, object]] = [
+        {
+            "digest": source_digest,
+            "kind": "asset",
+            "name": "norn-rostering-solver-source",
+        },
         {
             "digest": domain_sha256_digest(
                 _DEPENDENCY_CLOSURE_DOMAIN,
@@ -224,6 +276,29 @@ def build_function_manifest() -> dict[str, object]:
         },
     ]
     dep_closure_digest = domain_sha256_digest(_DEPENDENCY_CLOSURE_DOMAIN, dep_entries)
+
+    env_digest = oci_image_digest if oci_image_digest is not None else os.environ.get("NORN_SOLVER_OCI_IMAGE_DIGEST")
+    env_ref = oci_image_ref if oci_image_ref is not None else os.environ.get("NORN_SOLVER_OCI_IMAGE_REF")
+
+    if env_digest is not None:
+        if not _is_well_formed_digest(env_digest):
+            raise ValueError(f"invalid OCI image digest (expected sha256:<64 hex>): {env_digest!r}")
+        impl_digest = env_digest
+        if env_ref is not None:
+            if not _is_plain_reference(env_ref):
+                raise ValueError(f"invalid OCI image reference (must be plain registry/path): {env_ref!r}")
+            impl_locator: str | None = f"{env_ref}@{impl_digest}"
+        else:
+            impl_locator = None
+    else:
+        impl_digest = domain_sha256_digest(
+            _LOCAL_OCI_BUNDLE_DOMAIN,
+            {
+                "dependency_closure": dep_closure_digest,
+                "source_digest": source_digest,
+            },
+        )
+        impl_locator = None
 
     runtime_digest = domain_sha256_digest(
         b"norn.function/runtime/v1\0",
@@ -269,10 +344,10 @@ def build_function_manifest() -> dict[str, object]:
         },
         "functionId": FUNCTION_ID,
         "implementation": {
-            "digest": source_digest,
-            "entryPoint": "norn_rostering_solver.worker:handle_invoke_payload",
-            "format": "host",
-            "locator": f"norn-rostering-solver/{FUNCTION_VERSION}@{source_digest}",
+            "digest": impl_digest,
+            "entryPoint": "norn-rostering-worker",
+            "format": "oci_image",
+            "locator": impl_locator,
         },
         "inputSchema": {
             "digest": domain_sha256_digest(b"norn.schema/v1\0", in_doc),
@@ -337,7 +412,9 @@ def handle_invoke_payload(
         if invocation_id is not None:
             payload["invocation_id"] = invocation_id
         if alt_profile is not None:
-            payload["what_if"] = compare_what_if(request, alt_profile).to_dict()
+            what_if_dict = compare_what_if(request, alt_profile).to_dict()
+            what_if_dict["comparison_digest"] = compute_comparison_digest(what_if_dict)
+            payload["what_if"] = what_if_dict
 
         encoded_len = len((canonical_json(payload) + "\n").encode("utf-8"))
         if encoded_len > max_response_bytes:
@@ -401,7 +478,7 @@ def handle_invoke_payload(
 
 
 class RosteringWorkerServer(ThreadingHTTPServer):
-    """Bounded `ThreadingHTTPServer` with socket timeout, concurrency semaphore, and response byte cap."""
+    """Bounded `ThreadingHTTPServer` with thread cap, socket timeout, concurrency semaphore, and response byte cap."""
 
     daemon_threads = True
     allow_reuse_address = True
@@ -411,6 +488,7 @@ class RosteringWorkerServer(ThreadingHTTPServer):
         server_address: tuple[str, int],
         *,
         max_concurrent_solves: int = DEFAULT_MAX_CONCURRENT_SOLVES,
+        max_active_connections: int | None = None,
         socket_timeout: float = SOCKET_READ_TIMEOUT_SECONDS,
         max_response_bytes: int = MAX_RESPONSE_BYTES,
         acquire_timeout: float = DEFAULT_ACQUIRE_TIMEOUT_SECONDS,
@@ -421,11 +499,57 @@ class RosteringWorkerServer(ThreadingHTTPServer):
             raise ValueError("socket_timeout must be > 0")
         if max_response_bytes < 256:
             raise ValueError("max_response_bytes must be >= 256")
+        resolved_connections = (
+            max_active_connections if max_active_connections is not None else max(8, max_concurrent_solves * 2)
+        )
+        if resolved_connections < max_concurrent_solves:
+            raise ValueError("max_active_connections must be >= max_concurrent_solves")
         self.socket_timeout = socket_timeout
         self.max_response_bytes = max_response_bytes
         self.acquire_timeout = acquire_timeout
+        self.request_queue_size = resolved_connections
         self.concurrency_semaphore = threading.BoundedSemaphore(max_concurrent_solves)
+        self.connection_semaphore = threading.BoundedSemaphore(resolved_connections)
         super().__init__(server_address, RosteringWorkerHandler)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self.connection_semaphore.acquire(blocking=False):
+            # Refuse excess connections cleanly without spawning unbounded worker threads.
+            try:
+                body = (
+                    canonical_json(
+                        {
+                            "code": "NORN-SOLVER-BUSY",
+                            "error": "worker active connection limit reached; retry later",
+                            "status": "refused",
+                        }
+                    )
+                    + "\n"
+                ).encode("utf-8")
+                header = (
+                    "HTTP/1.1 503 Service Unavailable\r\n"
+                    "Content-Type: application/json; charset=utf-8\r\n"
+                    f"Content-Length: {len(body)}\r\n"
+                    "Connection: close\r\n\r\n"
+                ).encode("ascii")
+                request.sendall(header + body)
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.connection_semaphore.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.connection_semaphore.release()
 
 
 class RosteringWorkerHandler(BaseHTTPRequestHandler):
@@ -545,34 +669,16 @@ class RosteringWorkerHandler(BaseHTTPRequestHandler):
             )
             return
 
-        try:
-            raw_bytes = self.rfile.read(content_len)
-        except TimeoutError:
-            self._send_canonical_json(
-                int(HTTPStatus.REQUEST_TIMEOUT),
-                {
-                    "code": "NORN-SOLVER-TIMEOUT",
-                    "error": "socket read timed out while receiving request body",
-                    "status": "refused",
-                },
-            )
-            return
-
-        if len(raw_bytes) != content_len:
-            self._send_canonical_json(
-                int(HTTPStatus.BAD_REQUEST),
-                {
-                    "code": "NORN-SOLVER-JSON",
-                    "error": f"truncated request body: expected {content_len} bytes, got {len(raw_bytes)}",
-                    "status": "refused",
-                },
-            )
-            return
-
+        # Acquire concurrency permit BEFORE reading request body bytes into memory.
         sem = self.server.concurrency_semaphore
         acquire_timeout = self.server.acquire_timeout
-        acquired = sem.acquire(blocking=True, timeout=acquire_timeout) if acquire_timeout > 0 else sem.acquire(blocking=False)
+        acquired = (
+            sem.acquire(blocking=True, timeout=acquire_timeout)
+            if acquire_timeout > 0
+            else sem.acquire(blocking=False)
+        )
         if not acquired:
+            self.close_connection = True
             self._send_canonical_json(
                 int(HTTPStatus.SERVICE_UNAVAILABLE),
                 {
@@ -584,6 +690,30 @@ class RosteringWorkerHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            try:
+                raw_bytes = self.rfile.read(content_len)
+            except TimeoutError:
+                self._send_canonical_json(
+                    int(HTTPStatus.REQUEST_TIMEOUT),
+                    {
+                        "code": "NORN-SOLVER-TIMEOUT",
+                        "error": "socket read timed out while receiving request body",
+                        "status": "refused",
+                    },
+                )
+                return
+
+            if len(raw_bytes) != content_len:
+                self._send_canonical_json(
+                    int(HTTPStatus.BAD_REQUEST),
+                    {
+                        "code": "NORN-SOLVER-JSON",
+                        "error": f"truncated request body: expected {content_len} bytes, got {len(raw_bytes)}",
+                        "status": "refused",
+                    },
+                )
+                return
+
             status_code, payload = handle_invoke_payload(
                 raw_bytes,
                 max_response_bytes=self.server.max_response_bytes,
@@ -599,6 +729,7 @@ def create_worker_server(
     port: int = 8091,
     *,
     max_concurrent_solves: int = DEFAULT_MAX_CONCURRENT_SOLVES,
+    max_active_connections: int | None = None,
     socket_timeout: float = SOCKET_READ_TIMEOUT_SECONDS,
     max_response_bytes: int = MAX_RESPONSE_BYTES,
     acquire_timeout: float = DEFAULT_ACQUIRE_TIMEOUT_SECONDS,
@@ -607,6 +738,7 @@ def create_worker_server(
     return RosteringWorkerServer(
         (host, port),
         max_concurrent_solves=max_concurrent_solves,
+        max_active_connections=max_active_connections,
         socket_timeout=socket_timeout,
         max_response_bytes=max_response_bytes,
         acquire_timeout=acquire_timeout,

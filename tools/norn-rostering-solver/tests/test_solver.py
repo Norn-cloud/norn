@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import socket
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime, timedelta
@@ -29,6 +31,8 @@ from norn_rostering_solver import (
     FORBIDDEN_PII_FIELDS,
     FUNCTION_ID,
     FUNCTION_VERSION,
+    MAX_ASSIGNMENT_VARS,
+    MAX_CONFLICT_CONSTRAINTS,
     MAX_EMPLOYEES,
     MAX_HORIZON_DAYS,
     MAX_LEAVE_BLOCKS,
@@ -51,6 +55,7 @@ from norn_rostering_solver import (
     build_function_manifest,
     canonical_json,
     compare_what_if,
+    compute_comparison_digest,
     compute_manifest_digest,
     create_worker_server,
     handle_invoke_payload,
@@ -60,11 +65,13 @@ from norn_rostering_solver import (
     solve_roster,
     split_interval_by_iso_week,
     split_interval_by_local_day,
+    verify_comparison_digest,
     verify_or_raise,
     verify_receipt_digest,
     verify_roster,
     verify_statutory_laws,
 )
+from norn_rostering_solver.boundary import domain_sha256_digest
 
 
 def _utc(year: int, month: int, day: int, hour: int, minute: int = 0) -> datetime:
@@ -556,12 +563,19 @@ def test_exact_integer_minutes_preserved_without_lossy_hour_rounding() -> None:
 @pytest.mark.parametrize(
     ("field_path", "bad_val"),
     [
+        (("profile", "weekly_overtime_budget"), "1.00000000000000000000000000001"),  # exceeds 28-digit Decimal prec
+        (("profile", "weekly_overtime_budget"), "0.001"),  # over-scale money (> 2 decimals)
+        (("profile", "weekly_overtime_budget"), "1e-30"),  # tiny over-scale exponent
+        (("profile", "weekly_overtime_budget"), "NaN"),  # non-finite string
+        (("profile", "weekly_overtime_budget"), "Infinity"),  # non-finite string
+        (("profile", "weekly_overtime_budget"), "-Infinity"),  # non-finite string
         (("profile", "weekly_overtime_budget"), "500.125"),  # over-scale money (> 2 decimals)
         (("employees", 0, "overtime_cost_per_hour"), "120.999"),  # over-scale money
         (("profile", "weekly_overtime_budget"), "not-a-number"),  # invalid decimal
-        (("profile", "weekly_overtime_budget"), "9" * 40),  # huge decimal (was uncaught InvalidOperation)
+        (("profile", "weekly_overtime_budget"), "9" * 40),  # huge decimal
         (("profile", "weekly_overtime_budget"), "1e999999999"),  # huge exponent
         (("profile", "min_rest_hours"), "1.125"),  # 67.5 minutes (non-whole minute)
+        (("profile", "min_rest_hours"), "1.00000000000000000000000000001"),  # non-whole minute past prec 28
     ],
 )
 def test_bad_or_overscale_decimal_strings_fail_closed_with_400(
@@ -883,6 +897,88 @@ def test_overtime_repair_never_relaxes_statutory_weekly_cap() -> None:
     assert "HR-SH-STAT:max_weekly_hours_exceeded" in {v.code for v in stat_ver.violations}
 
 
+def test_america_st_johns_dst_midnight_rollback_151_vs_150_cap() -> None:
+    # America/St_Johns 2009-11-01 DST fallback rolls 00:01 NDT (-02:30) back to 23:01 NST (-03:30) on 2009-10-31!
+    # Shift [2009-11-01T00:58:00Z, 2009-11-01T04:30:00Z) = 212 elapsed UTC minutes:
+    #   - 00:58Z..02:30Z = 2009-10-31 22:28..24:00 (-02:30) ->  92 min on 2009-10-31
+    #   - 02:30Z..02:31Z = 2009-11-01 00:00..00:01 (-02:30) ->   1 min on 2009-11-01
+    #   - 02:31Z..03:30Z = 2009-10-31 23:01..24:00 (-03:30) ->  59 min on 2009-10-31 (rollback!)
+    #   - 03:30Z..04:30Z = 2009-11-01 00:00..01:00 (-03:30) ->  60 min on 2009-11-01
+    # Exact local totals: 151 min on 2009-10-31, 61 min on 2009-11-01.
+    tz = ZoneInfo("America/St_Johns")
+    shift = ShiftRequirementInput(
+        "sh_st_johns_rollback",
+        "branch_nl",
+        "cashier",
+        _utc(2009, 11, 1, 0, 58),
+        _utc(2009, 11, 1, 4, 30),
+        1,
+    )
+    split = split_interval_by_local_day(shift.starts_at, shift.ends_at, tz)
+    assert split == {
+        datetime(2009, 10, 31, tzinfo=UTC).date(): 151,
+        datetime(2009, 11, 1, tzinfo=UTC).date(): 61,
+    }
+    assert sum(split.values()) == shift.duration_minutes == 212
+
+    emp = (
+        EmployeeInput(
+            employee_id="emp_nl_1",
+            home_unit_id="branch_nl",
+            skills=("cashier",),
+            max_regular_weekly_hours=Decimal("40.00"),
+            max_overtime_weekly_hours=Decimal("0.00"),
+            overtime_cost_per_hour=Decimal("100.00"),
+        ),
+    )
+
+    # Under 150-minute daily cap: MUST be refused (`infeasible`) AND independent verifier MUST reject!
+    profile_150 = PreferenceProfileInput(
+        profile_id="prof_150",
+        currency="CAD",
+        weekly_overtime_budget_minor=0,
+        min_rest_minutes=660,
+        max_daily_minutes=150,
+        max_weekly_minutes=2880,
+        max_consecutive_days=6,
+    )
+    req_150 = SolveRequest("ros_nl_150", "branch_nl", emp, (shift,), profile_150, iana_timezone="America/St_Johns")
+    res_150 = solve_roster(req_150)
+    assert res_150.status == "infeasible"
+
+    forced = (
+        Assignment(
+            shift.shift_id,
+            "emp_nl_1",
+            shift.unit_id,
+            shift.role_code,
+            "2009-11-01T00:58:00Z",
+            "2009-11-01T04:30:00Z",
+            shift.duration_minutes,
+            shift.duration_hours,
+        ),
+    )
+    ver_150 = verify_roster(req_150, forced)
+    assert not ver_150.passed
+    assert "HR-SH-STAT:max_daily_hours_exceeded" in {v.code for v in ver_150.violations}
+
+    # Under 151-minute daily cap: MUST succeed (`optimal`) AND independent verifier MUST pass!
+    profile_151 = PreferenceProfileInput(
+        profile_id="prof_151",
+        currency="CAD",
+        weekly_overtime_budget_minor=0,
+        min_rest_minutes=660,
+        max_daily_minutes=151,
+        max_weekly_minutes=2880,
+        max_consecutive_days=6,
+    )
+    req_151 = SolveRequest("ros_nl_151", "branch_nl", emp, (shift,), profile_151, iana_timezone="America/St_Johns")
+    res_151 = solve_roster(req_151)
+    assert res_151.status == "optimal"
+    assert res_151.verification.passed is True
+    assert verify_roster(req_151, res_151.assignments).passed is True
+
+
 # ---------------------------------------------------------------------------
 # 4. Honest Solver Statuses & Repair Optimality Tests
 # ---------------------------------------------------------------------------
@@ -1037,6 +1133,69 @@ def test_cardinality_limits_enforced_before_model_construction() -> None:
         SolveRequest.from_dict(too_many_leaves)
     assert exc_l.value.code == "NORN-SOLVER-LIMIT-EXCEEDED"
 
+    # 5. Exceed MAX_ASSIGNMENT_VARS (`len(employees) * len(shifts) > 10_000`)
+    too_many_vars = _valid_raw_payload()
+    too_many_vars["employees"] = [
+        {
+            "employee_id": f"emp_v_{i:04d}",
+            "home_unit_id": "branch_maadi",
+            "skills": ["cashier"],
+            "max_regular_weekly_minutes": 2400,
+        }
+        for i in range(200)
+    ]
+    too_many_vars["shifts"] = [
+        {
+            "shift_id": f"sh_v_{i:04d}",
+            "unit_id": "branch_maadi",
+            "role_code": "cashier",
+            "starts_at": "2026-11-28T06:00:00Z",
+            "ends_at": "2026-11-28T14:00:00Z",
+            "required_count": 1,
+        }
+        for i in range(60)
+    ]
+    assert MAX_ASSIGNMENT_VARS < 200 * 60
+    with pytest.raises(LimitExceededError) as exc_v:
+        SolveRequest.from_dict(too_many_vars)
+    assert exc_v.value.code == "NORN-SOLVER-LIMIT-EXCEEDED"
+
+    # 6. All-overlapping worst-case payload exceeding MAX_CONFLICT_CONSTRAINTS (50,000) fails closed cleanly!
+    # 40 employees × 250 identical overlapping shifts: 40*250 = 10,000 <= MAX_ASSIGNMENT_VARS,
+    # but C(250, 2) * 40 = 1,245,000 > MAX_CONFLICT_CONSTRAINTS. Sweep-line aborts immediately!
+    overlapping_emps = tuple(
+        EmployeeInput(
+            employee_id=f"emp_ov_{i:03d}",
+            home_unit_id="branch_maadi",
+            skills=("cashier",),
+            max_regular_weekly_minutes=2400,
+        )
+        for i in range(40)
+    )
+    overlapping_shifts = tuple(
+        ShiftRequirementInput(
+            shift_id=f"sh_ov_{i:03d}",
+            unit_id="branch_maadi",
+            role_code="cashier",
+            starts_at=_utc(2026, 11, 28, 6),
+            ends_at=_utc(2026, 11, 28, 14),
+            required_count=1,
+        )
+        for i in range(250)
+    )
+    assert len(overlapping_emps) * len(overlapping_shifts) <= MAX_ASSIGNMENT_VARS
+    assert MAX_CONFLICT_CONSTRAINTS < (250 * 249 // 2) * 40
+    req_conflict_bomb = SolveRequest(
+        "ros_conflict_bomb",
+        "branch_maadi",
+        overlapping_emps,
+        overlapping_shifts,
+        _cairo_profile(),
+    )
+    with pytest.raises(LimitExceededError) as exc_c:
+        solve_roster(req_conflict_bomb)
+    assert exc_c.value.code == "NORN-SOLVER-LIMIT-EXCEEDED"
+
 
 def test_invalid_utf8_and_response_byte_cap_fail_closed() -> None:
     # 1. Invalid UTF-8 bytes -> 400 NORN-SOLVER-JSON (never 500 traceback!)
@@ -1064,24 +1223,39 @@ def test_http_worker_concurrency_semaphore_and_socket_timeout() -> None:
         acquire_timeout=0.0,
     )
     port = int(server.server_address[1])
-    base_url = f"http://127.0.0.1:{port}"
     invoke_path = f"/v1/functions/{FUNCTION_ID}/invoke"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
     try:
-        # 1. Concurrency semaphore exhaustion -> 503 NORN-SOLVER-BUSY
+        # 1. Concurrency semaphore exhaustion -> 503 NORN-SOLVER-BUSY BEFORE reading request body!
         assert server.concurrency_semaphore.acquire(blocking=False) is True
         try:
-            status, busy = _http_request(
-                base_url,
-                "POST",
-                invoke_path,
-                canonical_json(_valid_raw_payload()).encode("utf-8"),
-            )
-            assert status == 503
-            assert busy["code"] == "NORN-SOLVER-BUSY"
-            assert busy["status"] == "refused"
+            # Send ONLY headers claiming a large Content-Length and ZERO body bytes:
+            # if the worker read the body before acquiring the semaphore, this would stall and 408 timeout;
+            # instead it must immediately refuse with 503 NORN-SOLVER-BUSY!
+            with socket.create_connection(("127.0.0.1", port), timeout=2.0) as sock:
+                sock.sendall(
+                    (
+                        f"POST {invoke_path} HTTP/1.1\r\n"
+                        f"Host: 127.0.0.1:{port}\r\n"
+                        "Content-Type: application/json\r\n"
+                        "Content-Length: 100000\r\n"
+                        "Connection: close\r\n"
+                        "\r\n"
+                    ).encode("ascii")
+                )
+                chunks_busy: list[bytes] = []
+                while True:
+                    data = sock.recv(4096)
+                    if not data:
+                        break
+                    chunks_busy.append(data)
+                raw_busy = b"".join(chunks_busy).decode("utf-8")
+                assert "503" in raw_busy.splitlines()[0]
+                parsed_busy = json.loads(raw_busy.split("\r\n\r\n", 1)[1])
+                assert parsed_busy["code"] == "NORN-SOLVER-BUSY"
+                assert parsed_busy["status"] == "refused"
         finally:
             server.concurrency_semaphore.release()
 
@@ -1745,67 +1919,127 @@ def test_what_if_fairness_first_vs_cost_first() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_function_manifest_strictly_matches_norn_ir_schema() -> None:
-    manifest = build_function_manifest()
-
-    # Load the authoritative checked-in JSON Schema generated from `crates/norn-ir/src/function.rs`
+def _assert_manifest_passes_norn_checker_rules(manifest: dict[str, object]) -> None:
+    """Verify EVERY admission check from `crates/norn-checker/src/function.rs` (`check_function_manifest`)."""
     repo_root = Path(__file__).resolve().parents[3]
     schema_path = repo_root / "crates" / "norn-ir" / "schema" / "function_manifest.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
+    # 1. Exact closed schema keys (`#[serde(deny_unknown_fields)]`)
     allowed_top_keys = set(schema["properties"].keys())
     required_top_keys = set(schema["required"])
-    assert set(manifest.keys()) <= allowed_top_keys, f"extra keys rejected by deny_unknown_fields: {set(manifest.keys()) - allowed_top_keys}"
-    assert required_top_keys <= set(manifest.keys()), f"missing required keys: {required_top_keys - set(manifest.keys())}"
+    assert set(manifest.keys()) <= allowed_top_keys, f"extra keys: {set(manifest.keys()) - allowed_top_keys}"
+    assert required_top_keys <= set(manifest.keys()), f"missing keys: {required_top_keys - set(manifest.keys())}"
 
-    # Verify nested closed schemas (`additionalProperties: false`)
+    # 2. ABI & NFC canonical text
+    assert manifest["abi"] == "norn.function-abi/1"
+    canon_text = canonical_json(manifest)
+    assert unicodedata.normalize("NFC", canon_text) == canon_text
+
+    digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
     defs = schema["$defs"]
+
+    # 3. Implementation (`format != "host"` -> avoids `function.manifest.authored_host`)
     impl = manifest["implementation"]
     assert isinstance(impl, dict)
     assert set(impl.keys()) <= set(defs["Implementation"]["properties"].keys())
     assert set(defs["Implementation"]["required"]) <= set(impl.keys())
-    assert impl["format"] == "host"  # Never fake oci_image from Python source digest!
-    assert impl["digest"] == package_source_digest()
-    assert str(impl["locator"]).endswith(f"@{package_source_digest()}")
+    assert impl["format"] == "oci_image"
+    assert isinstance(impl["entryPoint"], str) and impl["entryPoint"].strip()
+    assert isinstance(impl["digest"], str) and digest_re.match(impl["digest"])
+    locator = impl.get("locator")
+    if locator is not None:
+        assert isinstance(locator, str)
+        pinned = f"@{impl['digest']}"
+        assert locator.endswith(pinned)
+        ref = locator[: -len(pinned)]
+        assert ref and "://" not in ref and not any(c in ref for c in ("@", "?", "#"))
+        assert not any(c.isspace() for c in ref)
 
+    # 4. Non-blank names & well-formed digests across schemas, runtime, platform
+    assert isinstance(manifest["functionId"], str) and manifest["functionId"].strip()
+    for schema_field in ("inputSchema", "outputSchema", "errorSchema"):
+        sref = manifest[schema_field]
+        assert isinstance(sref, dict)
+        assert set(sref.keys()) == set(defs["SchemaRef"]["properties"].keys())
+        assert isinstance(sref["id"], str) and sref["id"].strip()
+        assert isinstance(sref["digest"], str) and digest_re.match(sref["digest"])
+
+    runtime = manifest["runtime"]
+    assert isinstance(runtime, dict)
+    assert set(runtime.keys()) == set(defs["RuntimeIdentity"]["properties"].keys())
+    assert isinstance(runtime["id"], str) and runtime["id"].strip()
+    assert isinstance(runtime["version"], str) and runtime["version"].strip()
+    assert isinstance(runtime["digest"], str) and digest_re.match(runtime["digest"])
+
+    plat = manifest["platform"]
+    assert isinstance(plat, dict)
+    assert set(plat.keys()) == set(defs["Platform"]["properties"].keys())
+    assert isinstance(plat["os"], str) and plat["os"].strip()
+    assert isinstance(plat["arch"], str) and plat["arch"].strip()
+
+    # 5. Dependency closure: non-null, non-empty for oci_image, strictly sorted by name, exact computed_digest
+    dep = manifest["dependencyClosure"]
+    assert isinstance(dep, dict)
+    assert set(dep.keys()) == set(defs["DependencyClosure"]["properties"].keys())
+    entries = dep["entries"]
+    assert isinstance(entries, list) and len(entries) > 0
+    prev_name: str | None = None
+    for entry in entries:
+        assert isinstance(entry, dict)
+        assert set(entry.keys()) == set(defs["DependencyEntry"]["properties"].keys())
+        name = entry["name"]
+        assert isinstance(name, str) and name.strip()
+        if prev_name is not None:
+            assert prev_name < name
+        prev_name = name
+        assert isinstance(entry["digest"], str) and digest_re.match(entry["digest"])
+    assert dep["digest"] == domain_sha256_digest(b"norn.function/dependency-closure/v1\0", entries)
+
+    # 6. Determinism profile + cache policy + capabilities + positive bounds
     det = manifest["determinism"]
     assert isinstance(det, dict)
     assert set(det.keys()) == {"effectful"}
     eff = det["effectful"]
     assert isinstance(eff, dict)
     assert set(eff.keys()) == set(defs["EffectfulPolicy"]["properties"].keys())
-    assert eff["maxAttempts"] == 1
+    assert isinstance(eff["maxAttempts"], int) and eff["maxAttempts"] >= 1
     assert eff["providerIdempotency"] is True
+    assert manifest["cache"] == "none"
+    assert manifest["capabilities"] == []
+    assert manifest["steps"] == []
 
     bounds = manifest["bounds"]
     assert isinstance(bounds, dict)
     assert set(bounds.keys()) == set(defs["ResourceBounds"]["properties"].keys())
     assert all(isinstance(v, int) and v > 0 for v in bounds.values())
 
-    for schema_field in ("inputSchema", "outputSchema", "errorSchema"):
-        sref = manifest[schema_field]
-        assert isinstance(sref, dict)
-        assert set(sref.keys()) == set(defs["SchemaRef"]["properties"].keys())
-        assert str(sref["digest"]).startswith("sha256:")
 
-    dep = manifest["dependencyClosure"]
-    assert isinstance(dep, dict)
-    assert set(dep.keys()) == set(defs["DependencyClosure"]["properties"].keys())
-    entries = dep["entries"]
+def test_function_manifest_strictly_matches_norn_ir_schema_and_checker_rules() -> None:
+    # 1. Default local mode (no published OCI image -> deterministic local bundle digest, locator=None)
+    local_manifest = build_function_manifest()
+    _assert_manifest_passes_norn_checker_rules(local_manifest)
+    impl_local = local_manifest["implementation"]
+    assert isinstance(impl_local, dict)
+    assert impl_local["locator"] is None
+    dep_entries = local_manifest["dependencyClosure"]
+    assert isinstance(dep_entries, dict)
+    entries = dep_entries["entries"]
     assert isinstance(entries, list)
-    for entry in entries:
-        assert isinstance(entry, dict)
-        assert set(entry.keys()) == set(defs["DependencyEntry"]["properties"].keys())
-    dep_names = [e["name"] for e in entries]
-    assert dep_names == sorted(dep_names)
+    source_entry = next(e for e in entries if e["name"] == "norn-rostering-solver-source")
+    assert source_entry["digest"] == package_source_digest()
 
-    runtime = manifest["runtime"]
-    assert isinstance(runtime, dict)
-    assert set(runtime.keys()) == set(defs["RuntimeIdentity"]["properties"].keys())
-
-    plat = manifest["platform"]
-    assert isinstance(plat, dict)
-    assert set(plat.keys()) == set(defs["Platform"]["properties"].keys())
+    # 2. Published OCI container mode (explicit OCI image digest + registry ref)
+    pinned_digest = "sha256:" + "a" * 64
+    oci_manifest = build_function_manifest(
+        oci_image_digest=pinned_digest,
+        oci_image_ref="ghcr.io/norn-cloud/norn-rostering-solver",
+    )
+    _assert_manifest_passes_norn_checker_rules(oci_manifest)
+    impl_oci = oci_manifest["implementation"]
+    assert isinstance(impl_oci, dict)
+    assert impl_oci["digest"] == pinned_digest
+    assert impl_oci["locator"] == f"ghcr.io/norn-cloud/norn-rostering-solver@{pinned_digest}"
 
 
 def _http_request(
@@ -1860,12 +2094,12 @@ def test_live_http_worker_endpoints() -> None:
         assert health["manifest_digest"] == compute_manifest_digest()
         assert health["endpoints"]["invoke"] == f"/v1/functions/{FUNCTION_ID}/invoke"
 
-        # 2. GET /manifest — strict FunctionManifest (zero unknown fields) + digest header
+        # 2. GET /manifest — strict checker-admissible FunctionManifest + digest header
         status, headers, manifest = _http_request_with_headers(base_url, "GET", "/manifest")
         assert status == 200
         assert manifest["abi"] == "norn.function-abi/1"
         assert manifest["functionId"] == FUNCTION_ID
-        assert manifest["implementation"]["format"] == "host"
+        assert manifest["implementation"]["format"] == "oci_image"
         assert "manifestDigest" not in manifest
         assert "contractId" not in manifest
         assert "endpoints" not in manifest
@@ -1929,7 +2163,7 @@ def test_live_http_worker_endpoints() -> None:
         assert unsat_res["repair_suggestions"][0]["coverage_shortfall"] == 1
         assert verify_receipt_digest(unsat_res) is True
 
-        # 8. POST /invoke — what-if comparison over HTTP
+        # 8. POST /invoke — what-if comparison over HTTP with independent comparison_digest verification
         what_if_envelope = _valid_raw_payload()
         what_if_envelope["alt_profile"] = {
             **what_if_envelope["profile"],
@@ -1938,8 +2172,14 @@ def test_live_http_worker_endpoints() -> None:
         }
         status, wi_res = _http_request(base_url, "POST", invoke_path, canonical_json(what_if_envelope).encode("utf-8"))
         assert status == 200
+        assert verify_receipt_digest(wi_res) is True
         assert wi_res["what_if"]["base_profile_id"] == "prof_1"
         assert wi_res["what_if"]["alt_profile_id"] == "prof_2"
+        assert wi_res["what_if"]["comparison_digest"] == compute_comparison_digest(wi_res["what_if"])
+        assert verify_comparison_digest(wi_res["what_if"]) is True
+        tampered_wi = copy.deepcopy(wi_res["what_if"])
+        tampered_wi["changed_assignment_count"] = 999
+        assert verify_comparison_digest(tampered_wi) is False
 
         # 9. Unknown route returns 404
         status, not_found = _http_request(base_url, "GET", "/nonexistent")
