@@ -99,7 +99,8 @@ Shells own frame chrome and navigation geometry only; view components must never
 ### Approved web primitive stack
 
 1. **React 19** — core rendering runtime.
-2. **Vercel UI SDK (`@ui-sdk/core` + `@ui-sdk/react`, Apache-2.0)** — atomic interaction behaviors, controllable UI state primitives, and native `createAgent` Sidekick control.
+2. **Vercel UI SDK (`@ui-sdk/core` + `@ui-sdk/react` + `@ui-sdk/web`, Apache-2.0, pinned exactly at `0.1.0-beta.17` in `apps/studio/package.json`)** — atomic interaction behaviors and controllable UI state primitives (dialog, menu, popover, tooltip, command, toolbar, tree, the `ChromeDock` primitive, and the decision sheet's `@ui-sdk/web` radio/textarea).
+   - **Sidekick does not use the UI SDK agent bridge (`createAgent` / `agentTools` / `act`).** Sidekick acts only through the server's Norn tools over ACP (`src/sidekick/client.ts`), so every action passes the server's permission checks. A DOM-driving agent bridge would be a second, client-side action path, which the server-authority rule forbids. The bridge's beta.17 agent changes (one-call `act` plans, `expect` steps, finding components behind closed tabs and sections) therefore don't apply to Studio, and there is nothing to opt into.
 3. **Base UI (`@base-ui/react`, MIT)** — accessible headless primitives for standard overlays and controls (dialogs, popovers, menus, tabs, tooltips, toggles, sheets, direction provider).
 
 ### Long-term universal runtime trajectory (TARGET)
