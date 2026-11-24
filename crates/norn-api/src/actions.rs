@@ -16,6 +16,7 @@ use crate::{
     refusal::{Refusal, RefusalDiagnostic, RefusalSpan, codes},
 };
 use http::StatusCode;
+use norn_cell::flow_run::RunStarter;
 use norn_cell::{MAIN_WORLD, Receipt, compute::lineage::keyed_receipt_handle, engine::SqlEngine};
 use norn_ir::RuntimeValue;
 use norn_kernel::{
@@ -506,8 +507,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
             ("environmentId".into(), host.scope().environment_id.clone()),
         ]),
         actor: actor.to_owned(),
-        accountable_person: principal
-            .and_then(|starter| starter.verified_accountable_person().map(str::to_owned)),
+        accountable_person: principal.and_then(RunStarter::verified_accountable_person),
         approved_intent: None,
         input: input.clone(),
         idempotency_key: request.idempotency_key.clone(),

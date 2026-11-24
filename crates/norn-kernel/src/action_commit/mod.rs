@@ -938,7 +938,6 @@ fn check_scope<X>(call: &ActionCall<'_>) -> Result<(), ActionRefusal<X>> {
     }
     if call
         .accountable_person
-        .as_deref()
         .is_some_and(|person| validate_accountable_person(Some(person)).is_none())
     {
         return Err(ActionRefusal::InvalidInput {

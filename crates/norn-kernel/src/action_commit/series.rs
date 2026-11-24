@@ -141,7 +141,7 @@ where
             precondition_outcomes,
             parameter_pins: slice.parameter_pins.clone(),
             actor: call.actor.clone(),
-            accountable_person: call.accountable_person.clone(),
+            accountable_person: call.accountable_person.map(str::to_owned),
             turn: call.turn.id.clone(),
             transition: String::new(),
             from: String::new(),
@@ -284,7 +284,7 @@ fn recorded_generated_call<X>(
         object_type,
         &call.input,
         &call.actor,
-        call.accountable_person.as_deref(),
+        call.accountable_person,
         call.trace.as_ref(),
     ) {
         Ok(Some(record))

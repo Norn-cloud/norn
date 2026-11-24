@@ -65,7 +65,7 @@ pub struct ActionCall<'a> {
     /// AUTH-INDEPENDENT-PERSON (#618): the authenticated accountable person
     /// behind `actor`, from the host's verified principal; never a session or
     /// agent id standing in for one.
-    pub accountable_person: Option<String>,
+    pub accountable_person: Option<&'a str>,
     /// The prepared-intent digest ([`super::prepare_action_intent`]) of the
     /// commit an approval of this call was granted for, read by the host from
     /// its approval record. The call commits only as exactly that commit.
@@ -414,7 +414,7 @@ impl ActionCallRecord {
             precondition_outcomes: Vec::new(),
             parameter_pins: Vec::new(),
             actor: call.actor.clone(),
-            accountable_person: call.accountable_person.clone(),
+            accountable_person: call.accountable_person.map(str::to_owned),
             turn: call.turn.id.clone(),
             transition: transition.as_str().to_owned(),
             from: String::new(),

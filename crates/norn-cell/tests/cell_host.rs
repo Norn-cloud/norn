@@ -4877,10 +4877,8 @@ fn r2_blocker5_nullable_row_reconciles_across_predicate_and_point_slice_reads() 
         idempotency_key: "reconcile-1".to_owned(),
         object_type: None,
         turn: norn_kernel::DecisionTurn {
-            id: "turn-reconcile".to_owned(),
             now: LogicalTime::from_millis(2_000),
-            world: norn_kernel::World::Main,
-            consumes: None,
+            ..r2_turn("turn-reconcile")
         },
         trace: None,
     };
