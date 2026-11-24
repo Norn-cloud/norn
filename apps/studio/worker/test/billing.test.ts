@@ -414,7 +414,7 @@ test("sign-up makes no Polar call: an existing Polar customer with the same emai
   const { cookie, userId } = await enroll(env, "cora@example.com")
   expect(polarCalls).toEqual([])
   // The customer is made at checkout, under the account's own id, not looked up by email.
-  expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })).status).toBe(303)
+  expect((await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { cookie, origin: ORIGIN } })).status).toBe(303)
   expect(polarCalls.map((entry) => `${entry.method} ${entry.path}`)).toEqual(["POST /v1/checkouts/"])
   expect(polarCalls[0]?.body).toMatchObject({ external_customer_id: userId })
 })
@@ -440,7 +440,7 @@ test("a workspace over the plan's cell limit is refused with a typed refusal and
   expect(refused.status).toBe(403)
   const body = await refused.json() as { code: string; message: string; refusal: Record<string, unknown> }
   expect(body.code).toBe("PLAN_LIMIT")
-  expect(body.refusal).toEqual({ kind: "plan-limit", limit: "cells", plan: "free", allowed: 1, used: 1, upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro`, upgradeBy: "you" })
+  expect(body.refusal).toEqual({ kind: "plan-limit", limit: "cells", plan: "free", allowed: 1, used: 1, upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro`, upgradeMethod: "POST", upgradeBy: "you" })
   expect(sql(env).query("select count(*) as n from organization").get()).toEqual({ n: 1 })
   // Polar reports the subscription; the same request is now admitted.
   expect((await webhook(env, "subscription.active", subscription({ external_id: userId }))).status).toBe(200)
@@ -448,7 +448,7 @@ test("a workspace over the plan's cell limit is refused with a typed refusal and
   // And canceled again, the third is refused; a paying person's upgrade link was the portal, a free one's a checkout.
   expect((await post(env, CREATE, { name: "Third", slug: "third" }, { cookie })).status).toBe(200)
   const atLimit = await (await post(env, CREATE, { name: "Fourth", slug: "fourth" }, { cookie })).json() as { refusal: { upgradeUrl: string; plan: string } }
-  expect(atLimit.refusal).toMatchObject({ plan: "pro", upgradeUrl: `${ORIGIN}/api/billing/portal` })
+  expect(atLimit.refusal).toMatchObject({ plan: "pro", upgradeUrl: `${ORIGIN}/api/billing/portal`, upgradeMethod: "POST" })
 })
 
 test("invitations past the workspace owner's member limit are refused", async () => {
@@ -459,7 +459,7 @@ test("invitations past the workspace owner's member limit are refused", async ()
   for (const email of ["one@example.com", "two@example.com"]) expect((await post(env, "/api/auth/organization/invite-member", { email, role: "member", organizationId }, { cookie })).status).toBe(200)
   const refused = await post(env, "/api/auth/organization/invite-member", { email: "three@example.com", role: "member", organizationId }, { cookie })
   expect(refused.status).toBe(403)
-  expect(((await refused.json()) as { refusal: { limit: string } }).refusal).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 3, used: 3, upgradeBy: "you", upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro` })
+  expect(((await refused.json()) as { refusal: { limit: string } }).refusal).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 3, used: 3, upgradeBy: "you", upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro`, upgradeMethod: "POST" })
 })
 
 /** Put a second person into a workspace directly (accepting an invitation needs a verified address). */
@@ -702,11 +702,11 @@ test("a live subscription to a product without limits grants the free ones, but 
   await webhook(env, "subscription.past_due", subscription({ external_id: userId, product_id: "prod_retired", status: "past_due" }))
   expect(await entitlementOf(env.AUTH_DB as unknown as BillingDb, SETTINGS, userId)).toEqual({ billing: "enabled", plan: "prod_retired", status: "past_due", limits: FREE })
   polarCalls = []
-  const checkout = await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })
+  const checkout = await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { cookie, origin: ORIGIN } })
   expect(checkout.status).toBe(303)
   expect(checkout.headers.get("location")).toBe("https://sandbox.polar.sh/portal/cs_1")
   expect(polarCalls.map((entry) => `${entry.method} ${entry.path}`)).not.toContain("POST /v1/checkouts/")
-  expect(((await (await call(env, "/api/billing", { headers: { cookie } })).json()) as { actions: unknown }).actions).toEqual([{ kind: "portal", label: "Manage billing", href: `${ORIGIN}/api/billing/portal` }])
+  expect(((await (await call(env, "/api/billing", { headers: { cookie } })).json()) as { actions: unknown }).actions).toEqual([{ kind: "portal", label: "Manage billing", href: `${ORIGIN}/api/billing/portal`, method: "POST" }])
 })
 
 test("accepting a withdrawn invitation says what to do, not just that it is missing", async () => {
@@ -716,6 +716,7 @@ test("accepting a withdrawn invitation says what to do, not just that it is miss
   const { id } = (await (await post(env, "/api/auth/organization/invite-member", { email: "late@example.com", role: "member", organizationId }, { cookie })).json()) as { id: string }
   sql(env).run("delete from invitation where id = ?", [id])
   const late = await enroll(env, "late@example.com")
+  sql(env).run("update user set emailVerified = 1 where id = ?", [late.userId])
   const accept = await post(env, ACCEPT, { invitationId: id }, { cookie: late.cookie })
   expect(accept.status).toBe(400)
   const body = (await accept.json()) as { code: string; message: string }
@@ -744,12 +745,12 @@ test("a member-limit refusal sends someone who is not the payer to the workspace
 test("without Polar settings, nothing is billed, limited or called", async () => {
   const env = stage(false)
   const { cookie, userId } = await enroll(env, "sam@example.com")
-  for (const name of ["two", "three", "four"]) expect((await post(env, "/api/auth/organization/create", { name, slug: name }, { cookie })).status).toBe(200)
+  for (const name of ["two", "three", "four"]) expect((await post(env, CREATE, { name, slug: name }, { cookie })).status).toBe(200)
   const { id: organizationId } = sql(env).query("select organizationId as id from member where userId = ? order by createdAt limit 1").get(userId) as { id: string }
   for (const email of ["a@example.com", "b@example.com", "c@example.com"]) expect((await post(env, "/api/auth/organization/invite-member", { email, role: "member", organizationId }, { cookie })).status).toBe(200)
   const document = await (await call(env, "/api/billing", { headers: { cookie } })).json()
   expect(document).toEqual({ entitlement: UNLIMITED, usage: { cells: 4 }, actions: [] })
-  expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })).status).toBe(404)
+  expect((await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { cookie, origin: ORIGIN } })).status).toBe(404)
   expect((await webhook(env, "subscription.active", subscription({ external_id: userId }))).status).toBe(404)
   expect(sql(env).query("select count(*) as n from billing_limit").get()).toEqual({ n: 0 })
   // The limit triggers refuse nothing: no workspace is marked billed, Studio's own route included.
@@ -767,16 +768,25 @@ test("the billing document is the server's: entitlement, usage and the actions i
   const env = stage(true)
   const { cookie, userId } = await enroll(env, "ivy@example.com")
   expect((await call(env, "/api/billing")).status).toBe(401)
-  expect(await (await call(env, "/api/billing", { headers: { cookie } })).json() as unknown).toEqual({
+  const freeDoc = await (await call(env, "/api/billing", { headers: { cookie } })).json() as {
+    entitlement: unknown
+    usage: unknown
+    actions: { kind: string; label: string; href: string; method: string }[]
+  }
+  expect(freeDoc).toEqual({
     entitlement: { billing: "enabled", plan: "free", status: "none", limits: FREE },
     usage: { cells: 1 },
     actions: [
-      { kind: "checkout", label: "Upgrade to Pro", href: `${ORIGIN}/api/billing/checkout?plan=pro` },
-      { kind: "checkout", label: "Upgrade to Team", href: `${ORIGIN}/api/billing/checkout?plan=team` },
+      { kind: "checkout", label: "Upgrade to Pro", href: `${ORIGIN}/api/billing/checkout?plan=pro`, method: "POST" },
+      { kind: "checkout", label: "Upgrade to Team", href: `${ORIGIN}/api/billing/checkout?plan=team`, method: "POST" },
     ],
   })
+  const firstAction = freeDoc.actions[0]!
+  expect((await call(env, new URL(firstAction.href).pathname + new URL(firstAction.href).search, { method: firstAction.method, headers: { cookie, origin: ORIGIN } })).status).toBe(303)
   await webhook(env, "subscription.active", subscription({ external_id: userId }))
-  expect(((await (await call(env, "/api/billing", { headers: { cookie } })).json()) as { actions: unknown }).actions).toEqual([{ kind: "portal", label: "Manage billing", href: `${ORIGIN}/api/billing/portal` }])
+  const paidActions = ((await (await call(env, "/api/billing", { headers: { cookie } })).json()) as { actions: { kind: string; label: string; href: string; method: string }[] }).actions
+  expect(paidActions).toEqual([{ kind: "portal", label: "Manage billing", href: `${ORIGIN}/api/billing/portal`, method: "POST" }])
+  expect((await call(env, new URL(paidActions[0]!.href).pathname, { method: paidActions[0]!.method, headers: { cookie, origin: ORIGIN } })).status).toBe(303)
 })
 
 test("the plugin's own checkout and portal are refused from outside, whatever the caller sends", async () => {
@@ -794,8 +804,8 @@ test("the plugin's own checkout and portal are refused from outside, whatever th
     expect({ path, status: response.status }).toEqual({ path, status: 404 })
   }
   expect(polarCalls).toEqual([])
-  // /api/billing/checkout stays the way in, with the server's fixed body: the configured product, no trial or discount.
-  expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })).status).toBe(303)
+  // /api/billing/checkout stays the way in (same-origin POST only), with the server's fixed body: the configured product, no trial or discount.
+  expect((await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { cookie, origin: ORIGIN } })).status).toBe(303)
   const [checkout] = polarCalls
   expect(checkout?.body).toMatchObject({ products: ["prod_pro"] })
   for (const field of ["trial_interval", "trial_interval_count", "allow_trial", "discount_id", "metadata"]) expect((checkout?.body as Record<string, unknown>)[field] ?? null).toBeNull()
@@ -804,12 +814,18 @@ test("the plugin's own checkout and portal are refused from outside, whatever th
 test("another site cannot start a checkout or portal session with the person's cookie", async () => {
   const env = stage(true)
   const { cookie } = await enroll(env, "csrf@example.com")
-  for (const site of ["cross-site", "same-site"]) expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie, "sec-fetch-site": site } })).status).toBe(403)
-  expect((await call(env, "/api/billing/portal", { headers: { cookie, "sec-fetch-site": "cross-site" } })).status).toBe(403)
+  // GET and missing/cross-origin Origin are refused even when Fetch Metadata is absent.
+  expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })).status).toBe(405)
+  expect((await call(env, "/api/billing/portal", { headers: { cookie } })).status).toBe(405)
+  expect((await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { cookie } })).status).toBe(403)
+  expect((await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { cookie, origin: "https://evil.example" } })).status).toBe(403)
+  expect((await call(env, "/api/billing/portal", { method: "POST", headers: { cookie } })).status).toBe(403)
+  for (const site of ["cross-site", "same-site"]) expect((await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { cookie, origin: ORIGIN, "sec-fetch-site": site } })).status).toBe(403)
+  expect((await call(env, "/api/billing/portal", { method: "POST", headers: { cookie, origin: ORIGIN, "sec-fetch-site": "cross-site" } })).status).toBe(403)
   expect(polarCalls).toEqual([])
-  // Studio's own links (same-origin) and a typed address (none) work.
-  expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie, "sec-fetch-site": "same-origin" } })).status).toBe(303)
-  expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie, "sec-fetch-site": "none" } })).status).toBe(303)
+  // Studio's own same-origin POST works.
+  expect((await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { cookie, origin: ORIGIN, "sec-fetch-site": "same-origin" } })).status).toBe(303)
+  expect((await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { cookie, origin: ORIGIN } })).status).toBe(303)
   // The document itself is read by the shell's fetch and stays readable.
   expect((await call(env, "/api/billing", { headers: { cookie, "sec-fetch-site": "same-origin" } })).status).toBe(200)
 })
@@ -817,15 +833,15 @@ test("another site cannot start a checkout or portal session with the person's c
 test("checkout sends a free person to Polar for the configured product under their own id; a paying person goes to the portal", async () => {
   const env = stage(true)
   const { cookie, userId } = await enroll(env, "max@example.com")
-  expect((await call(env, "/api/billing/checkout?plan=pro")).status).toBe(401)
-  expect((await call(env, "/api/billing/checkout?plan=gold", { headers: { cookie } })).status).toBe(404)
-  const checkout = await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })
+  expect((await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { origin: ORIGIN } })).status).toBe(401)
+  expect((await call(env, "/api/billing/checkout?plan=gold", { method: "POST", headers: { cookie, origin: ORIGIN } })).status).toBe(404)
+  const checkout = await call(env, "/api/billing/checkout?plan=pro", { method: "POST", headers: { cookie, origin: ORIGIN } })
   expect(checkout.status).toBe(303)
   expect(checkout.headers.get("location")).toBe("https://sandbox.polar.sh/checkout/chk_1")
   expect(polarCalls.find((entry) => entry.path === "/v1/checkouts/")?.body).toMatchObject({ external_customer_id: userId, products: ["prod_pro"] })
   await webhook(env, "subscription.active", subscription({ external_id: userId }))
   polarCalls = []
-  const again = await call(env, "/api/billing/checkout?plan=team", { headers: { cookie } })
+  const again = await call(env, "/api/billing/checkout?plan=team", { method: "POST", headers: { cookie, origin: ORIGIN } })
   expect(again.headers.get("location")).toBe("https://sandbox.polar.sh/portal/cs_1")
   expect(polarCalls.map((entry) => entry.path)).toEqual(["/v1/customer-sessions/"])
   expect(polarCalls[0]?.body).toMatchObject({ external_customer_id: userId })
@@ -897,7 +913,8 @@ test("acceptance keeps Better Auth's checks: the recipient only, a verified addr
   const [invited] = await invitees(env, organizationId, owner.userId, ["chk1"]) as [Invitee]
   const stranger = await enroll(env, "stranger@example.com")
   verify(env, stranger.userId)
-  expect(await (await post(env, ACCEPT, { invitationId: invited.invitationId }, { cookie: stranger.cookie })).json()).toMatchObject({ code: "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION" })
+  // A stranger targeting someone else's invitation gets the uniform INVITATION_NOT_FOUND refusal (no existence oracle).
+  expect(await (await post(env, ACCEPT, { invitationId: invited.invitationId }, { cookie: stranger.cookie })).json()).toMatchObject({ code: "INVITATION_NOT_FOUND" })
   sql(env).run("update user set emailVerified = 0 where id = ?", [invited.userId])
   expect(await (await post(env, ACCEPT, { invitationId: invited.invitationId }, { cookie: invited.cookie })).json()).toMatchObject({ code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION" })
   verify(env, invited.userId)
@@ -1046,7 +1063,7 @@ test("turning billing off lifts every limit, in the API and in the database alik
   // The triggers agree: the billed workspace takes a fourth member, and its payer a second workspace.
   join_(off, organizationId, "user_billed_over", "member")
   expect(members(off, organizationId)).toBe(4)
-  expect((await post(off, "/api/auth/organization/create", { name: "Two", slug: "two" }, { cookie: owner.cookie })).status).toBe(200)
+  expect((await post(off, CREATE, { name: "Two", slug: "two" }, { cookie: owner.cookie })).status).toBe(200)
   // Redeployed with billing on: the limits are back for anything new; what exists stays.
   sql(on).run(billingModeStatement(true))
   expect(() => join_(on, organizationId, "user_billed_more", "member")).toThrow("billing.members_limit")

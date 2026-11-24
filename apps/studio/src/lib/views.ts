@@ -1,7 +1,9 @@
 import type { Fetch } from "./cell-read.ts"
-import { CellUnavailable, NO_DATA_CELL, readStudioScope, scopedHostFetch, StudioScopeError, type Finding, type ScopeProvider, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, defaultFetch, NO_DATA_CELL, readAtScope, readStudioScope, sameStudioScope, scopedHostFetch, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type Finding, type ScopeProvider, type StudioScope } from "./definitions.ts"
 import type { Predicate, RecordsQuery, SortKey } from "./records-query.ts"
 import { readRecordsAtScope, type RecordsRead } from "./records-source.ts"
+
+export { WORKSPACE_CHANGED_MESSAGE }
 
 /** A saved records view as the cell keeps it (definition kind `view`, VIEW-DEF-1). */
 export interface SavedView {
@@ -28,30 +30,9 @@ export interface StoredView {
 /** Suggested Workspace Spaces a view can pin into; custom space names are also accepted. */
 export const DEFAULT_SPACES = ["Operations", "Data", "Analysis"] as const
 
-/** Shown when a saved-view write is refused because the active workspace no longer matches the draft's scope. */
-export const WORKSPACE_CHANGED_MESSAGE = "This workspace changed; reload to edit this view."
-
-/** True when two scopes identify the same organization and environment. */
+/** True when two non-null scopes identify the same organization and environment. */
 export const sameScope = (a: StudioScope | null | undefined, b: StudioScope | null | undefined): boolean =>
-  a != null && b != null && a.orgId === b.orgId && a.environmentId === b.environmentId
-
-/** Return a saved view's read only while the active workspace matches its source. */
-export async function readViewAtScope<T>(
-  expectedScope: StudioScope,
-  readScope: ScopeProvider,
-  read: () => Promise<T>,
-  signal?: AbortSignal,
-): Promise<T> {
-  const before = await readScope()
-  if (signal?.aborted || !sameScope(before, expectedScope)) {
-    throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
-  }
-  const result = await read()
-  if (signal?.aborted || !sameScope(await readScope(), expectedScope)) {
-    throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
-  }
-  return result
-}
+  a != null && b != null && sameStudioScope(a, b)
 
 /** What the cell said to a save: the new version, its checker's findings, or that someone saved first. */
 export type ViewSaved =
@@ -159,15 +140,20 @@ const isSavedView = (value: unknown): value is SavedView =>
 
 /** The cell's saved views, through the Studio Worker's host route as the signed-in account. */
 export function cellViews(
-  fetcher: Fetch = (input, init) => fetch(input, init),
-  readScope: ScopeProvider = () => readStudioScope(fetcher),
+  fetcher: Fetch = defaultFetch,
+  readScope: ScopeProvider = (signal) => readStudioScope(fetcher, signal),
 ) {
   const callWith = (scopedFetch: Fetch) => async (path: string, init?: RequestInit) => {
     const response = await scopedFetch(path, {
       ...init,
       headers: { accept: "application/json", ...init?.body === undefined ? {} : { "content-type": "application/json" } },
     })
-    return { status: response.status, body: await response.json().catch(() => null) as Record<string, unknown> | null }
+    const text = await response.text()
+    let body: Record<string, unknown> | null = null
+    if (text !== "") {
+      try { body = JSON.parse(text) as Record<string, unknown> | null } catch { body = null }
+    }
+    return { status: response.status, body }
   }
   const callAt = (scope: StudioScope) => callWith(scopedHostFetch(fetcher, "/api/host", async () => scope))
   const verifiedWriteCall = async (expectedScope: StudioScope | null | undefined) => {
@@ -188,8 +174,8 @@ export function cellViews(
     throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
   }
 
-  const getWith = (read: ReturnType<typeof callWith>, scope: StudioScope) => async (id: string): Promise<StoredView | undefined> => {
-    const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`)
+  const getWith = (read: ReturnType<typeof callWith>, scope: StudioScope) => async (id: string, signal?: AbortSignal): Promise<StoredView | undefined> => {
+    const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`, signal === undefined ? undefined : { signal })
     if (status === 404 && body?.code === "definition.not_found") return undefined
     if (status !== 200 || typeof body?.version !== "number" || !isSavedView(body.payload)) {
       throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
@@ -234,8 +220,8 @@ export function cellViews(
     query: RecordsQuery,
     expectedScope: StudioScope,
     signal?: AbortSignal,
-  ): Promise<RecordsRead> => readViewAtScope(
-    expectedScope, readScope, () => readRecordsAtScope(objectType, query, expectedScope, fetcher, signal), signal,
+  ): Promise<RecordsRead> => readAtScope(
+    expectedScope, readScope, () => readRecordsAtScope(objectType, query, expectedScope, fetcher, signal), signal, WORKSPACE_CHANGED_MESSAGE,
   )
 
   const listAll = async (pinnedScope?: StudioScope | null): Promise<readonly StoredView[]> => {
@@ -280,7 +266,7 @@ export function cellViews(
     get,
     /** Read a definition only while its source workspace is active. */
     getAtScope: (id: string, expectedScope: StudioScope, signal?: AbortSignal) =>
-      readViewAtScope(expectedScope, readScope, () => getWith(callAt(expectedScope), expectedScope)(id), signal),
+      readAtScope(expectedScope, readScope, () => getWith(callAt(expectedScope), expectedScope)(id, signal), signal, WORKSPACE_CHANGED_MESSAGE),
     /** Read the confirmed server revision and lifecycle for conflict handling in `expectedScope`. */
     currentRevision,
     /** Read a record page bound explicitly to `expectedScope`, refusing on workspace switch before or during fetch. */
