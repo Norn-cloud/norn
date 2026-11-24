@@ -239,14 +239,19 @@ function IslandExpansion({
                   <div className="truncate text-sm font-medium text-foreground" lang={node.titleLang}>{node.title}</div>
                   <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{node.id}</div>
                 </div>
-                {node.ruleHoldings > 0 ? (
-                  <Badge variant="destructive" className="shrink-0 tabular-nums">
-                    {node.ruleHoldings}{node.ruleHoldingsApproximate ? "+" : ""} {node.ruleHoldings === 1 ? "holding" : "holdings"}
-                  </Badge>
-                ) : node.sourceErrors > 0 ? (
-                  <Badge variant="destructive" className="shrink-0 tabular-nums">
-                    {node.sourceErrors} sync
-                  </Badge>
+                {node.ruleHoldings > 0 || node.sourceErrors > 0 ? (
+                  <div className="flex shrink-0 items-center gap-1">
+                    {node.ruleHoldings > 0 && (
+                      <Badge variant="destructive" className="tabular-nums">
+                        {node.ruleHoldings}{node.ruleHoldingsApproximate ? "+" : ""} {node.ruleHoldings === 1 ? "holding" : "holdings"}
+                      </Badge>
+                    )}
+                    {node.sourceErrors > 0 && (
+                      <Badge variant="destructive" className="tabular-nums">
+                        {node.sourceErrors} sync
+                      </Badge>
+                    )}
+                  </div>
                 ) : (
                   <span
                     aria-hidden

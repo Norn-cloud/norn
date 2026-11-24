@@ -149,6 +149,21 @@ test("parseStudioTheme enforces WCAG AA contrast across text, hover buttons, pop
   })
   expect(whitePopoverDark.ok).toBe(false)
   if (!whitePopoverDark.ok) expect(whitePopoverDark.issues.some((i) => i.path.includes("on popover"))).toBe(true)
+
+  // Forced dark theme with mid-grey popover and dim action/link fails action/link on popover AND destructive/10 alert contrast.
+  const midGreyPopoverDark = parseStudioTheme({
+    version: 1,
+    name: "Mid Grey Popover Dark",
+    baseSkin: "polar",
+    appearance: "dark",
+    colors: { popover: "#343434", action: "#858585", link: "#858585" },
+  })
+  expect(midGreyPopoverDark.ok).toBe(false)
+  if (!midGreyPopoverDark.ok) {
+    expect(midGreyPopoverDark.issues.some((i) => i.path.includes("action (on popover)"))).toBe(true)
+    expect(midGreyPopoverDark.issues.some((i) => i.path.includes("link (on popover)"))).toBe(true)
+    expect(midGreyPopoverDark.issues.some((i) => i.path.includes("destructive/10 over popover"))).toBe(true)
+  }
 })
 
 test("forced appearance and omitted baseSkin use the exact same scheme and skin for validation and rendering", () => {

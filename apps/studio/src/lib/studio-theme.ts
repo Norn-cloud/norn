@@ -535,6 +535,10 @@ export function validateStudioThemeContrast(theme: StudioTheme): readonly Studio
     const primary = at("primary", bg)
     const actionHover = at("action-hover", bg)
     const destructive = at("destructive", bg)
+    const destructiveRaw = parseColorRgba(effective.destructive!)!
+    const destructiveTintBg = compositeOver({ ...destructiveRaw, a: destructiveRaw.a * 0.1 }, bg)
+    const destructiveTintCard = compositeOver({ ...destructiveRaw, a: destructiveRaw.a * 0.1 }, card)
+    const destructiveTintPopover = compositeOver({ ...destructiveRaw, a: destructiveRaw.a * 0.1 }, popover)
     const dockSurface = at("dock-surface", bg)
     const dockWell = at("dock-well", dockSurface)
 
@@ -564,12 +568,17 @@ export function validateStudioThemeContrast(theme: StudioTheme): readonly Studio
       ["primary-foreground (on action-hover)", effective["primary-foreground"]!, actionHover, 4.5],
       ["action (on background)", effective.action!, bg, 4.5],
       ["action (on card)", effective.action!, card, 4.5],
+      ["action (on popover)", effective.action!, popover, 4.5],
       ["link (on background)", effective.link!, bg, 4.5],
       ["link (on card)", effective.link!, card, 4.5],
+      ["link (on popover)", effective.link!, popover, 4.5],
       ["destructive-foreground (on destructive)", effective["destructive-foreground"]!, destructive, 4.5],
       ["destructive-text (on background)", effective["destructive-text"]!, bg, 4.5],
       ["destructive-text (on card)", effective["destructive-text"]!, card, 4.5],
       ["destructive-text (on popover)", effective["destructive-text"]!, popover, 4.5],
+      ["destructive-text (on destructive/10 over background)", effective["destructive-text"]!, destructiveTintBg, 4.5],
+      ["destructive-text (on destructive/10 over card)", effective["destructive-text"]!, destructiveTintCard, 4.5],
+      ["destructive-text (on destructive/10 over popover)", effective["destructive-text"]!, destructiveTintPopover, 4.5],
       ["dock-foreground (on dock-surface)", effective["dock-foreground"]!, dockSurface, 4.5],
       ["dock-foreground (on dock-well)", effective["dock-foreground"]!, dockWell, 4.5],
       ["dock-muted (on dock-surface)", effective["dock-muted"]!, dockSurface, 4.5],

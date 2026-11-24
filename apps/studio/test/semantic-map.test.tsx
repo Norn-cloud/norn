@@ -249,9 +249,9 @@ test("buildSemanticMap reflects server rule-holding sums, avoids false green on 
   expect(islandMatchesLens(beta, "attention", "Gamma Feed")).toBe(true)
   expect(islandMatchesLens(core, "attention", "")).toBe(false)
 
-  // Source-only bounded inbox (even with scanLimit absent) must keep unseen nodes "unknown", never green ("none").
+  // Source-only bounded inbox (with the real server scanLimit present) must keep unseen nodes "unknown", never green ("none").
   const sourceBoundedInbox: Inbox = {
-    scanLimit: undefined as unknown as number,
+    scanLimit: 500,
     sections: [
       { kind: "held_back", count: 0, shown: 0, approximate: false },
       { kind: "decision", count: 0, shown: 0, approximate: false },
@@ -267,6 +267,7 @@ test("buildSemanticMap reflects server rule-holding sums, avoids false green on 
     ],
   }
   const sourceBoundedMap = buildSemanticMap(sampleCatalog(), { kind: "live", inbox: sourceBoundedInbox })
+  expect(sourceBoundedMap.totals.alerts?.bounded).toBe(true)
   expect(sourceBoundedMap.islandsById.get("core:model")!.attention).toBe("unknown")
   expect(sourceBoundedMap.nodesById.get("core.Note")!.attention).toBe("unknown")
   // Beta has zero rule holdings and only secondary feed Gamma Feed failing: searching "Gamma Feed" keeps beta lit under Attention.
@@ -274,6 +275,21 @@ test("buildSemanticMap reflects server rule-holding sums, avoids false green on 
   expect(betaSecondaryOnly.ruleHoldings).toBe(0)
   expect(betaSecondaryOnly.sourceErrors).toBe(1)
   expect(islandMatchesLens(betaSecondaryOnly, "attention", "Gamma Feed")).toBe(true)
+
+  // A complete, empty live inbox (with the constant server scanLimit: 500) is NOT bounded and legitimately reports "none".
+  const completeEmptyInbox: Inbox = {
+    scanLimit: 500,
+    sections: [
+      { kind: "held_back", count: 0, shown: 0, approximate: false },
+      { kind: "decision", count: 0, shown: 0, approximate: false },
+      { kind: "source_error", count: 0, shown: 0, approximate: false },
+    ],
+    items: [],
+  }
+  const completeEmptyMap = buildSemanticMap(sampleCatalog(), { kind: "live", inbox: completeEmptyInbox })
+  expect(completeEmptyMap.totals.alerts?.bounded).toBe(false)
+  expect(completeEmptyMap.islandsById.get("core:model")!.attention).toBe("none")
+  expect(completeEmptyMap.nodesById.get("core.Note")!.attention).toBe("none")
 
   const item = projection.nodesById.get("app.Item")!
   expect(nodeMatchesLens(item, "governance")).toBe(true)

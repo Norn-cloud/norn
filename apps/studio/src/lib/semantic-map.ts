@@ -234,11 +234,12 @@ export function buildSemanticMap(
   const sourceSection = liveInbox?.sections.find((s) => s.kind === "source_error")
   // Inbox caps returned groups/source rows even when section totals are exact; never mark
   // unseen islands/nodes green if any alert fell outside the returned slice or was approximate.
+  // Note: `liveInbox.scanLimit` is always emitted as a constant server scan budget (e.g. 500)
+  // and does not indicate truncation unless `approximate` is true or returned rows < section count.
   const holdingsBounded = Boolean(
     liveInbox && (
       heldSection?.approximate
       || (heldSection?.count ?? 0) > returnedHoldingsSum
-      || liveInbox.scanLimit !== undefined
     ),
   )
   const sourcesBounded = Boolean(
