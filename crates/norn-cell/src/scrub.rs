@@ -12,20 +12,20 @@
 //! Any defect fences the cell durably (`cell.fenced`, S12) and retries persistence until durable.
 
 use crate::engine::SqlEngine;
-use crate::open_checkpoint::verify::DefinitionWalk;
 use crate::open_checkpoint::{self, ExportPin, OpenCheckpoint};
 use crate::quantity::FormatBoundary;
 use crate::{CellError, CellStore, LedgerHead};
+
+mod history;
 
 /// The refusal code of a read or write held back by the scrub (retryable).
 pub(crate) const VERIFYING: &str = "cell.verifying";
 /// The refusal code of a fenced cell.
 pub(crate) const FENCED: &str = "cell.fenced";
 
-/// Receipts one receipts step reads.
-pub(crate) const RECEIPT_STEP: usize = 512;
-/// Commits one history step verifies.
-pub(crate) const HISTORY_STEP: u64 = 64;
+/// Receipts one receipts step reads (capped well below 512 so fence probes +
+/// receipts stay strictly `<= 512` total SQL rows per wake).
+pub(crate) const RECEIPT_STEP: usize = 256;
 /// Loaded receipt digests one step copies into the rebuilt tree, for a
 /// catch-up from a checkpoint (no SQL, hashing only).
 const TREE_STEP: u64 = 8_192;
@@ -197,9 +197,7 @@ struct Run {
     tree: crate::transparency::ReceiptLog,
     quantity: Option<String>,
     receipts_at: u64,
-    ledger: LedgerHead,
-    boundary: Option<FormatBoundary>,
-    walk: Option<DefinitionWalk>,
+    history_cursor: history::HistoryCursor,
     quantity_scrub: crate::quantity::QuantityScrub,
     verified_pins: Option<VerifiedPins>,
     data_version: Option<u64>,
@@ -212,7 +210,7 @@ impl std::fmt::Debug for Run {
             .debug_struct("Run")
             .field("phase", &self.phase)
             .field("receipts_at", &self.receipts_at)
-            .field("ledger", &self.ledger.commits)
+            .field("ledger", &self.history_cursor.ledger.commits)
             .field("target", &self.target.commits)
             .finish_non_exhaustive()
     }
@@ -229,10 +227,7 @@ impl Run {
     ) -> Self {
         Self {
             receipts_at: start.as_ref().map_or(0, |start| start.head.commits),
-            ledger: start
-                .as_ref()
-                .map_or_else(LedgerHead::genesis, |start| start.head.clone()),
-            boundary: start.as_ref().and_then(|start| start.boundary),
+            history_cursor: history::HistoryCursor::new(start.as_ref()),
             quantity: start.as_ref().map(|start| start.quantity_receipts.clone()),
             quantity_scrub: crate::quantity::QuantityScrub::new(start.as_ref(), target_boundary),
             start,
@@ -242,7 +237,6 @@ impl Run {
             history,
             phase: Phase::Receipts,
             tree: crate::transparency::ReceiptLog::new(),
-            walk: None,
             verified_pins: None,
             data_version,
             restarts: 0,
@@ -265,9 +259,7 @@ impl Run {
         self.tree = crate::transparency::ReceiptLog::new();
         self.quantity = None;
         self.receipts_at = 0;
-        self.ledger = LedgerHead::genesis();
-        self.boundary = None;
-        self.walk = None;
+        self.history_cursor = history::HistoryCursor::new(None);
         self.quantity_scrub = crate::quantity::QuantityScrub::new(None, target_boundary);
         self.verified_pins = None;
         self.data_version = data_version;
@@ -277,7 +269,7 @@ impl Run {
     fn status(&self, history_ready: bool) -> ScrubStatus {
         let (phase, verified) = match self.phase {
             Phase::Receipts => ("receipts", self.receipts_at),
-            Phase::History | Phase::QuantityTail => ("history", self.ledger.commits),
+            Phase::History | Phase::QuantityTail => ("history", self.history_cursor.ledger.commits),
             Phase::Seed => ("seed", self.target.commits),
         };
         ScrubStatus::Verifying {
@@ -331,9 +323,7 @@ enum StepOutcome {
         done: bool,
     },
     HistoryChunk {
-        head: LedgerHead,
-        boundary: Option<FormatBoundary>,
-        walk: DefinitionWalk,
+        history_cursor: history::HistoryCursor,
         quantity_scrub: crate::quantity::QuantityScrub,
         verified_pins: Option<VerifiedPins>,
         done: bool,
@@ -807,8 +797,8 @@ impl<E: SqlEngine> CellStore<E> {
         })
     }
 
-    /// Phase 2: the next [`HISTORY_STEP`] commits, as a genesis open
-    /// verifies them. Stages progress into [`StepOutcome::HistoryChunk`].
+    /// Phase 2: advance history verification under a shared per-wake row budget
+    /// (resumable across wakes by keyset cursor, S10).
     fn scrub_history(&self, run: &Run) -> Result<StepOutcome, CellError> {
         let reader = self.verifier();
         if run.quantity_scrub.has_pending_work() {
@@ -819,70 +809,21 @@ impl<E: SqlEngine> CellStore<E> {
                 done: false,
             });
         }
-        let versions = reader.installed_definition_versions()?;
-        let mut walk = match &run.walk {
-            Some(walk) => walk.clone(),
-            None => match &run.start {
-                // A catch-up from a checkpoint re-runs the pins an open runs
-                // on it (S3): its export record, its definition versions.
-                Some(start) => {
-                    crate::cell_identity::verify_export_pin(&self.conn, start)?;
-                    self.definitions_at_checkpoint(&reader, &versions, start)?
-                }
-                None => DefinitionWalk::default(),
-            },
-        };
-        let after = run.ledger.commits;
-        let through = run.target.commits.min(after.saturating_add(HISTORY_STEP));
-        let (head, boundary) = reader.verify_ledger_span(&run.ledger, run.boundary, through)?;
-        if head.commits != through {
-            return Err(defect(
-                head.commits,
-                "the ledger ends before the head the open verified",
-            ));
-        }
-        crate::cell_identity::verify_records_between(&self.conn, after, through)?;
-        let mut chunk_receipts = Vec::new();
-        for receipt in reader.receipt_stream_from(after) {
-            let receipt = receipt?;
-            if receipt.body.commit_seq > through {
-                break;
-            }
-            self.definition_walk_step(&reader, &versions, &mut walk, &receipt)?;
-            chunk_receipts.push(receipt);
-        }
-        reader.verify_value_history_range(after, through)?;
+        let mut history_cursor = run.history_cursor.clone();
         let mut quantity_scrub = run.quantity_scrub.clone();
-        quantity_scrub.verify_chunk(&self.conn, &chunk_receipts, after, through)?;
-        let done = through == run.target.commits;
-        let verified_pins = if done {
-            if head != run.target || boundary != run.target_boundary {
-                return Err(defect(
-                    through,
-                    "the verified history does not end at the head the open verified",
-                ));
-            }
-            let installed = versions
-                .iter()
-                .filter(|version| version.commit_seq <= through)
-                .count();
-            if walk.version_index != installed {
-                return Err(defect(
-                    through,
-                    "the definition history and the receipts disagree",
-                ));
-            }
-            Some(VerifiedPins {
-                export: crate::cell_identity::last_record_through(&self.conn, through)?,
-                definitions: open_checkpoint::definitions_digest(&versions, through)?,
-            })
-        } else {
-            None
+        let (verified_pins, done) = match history_cursor.step(
+            self,
+            &reader,
+            run.start.as_ref(),
+            &run.target,
+            run.target_boundary,
+            &mut quantity_scrub,
+        )? {
+            history::HistoryStep::Continue => (None, false),
+            history::HistoryStep::Done(pins) => (Some(pins), true),
         };
         Ok(StepOutcome::HistoryChunk {
-            head,
-            boundary,
-            walk,
+            history_cursor,
             quantity_scrub,
             verified_pins,
             done,
@@ -963,16 +904,12 @@ fn apply_step(
             Ok(StepProgress::Continue)
         }
         StepOutcome::HistoryChunk {
-            head,
-            boundary,
-            walk,
+            history_cursor,
             quantity_scrub,
             verified_pins,
             done,
         } => {
-            run.ledger = head;
-            run.boundary = boundary;
-            run.walk = Some(walk);
+            run.history_cursor = history_cursor;
             run.quantity_scrub = quantity_scrub;
             if done {
                 run.verified_pins = verified_pins;

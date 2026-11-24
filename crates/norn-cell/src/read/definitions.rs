@@ -319,23 +319,60 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ),
             params![],
         )?;
-        let has_registry_table = definition_registry_table_exists(self.conn)?;
-        let has_admission_receipt_table = definition_admission_receipt_table_exists(self.conn)?;
-        rows.into_iter()
-            .map(|values| {
-                let mut installed = definition_from_row(&SqlRow(values))?;
-                if has_registry_table {
-                    installed.registry =
-                        definition_registry_for_version(self.conn, installed.version)?;
-                }
-                if has_admission_receipt_table {
-                    installed.admission_receipt =
-                        definition_admission_receipt_for_version(self.conn, installed.version)?;
-                }
-                (installed.layout, installed.layout_revision) =
-                    definition_layout_for_version(self.conn, installed.version)?;
-                Ok(installed)
-            })
-            .collect()
+        decode_definition_rows(self.conn, rows)
     }
+
+    /// Read at most `limit` retained definition versions strictly after
+    /// `after_version` (unfiltered when `after_version == 0`), in version order.
+    pub(crate) fn installed_definition_versions_after(
+        &self,
+        after_version: u64,
+        limit: usize,
+    ) -> Result<Vec<InstalledDefinitionSet>, CellError> {
+        let limit = i64::try_from(limit)
+            .unwrap_or(crate::engine::MAX_SAFE_INTEGER)
+            .min(crate::engine::MAX_SAFE_INTEGER);
+        let rows = if after_version == 0 {
+            self.conn.query(
+                &format!(
+                    "SELECT \"version\", \"receipt_sha256\", \"canonical_set\", \"model_hash\", \"ddl_hash\", \"installed_at\", \"commit_seq\" FROM \"{DEFINITION_VERSION}\" ORDER BY \"version\" LIMIT ?1"
+                ),
+                params![limit],
+            )?
+        } else {
+            self.conn.query(
+                &format!(
+                    "SELECT \"version\", \"receipt_sha256\", \"canonical_set\", \"model_hash\", \"ddl_hash\", \"installed_at\", \"commit_seq\" FROM \"{DEFINITION_VERSION}\" WHERE \"version\" > ?1 ORDER BY \"version\" LIMIT ?2"
+                ),
+                params![to_i64(after_version, "definitions version")?, limit],
+            )?
+        };
+        decode_definition_rows(self.conn, rows)
+    }
+}
+
+fn decode_definition_rows(
+    conn: &impl SqlEngine,
+    rows: Vec<Vec<crate::engine::SqlValue>>,
+) -> Result<Vec<InstalledDefinitionSet>, CellError> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let has_registry_table = definition_registry_table_exists(conn)?;
+    let has_admission_receipt_table = definition_admission_receipt_table_exists(conn)?;
+    rows.into_iter()
+        .map(|values| {
+            let mut installed = definition_from_row(&SqlRow(values))?;
+            if has_registry_table {
+                installed.registry = definition_registry_for_version(conn, installed.version)?;
+            }
+            if has_admission_receipt_table {
+                installed.admission_receipt =
+                    definition_admission_receipt_for_version(conn, installed.version)?;
+            }
+            (installed.layout, installed.layout_revision) =
+                definition_layout_for_version(conn, installed.version)?;
+            Ok(installed)
+        })
+        .collect()
 }

@@ -2760,7 +2760,7 @@ fn restart_scrub_after_large_sibling_suffix_stays_within_512_row_bound() {
     assert!(!history_ready(&store));
     assert!(matches!(store.scrub_step(), ScrubStatus::Verifying { .. }));
 
-    // Sibling adds 600 commits (> RECEIPT_STEP = 512) before the next wake.
+    // Sibling adds 600 commits (> RECEIPT_STEP = 256) before the next wake.
     let final_commits = initial.saturating_add(600);
     let mut sibling = open(&path).expect("sibling open");
     for n in initial..final_commits {
@@ -2830,6 +2830,101 @@ fn quantity_scrub_after_large_sibling_suffix_stays_within_512_total_rows_per_wak
         checkpoint(&path).map(|(commits, ..)| commits),
         Some(final_commits),
         "checkpoint advanced to the quantity sibling-extended head"
+    );
+}
+
+fn multi_row_batch(n: u64, width: u64) -> CommitBatch {
+    let writes = (0..width)
+        .map(|slot| FactWriteRow::Put {
+            object_type: "fixture.Item".to_owned(),
+            key: format!("m-{n}-{slot}"),
+            values: BTreeMap::from([(
+                "qty".to_owned(),
+                RuntimeValue::from(i64::try_from(slot).expect("qty")),
+            )]),
+        })
+        .collect();
+    let events = (0..width)
+        .map(|slot| {
+            runtime_object! {
+                "type" => "fixture.multi",
+                "n" => i64::try_from(n).expect("n"),
+                "slot" => i64::try_from(slot).expect("slot")
+            }
+        })
+        .collect();
+    CommitBatch {
+        world: MAIN_WORLD.to_owned(),
+        scope: engine_fixture::SCOPE.to_owned(),
+        logical_time: 20_000_u64.saturating_add(n),
+        idempotency_key: Some(format!("multi-{n}")),
+        writes,
+        events,
+        ..CommitBatch::default()
+    }
+}
+
+/// S10 (#1551 round 11): multi-row commits (both 64+ commits x 10 events/writes
+/// AND a single jumbo commit with 300 events + 300 writes = 600 rows > 512)
+/// resume cleanly across wakes while staying strictly <= 512 total SQL rows per wake.
+#[test]
+fn multi_row_commits_history_scrub_stays_within_512_total_rows_per_wake() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("multi.sqlite");
+    engine_fixture::write_cell(&path);
+    let mut seed = open(&path).expect("open");
+    // 64 multi-row commits (10 writes + 10 events each = 1,280 rows across 64 commits)
+    // plus one jumbo commit (300 writes + 300 events = 600 rows inside a single commit),
+    // then fill past EVERY so an open checkpoint is recorded covering all of them.
+    let jumbo_n = engine_fixture::COMMITS.saturating_add(64);
+    for n in engine_fixture::COMMITS..jumbo_n {
+        seed.commit(&multi_row_batch(n, 10)).expect("multi commit");
+    }
+    seed.commit(&multi_row_batch(jumbo_n, 300))
+        .expect("jumbo commit");
+    let total_commits = EVERY.saturating_add(4);
+    for n in jumbo_n.saturating_add(1)..total_commits {
+        seed.commit(&put(n)).expect("tail put");
+    }
+    drop(seed);
+    assert_eq!(checkpoint(&path).map(|(c, ..)| c), Some(EVERY));
+
+    // Clean checkpointed open: every scrub wake must read <= 512 total SQL rows.
+    let armed = std::rc::Rc::new(Cell::new(false));
+    let wake_rows = std::rc::Rc::new(Cell::new(0));
+    let max_wake_rows = std::rc::Rc::new(Cell::new(0));
+    let store = CellStore::from_engine(
+        RowBoundedEngine {
+            inner: NativeEngine::open(&path, keyed()).expect("native engine"),
+            armed: std::rc::Rc::clone(&armed),
+            wake_rows: std::rc::Rc::clone(&wake_rows),
+            max_wake_rows: std::rc::Rc::clone(&max_wake_rows),
+        },
+        engine_fixture::model(),
+    )
+    .expect("checkpointed open");
+    assert!(!history_ready(&store));
+    let status = scrub_measuring_total_wake_rows(&store, &armed, &wake_rows);
+    assert_eq!(status, ScrubStatus::Idle);
+    assert!(
+        max_wake_rows.get() <= 512,
+        "multi-row history scrub exceeded 512 total rows in one wake: saw {}",
+        max_wake_rows.get()
+    );
+    assert!(history_ready(&store));
+    drop(store);
+
+    // Tamper one late snapshot (slot 295, verified on a resumed wake) of the jumbo commit.
+    let tampered = dir.path().join("multi-tampered.sqlite");
+    std::fs::copy(&path, &tampered).expect("copy");
+    execute(
+        &tampered,
+        &format!("DELETE FROM _norn_fact_values WHERE id = 'm-{jumbo_n}-295'"),
+    );
+    let tampered_store = open(&tampered).expect("checkpointed open");
+    assert!(
+        matches!(tampered_store.scrub_to_end(), ScrubStatus::Fenced { .. }),
+        "resumed multi-wake snapshot verification must catch late corrupt row in jumbo commit"
     );
 }
 

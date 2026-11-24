@@ -413,7 +413,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.ledger_page(after, length_rows.len()).map(Some)
     }
 
-    fn ledger_range(&self, from: u64, limit: Option<usize>) -> Result<Vec<LedgerEntry>, CellError> {
+    pub(crate) fn ledger_range(
+        &self,
+        from: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<LedgerEntry>, CellError> {
         self.ledger_range_with(from, limit, true)
     }
 
@@ -598,6 +602,28 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         decode_receipts(rows)
     }
 
+    /// Read at most `limit` receipts after `after` (unfiltered when `after == 0`
+    /// so malformed non-positive sequence numbers are never hidden).
+    pub(crate) fn receipts_page_from(
+        &self,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<Receipt>, CellError> {
+        if after == 0 {
+            let limit = i64::try_from(limit)
+                .unwrap_or(MAX_SAFE_INTEGER)
+                .min(MAX_SAFE_INTEGER);
+            let rows = self.conn.query(
+                &format!(
+                    "SELECT \"commit_seq\", \"world\", \"idempotency_key\", \"request_hash\", \"receipt\", \"receipt_hash\" FROM \"{RECEIPT}\" ORDER BY \"commit_seq\" LIMIT ?1"
+                ),
+                params![limit],
+            )?;
+            return decode_receipts(rows);
+        }
+        self.receipts_after(after, limit)
+    }
+
     /// Iterate retained receipts in bounded pages, including an unfiltered first
     /// page so malformed nonpositive sequence numbers cannot be hidden.
     pub(crate) fn receipt_stream(&self) -> impl Iterator<Item = Result<Receipt, CellError>> + '_ {
@@ -749,7 +775,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         checkpoint: &LedgerHead,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
-        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Lookup, None)
+        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Lookup)
     }
 
     /// [`Self::verify_ledger_with_boundary`] from an open checkpoint that
@@ -762,23 +788,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         checkpoint: &LedgerHead,
         boundary: Option<crate::quantity::FormatBoundary>,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
-        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Known(boundary), None)
-    }
-
-    /// One chunk of the history scrub (#1551 round 4): the checks of
-    /// [`Self::verify_ledger_with_boundary`] for the commits after `from`
-    /// through commit `through`, from `boundary` (the quantity boundary in
-    /// force at `from`). The checks that need the whole ledger (no event
-    /// past the last receipt, the boundary against the cell's pointer, the
-    /// projection replay) are the open's, over live state; the scrub checks
-    /// its last chunk's head and boundary against the open's instead.
-    pub(crate) fn verify_ledger_span(
-        &self,
-        from: &LedgerHead,
-        boundary: Option<crate::quantity::FormatBoundary>,
-        through: u64,
-    ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
-        self.verify_ledger_after(from, BoundaryAtCheckpoint::Known(boundary), Some(through))
+        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Known(boundary))
     }
 
     #[allow(
@@ -789,7 +799,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         checkpoint: &LedgerHead,
         known_boundary: BoundaryAtCheckpoint,
-        through: Option<u64>,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
         let base = checkpoint.seq;
         let anchor_corrupt = || CellError::LedgerCorrupt {
@@ -853,9 +862,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let receipts = self.receipt_stream_from(checkpoint.commits);
         for receipt in receipts {
             let receipt = receipt?;
-            if through.is_some_and(|through| receipt.body.commit_seq > through) {
-                break;
-            }
             expected_commit = next(expected_commit, "commit_seq")?;
             let corrupt = |reason: &str| CellError::LedgerCorrupt {
                 seq: receipt.body.commit_seq,
@@ -970,7 +976,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 {
                     return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
                 }
-                if base > 0 && through.is_none() {
+                if base > 0 {
                     for request in requests.iter() {
                         crate::quantity::verify_transition_projection(
                             self.conn,
@@ -987,9 +993,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             hash: prev,
             commits: expected_commit,
         };
-        if through.is_some() {
-            return Ok((tail, boundary));
-        }
         if let Some(entry) = self
             .ledger_range(
                 if expected_seq == 0 {

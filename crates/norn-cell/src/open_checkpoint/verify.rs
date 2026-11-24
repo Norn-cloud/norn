@@ -58,8 +58,47 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.verify_value_history_range(commits, u64::MAX)
     }
 
+    /// Verify one committed written fact row against `_norn_fact_values`.
+    pub(crate) fn verify_written_snapshot(
+        &self,
+        world: &str,
+        commit_seq: u64,
+        row: &crate::store::WrittenRow,
+    ) -> Result<(), CellError> {
+        let stored: Option<(String, String, String)> = self.conn.query_optional(
+            &format!("SELECT root_type,snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND commit_seq=?2 AND object_type=?3 AND id=?4 AND version=?5"),
+            params![
+                world,
+                to_i64(commit_seq, "fact commit")?,
+                row.object_type,
+                row.key,
+                to_i64(row.version, "fact version")?,
+            ],
+            |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
+        )?;
+        let (root, encoded, hash) = stored.ok_or_else(unproven_snapshot)?;
+        let snapshot = decode_snapshot(
+            world,
+            &row.object_type,
+            &row.key,
+            row.version,
+            &encoded,
+            &hash,
+        )?;
+        if snapshot.root_type != root
+            || snapshot.object_type != row.object_type
+            || !crate::receipt_commitment::receipt_digest_matches(
+                row.snapshot_sha256.as_deref(),
+                &hash,
+            )
+        {
+            return Err(unproven_snapshot());
+        }
+        Ok(())
+    }
+
     /// [`Self::verify_value_history_after`] for the commits after `after`
-    /// through `through` only: one chunk of the history scrub.
+    /// through `through` only.
     pub(crate) fn verify_value_history_range(
         &self,
         after: u64,
@@ -70,30 +109,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             if receipt.body.commit_seq > through {
                 break;
             }
-            for row in receipt.body.written {
-                let stored: Option<(String, String, String)> = self.conn.query_optional(
-                    &format!("SELECT root_type,snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND commit_seq=?2 AND object_type=?3 AND id=?4 AND version=?5"),
-                    params![receipt.body.world, to_i64(receipt.body.commit_seq, "fact commit")?, row.object_type, row.key, to_i64(row.version, "fact version")?],
-                    |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
-                )?;
-                let (root, encoded, hash) = stored.ok_or_else(unproven_snapshot)?;
-                let snapshot = decode_snapshot(
-                    &receipt.body.world,
-                    &row.object_type,
-                    &row.key,
-                    row.version,
-                    &encoded,
-                    &hash,
-                )?;
-                if snapshot.root_type != root
-                    || snapshot.object_type != row.object_type
-                    || !crate::receipt_commitment::receipt_digest_matches(
-                        row.snapshot_sha256.as_deref(),
-                        &hash,
-                    )
-                {
-                    return Err(unproven_snapshot());
-                }
+            for row in &receipt.body.written {
+                self.verify_written_snapshot(&receipt.body.world, receipt.body.commit_seq, row)?;
             }
         }
         Ok(())
