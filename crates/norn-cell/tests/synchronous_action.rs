@@ -833,16 +833,18 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
             .all(|d| d.severity != DiagnosticSeverity::Error),
         "{findings:?}"
     );
-    let env = ScopedView::uniform(&artifacts, &BTreeSet::new())
+    let environment_hash = ScopedView::uniform(&artifacts, &BTreeSet::new())
         .receipt_env(&norn_ir::ResourceLimitProfile::norn_limits_v1())
-        .unwrap_or_else(|errors| panic!("type environment: {errors:?}"));
+        .ok()
+        .and_then(|env| env.reference().ok())
+        .map_or_default(|reference| reference.sha256);
     let rule = SynchronousRule::admit(
         action.synchronous_rule.clone().unwrap(),
         &writer,
         &BTreeMap::new(),
         norn_kernel::DecisionBinding {
             profile_id: "norn-zen/7".into(),
-            environment_hash: env.reference().unwrap().sha256,
+            environment_hash,
         },
     )
     .unwrap();

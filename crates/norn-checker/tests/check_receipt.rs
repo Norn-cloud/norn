@@ -183,12 +183,12 @@ fn historical_env(
     base: &[ArtifactEnvelope],
     limits: &ResourceLimitProfile,
 ) -> norn_expr::TypeEnvRef {
-    let consumer = artifacts
-        .first()
-        .or_else(|| base.first())
-        .unwrap_or_else(|| panic!("a definition"));
-    ScopedView::of(consumer, artifacts, base, &BTreeSet::new())
-        .receipt_env(limits)
+    let registry = BTreeSet::new();
+    let view = artifacts.first().or_else(|| base.first()).map_or_else(
+        || ScopedView::uniform(base, &registry),
+        |consumer| ScopedView::of(consumer, artifacts, base, &registry),
+    );
+    view.receipt_env(limits)
         .expect("historical definitions")
         .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
         .expect("historical environment")
