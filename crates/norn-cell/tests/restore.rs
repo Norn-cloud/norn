@@ -1039,7 +1039,7 @@ fn iface_link_model() -> Model {
 }
 
 #[tokio::test]
-async fn r10_restore_replays_legacy_cross_root_link_v1_and_advances_monotonically() {
+async fn r11_restore_round_trips_unmodified_cross_root_unchecked_export() {
     let iface_model = iface_link_model();
     let dir = tempfile::tempdir().expect("directory");
     let export = dir.path().join("export");
@@ -1077,27 +1077,17 @@ async fn r10_restore_replays_legacy_cross_root_link_v1_and_advances_monotonicall
         }],
         ..batch(seq)
     };
-    store.commit(&add(2, "test.TargetA")).expect("TargetA v1");
-    store
+    let c2 = store.commit(&add(2, "test.TargetA")).expect("TargetA v1");
+    let c3 = store
         .commit(&add(3, "test.TargetChild"))
         .expect("TargetChild v2");
-    store
-        .commit(&add(4, "test.TargetB"))
-        .expect("TargetB live v3");
-
-    let r1 = store.export_record(1).expect("journal").expect("r1");
-    let r2 = store.export_record(2).expect("journal").expect("r2");
-    let r3 = store.export_record(3).expect("journal").expect("r3");
-    let mut r4 = store.export_record(4).expect("journal").expect("r4");
-    assert_eq!(r4.receipt.body.linked.len(), 1);
-    assert_eq!(r4.receipt.body.linked[0].version, 3);
-    r4.receipt.body.linked[0].version = 1;
-    r4.receipt.hash = hash(&r4.receipt.body);
+    let c4 = store.commit(&add(4, "test.TargetB")).expect("TargetB v1");
+    assert_eq!(c2.receipt().body.linked[0].version, 1);
+    assert_eq!(c3.receipt().body.linked[0].version, 2);
+    assert_eq!(c4.receipt().body.linked[0].version, 1);
 
     let mut exporter = Exporter::local(&export).expect("exporter");
-    for record in [&r1, &r2, &r3, &r4] {
-        exporter.append(record).await.expect("append record");
-    }
+    export_all(&store, &mut exporter).await;
     let manifest = exporter.verify().await.expect("verified manifest");
     CellStore::restore_from(
         &mut exporter,
@@ -1108,7 +1098,7 @@ async fn r10_restore_replays_legacy_cross_root_link_v1_and_advances_monotonicall
         StoreOptions::default(),
     )
     .await
-    .expect("restore must replay pre-PR cross-root link receipt with version 1");
+    .expect("unmodified cross-root export must round-trip restore");
 
     let mut rebuilt = CellStore::open(&target, iface_model, StoreOptions::default()).expect("open");
     assert_eq!(
@@ -1125,12 +1115,115 @@ async fn r10_restore_replays_legacy_cross_root_link_v1_and_advances_monotonicall
             .expect("restored TargetB version"),
         1
     );
-    let next_a = rebuilt
-        .commit(&add(5, "test.TargetA"))
-        .expect("post-restore live TargetA");
-    assert_eq!(next_a.receipt().body.linked[0].version, 2);
     let next_b = rebuilt
-        .commit(&add(6, "test.TargetB"))
-        .expect("post-restore live TargetB");
-    assert_eq!(next_b.receipt().body.linked[0].version, 3);
+        .commit(&add(5, "test.TargetB"))
+        .expect("post-restore TargetB v2");
+    assert_eq!(next_b.receipt().body.linked[0].version, 2);
+}
+
+#[tokio::test]
+async fn r11_restore_round_trips_governed_host_link_tombstone_and_enforces_monotonicity() {
+    use norn_cell::SqliteCell;
+    use norn_ir::JsonObject;
+    use norn_kernel::{
+        CellCommit, CellHost as _, Command, CommitError, FactEvent, FactKey, FactMutation,
+        FactVersion, FactWrite, LinkKey, LinkMutation, LinkWrite,
+    };
+
+    let iface_model = iface_link_model();
+    let dir = tempfile::tempdir().expect("directory");
+    let (export, target) = (
+        dir.path().join("export"),
+        dir.path().join("restored.sqlite"),
+    );
+    let open_cell = |store| {
+        SqliteCell::<FactEvent, JsonObject, JsonObject>::new(
+            store,
+            "org_demo/dev",
+            |cmd: &Command<JsonObject>| cmd.payload.clone(),
+        )
+        .expect("cell")
+    };
+    let mut cell = open_cell(CellStore::open_in_memory(iface_model.clone()).expect("store"));
+    let seed = CellCommit {
+        writes: [
+            ("test.Node", "source"),
+            ("test.TargetChild", "target"),
+            ("test.TargetB", "target"),
+        ]
+        .into_iter()
+        .map(|(ty, key)| FactWrite {
+            key: FactKey::new(ty, key),
+            expected: FactVersion(0),
+            mutation: FactMutation::Put {
+                values: BTreeMap::new(),
+            },
+        })
+        .collect(),
+        ..CellCommit::empty()
+    };
+    cell.commit(seed).expect("seed objects");
+
+    let edge = |ty: &str| {
+        LinkKey::new(
+            FactKey::new("test.Node", "source"),
+            "related",
+            FactKey::new(ty, "target"),
+        )
+    };
+    let (key_a, key_b) = (edge("test.TargetChild"), edge("test.TargetB"));
+    let link_commit = |key: &LinkKey, expected: u64, mutation: LinkMutation| CellCommit {
+        links: vec![LinkWrite {
+            key: key.clone(),
+            expected: FactVersion(expected),
+            mutation,
+        }],
+        ..CellCommit::empty()
+    };
+    let add = || LinkMutation::Add {
+        values: BTreeMap::new(),
+    };
+    for (expected, mutation, next_ver) in
+        [(0, add(), 1), (1, LinkMutation::Remove, 2), (2, add(), 3)]
+    {
+        let receipt = cell
+            .commit(link_commit(&key_a, expected, mutation))
+            .expect("governed link commit");
+        assert_eq!(receipt.linked[0].version, FactVersion(next_ver));
+    }
+
+    let mut exporter = Exporter::local(&export).expect("exporter");
+    export_all(cell.store(), &mut exporter).await;
+    let manifest = exporter.verify().await.expect("verified manifest");
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        iface_model.clone(),
+        "org_demo/dev",
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("governed host link export must round-trip restore");
+
+    let mut rebuilt =
+        open_cell(CellStore::open(&target, iface_model, StoreOptions::default()).expect("open"));
+    for mutation in [add(), LinkMutation::Remove] {
+        assert!(matches!(
+            rebuilt.commit(link_commit(&key_b, 0, mutation)),
+            Err(CommitError::EffectiveValues { .. })
+        ));
+    }
+    assert!(matches!(
+        rebuilt.commit(link_commit(&key_a, 2, add())),
+        Err(CommitError::LinkConflict {
+            expected: FactVersion(2),
+            current: FactVersion(3),
+            ..
+        })
+    ));
+    let v4 = rebuilt
+        .commit(link_commit(&key_a, 3, add()))
+        .expect("post-restore v4");
+    assert_eq!(v4.linked[0].version, FactVersion(4));
 }

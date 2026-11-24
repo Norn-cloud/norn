@@ -3019,9 +3019,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 &target_type,
                 target,
             )?;
-            let slot_version =
-                mode.slot_version_floor(&self.reader(), self.world, &table_name, source, target)?;
-            let version = next(previous_version.max(slot_version), "link version")?;
+            let version = next(previous_version, "link version")?;
             let live_identity = self
                 .conn
                 .query_optional(

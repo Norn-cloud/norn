@@ -48,9 +48,9 @@ pub(crate) enum LinkGuardMode {
     /// static mapping links from `check_link_read_markings`, still enforce
     /// physical-slot target-identity guards.
     VerifiedMapping(VerifiedMappingProof),
-    /// Direct low-level `CellStore` commit (non-`CellHost`): still enforces IFC
-    /// read-marking checks and monotonic slot versioning while allowing
-    /// interface target-type replacement on the physical slot.
+    /// Direct low-level `CellStore` commit (non-`CellHost`): enforces IFC
+    /// read-marking checks while permitting interface target-type replacement
+    /// on the physical slot.
     UncheckedStore,
     /// Verified history replay (`restore`): skip live-admission guards.
     RetainedReplay,
@@ -86,25 +86,6 @@ impl LinkGuardMode {
     /// Whether `check_slot_target_match` must run for this commit.
     pub(crate) const fn check_slot_target(self) -> bool {
         matches!(self, Self::Host | Self::VerifiedMapping(_))
-    }
-
-    /// Physical-slot version floor for monotonic live link writes; returns `0`
-    /// during `RetainedReplay` so pre-PR exports whose cross-root replacement
-    /// recorded version `1` replay with byte-identical receipts.
-    pub(crate) fn slot_version_floor<E: SqlEngine>(
-        self,
-        reader: &StoreReader<'_, E>,
-        world: &str,
-        table_name: &str,
-        source: &str,
-        target: &str,
-    ) -> Result<u64, CellError> {
-        if matches!(self, Self::RetainedReplay) {
-            return Ok(0);
-        }
-        Ok(reader
-            .link_version_row(world, table_name, source, target)?
-            .map_or(0, |(existing, _)| existing))
     }
 }
 
