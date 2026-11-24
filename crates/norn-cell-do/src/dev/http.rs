@@ -483,8 +483,8 @@ fn refusal(refused: &Refusal) -> Response {
 pub(in crate::dev) mod action_cell;
 
 #[cfg(test)]
-#[path = "series_approval_tests.rs"]
-mod series_approval_tests;
+#[path = "exact_spelling_tests.rs"]
+mod exact_spelling_tests;
 
 #[cfg(test)]
 #[allow(

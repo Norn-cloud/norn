@@ -1,8 +1,7 @@
-//! AUTH-INDEPENDENT-PERSON (#618) for an approval-gated create whose key a
-//! naming series generates, through the dev host's own dispatch: the call
-//! parks, the reviewer approves it, and the requester's retry commits only
-//! the number and the exact text the approval was granted for
-//! (APPROVAL-INTENT-1).
+//! AUTH-INDEPENDENT-PERSON (#618) through the dev host's own dispatch: an
+//! approval-gated create parks, the reviewer approves it, and the
+//! requester's retry of exactly the call it is served commits the exact text
+//! the approval was granted for (APPROVAL-INTENT-1).
 
 use std::error::Error;
 
@@ -33,13 +32,12 @@ fn artifact(artifact_id: &str, kind: &str, payload: &Value, dependencies: &[&str
         "scope": { "orgId": "org_demo", "environmentId": "dev" },
         "dependencies": dependencies,
         "provenance": { "source": "authoring_sdk",
-            "sourcePath": "crates/norn-cell-do/src/dev/series_approval_tests.rs" },
+            "sourcePath": "crates/norn-cell-do/src/dev/exact_spelling_tests.rs" },
         "payload": payload
     })
 }
 
-/// `test.Note`, numbered `NO-00001`, … by its naming series, and the action
-/// that creates one from a title alone.
+/// `test.Note`, keyed by `no`, and the action that creates one.
 fn documents() -> Vec<Value> {
     let note = artifact(
         "test.Note.entity",
@@ -50,9 +48,7 @@ fn documents() -> Vec<Value> {
                 { "id": "no", "type": { "kind": "text" } },
                 { "id": "title", "type": { "kind": "text" } }
             ],
-            "identity": [{ "name": "primary", "properties": ["no"], "namingSeries": {
-                "pattern": "NO-{#####}", "timezone": "Etc/UTC",
-                "resetPolicy": "never", "gapPolicy": "gapless_within_commit" } }]
+            "identity": [{ "name": "primary", "properties": ["no"] }]
         } }),
         &[],
     );
@@ -66,7 +62,7 @@ fn documents() -> Vec<Value> {
             "ledgered": true,
             "inputSchema": { "type": "object", "additionalProperties": false,
                 "properties": { "no": { "type": "string" }, "title": { "type": "string" } },
-                "required": ["title"] },
+                "required": ["no", "title"] },
             "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "writes": [{ "entityKind": "test.Note", "change": "created" }],
             "effectProgram": { "kind": "upsert_input_object", "objectIdField": "no",
@@ -174,10 +170,6 @@ fn create_with(dev: &Dev, key: &str, input: &str) -> Checked<(u16, Value)> {
     call(dev, DEVELOPER_TOKEN, ("POST", &path, SCOPE), &body)
 }
 
-fn create(dev: &Dev, key: &str) -> Checked<(u16, Value)> {
-    create_with(dev, key, &json!({ "title": key }).to_string())
-}
-
 fn approve(dev: &Dev, parked: &Value) -> Checked {
     let id = parked
         .pointer("/decision/id")
@@ -190,34 +182,6 @@ fn approve(dev: &Dev, parked: &Value) -> Checked {
     Ok(())
 }
 
-/// Two creates park while the counter stands at one, so each approval names
-/// `NO-00001`. The second's retry commits it; the first's retry would now
-/// number its note `NO-00002`, which no one approved: it is refused, finally.
-#[test]
-fn a_generated_key_create_commits_only_the_number_it_was_approved_for() -> Checked {
-    let dev = dev()?;
-    gate(&dev)?;
-    let (status, first) = create(&dev, "create-1")?;
-    assert_eq!(status, 202, "{first}");
-    let (status, second) = create(&dev, "create-2")?;
-    assert_eq!(status, 202, "{second}");
-    approve(&dev, &first)?;
-    approve(&dev, &second)?;
-
-    let (status, committed) = create(&dev, "create-2")?;
-    assert_eq!(status, 200, "{committed}");
-    assert_eq!(committed.get("objectId"), Some(&json!("NO-00001")));
-    for _ in 0..2 {
-        let (status, refused) = create(&dev, "create-1")?;
-        assert_eq!(
-            (status, refused.get("code")),
-            (409, Some(&json!("action.approved_intent_changed"))),
-            "{refused}"
-        );
-    }
-    Ok(())
-}
-
 /// A title spelled decomposed (NFD) parks, is approved, and the requester's
 /// retry of exactly the call its requested decision serves (`encodedInput`)
 /// commits that spelling: neither the parked command nor the served call
@@ -227,7 +191,8 @@ fn a_decomposed_spelling_survives_parking_and_the_served_retry() -> Checked {
     let dev = dev()?;
     gate(&dev)?;
     let title = "cafe\u{301}";
-    let (status, parked) = create_with(&dev, "spelled-1", &json!({ "title": title }).to_string())?;
+    let input = json!({ "no": "N-1", "title": title }).to_string();
+    let (status, parked) = create_with(&dev, "spelled-1", &input)?;
     assert_eq!(status, 202, "{parked}");
     approve(&dev, &parked)?;
     let id = parked
@@ -248,12 +213,8 @@ fn a_decomposed_spelling_survives_parking_and_the_served_retry() -> Checked {
         .ok_or("no served call")?;
     let (status, committed) = create_with(&dev, "spelled-1", served)?;
     assert_eq!(status, 200, "{committed}");
-    let key = committed
-        .get("objectId")
-        .and_then(Value::as_str)
-        .ok_or("no object")?;
-    let path = format!("/v1/objects/test.Note/{key}");
-    let (status, note) = call(&dev, DEVELOPER_TOKEN, ("GET", &path, SCOPE), "")?;
+    let path = "/v1/objects/test.Note/N-1";
+    let (status, note) = call(&dev, DEVELOPER_TOKEN, ("GET", path, SCOPE), "")?;
     assert_eq!(status, 200, "{note}");
     assert_eq!(note.pointer("/values/title"), Some(&json!(title)));
     Ok(())

@@ -4926,3 +4926,46 @@ fn approved_intent_binds_the_exact_unicode_spelling() {
     );
     assert!(cell.outbox().is_empty());
 }
+
+/// AUTH-INDEPENDENT-PERSON (#618): a generated-key create whose allocator
+/// diagnostics stay concealed from the caller still prepares the commit its
+/// approval is granted for, and once another create has taken that number
+/// the approved call is refused as the approval's own `ApprovedIntentChanged`,
+/// never a concealed `TargetNotFound`.
+#[test]
+fn approved_intent_binds_a_generated_key_behind_concealed_allocation() {
+    struct Concealing;
+    impl ActionAuthorizer for Concealing {
+        fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+    }
+    let types = naming_series_types("gapless_within_commit", "year");
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let action = naming_series_action("commerce.named_order.create");
+    let first = naming_call(&action, "ACME", "create-1", 1_767_225_600_000);
+    let second = naming_call(&action, "ACME", "create-2", 1_767_225_600_000);
+    let prepared = norn_kernel::prepare_action_intent(&cell, &catalog, &first, &Concealing);
+    let Ok(norn_kernel::Prepared::Commit(granted)) = prepared else {
+        panic!("the concealed create reaches its commit point: {prepared:?}");
+    };
+    let taken = commit_action(&mut cell, &catalog, &second, &Concealing);
+    assert!(
+        matches!(taken, Ok(ActionOutcome::Committed { .. })),
+        "{taken:?}"
+    );
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &ActionCall {
+            approved_intent: Some(granted.digest),
+            ..first
+        },
+        &Concealing,
+    );
+    assert!(
+        matches!(&refused, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
+        "{refused:?}"
+    );
+}
