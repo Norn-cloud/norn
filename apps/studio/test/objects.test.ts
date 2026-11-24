@@ -67,6 +67,19 @@ test("a lifecycle's states follow its declared transitions from the initial stat
   expect(lifecycleOf(lifecycle, record).next).toEqual([])
 })
 
+test("lifecycleStates orders peer branches by declared enum order even when transitions are declared in reverse", () => {
+  const branching = {
+    property: "status",
+    initial: ["start"],
+    terminal: ["approved", "rejected"],
+    transitions: [
+      { id: "reject", from: ["start"], to: "rejected" },
+      { id: "approve", from: ["start"], to: "approved" },
+    ],
+  }
+  expect(lifecycleStates(branching, ["start", "approved", "rejected"])).toEqual(["start", "approved", "rejected"])
+})
+
 test("object types without a lifecycle declare none", () => {
   expect(lifecycleCatalog.byName.get("canon.Item")?.lifecycles).toEqual([])
 })

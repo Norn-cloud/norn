@@ -29,16 +29,11 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
-/// A UI machine composed with a backend lifecycle (#1236); `ui_lifecycle` is the caller.
-#[allow(
-    dead_code,
-    reason = "`ui_lifecycle` composes with `Together` syncs; `Alone`, `narrow_endings`, `state` and the Quint export are exercised by the core's own tests until a caller needs them"
-)]
-pub(crate) mod compose;
+pub mod compose;
 
 /// What reaching a state means for a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Ending {
+pub enum Ending {
     /// A good final ending (a lifecycle's `completed` or unclassified terminal; a UI `terminal`).
     Good,
     /// A final ending after every dispatched effect was compensated.
@@ -54,7 +49,8 @@ pub(crate) enum Ending {
 
 impl Ending {
     /// Final endings need no exit; a resting one does.
-    pub(crate) const fn is_final(self) -> bool {
+    #[must_use]
+    pub const fn is_final(self) -> bool {
         !matches!(self, Self::Resting)
     }
 }
@@ -62,7 +58,7 @@ impl Ending {
 /// Whether an edge is enabled for every concrete valuation the abstract state stands for
 /// (`Must`) or only for some (`May`: a guard the analysis does not decide, an abstracted law).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Modality {
+pub enum Modality {
     /// Enabled in every valuation; discharges option to complete.
     Must,
     /// Enabled in some valuation; counts for reachability only.
@@ -74,21 +70,22 @@ pub(crate) enum Modality {
 /// decides the modality, so a guard that may never be enabled can never discharge option to
 /// complete (coordinator ruling, 2026-11-13).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NetEdge {
+pub struct NetEdge {
     /// Source state index.
-    pub(crate) from: usize,
+    pub from: usize,
     /// Target state index.
-    pub(crate) to: usize,
+    pub to: usize,
     /// The caller's label for the edge (a transition index), echoed in witnesses.
-    pub(crate) label: usize,
+    pub label: usize,
     /// Driven by an input (a person, an external event, a server outcome) rather than time alone.
-    pub(crate) input: bool,
+    pub input: bool,
     modality: Modality,
 }
 
 impl NetEdge {
     /// An edge with no guard: enabled whenever its source state holds (must).
-    pub(crate) const fn unguarded(from: usize, to: usize, label: usize, input: bool) -> Self {
+    #[must_use]
+    pub const fn unguarded(from: usize, to: usize, label: usize, input: bool) -> Self {
         Self {
             from,
             to,
@@ -100,7 +97,8 @@ impl NetEdge {
 
     /// An edge whose guard the caller has not decided (may): it counts for reachability, never
     /// for completion. This is the only constructor for a guarded edge over abstract states.
-    pub(crate) const fn guarded(from: usize, to: usize, label: usize, input: bool) -> Self {
+    #[must_use]
+    pub const fn guarded(from: usize, to: usize, label: usize, input: bool) -> Self {
         Self {
             from,
             to,
@@ -113,7 +111,8 @@ impl NetEdge {
     /// An edge of a graph over exact valuations whose guards and laws were evaluated true on
     /// this source valuation (the PROOF-LIFECYCLE-3 rows): must, because the evaluation is the
     /// proof that the guard is enabled there.
-    pub(crate) const fn evaluated(from: usize, to: usize, label: usize, input: bool) -> Self {
+    #[must_use]
+    pub const fn evaluated(from: usize, to: usize, label: usize, input: bool) -> Self {
         Self {
             from,
             to,
@@ -124,27 +123,28 @@ impl NetEdge {
     }
 
     /// Must or may, as decided by the constructor.
-    pub(crate) const fn modality(&self) -> Modality {
+    #[must_use]
+    pub const fn modality(&self) -> Modality {
         self.modality
     }
 }
 
 /// A finite machine: states `0..states`, initial states, endings and edges.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Net {
+pub struct Net {
     /// Number of states.
-    pub(crate) states: usize,
+    pub states: usize,
     /// Initial state indices.
-    pub(crate) initial: Vec<usize>,
+    pub initial: Vec<usize>,
     /// The ending of each state, if it is one (length `states`).
-    pub(crate) endings: Vec<Option<Ending>>,
+    pub endings: Vec<Option<Ending>>,
     /// Edges; a self-loop never counts as leaving its state.
-    pub(crate) edges: Vec<NetEdge>,
+    pub edges: Vec<NetEdge>,
 }
 
 /// Whether some ending is reachable from a state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Completion {
+pub enum Completion {
     /// Along must edges: proved.
     Must,
     /// Only along paths that use a may edge: Unknown, never a pass.
@@ -155,27 +155,28 @@ pub(crate) enum Completion {
 
 /// The verdict for one state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct StateVerdict {
+pub struct StateVerdict {
     /// Reachable from an initial state along any edge.
-    pub(crate) reachable: bool,
+    pub reachable: bool,
     /// Not a final ending and no edge leaves it for another state (absorbing).
-    pub(crate) deadlock: bool,
+    pub deadlock: bool,
     /// Whether an ending is reachable from it.
-    pub(crate) completion: Completion,
+    pub completion: Completion,
 }
 
 impl StateVerdict {
     /// Reachable and refuted: a deadlock, or a trap (it has exits but no ending is reachable).
-    pub(crate) const fn stuck(self) -> bool {
+    #[must_use]
+    pub const fn stuck(self) -> bool {
         self.reachable && (self.deadlock || matches!(self.completion, Completion::None))
     }
 }
 
 /// The analysis of a [`Net`].
 #[derive(Debug, Clone)]
-pub(crate) struct Verdict {
+pub struct Verdict {
     /// One verdict per state, by index.
-    pub(crate) states: Vec<StateVerdict>,
+    pub states: Vec<StateVerdict>,
 }
 
 fn closure(seeds: impl IntoIterator<Item = usize>, next: &[Vec<usize>]) -> Vec<bool> {
@@ -220,7 +221,8 @@ fn adjacency(net: &Net, keep: impl Fn(&NetEdge) -> bool, backward: bool) -> Vec<
 }
 
 /// Option to complete, deadlock and reachability for every state of `net`.
-pub(crate) fn analyse(net: &Net) -> Verdict {
+#[must_use]
+pub fn analyse(net: &Net) -> Verdict {
     let endings = || {
         net.endings
             .iter()
@@ -264,7 +266,8 @@ pub(crate) fn analyse(net: &Net) -> Verdict {
 
 /// A shortest run from an initial state to `target`, as edge indices into `net.edges`
 /// (declaration order breaks ties). `None` when `target` is unreachable.
-pub(crate) fn witness(net: &Net, target: usize) -> Option<Vec<usize>> {
+#[must_use]
+pub fn witness(net: &Net, target: usize) -> Option<Vec<usize>> {
     let mut parent: Vec<Option<Option<usize>>> = vec![None; net.states];
     let mut queue = VecDeque::new();
     for &state in &net.initial {
@@ -301,7 +304,8 @@ pub(crate) fn witness(net: &Net, target: usize) -> Option<Vec<usize>> {
 
 /// States on a cycle of edges no input drives (a loop that runs on time alone). A self-loop
 /// is a cycle.
-pub(crate) fn input_free_cycles(net: &Net) -> Vec<bool> {
+#[must_use]
+pub fn input_free_cycles(net: &Net) -> Vec<bool> {
     let timed = adjacency(net, |edge| !edge.input, false);
     (0..net.states)
         .map(|state| {

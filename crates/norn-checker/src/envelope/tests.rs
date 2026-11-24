@@ -610,67 +610,6 @@ mod suite {
     }
 
     #[test]
-    fn rejects_relation_traversal_widget_dependency_without_relation_kind() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Widget,
-            json!({
-                "widgetVersion": "0.1",
-                "widgetId": "retail.stock.overview",
-                "dataDependencies": [{
-                    "dependencyId": "locationEdge",
-                    "objectKind": "retail.StockPosition",
-                    "query": { "kind": "relation_traversal" }
-                }],
-                "viewStates": [{ "stateId": "ready", "kind": "ready" }],
-                "actionBindings": [],
-                "permissions": [{
-                    "permission": "retail.inventory.read",
-                    "reason": "show scoped inventory data"
-                }]
-            }),
-        );
-
-        let diagnostics = artifact
-            .validate()
-            .expect_err("relation traversal must declare relation kind");
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "widget.validation.invalid_payload"
-                && diagnostic.path.as_deref()
-                    == Some("payload.dataDependencies[0].query.relationKind")
-        }));
-    }
-
-    #[test]
-    fn rejects_widget_action_binding_without_dependency() {
-        let artifact = artifact_with_payload(
-            &ArtifactKind::Widget,
-            json!({
-                "widgetVersion": "0.1",
-                "widgetId": "retail.replenishment.proposal",
-                "dataDependencies": [],
-                "viewStates": [{ "stateId": "preview", "kind": "preview" }],
-                "actionBindings": [{
-                    "bindingId": "approve",
-                    "actionId": "retail.replenishment.approve",
-                    "label": "Approve",
-                    "inputMapping": {},
-                    "requiredPermissions": ["retail.replenishment.approve"]
-                }],
-                "permissions": []
-            }),
-        );
-
-        let diagnostics = artifact
-            .validate()
-            .expect_err("widget action binding should require graph dependency");
-        assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "widget.validation.missing_dependency")
-        );
-    }
-
-    #[test]
     fn validates_customization_field_overlay_payload() {
         let artifact = artifact_with_payload(
             &ArtifactKind::Customization,

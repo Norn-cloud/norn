@@ -343,8 +343,8 @@ class AffectedPlanTests(unittest.TestCase):
         expected = ["test/" + value for value in self.full["shard"]]
         expected += ["phase/" + value for value in self.full["phase"]]
         self.assertEqual(sorted(task for bundle in self.full["bundle"] for task in bundle["tasks"]), sorted(expected))
-        # Each bundle is one Boat start: the full plan fills the three-bundle budget exactly.
-        self.assertEqual(len(self.full["bundle"]), 3)
+        # Each bundle is one Boat start: the full plan fills the eight-bundle budget exactly.
+        self.assertEqual(len(self.full["bundle"]), 8)
         self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in self.full["bundle"]))
         reordered = copy.deepcopy(self.full)
         reordered["shard"].reverse()

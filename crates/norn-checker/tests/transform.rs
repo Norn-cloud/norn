@@ -1115,3 +1115,128 @@ fn admission_refuses_an_expression_every_evaluation_would_refuse() {
     };
     assert_eq!(evaluate(&plan, &input).expect("evaluated").rows.len(), 1);
 }
+
+#[test]
+fn exact_temporal_division_with_dynamic_divisor_admits_evaluates_and_refuses_zero()
+-> Result<(), Box<dyn std::error::Error>> {
+    let shift_entity = entity(
+        "shop.Shift",
+        json!({
+            "properties": [
+                {"id": "start_at", "type": {"kind": "timestamp", "timezone": "utc"}},
+                {"id": "end_at", "type": {"kind": "timestamp", "timezone": "utc"}},
+                {"id": "divisor", "type": {"kind": "integer"}},
+                {"id": "count", "type": {"kind": "integer"}}
+            ]
+        }),
+    );
+    let make_pool = |nodes: Value,
+                     output: &str|
+     -> Result<Vec<ArtifactEnvelope>, Box<dyn std::error::Error>> {
+        let view_doc = artifact(
+            "shop.shift_view",
+            "derived",
+            json!([{"artifactId": "shop.Shift", "kind": "entity", "version": "0.1.0", "required": true}]),
+            json!({
+                "viewVersion": "0.1",
+                "viewId": "shop.shift_view",
+                "inputs": [{"artifactId": "shop.Shift", "kind": "entity", "version": "0.1.0", "alias": "shift"}],
+                "calc": {"kind": "relational", "nodes": nodes, "output": output},
+                "outputSchema": {},
+                "maintenance": "recompute_on_read"
+            }),
+        );
+        Ok(vec![
+            serde_json::from_value(shift_entity.clone())?,
+            serde_json::from_value(view_doc)?,
+        ])
+    };
+
+    // Dynamic integer divisor under explicit exact `round(...)` with `seconds_between` admits and evaluates.
+    let valid_nodes = json!({
+        "s": {"op": "scan", "input": "shift"},
+        "f": {
+            "op": "filter",
+            "input": "s",
+            "predicate": "round(seconds_between(timestamp(input.start_at), timestamp(input.end_at)) / input.divisor, 2, 'half_even') > 0"
+        },
+        "p": {
+            "op": "project",
+            "input": "f",
+            "columns": [
+                {"name": "id", "expression": "input.id"},
+                {
+                    "name": "rate_per_unit",
+                    "expression": "round(seconds_between(timestamp(input.start_at), timestamp(input.end_at)) / input.divisor, 2, 'half_even')"
+                }
+            ]
+        }
+    });
+    let pool = make_pool(valid_nodes, "p")?;
+    let found = findings_of(&pool);
+    assert_eq!(found, [], "{found:#?}");
+    let view_artifact = pool.last().ok_or("missing view artifact")?;
+    let plan = admit(view_artifact, &pool, &BTreeSet::new())
+        .map_err(|errors| format!("admit failed: {errors:?}"))?;
+
+    let row_with_divisor = |id: &str, divisor: i64| InputRow {
+        id: id.to_owned(),
+        version: 1,
+        values: BTreeMap::from([
+            (
+                "start_at".to_owned(),
+                RuntimeValue::String("2026-03-09T14:00:00Z".to_owned()),
+            ),
+            (
+                "end_at".to_owned(),
+                RuntimeValue::String("2026-03-09T14:00:01Z".to_owned()),
+            ),
+            (
+                "divisor".to_owned(),
+                RuntimeValue::Number(Decimal::from(divisor)),
+            ),
+            (
+                "count".to_owned(),
+                RuntimeValue::Number(Decimal::from(10_i64)),
+            ),
+        ]),
+    };
+
+    // Nonzero divisor: 1 / 3 rounded half_even at scale 2 = 0.33 (> 0).
+    let nonzero_input = TransformInput {
+        rows: BTreeMap::from([("shift".to_owned(), vec![row_with_divisor("s1", 3)])]),
+        links: BTreeMap::new(),
+    };
+    let output = evaluate(&plan, &nonzero_input)
+        .map_err(|err| format!("nonzero evaluation failed: {err:?}"))?;
+    let first_row = output.rows.first().ok_or("expected one projected row")?;
+    assert_eq!(output.rows.len(), 1);
+    assert_eq!(
+        first_row.values.get("rate_per_unit"),
+        Some(&RuntimeValue::Number(Decimal::parse("0.33")?))
+    );
+
+    // Zero divisor refuses at runtime rather than returning null.
+    let zero_input = TransformInput {
+        rows: BTreeMap::from([("shift".to_owned(), vec![row_with_divisor("s-zero", 0)])]),
+        links: BTreeMap::new(),
+    };
+    assert!(
+        evaluate(&plan, &zero_input).is_err(),
+        "zero divisor must fail closed at transform runtime"
+    );
+
+    // Negative control: plain non-exact dynamic division without explicit exact round still refuses admission.
+    let plain_div_nodes = json!({
+        "s": {"op": "scan", "input": "shift"},
+        "f": {"op": "filter", "input": "s", "predicate": "input.count / input.divisor > 0"}
+    });
+    let bad_pool = make_pool(plain_div_nodes, "f")?;
+    let bad_findings = findings_of(&bad_pool);
+    assert!(
+        bad_findings.iter().any(|d| d.code == codes::TYPE_MISMATCH),
+        "plain dynamic division must still refuse admission, got {bad_findings:#?}"
+    );
+
+    Ok(())
+}

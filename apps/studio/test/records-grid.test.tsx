@@ -186,3 +186,30 @@ test("RecordsTimeline hides stale bars while pending, alerts on filter overflow,
   expect(arabic).toContain("Prototype run")
   expect(arabic).toContain("نوفمبر")
 })
+
+test("RecordsGrid offers the Lifecycle view toggle beside Table and Timeline only when the type declares a lifecycle", async () => {
+  const renderGridFor = async (target: typeof concept, timeline: boolean) => {
+    const client = new QueryClient()
+    const first = live([])
+    client.setQueryData(["records", target.name, recordsQueryParams(EMPTY_QUERY).toString()], first)
+    const root = createRootRoute()
+    const router = createRouter({
+      routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/", component: () => <RecordsGrid concept={target} read={async () => first} timeline={timeline} /> })]),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    })
+    await router.load()
+    return renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
+  }
+
+  expect(await renderGridFor(concept, false)).not.toContain(">Lifecycle<")
+  const restatement = catalog.byName.get("core.analytics.Restatement")
+  if (restatement === undefined) throw new Error("core.analytics.Restatement is not in the recorded catalog")
+  const lifecycleOnly = await renderGridFor(restatement, false)
+  expect(lifecycleOnly).toContain(">Table<")
+  expect(lifecycleOnly).toContain(">Lifecycle<")
+  expect(lifecycleOnly).not.toContain(">Timeline<")
+  const both = await renderGridFor(restatement, true)
+  expect(both).toContain(">Table<")
+  expect(both).toContain(">Timeline<")
+  expect(both).toContain(">Lifecycle<")
+})

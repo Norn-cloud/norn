@@ -1,5 +1,5 @@
 {
-  "sha256": "b218ddc5b83b113dda444f2e7807dd911fc085e177fbbc3fe11812612ce7ee51",
+  "sha256": "2c02ad17bc1e71784a30017c2f6b5667655e055fe99806f03039edd37e2473cc",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -21,6 +21,7 @@
     "crates/norn-ir/Cargo.toml",
     "crates/norn-kernel/Cargo.toml",
     "crates/norn-projections/Cargo.toml",
+    "crates/norn-ui-checker/Cargo.toml",
     "third_party/ascent/ascent/Cargo.toml",
     "third_party/ascent/ascent_macro/Cargo.toml",
     "vendor/zen/core/engine/Cargo.toml",

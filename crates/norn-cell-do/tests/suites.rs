@@ -35,6 +35,8 @@ mod approval_fencing_quint;
 mod approval_recovery;
 #[path = "approvals.rs"]
 mod approvals;
+#[path = "automations_u1.rs"]
+mod automations_u1;
 #[path = "conformance_reference.rs"]
 mod conformance_reference;
 #[path = "connections.rs"]
@@ -92,3 +94,5 @@ mod tenant_isolation;
 mod timers;
 #[path = "tokens.rs"]
 mod tokens;
+#[path = "views.rs"]
+mod views;

@@ -868,18 +868,11 @@ pub(crate) fn check_typed_expression_in(
     expr: &Expression,
     env: &ZenTypeEnv,
     expected: &Type,
+    limits: &ResourceLimitProfile,
     tzdb: &crate::temporal::TzdbBundle,
 ) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(
-        expr,
-        env,
-        expected,
-        &ResourceLimitProfile::norn_limits_v1(),
-        None,
-        true,
-        tzdb,
-    )
-    .map(|(checked, _)| checked)
+    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None, true, tzdb)
+        .map(|(checked, _)| checked)
 }
 
 /// VAL-EXACT-1: select the exact runtime only for declared reads/results or an explicit site.
@@ -1190,7 +1183,7 @@ fn validate_lowered_source(source: &str, span: (u32, u32)) -> Vec<Diagnostic> {
     let mut parser = IntelliSense::new();
     parser
         .with_ast(source, false, |ast, metadata| {
-            exact_admission(ast, metadata, false)
+            sites::exact_admission(ast, metadata, false)
         })
         .unwrap_or_else(|| {
             vec![Diagnostic {
@@ -3403,58 +3396,4 @@ fn strip_scope_bounds(ty: &mut T, scope_id: usize) {
         | T::ParsedTimestamp
         | T::Record(Rec::Env { .. }) => {}
     }
-}
-
-/// VAL-ROUND: no information-losing operation enters the exact runtime implicitly.
-pub(crate) fn exact_admission<'n>(
-    root: &'n Node<'n>,
-    metadata: &AstMetadata,
-    destination: bool,
-) -> Vec<Diagnostic> {
-    let mut pending = vec![(root, destination)];
-    let mut out = Vec::new();
-    while let Some((node, destination)) = pending.pop() {
-        let round = matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() >= 2);
-        let site = destination
-            || matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() == 3);
-        let reason = if matches!(
-            node,
-            Node::Binary {
-                operator: Operator::Arithmetic(ArithmeticOperator::Divide),
-                ..
-            }
-        ) && !destination
-        {
-            Some("division requires a declared Decimal destination or explicit round site")
-        } else if matches!(
-            node,
-            Node::Binary {
-                operator: Operator::Comparison(ComparisonOperator::In | ComparisonOperator::NotIn),
-                ..
-            }
-        ) {
-            Some("membership is outside the exact arithmetic profile")
-        } else if matches!(node, Node::FunctionCall { kind, .. } if !(matches!(kind, FunctionKind::Internal(InternalFunction::Len)) || round && site))
-        {
-            Some("function requires an explicit supported exact site")
-        } else if matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.get(1).is_some_and(|value| matches!(value, Node::Number(scale) if scale.to_string().parse::<u32>().is_ok_and(|scale| scale > 18))))
-        {
-            Some("round exceeds the exact arithmetic scale bound")
-        } else if !destination && matches!(node, Node::Number(value) if value.scale() > 18) {
-            Some("numeric literal exceeds the exact arithmetic scale bound")
-        } else {
-            None
-        };
-        if let Some(reason) = reason {
-            out.push(Diagnostic {
-                code: "core.values.inexact",
-                message: reason.to_owned(),
-                span: metadata.get(&address(node)).map_or((0, 0), |m| m.span),
-            });
-        }
-        let mut children = Vec::new();
-        bounds::children(node, &mut children);
-        pending.extend(children.into_iter().map(|child| (child, site)));
-    }
-    out
 }

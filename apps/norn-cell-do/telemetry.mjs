@@ -63,7 +63,7 @@ const REFUSAL_CODES = new Set(Object.entries({
     "unsupported_law unsupported_mapping unsupported_marking unwritable",
   cell:
     "base_mismatch not_provisioned provision_conflict provision_refused reserved_artifact " +
-    "scope_conflict sqlite unopenable",
+    "fenced scope_conflict sqlite unopenable verifying",
   commit:
     "conflict dangling_link duplicate_key duplicate_link duplicate_link_read effective_values " +
     "event_limit host identifier_too_long immutable_object invalid_link_read invalid_predicate_read " +
@@ -88,7 +88,11 @@ const REFUSAL_CODES = new Set(Object.entries({
     "refused stale version_not_found",
   definition:
     "already_retired approval_action_unknown approval_duplicate approval_invalid " +
-    "approval_role_unknown binding_connector_invalid binding_digest_mismatch binding_invalid_payload " +
+    "approval_role_unknown automation_action_target_mismatch automation_action_unknown " +
+    "automation_guard_invalid automation_input_invalid automation_invalid " +
+    "automation_lifecycle_state_unknown automation_lifecycle_unknown automation_object_type_unknown " +
+    "automation_role_unknown automation_stale_property_invalid " +
+    "binding_connector_invalid binding_digest_mismatch binding_invalid_payload " +
     "binding_label_invalid binding_mapping_invalid binding_mapping_unknown_field binding_not_nfc " +
     "binding_role_unknown binding_version_mismatch cursor_invalid flow_action_declared " +
     "flow_artifact_conflict flow_artifact_foreign flow_command_unverifiable flow_function_unknown " +

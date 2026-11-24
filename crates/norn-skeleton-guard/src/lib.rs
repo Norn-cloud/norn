@@ -1,60 +1,27 @@
 //! Skeleton guard: enforces `knowledge/architecture/build-plan-2026-09-09/SKELETON.md`.
 //!
-//! The policy below is the single transcription of the SKELETON.md dependency
-//! table and hard rules. [`check_dependencies`] evaluates it against
-//! `cargo metadata`; [`check_layout`] asserts the boundary files exist;
-//! [`pub_validate_fns`] + [`check_norn_ir_validators`] enforce the
-//! `validate_*` allowlist for `norn-ir`; and [`check_baseline`] pins every
-//! known-violation allowlist to the checked-in `baseline.json`.
+//! Evaluates [`CRATES`] against `cargo metadata`, checks `boundary.json` layout,
+//! enforces `norn-ir` `validate_*` rules, and pins shrink-only allowlists to
+//! `baseline.json`, `loc-baseline.json`, and `lint-pin.json`.
 //!
 //! # What is checked, per dependency kind
 //!
-//! SKELETON.md: "every dependency not listed is forbidden".
-//!
-//! - **All direct kinds (normal, build, dev):** the `norn-*` edge table, the
-//!   ring-0 host/runtime and alternate-evaluator bans, single-owner crates,
-//!   and the vendored `zen-*` crates: path dependencies on exactly the
-//!   directories recorded in `zen-pin.json`, default features off, and only
-//!   Norn-profile features ([`ZenPin`]). [`check_zen_lock`] additionally holds
-//!   every `zen-*` package in `Cargo.lock` to one path (vendored) package,
-//!   [`check_zen_packages`] holds every resolved `zen-*` package to the
-//!   vendored manifest, and [`check_zen_vendor`] checks the vendored licence
-//!   and crate manifests.
-//! - **Ring-0, normal + build:** an *exhaustive* third-party allowlist per
-//!   crate, transcribed literally from SKELETON.md (crates named in the
-//!   crate's arrow or purpose column). Dev-only test tooling such as
-//!   `proptest` is not part of the shipped ring-0 surface and is governed by
-//!   the bans above.
-//! - **Test support (`norn-testkit`):** any workspace crate may take it as a
-//!   dev-dependency and none as a normal or build dependency; its own
-//!   `norn-*` edges follow the table and its normal/build third-party
-//!   dependencies are an exhaustive SKELETON.md allowlist.
-//! - **Ring-1, unscoped, tooling:** third-party dependencies are governed by
-//!   the hard-rule bans plus `cargo deny check` (licenses, advisories,
-//!   sources, and the `bans.deny` `wrappers` in `deny.toml`), not by an
-//!   exhaustive list. SKELETON.md does not enumerate them.
-//! - **`norn-cell` native adapter:** `rusqlite`, `object_store`, `tokio`, and
-//!   `tempfile` must be optional normal dependencies enabled only by its
-//!   `native` feature, which is also its default feature.
+//! - **All direct kinds:** `norn-*` edge table, ring-0 host/runtime and evaluator
+//!   bans, single-owner crates, and vendored `zen-*` path crates (`zen-pin.json`).
+//! - **Ring-0, normal + build:** exhaustive third-party allowlist from SKELETON.md.
+//! - **Test support (`norn-testkit`):** dev-dependency only; normal/build third-party
+//!   allowlisted.
+//! - **Ring-1, unscoped, tooling:** hard-rule bans plus `cargo deny check`.
+//! - **`norn-cell` native adapter:** `rusqlite`, `object_store`, `tokio`, `tempfile`
+//!   must be optional normal dependencies enabled only by `native`.
 //!
 //! # Known violations are shrink-only
 //!
-//! [`KNOWN_EDGE_VIOLATIONS`], [`KNOWN_THIRD_PARTY_VIOLATIONS`], and
-//! [`NORN_IR_VALIDATE_ALLOWLIST`] fail when an entry no longer matches the
-//! code, and must equal `crates/norn-skeleton-guard/baseline.json`. The
-//! baseline may only lose entries: CI (`skeleton-guard` job,
-//! `scripts/baseline-shrink-only.sh`) rejects a PR whose baseline gains an
-//! entry relative to the base branch.
-//!
-//! [`ratchet`] holds per-file counts (test honesty, `too_many_lines` allows,
-//! inner allows) in `baseline.json` `ratchets`; a count can only go down, and
-//! it must be lowered in the same PR that removes a violation. [`lint_pin`]
-//! holds the lint set (`[workspace.lints]`, `clippy.toml`, crate-root levels)
-//! to the floor in `lint-pin.json`. [`loc_cap`] enforces the 1,000 non-test
-//! LOC ceiling via the shrink-only `loc-baseline.json`. [`ring0_boundary`]
-//! enforces Ring-0 host-adapter / OLAP / UI crate bans and pins the remaining
-//! Ring-1 UI/widget modules in `norn-checker` (`baseline.json`
-//! `ring0_ui_modules`, #1613).
+//! [`KNOWN_EDGE_VIOLATIONS`], [`KNOWN_THIRD_PARTY_VIOLATIONS`],
+//! [`NORN_IR_VALIDATE_ALLOWLIST`], [`ratchet`] per-file counts, [`loc_cap`]
+//! non-test LOC ceilings, and [`ring0_boundary`] `ring0_ui_modules` (#1613)
+//! must only shrink (`scripts/baseline-shrink-only.sh`). [`lint_pin`] pins the
+//! lint floor (`lint-pin.json`).
 
 pub mod ci;
 pub mod lint_pin;
@@ -202,6 +169,11 @@ pub const CRATES: &[CrateRule] = &[
         &["serde", "serde_json"],
     ),
     rule(
+        "norn-ui-checker",
+        Ring::One,
+        &["norn-checker", "norn-expr", "norn-ir"],
+    ),
+    rule(
         "norn-cell",
         Ring::One,
         &[
@@ -219,6 +191,7 @@ pub const CRATES: &[CrateRule] = &[
             "norn-api",
             "norn-cell",
             "norn-checker",
+            "norn-ui-checker",
             "norn-ir",
             "norn-kernel",
             "norn-projections",
@@ -228,7 +201,13 @@ pub const CRATES: &[CrateRule] = &[
     rule(
         "norn-api",
         Ring::One,
-        &["norn-ir", "norn-cell", "norn-checker", "norn-kernel"],
+        &[
+            "norn-ir",
+            "norn-cell",
+            "norn-checker",
+            "norn-ui-checker",
+            "norn-kernel",
+        ],
     ),
     rule(
         "norn-cli",
@@ -244,7 +223,13 @@ pub const CRATES: &[CrateRule] = &[
     rule(
         "norn-checker-wasm",
         Ring::One,
-        &["norn-checker", "norn-projections", "norn-expr", "norn-ir"],
+        &[
+            "norn-checker",
+            "norn-ui-checker",
+            "norn-projections",
+            "norn-expr",
+            "norn-ir",
+        ],
     ),
     // Format-family readers (XSD first; norn-platform#2739, #3507): decisions +
     // expr evaluate the type tables; the checker runs the conformance harness

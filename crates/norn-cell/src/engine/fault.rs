@@ -171,6 +171,10 @@ impl<S: SqlEngine> SqlEngine for FaultEngine<S> {
         self.inner.admitted()
     }
 
+    fn checkpoint_key(&self) -> Option<crate::open_checkpoint::CheckpointKey> {
+        self.inner.checkpoint_key()
+    }
+
     fn definition_writes<T>(
         &self,
         f: impl FnOnce() -> Result<T, CellError>,
@@ -237,6 +241,11 @@ impl<S: SqlEngine> SqlEngine for FaultEngine<S> {
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
         self.live()?;
         self.inner.read_cache_revision()
+    }
+
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+        self.live()?;
+        self.inner.external_data_version()
     }
 }
 

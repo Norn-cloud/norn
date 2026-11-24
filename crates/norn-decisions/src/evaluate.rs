@@ -50,7 +50,7 @@ fn engine_tzdb(bundle: &TzdbBundle) -> Arc<dyn TzdbLookup> {
 }
 
 use crate::admit::ENGINE_MAX_DEPTH;
-use norn_ir::{DecisionOutput, FactChange, RuleRoot, RuntimeObject, RuntimeValue};
+use norn_ir::{DecisionOutput, FactChange, LinkChange, RuleRoot, RuntimeObject, RuntimeValue};
 
 use crate::convert::{from_variable, to_variable, value_to_runtime};
 use crate::schema::Schema;
@@ -487,13 +487,23 @@ fn output(
         Some(Value::Array(items)) => items,
         _ => Vec::new(),
     };
-    let (facts, commands, timers) = (list("facts"), list("commands"), list("timers"));
+    let (facts, links, commands, timers) = (
+        list("facts"),
+        list("links"),
+        list("commands"),
+        list("timers"),
+    );
     let mut changes = Vec::with_capacity(facts.len());
     for (index, fact) in facts.iter().enumerate() {
         changes.extend(fact_changes(fact, index, check_fact)?);
     }
+    let mut link_changes = Vec::with_capacity(links.len());
+    for (index, link) in links.iter().enumerate() {
+        link_changes.push(decode_link_change(link, index)?);
+    }
     let output = DecisionOutput {
         facts: changes,
+        links: link_changes,
         commands: records(&commands, "commands")?,
         timers: records(&timers, "timers")?,
     };
@@ -501,6 +511,16 @@ fn output(
         output,
         units_used,
         matched_rows: Vec::new(),
+    })
+}
+
+/// One validated link item decoded as a canonical [`LinkChange`].
+fn decode_link_change(link: &Value, index: usize) -> Result<LinkChange, DecisionError> {
+    let path = format!("output.links[{index}]");
+    let record = value_to_runtime(link)?;
+    LinkChange::from_runtime(&record).map_err(|reason| DecisionError::OutputSchema {
+        path,
+        reason: format!("not a canonical link change: {reason}"),
     })
 }
 

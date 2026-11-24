@@ -121,6 +121,12 @@ impl<E: SqlEngine> CellStore<E> {
         tenant: &TenantId,
         cutoff: Option<crate::KnowledgeCutoff>,
     ) -> Result<Prepared, CellError> {
+        // S7 (#1551): gate historical/as-of analytics before population or exclusion selection.
+        if cutoff.is_some() || plan.as_of() {
+            self.read().check_history("historical analytics")?;
+        } else {
+            self.read().check_live()?;
+        }
         self.check_question_scope(&context.scope)?;
         if cutoff.is_none()
             && matches!(
@@ -282,6 +288,8 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<BTreeSet<String>, CellError> {
         let model = self.model();
         let reader = self.read();
+        // S8 (#1551 round 5): scanning `_norn_ledger` for findings requires verified history.
+        reader.check_history("analytics quarantine findings")?;
         let mut candidates = BTreeSet::new();
         let rows = self.conn.query(
             &format!("SELECT DISTINCT json_extract(event, '$.fact.subjects[0].objectType'), json_extract(event, '$.fact.subjects[0].key') FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding'"),
@@ -333,6 +341,11 @@ impl<E: SqlEngine> CellStore<E> {
         prepared: Prepared,
         response: EvaluateResponse,
     ) -> Result<QueryResult, CellError> {
+        if prepared.known_at.is_some() || prepared.plan.as_of() {
+            self.read().check_history("historical analytics")?;
+        } else {
+            self.read().check_live()?;
+        }
         // A cutoff's history is immutable; a current answer is exact only at
         // the head it was prepared at.
         if prepared.known_at.is_none() && self.verified_head()? != prepared.revision {

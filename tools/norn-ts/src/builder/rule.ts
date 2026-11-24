@@ -24,11 +24,21 @@ export type RuleTrigger =
   | { readonly on: "deleted"; readonly objectType: string }
   | { readonly on: "observed"; readonly source: string }
 
+/** A date or timestamp window shared by predicate slices and action aggregates. */
+export interface PredicateWindow {
+  readonly property: string
+  readonly start: string
+  readonly end: string
+  readonly startInclusive: boolean
+  readonly endInclusive: boolean
+}
+
 /**
  * One slice entry: the trigger object, one object reached by a property of an
- * earlier entry, or (`link`) every target of a link of an earlier entry, as a
- * bounded list (#3079). `optional` omits a property-keyed entry whose key is
- * absent instead of refusing the turn.
+ * earlier entry, (`link`) every target of a link of an earlier entry,
+ * (`parameter`) an effective-dated parameter, or (`predicate`) a bounded,
+ * fenced predicate read (#1586). `optional` omits a property-keyed entry whose
+ * key is absent instead of refusing the turn.
  */
 export interface SliceDecl {
   readonly name: string
@@ -38,6 +48,7 @@ export interface SliceDecl {
     | { readonly property: { readonly from: string; readonly property: string } }
     | { readonly link: { readonly from: string; readonly link: string } }
     | { readonly parameter: { readonly from: string; readonly settingKey: string; readonly effectiveAt: string; readonly precedence: ReadonlyArray<EnvelopeOptions["scope"]>; readonly defaultFrom?: string } }
+    | { readonly predicate: { readonly filter?: Readonly<Record<string, string>>; readonly window?: PredicateWindow; readonly maxItems?: number } }
   readonly optional?: boolean
 }
 

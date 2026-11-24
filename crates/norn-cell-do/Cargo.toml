@@ -32,6 +32,7 @@ path = "tests/suites.rs"
 norn-api = { path = "../norn-api" }
 norn-cell = { path = "../norn-cell", default-features = false }
 norn-checker = { path = "../norn-checker" }
+norn-ui-checker = { path = "../norn-ui-checker" }
 norn-ir = { path = "../norn-ir" }
 # The kernel PDP and the Cedar schema projected from the cell model decide data reads.
 norn-kernel = { path = "../norn-kernel" }

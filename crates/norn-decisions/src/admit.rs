@@ -10,8 +10,8 @@ use norn_ir::jdm::{
     JdmHitPolicy, JdmNode, JdmSchemaContent, JdmSubDecisionContent, JdmSwitchContent,
 };
 use norn_ir::{
-    DECIDE_INPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, JsonValue, RULE_IR_V2_VERSION,
-    ResourceLimitProfile, RuleContractV2, RuleRoot, RuntimeObject, RuntimeValue,
+    JsonValue, RULE_IR_V2_VERSION, ResourceLimitProfile, RuleContractV2, RuleRoot, RuntimeObject,
+    RuntimeValue,
 };
 use zen_engine::Decision;
 use zen_engine::loader::MemoryLoader;
@@ -690,110 +690,7 @@ fn sub_decision_content(content: &JdmSubDecisionContent) -> DecisionNodeContent 
     }
 }
 
-fn invalid_schema(rule_id: &str, path: &str, reason: impl Into<String>) -> AdmissionError {
-    AdmissionError::InvalidSchema {
-        rule_id: rule_id.to_owned(),
-        path: path.to_owned(),
-        reason: reason.into(),
-    }
-}
-
-fn parse_schema(rule: &RuleRoot, member: &str) -> Result<Schema, AdmissionError> {
-    let document = norn_ir::JsonValue::Object(match member {
-        "inputSchema" => rule.input_schema.clone(),
-        _ => rule.output_schema.clone(),
-    });
-    Schema::parse(&document, member)
-        .map_err(|violation| invalid_schema(&rule.rule_id, &violation.path, violation.reason))
-}
-
-/// A sub-decision's schema: the closed dialect, rooted at a record.
-fn closed_record(rule: &RuleRoot, member: &str) -> Result<(), AdmissionError> {
-    match parse_schema(rule, member)?.properties() {
-        Some(_) => Ok(()),
-        None => Err(invalid_schema(
-            &rule.rule_id,
-            member,
-            "must be a closed record",
-        )),
-    }
-}
-
-/// The record members of a decide schema, which must be exactly `members`,
-/// all required.
-fn contract_members(
-    rule: &RuleRoot,
-    schema: &Schema,
-    member: &str,
-    members: &[&str],
-) -> Result<BTreeMap<String, Schema>, AdmissionError> {
-    let properties = schema
-        .properties()
-        .ok_or_else(|| invalid_schema(&rule.rule_id, member, "must be a closed record"))?;
-    let declared: BTreeSet<&str> = properties.keys().map(String::as_str).collect();
-    let expected: BTreeSet<&str> = members.iter().copied().collect();
-    let required: BTreeSet<&str> = schema
-        .required()
-        .into_iter()
-        .flatten()
-        .map(String::as_str)
-        .collect();
-    if declared != expected || required != expected {
-        return Err(invalid_schema(
-            &rule.rule_id,
-            member,
-            format!("the decide contract requires exactly the members {members:?}, all required"),
-        ));
-    }
-    Ok(properties.clone())
-}
-
-fn decide_input(rule: &RuleRoot) -> Result<(Schema, Schema), AdmissionError> {
-    let schema = parse_schema(rule, "inputSchema")?;
-    let mut members = contract_members(rule, &schema, "inputSchema", &DECIDE_INPUT_MEMBERS)?;
-    let mut record = |name: &str| {
-        members
-            .remove(name)
-            .filter(|member| member.properties().is_some())
-            .ok_or_else(|| {
-                invalid_schema(
-                    &rule.rule_id,
-                    &format!("inputSchema.properties.{name}"),
-                    "must be a closed record",
-                )
-            })
-    };
-    let slice = record("slice")?;
-    let event = record("event")?;
-    Ok((slice, event))
-}
-
-fn decide_output(rule: &RuleRoot) -> Result<Schema, AdmissionError> {
-    let schema = parse_schema(rule, "outputSchema")?;
-    let members = contract_members(rule, &schema, "outputSchema", &DECIDE_OUTPUT_MEMBERS)?;
-    for (name, member) in &members {
-        match member {
-            Schema::Array(items) if items.properties().is_some() => {}
-            Schema::Object { .. }
-            | Schema::Array(_)
-            | Schema::String(_)
-            | Schema::Integer
-            | Schema::Number
-            | Schema::Decimal(_)
-            | Schema::Boolean
-            | Schema::Null
-            | Schema::Json
-            | Schema::Nullable(_) => {
-                return Err(invalid_schema(
-                    &rule.rule_id,
-                    &format!("outputSchema.properties.{name}"),
-                    "must be a list of closed records",
-                ));
-            }
-        }
-    }
-    Ok(schema)
-}
+use crate::contract::{closed_record, decide_input, decide_output, invalid_schema};
 
 fn defaults(
     rule: &RuleRoot,

@@ -20,6 +20,27 @@ use crate::system::{
 };
 
 const MAX_MARKING_SUMMARY_VARIANTS: usize = 4_096;
+/// Bound on historical fact versions scanned per concrete type to prove
+/// classification completeness; exceeding this bound fails closed (#1559).
+const MAX_HISTORY_COMPLETENESS_SCAN: i64 = 10_000;
+
+/// One grouped or filtered question path that holds (or cannot be proved free
+/// of) a marking label in the evaluated world (PRIVACY-4, S2 #1547/#1559).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarkedQuestionPath {
+    /// A historical question reads retained versions where at least one
+    /// current, past or deleted version of this path's property holds a label.
+    History {
+        /// JSON pointer into the question or metric definition.
+        pointer: String,
+    },
+    /// A live row of this path's property holds a label, or its marking
+    /// summary could not be proved complete (fail closed).
+    Live {
+        /// JSON pointer into the question or metric definition.
+        pointer: String,
+    },
+}
 
 /// One object as stored.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,6 +88,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         ledger: &str,
         key: &norn_kernel::quantity::QuantityKey,
     ) -> Result<norn_kernel::quantity::QuantityBalance, CellError> {
+        self.check_live()?;
         crate::quantity::balance(self.conn, world, ledger, key)
     }
 
@@ -75,6 +97,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// # Errors
     /// SQL or stored-version errors.
     pub fn quantity_version(&self, world: &str, ledger: &str) -> Result<u64, CellError> {
+        self.check_live()?;
         crate::quantity::version(self.conn, world, ledger)
     }
 
@@ -87,6 +110,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         world: &str,
         request: &norn_ir::quantity_ledger::QuantityRequest,
     ) -> Result<Vec<norn_ir::quantity_ledger::QuantityBalanceVersion>, CellError> {
+        self.check_live()?;
         crate::quantity::balance_versions(self.conn, world, request)
     }
 
@@ -95,6 +119,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// # Errors
     /// Corruption or storage errors.
     pub fn clock_floor(&self) -> Result<u64, CellError> {
+        self.check_live()?;
         crate::quantity::clock_floor(self.conn)
     }
 
@@ -108,6 +133,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         ledger: &str,
         id: &str,
     ) -> Result<Option<norn_kernel::quantity::QuantityReservation>, CellError> {
+        self.check_live()?;
         crate::quantity::reservation(self.conn, world, ledger, id)
     }
 
@@ -121,6 +147,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         ledger: &str,
         id: &str,
     ) -> Result<Option<norn_kernel::quantity::QuantityPosting>, CellError> {
+        self.check_live()?;
         crate::quantity::posting(self.conn, world, ledger, id)
     }
 
@@ -132,6 +159,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         id: &str,
     ) -> Result<Option<(String, String, u64)>, CellError> {
+        self.check_live()?;
         let tables = self.model.tables(object_type)?;
         let Some(root) = tables.first() else {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
@@ -216,6 +244,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
 
     /// The root type of `object_type`'s hierarchy.
     pub(crate) fn root_type(&self, object_type: &str) -> Result<&'a str, CellError> {
+        self.check_live()?;
         self.model
             .chain(object_type)?
             .first()
@@ -266,6 +295,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         id: &str,
     ) -> Result<u64, CellError> {
+        self.check_live()?;
         let version: Option<i64> = self.conn.query_optional(
             &format!(
                 "SELECT \"version\" FROM \"{VERSIONS}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3"
@@ -292,6 +322,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         id: &str,
     ) -> Result<Option<u64>, CellError> {
+        self.check_live()?;
         let rowid: Option<i64> = self.conn.query_optional(
             &format!(
                 "SELECT rowid FROM \"{VERSIONS}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3"
@@ -315,6 +346,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         locator: u64,
     ) -> Result<Option<String>, CellError> {
+        self.check_live()?;
         let locator = to_i64(locator, "identity rowid")?;
         self.conn.query_optional(
             &format!(
@@ -385,6 +417,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         id: &str,
         version: Option<u64>,
     ) -> Result<Option<BTreeMap<String, Vec<String>>>, CellError> {
+        self.check_live()?;
         let current = version.is_none();
         let version = match version {
             Some(version) => version,
@@ -506,6 +539,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         property: &str,
     ) -> Result<Option<BTreeSet<String>>, CellError> {
+        self.check_live()?;
         let tables = self.model.tables(object_type)?;
         let Some(root) = tables.first() else {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
@@ -603,6 +637,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         object_type: &str,
         property: &str,
     ) -> Result<bool, CellError> {
+        self.check_live()?;
         if self.model.tables(object_type)?.is_empty() {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
         }
@@ -659,6 +694,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// # Errors
     /// SQL errors.
     pub fn stores_markings(&self) -> Result<bool, CellError> {
+        self.check_live()?;
         for (table, index) in [
             (MARKING_CURRENT, crate::system::MARKING_CURRENT_NONEMPTY),
             (MARKING_VERSION, crate::system::MARKING_VERSION_NONEMPTY),
@@ -675,5 +711,247 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             }
         }
         Ok(false)
+    }
+
+    /// Read the cell's snapshot version `(head_commit_seq, database_revision)`.
+    /// Fails closed if a [`crate::engine::ReadIsolation::Revisioned`] engine
+    /// cannot supply a database revision.
+    ///
+    /// # Errors
+    /// Backend revision-read failures or an unavailable snapshot revision.
+    pub fn snapshot_version(&self) -> Result<(u64, Option<(u64, u64)>), CellError> {
+        self.check_live()?;
+        let revision = match self.read_isolation() {
+            crate::engine::ReadIsolation::Revisioned => Some(
+                self.database_revision()?
+                    .ok_or(CellError::ComputeRefused("object.snapshot_unavailable"))?,
+            ),
+            crate::engine::ReadIsolation::ExclusiveSynchronous => None,
+        };
+        Ok((self.head_commit_seq()?, revision))
+    }
+
+    /// Whether any object type in the active model declares a property marking.
+    fn model_declares_markings(&self) -> bool {
+        self.model.object_types().any(|definition| {
+            self.model
+                .effective_property_markings(definition.name.as_str())
+                .is_ok_and(|markings| markings.values().any(|labels| !labels.is_empty()))
+        })
+    }
+
+    /// Whether the active retained definition set declares any marking in its
+    /// catalog (independently of `Model` property declarations). Strictly
+    /// decodes every retained entity payload so malformed marking catalogs fail
+    /// closed rather than falling through to the fast path.
+    fn has_retained_marking_catalog(&self) -> Result<bool, CellError> {
+        let version = self.active_definitions_version()?;
+        let Some(set) = self.installed_definitions(version)? else {
+            return Ok(false);
+        };
+        let norn_ir::RuntimeValue::Array(sources) =
+            norn_ir::RuntimeValue::from_json_text(&set.canonical_set)
+                .map_err(|error| CellError::Engine(format!("retained definitions: {error}")))?
+        else {
+            return Err(CellError::Engine(
+                "retained definitions must be an artifact array".to_owned(),
+            ));
+        };
+        let artifacts = sources
+            .iter()
+            .map(norn_ir::runtime::decode::<norn_ir::ArtifactEnvelope>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| CellError::Engine(format!("retained definitions: {error}")))?;
+        let mut found = false;
+        for artifact in artifacts
+            .iter()
+            .filter(|artifact| artifact.kind() == norn_ir::ArtifactKind::Entity)
+        {
+            let root: norn_ir::EntityRoot = serde_json::to_value(artifact.payload.to_json_value())
+                .and_then(serde_json::from_value)
+                .map_err(|error| {
+                    CellError::Engine(format!(
+                        "retained entity payload {}: {error}",
+                        artifact.artifact_id
+                    ))
+                })?;
+            if let norn_ir::EntityRoot::V2Markings(catalog) = root
+                && !catalog.markings.is_empty()
+            {
+                found = true;
+            }
+        }
+        Ok(found)
+    }
+
+    /// Whether any non-tombstone historical version of `object_type` (or a
+    /// subtype) in `world` lacks an immutable marking snapshot or a property
+    /// marking row for `property` (fail closed when historical classification
+    /// evidence is missing or the indexed root range exceeds
+    /// [`MAX_HISTORY_COMPLETENESS_SCAN`], #1559 S2c).
+    fn property_history_unclassified(
+        &self,
+        world: &str,
+        object_type: &str,
+        property: &str,
+    ) -> Result<bool, CellError> {
+        if self.model.tables(object_type)?.is_empty() {
+            return Err(CellError::UnknownObjectType(object_type.to_owned()));
+        }
+        // Bound the entire indexed `(world, root_type)` primary-key range so
+        // sibling subtypes cannot force an unbounded scan before LIMIT triggers.
+        let bound_sql = format!(
+            "SELECT COUNT(*) FROM ( \
+               SELECT 1 FROM \"{fv}\" \
+               WHERE \"world\" = ?1 AND \"root_type\" = ?2 \
+               LIMIT ?3 \
+             )",
+            fv = crate::system::FACT_VALUES,
+        );
+        let sql = format!(
+            "SELECT 1 FROM \"{fv}\" AS fv \
+             WHERE fv.\"world\" = ?1 AND fv.\"root_type\" = ?2 AND fv.\"object_type\" = ?3 \
+               AND json_type(fv.\"snapshot\", '$.values') = 'object' \
+               AND ( \
+                 NOT EXISTS ( \
+                   SELECT 1 FROM \"{snap}\" AS s \
+                   WHERE s.\"world\" = fv.\"world\" AND s.\"object_type\" = fv.\"object_type\" \
+                     AND s.\"id\" = fv.\"id\" AND s.\"version\" = fv.\"version\" AND s.\"is_current\" = 0 \
+                 ) \
+                 OR NOT EXISTS ( \
+                   SELECT 1 FROM \"{subj}\" AS ms \
+                   JOIN \"{ver}\" AS mv \
+                     ON mv.\"world\" = ms.\"world\" AND mv.\"object_type\" = ms.\"object_type\" \
+                     AND mv.\"subject\" = ms.\"subject\" AND mv.\"property\" = ?4 AND mv.\"version\" = fv.\"version\" \
+                   WHERE ms.\"world\" = fv.\"world\" AND ms.\"object_type\" = fv.\"object_type\" AND ms.\"id\" = fv.\"id\" \
+                 ) \
+               ) \
+             LIMIT 1",
+            fv = crate::system::FACT_VALUES,
+            snap = MARKING_SNAPSHOT,
+            subj = MARKING_SUBJECT,
+            ver = MARKING_VERSION,
+        );
+        let mut checked_roots = BTreeSet::new();
+        for definition in self.model.object_types() {
+            let concrete_type = definition.name.as_str();
+            if !self.model.is_a(concrete_type, object_type) {
+                continue;
+            }
+            let root = self.root_type(concrete_type)?;
+            if checked_roots.insert(root.to_owned()) {
+                let observed: i64 = self
+                    .conn
+                    .query_optional(
+                        &bound_sql,
+                        params![world, root, MAX_HISTORY_COMPLETENESS_SCAN.saturating_add(1)],
+                        |row| row.get(0),
+                    )?
+                    .ok_or_else(|| {
+                        CellError::Engine(
+                            "history completeness bound query returned no row".to_owned(),
+                        )
+                    })?;
+                if observed > MAX_HISTORY_COMPLETENESS_SCAN {
+                    return Ok(true);
+                }
+            }
+            let missing: Option<i64> = self.conn.query_optional(
+                &sql,
+                params![world, root, concrete_type, property],
+                |row| row.get(0),
+            )?;
+            if missing.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// PRIVACY-4 / S2 (#1547, #1559): verify that no grouped or filtered path
+    /// of `plan` (including every lowered sum's metric default filters) reads
+    /// marked or unclassified values in `world`. When `historical` is true,
+    /// any current, past or deleted version of a referenced property that holds
+    /// a label or lacks immutable classification evidence is refused.
+    ///
+    /// Pass `has_marking_catalog = true` when the caller already knows the
+    /// active definition catalog declares markings; when `false`, the guard
+    /// still resolves the retained definition catalog, model property markings,
+    /// and stored markings (`Self::stores_markings`) before taking the fast
+    /// path.
+    ///
+    /// # Errors
+    /// Unknown type, malformed retained definitions, or a SQL-engine error.
+    pub fn check_question_markings(
+        &self,
+        plan: &norn_checker::metric::compute::QuestionPlan,
+        world: &str,
+        historical: bool,
+        has_marking_catalog: bool,
+    ) -> Result<Option<MarkedQuestionPath>, CellError> {
+        self.check_live()?;
+        let question = plan.question();
+        if question.dimensions.is_empty()
+            && question.filters.is_empty()
+            && plan.sums().iter().all(|sum| sum.filters.is_empty())
+        {
+            return Ok(None);
+        }
+        if !has_marking_catalog
+            && !self.model_declares_markings()
+            && !self.stores_markings()?
+            && !self.has_retained_marking_catalog()?
+        {
+            return Ok(None);
+        }
+        let paths = question
+            .dimensions
+            .iter()
+            .enumerate()
+            .map(|(index, dimension)| (format!("/question/groupBy/{index}"), &dimension.path))
+            .chain(
+                question
+                    .filters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, filter)| (format!("/question/filter/{index}"), &filter.path)),
+            )
+            .chain(plan.sums().iter().flat_map(|sum| {
+                sum.filters.iter().enumerate().map(move |(index, filter)| {
+                    (
+                        format!("/metric/{}/norn/defaultFilters/{index}", sum.name),
+                        &filter.path,
+                    )
+                })
+            }));
+        for (pointer, path) in paths {
+            let property = path.property.as_str();
+            let types: Vec<String> = if path.links.is_empty() {
+                vec![plan.grain().as_str().to_owned()]
+            } else {
+                self.model
+                    .object_types()
+                    .map(|definition| definition.name.as_str().to_owned())
+                    .filter(|name| {
+                        self.model
+                            .effective_property_types(name)
+                            .is_ok_and(|properties| properties.iter().any(|(id, _)| id == property))
+                    })
+                    .collect()
+            };
+            for object_type in types {
+                if historical
+                    && (self.property_history_marked(world, &object_type, property)?
+                        || self.property_history_unclassified(world, &object_type, property)?)
+                {
+                    return Ok(Some(MarkedQuestionPath::History { pointer }));
+                }
+                let labels = self.property_marking_summary(world, &object_type, property)?;
+                if !labels.is_some_and(|labels| labels.is_empty()) {
+                    return Ok(Some(MarkedQuestionPath::Live { pointer }));
+                }
+            }
+        }
+        Ok(None)
     }
 }

@@ -58,10 +58,10 @@ pub fn prepare_artifact_source(source: RuntimeValue) -> Result<PreparedArtifact,
     })
 }
 
-/// Normalize one typed envelope for checker admission while retaining any
-/// lenient root diagnostics. Only the raw graph field is replaced: serializing
-/// the whole envelope would discard the payload root's recorded unknown keys.
-pub(crate) fn normalize_artifact(
+/// Normalize one typed envelope for checker admission while retaining lenient root diagnostics.
+/// # Errors
+/// Returns layout extraction diagnostics if legacy inline layout fields are malformed.
+pub fn normalize_artifact(
     artifact: &ArtifactEnvelope,
 ) -> Result<(ArtifactEnvelope, LayoutSidecar), Vec<Diagnostic>> {
     let ArtifactPayload::Rule(rule) = &artifact.payload else {

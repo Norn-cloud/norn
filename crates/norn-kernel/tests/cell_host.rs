@@ -358,6 +358,28 @@ impl CommitView for FixedView {
             vec![]
         })
     }
+
+    fn has_link_target(
+        &self,
+        source: &FactKey,
+        link: &str,
+        excluded: &std::collections::BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, Infallible> {
+        Ok(Some(self.links_of(source)?.iter().any(|key| {
+            key.source == *source && key.link == link && !excluded.contains(&key.target)
+        })))
+    }
+
+    fn has_link_source(
+        &self,
+        target: &FactKey,
+        link: &str,
+        excluded: &std::collections::BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, Infallible> {
+        Ok(Some(self.links_of(target)?.iter().any(|key| {
+            key.target == *target && key.link == link && !excluded.contains(&key.source)
+        })))
+    }
 }
 
 /// The kernel's check against the law types and [`FixedView`].
@@ -912,9 +934,15 @@ fn scalar_put_still_checks_required_inherited_owned_links() {
             link: &str,
             excluded: &std::collections::BTreeSet<FactKey>,
         ) -> Result<Option<bool>, Infallible> {
-            Ok(Some(FixedView.links_of(source)?.iter().any(|key| {
-                key.source == *source && key.link == link && !excluded.contains(&key.target)
-            })))
+            FixedView.has_link_target(source, link, excluded)
+        }
+        fn has_link_source(
+            &self,
+            target: &FactKey,
+            link: &str,
+            excluded: &std::collections::BTreeSet<FactKey>,
+        ) -> Result<Option<bool>, Infallible> {
+            FixedView.has_link_source(target, link, excluded)
         }
     }
     let mut types = law_object_types();
@@ -1007,6 +1035,26 @@ impl CommitView for ExtensionView {
                 vec![]
             },
         )
+    }
+    fn has_link_target(
+        &self,
+        source: &FactKey,
+        link: &str,
+        excluded: &std::collections::BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, Infallible> {
+        Ok(Some(self.links_of(source)?.iter().any(|key| {
+            key.source == *source && key.link == link && !excluded.contains(&key.target)
+        })))
+    }
+    fn has_link_source(
+        &self,
+        target: &FactKey,
+        link: &str,
+        excluded: &std::collections::BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, Infallible> {
+        Ok(Some(self.links_of(target)?.iter().any(|key| {
+            key.target == *target && key.link == link && !excluded.contains(&key.source)
+        })))
     }
     fn link_targets(
         &self,

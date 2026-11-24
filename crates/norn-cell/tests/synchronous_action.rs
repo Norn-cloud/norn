@@ -918,7 +918,10 @@ fn txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen() 
             assert_eq!(cell.store().read().next_timer_due().unwrap(), Some(100));
             continue;
         }
-        let ActionOutcome::Committed { receipt, record } = result.unwrap() else {
+        let ActionOutcome::Committed {
+            receipt, record, ..
+        } = result.unwrap()
+        else {
             panic!("first delivery must commit");
         };
         assert_eq!(receipt.written.len(), 3);

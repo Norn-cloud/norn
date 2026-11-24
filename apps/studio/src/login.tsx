@@ -2,14 +2,14 @@ import { useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { AuthRefusal, authApi, useRefreshAccount } from "@/lib/session"
+import { AuthRefusal, DEFAULT_AUTH_CONFIG, authApi, useAuthConfig, useRefreshAccount, type AuthConfig } from "@/lib/session"
 import { cn } from "@/lib/utils"
 import nornMark from "@/assets/norn-mark.webp"
 
 export type Mode = "sign-in" | "sign-up" | "email-link"
 
-/** Shown after sign-up whether or not the address already had an account. */
-export const SIGNED_UP = "Account ready. Sign in with your email and password."
+/** Shown after an accepted sign-up response (covers both new accounts and existing ones without revealing which). */
+export const SIGNED_UP = "If this address can sign up, you can now sign in with your email and password."
 
 const MODES: readonly { readonly mode: Mode; readonly label: string }[] = [
   { mode: "sign-in", label: "Sign in" },
@@ -26,12 +26,19 @@ function Field({ label, ...props }: { readonly label: string } & React.Component
   )
 }
 
-/** The only page a signed-out visitor sees: sign in, create an account, or ask for an email link. */
-export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) {
+/**
+ * The only page a signed-out visitor sees: sign in, create an account, or (when configured on the
+ * server) ask for an email link. Capabilities come from `/api/auth/config`, never a client flag.
+ */
+export function LoginPage({ initial = "sign-in", config }: { readonly initial?: Mode; readonly config?: AuthConfig }) {
+  const authConfig = useAuthConfig()
+  const activeConfig = config ?? authConfig.data ?? DEFAULT_AUTH_CONFIG
+  const modes = activeConfig.magicLink ? MODES : MODES.filter((entry) => entry.mode !== "email-link")
   const [mode, setMode] = useState<Mode>(initial)
+  const activeMode: Mode = mode === "email-link" && !activeConfig.magicLink ? "sign-in" : mode
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState<{ readonly tone: "error" | "info"; readonly text: string } | null>(null)
-  // The address carries across tabs: after "Account ready" the visitor signs in without retyping it.
+  // The address carries across tabs: after an accepted sign-up the visitor signs in without retyping it.
   const [email, setEmail] = useState("")
   const refresh = useRefreshAccount()
 
@@ -42,16 +49,16 @@ export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) 
     setPending(true)
     setMessage(null)
     try {
-      if (mode === "sign-in") await authApi.signIn(value("email"), value("password"))
-      if (mode === "sign-up") {
-        // Sign-up answers the same whether or not the address is registered, and starts no session.
+      if (activeMode === "sign-in") await authApi.signIn(value("email"), value("password"))
+      if (activeMode === "sign-up") {
+        // Server refuses non-allowlisted sign-ups explicitly (403); only an accepted 2xx transitions to sign-in.
         await authApi.signUp(value("name"), value("email"), value("password"))
         setMode("sign-in")
         setMessage({ tone: "info", text: SIGNED_UP })
         setPending(false)
         return
       }
-      if (mode === "email-link") {
+      if (activeMode === "email-link") {
         await authApi.emailLink(value("email"))
         setMessage({ tone: "info", text: "If that address has an account, a sign-in link is on its way. It expires in 10 minutes." })
         setPending(false)
@@ -67,6 +74,8 @@ export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) 
     await refresh()
   }
 
+  const heading = modes.find((entry) => entry.mode === activeMode)?.label ?? "Sign in"
+
   return (
     <main className="flex min-h-svh items-center justify-center bg-surface-subtle p-4">
       <div className="w-full max-w-sm space-y-6">
@@ -76,28 +85,39 @@ export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) 
         </div>
         <Card>
           <CardHeader>
-            <CardTitle>{MODES.find((entry) => entry.mode === mode)?.label}</CardTitle>
+            <CardTitle>{heading}</CardTitle>
             <CardDescription>Studio is available to signed-in members of an organization.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div role="tablist" aria-label="How to sign in" className="grid grid-cols-3 gap-1 rounded-md border bg-surface-subtle p-1 text-meta">
-              {MODES.map((entry) => (
-                <button key={entry.mode} type="button" role="tab" aria-selected={mode === entry.mode} onClick={() => { setMode(entry.mode); setMessage(null) }}
-                  className={cn("rounded-sm px-2 py-1 outline-none focus-visible:ring-3 focus-visible:ring-ring/30", mode === entry.mode ? "bg-card font-medium shadow-xs" : "text-muted-foreground hover:text-foreground")}>
+            <div role="tablist" aria-label="How to sign in" className={cn("grid gap-1 rounded-md border bg-surface-subtle p-1 text-meta", modes.length === 3 ? "grid-cols-3" : "grid-cols-2")}>
+              {modes.map((entry) => (
+                <button key={entry.mode} type="button" role="tab" aria-selected={activeMode === entry.mode} onClick={() => { setMode(entry.mode); setMessage(null) }}
+                  className={cn("rounded-sm px-2 py-1 outline-none focus-visible:ring-3 focus-visible:ring-ring/30", activeMode === entry.mode ? "bg-card font-medium shadow-xs" : "text-muted-foreground hover:text-foreground")}>
                   {entry.label}
                 </button>
               ))}
             </div>
-            <form key={mode} onSubmit={submit} className="grid gap-3">
-              {mode === "sign-up" && <Field label="Name" name="name" autoComplete="name" />}
-              <Field label="Email" name="email" type="email" autoComplete="email" defaultValue={email} onChange={(event) => setEmail(event.currentTarget.value)} />
-              {mode !== "email-link" && (
-                <Field label="Password" name="password" type="password" minLength={mode === "sign-up" ? 12 : undefined} maxLength={128}
-                  autoComplete={mode === "sign-up" ? "new-password" : "current-password"} />
+            {config === undefined && authConfig.isError && (
+              <p role="status" className="flex items-center justify-between gap-2 text-meta text-muted-foreground">
+                <span>Could not load all sign-in options.</span>
+                <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => void authConfig.refetch()}>Retry</button>
+              </p>
+            )}
+            <form key={activeMode} onSubmit={submit} className="grid gap-3">
+              {activeMode === "sign-up" && activeConfig.inviteOnly && (
+                <p className="rounded-md border bg-surface-subtle px-3 py-2 text-meta text-muted-foreground">
+                  This alpha is invite-only. Use your invited email address, or ask your admin for an invitation.
+                </p>
               )}
-              {mode === "sign-up" && <p className="text-meta text-muted-foreground">At least 12 characters. You start with your own organization.</p>}
+              {activeMode === "sign-up" && <Field label="Name" name="name" autoComplete="name" />}
+              <Field label="Email" name="email" type="email" autoComplete="email" defaultValue={email} onChange={(event) => setEmail(event.currentTarget.value)} />
+              {activeMode !== "email-link" && (
+                <Field label="Password" name="password" type="password" minLength={activeMode === "sign-up" ? 12 : undefined} maxLength={128}
+                  autoComplete={activeMode === "sign-up" ? "new-password" : "current-password"} />
+              )}
+              {activeMode === "sign-up" && <p className="text-meta text-muted-foreground">At least 12 characters. You start with your own workspace.</p>}
               {message && <p role={message.tone === "error" ? "alert" : "status"} className={cn("text-meta", message.tone === "error" ? "text-destructive" : "text-muted-foreground")}>{message.text}</p>}
-              <Button type="submit" disabled={pending}>{pending ? "Working…" : mode === "email-link" ? "Send link" : MODES.find((entry) => entry.mode === mode)?.label}</Button>
+              <Button type="submit" disabled={pending}>{pending ? "Working…" : activeMode === "email-link" ? "Send link" : heading}</Button>
             </form>
           </CardContent>
         </Card>

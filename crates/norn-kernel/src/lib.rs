@@ -63,6 +63,7 @@ mod commit_order;
 mod commit_versions;
 mod decider;
 pub mod decision_commit;
+mod decision_links;
 mod effect;
 mod envelope;
 pub mod flow_identity;
@@ -102,19 +103,20 @@ pub use action_commit::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
     ActionCall, ActionCallRecord, ActionDenial, ActionDerivedValue, ActionInputPreparation,
     ActionOutcome, ActionParameterPin, ActionPreconditionOutcome, ActionReadAuthzRequest,
-    ActionReadTypeAuthzRequest, ActionRefusal, NamingSeriesInspectionRequest, OWNED_ROWS_TYPE,
-    actor_derived_fields, commit_action, commit_action_with_limits, commit_action_with_meter,
-    commit_action_with_preparation, owned_rows_manifest_key, prepare_action_input,
-    prepare_action_input_for_call,
+    ActionReadTypeAuthzRequest, ActionRefusal, AutomationInputViolation,
+    NamingSeriesInspectionRequest, OWNED_ROWS_TYPE, actor_derived_fields, commit_action,
+    commit_action_with_limits, commit_action_with_meter, commit_action_with_preparation,
+    owned_rows_manifest_key, prepare_action_input, prepare_action_input_for_call,
+    validate_automation_static_input,
 };
 pub use cell_host::{Authorized, Checked, Committed, Proposed};
 pub use cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
     CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation, FactState, FactVersion,
     FactWrite, LedgerSeq, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkState,
-    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, PredicateObject,
-    PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance, SerializationLane,
-    WrittenLinkVersion, WrittenVersion, check_commit,
+    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, PredicateActionRead,
+    PredicateObject, PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance,
+    SerializationLane, WrittenLinkVersion, WrittenVersion, check_commit,
 };
 pub use decider::{
     Decider, Decision, DecisionOf, EnvelopeKind, Step, StepError, StepOf, StepResult, fold, replay,
@@ -125,6 +127,9 @@ pub use decision_commit::{
     EffectiveValuesError, FactEvent, FactSlice, PreparedDecision, TypeCatalog, commit_decision,
     commit_decision_with_limits, commit_decision_with_meter, decision_cell_commit, load_slice,
     prepare_decision, prepare_decision_with_limits, prepare_decision_with_source_owned_targets,
+};
+pub use decision_links::{
+    HostCellCommit, decision_cell_commit_with_host, decision_cell_commit_with_host_and_meter,
 };
 pub use effect::{
     Command, CommandId, DependencyToken, Effect, FreshnessPolicy, Generation, IdempotencyKey,

@@ -66,7 +66,9 @@ HEADER = (
     " and sys.pycache_prefix else 1)' || { echo \"Python isolation not honoured\" >&2; exit 1; }",
 )
 HEADER_VARIABLES = ("PYTHONSAFEPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")
-TRUSTED_WORKFLOWS = (".github/workflows/ci-policy.yml", ".github/workflows/trusted-merge-group.yml")
+CI_POLICY_WORKFLOW = ".github/workflows/ci-policy.yml"
+TRUSTED_POLICY_WORKFLOW = ".github/workflows/trusted-policy.yml"
+TRUSTED_MERGE_GROUP_WORKFLOW = ".github/workflows/trusted-merge-group.yml"
 TRUSTED_WORKFLOW_RUN = ('python3 -I -B -X pycache_prefix="$(mktemp -d)" trusted/scripts/ci/validate-runner-policy.py'
                         ' --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"')
 RUNNER = "scripts/ci/validate-runner-policy.py"
@@ -165,7 +167,7 @@ def shadow_errors(paths: list[str]) -> list[str]:
     return errors
 
 
-def workflow_errors(path: str, text: str) -> list[str]:
+def workflow_errors(path: str, text: str, *, requires_runner: bool = False) -> list[str]:
     errors = []
     lines = text.splitlines()
     for number, line in enumerate(lines, 1):
@@ -176,10 +178,11 @@ def workflow_errors(path: str, text: str) -> list[str]:
                 errors.append(f"{path}:{number}: `{match.group(1)}` runs without `-I`")
         if re.search(r"-X\s*['\"]?pycache_prefix", line) and line.strip() != f"run: {TRUSTED_WORKFLOW_RUN}":
             errors.append(f"{path}:{number}: a `-X pycache_prefix` outside the pinned trusted run is refused")
-    if path in TRUSTED_WORKFLOWS:
-        runs = [line.strip() for line in lines if "validate-runner-policy.py" in line and not line.lstrip().startswith("#")]
-        if runs != [f"run: {TRUSTED_WORKFLOW_RUN}"]:
-            errors.append(f"{path}: the trusted runner must run exactly once, as `{TRUSTED_WORKFLOW_RUN}`")
+    runs = [line.strip() for line in lines if "validate-runner-policy.py" in line and not line.lstrip().startswith("#")]
+    if requires_runner and runs != [f"run: {TRUSTED_WORKFLOW_RUN}"]:
+        errors.append(f"{path}: the trusted runner must run exactly once, as `{TRUSTED_WORKFLOW_RUN}`")
+    if not requires_runner and path == CI_POLICY_WORKFLOW and runs:
+        errors.append(f"{path}: the trusted runner belongs in {TRUSTED_POLICY_WORKFLOW}")
     return errors
 
 
@@ -546,10 +549,13 @@ def check(root: Path, gate_source: str) -> list[str]:
     present = set(paths)
     files, directories = gates(gate_source)
     errors = shadow_errors(paths)
+    policy_workflow = TRUSTED_POLICY_WORKFLOW if (root / TRUSTED_POLICY_WORKFLOW).exists() else CI_POLICY_WORKFLOW
+    trusted_workflows = (policy_workflow, TRUSTED_MERGE_GROUP_WORKFLOW)
     for path in paths:
         if path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml")):
-            errors += workflow_errors(path, (root / path).read_text(encoding="utf-8"))
-    for path in TRUSTED_WORKFLOWS:
+            errors += workflow_errors(path, (root / path).read_text(encoding="utf-8"),
+                                      requires_runner=path in trusted_workflows)
+    for path in trusted_workflows:
         if path not in present:
             errors.append(f"{path}: trusted workflow is missing")
     errors += runner_errors((root / RUNNER).read_text(encoding="utf-8")) if RUNNER in present \

@@ -1088,6 +1088,7 @@ fn approved_candidate_refuses_an_alternate_kernel_writer_before_activation() {
                 property: norn_ir::PropertyId("candidate".into()),
                 value: norn_ir::RuntimeValue::from("unreviewed generation"),
             }],
+            links: vec![],
             commands: vec![],
             timers: vec![],
         };
@@ -1118,4 +1119,345 @@ fn approved_candidate_refuses_an_alternate_kernel_writer_before_activation() {
         "reviewed-activation",
         true
     ));
+}
+
+fn restatement_catalog_artifacts() -> Value {
+    let restatement: Value = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.analytics.Restatement.entity.json"
+    ))
+    .expect("generated restatement entity");
+    let interface: Value = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.analytics.RestatementEvidence.interface.json"
+    ))
+    .expect("generated interface");
+    json!([
+        {"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object_type()}},
+        restatement,
+        interface,
+        {"irVersion":"0.1","artifactId":"demo.markings.entity","kind":"entity","namespace":"demo","name":"Markings","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":[{"id":"pii.contact","label":"Contact","severity":"high","category":"pii.contact","mask":{"kind":"redacted"}}]}}
+    ])
+}
+
+fn install_restatement_marking_catalog(store: &mut CellStore, model: Model) {
+    let artifacts = restatement_catalog_artifacts();
+    store
+        .install_definitions(
+            model,
+            norn_cell::InstalledDefinitionInput {
+                canonical_set: serde_json::to_string(&artifacts).expect("set"),
+                registry: vec![],
+                receipt_sha256: "restatement-catalog".into(),
+                admission_receipt: None,
+                readmission: None,
+                diff: json!({}),
+                installed_at: CLOCK,
+                layout: None,
+            },
+            Some(0),
+            SCOPE,
+        )
+        .expect("install marking catalog");
+}
+
+fn commit_and_delete_row(
+    store: &mut CellStore,
+    path: &Path,
+    secret_metal: &str,
+    labelled_row: bool,
+    drop_historical_snapshot: bool,
+) -> (u64, u64) {
+    let events = if labelled_row {
+        vec![
+            norn_ir::RuntimeValue::from_json(json!({
+                "type": "observation.recorded",
+                "mapped": [{
+                    "objectType": TYPE,
+                    "key": "SYN-LABELLED-1",
+                    "propertyProvenance": {"metal": {"markings": ["pii.contact"]}}
+                }]
+            }))
+            .expect("event"),
+        ]
+    } else {
+        vec![]
+    };
+    let committed = store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: SCOPE.into(),
+            logical_time: CLOCK + 500,
+            writes: vec![put(
+                "SYN-LABELLED-1",
+                50_000,
+                48_000,
+                "2026-10-23T12:00:00Z",
+                secret_metal,
+            )],
+            events,
+            ..CommitBatch::default()
+        })
+        .expect("commit row")
+        .receipt()
+        .clone();
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: SCOPE.into(),
+            logical_time: CLOCK + 1000,
+            writes: vec![norn_cell::FactWriteRow::Delete {
+                object_type: TYPE.into(),
+                key: "SYN-LABELLED-1".into(),
+            }],
+            ..CommitBatch::default()
+        })
+        .expect("delete row");
+    if drop_historical_snapshot {
+        use norn_cell::engine::SqlEngine as _;
+        norn_cell::engine::NativeEngine::open(path, StoreOptions::default())
+            .expect("raw engine")
+            .execute(
+                "DELETE FROM \"_norn_marking_snapshot\" WHERE \"id\" = 'SYN-LABELLED-1' AND \"is_current\" = 0",
+                &[],
+            )
+            .expect("drop historical snapshot");
+    }
+    (committed.body.logical_time, committed.body.commit_seq)
+}
+
+fn run_restatement_marking_world(
+    secret_metal: &str,
+    labelled_row: bool,
+    drop_historical_snapshot: bool,
+) -> String {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (mut store, plan, mut context, model) = setup(&path);
+    if drop_historical_snapshot {
+        install_restatement_marking_catalog(&mut store, model);
+    }
+    let (committed_time, committed_seq) = commit_and_delete_row(
+        &mut store,
+        &path,
+        secret_metal,
+        labelled_row,
+        drop_historical_snapshot,
+    );
+    progress(&mut context, committed_time, committed_seq);
+    let point = KnowledgeCutoff {
+        recorded_at: LogicalTime::from_millis(committed_time),
+        frontier: committed_seq,
+    };
+    let version = store
+        .read()
+        .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("slot version");
+    let build = store
+        .begin_restatement(
+            ID,
+            context.clone(),
+            version,
+            "rebuild over deleted history",
+            &BTreeSet::from(["week".into(), "loss".into()]),
+        )
+        .expect("private rebuild");
+    let outcome = store.prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true));
+    if !labelled_row && !drop_historical_snapshot {
+        assert!(
+            outcome.is_ok(),
+            "positive control: unlabelled deleted-row restatement must succeed"
+        );
+        return String::from("ok");
+    }
+    let Err(error) = outcome else {
+        panic!("restatement over marked or unclassified history must refuse");
+    };
+    assert!(
+        matches!(
+            error,
+            norn_cell::CellError::ComputeRefused("question.marked_history")
+        ),
+        "expected question.marked_history, got {error:?}"
+    );
+    let slot = store
+        .read()
+        .object(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("slot")
+        .expect("slot present");
+    assert_eq!(
+        slot.values
+            .get("candidate")
+            .and_then(norn_ir::RuntimeValue::as_str),
+        Some(""),
+        "refused restatement must stage no candidate: {slot:?}"
+    );
+    assert_eq!(
+        slot.values
+            .get("status")
+            .and_then(norn_ir::RuntimeValue::as_str),
+        Some("building"),
+        "{slot:?}"
+    );
+    format!("{error:?}")
+}
+
+/// S2c (#1559): `prepare_restatement` refuses any historical slice whose
+/// grouped or filtered field carries a marking in current or deleted history,
+/// or lacks immutable historical classification evidence when a retained
+/// marking catalog is installed. An identical unlabelled deleted-row world
+/// succeeds (positive control), and two worlds differing only in the deleted
+/// labelled value refuse identically (`question.marked_history`).
+#[test]
+fn prepare_restatement_refuses_slice_over_deleted_labelled_field() {
+    // Positive control: identical unlabelled deleted-row world succeeds.
+    assert_eq!(run_restatement_marking_world("gold", false, false), "ok");
+    // Deleted labelled row refuses identically across two secret values.
+    assert_eq!(
+        run_restatement_marking_world("secret-alpha", true, false),
+        run_restatement_marking_world("secret-beta", true, false)
+    );
+    // Retained marking catalog + missing historical snapshot fails closed.
+    assert_eq!(
+        run_restatement_marking_world("gold", false, true),
+        run_restatement_marking_world("secret-alpha", true, false)
+    );
+}
+
+/// S2c (#1559): revalidating slice markings inside `stage_restatement`'s commit
+/// transaction closes the window between `prepare_restatement` and staging.
+#[test]
+fn stage_restatement_refuses_if_a_slice_becomes_marked_after_preparation() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (mut store, plan, mut context, _model) = setup(&path);
+    let point = cutoff(&store, &context);
+    let version = store
+        .read()
+        .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("slot version");
+    let build = store
+        .begin_restatement(
+            ID,
+            context.clone(),
+            version,
+            "clean build before reclassification",
+            &BTreeSet::from(["week".into(), "loss".into()]),
+        )
+        .expect("private rebuild");
+    let prepared = store
+        .prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true))
+        .expect("clean cell prepares");
+    // Before staging commits, another commit introduces a labelled row on the
+    // grouped/filtered property without touching the restatement slot.
+    context.now_ms = CLOCK + 500;
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: SCOPE.into(),
+            logical_time: CLOCK + 500,
+            writes: vec![put(
+                "SYN-LATE-MARKED",
+                50_000,
+                48_000,
+                "2026-10-23T12:00:00Z",
+                "secret-metal",
+            )],
+            events: vec![
+                norn_ir::RuntimeValue::from_json(json!({
+                    "type": "observation.recorded",
+                    "mapped": [{
+                        "objectType": TYPE,
+                        "key": "SYN-LATE-MARKED",
+                        "propertyProvenance": {"metal": {"markings": ["pii.contact"]}}
+                    }]
+                }))
+                .expect("event"),
+            ],
+            ..CommitBatch::default()
+        })
+        .expect("reclassifying commit");
+    let error = store
+        .stage_restatement(prepared)
+        .expect_err("staging transaction must revalidate slice markings");
+    assert!(
+        matches!(
+            error,
+            norn_cell::CellError::ComputeRefused("question.marked_history")
+        ),
+        "expected question.marked_history, got {error:?}"
+    );
+    let slot = store
+        .read()
+        .object(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("slot")
+        .expect("slot present");
+    assert_eq!(
+        slot.values
+            .get("candidate")
+            .and_then(norn_ir::RuntimeValue::as_str),
+        Some(""),
+        "refused staging must leave candidate empty: {slot:?}"
+    );
+}
+
+/// S2c (#1559): a valid marking catalog followed by a malformed retained
+/// entity payload still fails closed rather than returning early on the first
+/// catalog.
+#[test]
+fn prepare_restatement_fails_closed_on_malformed_entity_after_valid_catalog() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (mut store, plan, context, model) = setup(&path);
+    let mut corrupted = restatement_catalog_artifacts();
+    install_restatement_marking_catalog(&mut store, model);
+    corrupted.as_array_mut().expect("array").push(json!({
+        "irVersion":"0.1",
+        "artifactId":"demo.broken.entity",
+        "kind":"entity",
+        "namespace":"demo",
+        "name":"Broken",
+        "version":"0.1.0",
+        "lifecycle":"draft",
+        "scope":{"orgId":"org_demo","environmentId":"dev"},
+        "dependencies":[],
+        "provenance":{"source":"authoring_sdk"},
+        "payload":{"entityVersion":"2.0","markings":"not-an-array"}
+    }));
+    {
+        use norn_cell::engine::SqlEngine as _;
+        let tamper =
+            norn_cell::engine::NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+        tamper
+            .definition_writes(|| {
+                tamper.execute(
+                    "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
+                    &[norn_cell::engine::SqlValue::Text(
+                        serde_json::to_string(&corrupted).expect("corrupted json"),
+                    )],
+                )
+            })
+            .expect("corrupt retained set");
+    }
+    let point = cutoff(&store, &context);
+    let version = store
+        .read()
+        .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("slot version");
+    let build = store
+        .begin_restatement(
+            ID,
+            context.clone(),
+            version,
+            "rebuild with corrupt retained entity",
+            &BTreeSet::from(["week".into(), "loss".into()]),
+        )
+        .expect("private rebuild");
+    let Err(error) =
+        store.prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true))
+    else {
+        panic!("malformed retained entity payload must fail closed");
+    };
+    assert!(
+        matches!(error, norn_cell::CellError::Engine(ref message) if message.contains("demo.broken.entity")),
+        "expected Engine error naming malformed entity, got {error:?}"
+    );
 }

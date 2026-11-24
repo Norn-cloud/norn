@@ -64,6 +64,7 @@
 
 mod admit;
 mod aggregate;
+mod contract;
 mod convert;
 mod error;
 mod evaluate;

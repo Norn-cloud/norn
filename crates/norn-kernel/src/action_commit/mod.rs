@@ -1,37 +1,15 @@
-//! The action commit path (T2-KER-2c, #2895).
+//! The action commit path (T2-KER-2c, #2895): authorized calls commit through
+//! [`crate::decision_commit`] in one [`CellHost::commit`] (fact writes, ledger
+//! events, and idempotency record).
 //!
-//! An authorized call of an action whose effect program is `fire_transition`
-//! or `upsert_input_object` commits through the decision-commit path
-//! ([`crate::decision_commit`]) in **one** [`CellHost::commit`]: the fact
-//! writes and ledger events plus the call's idempotency record.
-//! [`commit_action`] is the entry point a shell (`norn dev`'s
-//! `POST /v1/actions/{action}`, the cell shim) calls.
-//!
-//! Order of checks, each refusing with nothing committed:
-//!
-//! 1. **Command shape and scope, fail-closed**:
-//!    [`crate::action::check_action_command`] (organization scope, identity
-//!    fields) and every `scopeRequired` key present and non-blank.
-//! 2. **Effect**: only `fire_transition` and `upsert_input_object` are
-//!    executable here.
-//! 3. **Input preparation**: ordered ZEN derivations run against caller input
-//!    and prior derived values, then the effective object is checked against
-//!    the closed input schema. The raw caller input remains the idempotency
-//!    binding.
-//! 4. **Current-state authorization**, by the injected [`ActionAuthorizer`],
-//!    with the target's committed values when it exists. A missing transition
-//!    target is still checked with `target_values: None` and reports
-//!    [`ActionRefusal::TargetNotFound`]. A create upsert defers resource
-//!    authorization until its proposed values have been prepared.
-//! 5. **Preconditions**: every action precondition (a boolean ZEN Expression
-//!    over effective input and the authorized, declared slice) holds. The
-//!    slice's fact versions and complete bounded link sets are compared again
-//!    in the commit; false, non-boolean, failing, or stale reads refuse.
-//! 6. **Object kind**: the target's type is the effect's `objectKind` or a
-//!    subtype of it.
-//! 7. **Idempotency**: a committed call with the same action and idempotency
-//!    key replays (no second transition) when its binding (object, input,
-//!    actor) is equal, and refuses otherwise. Existing targets are authorized
+//! Checks (each refusing with nothing committed):
+//! 1. **Command & scope** (fail-closed): [`crate::action::check_action_command`] and `scopeRequired`.
+//! 2. **Effect**: `fire_transition`, `upsert_input_object`, or owned-rows mutation.
+//! 3. **Input preparation**: ZEN derivations against caller input; raw input binds idempotency.
+//! 4. **Authorization**: [`ActionAuthorizer`] on committed values (deferred for create upserts).
+//! 5. **Preconditions**: ZEN boolean expressions over authorized slice, CAS-verified at commit.
+//! 6. **Object kind**: target type matches effect's `objectKind` or subtype.
+//! 7. **Idempotency**: exact binding replays; conflicts refuse. Existing targets are authorized
 //!    against current state before replay. An absent upsert replay is checked
 //!    as an absent current target and remains not-found, rather than becoming
 //!    a fresh create.
@@ -52,9 +30,11 @@
 //!    had the same idempotency key and binding, this one replays after current
 //!    state authorization.
 
+mod automation_input;
 mod input;
 mod owned_rows;
 mod parameter;
+mod predicate;
 mod receipt;
 mod series;
 mod slice;
@@ -73,14 +53,14 @@ use norn_ir::{ActionEffectProgram, FactChange, ObjectTypeName};
 use crate::action::{ActionCommandRejection, ActionCommandShape, check_action_command};
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactWrite, JsonObject,
-    JsonValue, LinkKey, LinkMutation, LinkWrite,
 };
 use crate::decision_commit::{
-    DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_limits, widen_effect,
+    DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_links_validated, widen_effect,
 };
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
 
+pub use automation_input::{AutomationInputViolation, validate_automation_static_input};
 pub use input::{actor_derived_fields, prepare_action_input, prepare_action_input_for_call};
 pub use types::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
@@ -443,6 +423,7 @@ where
         recorded,
         record,
         series_candidate,
+        decision_links,
         receipt,
     } = pending;
     let generated_key = series_candidate.is_some();
@@ -466,56 +447,12 @@ where
     )?;
     let output = norn_ir::DecisionOutput {
         facts: changes,
+        links: decision_links.clone(),
         commands,
         timers: Vec::new(),
     };
-    let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
-    let mut created_links = Vec::new();
-    // TXN-ATOMIC-1: links only connect captured or proposed endpoints; no extra transaction.
-    for binding in &call.action.create_links {
-        let linked_target = action_link_endpoint::<H::Error>(
-            &effective_input,
-            &binding.target_type,
-            &binding.target_id_field,
-        )?;
-        let source = match &binding.source {
-            Some(source) => action_link_endpoint::<H::Error>(
-                &effective_input,
-                &source.object_type,
-                &source.id_field,
-            )?,
-            None => target.clone(),
-        };
-        if crate::CommitModel::new(catalog)
-            .link(&source.object_type, &binding.link)
-            .is_none_or(|link| link.target.as_str() != binding.target_type)
-            || !prepared.writes.iter().any(|write| {
-                write.key == source && matches!(write.mutation, FactMutation::Put { .. })
-            })
-            || !(slice.get(&linked_target).is_some_and(FactState::exists)
-                || prepared.writes.iter().any(|write| {
-                    write.key == linked_target && matches!(write.mutation, FactMutation::Put { .. })
-                }))
-            || (binding.source.is_some() && call.action.synchronous_rule.is_none())
-            || !created_links.iter().all(|write: &LinkWrite| {
-                write.key != LinkKey::new(source.clone(), &binding.link, linked_target.clone())
-            })
-        {
-            return Err(crate::synchronous_rule::refused(
-                "a link requires a written source and a captured or proposed target",
-            ));
-        }
-        let key = LinkKey::new(source, &binding.link, linked_target);
-        let expected = host.load_link(&key).map_err(host_failure)?.version;
-        created_links.push(LinkWrite {
-            key,
-            expected,
-            mutation: LinkMutation::Add {
-                values: JsonObject::new(),
-            },
-        });
-    }
-
+    let mut prepared =
+        prepare_decision_with_links_validated(catalog, &slice, &call.turn, &output, limits)?;
     for write in &mut prepared.writes {
         let key = write.key.clone();
         authorize_proposed_target(
@@ -527,6 +464,20 @@ where
             std::slice::from_mut(write),
         )?;
     }
+    let created_links = crate::decision_links::prepare_action_commit_links(
+        host,
+        &crate::decision_links::ActionCommitLinks {
+            catalog,
+            call,
+            effective_input: &effective_input,
+            authorizer,
+            target: &target,
+            slice: &slice,
+            prepared_writes: &prepared.writes,
+            decision_links: &decision_links,
+            limits,
+        },
+    )?;
     let record = action_record_with_transition(record, &prepared.events);
     // Transition metadata is added after the earlier precondition/evidence
     // checks, so include the finalized receipt in the aggregate output bound.
@@ -537,7 +488,7 @@ where
     }
     let action_call = format!("{}/{}", call.action.action_id, call.idempotency_key);
     append_command_events(&mut events, &prepared.effects, &action_call);
-    counts.events = events.len();
+    counts.events = events.len().saturating_add(created_links.len());
     check_decision_envelope(limits, counts).map_err(|exceeded| {
         ActionRefusal::Decision(DecisionRefusal::EnvelopeExceeded {
             kind: exceeded.kind,
@@ -551,6 +502,8 @@ where
         writes.push(candidate.counter_write);
         reads.extend(candidate.skipped_reads);
     }
+    let target_before = receipt::target_before_version(catalog, &slice, &target);
+    receipt::ensure_target_read(catalog, &target, target_before, &writes, &mut reads);
     writes.push(FactWrite {
         key: record_key.clone(),
         expected: recorded.version,
@@ -605,7 +558,13 @@ where
             if let Some(meter) = meter {
                 meter.charge(counts);
             }
-            Ok(ActionOutcome::Committed { receipt, record })
+            let target_version =
+                receipt::committed_target_version(catalog, &receipt, &target, target_before);
+            Ok(ActionOutcome::Committed {
+                receipt,
+                record,
+                target_version,
+            })
         }
         Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),
@@ -1065,19 +1024,4 @@ fn replay<X>(
             key: key.to_owned(),
         }),
     }
-}
-
-fn action_link_endpoint<X>(
-    input: &JsonObject,
-    object_type: &str,
-    field: &str,
-) -> Result<FactKey, ActionRefusal<X>> {
-    input
-        .get(field)
-        .and_then(JsonValue::as_str)
-        .filter(|key| !key.trim().is_empty())
-        .map(|key| FactKey::new(object_type, key))
-        .ok_or_else(|| ActionRefusal::InvalidInput {
-            field: field.to_owned(),
-        })
 }

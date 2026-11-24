@@ -3,7 +3,7 @@
  * the recording when no cell is connected) and the live reads themselves. Kept
  * apart from transport.ts, which finds recordings with Vite's import.meta.glob.
  */
-import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
+import { queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { CellUnavailable, StudioScopeError, readStudioScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type StudioScope } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
@@ -86,7 +86,7 @@ const NO_HOST = "No Norn host is connected to this deployment."
 
 async function discoverScope(fetcher: Fetch, signal?: AbortSignal): Promise<StudioScope | null> {
   try { return await readStudioScope(fetcher, signal) } catch (error) {
-    if (signal?.aborted) throw error
+    signal?.throwIfAborted()
     // A session server outage must retry; a missing session or scope can use the recording.
     if (error instanceof CellUnavailable && (error.status === 0 || error.status >= 500)) throw error
     if (error instanceof CellUnavailable || error instanceof StudioScopeError) return null
@@ -99,15 +99,19 @@ export async function readMode(
   knownScope?: StudioScope | null,
   signal?: AbortSignal,
 ): Promise<Mode> {
+  signal?.throwIfAborted()
   const scope = knownScope === undefined ? await discoverScope(fetcher, signal) : knownScope
+  signal?.throwIfAborted()
   if (scope === null) return { kind: "recorded" }
   const response = await scopedHostFetch(fetcher, "/api/host", async () => scope)(
     "/v1/definitions",
     { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) },
   )
+  signal?.throwIfAborted()
   if (response.status === 404) return { kind: "recorded" }
   if (!response.ok) {
     const error: unknown = await response.json().catch(() => null)
+    signal?.throwIfAborted()
     if (error !== null && typeof error === "object") {
       if (response.status === 503 && "error" in error && error.error === NO_HOST) return { kind: "recorded" }
       if ("message" in error && typeof error.message === "string") throw new CellUnavailable(response.status, error.message)
@@ -115,6 +119,7 @@ export async function readMode(
     throw new CellUnavailable(response.status)
   }
   const text = await response.text()
+  signal?.throwIfAborted()
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { return { kind: "recorded" } }
   const artifacts = (parsed as { artifacts?: unknown } | null)?.artifacts
@@ -174,9 +179,26 @@ export class ScopeSupersededError extends Error {
 
 let modeGeneration = 0
 let activeModeScopeKey: string | null = null
-const modeByScope = new Map<string, Promise<Mode>>()
-let unkeyedMode: Promise<Mode> | undefined
+type ModeProbe = { readonly controller: AbortController; readonly result: Promise<Mode> }
+const modeByScope = new Map<string, ModeProbe>()
+let unkeyedMode: ModeProbe | undefined
+const pendingModeControllers = new Set<AbortController>()
 const browserFetch: Fetch = (input, init) => fetch(input, init)
+
+function startModeProbe(read: (signal: AbortSignal) => Promise<Mode>): ModeProbe {
+  const controller = new AbortController()
+  pendingModeControllers.add(controller)
+  const result = read(controller.signal).finally(() => { pendingModeControllers.delete(controller) })
+  return { controller, result }
+}
+
+function observeModeProbe(probe: ModeProbe, signal?: AbortSignal): Promise<Mode> {
+  if (signal === undefined) return probe.result
+  const abort = () => probe.controller.abort(signal.reason)
+  if (signal.aborted) abort()
+  else signal.addEventListener("abort", abort, { once: true })
+  return probe.result.finally(() => signal.removeEventListener("abort", abort))
+}
 
 /**
  * The mode for the current server-reported scope, keyed by `orgId + environmentId`.
@@ -198,28 +220,28 @@ export function currentMode(
     unkeyedMode = undefined
     activeModeScopeKey = key
     const existing = modeByScope.get(key)
-    if (existing !== undefined) return existing
+    if (existing !== undefined && !existing.controller.signal.aborted) return observeModeProbe(existing, signal)
     const gen = modeGeneration
-    const promise = readMode(fetcher, knownScope, signal).then(
+    const probe = startModeProbe((probeSignal) => readMode(fetcher, knownScope, probeSignal).then(
       (result) => {
         if (modeGeneration !== gen) throw new ScopeSupersededError()
         return result
       },
       (error: unknown) => {
-        if (modeGeneration === gen && modeByScope.get(key) === promise) modeByScope.delete(key)
+        if (modeByScope.get(key) === probe) modeByScope.delete(key)
         throw error
       },
-    )
-    modeByScope.set(key, promise)
-    return promise
+    ))
+    modeByScope.set(key, probe)
+    return observeModeProbe(probe, signal)
   }
   if (activeModeScopeKey !== null) {
     const existing = modeByScope.get(activeModeScopeKey)
-    if (existing !== undefined) return existing
+    if (existing !== undefined && !existing.controller.signal.aborted) return observeModeProbe(existing, signal)
   }
-  if (unkeyedMode !== undefined) return unkeyedMode
+  if (unkeyedMode !== undefined && !unkeyedMode.controller.signal.aborted) return observeModeProbe(unkeyedMode, signal)
   const gen = modeGeneration
-  const promise = discoverScope(fetcher, signal).then(async (scope) => {
+  const probe = startModeProbe((probeSignal) => discoverScope(fetcher, probeSignal).then(async (scope) => {
     const key = studioScopeKey(scope)
     const checkScope = () => {
       if (modeGeneration !== gen || (activeModeScopeKey !== null && activeModeScopeKey !== key)) {
@@ -227,19 +249,24 @@ export function currentMode(
       }
     }
     checkScope()
-    const result = await readMode(fetcher, scope, signal)
-    checkScope()
-    if (result.kind === "live") {
-      activeModeScopeKey = key
-      if (!modeByScope.has(key)) modeByScope.set(key, promise)
+    const existing = modeByScope.get(key)
+    const shared = existing !== undefined && !existing.controller.signal.aborted
+    if (!shared) modeByScope.set(key, probe)
+    try {
+      const result = await (shared ? observeModeProbe(existing, probeSignal) : readMode(fetcher, scope, probeSignal))
+      checkScope()
+      if (result.kind === "live") activeModeScopeKey = key
+      return result
+    } catch (error) {
+      if (modeByScope.get(key) === probe) modeByScope.delete(key)
+      throw error
     }
-    return result
   }).catch((error: unknown) => {
-    if (unkeyedMode === promise) unkeyedMode = undefined
+    if (unkeyedMode === probe) unkeyedMode = undefined
     throw error
-  })
-  unkeyedMode = promise
-  return promise
+  }))
+  unkeyedMode = probe
+  return observeModeProbe(probe, signal)
 }
 
 /** A refusal the cell sent for a read: its code and message, shown as they are. */
@@ -252,8 +279,10 @@ export class CellRefusal extends Error {
  * serve (a 404 `route.not_found`, or a 503) is {@link NotServed} under `what`; any other refusal
  * is the cell's {@link CellRefusal}.
  */
-export async function cellRead<T>(path: string, what: string, init: RequestInit = {}, fetcher: Fetch = browserFetch): Promise<Read<T>> {
-  const call = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
+export async function cellRead<T>(
+  path: string, what: string, init: RequestInit = {}, fetcher: Fetch = browserFetch, scope?: StudioScope,
+): Promise<Read<T>> {
+  const call = scopedHostFetch(fetcher, "/api/host", async () => scope ?? readStudioScope(fetcher))
   const response = await call(path, { ...init, headers: { accept: "application/json", ...init.body === undefined ? {} : { "content-type": "application/json" }, ...init.headers } })
   const text = await response.text()
   if (response.ok) return readDocument<T>(text, "live")
@@ -331,13 +360,17 @@ export function useMode() {
     }
   }, [client, scope.isSuccess, key, activeScope])
 
-  return useQuery({
-    queryKey: ["studio-mode", key],
-    enabled: scopeReady,
+  return useQuery(modeQuery(scopeOutage ? undefined : activeScope, scopeReady, scopeOutage ? client : undefined))
+}
+
+export function modeQuery(scope: StudioScope | null | undefined, enabled = true, recoveryClient?: QueryClient) {
+  return queryOptions({
+    queryKey: ["studio-mode", scope === undefined ? "outage" : studioScopeKey(scope)],
+    enabled,
     queryFn: async ({ signal }) => {
-      if (!scopeOutage) return currentMode(browserFetch, activeScope, signal)
+      if (recoveryClient === undefined) return currentMode(browserFetch, scope, signal)
       const recovered = await readMode(browserFetch, undefined, signal)
-      client.setQueryData(["studio-scope"], recovered.kind === "live" ? recovered.scope : null)
+      recoveryClient.setQueryData(["studio-scope"], recovered.kind === "live" ? recovered.scope : null)
       return recovered
     },
     retry: (failureCount, error) =>
@@ -347,6 +380,16 @@ export function useMode() {
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     staleTime: Infinity,
   })
+}
+
+/** Stop in-flight probes, including reads the transport started directly. */
+export async function retryMode(client: QueryClient): Promise<void> {
+  const filter = { queryKey: ["studio-mode"], type: "active" } as const
+  const cancellation = client.cancelQueries(filter)
+  for (const controller of pendingModeControllers) controller.abort()
+  refreshMode()
+  await cancellation
+  await client.refetchQueries(filter, { cancelRefetch: false })
 }
 
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type or scope changes). */
