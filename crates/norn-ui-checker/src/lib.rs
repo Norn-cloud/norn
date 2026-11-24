@@ -18,8 +18,6 @@ pub mod ui_machine;
 pub mod ui_view;
 pub mod widget_ux;
 
-use std::collections::BTreeMap;
-
 use norn_checker::{
     CheckReceipt, CheckedArtifactSet, Diagnostic, DiagnosticCode, DiagnosticRemediation,
     DiagnosticSeverity, DiagnosticsDigest, EntityArtifactSetContext, IDENTIFIER_ADMISSION_PROFILE,
@@ -32,7 +30,7 @@ pub use widget_ux::{
     GeneratedTransitionEnabledWhenError, check_widget_ux_set, generated_transition_enabled_when,
 };
 
-const fn legacy_severity_rank(severity: &DiagnosticSeverity) -> u8 {
+const fn severity_rank(severity: &DiagnosticSeverity) -> u8 {
     match severity {
         DiagnosticSeverity::Info => 0,
         DiagnosticSeverity::Warning => 1,
@@ -40,66 +38,96 @@ const fn legacy_severity_rank(severity: &DiagnosticSeverity) -> u8 {
     }
 }
 
-fn dedupe_legacy_findings(
-    diagnostics: impl IntoIterator<Item = norn_ir::Diagnostic>,
-) -> Vec<norn_ir::Diagnostic> {
-    let mut out: Vec<norn_ir::Diagnostic> = Vec::new();
-    for finding in diagnostics {
-        if let Some(existing) = out.iter_mut().find(|existing| {
+fn push_legacy_widget_extra(
+    out: &mut Vec<(norn_ir::Diagnostic, bool)>,
+    extra: Vec<norn_ir::Diagnostic>,
+) {
+    for finding in extra {
+        if let Some((existing, from_ring0)) = out.iter_mut().find(|(existing, _)| {
             existing.code == finding.code
                 && existing.artifact_id == finding.artifact_id
                 && existing.path == finding.path
         }) {
-            if legacy_severity_rank(&finding.severity) > legacy_severity_rank(&existing.severity) {
+            let new_rank = severity_rank(&finding.severity);
+            let old_rank = severity_rank(&existing.severity);
+            if new_rank > old_rank || (*from_ring0 && new_rank == old_rank) {
                 *existing = finding;
+                *from_ring0 = false;
             }
         } else {
-            out.push(finding);
+            out.push((finding, false));
         }
     }
-    out
 }
 
-fn splice_legacy_widget_findings(
+fn merge_legacy_widget_diagnostics(
     ring0: Vec<norn_ir::Diagnostic>,
     extra: Vec<norn_ir::Diagnostic>,
 ) -> Vec<norn_ir::Diagnostic> {
-    let mut merged = Vec::with_capacity(ring0.len().saturating_add(extra.len()));
+    let mut out: Vec<(norn_ir::Diagnostic, bool)> =
+        Vec::with_capacity(ring0.len().saturating_add(extra.len()));
     let mut pending = Some(extra);
     for finding in ring0 {
         if finding.code == norn_checker::codes::WIDGET_RING1_REQUIRED {
             if let Some(extras) = pending.take() {
-                merged.extend(extras);
+                push_legacy_widget_extra(&mut out, extras);
             }
         } else {
-            merged.push(finding);
+            out.push((finding, true));
         }
     }
     if let Some(extras) = pending {
-        merged.extend(extras);
+        push_legacy_widget_extra(&mut out, extras);
     }
-    dedupe_legacy_findings(merged)
+    out.into_iter().map(|(diagnostic, _)| diagnostic).collect()
 }
 
-fn splice_single_widget_findings(
-    ring0: Vec<Diagnostic>,
-    extra: Vec<Diagnostic>,
-) -> Vec<Diagnostic> {
-    let mut merged = Vec::with_capacity(ring0.len().saturating_add(extra.len()));
+fn push_widget_extra(out: &mut Vec<(Diagnostic, bool)>, extra: Vec<Diagnostic>) {
+    for finding in extra {
+        let finding_ptr = finding
+            .span
+            .as_ref()
+            .map_or("", |span| span.pointer.as_str());
+        if let Some((existing, from_ring0)) = out.iter_mut().find(|(existing, _)| {
+            existing.code == finding.code
+                && existing.artifact_id == finding.artifact_id
+                && existing
+                    .span
+                    .as_ref()
+                    .map_or("", |span| span.pointer.as_str())
+                    == finding_ptr
+        }) {
+            let new_rank = severity_rank(&finding.severity);
+            let old_rank = severity_rank(&existing.severity);
+            if new_rank > old_rank || (*from_ring0 && new_rank == old_rank) {
+                *existing = finding;
+                *from_ring0 = false;
+            }
+        } else {
+            out.push((finding, false));
+        }
+    }
+}
+
+fn merge_widget_diagnostics(ring0: Vec<Diagnostic>, extra: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    let mut out: Vec<(Diagnostic, bool)> =
+        Vec::with_capacity(ring0.len().saturating_add(extra.len()));
     let mut pending = Some(extra);
     for finding in ring0 {
         if finding.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED {
             if let Some(extras) = pending.take() {
-                merged.extend(extras);
+                push_widget_extra(&mut out, extras);
             }
         } else {
-            merged.push(finding);
+            out.push((finding, true));
         }
     }
     if let Some(extras) = pending {
-        merged.extend(extras);
+        push_widget_extra(&mut out, extras);
     }
-    norn_checker::entity_artifacts::dedupe_findings(merged)
+    norn_checker::entity_artifacts::dedupe_findings(
+        out.into_iter().map(|(diagnostic, _)| diagnostic),
+    )
 }
 
 fn widget_extra_diagnostics(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
@@ -117,20 +145,8 @@ fn widget_extra_diagnostics(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     }
 }
 
-fn normalize_artifacts(artifacts: &[ArtifactEnvelope]) -> Vec<ArtifactEnvelope> {
-    artifacts
-        .iter()
-        .map(
-            |artifact| match norn_checker::layout::normalize_artifact(artifact) {
-                Ok((normalized, _layout)) => normalized,
-                Err(_layout_findings) => artifact.clone(),
-            },
-        )
-        .collect()
-}
-
 /// Validate one artifact envelope with Ring-0 checks completed first, then
-/// Ring-1 widget payload/dependency validation spliced in-place at the
+/// Ring-1 widget payload/dependency validation merged at the
 /// [`norn_checker::codes::WIDGET_RING1_REQUIRED`] marker.
 ///
 /// # Errors
@@ -146,7 +162,7 @@ pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<norn_ir:
     };
     let payload = norn_checker::envelope::validation_json_value(&artifact.payload);
     let diagnostics =
-        splice_legacy_widget_findings(ring0, envelope::validate_widget_extra(artifact, &payload));
+        merge_legacy_widget_diagnostics(ring0, envelope::validate_widget_extra(artifact, &payload));
     if diagnostics
         .iter()
         .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
@@ -158,7 +174,7 @@ pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<norn_ir:
 }
 
 /// Check one artifact envelope with Ring-0 checks completed first, then Ring-1
-/// widget payload/dependency validation spliced in-place at the
+/// widget payload/dependency validation merged at the
 /// [`norn_checker::codes::WIDGET_RING1_REQUIRED`] marker.
 #[must_use]
 pub fn check_artifact(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
@@ -172,12 +188,12 @@ pub fn check_artifact(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     if !had_ring1_marker {
         return findings;
     }
-    splice_single_widget_findings(findings, widget_extra_diagnostics(artifact))
+    merge_widget_diagnostics(findings, widget_extra_diagnostics(artifact))
 }
 
 /// Decode an artifact envelope from wire JSON and check it with Ring-0 checks
-/// completed first, then Ring-1 widget payload/dependency validation spliced
-/// in-place at the [`norn_checker::codes::WIDGET_RING1_REQUIRED`] marker.
+/// completed first, then Ring-1 widget payload/dependency validation merged at
+/// the [`norn_checker::codes::WIDGET_RING1_REQUIRED`] marker.
 #[must_use]
 pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
     let findings = norn_checker::check_artifact_json(value);
@@ -195,7 +211,7 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
             .into_iter()
             .map(|diagnostic| Diagnostic::from_legacy_in(diagnostic, value))
             .collect();
-        return splice_single_widget_findings(findings, extra);
+        return merge_widget_diagnostics(findings, extra);
     }
     findings
         .into_iter()
@@ -204,57 +220,45 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
 }
 
 /// Resolve `artifacts` against `context.base` and run every Ring-0 set check
-/// to completion first, then splice each widget's Ring-1 envelope findings
-/// in-place at its [`norn_checker::codes::WIDGET_RING1_REQUIRED`] marker and
-/// append Ring-1 Widget UX / UI law checks with higher-severity-wins
-/// deduplication.
+/// to completion first, then merge each candidate widget's Ring-1 envelope
+/// findings in its exact per-artifact slot and insert set-level Widget UX / UI
+/// law checks between the pre-UX and post-UX Ring-0 phases with
+/// higher-severity-wins deduplication.
 #[must_use]
 pub fn check_artifact_set(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
-    let ring0_findings = norn_checker::check_artifact_set(artifacts, context);
-
-    let normalized_artifacts = normalize_artifacts(artifacts);
-    let normalized_base = normalize_artifacts(context.base);
+    let phases = norn_checker::check_artifact_set_ring0_phases(artifacts, context);
     let normalized_context = EntityArtifactSetContext {
-        base: &normalized_base,
+        base: &phases.normalized_base,
         ..*context
     };
 
-    let mut widget_extras: BTreeMap<String, Vec<Diagnostic>> = BTreeMap::new();
-    for artifact in &normalized_artifacts {
-        if matches!(artifact.payload, ArtifactPayload::Widget(_)) {
-            widget_extras
-                .entry(artifact.artifact_id.clone())
-                .or_default()
-                .extend(widget_extra_diagnostics(artifact));
-        }
-    }
-
-    let mut merged = Vec::with_capacity(ring0_findings.len());
-    for finding in ring0_findings {
-        if finding.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED {
-            if let Some(id) = finding.artifact_id.as_deref()
-                && let Some(extras) = widget_extras.remove(id)
-            {
-                merged.extend(extras);
+    let merged_per_artifact = phases
+        .normalized_artifacts
+        .iter()
+        .zip(phases.per_artifact)
+        .flat_map(|(artifact, ring0_local)| {
+            if matches!(artifact.payload, ArtifactPayload::Widget(_)) {
+                merge_widget_diagnostics(ring0_local, widget_extra_diagnostics(artifact))
+            } else {
+                ring0_local
             }
-        } else {
-            merged.push(finding);
-        }
-    }
-    for (_id, extras) in widget_extras {
-        merged.extend(extras);
-    }
+        });
 
-    if norn_checker::resolve_artifact_set(&normalized_artifacts, &normalized_base).is_ok() {
-        merged.extend(check_widget_ux_set(
-            &normalized_artifacts,
-            &normalized_context,
-        ));
-    }
-    norn_checker::entity_artifacts::dedupe_findings(merged)
+    let ux_findings = if phases.resolved_ok {
+        check_widget_ux_set(&phases.normalized_artifacts, &normalized_context)
+    } else {
+        Vec::new()
+    };
+
+    norn_checker::entity_artifacts::dedupe_findings(
+        merged_per_artifact
+            .chain(phases.pre_ux_set)
+            .chain(ux_findings)
+            .chain(phases.post_ux_set),
+    )
 }
 
 fn check_artifact_set_with_receipt_inner(
@@ -401,13 +405,20 @@ pub fn explain(
 mod ring1_composition_tests {
     use std::collections::BTreeSet;
 
-    use norn_checker::{EntityArtifactSetContext, ReceiptSources};
+    use norn_checker::{DiagnosticsDigest, EntityArtifactSetContext, ReceiptSources};
     use norn_ir::{ArtifactEnvelope, DiagnosticSeverity, ResourceLimitProfile, RuntimeValue};
     use serde_json::json;
 
     use crate::{
-        check_artifact_set, check_artifact_set_with_receipt, splice_legacy_widget_findings,
+        check_artifact, check_artifact_json, check_artifact_set, check_artifact_set_with_receipt,
+        merge_legacy_widget_diagnostics, validate_artifact,
     };
+
+    fn widget_fixture_json() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        Ok(serde_json::from_str(include_str!(
+            "../../../fixtures/ir/retail-replenishment.widget.json"
+        ))?)
+    }
 
     fn cyclic_concept_fixture() -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
         Ok(serde_json::from_value(json!({
@@ -476,20 +487,17 @@ mod ring1_composition_tests {
     }
 
     #[test]
-    fn ring0_set_unit_and_defined_concept_checks_complete_in_original_order()
+    fn duplicate_widget_artifact_id_preserves_copy2_local_error_order()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut bad_widget: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../fixtures/ir/retail-replenishment.widget.json"
-        ))?;
-        // Strip dependencies so Ring-1 emits `widget.validation.missing_dependency`,
-        // AND break Ring-0 envelope (`irVersion`) so Ring-0 emits its own error.
-        if let Some(obj) = bad_widget.as_object_mut() {
-            obj.insert("dependencies".to_owned(), json!([]));
+        let valid_copy: ArtifactEnvelope = serde_json::from_value(widget_fixture_json()?)?;
+        let mut bad_copy_json = widget_fixture_json()?;
+        if let Some(obj) = bad_copy_json.as_object_mut() {
             obj.insert("irVersion".to_owned(), json!("9.9"));
+            obj.insert("dependencies".to_owned(), json!([]));
         } else {
             return Err("widget fixture must be an object".into());
         }
-        let widget_env: ArtifactEnvelope = serde_json::from_value(bad_widget.clone())?;
+        let bad_copy: ArtifactEnvelope = serde_json::from_value(bad_copy_json)?;
 
         let registry = BTreeSet::new();
         let context = EntityArtifactSetContext {
@@ -497,77 +505,211 @@ mod ring1_composition_tests {
             base: &[],
             tenant: None,
         };
-        let artifacts = [
-            widget_env,
-            cyclic_concept_fixture()?,
-            unpinned_unit_entity_fixture()?,
-        ];
-
-        let findings = check_artifact_set(&artifacts, &context);
-        let ir_version_idx = findings
-            .iter()
-            .position(|d| d.is_error() && d.code.as_str() == "ir.validation.unsupported_version");
-        let missing_dep_idx = findings.iter().position(|d| {
-            d.is_error() && d.code.as_str() == "widget.validation.missing_dependency"
-        });
-        let unit_idx = findings
-            .iter()
-            .position(|d| d.is_error() && d.code.as_str() == "core.values.unit_mismatch");
-        let cycle_idx = findings
-            .iter()
-            .position(|d| d.is_error() && d.code.as_str() == "core.graph.cycle");
-
+        let findings = check_artifact_set(&[valid_copy, bad_copy], &context);
+        let (Some(ir_version_idx), Some(missing_dep_idx)) = (
+            findings.iter().position(|d| {
+                d.is_error() && d.code.as_str() == "ir.validation.unsupported_version"
+            }),
+            findings.iter().position(|d| {
+                d.is_error() && d.code.as_str() == "widget.validation.missing_dependency"
+            }),
+        ) else {
+            return Err(format!(
+                "Both copy-2 Ring-0 and Ring-1 errors must be reported: {findings:#?}"
+            )
+            .into());
+        };
         assert!(
-            ir_version_idx.is_some(),
-            "Ring-0 per-artifact error must survive Ring-1 composition: {findings:#?}"
-        );
-        assert!(
-            missing_dep_idx.is_some(),
-            "Ring-1 widget error must also be reported: {findings:#?}"
-        );
-        assert!(
-            unit_idx.is_some(),
-            "Ring-0 unit_admission::check must complete independently: {findings:#?}"
-        );
-        assert!(
-            cycle_idx.is_some(),
-            "Ring-0 defined_concepts::check_cycles must complete independently: {findings:#?}"
-        );
-        assert!(
-            ir_version_idx < missing_dep_idx && missing_dep_idx < unit_idx && unit_idx < cycle_idx,
-            "Spliced widget envelope findings must precede unit_admission and defined_concepts: {findings:#?}"
-        );
-        assert!(
-            !findings
-                .iter()
-                .any(|d| d.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED),
-            "Ring-1 must strip only WIDGET_RING1_REQUIRED: {findings:#?}"
-        );
-
-        let raw_widget = RuntimeValue::from_json_text(serde_json::to_string(&bad_widget)?)?;
-        let sources = ReceiptSources::new(&[raw_widget], &[])?;
-        let limits = ResourceLimitProfile::norn_limits_v1();
-
-        let ring0_receipt =
-            norn_checker::check_artifact_set_with_receipt(&sources, &context, &limits)?;
-        assert!(
-            !ring0_receipt.receipt.admitted,
-            "Standalone Ring-0 receipt must fail closed on widgets"
-        );
-        assert!(ring0_receipt.diagnostics.iter().any(|d| {
-            d.is_error() && d.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED
-        }));
-
-        let ring1_receipt = check_artifact_set_with_receipt(&sources, &context, &limits)?;
-        assert!(
-            !ring1_receipt.receipt.admitted,
-            "Ring-1 receipt must refuse widget with Ring-0 and Ring-1 errors"
+            ir_version_idx < missing_dep_idx,
+            "Copy 2's ir.validation.unsupported_version must precede copy 2's widget.validation.missing_dependency: {findings:#?}"
         );
         Ok(())
     }
 
     #[test]
-    fn splice_legacy_widget_findings_preserves_ring0_error_over_ring1_warning_and_info() {
+    fn projection_hints_null_reports_legacy_message_across_all_four_entrypoints()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut widget_json = widget_fixture_json()?;
+        if let Some(payload) = widget_json
+            .get_mut("payload")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            payload.insert("projectionHints".to_owned(), serde_json::Value::Null);
+        } else {
+            return Err("widget fixture payload must be an object".into());
+        }
+        let widget_env: ArtifactEnvelope = serde_json::from_value(widget_json.clone())?;
+
+        let legacy_err = match validate_artifact(&widget_env) {
+            Ok(()) => return Err("validate_artifact must reject projectionHints: null".into()),
+            Err(diags) => diags,
+        };
+        assert!(
+            legacy_err.iter().any(|d| {
+                d.code == "widget.validation.invalid_payload"
+                    && d.path.as_deref() == Some("payload.projectionHints")
+                    && d.message == "value must be an object"
+            }),
+            "validate_artifact must preserve legacy message: {legacy_err:#?}"
+        );
+
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
+        for (label, findings) in [
+            ("check_artifact", check_artifact(&widget_env)),
+            ("check_artifact_json", check_artifact_json(&widget_json)),
+            (
+                "check_artifact_set",
+                check_artifact_set(std::slice::from_ref(&widget_env), &context),
+            ),
+        ] {
+            assert!(
+                findings.iter().any(|d| {
+                    d.is_error()
+                        && d.code.as_str() == "widget.validation.invalid_payload"
+                        && d.span
+                            .as_ref()
+                            .is_some_and(|s| s.pointer == "/payload/projectionHints")
+                        && d.message == "value must be an object"
+                }),
+                "{label} must preserve legacy message 'value must be an object': {findings:#?}"
+            );
+        }
+        Ok(())
+    }
+
+    fn ux_widget_fixture() -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
+        let mut widget_json = widget_fixture_json()?;
+        if let Some(obj) = widget_json.as_object_mut() {
+            obj.insert("dependencies".to_owned(), json!([]));
+            obj.insert("irVersion".to_owned(), json!("9.9"));
+        } else {
+            return Err("widget fixture must be an object".into());
+        }
+        if let Some(payload) = widget_json
+            .get_mut("payload")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            payload.insert(
+                "ux".to_owned(),
+                json!({
+                    "uxVersion": "0.1",
+                    "pages": [],
+                    "dataBindings": [],
+                    "actionBindings": [{
+                        "bindingId": "invoke",
+                        "action": { "id": "missing.action", "version": "0.1.0" },
+                        "inputMapping": {},
+                        "inputs": {},
+                        "requiredCapability": "test.invoke"
+                    }],
+                    "fields": [],
+                    "forms": [],
+                    "actionPlacements": [],
+                    "navigationItems": [],
+                    "overrides": []
+                }),
+            );
+        } else {
+            return Err("widget fixture payload must be an object".into());
+        }
+        Ok(serde_json::from_value(widget_json)?)
+    }
+
+    #[test]
+    fn mixed_set_preserves_origin_main_phase_order_and_receipt_digest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
+        let artifacts = [
+            ux_widget_fixture()?,
+            cyclic_concept_fixture()?,
+            unpinned_unit_entity_fixture()?,
+        ];
+        let findings = check_artifact_set(&artifacts, &context);
+
+        let (
+            Some(ir_version_idx),
+            Some(missing_dep_idx),
+            Some(ux_set_idx),
+            Some(unit_idx),
+            Some(cycle_idx),
+        ) = (
+            findings.iter().position(|d| {
+                d.is_error() && d.code.as_str() == "ir.validation.unsupported_version"
+            }),
+            findings.iter().position(|d| {
+                d.is_error() && d.code.as_str() == "widget.validation.missing_dependency"
+            }),
+            findings.iter().position(|d| {
+                d.is_error()
+                    && d.code.as_str() == "widget.validation.invalid_payload"
+                    && d.span
+                        .as_ref()
+                        .is_some_and(|s| s.pointer.starts_with("/payload/ux"))
+            }),
+            findings
+                .iter()
+                .position(|d| d.is_error() && d.code.as_str() == "core.values.unit_mismatch"),
+            findings
+                .iter()
+                .position(|d| d.is_error() && d.code.as_str() == "core.graph.cycle"),
+        )
+        else {
+            return Err(format!(
+                "Expected local, ux-set, unit_admission, and defined_concepts errors: {findings:#?}"
+            )
+            .into());
+        };
+
+        assert!(
+            ir_version_idx < missing_dep_idx
+                && missing_dep_idx < ux_set_idx
+                && ux_set_idx < unit_idx
+                && unit_idx < cycle_idx,
+            "Exact origin/main phase order must hold (local < widget_ux_set < unit_mismatch < cycle): {findings:#?}"
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|d| d.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED),
+            "Ring-1 must strip WIDGET_RING1_REQUIRED: {findings:#?}"
+        );
+
+        let raw_sources: Vec<RuntimeValue> = artifacts
+            .iter()
+            .map(|a| Ok(RuntimeValue::from_json_text(serde_json::to_string(a)?)?))
+            .collect::<Result<_, Box<dyn std::error::Error>>>()?;
+        let sources = ReceiptSources::new(&raw_sources, &[])?;
+        let limits = ResourceLimitProfile::norn_limits_v1();
+
+        let ring0_receipt =
+            norn_checker::check_artifact_set_with_receipt(&sources, &context, &limits)?;
+        assert!(!ring0_receipt.receipt.admitted);
+        assert!(ring0_receipt.diagnostics.iter().any(|d| {
+            d.is_error() && d.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED
+        }));
+
+        let ring1_receipt = check_artifact_set_with_receipt(&sources, &context, &limits)?;
+        assert!(!ring1_receipt.receipt.admitted);
+        assert_eq!(ring1_receipt.diagnostics, findings);
+        assert_eq!(
+            ring1_receipt.receipt.diagnostics,
+            DiagnosticsDigest::of(&findings)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_legacy_widget_diagnostics_preserves_ring0_error_over_ring1_warning_and_info() {
         let error = norn_ir::Diagnostic {
             code: "widget.validation.invalid_payload".to_owned(),
             severity: DiagnosticSeverity::Error,
@@ -595,7 +737,7 @@ mod ring1_composition_tests {
             ..error.clone()
         };
 
-        let merged = splice_legacy_widget_findings(
+        let merged = merge_legacy_widget_diagnostics(
             vec![error.clone(), marker.clone()],
             vec![warning.clone(), info],
         );
@@ -605,7 +747,7 @@ mod ring1_composition_tests {
             Some(&DiagnosticSeverity::Error)
         );
 
-        let upgraded = splice_legacy_widget_findings(vec![warning, marker], vec![error]);
+        let upgraded = merge_legacy_widget_diagnostics(vec![warning, marker], vec![error]);
         assert_eq!(upgraded.len(), 1);
         assert_eq!(
             upgraded.first().map(|d| &d.severity),

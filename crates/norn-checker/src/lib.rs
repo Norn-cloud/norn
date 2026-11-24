@@ -103,7 +103,8 @@ pub mod verification;
 pub use action_set::{check_action_firing, check_action_set};
 pub use agent::{AgentContext, check_agent};
 pub use artifact_set::{
-    ResolvedArtifactSet, check_artifact_set, may_reference, resolve_artifact_set, scope_conflict,
+    ResolvedArtifactSet, Ring0ArtifactSetPhases, check_artifact_set,
+    check_artifact_set_ring0_phases, may_reference, resolve_artifact_set, scope_conflict,
 };
 pub use codes::{CodeEntry, Tier, conformance_manifest};
 pub use definitions_diff::{
