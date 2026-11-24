@@ -14,6 +14,8 @@
     reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
 )]
 
+#[path = "accounting_vertical_e2e.rs"]
+mod accounting_vertical_e2e;
 #[path = "bench_clauses.rs"]
 mod bench_clauses;
 #[path = "bench_import.rs"]

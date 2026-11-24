@@ -1,0 +1,167 @@
+{
+  "artifactId": "accounting.MonetaryAccount.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Monetary account",
+  "namespace": "accounting",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A conserved cash, bank, clearing, or control monetary resource (implements core.Resource).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Resource"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Counterparty or legal entity owning this monetary account.",
+          "id": "owner",
+          "target": "accounting.Counterparty"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Bank or custodian holding this monetary account.",
+          "id": "custodian",
+          "target": "accounting.Counterparty"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Ledger book tracking this monetary account.",
+          "id": "book",
+          "target": "accounting.Book"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Chart-of-accounts control account mapped to this monetary resource.",
+          "id": "gl_account",
+          "target": "accounting.Account"
+        }
+      ],
+      "name": "accounting.MonetaryAccount",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "resource_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "ref",
+            "name": "core.quantity",
+            "unitSource": [
+              "unit",
+              "currency"
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "valuation_method",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "fifo"
+              },
+              {
+                "value": "moving_average"
+              }
+            ]
+          }
+        },
+        {
+          "id": "account_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "cash"
+              },
+              {
+                "value": "bank"
+              },
+              {
+                "value": "clearing"
+              },
+              {
+                "value": "control"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.MonetaryAccount.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

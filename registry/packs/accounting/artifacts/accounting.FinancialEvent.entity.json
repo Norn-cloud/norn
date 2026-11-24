@@ -1,0 +1,163 @@
+{
+  "artifactId": "accounting.FinancialEvent.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Financial event",
+  "namespace": "accounting",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "An immutable economic event backing posted journal lines or value movements (implements core.EconomicEvent).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.EconomicEvent"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Counterparty providing value in this financial event.",
+          "id": "provider",
+          "target": "accounting.Counterparty"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Counterparty receiving value in this financial event.",
+          "id": "receiver",
+          "target": "accounting.Counterparty"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Monetary account moved or adjusted by this financial event.",
+          "id": "resource",
+          "target": "accounting.MonetaryAccount"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional commitment fulfilled by this financial event.",
+          "id": "fulfils",
+          "target": "core.Commitment"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "description": "Optional prior financial event reversed by this event.",
+          "id": "reverses",
+          "target": "accounting.FinancialEvent"
+        }
+      ],
+      "name": "accounting.FinancialEvent",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "action",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "transfer_ownership"
+              },
+              {
+                "value": "transfer_custody"
+              },
+              {
+                "value": "consume"
+              },
+              {
+                "value": "produce"
+              }
+            ]
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.quantity",
+            "unitSource": [
+              "unit",
+              "currency"
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "reference_no",
+          "type": {
+            "kind": "ref",
+            "name": "core.document_number"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.FinancialEvent.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

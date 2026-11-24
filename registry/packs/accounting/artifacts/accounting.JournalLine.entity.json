@@ -1,0 +1,147 @@
+{
+  "artifactId": "accounting.JournalLine.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Journal line",
+  "namespace": "accounting",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "One strictly one-sided debit or credit posting line valuing a financial event (implements core.LedgerEffect).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.LedgerEffect"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Underlying financial event valued by this ledger effect.",
+          "id": "event",
+          "target": "accounting.FinancialEvent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Parent journal entry containing this posting line.",
+          "id": "entry",
+          "target": "accounting.JournalEntry"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Chart-of-accounts node posted by this line.",
+          "id": "account",
+          "target": "accounting.Account"
+        }
+      ],
+      "name": "accounting.JournalLine",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "account_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "side",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "debit"
+              },
+              {
+                "value": "credit"
+              }
+            ]
+          }
+        },
+        {
+          "id": "amount",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "debit_amount",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "credit_amount",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "description",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.JournalLine.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

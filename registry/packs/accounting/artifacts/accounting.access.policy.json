@@ -1,0 +1,198 @@
+{
+  "artifactId": "accounting.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Accounting action authorization policy",
+  "namespace": "accounting",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "accounting.access",
+    "rules": [
+      {
+        "actions": [
+          "accounting.journal.post"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "senior_accountant",
+                "controller",
+                "owner"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "created_by_user_id",
+              "op": "ne",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "accounting.JournalEntry",
+        "ruleId": "post_journal_entry",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "accounting.journal.reverse"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "controller",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "accounting.JournalEntry",
+        "ruleId": "reverse_journal_entry",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "accounting.period.close"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "senior_accountant",
+                "controller",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "accounting.FiscalPeriod",
+        "ruleId": "close_fiscal_period",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "accounting.period.lock"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "controller",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "accounting.FiscalPeriod",
+        "ruleId": "lock_fiscal_period",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "accounting.invoice.issue"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "accountant",
+                "senior_accountant",
+                "controller",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "accounting.Invoice",
+        "ruleId": "issue_invoice",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "accounting.invoice.void"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "senior_accountant",
+                "controller",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "accounting.Invoice",
+        "ruleId": "void_invoice",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "accounting.payment.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "accountant",
+                "senior_accountant",
+                "controller",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "accounting.Payment",
+        "ruleId": "record_payment",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

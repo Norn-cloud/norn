@@ -1,0 +1,152 @@
+{
+  "artifactId": "accounting.FiscalPeriod.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Fiscal period",
+  "namespace": "accounting",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A proper half-open [starts_at, ends_at) UTC accounting period governing posting cutoffs (implements core.TimeInterval).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.TimeInterval"
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "locked"
+          ],
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "locked"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "id": "begin_close",
+              "to": "closing"
+            },
+            {
+              "from": [
+                "open",
+                "closing"
+              ],
+              "id": "close",
+              "to": "closed"
+            },
+            {
+              "from": [
+                "closing",
+                "closed"
+              ],
+              "id": "reopen",
+              "to": "open"
+            },
+            {
+              "from": [
+                "closed"
+              ],
+              "id": "lock",
+              "to": "locked"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Ledger book governed by this fiscal period.",
+          "id": "book",
+          "target": "accounting.Book"
+        }
+      ],
+      "name": "accounting.FiscalPeriod",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "period_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "starts_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "ends_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "timezone",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
+          }
+        },
+        {
+          "default": "open",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "closing"
+              },
+              {
+                "value": "closed"
+              },
+              {
+                "value": "locked"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.FiscalPeriod.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

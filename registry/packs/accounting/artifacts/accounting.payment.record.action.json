@@ -1,0 +1,205 @@
+{
+  "artifactId": "accounting.payment.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record immutable payment",
+  "namespace": "accounting",
+  "payload": {
+    "access": {
+      "artifactId": "accounting.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "accounting.payment.record",
+    "createLinks": [
+      {
+        "link": "provider",
+        "targetIdField": "providerId",
+        "targetType": "accounting.Counterparty"
+      },
+      {
+        "link": "receiver",
+        "targetIdField": "receiverId",
+        "targetType": "accounting.Counterparty"
+      },
+      {
+        "link": "resource",
+        "targetIdField": "resourceId",
+        "targetType": "accounting.MonetaryAccount"
+      },
+      {
+        "link": "settles",
+        "targetIdField": "invoiceId",
+        "targetType": "accounting.Invoice"
+      }
+    ],
+    "description": "Record a create-only immutable payment settling an invoice claim and updating conserved monetary custody.",
+    "effectProgram": {
+      "entityArtifactId": "accounting.Payment.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "accounting.Payment",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "transfer_ownership",
+            "transfer_custody",
+            "consume",
+            "produce"
+          ],
+          "type": "string"
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "invoiceId": {
+          "type": "string"
+        },
+        "occurred_at": {
+          "type": "string"
+        },
+        "payment_method": {
+          "enum": [
+            "bank_transfer",
+            "cash",
+            "card",
+            "check",
+            "wire",
+            "other"
+          ],
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "quantity": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "receiverId": {
+          "type": "string"
+        },
+        "reference_no": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "occurred_at",
+        "quantity",
+        "unit",
+        "currency",
+        "payment_method",
+        "reference_no",
+        "providerId",
+        "receiverId",
+        "resourceId",
+        "invoiceId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "input.quantity > 0"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "providerId"
+          }
+        },
+        "name": "provider",
+        "objectType": "accounting.Counterparty"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "receiverId"
+          }
+        },
+        "name": "receiver",
+        "objectType": "accounting.Counterparty"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "resourceId"
+          }
+        },
+        "name": "resource",
+        "objectType": "accounting.MonetaryAccount"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "invoiceId"
+          }
+        },
+        "name": "invoice",
+        "objectType": "accounting.Invoice"
+      }
+    ],
+    "title": "Record immutable payment",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "accounting.Payment"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.payment.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,97 @@
+{
+  "artifactId": "accounting.Counterparty.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Counterparty",
+  "namespace": "accounting",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A legal entity, customer, supplier, or bank participating in financial claims and payments (implements core.Agent).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Agent"
+      ],
+      "name": "accounting.Counterparty",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "default": "organization",
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "person"
+              },
+              {
+                "value": "organization"
+              },
+              {
+                "value": "system"
+              }
+            ]
+          }
+        },
+        {
+          "id": "counterparty_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "counterparty_type",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "customer"
+              },
+              {
+                "value": "supplier"
+              },
+              {
+                "value": "bank"
+              },
+              {
+                "value": "entity"
+              },
+              {
+                "value": "other"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.Counterparty.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

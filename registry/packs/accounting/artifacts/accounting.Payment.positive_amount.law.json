@@ -1,0 +1,50 @@
+{
+  "artifactId": "accounting.Payment.positive_amount.law",
+  "dependencies": [
+    {
+      "artifactId": "accounting.Payment.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Payment quantity is strictly positive",
+  "namespace": "accounting",
+  "payload": {
+    "id": "accounting.Payment.positive_amount",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "accounting",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/accounting/settlement.ts"
+    },
+    "rationale": "Every recorded payment economic event must transfer a strictly positive monetary quantity.",
+    "response": {
+      "expression": "self.quantity > 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "accounting.Payment"
+      ],
+      "root": {
+        "id": "accounting.Payment",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "accounting.Payment"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.Payment.positive_amount.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

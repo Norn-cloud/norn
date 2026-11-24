@@ -1,0 +1,718 @@
+{
+  "artifactId": "accounting.Account.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Ledger account",
+  "namespace": "accounting",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A chart-of-accounts node within a ledger book; grouping accounts aggregate children and forbid direct posting.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "archived"
+          ],
+          "initial": [
+            "active"
+          ],
+          "property": "status",
+          "terminal": [
+            "archived"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "active"
+              ],
+              "id": "freeze",
+              "to": "frozen"
+            },
+            {
+              "from": [
+                "frozen"
+              ],
+              "id": "unfreeze",
+              "to": "active"
+            },
+            {
+              "from": [
+                "active",
+                "frozen"
+              ],
+              "id": "archive",
+              "to": "archived"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Ledger book owning this account.",
+          "id": "book",
+          "target": "accounting.Book"
+        },
+        {
+          "acyclic": true,
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional parent grouping account in the chart hierarchy.",
+          "id": "parent",
+          "target": "accounting.Account"
+        }
+      ],
+      "name": "accounting.Account",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "account_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "account_class",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "asset"
+              },
+              {
+                "value": "liability"
+              },
+              {
+                "value": "equity"
+              },
+              {
+                "value": "revenue"
+              },
+              {
+                "value": "expense"
+              }
+            ]
+          }
+        },
+        {
+          "id": "normal_balance",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "debit"
+              },
+              {
+                "value": "credit"
+              }
+            ]
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "AED"
+              },
+              {
+                "value": "AFN"
+              },
+              {
+                "value": "ALL"
+              },
+              {
+                "value": "AMD"
+              },
+              {
+                "value": "AOA"
+              },
+              {
+                "value": "ARS"
+              },
+              {
+                "value": "AUD"
+              },
+              {
+                "value": "AWG"
+              },
+              {
+                "value": "AZN"
+              },
+              {
+                "value": "BAM"
+              },
+              {
+                "value": "BBD"
+              },
+              {
+                "value": "BDT"
+              },
+              {
+                "value": "BHD"
+              },
+              {
+                "value": "BIF"
+              },
+              {
+                "value": "BMD"
+              },
+              {
+                "value": "BND"
+              },
+              {
+                "value": "BOB"
+              },
+              {
+                "value": "BOV"
+              },
+              {
+                "value": "BRL"
+              },
+              {
+                "value": "BSD"
+              },
+              {
+                "value": "BTN"
+              },
+              {
+                "value": "BWP"
+              },
+              {
+                "value": "BYN"
+              },
+              {
+                "value": "BZD"
+              },
+              {
+                "value": "CAD"
+              },
+              {
+                "value": "CDF"
+              },
+              {
+                "value": "CHE"
+              },
+              {
+                "value": "CHF"
+              },
+              {
+                "value": "CHW"
+              },
+              {
+                "value": "CLF"
+              },
+              {
+                "value": "CLP"
+              },
+              {
+                "value": "CNY"
+              },
+              {
+                "value": "COP"
+              },
+              {
+                "value": "COU"
+              },
+              {
+                "value": "CRC"
+              },
+              {
+                "value": "CUP"
+              },
+              {
+                "value": "CVE"
+              },
+              {
+                "value": "CZK"
+              },
+              {
+                "value": "DJF"
+              },
+              {
+                "value": "DKK"
+              },
+              {
+                "value": "DOP"
+              },
+              {
+                "value": "DZD"
+              },
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "ERN"
+              },
+              {
+                "value": "ETB"
+              },
+              {
+                "value": "EUR"
+              },
+              {
+                "value": "FJD"
+              },
+              {
+                "value": "FKP"
+              },
+              {
+                "value": "GBP"
+              },
+              {
+                "value": "GEL"
+              },
+              {
+                "value": "GHS"
+              },
+              {
+                "value": "GIP"
+              },
+              {
+                "value": "GMD"
+              },
+              {
+                "value": "GNF"
+              },
+              {
+                "value": "GTQ"
+              },
+              {
+                "value": "GYD"
+              },
+              {
+                "value": "HKD"
+              },
+              {
+                "value": "HNL"
+              },
+              {
+                "value": "HTG"
+              },
+              {
+                "value": "HUF"
+              },
+              {
+                "value": "IDR"
+              },
+              {
+                "value": "ILS"
+              },
+              {
+                "value": "INR"
+              },
+              {
+                "value": "IQD"
+              },
+              {
+                "value": "IRR"
+              },
+              {
+                "value": "ISK"
+              },
+              {
+                "value": "JMD"
+              },
+              {
+                "value": "JOD"
+              },
+              {
+                "value": "JPY"
+              },
+              {
+                "value": "KES"
+              },
+              {
+                "value": "KGS"
+              },
+              {
+                "value": "KHR"
+              },
+              {
+                "value": "KMF"
+              },
+              {
+                "value": "KPW"
+              },
+              {
+                "value": "KRW"
+              },
+              {
+                "value": "KWD"
+              },
+              {
+                "value": "KYD"
+              },
+              {
+                "value": "KZT"
+              },
+              {
+                "value": "LAK"
+              },
+              {
+                "value": "LBP"
+              },
+              {
+                "value": "LKR"
+              },
+              {
+                "value": "LRD"
+              },
+              {
+                "value": "LSL"
+              },
+              {
+                "value": "LYD"
+              },
+              {
+                "value": "MAD"
+              },
+              {
+                "value": "MDL"
+              },
+              {
+                "value": "MGA"
+              },
+              {
+                "value": "MKD"
+              },
+              {
+                "value": "MMK"
+              },
+              {
+                "value": "MNT"
+              },
+              {
+                "value": "MOP"
+              },
+              {
+                "value": "MRU"
+              },
+              {
+                "value": "MUR"
+              },
+              {
+                "value": "MVR"
+              },
+              {
+                "value": "MWK"
+              },
+              {
+                "value": "MXN"
+              },
+              {
+                "value": "MXV"
+              },
+              {
+                "value": "MYR"
+              },
+              {
+                "value": "MZN"
+              },
+              {
+                "value": "NAD"
+              },
+              {
+                "value": "NGN"
+              },
+              {
+                "value": "NIO"
+              },
+              {
+                "value": "NOK"
+              },
+              {
+                "value": "NPR"
+              },
+              {
+                "value": "NZD"
+              },
+              {
+                "value": "OMR"
+              },
+              {
+                "value": "PAB"
+              },
+              {
+                "value": "PEN"
+              },
+              {
+                "value": "PGK"
+              },
+              {
+                "value": "PHP"
+              },
+              {
+                "value": "PKR"
+              },
+              {
+                "value": "PLN"
+              },
+              {
+                "value": "PYG"
+              },
+              {
+                "value": "QAR"
+              },
+              {
+                "value": "RON"
+              },
+              {
+                "value": "RSD"
+              },
+              {
+                "value": "RUB"
+              },
+              {
+                "value": "RWF"
+              },
+              {
+                "value": "SAR"
+              },
+              {
+                "value": "SBD"
+              },
+              {
+                "value": "SCR"
+              },
+              {
+                "value": "SDG"
+              },
+              {
+                "value": "SEK"
+              },
+              {
+                "value": "SGD"
+              },
+              {
+                "value": "SHP"
+              },
+              {
+                "value": "SLE"
+              },
+              {
+                "value": "SOS"
+              },
+              {
+                "value": "SRD"
+              },
+              {
+                "value": "SSP"
+              },
+              {
+                "value": "STN"
+              },
+              {
+                "value": "SVC"
+              },
+              {
+                "value": "SYP"
+              },
+              {
+                "value": "SZL"
+              },
+              {
+                "value": "THB"
+              },
+              {
+                "value": "TJS"
+              },
+              {
+                "value": "TMT"
+              },
+              {
+                "value": "TND"
+              },
+              {
+                "value": "TOP"
+              },
+              {
+                "value": "TRY"
+              },
+              {
+                "value": "TTD"
+              },
+              {
+                "value": "TWD"
+              },
+              {
+                "value": "TZS"
+              },
+              {
+                "value": "UAH"
+              },
+              {
+                "value": "UGX"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "USN"
+              },
+              {
+                "value": "UYI"
+              },
+              {
+                "value": "UYU"
+              },
+              {
+                "value": "UYW"
+              },
+              {
+                "value": "UZS"
+              },
+              {
+                "value": "VED"
+              },
+              {
+                "value": "VES"
+              },
+              {
+                "value": "VND"
+              },
+              {
+                "value": "VUV"
+              },
+              {
+                "value": "WST"
+              },
+              {
+                "value": "XAD"
+              },
+              {
+                "value": "XAF"
+              },
+              {
+                "value": "XAG"
+              },
+              {
+                "value": "XAU"
+              },
+              {
+                "value": "XBA"
+              },
+              {
+                "value": "XBB"
+              },
+              {
+                "value": "XBC"
+              },
+              {
+                "value": "XBD"
+              },
+              {
+                "value": "XCD"
+              },
+              {
+                "value": "XCG"
+              },
+              {
+                "value": "XDR"
+              },
+              {
+                "value": "XOF"
+              },
+              {
+                "value": "XPD"
+              },
+              {
+                "value": "XPF"
+              },
+              {
+                "value": "XPT"
+              },
+              {
+                "value": "XSU"
+              },
+              {
+                "value": "XUA"
+              },
+              {
+                "value": "YER"
+              },
+              {
+                "value": "ZAR"
+              },
+              {
+                "value": "ZMW"
+              },
+              {
+                "value": "ZWG"
+              }
+            ]
+          }
+        },
+        {
+          "default": false,
+          "id": "is_group",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "default": true,
+          "id": "allow_direct_posting",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "default": "active",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "active"
+              },
+              {
+                "value": "frozen"
+              },
+              {
+                "value": "archived"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.Account.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,50 @@
+{
+  "artifactId": "accounting.JournalLine.one_sided.law",
+  "dependencies": [
+    {
+      "artifactId": "accounting.JournalLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Every journal line is strictly one-sided (debit or credit) with a matching positive amount",
+  "namespace": "accounting",
+  "payload": {
+    "id": "accounting.JournalLine.one_sided",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "accounting",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/accounting/ledger.ts"
+    },
+    "rationale": "A journal line must carry a strictly positive amount on exactly one side (debit or credit), zero on the opposite side, and match its canonical amount.",
+    "response": {
+      "expression": "(self.side == \"debit\" and self.debit_amount > 0 and self.credit_amount == 0 and self.amount == self.debit_amount) or (self.side == \"credit\" and self.credit_amount > 0 and self.debit_amount == 0 and self.amount == self.credit_amount)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "accounting.JournalLine"
+      ],
+      "root": {
+        "id": "accounting.JournalLine",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "accounting.JournalLine"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.JournalLine.one_sided.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

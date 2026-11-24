@@ -1,0 +1,73 @@
+{
+  "artifactId": "accounting.period.lock.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Lock fiscal period",
+  "namespace": "accounting",
+  "payload": {
+    "access": {
+      "artifactId": "accounting.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "accounting.period.lock",
+    "description": "Permanently lock a closed fiscal period so it becomes immutable.",
+    "effectProgram": {
+      "entityArtifactId": "accounting.FiscalPeriod.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "periodId",
+      "objectKind": "accounting.FiscalPeriod",
+      "transition": "lock"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "periodId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "periodId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "periodId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "periodId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Lock fiscal period",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "accounting.FiscalPeriod"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.period.lock.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

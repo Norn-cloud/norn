@@ -1,0 +1,88 @@
+{
+  "artifactId": "accounting.invoice.issue.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Issue invoice",
+  "namespace": "accounting",
+  "payload": {
+    "access": {
+      "artifactId": "accounting.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "accounting.invoice.issue",
+    "description": "Issue a draft invoice once its total amount is strictly positive.",
+    "effectProgram": {
+      "entityArtifactId": "accounting.Invoice.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "invoiceId",
+      "objectKind": "accounting.Invoice",
+      "transition": "issue"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "invoiceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "invoiceId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "invoiceId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "invoiceId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.invoice.status == 'draft') and (slice.invoice.amount > 0)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "invoiceId"
+          }
+        },
+        "name": "invoice",
+        "objectType": "accounting.Invoice"
+      }
+    ],
+    "title": "Issue invoice",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "accounting.Invoice"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.invoice.issue.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

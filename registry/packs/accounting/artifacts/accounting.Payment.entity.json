@@ -1,0 +1,195 @@
+{
+  "artifactId": "accounting.Payment.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Payment",
+  "namespace": "accounting",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "An immutable, create-only payment or settlement economic event (implements core.EconomicEvent).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.EconomicEvent"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Counterparty remitting the payment.",
+          "id": "provider",
+          "target": "accounting.Counterparty"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Counterparty receiving the payment.",
+          "id": "receiver",
+          "target": "accounting.Counterparty"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Monetary account settled by this payment.",
+          "id": "resource",
+          "target": "accounting.MonetaryAccount"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional commitment fulfilled by this payment.",
+          "id": "fulfils",
+          "target": "core.Commitment"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional invoice claim settled in whole or in part by this payment.",
+          "id": "settles",
+          "target": "accounting.Invoice"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "description": "Optional prior payment reversed by this payment.",
+          "id": "reverses",
+          "target": "accounting.Payment"
+        }
+      ],
+      "name": "accounting.Payment",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "action",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "transfer_ownership"
+              },
+              {
+                "value": "transfer_custody"
+              },
+              {
+                "value": "consume"
+              },
+              {
+                "value": "produce"
+              }
+            ]
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.quantity",
+            "unitSource": [
+              "unit",
+              "currency"
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "payment_method",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "bank_transfer"
+              },
+              {
+                "value": "cash"
+              },
+              {
+                "value": "card"
+              },
+              {
+                "value": "check"
+              },
+              {
+                "value": "wire"
+              },
+              {
+                "value": "other"
+              }
+            ]
+          }
+        },
+        {
+          "id": "reference_no",
+          "type": {
+            "kind": "ref",
+            "name": "core.document_number"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.Payment.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

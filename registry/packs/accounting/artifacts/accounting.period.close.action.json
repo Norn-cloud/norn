@@ -1,0 +1,73 @@
+{
+  "artifactId": "accounting.period.close.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Close fiscal period",
+  "namespace": "accounting",
+  "payload": {
+    "access": {
+      "artifactId": "accounting.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "accounting.period.close",
+    "description": "Close an open or closing fiscal period so no further regular journal entries post into it.",
+    "effectProgram": {
+      "entityArtifactId": "accounting.FiscalPeriod.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "periodId",
+      "objectKind": "accounting.FiscalPeriod",
+      "transition": "close"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "periodId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "periodId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "periodId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "periodId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Close fiscal period",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "accounting.FiscalPeriod"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.period.close.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

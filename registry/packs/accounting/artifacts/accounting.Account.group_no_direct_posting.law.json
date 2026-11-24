@@ -1,0 +1,50 @@
+{
+  "artifactId": "accounting.Account.group_no_direct_posting.law",
+  "dependencies": [
+    {
+      "artifactId": "accounting.Account.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Grouping accounts in the chart of accounts must never allow direct journal posting.",
+  "namespace": "accounting",
+  "payload": {
+    "id": "accounting.Account.group_no_direct_posting",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "accounting",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/accounting/ledger.ts"
+    },
+    "rationale": "Grouping accounts in the chart of accounts must never allow direct journal posting.",
+    "response": {
+      "expression": "(not self.is_group) or (not self.allow_direct_posting)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "accounting.Account"
+      ],
+      "root": {
+        "id": "accounting.Account",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "accounting.Account"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.Account.group_no_direct_posting.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

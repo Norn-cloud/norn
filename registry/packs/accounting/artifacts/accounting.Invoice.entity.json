@@ -1,0 +1,243 @@
+{
+  "artifactId": "accounting.Invoice.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Invoice",
+  "namespace": "accounting",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "An accounts receivable or accounts payable economic claim (implements core.Claim).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Claim"
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "paid",
+            "voided"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "paid",
+            "voided"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "issue",
+              "to": "issued"
+            },
+            {
+              "from": [
+                "issued",
+                "partially_paid"
+              ],
+              "id": "record_partial_payment",
+              "to": "partially_paid"
+            },
+            {
+              "from": [
+                "issued",
+                "partially_paid"
+              ],
+              "id": "mark_paid",
+              "to": "paid"
+            },
+            {
+              "from": [
+                "draft",
+                "issued"
+              ],
+              "id": "void",
+              "to": "voided"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Counterparty entitled to receive payment on this invoice.",
+          "id": "creditor",
+          "target": "accounting.Counterparty"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Counterparty obliged to settle this invoice.",
+          "id": "debtor",
+          "target": "accounting.Counterparty"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional commitment that gave rise to this invoice claim.",
+          "id": "arises_from",
+          "target": "core.Commitment"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Ledger book recording this invoice.",
+          "id": "book",
+          "target": "accounting.Book"
+        }
+      ],
+      "name": "accounting.Invoice",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "invoice_number",
+          "type": {
+            "kind": "ref",
+            "name": "core.document_number"
+          }
+        },
+        {
+          "id": "direction",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "receivable"
+              },
+              {
+                "value": "payable"
+              }
+            ]
+          }
+        },
+        {
+          "id": "subtotal",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "tax_amount",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "amount",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "amount_paid",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "due_date",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.date"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "issued"
+              },
+              {
+                "value": "partially_paid"
+              },
+              {
+                "value": "paid"
+              },
+              {
+                "value": "voided"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.Invoice.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

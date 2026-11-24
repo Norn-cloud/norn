@@ -1,0 +1,50 @@
+{
+  "artifactId": "accounting.Invoice.amount_conservation.law",
+  "dependencies": [
+    {
+      "artifactId": "accounting.Invoice.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Invoice amounts conserve subtotal + tax and bound settled amount",
+  "namespace": "accounting",
+  "payload": {
+    "id": "accounting.Invoice.amount_conservation",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "accounting",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/accounting/settlement.ts"
+    },
+    "rationale": "Subtotal and tax must be non-negative, invoice amount must equal subtotal + tax_amount, amount_paid must stay between 0 and amount, and non-draft invoices must have a strictly positive amount.",
+    "response": {
+      "expression": "self.subtotal >= 0 and self.tax_amount >= 0 and self.amount == self.subtotal + self.tax_amount and self.amount_paid >= 0 and self.amount_paid <= self.amount and (self.status == \"draft\" or self.amount > 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "accounting.Invoice"
+      ],
+      "root": {
+        "id": "accounting.Invoice",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "accounting.Invoice"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.Invoice.amount_conservation.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

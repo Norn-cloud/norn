@@ -1,0 +1,73 @@
+{
+  "artifactId": "accounting.journal.reverse.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Reverse posted journal entry",
+  "namespace": "accounting",
+  "payload": {
+    "access": {
+      "artifactId": "accounting.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "accounting.journal.reverse",
+    "description": "Mark a posted journal entry as reversed under controller authority.",
+    "effectProgram": {
+      "entityArtifactId": "accounting.JournalEntry.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "entryId",
+      "objectKind": "accounting.JournalEntry",
+      "transition": "reverse"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "entryId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entryId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "entryId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entryId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Reverse posted journal entry",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "accounting.JournalEntry"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.journal.reverse.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

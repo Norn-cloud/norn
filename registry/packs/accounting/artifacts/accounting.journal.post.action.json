@@ -1,0 +1,102 @@
+{
+  "artifactId": "accounting.journal.post.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Post journal entry",
+  "namespace": "accounting",
+  "payload": {
+    "access": {
+      "artifactId": "accounting.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "accounting.journal.post",
+    "description": "Post a balanced draft journal entry into an open fiscal period.",
+    "effectProgram": {
+      "entityArtifactId": "accounting.JournalEntry.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "entryId",
+      "objectKind": "accounting.JournalEntry",
+      "transition": "post"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "entryId": {
+          "type": "string"
+        },
+        "periodId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entryId",
+        "periodId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "entryId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entryId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.period.status == 'open') and (slice.entry.total_debit == slice.entry.total_credit)) and (slice.entry.total_debit > 0)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entryId"
+          }
+        },
+        "name": "entry",
+        "objectType": "accounting.JournalEntry"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "periodId"
+          }
+        },
+        "name": "period",
+        "objectType": "accounting.FiscalPeriod"
+      }
+    ],
+    "title": "Post journal entry",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "accounting.JournalEntry"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.journal.post.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

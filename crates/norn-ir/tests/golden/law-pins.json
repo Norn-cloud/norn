@@ -18,6 +18,12 @@
   "fixtures/stress/purchase.json#/2/payload": "sha256:f53176436c3004c05dc56d729090e47b113d5e8684a8d988b547584fbbe65243",
   "fixtures/stress/purchase.json#/8/payload": "sha256:8e1e5b30c6a8eb9816f2e392b3fae9af4e17c28dc04049598af66c546e5745e9",
   "registry/core/artifacts/core.analytics.restatement_policy.law.json#/payload": "sha256:6411cda959ac4fb05c1e95494508beb4a7a2a749cc5518396a04fd2db6410430",
+  "registry/packs/accounting/artifacts/accounting.Account.group_no_direct_posting.law.json#/payload": "sha256:bacf524fe3203d7536d38c8a53fe160aeb93dfc1a143a22d14fe17af7c80deec",
+  "registry/packs/accounting/artifacts/accounting.Invoice.amount_conservation.law.json#/payload": "sha256:4f5390dfde08992c15e35abf644fc982e13f3a78e3b743f8a7c236afd7f30e5b",
+  "registry/packs/accounting/artifacts/accounting.JournalEntry.balanced.law.json#/payload": "sha256:7f859c9d34f12a27a7fb0f63ba886c4c25b6baeb9b0e49957f028e089c81b46c",
+  "registry/packs/accounting/artifacts/accounting.JournalLine.one_sided.law.json#/payload": "sha256:44695bdf87ed772b4e02d7fae922c4d3859f21396c08b2a771bc9bebee7056b9",
+  "registry/packs/accounting/artifacts/accounting.MonetaryAccount.non_negative.law.json#/payload": "sha256:229018e4e5ebf796c7c9a8d12183342aaaf2513d2d14e4518f76e702c42f2fcd",
+  "registry/packs/accounting/artifacts/accounting.Payment.positive_amount.law.json#/payload": "sha256:8436af1f058a816bda91fee2d3607c603f44fe78d18698684b1df4d7c954688f",
   "registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json#/payload": "sha256:18f52fd6fea89c188a2295a098a01b66e949a90c77ec002447a857351651eada",
   "registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json#/payload": "sha256:73ed6579985cbd585a92a9e80ee0febcd45e9e93836fdad57aa9417b32138eaa",
   "registry/packs/ml/artifacts/ml.promotion_policy.law.json#/payload": "sha256:28490dcafd59948a98dcb621e09fe8eb69004c9de0f61ac2ce3402364e76803c"

@@ -1,0 +1,50 @@
+{
+  "artifactId": "accounting.MonetaryAccount.non_negative.law",
+  "dependencies": [
+    {
+      "artifactId": "accounting.MonetaryAccount.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Monetary account balance is non-negative",
+  "namespace": "accounting",
+  "payload": {
+    "id": "accounting.MonetaryAccount.non_negative",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "accounting",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/accounting/ledger.ts"
+    },
+    "rationale": "A conserved monetary resource balance must remain non-negative unless modeled as an explicit credit liability.",
+    "response": {
+      "expression": "self.quantity >= 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "accounting.MonetaryAccount"
+      ],
+      "root": {
+        "id": "accounting.MonetaryAccount",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "accounting.MonetaryAccount"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.MonetaryAccount.non_negative.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

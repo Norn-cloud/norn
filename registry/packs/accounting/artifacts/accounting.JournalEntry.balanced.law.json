@@ -1,0 +1,51 @@
+{
+  "artifactId": "accounting.JournalEntry.balanced.law",
+  "dependencies": [
+    {
+      "artifactId": "accounting.JournalEntry.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Every non-draft journal entry must have equal, strictly positive total debits and credits.",
+  "namespace": "accounting",
+  "payload": {
+    "condition": "self.status != 'draft'",
+    "id": "accounting.JournalEntry.balanced",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "accounting",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/accounting/ledger.ts"
+    },
+    "rationale": "Every non-draft journal entry must have equal, strictly positive total debits and credits.",
+    "response": {
+      "expression": "(self.total_debit == self.total_credit) and (self.total_debit > 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "accounting.JournalEntry"
+      ],
+      "root": {
+        "id": "accounting.JournalEntry",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "accounting.JournalEntry"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.JournalEntry.balanced.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

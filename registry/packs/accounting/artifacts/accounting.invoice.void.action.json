@@ -1,0 +1,73 @@
+{
+  "artifactId": "accounting.invoice.void.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Void invoice",
+  "namespace": "accounting",
+  "payload": {
+    "access": {
+      "artifactId": "accounting.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "accounting.invoice.void",
+    "description": "Void an unpaid draft or issued invoice.",
+    "effectProgram": {
+      "entityArtifactId": "accounting.Invoice.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "invoiceId",
+      "objectKind": "accounting.Invoice",
+      "transition": "void"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "invoiceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "invoiceId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "invoiceId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "invoiceId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Void invoice",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "accounting.Invoice"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.invoice.void.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
