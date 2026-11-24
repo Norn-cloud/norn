@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { activeVersion, agentAnswerIssue, agentTailIssue, authDeploy, deploymentStableIssue, cellHost, cloudflareCredentials, deployTarget, domainParity, NORN_CLOUDFLARE_ACCOUNT_ID, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, requireSignInRecipe, requireWorkerScript, useCloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
+import { activeVersion, agentAnswerIssue, agentTailIssue, authDeploy, deploymentStableIssue, cellHost, cellHostUrl, cloudflareCredentials, deployTarget, domainParity, NORN_CLOUDFLARE_ACCOUNT_ID, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, requireSignInRecipe, requireWorkerScript, useCloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
 
 const preview = deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-preview.norn.cloud" })
 const prod = deployTarget({ ALCHEMY_STAGE: "prod", NORN_DEPLOY_PROD: "1" })
@@ -173,6 +173,11 @@ test("only preview binds a cell Worker, by script name; prod has none until prom
   expect(cellHost(preview)).toBe("norn-cell-preview")
   expect(cellHost(prod)).toBeUndefined()
   expect(cellHost(deployTarget({ ALCHEMY_STAGE: "pr-12", STUDIO_DOMAINS: "studio-pr-12.norn.cloud" }))).toBeUndefined()
+  // The alpha reaches its self-hosted Rivet runners over HTTPS, and binds no cell Worker.
+  const alpha = deployTarget({ ALCHEMY_STAGE: "alpha", STUDIO_DOMAINS: "alpha.norn.cloud" })
+  expect(cellHostUrl(alpha)).toBe("https://alpha-cells.norn.cloud")
+  expect(cellHost(alpha)).toBeUndefined()
+  expect(cellHostUrl(preview)).toBeUndefined()
 })
 
 test("a missing cell Worker fails the deploy by name; an existing one passes", async () => {
