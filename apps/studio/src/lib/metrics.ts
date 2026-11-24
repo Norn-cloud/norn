@@ -71,7 +71,7 @@ export function metricHeading(metric: Pick<MetricSummary, "additivity" | "label"
   }
   const additivity = additivityOf(metric)
   const word = property.charAt(0).toUpperCase() + property.slice(1)
-  if (additivity?.kind === "additive") return `Total ${property}`
+  if (additivity?.kind === "additive") return word === "Total" ? word : `Total ${property}`
   if (additivity?.kind === "semi_additive") return `${word}, ${REDUCTION[additivity.aggregate](grain)}`
   return word
 }

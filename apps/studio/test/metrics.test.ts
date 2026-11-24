@@ -8,6 +8,7 @@ const RATIO = { kind: "ratio", expression: null, label: "sum(output_fine_g) / su
 
 test("only a sum the cell may add across time is a total", () => {
   expect(metricHeading(SUM, "week")).toBe("Total quantity")
+  expect(metricHeading({ ...SUM, expression: "total" }, "week")).toBe("Total")
   expect(metricHeading(AS_OF, "week")).toBe("Quantity, end of week")
   expect(metricHeading({ ...AS_OF, expression: "stock_cost" }, "week")).toBe("Stock cost, end of week")
 })
