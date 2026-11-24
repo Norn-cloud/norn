@@ -82,7 +82,7 @@ export function DecisionsPage() {
   const heldCount = heldSection && (heldSection.count > 0 || heldSection.approximate) ? heldCountText(heldSection.count, heldSection.approximate) : undefined
 
   const body = (() => {
-    if (read.isPending) return <LoadState status="pending" skeleton="list" loadingLabel="Reading decisions" onRetry={refresh}>{() => null}</LoadState>
+    if (read.isPending) return <LoadState status="pending" bone="decisions-list" skeleton="list" loadingLabel="Reading decisions" onRetry={refresh}>{() => null}</LoadState>
     if (read.isError) return <LoadState status="error" error={read.error} isFetching={read.isFetching} onRetry={() => void read.refetch()}>{() => null}</LoadState>
     const result = read.data?.result
     if (result?.kind === "no-cell") return <EmptyState icon={Inbox} title="No data cell">{NO_DATA_CELL}</EmptyState>

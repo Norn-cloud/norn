@@ -4,9 +4,7 @@
     python3 -m unittest apps/norn-cell-do/conformance/test_conformance.py
 """
 import importlib.util
-import json
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -24,10 +22,8 @@ class StubHost:
     controls = True
     runners = 1
 
-    def __init__(self, project=None, state=None):
-        self.project, self.state = project, state
+    def __init__(self):
         self.kills = self.starts = 0
-        StubHost.last = self
 
     def urls(self):
         return ["http://stub.invalid"]
@@ -56,89 +52,29 @@ def reference(steps=3):
     }
 
 
-class LocalRunLeavesTheProjectAlone(unittest.TestCase):
-    """S1: a local run writes the opt-in config only in a disposable copy."""
-
-    def test_source_wrangler_json_is_byte_identical(self):
-        self.run_local(symlinked=False)
-
-    def test_a_symlinked_wrangler_json_is_never_written_through(self):
-        self.run_local(symlinked=True)
-
-    def run_local(self, symlinked):
-        with tempfile.TemporaryDirectory() as root:
-            project = Path(root) / "project"
-            project.mkdir()
-            original = (HERE / "wrangler.json").read_bytes()
-            deployable = Path(root) / "deployable.json"
-            deployable.write_bytes(original)
-            state = Path(root) / "original-state"
-            state.mkdir()
-            (project / ".celld").symlink_to(state)
-            (project / ".open-orange").symlink_to(state)
-            (project / "wrangler.jsonc").symlink_to(deployable)
-            (project / "assets").mkdir()
-            (project / "linked").symlink_to((project / "assets").resolve())
-            if symlinked:
-                (project / "wrangler.json").symlink_to(deployable)
-            else:
-                (project / "wrangler.json").write_bytes(original)
-            ref = Path(root) / "reference.json"
-            ref.write_text(json.dumps({**reference(), "format": conformance.REFERENCE_FORMAT}))
-            argv = ["conformance.py", "--reference", str(ref), "--host", "celld", "--project", str(project), "--state", str(Path(root) / "state"), "--only", "none", "--quick"]
-            seen = {}
-
-            def host(path, state):
-                seen["config"] = json.loads((path / "wrangler.json").read_text())
-                seen["copy"] = path
-                linked = path / "linked"
-                seen["inward"] = linked.is_symlink() and project.resolve() in linked.resolve().parents
-                seen["celld"] = any((path / n).exists() or (path / n).is_symlink() for n in (".celld", ".open-orange", "wrangler.jsonc"))
-                return StubHost(path, state)
-
-            with mock.patch.object(conformance, "CelldHost", host), mock.patch.object(sys, "argv", argv):
-                with self.assertRaises(SystemExit) as exited:
-                    conformance.main()
-            self.assertEqual(exited.exception.code, 0)
-            self.assertEqual((project / "wrangler.json").read_bytes(), original)
-            self.assertEqual(deployable.read_bytes(), original, "the file a symlink points at is untouched")
-            self.assertFalse(seen["celld"], "the copy carries no host state dirs or other config spellings, so no host can open the original state")
-            self.assertEqual(list(state.iterdir()), [], "the original state directory is untouched")
-            self.assertFalse(seen["inward"], "no link in the copy leads back into the supplied project")
-            self.assertNotEqual(seen["copy"].resolve(), project.resolve())
-            self.assertEqual(seen["config"]["vars"]["NORN_CONFORMANCE"], "synthetic")
-            self.assertNotIn("workers_dev", seen["config"])
-            self.assertFalse(seen["copy"].exists(), "the disposable copy is removed afterwards")
-
-
-class StateNeverReachesTheProject(unittest.TestCase):
-    """Host state and logs go to a fresh directory, never through a link into the project."""
+class StateIsFreshAndReal(unittest.TestCase):
+    """Host state and logs go to a fresh directory, never through a link."""
 
     def test_default_state_is_a_fresh_temp_directory(self):
-        with tempfile.TemporaryDirectory() as root:
-            project = Path(root) / "project"
-            project.mkdir()
-            state = conformance.fresh_state(None, project.resolve())
-            try:
-                self.assertFalse(project.resolve() in state.resolve().parents)
-                self.assertEqual(list(state.iterdir()), [])
-            finally:
-                state.rmdir()
+        state = conformance.fresh_state(None)
+        try:
+            self.assertEqual(list(state.iterdir()), [])
+        finally:
+            state.rmdir()
 
     def test_unsafe_state_directories_are_refused(self):
         with tempfile.TemporaryDirectory() as root:
-            project = Path(root) / "project"
-            project.mkdir()
-            inside = project / "state"
-            linked = Path(root) / "project-conformance-state"
-            linked.symlink_to(project)
+            target = Path(root) / "target"
+            target.mkdir()
+            linked = Path(root) / "linked-state"
+            linked.symlink_to(target)
             busy = Path(root) / "busy"
             busy.mkdir()
-            (busy / "celld.log").symlink_to(project / "log")
-            for bad in (inside, linked, busy):
+            (busy / "runner-0.log").write_text("")
+            for bad in (linked, busy):
                 with self.assertRaises(SystemExit, msg=str(bad)):
-                    conformance.fresh_state(bad, project.resolve())
-            self.assertEqual(sorted(p.name for p in project.iterdir()), [], "nothing was written into the project")
+                    conformance.fresh_state(bad)
+            self.assertEqual(list(target.iterdir()), [], "nothing was written through the link")
 
 
 class MarkerlessResetNeverKills(unittest.TestCase):

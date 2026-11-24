@@ -37,6 +37,7 @@ export function RecordsPage() {
         error={read.error}
         isFetching={read.isFetching}
         onRetry={() => { refreshMode(); void read.refetch() }}
+        bone="records-table"
         skeleton="table"
         loadingLabel="Reading records"
       >

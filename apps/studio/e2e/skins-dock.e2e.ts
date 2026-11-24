@@ -38,21 +38,21 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await page.goto("/")
   await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible()
 
-  // 1. Default skin is open-canvas with sidebar chrome and Geist font family.
+  // 1. Default skin is strict monochrome Polar with sidebar chrome and Geist font family.
   await expect.poll(() => page.evaluate(() => ({
     skin: document.documentElement.dataset.skin,
     shell: document.documentElement.dataset.shell,
     font: getComputedStyle(document.documentElement).fontFamily,
   }))).toEqual({
-    skin: "open",
+    skin: "polar",
     shell: "sidebar",
     font: expect.stringContaining("Geist Variable"),
   })
-  await capture(page, "open-light-home")
+  await capture(page, "polar-light-home")
 
   await page.goto("/sources")
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
-  await capture(page, "open-light-sources")
+  await capture(page, "polar-light-sources")
 
   // 2. Open the first-party @ui-sdk/core + @ui-sdk/react ChromeDock appearance tray and verify data-state transitions.
   const trigger = page.locator('[data-slot="chrome-dock-trigger"]').first()
@@ -61,11 +61,9 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await expect(trigger).toHaveAttribute("data-state", "open")
   const tray = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
   await expect(tray).toBeVisible()
-  await expect(tray.locator('[data-skin-option="open"]')).toHaveAttribute("data-state", "selected")
-
-  // 3. Switch to Polar skin (light monochrome): white canvas, near-black #18181b primary (zero purple buttons!).
-  await tray.locator('[data-skin-option="polar"]').click()
   await expect(tray.locator('[data-skin-option="polar"]')).toHaveAttribute("data-state", "selected")
+
+  // 3. Verify Polar monochrome light palette: white canvas, near-black #18181b primary (zero purple buttons!).
   await expect.poll(() => page.evaluate(() => ({
     skin: document.documentElement.dataset.skin,
     pageBg: getComputedStyle(document.querySelector('[data-slot="sidebar-inset"]')!).backgroundColor,
@@ -75,13 +73,17 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
     pageBg: "rgb(255, 255, 255)",
     primaryBg: "rgb(24, 24, 27)",
   })
+
+  // Switch to Open skin and verify persistence across reload.
+  await tray.locator('[data-skin-option="open"]').click()
+  await expect(tray.locator('[data-skin-option="open"]')).toHaveAttribute("data-state", "selected")
   await page.keyboard.press("Escape")
   await expect(trigger).toHaveAttribute("data-state", "closed")
 
-  // 4. Reload verifies localStorage persistence of data-skin="polar".
+  // 4. Reload verifies localStorage persistence of data-skin="open".
   await page.reload()
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("polar")
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("open")
 
   // 5. Switch to Luma skin, then Liquid Glass skin (verifying real backdrop-filter blur).
   await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
@@ -263,4 +265,127 @@ test("single-select ToggleGroup preserves radiogroup/radio ARIA semantics and ar
   await expect(graph).toBeFocused()
   await expect(graph).toHaveAttribute("aria-checked", "true")
   await expect(list).toHaveAttribute("aria-checked", "false")
+})
+
+test("custom StudioTheme JSON dialog validates WCAG AA contrast, applies custom tokens across reload, and resets cleanly", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: "dark" })
+  await recorded(page)
+  await page.goto("/sources")
+  await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
+
+  await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
+  await page.locator('[data-slot="custom-theme-trigger"]').click()
+  const dialog = page.getByRole("dialog", { name: "Custom theme JSON" })
+  await expect(dialog).toBeVisible()
+  await capture(page, "polar-dark-custom-theme-dialog")
+
+  // Low-contrast JSON is rejected with WCAG AA contrast feedback before mutating :root.
+  const editor = dialog.getByRole("textbox", { name: "Theme JSON definition" })
+  await editor.fill(JSON.stringify({
+    version: 1,
+    name: "Too Faint",
+    baseSkin: "polar",
+    variants: { dark: { background: "#111113", foreground: "#222226" } },
+  }))
+  await dialog.getByRole("button", { name: "Apply theme" }).click()
+  await expect(dialog.locator('[data-slot="theme-validation-errors"]')).toContainText("WCAG AA")
+
+  // Selecting and applying the Graphite Terminal preset writes custom tokens and persists across reload.
+  await dialog.getByRole("button", { name: "Graphite Terminal" }).click()
+  await dialog.getByRole("button", { name: "Apply theme" }).click()
+  await expect(dialog).toBeHidden()
+  await expect.poll(() => page.evaluate(() => ({
+    customTheme: document.documentElement.dataset.customTheme,
+    bgVar: document.documentElement.style.getPropertyValue("--background").trim(),
+  }))).toEqual({
+    customTheme: "Graphite Terminal",
+    bgVar: "#0f1117",
+  })
+
+  await page.reload()
+  await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.customTheme)).toBe("Graphite Terminal")
+
+  // Resetting clears every inline CSS variable cleanly.
+  await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
+  await page.locator('[data-slot="custom-theme-trigger"]').click()
+  await page.getByRole("button", { name: "Reset to built-in skin" }).click()
+  await expect.poll(() => page.evaluate(() => ({
+    customTheme: document.documentElement.dataset.customTheme,
+    bgVar: document.documentElement.style.getPropertyValue("--background"),
+  }))).toEqual({
+    customTheme: undefined,
+    bgVar: "",
+  })
+})
+
+test("Semantic Map (/map) renders monochrome islands, bundled bridges, zoom-in expansion, lenses, and provenance side sheet", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: "dark" })
+  await recorded(page)
+  await page.goto("/map")
+  await expect(page.getByRole("heading", { name: "Semantic map", level: 1 })).toBeVisible()
+
+  const islands = page.locator('[data-slot="semantic-island"]')
+  await expect(islands.first()).toBeVisible()
+  await capture(page, "polar-dark-semantic-map")
+
+  // Expand the first island (Zoom 1) and open a node's provenance side sheet (Zoom 2).
+  await islands.first().getByRole("button", { name: "Expand island" }).click()
+  await expect(page.locator('[data-slot="island-expansion"]')).toBeVisible()
+  await page.locator('[data-slot="semantic-node"]').first().click()
+  const sheet = page.locator('[data-slot="provenance-sheet"]')
+  await expect(sheet).toBeVisible()
+  await expect(sheet.getByRole("link", { name: "Open records" })).toBeVisible()
+  await expect(sheet.getByRole("link", { name: "Definition" })).toBeVisible()
+  await capture(page, "polar-dark-semantic-map-dossier")
+
+  // Switch lenses and return to Zoom 0 overview.
+  await page.getByRole("radio", { name: "Governance" }).click()
+  await page.getByRole("button", { name: "All islands" }).click()
+  await expect(islands.first()).toBeVisible()
+})
+
+test("boneyard-js renders UI-shape bone skeletons inside container bounds with zero horizontal overflow while pending", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: "dark" })
+  await page.route("**/api/**", async (route) => {
+    const url = route.request().url()
+    if (url.includes("/v1/definitions")) {
+      await new Promise((resolve) => setTimeout(resolve, 2500))
+      return route.fulfill({ status: 404, json: { error: "not found" } })
+    }
+    return route.fulfill({ status: 404, json: { error: "not found" } })
+  })
+  // Register session AFTER the catch-all **/api/** route so /api/me serves environmentId: "analytics".
+  await session(page)
+  await page.goto("/map")
+  const skeleton = page.locator('[data-slot="bone-skeleton"][data-bone="semantic-map"]')
+  await expect(skeleton).toBeVisible()
+  await expect(skeleton).toHaveAttribute("aria-busy", "true")
+  const overlay = skeleton.locator('[data-boneyard-overlay="true"]')
+  await expect(overlay).toBeVisible()
+  await capture(page, "polar-dark-semantic-map-bones")
+
+  // Verify real boneyard-js bones rendered from the viewport breakpoint and stay strictly within container bounds.
+  const geometry = await page.evaluate(() => {
+    const overlayEl = document.querySelector<HTMLElement>('[data-bone="semantic-map"] [data-boneyard-overlay="true"]')
+    if (!overlayEl) return null
+    const host = overlayEl.getBoundingClientRect()
+    const bones = [...overlayEl.querySelectorAll<HTMLElement>('[data-boneyard-bone="true"]')].map((el) => {
+      const r = el.getBoundingClientRect()
+      return { left: r.left, right: r.right, width: r.width, height: r.height }
+    })
+    return {
+      hostLeft: host.left,
+      hostRight: host.right,
+      hostWidth: host.width,
+      count: bones.length,
+      overflowing: bones.filter((b) => b.left < host.left - 1 || b.right > host.right + 1 || b.width <= 0 || b.height <= 0).length,
+    }
+  })
+  expect(geometry).not.toBeNull()
+  expect(geometry!.count).toBeGreaterThanOrEqual(10)
+  expect(geometry!.overflowing).toBe(0)
 })

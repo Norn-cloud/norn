@@ -1,0 +1,37 @@
+{
+  "sha256": "e0cda9ad9e465ee416b473b0e2e8686a468c8c66a6f279b9c7379c5650b38018",
+  "origin": "derived",
+  "category": "standards-data",
+  "license": "MIT",
+  "sources": [
+    {
+      "id": "standards.iana-tzdb-2026c",
+      "revision": "2026c",
+      "evidence": {
+        "path": "registry/standards/iana-tzdb-2026c.source.json",
+        "sha256": "74000cf1cd453d4c19dbabc2656fe3b187ac8ed9ac0040fe4dbf1fba38f76083"
+      }
+    }
+  ],
+  "analyzed_sources": [],
+  "parents": [
+    "scripts/generate_tzdb_bundles.py"
+  ],
+  "rights_evidence": [
+    {
+      "path": "registry/standards/iana-tzdb-2026c.source.json",
+      "sha256": "74000cf1cd453d4c19dbabc2656fe3b187ac8ed9ac0040fe4dbf1fba38f76083"
+    },
+    {
+      "path": "crates/norn-expr/data/tzdb/LICENSE-MIT",
+      "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
+    }
+  ],
+  "notices": [
+    {
+      "path": "crates/norn-expr/data/tzdb/LICENSE-MIT",
+      "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
+    }
+  ],
+  "connector": null
+}
