@@ -235,8 +235,9 @@ signed delta, an "After" value, a page-head live line).
 ### 4.5 Dock
 
 `--dock-surface` #1d1d20 / #222226, `--dock-well` #34343a / #3a3a41, `--dock-border`
-rgb(255 255 255 / .08), `--dock-foreground` #ffffff, `--dock-muted` #a5a5ad (6.87:1 / 6.48:1 on the
-light- and dark-scheme dock), `--dock-ring` #93b4ff. The dock is dark in every skin and scheme;
+rgb(255 255 255 / .08), `--dock-foreground` #ffffff, `--dock-muted` #b4b4bc (8.16:1 / 7.70:1 on the
+light- and dark-scheme dock, 4.93:1 on the glass-light composite #3f414a, 8.96:1 on glass dark;
+shipped `index.css` still uses #a5a5ad, which is 4.15:1 on glass light: see section 18), `--dock-ring` #93b4ff. The dock is dark in every skin and scheme;
 `glass` makes it translucent (rgb(24 26 36 / .82) / rgb(18 20 34 / .80)).
 
 `--dock-indicator` is its **own token**, never an alias of `--action`, because the dock is dark
@@ -367,7 +368,8 @@ Shells own frame chrome and navigation only. A view never knows which shell it i
   - **< 640px: every destination shows its label** under the icon (`--text-meta`) and every target
     is at least **44 × 44 CSS px** (written in px, since `size-10` is only 36px at the 90% root).
     The dock may scroll horizontally on its toolbar axis; it never wraps.
-- `prefers-reduced-transparency` or `glass` fallbacks keep the dock opaque enough for 4.5:1 labels.
+- `prefers-reduced-transparency` or `glass` fallbacks keep the dock opaque enough for 4.5:1 labels; with
+  `--dock-muted` #b4b4bc the glass-light composite (#3f414a) holds 4.93:1 (TARGET until `index.css` adopts it).
 
 ### 9.2 `sidebar` (opt-in, for builders)
 
@@ -541,7 +543,7 @@ reduced by `src/lib/screen/call.ts`). Each arm has one rendering:
 | `pending` | HTTP 202, `decision` { `id`, `expiresAtMs` } | Held dot, "Sent for approval", the decision id (mono) and its expiry. Nothing committed; no receipt is shown. |
 | `refused` | `Refusal` (section 12.3) | The refusal replaces the primary action. |
 | `no-cell` | no cell is connected | An unavailable state that says no cell is connected and how to start one (`norn dev`); no Retry loop. |
-| `unavailable` | **every** HTTP 404 or 503 from the action route (CURRENT). `callAction` checks the status before using the body, so a 404 or 503 that carries a typed `Refusal` is also reported as `unavailable` and its refusal is dropped; `listActions` does the same for the catalog. TARGET: a 404 or 503 whose body is a `Refusal` resolves to `refused` (section 18). | "This cell doesn't take actions from Studio yet." No Retry. |
+| `unavailable` | **every** HTTP 404 or 503 from the action route (CURRENT). `callAction` parses the body but the status decides the outcome, so a 404 or 503 that carries a typed `Refusal` is also reported as `unavailable` and its refusal is dropped; `listActions` does the same for the catalog. TARGET: a 404 or 503 whose body is a `Refusal` resolves to `refused` (section 18). | CURRENT: "This cell doesn't take actions from Studio yet.", no Retry, for both statuses. TARGET (section 18): an untyped **404** keeps that copy with no Retry (the route is absent); an untyped **503** is a temporary outage: "The cell is temporarily unavailable." with Retry (section 12.2), never the unsupported-route copy. |
 | (thrown) | network failure, a malformed 202, or another non-2xx whose body is not a `Refusal` (`CellUnavailable`); reduced to `failed` with reason `error` | "Couldn't reach the cell", with Retry. |
 
 - **One idempotency key per user intent.** The draft holds one `idempotencyKey`; a retry of the same
@@ -823,6 +825,10 @@ Measured on `origin/main` at `ff0f95bd5e`. **Not fixed here**; the restyle lane 
 - [ ] `listActions`' `refused` arm keeps only `status`, `code` and `message`.
 - [ ] `callAction` and `listActions` map every 404 and 503 to `unavailable` without using the body,
   so a typed `Refusal` on those statuses is never shown (section 12.4).
+- [ ] An untyped 503 renders the unsupported-route copy with no Retry; it should read as a temporary
+  outage with Retry, and only an untyped 404 keeps "doesn't take actions" (section 12.4).
+- [ ] `index.css` `--dock-muted` is #a5a5ad (4.15:1 on the glass-light dock composite #3f414a);
+  the spec value is #b4b4bc (4.93:1) (section 9.1 tokens).
 
 **Agent operability**
 
