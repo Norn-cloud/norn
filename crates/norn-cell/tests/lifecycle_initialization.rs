@@ -17,12 +17,13 @@ use norn_kernel::snapshot_observe::{
     ObservationSynthesis, ObservedSnapshot, prepare_observed_snapshot,
 };
 use norn_kernel::{
-    CellCommit, CellHost, CommitError, DecisionTurn, EnvelopeLimits, FactEvent, FactKey,
-    FactMutation, FactVersion, FactWrite, LifecycleInitRefusal, LogicalTime,
-    ObservationAuthorization, ObservationEvent, World, commit_decision,
+    CellCommit, CellHost, CommitError, CommitModel, CommitView, DecisionTurn, EnvelopeLimits,
+    FactEvent, FactKey, FactMutation, FactVersion, FactWrite, LifecycleInitRefusal, LogicalTime,
+    ObservationAuthorization, ObservationEvent, World, check_commit, commit_decision,
     decision_cell_commit_with_host, load_slice,
 };
 use serde_json::json;
+use std::convert::Infallible;
 
 type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
 type ObservedCell = SqliteCell<ObservationEvent, JsonObject, JsonObject>;
@@ -1089,9 +1090,13 @@ fn a_replayed_deletion_follows_the_decision_deletion_rule() {
         "{protected:?}"
     );
     assert_eq!(snapshot(&cell, &grant), before);
-    // An unprotected type may be created, deleted and created again.
+    // An unprotected type may be created, deleted and created again. The
+    // SQLite ledger proves each `Created` against its own stored emission,
+    // so this sequence is checked against the shared admission directly.
+    let model = cell.store().model().clone();
+    let catalog = model.type_catalog();
     let key = document();
-    cell.commit(evidence(
+    let commit = evidence(
         &key,
         json!({ "status": "draft", "pages": 1 }),
         vec![
@@ -1099,8 +1104,36 @@ fn a_replayed_deletion_follows_the_decision_deletion_rule() {
             deleted(&key),
             created(&key, json!({ "pages": 1 })),
         ],
-    ))
-    .expect("create, delete and create again");
+    );
+    check_commit(&commit, &CommitModel::new(&catalog), &EmptyView)
+        .expect("create, delete and create again");
+}
+
+/// A pre-state with no objects, links or deliveries.
+struct EmptyView;
+
+impl CommitView for EmptyView {
+    type Error = Infallible;
+
+    fn pending(&self, _: &norn_kernel::Consumed) -> Result<bool, Infallible> {
+        Ok(false)
+    }
+
+    fn version(&self, _: &FactKey) -> Result<FactVersion, Infallible> {
+        Ok(FactVersion::ABSENT)
+    }
+
+    fn concrete(&self, _: &FactKey) -> Result<Option<ObjectTypeName>, Infallible> {
+        Ok(None)
+    }
+
+    fn link_version(&self, _: &norn_kernel::LinkKey) -> Result<FactVersion, Infallible> {
+        Ok(FactVersion::ABSENT)
+    }
+
+    fn links_of(&self, _: &FactKey) -> Result<Vec<norn_kernel::LinkKey>, Infallible> {
+        Ok(Vec::new())
+    }
 }
 
 fn modified(key: &FactKey, before: serde_json::Value, after: serde_json::Value) -> FactEvent {
@@ -1118,7 +1151,9 @@ fn modified(key: &FactKey, before: serde_json::Value, after: serde_json::Value) 
 fn a_modification_aggregate_cannot_describe_a_first_write() {
     let mut cell = cell();
     let existing = FactKey::new("test.Document", "D-0");
-    cell.commit(put(&existing, values(json!({ "pages": 1 })), vec![]))
+    let stored = json!({ "status": "draft", "pages": 1 });
+    let updated = json!({ "status": "draft", "pages": 2 });
+    cell.commit(put(&existing, values(stored.clone()), vec![]))
         .expect("an existing document");
     let fresh = document();
     let before = snapshot(&cell, &fresh);
@@ -1141,20 +1176,17 @@ fn a_modification_aggregate_cannot_describe_a_first_write() {
     );
     assert_eq!(snapshot(&cell, &fresh), before);
     // An aggregate of an existing object beside a first write is unaffected.
+    // The host proves it against the stored and written snapshots.
     let mut commit = put(
         &FactKey::new("test.Document", "D-2"),
         values(json!({ "pages": 1 })),
-        vec![modified(
-            &existing,
-            json!({ "pages": 1 }),
-            json!({ "pages": 2 }),
-        )],
+        vec![modified(&existing, stored, updated.clone())],
     );
     commit.writes.push(FactWrite {
         key: existing,
         expected: FactVersion(1),
         mutation: FactMutation::Put {
-            values: values(json!({ "status": "draft", "pages": 2 })),
+            values: values(updated),
         },
     });
     cell.commit(commit)
