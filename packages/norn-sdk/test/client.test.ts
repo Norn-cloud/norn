@@ -122,3 +122,60 @@ test("a success the route declares without content has no document, never an err
   expect(accepted.document).toBeUndefined()
   expect(accepted.numbers.size).toBe(0)
 })
+
+test("a refusal-like body that is no valid norn/refusal@2 document is unavailable, never a typed refusal", async () => {
+  const valid = { format: "norn/refusal@2", retryable: false, reason: null, code: "authz.denied", category: "permission", message: "denied", explanation: "policy" }
+  const malformed: Record<string, unknown>[] = [
+    { ...valid, format: undefined },
+    { ...valid, format: "norn/refusal@1" },
+    { ...valid, retryable: "no" },
+    { ...valid, retryable: undefined },
+    { ...valid, explanation: 7 },
+    { ...valid, category: "teapot" },
+    { ...valid, reason: "because" },
+    { ...valid, diagnostics: "none" },
+    { ...valid, diagnostics: [{ code: "Q001", severity: "error", message: "m" }] },
+    { ...valid, diagnostics: [{ code: "Q001", severity: "error", message: "m", span: { pointer: 3 } }] },
+    { ...valid, incidentId: 42 },
+  ]
+  for (const body of malformed) {
+    const client = createNornClient({ baseUrl: "https://cell.example", scope, fetch: cell(403, JSON.stringify(body)).fetch })
+    const error = await client.get("/v1/runs/{id}", { path: { id: "r" } }).catch((caught: unknown) => caught)
+    expect(error, JSON.stringify(body)).toBeInstanceOf(NornUnavailableError)
+    expect((error as NornUnavailableError).status).toBe(403)
+  }
+  const client = createNornClient({ baseUrl: "https://cell.example", scope, fetch: cell(403, JSON.stringify({ ...valid, diagnostics: [{ code: "Q001", severity: "error", message: "m", span: null, law: null }], incidentId: "inc_1" })).fetch })
+  const refused = await client.get("/v1/runs/{id}", { path: { id: "r" } }).catch((caught: unknown) => caught)
+  expect(refused).toBeInstanceOf(NornRefusalError)
+  expect((refused as NornRefusalError).diagnostics).toHaveLength(1)
+})
+
+test("a file route is read as bytes by its content type, never through the JSON decoder", async () => {
+  const parquet = new Uint8Array([0x50, 0x41, 0x52, 0x31, 0x00, 0xff, 0x50, 0x41, 0x52, 0x31])
+  const asked: (RequestInit | undefined)[] = []
+  const client = createNornClient({
+    baseUrl: "https://cell.example",
+    scope,
+    fetch: async (_url, init) => { asked.push(init); return new Response(parquet, { status: 200, headers: { "content-type": "application/vnd.apache.parquet", etag: '"e1"' } }) },
+  })
+  const file = await client.download("/v1/objects/{type}:export", { path: { type: "demo.Item" }, query: { columns: "amount" } })
+  expect(file.contentType).toBe("application/vnd.apache.parquet")
+  expect([...new Uint8Array(file.bytes)]).toEqual([...parquet])
+  expect(file.etag).toBe('"e1"')
+  expect(new Headers(asked[0]?.headers).get("accept")).toBe("*/*")
+  // @ts-expect-error An export answers with a file, not a document: `get` does not take it.
+  void (() => client.get("/v1/objects/{type}:export", { path: { type: "demo.Item" }, query: { columns: "amount" } }))
+  // @ts-expect-error A document route is read with `get`.
+  void (() => client.download("/v1/runs/{id}", { path: { id: "r" } }))
+  // A document read that is answered with a file is unavailable, not decoded.
+  const misrouted = await (client.get as unknown as (route: string, options: unknown) => Promise<unknown>)("/v1/runs/{id}", { path: { id: "r" } }).catch((caught: unknown) => caught)
+  expect(misrouted).toBeInstanceOf(NornUnavailableError)
+  expect((misrouted as NornUnavailableError).message).toContain("application/vnd.apache.parquet")
+  // A file read answered with a JSON document is not the file.
+  const json = createNornClient({ baseUrl: "https://cell.example", scope, fetch: cell(200, '{"rows":[]}').fetch })
+  expect(await json.download("/v1/objects/{type}:export", { path: { type: "demo.Item" }, query: { columns: "amount" } }).catch((caught: unknown) => caught)).toBeInstanceOf(NornUnavailableError)
+  // A refusal to an export is still the typed refusal.
+  const denied = { format: "norn/refusal@2", retryable: false, reason: null, code: "authz.denied", category: "permission", message: "denied", explanation: "policy" }
+  const refusing = createNornClient({ baseUrl: "https://cell.example", scope, fetch: cell(403, JSON.stringify(denied)).fetch })
+  expect(await refusing.download("/v1/objects/{type}:export", { path: { type: "demo.Item" }, query: { columns: "amount" } }).catch((caught: unknown) => caught)).toBeInstanceOf(NornRefusalError)
+})

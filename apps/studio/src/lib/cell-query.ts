@@ -1,11 +1,8 @@
-import { hashKey, queryOptions, replaceEqualDeep, useMutation, useQuery, useQueryClient, type Query, type QueryClient, type QueryKey, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
-import { useEffect, useState } from "react"
+import { hashKey, queryOptions, replaceEqualDeep, useMutation, useQuery, useQueryClient, type MutateOptions, type MutationOptions, type Query, type QueryClient, type QueryKey, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createNornClient, fillRoute, NornRefusalError, NornUnavailableError, scopedQuery, type CallOptions, type FetchLike, type GetRoute, type NornClient, type NornDocument, type Operation, type PostRoute, type Success } from "../../../../packages/norn-sdk/src/client.ts"
-import { readExact } from "../../../../packages/norn-sdk/src/exact.ts"
 import type { LiveRefusal, LiveSnapshot } from "../../../../packages/norn-demo-ui/src/live/client.ts"
-import { cellPersistence, forgetOnScopeChange, type CellPersistence, type StoredDocument } from "./cell-cache.ts"
-import { cellCacheStorage } from "./cell-cache-store.ts"
-import { CELL_FETCH_TIMEOUT_MS, CellUnavailable, fetchWithTimeout, NO_DATA_CELL, parseUnavailableDetail, recordCellReachable, StudioScopeError, type StudioScope } from "./definitions.ts"
+import { CELL_FETCH_TIMEOUT_MS, CellUnavailable, fetchWithTimeout, NO_DATA_CELL, parseUnavailableDetail, recordCellReachable, sameStudioScope, StudioScopeError, type StudioScope } from "./definitions.ts"
 import { live } from "./live-reads.ts"
 import { CellRefusal, NotServed } from "./live-transport.ts"
 
@@ -20,8 +17,8 @@ import { CellRefusal, NotServed } from "./live-transport.ts"
  *   {@link CellUnavailable} or {@link NotServed} error, as `cellRead` raises them.
  * - Unmounting unsubscribes; the live client keeps its own limits (frame size, one wire
  *   subscription per path, the cell's `live.too_many_subscriptions`).
- * - Persistence across reloads is opt-in per query and only for documents the server marks
- *   storable (`cell-cache.ts`).
+ * - Nothing is kept across reloads. Persistence lands with the server's cache-policy flag (#1374),
+ *   keyed by reader and scope.
  */
 
 /** A cell document as the cache holds it: Studio's `Read<T>` shape, plus where it came from. */
@@ -30,10 +27,7 @@ export interface CellDocument<T> {
   readonly document: T
   readonly numbers: ReadonlyMap<string, string>
   readonly origin: "live"
-  /** The server's text when this came from a read; null for a pushed document. */
-  readonly text: string | null
-  readonly cacheControl: string | null
-  /** The live digest of a pushed document. */
+  /** The live digest of a pushed document; null for a read. */
   readonly digest: string | null
 }
 
@@ -85,14 +79,22 @@ function answerError(status: number, body: unknown, what: string): Error {
   return new CellUnavailable(status, message, detail)
 }
 
-/** The typed client's error as the existing refusal state, the way `cellRead` raises it. */
+/**
+ * The typed client's error as the existing refusal state. A typed refusal keeps its code and
+ * detail. An answer the SDK did not accept as a refusal is never read for one: it is not served
+ * (a 404 naming no route, or Studio's Worker with no host) or the cell is unavailable, with no
+ * code and no detail.
+ */
 export function studioError(error: unknown, what: string): unknown {
   if (error instanceof NornRefusalError) return answerError(error.status, error.refusal, what)
   if (error instanceof NornUnavailableError) {
     if (error.status === 0) return error.cause instanceof CellUnavailable ? error.cause : new CellUnavailable(0, undefined, { retryable: true })
     let body: unknown = null
-    try { body = error.body === null ? null : JSON.parse(error.body) } catch { body = null }
-    return answerError(error.status, body, what)
+    try { body = error.body === null || error.body.trim() === "" ? null : JSON.parse(error.body) } catch { body = undefined }
+    const record = body !== null && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null
+    if (error.status === 404 && (body === null || (record !== null && (record["code"] === undefined || record["code"] === "route.not_found")))) return new NotServed(what)
+    if (error.status === 503 && record?.["error"] === NO_HOST) return new NotServed(what)
+    return new CellUnavailable(error.status, undefined, {})
   }
   return error
 }
@@ -100,56 +102,49 @@ export function studioError(error: unknown, what: string): unknown {
 type LooseCall = (route: string, options?: { readonly path?: unknown; readonly query?: unknown; readonly body?: unknown; readonly signal?: AbortSignal }) => Promise<NornDocument<unknown>>
 
 const asDocument = <T,>(read: NornDocument<unknown>): CellDocument<T> => ({
-  status: read.status, document: read.document as T, numbers: read.numbers, origin: "live", text: read.text, cacheControl: read.cacheControl, digest: null,
+  status: read.status, document: read.document as T, numbers: read.numbers, origin: "live", digest: null,
 })
 
-/** Restore a kept document as a cell query's data. */
-export const restoreDocument = (stored: StoredDocument): CellDocument<unknown> => ({
-  status: stored.status, ...readExact<unknown>(stored.text), origin: "live", text: stored.text, cacheControl: null, digest: null,
-})
-
-/** Pushes per query hash: a read that started before a push never overwrites the pushed document. */
-const pushes = new WeakMap<QueryClient, Map<string, number>>()
-const pushCount = (client: QueryClient, hash: string): number => pushes.get(client)?.get(hash) ?? 0
-function countPush(client: QueryClient, hash: string): void {
-  let counts = pushes.get(client)
-  if (counts === undefined) pushes.set(client, counts = new Map())
+/**
+ * The live sequence of each read (per query hash): it advances on every frame the cell sends for
+ * the read, a pushed snapshot or a pushed refusal, whether or not the document changed. A read
+ * notes the sequence when it starts. If the sequence moved by the time the read answers, a push
+ * landed while the read was in flight, so the read's answer may be older than the push and the
+ * cache keeps what the push left. Arrival order on the one socket orders the frames: no value
+ * comparison decides which answer is newer.
+ */
+const sequences = new WeakMap<QueryClient, Map<string, number>>()
+const sequenceOf = (client: QueryClient, hash: string): number => sequences.get(client)?.get(hash) ?? 0
+function advance(client: QueryClient, hash: string): void {
+  let counts = sequences.get(client)
+  if (counts === undefined) sequences.set(client, counts = new Map())
   counts.set(hash, (counts.get(hash) ?? 0) + 1)
 }
 
-let persistence: CellPersistence | null = null
-const studioPersistence = (): CellPersistence => persistence ??= cellPersistence(cellCacheStorage(), restoreDocument)
-
 export interface CellQueryConfig {
   readonly scope: StudioScope | null
-  /** Keep the document across reloads when the server marks it storable. */
-  readonly persist?: boolean
   readonly enabled?: boolean
   /** What the page calls this read in a "not served" state. */
   readonly what?: string
   readonly fetch?: FetchLike
-  /** The persistence to use instead of Studio's IndexedDB one (tests). */
-  readonly persistence?: CellPersistence
 }
 
 /** The query options of one cell read (what `useCellQuery` runs). */
 export function cellQueryOptions<P extends GetRoute>(client: QueryClient, route: P, params: CellParams<P>, config: CellQueryConfig) {
   const scope = config.scope ?? NO_SCOPE
   const what = config.what ?? route
-  const kept = config.persist === true ? config.persistence ?? studioPersistence() : undefined
   return queryOptions<CellData<P>, Error, CellData<P>, CellQueryKey>({
     queryKey: cellQueryKey(route, scope, params),
     enabled: config.scope !== null && config.enabled !== false,
     retry: false,
-    ...(kept === undefined ? {} : { persister: kept.persister as never }),
     queryFn: async ({ queryKey, signal }) => {
       if (config.scope === null) throw new StudioScopeError(NO_DATA_CELL)
       const hash = hashKey(queryKey)
-      const before = pushCount(client, hash)
+      const started = sequenceOf(client, hash)
       let read: NornDocument<unknown>
-      // A push that landed while this read was in flight is newer than whatever the read returns.
+      // A frame the cell pushed while this read was in flight is at least as new as the read's answer.
       const pushedSince = (): CellData<P> | undefined => {
-        if (pushCount(client, hash) === before) return undefined
+        if (sequenceOf(client, hash) === started) return undefined
         const pushed = client.getQueryState<CellData<P>, Error>(queryKey)
         if (pushed?.error != null) throw pushed.error
         return pushed?.data
@@ -177,39 +172,46 @@ const sameNumbers = (a: ReadonlyMap<string, string>, b: ReadonlyMap<string, stri
 /**
  * Join the read under `queryKey` to the cell's pushes for `path`: a changed answer is written into
  * the cache, a pushed refusal puts the read into its refusal state. Returns the unsubscribe.
+ *
+ * - The live client hands a new listener what it last received for the path at once. That replay
+ *   is not a new answer: every listener of the path writes this same entry, so the cache already
+ *   holds it or something newer (a later read). It is ignored.
+ * - `onLiveRefusal` reports the live protocol's refusal of the subscription, and `null` once the
+ *   cell sends this subscription a frame again (after a reconnect).
  */
 export function attachLive(options: {
   readonly client: QueryClient
   readonly live: LiveSource
-  readonly scope: StudioScope
   readonly route: string
   readonly queryKey: CellQueryKey
   readonly path: string
   readonly what?: string
-  readonly persistence?: CellPersistence
-  readonly onRefused?: (refusal: LiveRefusal) => void
+  readonly onLiveRefusal?: (refusal: LiveRefusal | null) => void
 }): () => void {
-  const { client, queryKey, route, scope } = options
+  const { client, queryKey, route, onLiveRefusal } = options
   const hash = hashKey(queryKey)
-  return options.live.subscribe(options.path, (snapshot) => {
-    const current = client.getQueryData<CellDocument<unknown>>(queryKey)
+  let replaying = true
+  const stop = options.live.subscribe(options.path, (snapshot) => {
+    if (replaying) return
+    advance(client, hash)
+    onLiveRefusal?.(null)
     if (snapshot.status >= 200 && snapshot.status < 300) {
-      // The first answer after subscribing is the page's own read: nothing changed.
+      const current = client.getQueryData<CellDocument<unknown>>(queryKey)
+      // An unchanged answer (the first frame after subscribing is the page's own read) keeps the
+      // cached document as it is; the sequence above still fences any read in flight.
       if (current !== undefined && replaceEqualDeep(current.document, snapshot.body) === current.document && sameNumbers(current.numbers, snapshot.numbers)) return
-      countPush(client, hash)
-      const pushed: CellDocument<unknown> = { status: snapshot.status, document: snapshot.body, numbers: snapshot.numbers, origin: "live", text: null, cacheControl: null, digest: snapshot.digest }
+      const pushed: CellDocument<unknown> = { status: snapshot.status, document: snapshot.body, numbers: snapshot.numbers, origin: "live", digest: snapshot.digest }
       client.setQueryData(queryKey, pushed)
-      void options.persistence?.write(scope, queryKey, route, pushed)
       return
     }
-    countPush(client, hash)
     const query: Query | undefined = client.getQueryCache().find({ queryKey, exact: true })
     if (query !== undefined) {
       const error = answerError(snapshot.status, snapshot.body, options.what ?? route)
       query.setState({ status: "error", error, data: undefined, errorUpdatedAt: Date.now(), errorUpdateCount: query.state.errorUpdateCount + 1, fetchStatus: "idle" })
     }
-    void options.persistence?.write(scope, queryKey, route, { status: snapshot.status, document: snapshot.body, text: null, cacheControl: null })
-  }, options.onRefused ? { onRefused: options.onRefused } : undefined)
+  }, onLiveRefusal ? { onRefused: onLiveRefusal } : undefined)
+  replaying = false
+  return stop
 }
 
 export interface CellQuery<T> {
@@ -227,18 +229,13 @@ export function useCellQuery<P extends GetRoute>(route: P, params: CellParams<P>
   const { scope } = config
   const enabled = options.enabled === true
   const key = JSON.stringify(options.queryKey)
-  const kept = config.persist === true ? config.persistence ?? studioPersistence() : undefined
-  useEffect(() => {
-    if (kept !== undefined) forgetOnScopeChange(client, kept.storage)
-  }, [client, kept])
   useEffect(() => {
     setLiveRefusal(null)
     if (!enabled || scope === null || typeof WebSocket === "undefined") return
     return attachLive({
-      client, live: live(scope), scope, route, queryKey: options.queryKey, path: cellPath(route, scope, params),
+      client, live: live(scope), route, queryKey: options.queryKey, path: cellPath(route, scope, params),
       ...(config.what === undefined ? {} : { what: config.what }),
-      ...(kept === undefined ? {} : { persistence: kept }),
-      onRefused: setLiveRefusal,
+      onLiveRefusal: setLiveRefusal,
     })
     // The key's value, not its identity, decides the subscription.
   }, [client, key, enabled])
@@ -273,9 +270,51 @@ export function invalidateCellRoutes(client: QueryClient, scope: StudioScope, pr
 export type CellCall<P extends PostRoute> = Pick<CallOptions<Operation<P, "post">>, "path" | "query" | "body">
 export type CellResult<P extends PostRoute> = CellDocument<Success<Operation<P, "post">>>
 
+/** Why a call submitted in one workspace was not sent: the workspace changed before it could be. */
+export const SCOPE_CHANGED = "The workspace changed before this change was sent. Nothing was sent."
+
+/** The scope each call was submitted in, by the call's own variables (a copy made at submission). */
+const submittedIn = new WeakMap<object, StudioScope>()
+
+/**
+ * Bind `call` to `scope`, the scope it is submitted in: the copy returned is what the mutation runs.
+ * Each submission gets its own copy, so one variables object submitted in two scopes is two calls.
+ */
+export function submitIn<V extends object>(call: V, scope: StudioScope | null): V {
+  const bound = { ...call }
+  if (scope !== null) submittedIn.set(bound, scope)
+  return bound
+}
+
+/**
+ * The mutation options of one route. A call runs in the scope it was submitted in (`submitIn`),
+ * never the scope of whatever render last updated the options: a call queued (offline, or behind
+ * another) in workspace A that would start after the page moved to B is refused before any request
+ * is sent, and a call never submitted through `submitIn` is refused too. On success the submitting
+ * scope's reads are invalidated.
+ */
+export function cellMutationOptions<P extends PostRoute>(client: QueryClient, route: P, current: () => StudioScope | null, config: {
+  readonly invalidates?: (result: CellResult<P>, call: CellCall<P>) => readonly CellRoutePrefix[]
+  readonly fetch?: FetchLike
+}): MutationOptions<CellResult<P>, Error, CellCall<P>> {
+  return {
+    mutationFn: async (call) => {
+      const scope = submittedIn.get(call)
+      if (scope === undefined) throw new StudioScopeError(NO_DATA_CELL)
+      if (!sameStudioScope(scope, current())) throw new StudioScopeError(SCOPE_CHANGED)
+      return asDocument(await (studioCellClient(scope, config.fetch).post as unknown as LooseCall)(route, call))
+    },
+    onSuccess: async (result, call) => {
+      const scope = submittedIn.get(call)
+      if (scope !== undefined && config.invalidates !== undefined) await invalidateCellRoutes(client, scope, config.invalidates(result, call))
+    },
+  }
+}
+
 /**
  * Call `route` in `scope`. A refusal is the typed `NornRefusalError` (code, category, checker
- * diagnostics); on success the reads `invalidates` names are read again.
+ * diagnostics); on success the reads `invalidates` names are read again. Each call is bound to the
+ * scope it was submitted in (see {@link cellMutationOptions}).
  */
 export function useCellMutation<P extends PostRoute>(route: P, config: {
   readonly scope: StudioScope | null
@@ -283,13 +322,12 @@ export function useCellMutation<P extends PostRoute>(route: P, config: {
   readonly fetch?: FetchLike
 }): UseMutationResult<CellResult<P>, Error, CellCall<P>> {
   const client = useQueryClient()
-  return useMutation<CellResult<P>, Error, CellCall<P>>({
-    mutationFn: async (call) => {
-      if (config.scope === null) throw new StudioScopeError(NO_DATA_CELL)
-      return asDocument(await (studioCellClient(config.scope, config.fetch).post as unknown as LooseCall)(route, call))
-    },
-    onSuccess: async (result, call) => {
-      if (config.scope !== null && config.invalidates !== undefined) await invalidateCellRoutes(client, config.scope, config.invalidates(result, call))
-    },
-  })
+  const current = useRef(config.scope)
+  useLayoutEffect(() => { current.current = config.scope })
+  const result = useMutation<CellResult<P>, Error, CellCall<P>>(cellMutationOptions(client, route, () => current.current, config))
+  const { mutate: run, mutateAsync: runAsync } = result
+  type Options = MutateOptions<CellResult<P>, Error, CellCall<P>>
+  const mutate = useCallback((call: CellCall<P>, options?: Options) => run(submitIn(call, current.current), options), [run])
+  const mutateAsync = useCallback((call: CellCall<P>, options?: Options) => runAsync(submitIn(call, current.current), options), [runAsync])
+  return { ...result, mutate, mutateAsync }
 }

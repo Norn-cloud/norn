@@ -34,8 +34,20 @@ type Defined<T> = Exclude<T, undefined>
 export type Operation<P extends keyof paths, M extends Method> = Defined<paths[P][M]>
 /** Every route that serves `method`. */
 export type RoutesWith<M extends Method> = { [P in keyof paths]: [Operation<P, M>] extends [never] ? never : P }[keyof paths]
-export type GetRoute = RoutesWith<"get">
-export type PostRoute = RoutesWith<"post">
+
+type SuccessStatus = 200 | 201 | 202 | 203 | 204
+type MediaOf<R> = R extends { readonly content: infer C } ? keyof C & string : never
+/** The media types a route answers with when it succeeds. */
+export type SuccessMedia<O> = O extends { readonly responses: infer R } ? MediaOf<R[Extract<keyof R, SuccessStatus>]> : never
+/** Whether `O` answers a success with something other than a JSON document (a Parquet export, …). */
+type ServesFile<O> = [Exclude<SuccessMedia<O>, "application/json">] extends [never] ? false : true
+type DocumentRoutesWith<M extends Method> = { [P in RoutesWith<M>]: ServesFile<Operation<P, M>> extends true ? never : P }[RoutesWith<M>]
+
+/** Every route whose GET answers with a JSON document (or nothing): what `get` reads. */
+export type GetRoute = DocumentRoutesWith<"get">
+/** Every route whose GET answers with a file (`application/vnd.apache.parquet`, …): what `download` reads. */
+export type FileRoute = { [P in RoutesWith<"get">]: ServesFile<Operation<P, "get">> extends true ? P : never }[RoutesWith<"get">]
+export type PostRoute = DocumentRoutesWith<"post">
 
 /** The query members the client binds itself: the scope. */
 type Bound = "orgId" | "environmentId"
@@ -60,7 +72,6 @@ export type CallOptions<O> = Slot<"path", PathParams<O>> & Slot<"query", QueryPa
 /** `[options]`, optional when the call needs nothing. */
 export type CallArgs<O> = [RequiredKeys<CallOptions<O>>] extends [never] ? [options?: CallOptions<O>] : [options: CallOptions<O>]
 
-type SuccessStatus = 200 | 201 | 202 | 203 | 204
 type ResponseJson<R> = R extends { readonly content: { readonly "application/json": infer B } } ? B : undefined
 /** The document a route answers with when it succeeds (a union when it has several successes). */
 export type Success<O> = O extends { readonly responses: infer R } ? ResponseJson<R[Extract<keyof R, SuccessStatus>]> : never
@@ -75,6 +86,15 @@ export interface NornDocument<T> {
   readonly text: string
   /** The server's `Cache-Control`, if it sent one: whether a client may store this document is the server's to say. */
   readonly cacheControl: string | null
+  readonly etag: string | null
+}
+
+/** A file a route answered with, as the server sent it. */
+export interface NornFile {
+  readonly status: number
+  /** The server's `Content-Type`: one of the media types the route declares. */
+  readonly contentType: string
+  readonly bytes: ArrayBuffer
   readonly etag: string | null
 }
 
@@ -106,17 +126,54 @@ export class NornUnavailableError extends Error {
   }
 }
 
+const REFUSAL_FORMAT: Refusal["format"] = "norn/refusal@2"
 const CATEGORIES: ReadonlySet<string> = new Set<RefusalCategory>(["visibility", "permission", "precondition", "conflict", "invalid", "limit", "internal"])
 
-/** The refusal `text` holds, if it is one (`norn/refusal@2`: a code, a category and a message). */
+type Fields = Readonly<Record<string, unknown>>
+const isFields = (value: unknown): value is Fields => value !== null && typeof value === "object" && !Array.isArray(value)
+const absentOr = (value: unknown, check: (present: unknown) => boolean): boolean => value === undefined || check(value)
+const isText = (value: unknown): value is string => typeof value === "string"
+
+/** One checker finding as `RefusalDiagnostic` declares it. */
+function isDiagnostic(value: unknown): value is RefusalDiagnostic {
+  if (!isFields(value)) return false
+  const { code, severity, message, law, span } = value
+  return isText(code) && isText(severity) && isText(message)
+    && absentOr(law, (present) => present === null || isText(present))
+    && (span === null || (isFields(span) && isText(span["pointer"])))
+}
+
+/**
+ * The refusal `text` holds, if it is a `norn/refusal@2` document: the format, and every member
+ * the typed error exposes with the type the contract gives it. Anything else, a refusal-like body
+ * with a missing or different format or a mistyped member included, is no refusal (null), and the
+ * client reports the answer as unavailable rather than trusting part of it.
+ */
 export function refusalOf(text: string): Refusal | null {
   let body: unknown
   try { body = JSON.parse(text) } catch { return null }
-  if (body === null || typeof body !== "object" || Array.isArray(body)) return null
-  const { code, category, message } = body as Record<string, unknown>
-  if (typeof code !== "string" || typeof message !== "string" || typeof category !== "string" || !CATEGORIES.has(category)) return null
-  const refusal = body as Refusal
-  return { ...refusal, retryable: refusal.retryable === true }
+  if (!isFields(body)) return null
+  const { format, code, category, message, explanation, retryable, reason, diagnostics } = body
+  if (format !== REFUSAL_FORMAT || !isText(code) || !isText(message) || !isText(explanation) || typeof retryable !== "boolean") return null
+  if (!isText(category) || !CATEGORIES.has(category)) return null
+  if (!(reason === null || isFields(reason))) return null
+  if (!absentOr(diagnostics, (present) => Array.isArray(present) && present.every(isDiagnostic))) return null
+  if (!["decidedAt", "incidentId", "restatement", "restatementSha256"].every((name) => absentOr(body[name], isText))) return null
+  return body as Refusal
+}
+
+/** The media type `contentType` names, parameters such as `charset` aside. */
+const mediaOf = (contentType: string): string => contentType.split(";", 1)[0]?.trim().toLowerCase() ?? ""
+
+/**
+ * Whether a body of `contentType` may be read as a JSON document: JSON (`application/json`,
+ * `…+json`), text, or no type at all. A file's media type (`application/vnd.apache.parquet`,
+ * `application/octet-stream`, …) never is: its bytes are not decoded as JSON.
+ */
+function readsAsJson(contentType: string | null): boolean {
+  if (contentType === null) return true
+  const media = mediaOf(contentType)
+  return media === "" || media === "application/json" || media.endsWith("+json") || media.startsWith("text/")
 }
 
 /** `route` with its `{name}` segments filled, each percent-encoded. One linear pass. */
@@ -172,6 +229,8 @@ export interface NornClient {
   /** The scoped route a call would ask, without the base URL (`/v1/runs/r1?orgId=…`): what a live subscription names. */
   readonly route: <P extends GetRoute>(route: P, ...args: CallArgs<Operation<P, "get">>) => Promise<string>
   readonly get: <P extends GetRoute>(route: P, ...args: CallArgs<Operation<P, "get">>) => Promise<NornDocument<Success<Operation<P, "get">>>>
+  /** Read a route that answers with a file (an export): its bytes, never decoded as JSON. */
+  readonly download: <P extends FileRoute>(route: P, ...args: CallArgs<Operation<P, "get">>) => Promise<NornFile>
   readonly post: <P extends PostRoute>(route: P, ...args: CallArgs<Operation<P, "post">>) => Promise<NornDocument<Success<Operation<P, "post">>>>
 }
 
@@ -193,14 +252,15 @@ export function createNornClient(options: NornClientOptions): NornClient {
     return `${fillRoute(template, call.path)}?${scopedQuery(call.query, await scopeOf())}`
   }
 
-  async function request<T>(method: "GET" | "POST", template: string, call: LooseOptions = {}): Promise<NornDocument<T>> {
+  /** Send one call; a success's body is read as `read` says, a failure's as a refusal or nothing. */
+  async function send<T>(method: "GET" | "POST", template: string, call: LooseOptions, accept: string, read: (response: Response) => Promise<T>): Promise<T> {
     const target = `${base}${await route(template, call)}`
-    const headers: Record<string, string> = { accept: "application/json", ...call.headers }
+    const headers: Record<string, string> = { accept, ...call.headers }
     if (call.body !== undefined) headers["content-type"] = "application/json"
     const token = await options.token?.()
     if (token) headers["authorization"] = `Bearer ${token}`
     let response: Response
-    let text: string
+    let failure: string
     try {
       response = await fetcher(target, {
         method,
@@ -209,28 +269,51 @@ export function createNornClient(options: NornClientOptions): NornClient {
         ...(call.signal === undefined ? {} : { signal: call.signal }),
         ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
       })
-      text = await response.text()
+      if (response.ok) return await read(response)
+      failure = await response.text()
     } catch (error) {
+      if (error instanceof NornUnavailableError) throw error
       if (call.signal?.aborted) throw error
       throw new NornUnavailableError(0, null, undefined, { cause: error })
     }
-    if (response.ok) {
-      // A success the route declares without content (`202` to a notification) has no document.
-      if (text.trim() === "") return { status: response.status, document: undefined as T, numbers: new Map(), text, cacheControl: response.headers.get("cache-control"), etag: response.headers.get("etag") }
-      let exact
-      try { exact = readExact<T>(text) } catch { throw new NornUnavailableError(response.status, text, "The cell's answer was not a document.") }
-      return { status: response.status, ...exact, text, cacheControl: response.headers.get("cache-control"), etag: response.headers.get("etag") }
-    }
-    const refusal = refusalOf(text)
+    const refusal = refusalOf(failure)
     if (refusal !== null) throw new NornRefusalError(response.status, refusal)
-    throw new NornUnavailableError(response.status, text)
+    throw new NornUnavailableError(response.status, failure)
   }
+
+  /** A JSON document route's success. A body of a file's media type is never decoded as JSON. */
+  async function documentOf<T>(response: Response): Promise<NornDocument<T>> {
+    const contentType = response.headers.get("content-type")
+    if (!readsAsJson(contentType)) throw new NornUnavailableError(response.status, null, `The cell answered with ${contentType}, not a JSON document.`)
+    const text = await response.text()
+    const meta = { cacheControl: response.headers.get("cache-control"), etag: response.headers.get("etag") }
+    // A success the route declares without content (`202` to a notification) has no document.
+    if (text.trim() === "") return { status: response.status, document: undefined as T, numbers: new Map(), text, ...meta }
+    let exact
+    try { exact = readExact<T>(text) } catch { throw new NornUnavailableError(response.status, text, "The cell's answer was not a document.") }
+    return { status: response.status, ...exact, text, ...meta }
+  }
+
+  const request = <T,>(method: "GET" | "POST", template: string, call: LooseOptions = {}) =>
+    send(method, template, call, "application/json", (response) => documentOf<T>(response))
+
+  const download = (template: string, call: LooseOptions = {}) =>
+    send("GET", template, call, "*/*", async (response): Promise<NornFile> => {
+      const contentType = response.headers.get("content-type") ?? ""
+      // A file route's success names its media type; an answer without one, or a JSON document, is not the file.
+      const media = mediaOf(contentType)
+      if (media === "" || media === "application/json" || media.endsWith("+json")) {
+        throw new NornUnavailableError(response.status, null, `The cell answered ${contentType === "" ? "without a content type" : contentType}, not a file.`)
+      }
+      return { status: response.status, contentType, bytes: await response.arrayBuffer(), etag: response.headers.get("etag") }
+    })
 
   const loose = (args: readonly unknown[]) => args[0] as LooseOptions | undefined
   return {
     route: <P extends GetRoute>(template: P, ...args: CallArgs<Operation<P, "get">>) => route(template, loose(args)),
     get: <P extends GetRoute>(template: P, ...args: CallArgs<Operation<P, "get">>) =>
       request<Success<Operation<P, "get">>>("GET", template, loose(args)),
+    download: <P extends FileRoute>(template: P, ...args: CallArgs<Operation<P, "get">>) => download(template, loose(args)),
     post: <P extends PostRoute>(template: P, ...args: CallArgs<Operation<P, "post">>) =>
       request<Success<Operation<P, "post">>>("POST", template, loose(args)),
   }

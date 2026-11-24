@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test"
-import { QueryClient } from "@tanstack/react-query"
+import { MutationObserver, onlineManager, QueryClient } from "@tanstack/react-query"
 import { parseLiveFrame } from "../../../packages/norn-sdk/src/live.ts"
-import type { LiveRefusal, LiveSnapshot } from "../../../packages/norn-demo-ui/src/live/client.ts"
-import { actionReads, attachLive, cellPath, cellQueryKey, cellQueryOptions, invalidateCellRoutes, type CellDocument, type LiveSource } from "../src/lib/cell-query.ts"
+import { LiveClient, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../../../packages/norn-demo-ui/src/live/client.ts"
+import { actionReads, attachLive, cellMutationOptions, cellPath, cellQueryKey, cellQueryOptions, invalidateCellRoutes, SCOPE_CHANGED, submitIn, type CellDocument, type LiveSource } from "../src/lib/cell-query.ts"
+import { CellUnavailable, StudioScopeError, type StudioScope } from "../src/lib/definitions.ts"
 import { CellRefusal, NotServed } from "../src/lib/live-transport.ts"
 
 const ROUTE = "/v1/objects/{type}/{id}"
@@ -60,7 +61,7 @@ test("a push writes the cell's document into the cache, exact decimals kept, wit
   const { asked, options } = await readOnce(client)
   const socket = liveCell()
   const path = cellPath(ROUTE, scope, params)
-  const stop = attachLive({ client, live: socket.live, scope, route: ROUTE, queryKey: options.queryKey, path })
+  const stop = attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path })
   expect([...socket.subscribed.keys()]).toEqual(["/v1/objects/demo.Item/i1?orgId=org_1&environmentId=dev"])
   // The first answer after subscribing is the page's own read: the cache keeps it.
   const first = client.getQueryData(options.queryKey)
@@ -81,7 +82,7 @@ test("unmounting unsubscribes the read's path", async () => {
   const { options } = await readOnce(client)
   const socket = liveCell()
   const path = cellPath(ROUTE, scope, params)
-  const stop = attachLive({ client, live: socket.live, scope, route: ROUTE, queryKey: options.queryKey, path })
+  const stop = attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path })
   stop()
   expect(socket.unsubscribed).toEqual([path])
   expect(socket.subscribed.size).toBe(0)
@@ -95,7 +96,7 @@ test("two scopes never share a read: keys, pushes and invalidation stay in their
   expect(cellPath(ROUTE, other, params)).toBe("/v1/objects/demo.Item/i1?orgId=org_2&environmentId=dev")
   const socket = liveCell()
   const path = cellPath(ROUTE, scope, params)
-  attachLive({ client, live: socket.live, scope, route: ROUTE, queryKey: mine.options.queryKey, path })
+  attachLive({ client, live: socket.live, route: ROUTE, queryKey: mine.options.queryKey, path })
   socket.push(path, 200, "d2", record(2, "11"))
   expect(client.getQueryData<CellDocument<{ version: number }>>(mine.options.queryKey)?.document.version).toBe(2)
   expect(client.getQueryData<CellDocument<{ version: number }>>(theirs.options.queryKey)?.document.version).toBe(1)
@@ -119,7 +120,7 @@ test("a refusal, read or pushed, is the existing refusal state", async () => {
   const { options } = await readOnce(client)
   const socket = liveCell()
   const path = cellPath(ROUTE, scope, params)
-  attachLive({ client, live: socket.live, scope, route: ROUTE, queryKey: options.queryKey, path })
+  attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path })
   socket.push(path, 404, "gone", '{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"object.not_found","category":"visibility","message":"not found","explanation":"x"}')
   const state = client.getQueryState(options.queryKey)
   expect(state?.status).toBe("error")
@@ -141,7 +142,7 @@ test("a read already in flight when a push lands never overwrites the pushed doc
   const reading = client.fetchQuery(options)
   const socket = liveCell()
   const path = cellPath(ROUTE, scope, params)
-  attachLive({ client, live: socket.live, scope, route: ROUTE, queryKey: options.queryKey, path })
+  attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path })
   socket.push(path, 200, "d2", record(2, "12"))
   while (cell.asked.length === 0) await Bun.sleep(1)
   release(new Response(record(1, "10.50")))
@@ -158,7 +159,7 @@ test("a refusal pushed while a read is in flight wins over the older read", asyn
   const reading = client.fetchQuery(options).catch((error: unknown) => error)
   const socket = liveCell()
   const path = cellPath(ROUTE, scope, params)
-  attachLive({ client, live: socket.live, scope, route: ROUTE, queryKey: options.queryKey, path })
+  attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path })
   socket.push(path, 403, "denied", '{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"authz.denied","category":"permission","message":"denied","explanation":"x"}')
   while (cell.asked.length === 0) await Bun.sleep(1)
   release(new Response(record(1, "10.50")))
@@ -174,7 +175,7 @@ test("a push wins over a read that fails after it", async () => {
   const reading = client.fetchQuery(options)
   const socket = liveCell()
   const path = cellPath(ROUTE, scope, params)
-  attachLive({ client, live: socket.live, scope, route: ROUTE, queryKey: options.queryKey, path })
+  attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path })
   socket.push(path, 200, "d2", record(2, "12"))
   while (cell.asked.length === 0) await Bun.sleep(1)
   fail(new TypeError("network down"))
@@ -188,8 +189,181 @@ test("a live refusal leaves the read standing and is reported to the page", asyn
   const socket = liveCell()
   const path = cellPath(ROUTE, scope, params)
   const refusals: LiveRefusal[] = []
-  attachLive({ client, live: socket.live, scope, route: ROUTE, queryKey: options.queryKey, path, onRefused: (refusal) => refusals.push(refusal) })
+  attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path, onLiveRefusal: (refusal) => { if (refusal !== null) refusals.push(refusal) } })
   socket.subscribed.get(path)?.onRefused?.({ code: "live.too_many_subscriptions", message: "at most 8 subscriptions per socket" })
   expect(refusals.map(({ code }) => code)).toEqual(["live.too_many_subscriptions"])
   expect(client.getQueryState(options.queryKey)?.status).toBe("success")
+})
+
+test("a malformed refusal is never trusted for its code: the read is unavailable", async () => {
+  const client = new QueryClient()
+  // Refusal-shaped, but no `norn/refusal@2` document: no format, and a mistyped diagnostics member.
+  for (const body of [
+    '{"retryable":false,"reason":null,"code":"authz.denied","category":"permission","message":"denied","explanation":"x"}',
+    '{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"authz.denied","category":"permission","message":"denied","explanation":"x","diagnostics":"none"}',
+  ]) {
+    const { options } = await readOnce(client, scope, () => new Response(body, { status: 403 }))
+    const error = client.getQueryState(options.queryKey)?.error
+    expect(error).toBeInstanceOf(CellUnavailable)
+    expect((error as CellUnavailable).code).toBeUndefined()
+    client.clear()
+  }
+})
+
+test("a read in flight when an unchanged push lands is still fenced: an older answer never overwrites it", async () => {
+  const client = new QueryClient()
+  // The cache holds v2; a read that started before the cell pushed v2 again answers v1.
+  const { options } = await readOnce(client, scope, () => new Response(record(2, "12")))
+  let release: (response: Response) => void = () => {}
+  const slow = httpCell(() => new Promise<Response>((resolve) => { release = resolve }))
+  const again = cellQueryOptions(client, ROUTE, params, { scope, fetch: slow.fetch })
+  const reading = client.fetchQuery({ ...again, staleTime: 0 })
+  const socket = liveCell()
+  const path = cellPath(ROUTE, scope, params)
+  attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path })
+  const held = client.getQueryData(options.queryKey)
+  socket.push(path, 200, "d2", record(2, "12"))
+  expect(client.getQueryData(options.queryKey) === held).toBe(true)
+  while (slow.asked.length === 0) await Bun.sleep(1)
+  release(new Response(record(1, "10.50")))
+  expect((await reading).document.version).toBe(2)
+  expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(2)
+})
+
+/** A socket the real `LiveClient` drives: the test opens it, sends the cell's frames and drops it. */
+class CellSocket implements SocketLike {
+  readyState = 0
+  readonly sent: { type: string; id: string; path?: string }[] = []
+  readonly #listeners = new Map<string, ((event: { code?: number; data?: unknown }) => void)[]>()
+  send(data: string) { this.sent.push(JSON.parse(data) as { type: string; id: string; path?: string }) }
+  close() { this.readyState = 3 }
+  addEventListener(type: string, listener: (event: { code?: number; data?: unknown }) => void) {
+    this.#listeners.set(type, [...this.#listeners.get(type) ?? [], listener])
+  }
+  emit(type: "open" | "message" | "close", event: { code?: number; data?: unknown } = {}) {
+    if (type === "open") this.readyState = 1
+    if (type === "close") this.readyState = 3
+    for (const listener of this.#listeners.get(type) ?? []) listener(event)
+  }
+  snapshot(id: string, digest: string, body: string) { this.emit("message", { data: `{"type":"snapshot","id":"${id}","status":200,"digest":"${digest}","body":${body}}` }) }
+}
+
+function realLive() {
+  const sockets: CellSocket[] = []
+  const live = new LiveClient({
+    url: () => "wss://studio/api/host/v1/subscribe",
+    connect: () => { const socket = new CellSocket(); sockets.push(socket); return socket },
+    schedule: (callback) => queueMicrotask(callback),
+    delay: () => 0,
+  })
+  const opened = async () => {
+    while (sockets.at(-1)?.readyState !== 0) await Bun.sleep(1)
+    const socket = sockets.at(-1) as CellSocket
+    socket.emit("open")
+    return socket
+  }
+  return { live, opened }
+}
+
+test("a replay of what the socket last held never overwrites a newer read", async () => {
+  const client = new QueryClient()
+  const { options } = await readOnce(client)
+  const path = cellPath(ROUTE, scope, params)
+  const { live, opened } = realLive()
+  const stopFirst = attachLive({ client, live, route: ROUTE, queryKey: options.queryKey, path })
+  const socket = await opened()
+  const id = socket.sent.find(({ type }) => type === "subscribe")?.id ?? ""
+  socket.snapshot(id, "d1", record(1, "10.50"))
+  // A fresh read advances the shared entry to v2 while the socket still holds v1.
+  await client.fetchQuery({ ...cellQueryOptions(client, ROUTE, params, { scope, fetch: httpCell(() => new Response(record(2, EXACT))).fetch }), staleTime: 0 })
+  expect(live.snapshot(path)?.digest).toBe("d1")
+  // A second observer mounts: the live client replays v1 to it at once.
+  const stopSecond = attachLive({ client, live, route: ROUTE, queryKey: options.queryKey, path })
+  const held = client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)
+  expect(held?.document.version).toBe(2)
+  expect(held?.numbers.get("/values/amount")).toBe(EXACT)
+  // A new frame from the cell is still written.
+  socket.snapshot(id, "d3", record(3, "13"))
+  expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(3)
+  stopSecond()
+  stopFirst()
+})
+
+test("a live refusal clears once the cell answers the subscription again after a reconnect", async () => {
+  const client = new QueryClient()
+  const { options } = await readOnce(client)
+  const path = cellPath(ROUTE, scope, params)
+  const { live, opened } = realLive()
+  const seen: (string | null)[] = []
+  const stop = attachLive({ client, live, route: ROUTE, queryKey: options.queryKey, path, onLiveRefusal: (refusal) => seen.push(refusal?.code ?? null) })
+  const first = await opened()
+  const id = first.sent.find(({ type }) => type === "subscribe")?.id ?? ""
+  first.emit("message", { data: `{"type":"refused","id":"${id}","code":"live.too_many_subscriptions","message":"at most 8 subscriptions per socket"}` })
+  expect(seen).toEqual(["live.too_many_subscriptions"])
+  first.emit("close", { code: 1006 })
+  const second = await opened()
+  expect(second.sent).toContainEqual({ type: "subscribe", id, path })
+  second.snapshot(id, "d2", record(2, "12"))
+  expect(seen).toEqual(["live.too_many_subscriptions", null])
+  expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(2)
+  stop()
+})
+
+const ACTION = "/v1/actions/{actionId}" as const
+const call = { path: { actionId: "demo.item.add" }, body: { input: { amount: "1" }, idempotencyKey: "k1" } }
+
+/** A cell that counts writes, and a mutation observer as `useCellMutation` runs it, with the page's scope in `page.scope`. */
+function writer(client: QueryClient, page: { scope: StudioScope | null }) {
+  const posts: string[] = []
+  const fetch = async (url: string) => { posts.push(url); return new Response('{"outcome":"committed"}') }
+  const options = () => cellMutationOptions(client, ACTION, () => page.scope, { fetch, invalidates: () => [{ route: "/v1/inbox" }] })
+  const observer = new MutationObserver(client, options())
+  // A render updates a pending mutation's options, as `useMutation` does.
+  return { posts, observer, rerender: () => observer.setOptions(options()) }
+}
+
+test("a write queued in one workspace is refused, with nothing sent, once the page moved to another", async () => {
+  const client = new QueryClient()
+  const page: { scope: StudioScope | null } = { scope }
+  const { posts, observer, rerender } = writer(client, page)
+  client.mount()
+  onlineManager.setOnline(false)
+  try {
+    const sent = observer.mutate(submitIn(call, page.scope)).catch((error: unknown) => error)
+    await Bun.sleep(1)
+    expect(observer.getCurrentResult().isPaused).toBe(true)
+    // The page moves to another workspace and renders again before the write can start.
+    page.scope = other
+    rerender()
+    client.setQueryData(cellQueryKey("/v1/inbox", other, {}), { document: {} })
+    onlineManager.setOnline(true)
+    const error = await sent
+    expect(error).toBeInstanceOf(StudioScopeError)
+    expect((error as Error).message).toBe(SCOPE_CHANGED)
+    expect(posts).toEqual([])
+    expect(client.getQueryState(cellQueryKey("/v1/inbox", other, {}))?.isInvalidated).toBe(false)
+  } finally {
+    onlineManager.setOnline(true)
+    client.unmount()
+  }
+})
+
+test("a write runs in the scope it was submitted in, and invalidates that scope's reads", async () => {
+  const client = new QueryClient()
+  const page: { scope: StudioScope | null } = { scope }
+  const { posts, observer } = writer(client, page)
+  client.setQueryData(cellQueryKey("/v1/inbox", scope, {}), { document: {} })
+  client.setQueryData(cellQueryKey("/v1/inbox", other, {}), { document: {} })
+  // One variables object submitted twice is two calls, each bound to its own scope.
+  const first = submitIn(call, scope)
+  const second = submitIn(call, other)
+  expect(first).not.toBe(second)
+  await observer.mutate(first)
+  expect(posts).toEqual(["/api/host/v1/actions/demo.item.add?orgId=org_1&environmentId=dev"])
+  expect(client.getQueryState(cellQueryKey("/v1/inbox", scope, {}))?.isInvalidated).toBe(true)
+  expect(client.getQueryState(cellQueryKey("/v1/inbox", other, {}))?.isInvalidated).toBe(false)
+  expect(await observer.mutate(second).catch((error: unknown) => (error as Error).message)).toBe(SCOPE_CHANGED)
+  // A call that was never bound to a scope is refused too.
+  expect(await observer.mutate(call).catch((error: unknown) => error)).toBeInstanceOf(StudioScopeError)
+  expect(posts).toHaveLength(1)
 })
