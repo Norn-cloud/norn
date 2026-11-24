@@ -380,7 +380,7 @@ fn a_first_put_in_an_initial_state_or_its_default_is_admitted() {
     // Updates of existing objects are outside initialization.
     cell.commit(CellCommit {
         writes: vec![FactWrite {
-            key: explicit.clone(),
+            key: explicit,
             expected: FactVersion(1),
             mutation: FactMutation::Put {
                 values: values(json!({ "status": "draft", "pages": 2 })),
@@ -626,22 +626,23 @@ fn forged_creations_and_unrecorded_writes_are_refused_with_no_effects() {
 /// Create `test.Batch` `B-1` recording `created`, then seal it.
 fn seal_batch(created: JsonObject) -> Commit {
     let key = FactKey::new("test.Batch", "B-1");
+    let events = vec![
+        FactEvent::Created {
+            key: key.clone(),
+            values: created,
+        },
+        FactEvent::Transitioned {
+            key: key.clone(),
+            lifecycle: PropertyId("state".into()),
+            transition: TransitionId("seal".into()),
+            from: "open".into(),
+            to: "sealed".into(),
+        },
+    ];
     put(
         &key,
         values(json!({ "state": "sealed", "size": 1 })),
-        vec![
-            FactEvent::Created {
-                key: key.clone(),
-                values: created,
-            },
-            FactEvent::Transitioned {
-                key: key.clone(),
-                lifecycle: PropertyId("state".into()),
-                transition: TransitionId("seal".into()),
-                from: "open".into(),
-                to: "sealed".into(),
-            },
-        ],
+        events,
     )
 }
 
