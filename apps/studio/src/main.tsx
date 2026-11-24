@@ -4,6 +4,7 @@ import { BarChart3, Blend, Bookmark, BookMarked, ChartLine, Columns2, Database, 
 import { StrictMode, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { endSession, useAccount, type Account } from "@/lib/session"
+import { applyAppearance, storedShellChrome, storedSkin } from "@/lib/appearance"
 import { isSectionVisible, useLearningCapabilities } from "@/lib/learning/capabilities"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
@@ -92,10 +93,11 @@ const queryClient = new QueryClient()
 const root = createRootRoute({ component: Root })
 const router = createRouter({ routeTree: routeTree(root) })
 
-// Dark and light are peers: follow the reader's system setting.
+// Dark and light are peers: follow the reader's system setting; apply persisted skin & shell before first paint.
 const dark = window.matchMedia("(prefers-color-scheme: dark)")
 const applyScheme = () => document.documentElement.classList.toggle("dark", dark.matches)
 applyScheme()
+applyAppearance(storedSkin(), storedShellChrome())
 dark.addEventListener("change", applyScheme)
 
 // An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.

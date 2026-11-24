@@ -1,5 +1,5 @@
 import { createContext, use, useEffect, useState, type ReactNode } from "react"
-import { Direction } from "radix-ui"
+import { DirectionProvider } from "@base-ui/react/direction-provider"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 /**
@@ -47,7 +47,7 @@ export function LocaleProvider({ children, initial }: { readonly children: React
   }
   return (
     <LocaleContext value={{ locale, setLocale }}>
-      <Direction.DirectionProvider dir={directionOf(locale)}>{children}</Direction.DirectionProvider>
+      <DirectionProvider direction={directionOf(locale)}>{children}</DirectionProvider>
     </LocaleContext>
   )
 }

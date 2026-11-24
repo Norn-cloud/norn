@@ -37,7 +37,7 @@ use norn_cell::read::PendingTimer;
 use norn_ir::RuntimeObject;
 use norn_kernel::{
     CellCommit, CellHost, DecisionTurn, DueTimer, EnvelopeLimits, FactEvent, FactKey, LogicalTime,
-    World,
+    TurnEnvelopeLimits, TurnEnvelopeMeter, World,
 };
 
 use crate::decisions::OpenDecision;
@@ -281,6 +281,15 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
     let more = items.len() > MAX_DUE_STEPS;
     items.truncate(MAX_DUE_STEPS);
     let mut work = DueWork::default();
+    let step_budget = u64::try_from(MAX_DUE_STEPS).unwrap_or(1);
+    let mut meter = TurnEnvelopeMeter::with_limits(
+        EnvelopeLimits::V1,
+        TurnEnvelopeLimits {
+            max_events: u64::from(EnvelopeLimits::V1.max_events).saturating_mul(step_budget),
+            max_commands: u64::from(EnvelopeLimits::V1.max_commands).saturating_mul(step_budget),
+            max_timers: u64::from(EnvelopeLimits::V1.max_timers).saturating_mul(step_budget),
+        },
+    );
     for item in items {
         let (key, incarnation) = item.retry_key();
         let handled = match &item {
@@ -297,7 +306,7 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
                         timer,
                         incarnation: norn_kernel::LedgerSeq(pending.commit_seq),
                     };
-                    fire_timer(&mut cell, &due, now)
+                    fire_timer(&mut cell, &due, now, &mut meter)
                 })
                 .map(|()| &mut work.timers)
                 .map_err(|refusal| format!("timer {}: {}", pending.timer.timer_id, why(&refusal))),
@@ -475,6 +484,7 @@ fn fire_timer<E: SqlEngine>(
     cell: &mut ActionCell<E>,
     due: &DueTimer<RuntimeObject>,
     now: LogicalTime,
+    meter: &mut TurnEnvelopeMeter,
 ) -> Result<(), Refusal> {
     let consumed = Some(due.consumed());
     let record = &due.timer.payload;
@@ -522,12 +532,8 @@ fn fire_timer<E: SqlEngine>(
                         world: World::Main,
                         consumes: consumed,
                     };
-                    norn_kernel::decision_cell_commit::<_, _, _, norn_cell::CellError>(
-                        &catalog,
-                        &slice,
-                        &turn,
-                        &output,
-                        &EnvelopeLimits::V1,
+                    norn_kernel::decision_cell_commit_with_host_and_meter(
+                        &*cell, &catalog, &slice, &turn, &output, meter,
                     )
                     .map_err(|refusal| Refusal::host(refusal.code()))?
                 }

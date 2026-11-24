@@ -1,7 +1,7 @@
 {
   "vendor": {
     "path": "apps/studio/src/components/ui",
-    "method": "shadcn CLI 4.23.0 `init --preset luma --reinstall` (style radix-luma, base color neutral), copied as source; later `add sidebar command dropdown-menu` with the same CLI and style; later `add breadcrumb collapsible avatar tabs popover toggle-group` with the same CLI and style",
+    "method": "shadcn CLI 4.23.0 base component layouts (MIT), migrated to @base-ui/react and @ui-sdk/react primitives",
     "license": {
       "spdx": "MIT",
       "file": "LICENSE",
@@ -38,8 +38,9 @@
     ],
     "changes": [
       "`cn` is imported from `@/lib/utils`",
-      "shadcn.css is the keyframes, state variants and no-scrollbar part of shadcn@4.23.0's dist/tailwind.css, vendored instead of depending on the CLI package",
-      "index.css carries the Norn theme tokens plus the app's base layer"
+      "All interactive primitives are backed by @base-ui/react or @ui-sdk/react (no Radix dependencies or CSS variables)",
+      "shadcn.css holds Base UI / UI SDK keyframes, state variants and the no-scrollbar utility",
+      "index.css carries the Norn theme tokens, swappable skin palettes (open, polar, luma, glass), and base layer"
     ]
   },
   "upstream": {

@@ -41,7 +41,7 @@ This cut checks structure only. Generic type/unit substitution, B2 law instantia
 
 `SliceKey::Parameter {from, settingKey, effectiveAt, precedence: Vec<ScopeRef>, defaultFrom?}` projects one numeric setting from an earlier complete authorized link-list slice. `effectiveAt` names the action's input timestamp; `defaultFrom`, when present, names an earlier single-object setting slice. Scope ordering is explicit and closed; no aliases or globals are inferred. Candidate data and link membership stay in the transaction read set.
 
-The initial native numeric-setting fact profile uses `setting_key`, exact numeric `value`, `effective_from`, nullable `effective_to`, `review_state`, and five present nullable scope fields (`org_id`, `tenant_id`, `workspace_id`, `environment_id`, `business_unit_id`) projected to `ScopeRef`. It projects to the existing `SettingRoot`; source facts are changed only by ordinary governed actions. The binding contract alone refuses execution until the runtime projection and receipt pin are qualified; rule bindings remain unsupported.
+The initial native numeric-setting fact profile uses `setting_key`, exact numeric `value`, `effective_from`, nullable `effective_to`, `review_state`, and five present nullable scope fields (`org_id`, `tenant_id`, `workspace_id`, `environment_id`, `business_unit_id`) projected to `ScopeRef`. It projects to the existing `SettingRoot`; source facts are changed only by ordinary governed actions. Action runtime projection, resolution and receipt pinning (`ActionParameterPin`) for this numeric profile are implemented and regression-tested in `crates/norn-kernel/src/action_commit/parameter.rs` and `crates/norn-kernel/tests/action_parameters.rs`; rule bindings and recorded-time snapshot selection remain unsupported.
 
 ### Initial overlay analysis profile
 
@@ -76,12 +76,12 @@ Evidence: structural identity/admission, runtime activation/parameter pins, gene
 
 ## Main and gaps
 
-Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, `crates/norn-checker/src/obligations/`, `crates/norn-cell/src/migration.rs`. Settings and live-data migration are real substrate. `SettingValue::Number(f64)` is not an exact economic parameter. B1–B3 remain the [design on #213](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558465085); generic pack instances, protected law transport and complete in-flight migration are gaps.
+Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, `crates/norn-checker/src/{obligations/,parameter.rs}`, `crates/norn-kernel/src/action_commit/parameter.rs`, `crates/norn-kernel/tests/action_parameters.rs`, `crates/norn-cell/src/migration.rs`. Settings and live-data migration are real substrate: `SettingValue::Number(DecimalLiteral)` carries exact decimal-string literals (refusing binary64 JSON numbers) decoded to `RuntimeValue::Number(Decimal)`, and `SliceKey::Parameter` runtime resolution, scope precedence fallthrough, effective-time `PARAM-NO-MATCH` default/refusal behavior and `PARAM-TAX` receipt pinning are implemented and regression-tested in `crates/norn-kernel/tests/action_parameters.rs`. B1–B3 remain the [design on #213](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558465085); generic pack instances, protected law transport, rule parameter bindings, non-numeric/recorded-time snapshot parameter resolution and complete in-flight migration are gaps.
 
 ## Work breakdown (one coherent unit per PR)
 
 1. B1 role/endpoints in existing mapping roots, then typed member interpretations, then MAP-* negatives/schema/SDK projection cuts.
 2. Coordinate 05 B2 law instances; B3 checked retained-layer construction and receipt revalidation, then full writer/edge challenge reconstruction, then LAYERS/EDGE tests.
 3. Add stable generic instance/type-unit binding admission, then explicit import/export/alias conformance.
-4. Upgrade governed parameter exact typing and scope/interval resolution, then PARAM-TAX commit history tests with 01/04.
+4. Governed numeric parameter exact typing (`SettingValue::Number(DecimalLiteral)`), scope/interval resolution, effective-time `PARAM-NO-MATCH` default/refusal behavior and `PARAM-TAX` receipt pinning are present (`crates/norn-checker/src/parameter.rs`, `crates/norn-kernel/src/action_commit/parameter.rs`, `crates/norn-kernel/tests/action_parameters.rs`); remaining work is rule parameter bindings and non-numeric / recorded-time snapshot parameter resolution with 01/04.
 5. Add migration plan coverage for states/timers/commands, then atomic activation, then MIGRATE-FLIGHT and rollback/restatement tests with 08.

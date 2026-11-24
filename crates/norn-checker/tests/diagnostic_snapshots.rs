@@ -182,6 +182,10 @@ fn check_invalid_corpus(dir: &str, snapshot_dir: &str) -> std::collections::BTre
     for entry in entries {
         let file = field(entry, "file");
         let code = field(entry, "code");
+        if code.starts_with("widget.") {
+            // Widget payload fixtures are validated by Ring-1 `norn-ui-checker`.
+            continue;
+        }
         covered.insert(code.to_owned());
         let error_at = field(entry, "error_at");
         assert_ne!(field(entry, "reason").len(), 0, "{file}: empty reason");

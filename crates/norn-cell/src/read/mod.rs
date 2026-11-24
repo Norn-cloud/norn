@@ -37,7 +37,7 @@ pub use ledger::{LedgerEntry, LedgerHead};
 pub use links::{
     LinkDirection, LinkEdgeRecord, LinkPagePosition, LinkReadPage, LinkRecord, LinkRef,
 };
-pub use objects::ObjectRecord;
+pub use objects::{MarkedQuestionPath, ObjectRecord};
 pub use pagination::{
     BindingRootCandidate, BindingSortValue, BindingSortedCandidate, BindingSortedPosition,
 };
@@ -161,7 +161,7 @@ pub(crate) fn query_expressions(
     Ok(rows)
 }
 
-fn query_projected(
+pub(crate) fn query_projected(
     engine: &impl SqlEngine,
     table: &str,
     columns: &[(&str, bool)],

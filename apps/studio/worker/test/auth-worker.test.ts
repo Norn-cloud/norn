@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import worker, { type Env } from "../index.ts"
+import worker, { acceptInvitation, type Env } from "../index.ts"
 
 const ORIGIN = "https://studio-preview.norn.cloud"
 const MIGRATION: string = readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8")
@@ -416,4 +416,55 @@ test("/api/me never takes the environment from the client, and gives none for a 
   db.run(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values ('org_other', 'Other', 'other', ?, ?)`, [JSON.stringify({ environmentId: "warehouse" }), Date.now()])
   db.run(`update "session" set "activeOrganizationId" = 'org_other' where "userId" = ?`, [user])
   expect(await meOf(env, cookie)).toMatchObject({ organization: null, environmentId: null })
+})
+
+test("#1460: acceptInvitation preserves upstream headers (including multiple Set-Cookie) and drops stale Content-Length", async () => {
+  const upstreamHeaders = new Headers({
+    "content-type": "application/json",
+    "content-length": "37",
+    "content-encoding": "gzip",
+    etag: '"stale-etag"',
+    "x-upstream": "preserved",
+  })
+  upstreamHeaders.append("set-cookie", "__Secure-norn.session_token=refreshed-tok; Path=/; HttpOnly; Secure; SameSite=Lax")
+  upstreamHeaders.append("set-cookie", "__Secure-norn.extra=1; Path=/; HttpOnly; Secure; SameSite=Lax")
+  const upstream = new Response(JSON.stringify({ code: "INVITATION_NOT_FOUND", message: "Invitation not found" }), { status: 400, headers: upstreamHeaders })
+
+  const rewritten = await acceptInvitation(upstream)
+  expect(rewritten.status).toBe(400)
+  expect((await rewritten.json()) as unknown).toEqual({
+    code: "INVITATION_NOT_FOUND",
+    message: "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one.",
+  })
+  expect(rewritten.headers.getSetCookie()).toEqual([
+    "__Secure-norn.session_token=refreshed-tok; Path=/; HttpOnly; Secure; SameSite=Lax",
+    "__Secure-norn.extra=1; Path=/; HttpOnly; Secure; SameSite=Lax",
+  ])
+  expect(rewritten.headers.get("content-length")).toBeNull()
+  expect(rewritten.headers.get("content-encoding")).toBeNull()
+  expect(rewritten.headers.get("etag")).toBeNull()
+  expect(rewritten.headers.get("x-upstream")).toBe("preserved")
+  expect(rewritten.headers.get("cache-control")).toBe("no-store")
+})
+
+test("#1460: a failed accept-invitation that refreshes an aging session still delivers the refreshed Set-Cookie", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  const signedIn = await enroll(env, "refresh@example.com", "Refresh")
+  const cookie = cookieOf(signedIn)
+  // Age the session past updateAge (24h) while keeping it valid (7d lifetime) so Better Auth's
+  // session middleware refreshes it and emits a new Set-Cookie on the next authenticated call.
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()
+  const fourDaysAhead = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString()
+  db.run(`update "session" set "updatedAt" = ?, "expiresAt" = ?`, [twoDaysAgo, fourDaysAhead])
+
+  const response = await post(env, "/api/auth/organization/accept-invitation", { invitationId: "inv_missing" }, { cookie })
+  expect(response.status).toBe(400)
+  expect((await response.json()) as unknown).toEqual({
+    code: "INVITATION_NOT_FOUND",
+    message: "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one.",
+  })
+  expect(response.headers.get("cache-control")).toBe("no-store")
+  const cookies = response.headers.getSetCookie()
+  expect(cookies.some((line) => line.startsWith("__Secure-norn.session_token="))).toBe(true)
 })

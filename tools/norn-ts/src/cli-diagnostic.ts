@@ -66,6 +66,14 @@ export function cliDiagnostic(error: ProjectError, extra: { readonly source?: So
   }
 }
 
+/** Render a CLI diagnostic with its registered code, message and guidance. */
+export function formatCliDiagnostic(finding: Finding): string {
+  const lines = [`${finding.code}: ${finding.message}`]
+  if (finding.fix) lines.push(`  fix: ${finding.fix}`)
+  else if (finding.no_fix) lines.push(`  no automatic fix: ${finding.no_fix}`)
+  return lines.join("\n")
+}
+
 /** A `norn-checker/diagnostics@1` finding (what `norn check` reports) as `norn/diagnostic@2`. */
 export function checkerDiagnostic(finding: CheckerDiagnostic): Finding {
   const entry = registered(finding.code)

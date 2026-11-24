@@ -169,6 +169,19 @@ impl<V: CommitView + ?Sized> CommitView for ProfileView<'_, V> {
         self.inner.has_link_target(source, link, excluded)
     }
 
+    fn has_link_source(
+        &self,
+        target: &FactKey,
+        link: &str,
+        excluded: &BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, Self::Error> {
+        self.fact(target);
+        for key in excluded {
+            self.fact(key);
+        }
+        self.inner.has_link_source(target, link, excluded)
+    }
+
     fn links_of(&self, key: &FactKey) -> Result<Vec<LinkKey>, Self::Error> {
         self.fact(key);
         let links = self.inner.links_of(key)?;

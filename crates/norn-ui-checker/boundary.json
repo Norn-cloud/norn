@@ -1,0 +1,11 @@
+{
+  "name": "norn-ui-checker",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-checker",
+    "norn-expr",
+    "norn-ir"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}

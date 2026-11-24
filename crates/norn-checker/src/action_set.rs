@@ -2,47 +2,15 @@
 //! an action may write, checked over a resolved artifact set.
 //!
 //! [`check_action_set`] runs inside [`crate::check_artifact_set`] after
-//! resolution. It reads every candidate `action` artifact that decodes into
-//! its typed root ([`norn_ir::ActionRoot`]; one that does not has per-artifact
-//! findings and is skipped) against the **effective model**: every object
-//! type defined by an `entity` artifact of the candidates or the installed
-//! base, `EntityIR` v2 as decoded and v1 lowered through
-//! [`crate::entity_object_type`], with the effective (inherited, extended)
-//! properties of v2 types from [`crate::EffectiveCatalog`].
+//! resolution against the effective model of candidate and base entity types
+//! ([`crate::entity_object_type`], [`crate::EffectiveCatalog`]).
 //!
-//! # Identities
+//! # Identities & Effect targets
 //!
-//! Artifact identities (`(artifactId, version)`, conflicting versions,
-//! shadowing the base) are the resolver's ([`crate::artifact_set::codes`]),
-//! and `EntityIR` v2 type names are the whole-model check's
-//! (`object_type.validation.duplicate_name`). Two identities neither covers
-//! are checked here:
-//!
-//! - an object type name defined twice where one definition is `EntityIR` v1
-//!   ([`codes::DUPLICATE_OBJECT_TYPE`]): the v2 model does not see v1
-//!   artifacts, and an object kind must name one type;
-//! - an `actionId` used by two actions of the set or the base
-//!   ([`codes::DUPLICATE_ACTION_ID`]): it is the action's command and MCP tool
-//!   name.
-//!
-//! # Effect targets
-//!
-//! The closed effect program ([`norn_ir::ActionEffectProgram`]) has two
-//! operations, `upsert_input_object` and `fire_transition` (T3-LIFE-3,
-//! #2867). Each pins an `entity` artifact by exact id and version and names
-//! the object kind it writes ([`norn_ir::ActionEffectProgram::target`]). Its
-//! target must:
-//!
-//! - resolve to an `entity` artifact of the set or the base
-//!   ([`codes::UNRESOLVED_EFFECT_ENTITY`]) the action's scope can see
-//!   ([`crate::artifact_set::codes::INCOMPATIBLE_SCOPE`]);
-//! - be the object type that artifact defines ([`codes::EFFECT_KIND_MISMATCH`]);
-//! - be writable by a generic action ([`codes::TARGET_NOT_WRITABLE`]): the
-//!   type's mutation authority is `generic_action` (a `domain_engine` type is
-//!   mutated only by its domain engine's commands, the rule of
-//!   [`norn_ir::entity_mutation_authority_admits`]), and, for an upsert, no
-//!   property of the input schema, from which the upsert derives the object,
-//!   is a computed (read-only) property of the effective type.
+//! Checks duplicate v1/v2 object types ([`codes::DUPLICATE_OBJECT_TYPE`]),
+//! duplicate `actionId`s ([`codes::DUPLICATE_ACTION_ID`]), and closed effect
+//! programs ([`norn_ir::ActionEffectProgram`]: resolution, scope visibility,
+//! kind match, and `generic_action` writability without computed inputs).
 //!
 //! # The declared write set
 //!
@@ -113,7 +81,8 @@ use norn_ir::{
 use crate::artifact_set::scope_finding;
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
 use crate::entity_instance::{
-    EffectiveCatalog, EffectiveKind, EffectiveLifecycle, EffectiveObjectType, EffectiveProperty,
+    EffectiveCatalog, EffectiveKind, EffectiveLifecycle, EffectiveLink, EffectiveObjectType,
+    EffectiveProperty,
 };
 use crate::entity_lowering::{EntityForm, entity_object_type};
 use crate::lifecycle_writes::{codes as codes_lifecycle, finding as lifecycle_finding};
@@ -456,6 +425,9 @@ fn check_action(
         } else {
             findings.push(finding(codes::UNDECLARED_EFFECT_WRITE, "synchronousRule requires finite objectType and supported op enums in its closed fact schema".to_owned(), artifact, "/payload/synchronousRule"));
         }
+        findings.extend(crate::decision_links::synchronous_writer_link_findings(
+            artifact, root, writer, model,
+        ));
     }
     if let Some(program) = &root.effect_program {
         let kind = program.target().object_kind;
@@ -960,57 +932,17 @@ fn action_slice_key_findings(
     };
     let path = format!("/payload/slice/{index}");
     let kind = entry.object_type.as_str();
-    if let SliceKey::Property { from, property } = &entry.key
+    if let SliceKey::Property { from, .. } = &entry.key
         && from != "input"
     {
-        let Some(source) = root
-            .slice
-            .iter()
-            .take(index)
-            .find(|prior| prior.name == *from)
-        else {
-            return findings;
-        };
-        match environment
-            .record(source.object_type.as_str())
-            .and_then(|record| record.fields.get(property.as_str()))
-            .filter(|field| matches!(field.source, FieldSource::Property { .. }))
-        {
-            None => findings.push(finding(
-                codes::INVALID_SLICE,
-                format!(
-                    "slice key property {:?} is not declared on source type {:?}",
-                    property.as_str(),
-                    source.object_type.as_str()
-                ),
-                artifact,
-                &format!("{path}/key/property"),
-            )),
-            Some(field) if !is_action_string_key_type(&field.ty) => findings.push(finding(
-                codes::INVALID_SLICE,
-                format!(
-                    "slice key property {:?} must be a string or enum",
-                    property.as_str()
-                ),
-                artifact,
-                &format!("{path}/key/property"),
-            )),
-            Some(field)
-                if (source.optional || matches!(field.ty, Type::Optional(_)))
-                    && !entry.optional =>
-            {
-                findings.push(finding(
-                    codes::INVALID_SLICE,
-                    format!(
-                        "slice key property {:?} of entry {from:?} may be absent or null; mark the slice entry optional",
-                        property.as_str(),
-                    ),
-                    artifact,
-                    &format!("{path}/key/property"),
-                ));
-            }
-            Some(_) => {}
-        }
+        findings.extend(crate::predicate_slice::action_property_slice_findings(
+            artifact,
+            root,
+            index,
+            entry,
+            &path,
+            environment,
+        ));
     }
 
     if let SliceKey::Link { from, link } = &entry.key
@@ -1052,6 +984,16 @@ fn action_slice_key_findings(
             entry,
             &path,
             environment,
+        ));
+    }
+    if let SliceKey::Predicate { .. } = &entry.key
+        && let (Some(effective), Some(record)) = (
+            model.effective_object_type_named(kind),
+            environment.record(kind),
+        )
+    {
+        findings.extend(crate::predicate_slice::action_predicate_slice_findings(
+            artifact, root, entry, &path, effective, record,
         ));
     }
     findings
@@ -1212,18 +1154,6 @@ fn validate_parameter_fact_profile(
     }
 }
 
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "The foreign non-exhaustive enum requires a catch-all; unknown variants retain the existing fallback"
-)]
-fn is_action_string_key_type(ty: &Type) -> bool {
-    match ty {
-        Type::Text { .. } | Type::Enum { .. } => true,
-        Type::Optional(inner) => is_action_string_key_type(inner),
-        _ => false,
-    }
-}
-
 /// The findings of an action's effect program target: it resolves, is the
 /// pinned artifact's object type, and is writable.
 fn effect_target_findings(
@@ -1304,9 +1234,9 @@ pub(crate) struct Defined<'a> {
     /// Effective stored-property contracts; absent only when the model was
     /// built without effective views.
     pub(crate) effective_object_type: Option<Result<EffectiveObjectType, String>>,
-    /// Effective forward links, including inherited and extension links:
-    /// `(link id, target)`. Unavailable models have no admitted links.
-    links: Vec<(String, String)>,
+    /// Effective forward links, including inherited and extension links.
+    /// Unavailable models have no admitted links.
+    links: Vec<EffectiveLink>,
 }
 
 impl Defined<'_> {
@@ -2365,15 +2295,16 @@ fn action_model_environment(
     ZenTypeEnv::from_artifact_set_for_checking(&definitions, registry, EnvOptions::default())
 }
 
-/// The object types of the set and the base, by name, in definition order
-/// (base first).
-pub(crate) struct Model<'a> {
+/// The object types of the set and the base, by name, in definition order (base first).
+pub struct Model<'a> {
     by_name: BTreeMap<String, Vec<Defined<'a>>>,
     expression_environment: Result<ZenTypeEnv, Vec<norn_expr::EnvError>>,
 }
 
 impl<'a> Model<'a> {
-    pub(crate) fn new(
+    /// Build the effective object-type model over candidate `artifacts` and installed `base`.
+    #[must_use]
+    pub fn new(
         artifacts: &'a [ArtifactEnvelope],
         base: &'a [ArtifactEnvelope],
         registry: &BTreeSet<PropertyTypeName>,
@@ -2448,10 +2379,7 @@ impl<'a> Model<'a> {
             let links = catalog
                 .as_ref()
                 .and_then(|catalog| catalog.links_for_object_type(&name))
-                .unwrap_or_default()
-                .iter()
-                .map(|link| (link.id.as_str().to_owned(), link.target.as_str().to_owned()))
-                .collect();
+                .map_or_default(<[EffectiveLink]>::to_vec);
             by_name.entry(name.clone()).or_default().push(Defined {
                 name,
                 artifact,
@@ -2476,7 +2404,16 @@ impl<'a> Model<'a> {
         self.by_name.get(name).and_then(|defined| defined.first())
     }
 
-    fn effective_object_type_named(&self, name: &str) -> Option<&EffectiveObjectType> {
+    /// The effective lifecycles declared on object type `name`, if present.
+    #[must_use]
+    pub fn object_type_lifecycles(
+        &self,
+        name: &str,
+    ) -> Option<&Result<Vec<EffectiveLifecycle>, String>> {
+        self.object_type(name).map(|defined| &defined.lifecycles)
+    }
+
+    pub(crate) fn effective_object_type_named(&self, name: &str) -> Option<&EffectiveObjectType> {
         self.by_name
             .get(name)?
             .iter()
@@ -2485,7 +2422,7 @@ impl<'a> Model<'a> {
 
     /// Whether an effect target is an owned child type or its subtype, using
     /// the same effective ownership and lineage model as the runtime catalog.
-    fn is_owned_child_target(&self, target_name: &str) -> bool {
+    pub(crate) fn is_owned_child_target(&self, target_name: &str) -> bool {
         let Some(target) = self.effective_object_type_named(target_name) else {
             return false;
         };
@@ -2505,14 +2442,20 @@ impl<'a> Model<'a> {
         })
     }
 
-    /// The effective forward target of `link` on `name`, including inherited
-    /// narrowing and extension-added links. Unavailable models fail closed.
-    pub(crate) fn link_target(&self, name: &str, link: &str) -> Option<&str> {
+    /// The effective forward link contract for `link` on `name`, including
+    /// inherited narrowing, properties, and extension-added links.
+    pub(crate) fn effective_link(&self, name: &str, link: &str) -> Option<&EffectiveLink> {
         self.object_type(name)?
             .links
             .iter()
-            .find(|(id, _)| id == link)
-            .map(|(_, target)| target.as_str())
+            .find(|candidate| candidate.id.as_str() == link)
+    }
+
+    /// The effective forward target of `link` on `name`, including inherited
+    /// narrowing and extension-added links. Unavailable models fail closed.
+    pub(crate) fn link_target(&self, name: &str, link: &str) -> Option<&str> {
+        self.effective_link(name, link)
+            .map(|candidate| candidate.target.as_str())
     }
 
     /// The object type `artifact` defines.
@@ -2829,7 +2772,6 @@ fn create_link_findings(
             .as_ref()
             .map(|s| s.object_type.as_str())
             .or_else(|| primary.map(|p| p.target().object_kind));
-        let source = source_kind.and_then(|kind| model.object_type(kind));
         let source_written = binding.source.as_ref().is_none_or(|source| {
             composed
                 && input_schema_field_is_string(&root.input_schema, &source.id_field)
@@ -2845,12 +2787,7 @@ fn create_link_findings(
                 ..
             })
         );
-        let declared = source.and_then(|s| {
-            s.links
-                .iter()
-                .find(|(id, _)| id == &binding.link)
-                .map(|(_, target)| target)
-        });
+        let declared = source_kind.and_then(|kind| model.link_target(kind, &binding.link));
         let in_slice = root.slice.iter().any(|entry| entry.object_type.as_str() == binding.target_type && !entry.optional && matches!(&entry.key, SliceKey::Property { from, property } if from == "input" && property.as_str() == binding.target_id_field));
         let created_target = composed
             && root.writes.iter().any(|write| {
@@ -2872,7 +2809,7 @@ fn create_link_findings(
             || !source_written
             || !(in_slice || created_target || primary_target)
             || !input_schema_field_is_string(&root.input_schema, &binding.target_id_field)
-            || declared.is_none_or(|target| target != &binding.target_type)
+            || declared.is_none_or(|target| target != binding.target_type)
         {
             findings.push(finding(codes::CREATE_LINK, "createLinks requires a declared written source, unique source/link binding, and an authorized required slice target or a target created in the same proposal".to_owned(), artifact, "/payload/createLinks"));
         }

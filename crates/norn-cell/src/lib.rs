@@ -50,6 +50,7 @@ pub mod fork;
 mod history;
 mod history_selection;
 pub mod host;
+mod link_guard;
 mod link_laws;
 pub mod mapping_bundle;
 pub mod mapping_conflict;
@@ -116,8 +117,8 @@ pub use mapping_process::{MappingOutcome, QuarantineReason};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,
-    LedgerEntry, LedgerHead, LinkRecord, ObjectRecord, PendingCommand, PendingObservation,
-    PendingTimer, RunRecord, StoreReader,
+    LedgerEntry, LedgerHead, LinkRecord, MarkedQuestionPath, ObjectRecord, PendingCommand,
+    PendingObservation, PendingTimer, RunRecord, StoreReader,
 };
 #[cfg(feature = "native")]
 pub use restore::{HistoryDiagnosis, PrefixRestore, RestoreError, RestoreReport, UnprovenEntry};
