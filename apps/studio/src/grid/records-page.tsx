@@ -10,7 +10,7 @@ import { ProfilePanel } from "./profile-panel.tsx"
 import { QuarantinePanel } from "./quarantine-panel.tsx"
 import { useState } from "react"
 import type { StoredView } from "../lib/views.ts"
-import { RecordsGrid, type GridQuery } from "./records-grid.tsx"
+import { RecordsGrid, type DisplayedGridQuery } from "./records-grid.tsx"
 import { offersTimeline } from "../lib/timeline.ts"
 import { ViewsBar, openedQuery } from "./views-bar.tsx"
 
@@ -26,7 +26,7 @@ export function RecordsPage() {
   const live = useMode().data?.kind === "live"
   // The open saved view (none: every record) and the query the grid shows, for saving.
   const [view, setView] = useState<StoredView | null>(null)
-  const [query, setQuery] = useState<GridQuery>()
+  const [query, setQuery] = useState<DisplayedGridQuery>()
   const initialTab = search.population === "held_back" ? "quarantine" : "records"
   return (
     <div className="space-y-4">

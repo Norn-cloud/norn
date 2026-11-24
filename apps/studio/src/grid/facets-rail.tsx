@@ -3,9 +3,11 @@ import { Check, ListFilter, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Field } from "../lib/catalog.ts"
-import { FacetsTimedOut, chosen, countText, readFacets, toggled, without, type Facet } from "../lib/facets.ts"
+import { StudioScopeError, type StudioScope } from "../lib/definitions.ts"
+import { FacetsTimedOut, chosen, countText, facetsQuery, toggled, without, type Facet } from "../lib/facets.ts"
 import { displayOf } from "../lib/objects.ts"
 import type { Clause, Predicate } from "../lib/records-query.ts"
+import { WORKSPACE_CHANGED_MESSAGE } from "../lib/views.ts"
 
 const label = (field: Field | undefined, property: string) => field?.label ?? property.replaceAll("_", " ")
 
@@ -20,21 +22,22 @@ function valueText(field: Field | undefined, value: string | boolean): string {
  * grid's filter lists, most rows first. Choosing a value narrows the grid; a property's own counts
  * leave out its own choice, so a second value can be added beside the first.
  */
-export function FacetsRail({ objectType, fields, filter, onFilter }: {
+export function FacetsRail({ objectType, fields, filter, scope, onFilter }: {
   readonly objectType: string
   readonly fields: readonly Field[]
   readonly filter: Predicate | null
+  readonly scope?: StudioScope
   readonly onFilter: (next: Predicate | null) => void
 }) {
   const byId = new Map(fields.map((field) => [field.id, field]))
-  const base = useQuery({ queryKey: ["facets", objectType, JSON.stringify(filter)], queryFn: () => readFacets(objectType, filter), retry: false })
+  const base = useQuery(facetsQuery({ objectType, filter, scope }))
   const narrowed = [...new Set((filter?.all ?? []).filter((clause) => clause.op === "eq" || clause.op === "in").map(({ property }) => property))]
   const own = useQueries({
-    queries: narrowed.map((property) => {
-      const rest = without(filter, property)
-      return { queryKey: ["facets", objectType, JSON.stringify(rest), property], queryFn: () => readFacets(objectType, rest, [property]), retry: false }
-    }),
+    queries: narrowed.map((property) => facetsQuery({ objectType, filter: without(filter, property), scope, property })),
   })
+  if (scope && [base, ...own].some(({ error }) => error instanceof StudioScopeError && error.message === WORKSPACE_CHANGED_MESSAGE)) {
+    return <p role="alert" className="px-1 text-meta text-destructive">{WORKSPACE_CHANGED_MESSAGE}</p>
+  }
   if (base.isPending) return <p className="px-1 text-meta text-muted-foreground">Counting values…</p>
   if (base.isError) return (
     <div role="status" className="grid gap-1.5 px-1 text-meta text-muted-foreground">
