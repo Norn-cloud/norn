@@ -6,6 +6,9 @@
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+const MIN_MAGNITUDE: u128 = 0x8000_0000_0000_0000_0000_0000_0000_0000;
+
 /// An unsigned 160-bit integer, ordered most significant limb first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(verus_keep_ghost, verus_verify)]
@@ -14,30 +17,30 @@ pub struct U160 {
     lo: u128,
 }
 
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_sign_loss,
+    clippy::arithmetic_side_effects,
+    reason = "MIN has a dedicated unsigned branch; all other absolute values fit in i128"
+)]
+#[cfg_attr(verus_keep_ghost, verus_spec(r => ensures
+        r.value() == positive(term as int) + positive(-(term as int))
+    ))]
+const fn absolute(term: i128) -> U160 {
+    let lo: u128 = if term == i128::MIN {
+        MIN_MAGNITUDE
+    } else if term < 0 {
+        (-term) as u128
+    } else {
+        term as u128
+    };
+    U160 { hi: 0, lo }
+}
+
 impl U160 {
     /// Embed a single unsigned limb.
     #[must_use]
     pub const fn from_u128(lo: u128) -> Self {
-        Self { hi: 0, lo }
-    }
-
-    #[allow(
-        clippy::as_conversions,
-        clippy::cast_sign_loss,
-        clippy::arithmetic_side_effects,
-        reason = "MIN has a dedicated unsigned branch; all other absolute values fit in i128"
-    )]
-    #[cfg_attr(verus_keep_ghost, verus_spec(r => ensures
-        r.value() == positive(term as int) + positive(-(term as int))
-    ))]
-    const fn absolute(term: i128) -> Self {
-        let lo: u128 = if term == i128::MIN {
-            1_u128 << 127_u32
-        } else if term < 0 {
-            (-term) as u128
-        } else {
-            term as u128
-        };
         Self { hi: 0, lo }
     }
 
@@ -135,7 +138,7 @@ impl ExactSum {
         if self.terms == u32::MAX {
             return None;
         }
-        let limb = U160::absolute(term);
+        let limb = absolute(term);
         #[cfg(verus_keep_ghost)]
         proof! {
             assert(self.bounded());
@@ -167,7 +170,12 @@ impl ExactSum {
     #[must_use]
     #[cfg_attr(verus_keep_ghost, verus_spec(r =>
         requires self.bounded(),
-        ensures r.is_some() ==> r.unwrap().count() == self.count() - 1,
+        ensures r.is_some() == (self.count() > 0
+                && self.positives() >= positive(term as int)
+                && self.negatives() >= positive(-(term as int))
+                && self.positives() + self.negatives() - positive(term as int) - positive(-(term as int))
+                    <= (self.count() - 1) * (radix()/2)),
+            r.is_some() ==> r.unwrap().count() == self.count() - 1,
             r.is_some() ==> r.unwrap().positives() == self.positives() - positive(term as int),
             r.is_some() ==> r.unwrap().negatives() == self.negatives() - positive(-(term as int)),
             r.is_some() ==> r.unwrap().bounded()
@@ -176,7 +184,12 @@ impl ExactSum {
         if self.terms == 0 {
             return None;
         }
-        let limb = U160::absolute(term);
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            assert(radix()/2 == 170141183460469231731687303715884105728int) by (compute);
+            assert(self.positives() + self.negatives() <= u32::MAX as int * (radix()/2));
+        }
+        let limb = absolute(term);
         if term < 0 {
             match self.neg.minus(limb) {
                 Some(rest) => self.neg = rest,
@@ -194,8 +207,14 @@ impl ExactSum {
         let lo: u128 = if self.terms & 1 == 0 {
             0
         } else {
-            1_u128 << 127_u32
+            MIN_MAGNITUDE
         };
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            let n = self.terms;
+            assert((n >> 1u32) == n / 2u32 && (n & 1u32) == n % 2u32) by (bit_vector);
+            assert((hi as int)*radix() + lo as int == (n as int)*(radix()/2));
+        }
         if magnitude.hi > hi || (magnitude.hi == hi && magnitude.lo > lo) {
             return None;
         }
@@ -224,7 +243,7 @@ impl ExactSum {
                 None => return None,
             },
         };
-        if negative && difference.hi == 0 && difference.lo == 1_u128 << 127_u32 {
+        if negative && difference.hi == 0 && difference.lo == MIN_MAGNITUDE {
             return Some(i128::MIN);
         }
         if difference.hi != 0 || difference.lo > i128::MAX as u128 {

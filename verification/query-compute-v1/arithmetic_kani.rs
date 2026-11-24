@@ -54,7 +54,12 @@ fn ratio_never_panics_for_full_width_inputs() {
 fn retracting_an_admitted_add_restores_the_original_total() {
     let before = ExactSum::ZERO.add(i128::from(kani::any::<i64>())).unwrap();
     let value: i64 = kani::any();
-    if let Ok(after) = arithmetic::add(before, value) {
+    let next = arithmetic::add(before, value);
+    assert_eq!(
+        next.is_ok(),
+        value.unsigned_abs() <= arithmetic::MAX_VALUE.unsigned_abs()
+    );
+    if let Ok(after) = next {
         assert_eq!(after.retract(i128::from(value)), Some(before));
     }
 }

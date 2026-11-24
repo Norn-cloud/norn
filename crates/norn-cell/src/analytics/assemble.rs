@@ -435,7 +435,7 @@ fn coefficient_sum(text: &str) -> Result<i128, CellError> {
 }
 
 /// Recover the positive and negative subtotals of a summarized operand.
-fn publish_reported(total: &str, magnitude: &str, count: u64) -> Result<i128, CellError> {
+fn publish_reported(total: &str, magnitude: &str, non_null: u64) -> Result<i128, CellError> {
     let total = coefficient_sum(total)?;
     let magnitude = coefficient_sum(magnitude)?;
     // From T=P-N and M=P+N recover the two nonnegative subtotals
@@ -463,7 +463,7 @@ fn publish_reported(total: &str, magnitude: &str, count: u64) -> Result<i128, Ce
         .div_ceil(limit)
         .checked_add(neg.unsigned_abs().div_ceil(limit))
         .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
-    if minimum_members > u128::from(count) {
+    if minimum_members > u128::from(non_null) {
         return Err(CellError::Engine(
             "bucket subtotals exceed member capacity".into(),
         ));
@@ -493,8 +493,17 @@ fn assemble_row(
         return Err(refused("core.compute.bound_exceeded"));
     }
     let mut totals = Vec::with_capacity(arity);
-    for (total, magnitude) in bucket.totals.iter().zip(&bucket.magnitude) {
-        totals.push(publish_reported(total, magnitude, bucket.count)?);
+    for ((total, magnitude), nulls) in bucket
+        .totals
+        .iter()
+        .zip(&bucket.magnitude)
+        .zip(&bucket.nulls)
+    {
+        let non_null = bucket
+            .count
+            .checked_sub(*nulls)
+            .ok_or_else(|| CellError::Engine("null count exceeds bucket count".into()))?;
+        totals.push(publish_reported(total, magnitude, non_null)?);
     }
     let value_number = match totals.as_slice() {
         [sum] => Some(decimal(*sum)?),
@@ -610,6 +619,7 @@ mod exact_sum_tests {
     #[test]
     fn summarized_bucket_needs_members_for_both_subtotals() {
         let mut reported = bucket(Vec::new(), 2);
+        reported.members = None;
         reported.count = 1;
         assert!(
             matches!(assemble_row(&reported, RuntimeValue::Null, 1, false),
@@ -617,6 +627,8 @@ mod exact_sum_tests {
         );
         reported.count = 2;
         assert!(assemble_row(&reported, RuntimeValue::Null, 1, false).is_ok());
+        reported.nulls = vec![1];
+        assert!(assemble_row(&reported, RuntimeValue::Null, 1, false).is_err());
     }
 
     #[test]
