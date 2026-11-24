@@ -34,12 +34,12 @@ export function PageHeader({ title, description, actions, primary, secondary, me
   const end = actions !== undefined || primary !== undefined || (secondary?.length ?? 0) > 0
   return (
     <header data-slot="page-header" className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-      <div className="min-w-0 flex-1 basis-80 space-y-1">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h1 lang={lang} className="min-w-0 text-title leading-tight font-semibold tracking-tight [overflow-wrap:anywhere]">{title}</h1>
+      <div className="min-w-0 flex-1 basis-80 space-y-1.5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <h1 lang={lang} className="min-w-0 text-title leading-[1.15] font-semibold tracking-[-0.025em] text-foreground [overflow-wrap:anywhere]">{title}</h1>
           {meta && <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">{meta}</div>}
         </div>
-        {description && <p className="max-w-[72ch] text-pretty text-muted-foreground">{description}</p>}
+        {description && <p className="max-w-[70ch] text-sm leading-relaxed text-pretty text-muted-foreground">{description}</p>}
       </div>
       {end && (
         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -56,7 +56,7 @@ export function PageHeader({ title, description, actions, primary, secondary, me
 function Overflow({ actions }: { readonly actions: readonly PageAction[] }) {
   return (
     <Menu onAction={(value) => actions.find(({ label }) => label === value)?.onSelect?.()}>
-      <MenuTrigger aria-label="More actions" className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent">
+      <MenuTrigger aria-label="More actions" className="flex size-8 items-center justify-center rounded-lg border border-transparent text-muted-foreground transition-colors outline-none hover:border-border/80 hover:bg-surface-subtle hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:border-border/80 data-open:bg-surface-subtle data-open:text-foreground">
         <Ellipsis aria-hidden className="size-4" />
       </MenuTrigger>
       <KitMenuContent align="end">
@@ -71,9 +71,10 @@ function Overflow({ actions }: { readonly actions: readonly PageAction[] }) {
 }
 
 /**
- * A section of a page (design v3): one hairline frame at the frame radius, no shadow, a quiet header
- * row (small muted icon, label, an optional hint or control at the end), then the list, table or
- * figure flush inside. A panel inside a panel is a ruled section of it, never a card in a card.
+ * A section of a page (design v4): one hairline frame on a subtly tinted card surface at the panel
+ * radius (11px), a quiet header row (small muted icon, title, optional hint or control at the end),
+ * then the list, table or figure flush inside. A panel inside a panel is a ruled section, never a
+ * card in a card.
  */
 export function Panel({ icon: Icon, label, action, children, className, id }: {
   icon?: LucideIcon
@@ -84,14 +85,14 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
   id?: string
 }) {
   return (
-    <section id={id} data-slot="panel" className={cn("min-w-0 overflow-hidden rounded-lg border bg-card",
+    <section id={id} data-slot="panel" className={cn("min-w-0 overflow-hidden rounded-xl border border-border/90 bg-card",
       // A panel inside another panel is a section of it, not a card in a card: one hairline above, no frame.
       "[[data-slot=well]_&]:rounded-none [[data-slot=well]_&]:border-x-0 [[data-slot=well]_&]:border-b-0 [[data-slot=well]_&]:bg-transparent [[data-slot=well]_&>header]:px-0",
       className)}>
-      <header className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-1.5 text-sm">
+      <header className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-2 text-sm">
         {Icon && <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
         {/* A title wraps (two lines at most) rather than losing its end; a hint goes to the next line when both don't fit. */}
-        <h2 className="line-clamp-2 min-w-0 flex-1 basis-40 text-panel font-medium [overflow-wrap:anywhere]" title={typeof label === "string" ? label : undefined}>{label}</h2>
+        <h2 className="line-clamp-2 min-w-0 flex-1 basis-40 text-panel font-semibold tracking-[-0.01em] text-foreground [overflow-wrap:anywhere]" title={typeof label === "string" ? label : undefined}>{label}</h2>
         {/* A hint (text) gives way on a phone; a control (an element) stays. */}
         {action && <div className={cn("ms-auto shrink-0 text-meta text-muted-foreground", typeof action === "string" && "max-sm:hidden")}>{action}</div>}
       </header>
@@ -100,9 +101,9 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
   )
 }
 
-/** The body of a panel: flush with the card, so a panel is one surface (no inner frame). */
+/** The body of a panel: flush with the card under one hairline, so a panel reads as one calm surface. */
 export function Well({ children, className }: { children: ReactNode; className?: string }) {
-  return <div data-slot="well" className={cn("border-t bg-card", className)}>{children}</div>
+  return <div data-slot="well" className={cn("border-t border-border/80 bg-card", className)}>{children}</div>
 }
 
 /**
@@ -111,11 +112,13 @@ export function Well({ children, className }: { children: ReactNode; className?:
  */
 export function EmptyState({ icon: Icon, title = "No data yet", children, next }: { icon: LucideIcon; title?: ReactNode; children: ReactNode; next?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
-      <Icon aria-hidden className="size-5 text-muted-foreground/70" />
-      <div className="text-sm font-medium">{title}</div>
-      <p className="max-w-xs text-meta text-muted-foreground">{children}</p>
-      {next && <div className="flex flex-wrap justify-center gap-2 pt-1">{next}</div>}
+    <div className="flex flex-col items-center gap-2.5 px-6 py-12 text-center">
+      <span aria-hidden className="flex size-10 items-center justify-center rounded-xl border border-border/80 bg-surface-subtle text-muted-foreground">
+        <Icon className="size-4.5" />
+      </span>
+      <div className="text-sm font-semibold text-foreground">{title}</div>
+      <p className="max-w-xs text-meta leading-relaxed text-muted-foreground">{children}</p>
+      {next && <div className="flex flex-wrap justify-center gap-2 pt-1.5">{next}</div>}
     </div>
   )
 }

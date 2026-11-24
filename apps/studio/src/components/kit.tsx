@@ -8,9 +8,9 @@ import { cn } from "@/lib/utils"
 // Studio's look for UI SDK parts: the behaviour (keys, focus, dismissal, ARIA) is UI SDK's, the
 // tokens are shadcn's. Popups render in the top layer, so they carry their own surface.
 
-const surface = "rounded-xl bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-border outline-none"
+const surface = "rounded-xl bg-popover p-1 text-popover-foreground shadow-float ring-1 ring-border outline-none"
 const motion = "origin-(--transform-origin) transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
-const row = "flex cursor-default items-center gap-2 rounded-lg px-2 py-1.5 text-sm outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
+const row = "flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
 
 export { Menu, Popover }
 

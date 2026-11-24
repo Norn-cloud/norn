@@ -1,6 +1,19 @@
 {
   "artifactId": "core.Hold.interface",
-  "dependencies": [],
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "std.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
   "irVersion": "0.1",
   "kind": "entity",
   "lifecycle": "active",
@@ -10,6 +23,18 @@
     "entityVersion": "2.0",
     "interface": {
       "description": "A quantity set aside against a balance: an escrow, a stock reservation or a use of a quota. A hold is released, consumed or expires, and never exceeds what is available (core.law.escrow_non_negative).",
+      "invariants": [
+        {
+          "expression": "self.quantity > 0",
+          "id": "positive_quantity",
+          "message": "A hold quantity must be strictly positive."
+        },
+        {
+          "expression": "((self.unit != null) and (self.currency == null)) or ((self.unit == null) and (self.currency != null))",
+          "id": "single_measure",
+          "message": "A hold must carry either a unit or a currency, never both or neither."
+        }
+      ],
       "links": [
         {
           "cardinality": {
@@ -109,5 +134,5 @@
     "sourcePath": "registry/core/artifacts/core.Hold.interface.json"
   },
   "scope": {},
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

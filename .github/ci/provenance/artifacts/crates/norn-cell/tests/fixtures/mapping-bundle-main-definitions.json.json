@@ -1,0 +1,21 @@
+{
+  "sha256": "c317962fb56b540d820ae25be803e9b9e71c0e3669f8f041735e798e3dc69065",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-cell/tests/mapping_links.rs",
+    "crates/norn-cell/tests/support/mapped_cell.rs",
+    "crates/norn-cell/tests/fixtures/mapping-bundle-main-decimal-text.json"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

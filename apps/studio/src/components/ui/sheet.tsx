@@ -49,7 +49,7 @@ function SheetContent({
       data-side={side}
       initialFocus={onOpenAutoFocus && (() => firstFocus(ref.current, onOpenAutoFocus))}
       className={cn(
-        "fixed z-50 m-0 flex flex-col bg-popover bg-clip-padding text-sm text-popover-foreground shadow-xl outline-none transition-[translate,opacity] duration-200 ease-in-out data-starting-style:opacity-0 data-closed:transition-none data-closed:**:transition-none backdrop:bg-black/30 supports-backdrop-filter:backdrop:backdrop-blur-sm",
+        "fixed z-50 m-0 flex flex-col bg-popover bg-clip-padding text-sm text-popover-foreground shadow-float outline-none transition-[translate,opacity] duration-200 ease-in-out data-starting-style:opacity-0 data-closed:transition-none data-closed:**:transition-none backdrop:bg-black/35 supports-backdrop-filter:backdrop:backdrop-blur-xs",
         "data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:border-t data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:h-full data-[side=left]:w-3/4 data-[side=left]:border-r data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:h-full data-[side=right]:w-3/4 data-[side=right]:border-l data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=left]:sm:max-w-sm data-[side=right]:sm:max-w-sm",
         "data-[side=bottom]:data-starting-style:translate-y-10 data-[side=left]:data-starting-style:-translate-x-10 data-[side=right]:data-starting-style:translate-x-10 data-[side=top]:data-starting-style:-translate-y-10",
         className
