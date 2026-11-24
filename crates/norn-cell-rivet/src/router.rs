@@ -1,10 +1,14 @@
 //! The public router: the native port of `apps/norn-cell-do/worker.mjs`'s
-//! default export. It only picks the actor: each well-formed scope in a
+//! default export. It picks the actor: each well-formed scope in a
 //! declared environment has its own cell actor, named by its key; anything
 //! else reaches the demo cell, whose scope admission answers the same opaque
-//! denial as any other failed read. Nothing here inspects data or grants
-//! access. Requests reach the actor through the engine's gateway, so any
-//! runner process can route to a cell another runner hosts.
+//! denial as any other failed read. Before a body is read, an actor is looked
+//! up or created, or a socket is upgraded, the [`Gate`] verifies the caller's
+//! host token for that scope; a request without one is refused here and
+//! never reaches the engine. Nothing here inspects data or grants access:
+//! the cell verifies the token again and authorizes the request. Requests
+//! reach the actor through the engine's gateway, so any runner process can
+//! route to a cell another runner hosts.
 
 use std::sync::Arc;
 
@@ -22,6 +26,7 @@ use crate::actor::{
     CELL_ACTOR, CELL_HEADER, LARGE_BODY_PATHS, MAX_BODY, MAX_PROVISION_BODY, cell_key,
 };
 use crate::config::HostConfig;
+use crate::gate::{Admission, Gate};
 use norn_api::scope::CellScope;
 
 /// The demo cell: where a request naming no well-formed scope lands.
@@ -58,6 +63,7 @@ fn is_demo(org: &str, env: &str) -> bool {
 pub struct Router {
     client: Client,
     config: Arc<HostConfig>,
+    gate: Gate,
 }
 
 impl std::fmt::Debug for Router {
@@ -129,10 +135,30 @@ fn refuse(
 }
 
 impl Router {
-    /// A router over the engine at `client`.
-    #[must_use]
-    pub const fn new(client: Client, config: Arc<HostConfig>) -> Self {
-        Self { client, config }
+    /// A router over the engine at `client`, gated by `config`'s issuer.
+    ///
+    /// # Errors
+    /// The gate's outbound HTTP client cannot be built.
+    pub fn new(client: Client, config: Arc<HostConfig>) -> anyhow::Result<Self> {
+        let gate = Gate::new(&config)?;
+        Ok(Self {
+            client,
+            config,
+            gate,
+        })
+    }
+
+    /// The gate's answer for a request carrying `headers` to `target`, as a
+    /// refusal when it is not admitted.
+    async fn admitted(&self, headers: &HeaderMap, target: &Target) -> Result<(), Box<Response>> {
+        let authorization = headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok());
+        match self.gate.admit(authorization, target.scope.as_ref()).await {
+            Admission::Admit => Ok(()),
+            Admission::Deny => Err(Box::new(denied())),
+            Admission::Unavailable => Err(Box::new(unavailable_now())),
+        }
     }
 
     fn cors(&self, headers: &HeaderMap) -> Vec<(&'static str, String)> {
@@ -266,6 +292,9 @@ impl Router {
         if path == "/v1/subscribe" {
             return self.subscribe(request, target).await;
         }
+        if let Err(refused) = self.admitted(request.headers(), &target).await {
+            return *refused;
+        }
         let limit = if LARGE_BODY_PATHS.contains(&path.as_str()) {
             MAX_PROVISION_BODY
         } else {
@@ -381,6 +410,9 @@ impl Router {
                 "a live socket carries the caller's token",
             );
         };
+        if let Err(refused) = self.admitted(&parts.headers, &target).await {
+            return *refused;
+        }
         let Ok(upgrade) = WebSocketUpgrade::from_request_parts(&mut parts, &()).await else {
             return upgrade_required();
         };
@@ -468,8 +500,24 @@ impl Router {
     }
 }
 
+/// The gate's denial: the cell's own `authz.denied`, indistinguishable for
+/// every kind of bad token.
+fn denied() -> Response {
+    refuse(
+        StatusCode::FORBIDDEN,
+        norn_api::refusal::codes::AUTHZ_DENIED,
+        "permission",
+        "the request is not authorized",
+        "the request carries no valid identity for this cell",
+    )
+}
+
 fn unavailable(error: &anyhow::Error) -> Response {
     tracing::warn!(error = %format!("{error:#}"), "the cell actor did not answer");
+    unavailable_now()
+}
+
+fn unavailable_now() -> Response {
     let body = json!({"format": "norn/refusal@2", "retryable": true, "reason": null, "code": "host.unavailable", "category": "host", "message": "the cell is unavailable", "explanation": "retry the request"});
     (
         StatusCode::SERVICE_UNAVAILABLE,

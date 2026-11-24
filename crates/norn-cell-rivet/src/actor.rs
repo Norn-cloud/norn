@@ -173,13 +173,55 @@ pub fn refusal(
 /// The JWKS document this process fetched last, reused by cold opens for
 /// `OPEN_RETRY_MS` (one issuer fetch a minute however many cells open).
 #[derive(Clone)]
-struct Jwks {
+pub(crate) struct Jwks {
     url: String,
-    text: String,
-    at: u64,
+    /// The document.
+    pub(crate) text: String,
+    /// When it was fetched (Unix ms).
+    pub(crate) at: u64,
 }
 
 static LAST_JWKS: std::sync::Mutex<Option<Jwks>> = std::sync::Mutex::new(None);
+
+/// The pinned JWKS document at `url` and when it was fetched; `reuse` accepts
+/// this process's last one while it is younger than `OPEN_RETRY_MS`. The
+/// actors and the router's gate share it, so a runner fetches the issuer's
+/// keys at most once a minute for both.
+pub(crate) async fn fetch_jwks(http: &reqwest::Client, url: String, reuse: bool) -> Result<Jwks> {
+    if reuse {
+        let last = LAST_JWKS
+            .lock()
+            .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))?
+            .clone();
+        if let Some(last) = last
+            && last.url == url
+            && now_ms()
+                .checked_sub(last.at)
+                .is_some_and(|age| age < OPEN_RETRY_MS)
+        {
+            return Ok(last);
+        }
+    }
+    let response = http
+        .get(&url)
+        .timeout(JWKS_TIMEOUT)
+        .send()
+        .await
+        .context("JWKS fetch failed")?;
+    if response.status() != reqwest::StatusCode::OK {
+        return Err(anyhow!("JWKS fetch failed: HTTP {}", response.status()));
+    }
+    let text = response.text().await.context("JWKS read failed")?;
+    let fetched = Jwks {
+        url,
+        text,
+        at: now_ms(),
+    };
+    *LAST_JWKS
+        .lock()
+        .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))? = Some(fetched.clone());
+    Ok(fetched)
+}
 
 /// What the actor keeps about its cell between requests.
 #[derive(Default)]
@@ -527,48 +569,14 @@ impl CellActor {
         Ok(())
     }
 
-    /// The pinned JWKS document and when it was fetched; `reuse` accepts this
-    /// process's last one while it is younger than `OPEN_RETRY_MS`.
+    /// The pinned JWKS document and when it was fetched ([`fetch_jwks`]).
     async fn jwks(&self, reuse: bool) -> Result<Jwks> {
         let url = self
             .config
             .jwks_url
             .clone()
             .context("NORN_HOST_JWKS_URL is not set")?;
-        if reuse {
-            let last = LAST_JWKS
-                .lock()
-                .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))?
-                .clone();
-            if let Some(last) = last
-                && last.url == url
-                && now_ms()
-                    .checked_sub(last.at)
-                    .is_some_and(|age| age < OPEN_RETRY_MS)
-            {
-                return Ok(last);
-            }
-        }
-        let response = self
-            .http
-            .get(&url)
-            .timeout(JWKS_TIMEOUT)
-            .send()
-            .await
-            .context("JWKS fetch failed")?;
-        if response.status() != reqwest::StatusCode::OK {
-            return Err(anyhow!("JWKS fetch failed: HTTP {}", response.status()));
-        }
-        let text = response.text().await.context("JWKS read failed")?;
-        let fetched = Jwks {
-            url,
-            text,
-            at: now_ms(),
-        };
-        *LAST_JWKS
-            .lock()
-            .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))? = Some(fetched.clone());
-        Ok(fetched)
+        fetch_jwks(&self.http, url, reuse).await
     }
 
     async fn refresh_jwks(&self) -> bool {

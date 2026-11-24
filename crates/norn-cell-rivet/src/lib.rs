@@ -13,6 +13,7 @@
 //! - [`alarm`]: the actor's durable alarm and kept scope.
 //! - [`live`]: live subscriptions (`subscribe.mjs`).
 //! - [`router`]: the public router (the Worker's default export).
+//! - [`gate`]: the router's host-token check before anything reaches a cell.
 //! - [`config`]: the pinned configuration.
 //! - `conformance` (feature): the host conformance seams and probe actor.
 
@@ -23,6 +24,7 @@ pub mod config;
 pub mod conformance;
 pub mod core;
 pub mod engine;
+pub mod gate;
 pub mod live;
 pub mod router;
 pub mod thread;
