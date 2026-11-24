@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { Copy, Eye, LayoutDashboard, Pencil, Plus, Sparkles, Trash2, Undo2 } from "lucide-react"
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { EmptyState, PageHeader, Panel } from "@/components/panel"
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { list, type Issue } from "@/lib/editor"
-import { dashboardField, dashboardId, duplicateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type Tile } from "@/lib/definitions"
+import { cellDefinitions, dashboardField, dashboardId, defaultDefinitions, defaultFetch, duplicateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type StudioScope, type Tile } from "@/lib/definitions"
 import { QuestionBuilder, UNEDITABLE, draftOf, questionFitsDraft, readCatalog, type QuestionCatalog } from "./builder.tsx"
 import { TileAnswer, VIEWS, ViewIcon, defaultView, viewIcon, viewKey, viewOf } from "./dashboards/tile-view.tsx"
 import { DashboardAssistant } from "./dashboards/assistant.tsx"
@@ -42,7 +42,13 @@ const settled = (result: Installed) => {
 }
 
 /** A deleted dashboard: retiring keeps its history, so undoing installs the same definition over the retired version. */
-interface Removed { readonly id: string; readonly version: number; readonly dashboard: Dashboard }
+interface Removed {
+  readonly id: string
+  readonly version: number
+  readonly dashboard: Dashboard
+  readonly store: DefinitionStore
+  readonly scopeKey: string
+}
 
 function UndoDelete({ removed, pending, error, onUndo }: { readonly removed: Removed; readonly pending: boolean; readonly error?: string; readonly onUndo: () => void }) {
   return (
@@ -54,10 +60,19 @@ function UndoDelete({ removed, pending, error, onUndo }: { readonly removed: Rem
   )
 }
 
+/** Pin the default cell store to the scope that loaded this dashboard view/editor; keep test stores intact. */
+function useScopedStore(loadedScope: StudioScope | null | undefined): DefinitionStore {
+  const store = useDefinitions()
+  return useMemo(
+    () => store === defaultDefinitions && loadedScope !== undefined ? cellDefinitions(defaultFetch, "/api/host", async () => loadedScope) : store,
+    [store, loadedScope],
+  )
+}
+
 /** Every saved dashboard, with open, duplicate and delete. */
 export function DashboardsPage() {
-  const store = useDefinitions()
   const scope = useStudioScope()
+  const store = useScopedStore(scope.data)
   const cellAvailable = scope.isSuccess && scope.data !== null
   const client = useQueryClient()
   const navigate = useNavigate()
@@ -73,18 +88,22 @@ export function DashboardsPage() {
     },
     onSuccess: refresh,
   })
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
   const [removed, setRemoved] = useState<Removed>()
+  useEffect(() => { setRemoved((current) => current?.scopeKey === scopeKey ? current : undefined) }, [scopeKey])
   const remove = useMutation({
     mutationFn: async (summary: DashboardSummary) => {
-      const stored = await store.get(summary.id)
-      const retired = settled(await store.retire(summary.id, summary.version))
-      return stored === undefined || !retired.installed ? undefined : { id: summary.id, version: retired.version, dashboard: stored.dashboard }
+      const originStore = store
+      const originScopeKey = scopeKey
+      const stored = await originStore.get(summary.id)
+      const retired = settled(await originStore.retire(summary.id, summary.version))
+      return stored === undefined || !retired.installed ? undefined : { id: summary.id, version: retired.version, dashboard: stored.dashboard, store: originStore, scopeKey: originScopeKey }
     },
     onSuccess: setRemoved,
     onSettled: refresh,
   })
-  const undo = useMutation({ mutationFn: async (gone: Removed) => settled(await store.install(gone.id, gone.dashboard, gone.version)), onSuccess: () => setRemoved(undefined), onSettled: refresh })
-  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity, enabled: cellAvailable })
+  const undo = useMutation({ mutationFn: async (gone: Removed) => settled(await gone.store.install(gone.id, gone.dashboard, gone.version)), onSuccess: () => setRemoved(undefined), onSettled: refresh })
+  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: () => readCatalog(scope.data), retry: false, staleTime: Infinity, enabled: cellAvailable })
   return (
     <section className="space-y-6">
       <PageHeader title="Dashboards" description="Saved sets of questions. Each is a definition the cell checks before it is kept."
@@ -92,7 +111,7 @@ export function DashboardsPage() {
       {scope.isPending && <LoadState status="pending" skeleton="list" loadingLabel="Connecting to workspace" onRetry={() => void scope.refetch()}>{() => null}</LoadState>}
       {scope.isSuccess && scope.data === null && <EmptyState icon={LayoutDashboard} title="No data cell">{NO_DATA_CELL}</EmptyState>}
       {scope.isError && <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />}
-      {catalog.data && <DashboardAssistant catalog={catalog.data} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} />} />}
+      {catalog.data && <DashboardAssistant catalog={catalog.data} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} scope={scope.data} />} />}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
       {removed && <UndoDelete removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
@@ -136,8 +155,8 @@ export function DashboardsPage() {
   )
 }
 
-function TileCard({ tile, index, count, invalid, catalog, onChange, onEdit, onMove, onDuplicate, onRemove }: {
-  readonly tile: Tile; readonly index: number; readonly count: number; readonly invalid: boolean; readonly catalog: QuestionCatalog
+function TileCard({ tile, index, count, invalid, catalog, scope, onChange, onEdit, onMove, onDuplicate, onRemove }: {
+  readonly tile: Tile; readonly index: number; readonly count: number; readonly invalid: boolean; readonly catalog: QuestionCatalog; readonly scope?: StudioScope | null
   readonly onChange: (tile: Tile) => void; readonly onEdit: () => void; readonly onMove: (to: number) => void; readonly onDuplicate: () => void; readonly onRemove: () => void
 }) {
   return (
@@ -156,14 +175,14 @@ function TileCard({ tile, index, count, invalid, catalog, onChange, onEdit, onMo
         </select>
         <Button type="button" variant="outline" size="sm" onClick={onEdit}><Pencil />Edit question</Button>
       </div>
-      <TileAnswer tile={tile} catalog={catalog} />
+      <TileAnswer tile={tile} catalog={catalog} scope={scope} />
     </div>
   )
 }
 
 /** One dashboard: title and tiles, each an admitted question with its view. The cell admits and keeps it. */
-export function DashboardEditor({ store, catalog, stored, guard, onSaved, onReload, cellAvailable = true }: {
-  readonly store: DefinitionStore; readonly catalog: QuestionCatalog; readonly stored?: StoredDashboard; readonly cellAvailable?: boolean
+export function DashboardEditor({ store, catalog, stored, guard, onSaved, onReload, cellAvailable = true, scope }: {
+  readonly store: DefinitionStore; readonly catalog: QuestionCatalog; readonly stored?: StoredDashboard; readonly cellAvailable?: boolean; readonly scope?: StudioScope | null
   readonly guard?: (dirty: boolean) => ReactNode; readonly onSaved?: (saved: { readonly id: string; readonly version: number }) => void
   /** Reopen the stored version, dropping this one (after a conflict). */
   readonly onReload?: () => void
@@ -238,7 +257,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
       <div data-field="tiles" className="grid items-start gap-4 lg:grid-cols-2">
         {dashboard.tiles.length === 0 && <div className="lg:col-span-2"><EmptyState icon={LayoutDashboard}>No questions on this dashboard yet.</EmptyState></div>}
         {dashboard.tiles.map((tile, index) => (
-          <TileCard key={tile.id} tile={tile} index={index} count={dashboard.tiles.length} invalid={invalid(`tile.${index}`)} catalog={catalog}
+          <TileCard key={tile.id} tile={tile} index={index} count={dashboard.tiles.length} invalid={invalid(`tile.${index}`)} catalog={catalog} scope={scope}
             onChange={(next) => tiles(dashboard.tiles.map((t, at) => at === index ? next : t))}
             onEdit={() => setEditing(index)}
             onMove={(to) => tiles(list.move(dashboard.tiles, index, to))}
@@ -253,7 +272,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
             <SheetTitle>{open ? `Edit "${questionTitle(open)}"` : "Add a question"}</SheetTitle>
             <SheetDescription>The server's checker must admit the question before it joins the dashboard.</SheetDescription>
           </SheetHeader>
-          <div className="p-4">{editing !== undefined && <QuestionBuilder key={String(editing)} catalog={catalog} initial={open ? draftOf(open.question, open.title) : undefined} unsupported={open && !questionFitsDraft(open.question, catalog) ? UNEDITABLE : undefined} onUse={use} />}</div>
+          <div className="p-4">{editing !== undefined && <QuestionBuilder key={String(editing)} catalog={catalog} originScope={scope} initial={open ? draftOf(open.question, open.title) : undefined} unsupported={open && !questionFitsDraft(open.question, catalog) ? UNEDITABLE : undefined} onUse={use} />}</div>
         </SheetContent>
       </Sheet>
     </div>
@@ -264,9 +283,9 @@ export function DashboardEditorPage() {
   const scope = useStudioScope()
   const cellAvailable = scope.isSuccess && scope.data !== null
   const { id } = useParams({ strict: false }) as { id?: string }
-  const store = useDefinitions()
+  const store = useScopedStore(scope.data)
   const navigate = useNavigate()
-  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
+  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: () => readCatalog(scope.data), enabled: !scope.isPending, retry: false, staleTime: Infinity })
   // A query may not resolve to undefined: a missing dashboard is null, and a new one reads nothing.
   const stored = useQuery({ queryKey: ["dashboard", id, scope.data?.orgId, scope.data?.environmentId], queryFn: async () => (id === undefined ? null : await store.get(id)) ?? null, enabled: id !== undefined && cellAvailable, retry: false,
     // Only an open (and an explicit reload) reads the dashboard: a background refetch must not replace the draft being edited.
@@ -292,7 +311,7 @@ export function DashboardEditorPage() {
       {!fresh && stored.isSuccess && stored.data === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
       {/* The editor opens once the workspace scope is known, so nothing is typed into an editor its scope would then replace. */}
       {!scope.isPending && catalog.data && (fresh || (stored.data && stored.isFetchedAfterMount)) && (
-        <DashboardEditor key={`${scope.data?.orgId ?? "none"}:${scope.data?.environmentId ?? "none"}:${stored.data?.id ?? "new"}:${opened}`} cellAvailable={cellAvailable} store={store} catalog={catalog.data} stored={stored.data ?? undefined} guard={(dirty) => <DirtyGuard dirty={dirty} />}
+        <DashboardEditor key={`${scope.data?.orgId ?? "none"}:${scope.data?.environmentId ?? "none"}:${stored.data?.id ?? "new"}:${opened}`} cellAvailable={cellAvailable} store={store} catalog={catalog.data} stored={stored.data ?? undefined} scope={scope.data} guard={(dirty) => <DirtyGuard dirty={dirty} />}
           // Start again from theirs only once it has been read; a failed or empty read keeps this draft and its conflict banner.
           onReload={() => void stored.refetch().then((read) => { if (read.isSuccess && read.data) setOpened((n) => n + 1) })}
           onSaved={(saved) => { if (id === undefined) setTimeout(() => void navigate({ to: "/dashboards/$id/edit", params: { id: saved.id }, replace: true })) }} />
@@ -302,7 +321,7 @@ export function DashboardEditorPage() {
 }
 
 /** A saved dashboard as its readers see it: every tile answered live from the cell and drawn as its view. */
-export function DashboardBoard({ dashboard, catalog, id }: { readonly dashboard: Dashboard; readonly catalog: QuestionCatalog; readonly id?: string }) {
+export function DashboardBoard({ dashboard, catalog, id, scope }: { readonly dashboard: Dashboard; readonly catalog: QuestionCatalog; readonly id?: string; readonly scope?: StudioScope | null }) {
   const tiles = layoutTiles(dashboard.tiles)
   return (
     <div className="grid items-start gap-4 lg:grid-cols-2">
@@ -310,7 +329,7 @@ export function DashboardBoard({ dashboard, catalog, id }: { readonly dashboard:
         next={id !== undefined && <Button asChild size="sm" variant="outline"><Link to="/dashboards/$id/edit" params={{ id }}><Pencil />Add a question</Link></Button>}>No questions on this dashboard yet.</EmptyState></div>}
       {tiles.map((tile) => (
         <Panel key={tile.id} icon={viewIcon(tile.view)} label={questionTitle(tile)} className={tile.layout.w === 2 ? "lg:col-span-2" : ""}>
-          <TileAnswer tile={tile} catalog={catalog} />
+          <TileAnswer tile={tile} catalog={catalog} scope={scope} />
         </Panel>
       ))}
     </div>
@@ -322,10 +341,10 @@ export function DashboardBoardPage() {
   const scope = useStudioScope()
   const cellAvailable = scope.isSuccess && scope.data !== null
   const { id } = useParams({ strict: false }) as { id: string }
-  const store = useDefinitions()
+  const store = useScopedStore(scope.data)
   const navigate = useNavigate()
   const client = useQueryClient()
-  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
+  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: () => readCatalog(scope.data), enabled: !scope.isPending, retry: false, staleTime: Infinity })
   const stored = useQuery({ queryKey: ["dashboard-board", id, scope.data?.orgId, scope.data?.environmentId], queryFn: async () => (await store.get(id)) ?? null, enabled: cellAvailable, retry: false })
   const duplicate = useMutation({
     mutationFn: async (from: StoredDashboard) => {
@@ -336,16 +355,20 @@ export function DashboardBoardPage() {
     },
     onSuccess: (copied) => { void client.invalidateQueries({ queryKey: ["dashboards"] }); void navigate({ to: "/dashboards/$id", params: { id: copied } }) },
   })
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
   const [removed, setRemoved] = useState<Removed>()
+  useEffect(() => { setRemoved((current) => current?.scopeKey === scopeKey ? current : undefined) }, [scopeKey])
   const remove = useMutation({
     mutationFn: async (from: StoredDashboard) => {
-      const retired = settled(await store.retire(from.id, from.version))
-      return retired.installed ? { id: from.id, version: retired.version, dashboard: from.dashboard } : undefined
+      const originStore = store
+      const originScopeKey = scopeKey
+      const retired = settled(await originStore.retire(from.id, from.version))
+      return retired.installed ? { id: from.id, version: retired.version, dashboard: from.dashboard, store: originStore, scopeKey: originScopeKey } : undefined
     },
     onSuccess: (gone) => { setRemoved(gone); void client.invalidateQueries({ queryKey: ["dashboards"] }) },
   })
   const undo = useMutation({
-    mutationFn: async (gone: Removed) => settled(await store.install(gone.id, gone.dashboard, gone.version)),
+    mutationFn: async (gone: Removed) => settled(await gone.store.install(gone.id, gone.dashboard, gone.version)),
     onSuccess: () => { setRemoved(undefined); void client.invalidateQueries({ queryKey: ["dashboards"] }); void stored.refetch() },
   })
   const board = removed ? undefined : stored.data
@@ -375,11 +398,11 @@ export function DashboardBoardPage() {
       {removed && <UndoDelete removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
       {removed && <Button asChild variant="ghost" size="sm"><Link to="/dashboards">Back to dashboards</Link></Button>}
       {stored.isSuccess && board === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
-      {board && catalog.data && <DashboardBoard dashboard={board.dashboard} catalog={catalog.data} id={board.id} />}
+      {board && catalog.data && <DashboardBoard dashboard={board.dashboard} catalog={catalog.data} id={board.id} scope={scope.data} />}
       {board && catalog.data && (
         <details className="group rounded-xl border bg-card p-3">
           <summary className="cursor-pointer text-sm font-medium">Change it with the assistant</summary>
-          <div className="mt-3"><DashboardAssistant catalog={catalog.data} dashboardId={board.id} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} />} /></div>
+          <div className="mt-3"><DashboardAssistant catalog={catalog.data} dashboardId={board.id} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} scope={scope.data} />} /></div>
         </details>
       )}
     </section>
