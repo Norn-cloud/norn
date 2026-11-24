@@ -242,7 +242,7 @@ fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
     let artifacts = envelopes(&values);
     let limits = ResourceLimitProfile::norn_limits_v1();
     let mut receipt = receipt(&values);
-    assert_eq!(receipt.type_env.as_ref().unwrap().version, 2);
+    assert_eq!(receipt.type_env.as_ref().unwrap().version, 3);
     receipt.type_env = Some(
         derive_type_env(&artifacts, &[], &limits)
             .unwrap()

@@ -3,7 +3,7 @@
     "command": "check",
     "input": "tools/norn-ts/fixtures/quickstart",
     "status": 0,
-    "sha256": "15978a943c2782cfe795e43743e2545ac9aecf4c7bfee15ca65118ea3289c095"
+    "sha256": "90cc5f6eae7a0f59af7feb47c2372d102ebdde648c8996337f90e32b76302451"
   },
   {
     "command": "check",

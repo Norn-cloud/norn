@@ -5,8 +5,10 @@
 pub enum TypeEnvVersion {
     /// Historical projection without currency-source bindings.
     V1,
-    /// Currency-source-aware projection for new admissions.
+    /// Historical currency-source and rate projection without decimal-binding owners.
     V2,
+    /// Owner-aware projection for new admissions.
+    V3,
 }
 
 impl TypeEnvVersion {
@@ -16,6 +18,7 @@ impl TypeEnvVersion {
         match version {
             1 => Some(Self::V1),
             2 => Some(Self::V2),
+            3 => Some(Self::V3),
             _ => None,
         }
     }
@@ -26,6 +29,7 @@ impl TypeEnvVersion {
         match self {
             Self::V1 => 1,
             Self::V2 => 2,
+            Self::V3 => 3,
         }
     }
 }

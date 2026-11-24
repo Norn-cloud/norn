@@ -653,7 +653,7 @@ mod tests {
         assert_eq!(admitted.verify(substituted).unwrap_err().code, "host.error");
         // (b) Another version of a base artifact is not the receipt's base.
         let mut versioned = admitted.artifacts.clone();
-        versioned[a]["version"] = "0.2.0".into();
+        versioned[a]["version"] = "9.9.9".into();
         assert_eq!(admitted.verify(versioned).unwrap_err().code, unavailable);
         // (c) An older base artifact replayed against the newer receipt.
         let mut replayed = admitted.artifacts.clone();

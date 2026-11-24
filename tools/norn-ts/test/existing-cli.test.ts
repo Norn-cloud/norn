@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { TOOL_ROOT } from "../src/profile.ts"
 import pins from "./existing-cli-pins.json"
 
-// Pins captured against main 2a6c17a7ae; the same outputs were verified on the tree with init/fmt.
+// Pins captured against main 2a6c17a7ae; quickstart check pin refreshed for norn-zen/7 and norn.expr.env/3.
 test("existing_cli_output_unchanged", async () => {
   for (const pin of pins) {
     const child = Bun.spawn([process.execPath, "tools/norn-ts/src/cli.ts", pin.command, pin.input, "--org", "org_demo", "--env", "dev"], {
