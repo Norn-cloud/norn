@@ -431,23 +431,17 @@ fn sub_decision(rule_id: &str, calls: Option<&str>) -> Json {
 type Outcome = Result<norn_decisions::Evaluated, DecisionError>;
 type Built<T> = Result<T, Box<dyn std::error::Error>>;
 
-/// Evaluates a decide graph calling the ordinary helper `demo.approve` on
-/// `input_field` with `slice = {n: 2}`. The helper declares
-/// `{n: number} -> {approved: boolean}` and computes `approved` as
-/// `approved` (passing its input through when `pass_through`).
-fn approval_outcome(input_field: &str, approved: &str, pass_through: bool) -> Built<Outcome> {
-    let mut root = commands_rule(
-        "demo.rule.approval_caller",
-        &closed(&json!({ "n": { "type": "number" } })),
-        "[]",
-    );
+/// A decide graph over `slice` that calls the ordinary helper `demo.helper`
+/// on `input_field`, binds its result to `called`, and emits `commands`.
+fn caller(slice: &Json, input_field: &str, commands: &str) -> Built<Json> {
+    let mut root = commands_rule("demo.rule.caller", slice, commands);
     root["graph"]["nodes"]
         .as_array_mut()
         .ok_or("root nodes")?
         .insert(
             1,
             json!({ "id": "call", "name": "call", "type": "decisionNode", "content": {
-                "key": "demo.approve", "inputField": input_field, "outputPath": "approval", "passThrough": true
+                "key": "demo.helper", "inputField": input_field, "outputPath": "called", "passThrough": true
             } }),
         );
     root["graph"]["edges"][0]["targetId"] = json!("call");
@@ -455,30 +449,78 @@ fn approval_outcome(input_field: &str, approved: &str, pass_through: bool) -> Bu
         .as_array_mut()
         .ok_or("root edges")?
         .push(json!({ "id": "e_call", "sourceId": "call", "targetId": "x" }));
-    let mut helper = sub_decision("demo.rule.approve", None);
-    helper["outputSchema"] = closed(&json!({ "approved": { "type": "boolean" } }));
+    Ok(root)
+}
+
+/// The helper `demo.helper`: one expression node computing `expressions`
+/// (passing its input through when `pass_through`) between closed `input`
+/// and `output` records.
+fn helper(input: &Json, output: &Json, expressions: &Json, pass_through: bool) -> Built<Json> {
+    let mut helper = sub_decision("demo.rule.helper", None);
+    helper["inputSchema"] = closed(input);
+    helper["outputSchema"] = closed(output);
     helper["graph"]["nodes"]
         .as_array_mut()
         .ok_or("helper nodes")?
         .insert(
             1,
-            json!({ "id": "decide", "name": "decide", "type": "expressionNode", "content": {
-                "expressions": [{ "id": "a", "key": "approved", "value": approved }],
-                "passThrough": pass_through
+            json!({ "id": "body", "name": "body", "type": "expressionNode", "content": {
+                "expressions": expressions, "passThrough": pass_through
             } }),
         );
     helper["graph"]["edges"] = json!([
-        { "id": "e_in", "sourceId": "in", "targetId": "decide" },
-        { "id": "e_out", "sourceId": "decide", "targetId": "out" }
+        { "id": "e_in", "sourceId": "in", "targetId": "body" },
+        { "id": "e_out", "sourceId": "body", "targetId": "out" }
     ]);
-    let subs = BTreeMap::from([("demo.approve".to_owned(), rule(&helper))]);
-    let decision = AdmittedDecision::admit(&rule(&root), &subs, binding())?;
+    Ok(helper)
+}
+
+/// Admits `root` with `helper` as `demo.helper` and evaluates it on `slice`.
+fn call_outcome(root: &Json, helper: &Json, slice: &Json) -> Built<Outcome> {
+    let subs = BTreeMap::from([("demo.helper".to_owned(), rule(helper))]);
+    let decision = AdmittedDecision::admit(&rule(root), &subs, binding())?;
     Ok(run(
         &decision,
-        Value::object([("n", num("2"))]),
+        value(slice),
         event(),
         EvaluationBudget::default(),
     ))
+}
+
+/// `{n: 2}` passed on `input_field` to a helper declaring
+/// `{n: number} -> {approved: boolean}` that computes `approved` as
+/// `approved`.
+fn approval_outcome(input_field: &str, approved: &str, pass_through: bool) -> Built<Outcome> {
+    let n = json!({ "n": { "type": "number" } });
+    call_outcome(
+        &caller(&closed(&n), input_field, "[]")?,
+        &helper(
+            &n,
+            &json!({ "approved": { "type": "boolean" } }),
+            &json!([{ "id": "a", "key": "approved", "value": approved }]),
+            pass_through,
+        )?,
+        &json!({ "n": 2 }),
+    )
+}
+
+/// The `actionId` of the single command an evaluation emitted.
+fn action_id(outcome: &Outcome) -> Option<String> {
+    match outcome
+        .as_ref()
+        .ok()?
+        .output
+        .commands
+        .first()?
+        .get("actionId")?
+    {
+        norn_ir::RuntimeValue::String(id) => Some(id.clone()),
+        norn_ir::RuntimeValue::Null
+        | norn_ir::RuntimeValue::Bool(_)
+        | norn_ir::RuntimeValue::Number(_)
+        | norn_ir::RuntimeValue::Array(_)
+        | norn_ir::RuntimeValue::Object(_) => None,
+    }
 }
 
 /// Whether the evaluation was refused at the root's `call` node.
@@ -509,6 +551,65 @@ fn ordinary_sub_decisions_are_held_to_their_declared_schemas() -> Built<()> {
     // An undeclared output member (the passed-through `n`) is refused:
     // outputs are exact.
     assert!(refused_at_call(&approval_outcome("slice", "n > 0", true)?));
+    Ok(())
+}
+
+/// #1708: a helper runs on its declared members only. An undeclared caller
+/// member is absent inside the helper, so no value of it can change the
+/// helper's result; declared members still flow through.
+#[test]
+fn an_undeclared_caller_member_cannot_reach_a_helper() -> Built<()> {
+    let root = caller(
+        &closed(&json!({ "n": { "type": "number" }, "extra": { "type": "string" } })),
+        "slice",
+        "[{actionId: called.seen}]",
+    )?;
+    let helper = helper(
+        &json!({ "n": { "type": "number" } }),
+        &json!({ "seen": { "type": "string" } }),
+        &json!([{
+            "id": "s",
+            "key": "seen",
+            "value": "extra == null and n == 2 ? 'declared only' : 'leaked'"
+        }]),
+        false,
+    )?;
+    for extra in ["a", "b"] {
+        let outcome = call_outcome(&root, &helper, &json!({ "n": 2, "extra": extra }))?;
+        assert_eq!(
+            action_id(&outcome).as_deref(),
+            Some("declared only"),
+            "{extra}"
+        );
+    }
+    Ok(())
+}
+
+/// #1708: a temporal value crosses a helper boundary in the canonical string
+/// form its `string` schema checked, in both directions: the helper and its
+/// caller apply string operations to it.
+#[test]
+fn temporal_values_cross_helper_boundaries_as_checked_strings() -> Built<()> {
+    let day = json!({ "day": { "type": "string" } });
+    let root = caller(
+        &closed(&json!({})),
+        "{day: date('2026-01-02')}",
+        "[{actionId: called.day + '|' + called.tag}]",
+    )?;
+    let helper = helper(
+        &day,
+        &json!({ "day": { "type": "string" }, "tag": { "type": "string" } }),
+        &json!([
+            { "id": "d", "key": "day", "value": "date(day)" },
+            { "id": "t", "key": "tag", "value": "day + '!'" }
+        ]),
+        false,
+    )?;
+    let outcome = call_outcome(&root, &helper, &json!({}))?;
+    assert_eq!(
+        action_id(&outcome).as_deref(),
+        Some("2026-01-02|2026-01-02!")
+    );
     Ok(())
 }
 

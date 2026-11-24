@@ -105,6 +105,7 @@ impl StepContracts {
         meter: Option<&Meter>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.check_declared(key, value, input, meter, false)
+            .map(drop)
     }
 
     fn check_declared(
@@ -114,7 +115,7 @@ impl StepContracts {
         input: bool,
         meter: Option<&Meter>,
         project: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<norn_expr::Value, Box<dyn std::error::Error>> {
         let (before, after) = self
             .schemas
             .get(key)
@@ -132,7 +133,8 @@ impl StepContracts {
         }
         schema
             .check(&value, if input { "step.input" } else { "step.output" })
-            .map_err(|error| format!("{}: {}", error.path, error.reason).into())
+            .map_err(|error| format!("{}: {}", error.path, error.reason))?;
+        Ok(value)
     }
 }
 
@@ -171,10 +173,6 @@ impl DecisionContracts for StepContracts {
         })
     }
 
-    /// An ordinary invocation: zen hands the helper its caller's whole merged
-    /// context, so the input is checked on the helper's declared members only
-    /// (each present and well typed, nested records exact); the output is
-    /// checked exactly. A key without an admitted contract is refused.
     fn check(
         &self,
         key: &str,
@@ -182,7 +180,26 @@ impl DecisionContracts for StepContracts {
         input: bool,
         meter: Option<&Meter>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.check_declared(key, value, input, meter, input)
+        self.cross(key, value, input, meter).map(drop)
+    }
+
+    /// An ordinary invocation: zen hands the helper its caller's whole merged
+    /// context, so the input is checked on the helper's declared members only
+    /// (each present and well typed, nested records exact); the output is
+    /// checked exactly. What crosses the boundary is the checked value itself:
+    /// the declared members only, with temporal values in the canonical string
+    /// form the schema checked, so a helper never reads an undeclared caller
+    /// member and a caller never receives an unchecked representation (#1708).
+    /// A key without an admitted contract is refused.
+    fn cross(
+        &self,
+        key: &str,
+        value: &Variable,
+        input: bool,
+        meter: Option<&Meter>,
+    ) -> Result<Option<Variable>, Box<dyn std::error::Error>> {
+        let checked = self.check_declared(key, value, input, meter, input)?;
+        Ok(Some(crate::convert::to_variable(&checked)?))
     }
 }
 

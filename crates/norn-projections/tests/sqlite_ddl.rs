@@ -442,7 +442,10 @@ fn case_distinct_physical_names_project_unchanged() {
         })
         .map(|schema| schema.to_sql())
     };
-    let alone = [sql(&[bin.clone()]), sql(&[sku.clone()])];
+    let alone = [
+        sql(std::slice::from_ref(&bin)),
+        sql(std::slice::from_ref(&sku)),
+    ];
     let [Ok(bin_sql), Ok(sku_sql)] = &alone else {
         panic!("each type projects alone: {alone:?}");
     };
