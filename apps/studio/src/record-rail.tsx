@@ -7,9 +7,10 @@ import { HiddenWriter } from "@/components/hidden-writer"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import { lawHeadline, systemName, type Law } from "./lib/catalog.ts"
+import { useStudioScope } from "./lib/definitions.ts"
 import { readableTime } from "./lib/format.ts"
 import { liveTypeAccess, type RoleAccess, type TypeAccess } from "./lib/live.ts"
-import { changedProperties, historyUnavailable, readHistory } from "./evidence/review.ts"
+import { changedProperties, historyQueryKey, historyUnavailable, readHistory } from "./evidence/review.ts"
 
 /** The cell's per-role decisions over one collection (`GET /v1/access?objectType=`), shared by the rail's parts. */
 export function useTypeAccess(objectType: string, live: boolean) {
@@ -135,7 +136,9 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
   readonly actionTitles: ReadonlyMap<string, string>
   readonly onAll: () => void
 }) {
-  const read = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id), retry: false })
+  const scope = useStudioScope()
+  const boundScope = scope.data ?? null
+  const read = useQuery({ queryKey: historyQueryKey(objectType, id, boundScope), queryFn: () => readHistory(objectType, id, boundScope), enabled: scope.isSuccess, retry: false })
   const history = read.data
   const versions = history?.document.versions ?? []
   return (

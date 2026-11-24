@@ -1,35 +1,21 @@
 # Demo UI
 
-The one renderer for the #218 demo shell: pure functions from authorized
-server documents to self-contained HTML. They don't fetch, admit, authorize,
-execute or infer. Whatever supplies a document (today a caller of the
-server's generic routes; later a client-cell runtime) must pass the exact
-authorized read, never an unfiltered registry dump. Every page states what the
-read says about its frontier and freshness, and nothing more.
+Framework-free UI pieces that Studio (`apps/studio`) imports by path. None of
+them fetches on its own, decides permission or computes data: each one renders
+or drives what the server's admitted documents declare.
 
-- `renderShell` (`src/shell.ts`): the shared frame. No script and no remote
-  resources; light and dark themes follow the platform preference; responsive.
-- `renderCatalogDocument({ artifacts })` (`@norn/demo-ui/catalog`): concepts,
-  their declared `extends`/`implements` graph, relations, laws and value types
-  over `NornArtifactEnvelope[]`. It shows only what each artifact declares, in
-  server order. Inheritance, effective laws, the inherited origin chain and the
-  reviewed EN/AR wording are server projections; until the document carries
-  them the page says "not exposed by the server" rather than computing them.
-- `renderRefusalDocument({ refusal, source })` (`@norn/demo-ui/refusal`): "why
-  was this refused?" for one `norn/refusal@2` action response. An action's
-  status is a commitment: submitted, then accepted with its receipt or refused
-  with its typed reason and no effects (TXN-ATOMIC-1). This page renders the
-  refused state; the pending and accepted states arrive with the action forms
-  and the server's action route types. Operand values come from the exact
-  response text, so decimals keep their scale. A reason the server does not
-  disclose (DIAG-REDACT-1) and the repair hint stay absent; categories are shown
-  as the server sends them. A source that is not the same response refuses to
-  render.
-- `renderDefinitionsDocument({ entries })`: the source inspector. Each entry is
-  metadata typed from the generated SDK plus the exact JSON source returned by
-  the same read; source bytes are preserved as escaped text, including numeric
-  literals outside JavaScript's precision.
+- `src/machine/` (`@norn/demo-ui/machine`): runs a page's declared UI machine
+  (UI-MACHINE-1). It evaluates guards, walks transitions and reports outcomes.
+- `src/elements/decision-sheet.ts`: `<norn-decision-sheet>`, one decision
+  rendered from its admitted page document and driven only by its machine.
+- `src/elements/lifecycle-view.ts`: `<norn-lifecycle-view>` (UI-LIFECYCLE-2),
+  an object type's lifecycle with the cell's live count per state, plus the
+  checker's counterexamples.
+- `src/catalog-host/`: the sandboxed host for a catalog component
+  (UI-CATALOG-1), and the compiler from a Foldkit component's machine to
+  Norn's machine IR.
+- `src/live/client.ts`: the client side of live reads (UI-LIVE-1,
+  `norn.live.v1`).
 
 Run `bun install --frozen-lockfile --ignore-scripts --backend copyfile`,
-`bun run typecheck` and `bun test` from this package on Boat. The tests render
-the compiled registry and law fixtures, not hand-written definitions.
+`bun run typecheck` and `bun test` from this package on Boat.

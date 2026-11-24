@@ -72,7 +72,6 @@ mod reads;
 mod row_tree;
 /// Exact validation of the admitted closed JSON schema dialect.
 pub mod schema;
-mod structural_sum;
 pub mod temporal;
 mod tzdb;
 mod value;
@@ -102,5 +101,4 @@ pub use reads::{
     ExpressionReads, expression_element_paths, expression_read_paths, expression_reads,
 };
 pub use row_tree::{RowArithmetic, RowComparison, RowExpr, row_expression};
-pub use structural_sum::{StructuralSumEquality, structural_sum_equality};
 pub use value::{Number, Value};

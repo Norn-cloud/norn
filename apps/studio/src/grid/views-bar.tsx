@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
-import { NO_DATA_CELL, useStudioScope } from "../lib/definitions.ts"
+import { NO_DATA_CELL, useStudioScope, type StudioScope } from "../lib/definitions.ts"
 import { cellViews, newViewId, sortKeys, sortText, type SavedView, type StoredView, type ViewSaved, type ViewsClient } from "../lib/views.ts"
 import type { DisplayedGridQuery, GridQuery } from "./records-grid.tsx"
 
@@ -111,29 +111,32 @@ export function deletedViewNotice(params: {
  * query as a new one, update or rename the open one, or delete it, with an undo that installs it
  * again. Whether the reader may change them is the cell's call; its refusal is shown as it is.
  */
-export function ViewsBar({ objectType, open, query, onOpen }: {
+export function ViewsBar({ objectType, scope: boundScope, open, query, onOpen }: {
   readonly objectType: string
+  readonly scope?: StudioScope
   readonly open: StoredView | null
   readonly query: DisplayedGridQuery | undefined
   readonly onOpen: (view: StoredView | null) => void
 }) {
   const client = useQueryClient()
   const scope = useStudioScope()
-  const activeScope = scope.data ?? null
+  const activeScope = boundScope ?? (scope.data ?? null)
   const list = useQuery({
     queryKey: ["views", objectType, activeScope?.orgId, activeScope?.environmentId],
     queryFn: () => views.list(objectType, activeScope),
-    enabled: scope.isSuccess && activeScope !== null,
+    enabled: (boundScope !== undefined || scope.isSuccess) && activeScope !== null,
     retry: false,
   })
   const [notice, setNotice] = useState<ViewsBarNotice | null>(null)
   const [creating, setCreating] = useState(false)
+  const [creatingScope, setCreatingScope] = useState<StudioScope | null>(null)
   const [renaming, setRenaming] = useState(false)
   const reread = () => client.invalidateQueries({ queryKey: ["views"] })
+  const saveScope = query?.scope ?? open?.scope ?? activeScope
   const create = async (title: string) => {
     if (query === undefined) return "The grid has not answered yet."
-    if (activeScope === null) return NO_DATA_CELL
-    const targetScope = activeScope
+    const targetScope = query.scope ?? creatingScope ?? open?.scope ?? activeScope
+    if (targetScope === null) return NO_DATA_CELL
     const id = newViewId(objectType, title)
     const view = asView(title, objectType, query)
     const result = await views.save(id, view, undefined, targetScope).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
@@ -141,6 +144,7 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
     if (!result.saved) return problemOf(result)
     await reread()
     setCreating(false)
+    setCreatingScope(null)
     onOpen({ id, version: result.version, scope: targetScope, view })
     setNotice({ text: `Saved “${title}”.` })
     return null
@@ -199,8 +203,8 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
           </Popover>
           <Button type="button" variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive" onClick={() => void remove()}><Trash2 />Delete</Button>
         </>}
-        <Popover open={creating} onOpenChange={setCreating}>
-          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" className="h-8" disabled={query === undefined || activeScope === null}><Bookmark />Save as view</Button></PopoverTrigger>
+        <Popover open={creating} onOpenChange={(next) => { setCreating(next); setCreatingScope(next ? saveScope : null) }}>
+          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" className="h-8" disabled={query === undefined || saveScope === null}><Bookmark />Save as view</Button></PopoverTrigger>
           <PopoverContent align="end" className="w-72 rounded-node border-node-border shadow-float">
             <TitleForm initial="" submit="Save view" onDone={create} />
           </PopoverContent>
