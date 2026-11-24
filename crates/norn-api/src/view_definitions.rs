@@ -39,13 +39,53 @@ fn pointer_token(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
 
+/// The `objectType` and `columns` of the retained view revision a write
+/// replaces, when that revision exists and has `kind == "view"`.
+///
+/// Main originally admitted views with repeated declared columns and no
+/// 64-column limit. Carrying the replaced revision's column list lets the
+/// server admit Undo restores and non-column edits of already-admitted views
+/// without losing data, while enforcing the stricter column rules on every
+/// new view and every column-changing edit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RetainedViewColumns {
+    pub(crate) object_type: String,
+    pub(crate) columns: Vec<String>,
+}
+
+/// Extract the `objectType` and `columns` stored in a retained view payload.
+#[must_use]
+pub(crate) fn retained_columns(stored: &str) -> Option<RetainedViewColumns> {
+    let value: Value = serde_json::from_str(stored).ok()?;
+    let object = value.as_object()?;
+    let object_type = object.get("objectType")?.as_str()?.to_owned();
+    let columns = object
+        .get("columns")?
+        .as_array()?
+        .iter()
+        .map(|column| column.as_str().map(str::to_owned))
+        .collect::<Option<Vec<String>>>()?;
+    Some(RetainedViewColumns {
+        object_type,
+        columns,
+    })
+}
+
 /// Check a retained `kind: "view"` payload against the cell's active model.
+///
+/// `replaced` carries the `objectType` and `columns` of the retained view
+/// revision this write replaces, if any. The new column rules (no duplicates,
+/// at most [`MAX_VIEW_COLUMNS`]) apply only when the write creates a new view
+/// or changes `columns` (or `objectType`) relative to `replaced`; restoring a
+/// retired legacy view or editing its non-column fields remains admitted under
+/// the declared-property check that originally admitted it.
 ///
 /// # Errors
 /// A host failure reading the cell's model.
 pub(crate) fn check<E: SqlEngine>(
     host: &DevHost<E>,
     value: &Value,
+    replaced: Option<&RetainedViewColumns>,
     findings: &mut Vec<RefusalDiagnostic>,
 ) -> Result<(), Refusal> {
     let Some(object) = value.as_object() else {
@@ -78,25 +118,25 @@ pub(crate) fn check<E: SqlEngine>(
         "space",
         findings,
     );
-    let object_type_name = object.get("objectType").and_then(Value::as_str);
-    let declared = match object_type_name {
+    let declared = match object.get("objectType").and_then(Value::as_str) {
         Some(object_type) => {
             let cell = host.cell()?;
             let reader = cell.store().read();
             if reader.model().has_type(object_type) {
-                Some(
+                Some((
+                    object_type,
                     reader
                         .model()
                         .effective_property_types(object_type)
                         .map_err(Refusal::host)?,
-                )
+                ))
             } else {
                 None
             }
         }
         None => None,
     };
-    let Some(properties) = declared else {
+    let Some((object_type, properties)) = declared else {
         findings.push(RefusalDiagnostic::error(
             codes::INVALID_PAYLOAD,
             "objectType names a declared object type",
@@ -124,7 +164,13 @@ pub(crate) fn check<E: SqlEngine>(
     if let Err(refusal) = crate::object_query::parse(&query, &properties) {
         findings.extend(refusal.diagnostics);
     }
-    check_columns(object.get("columns"), &properties, findings);
+    check_columns(
+        object.get("columns"),
+        object_type,
+        &properties,
+        replaced,
+        findings,
+    );
     Ok(())
 }
 
@@ -205,15 +251,34 @@ fn check_optional_text(
     }
 }
 
+fn columns_unchanged(
+    object_type: &str,
+    columns: &[Value],
+    replaced: Option<&RetainedViewColumns>,
+) -> bool {
+    replaced.is_some_and(|prev| {
+        prev.object_type == object_type
+            && prev.columns.len() == columns.len()
+            && prev
+                .columns
+                .iter()
+                .zip(columns)
+                .all(|(previous, current)| current.as_str() == Some(previous.as_str()))
+    })
+}
+
 fn check_columns(
     value: Option<&Value>,
+    object_type: &str,
     properties: &[(String, Option<norn_ir::PropertyType>)],
+    replaced: Option<&RetainedViewColumns>,
     findings: &mut Vec<RefusalDiagnostic>,
 ) {
     match value {
         None => {}
         Some(Value::Array(columns)) => {
-            if columns.len() > MAX_VIEW_COLUMNS {
+            let unchanged = columns_unchanged(object_type, columns, replaced);
+            if !unchanged && columns.len() > MAX_VIEW_COLUMNS {
                 findings.push(RefusalDiagnostic::error(
                     codes::INVALID_PAYLOAD,
                     format!("a view lists at most {MAX_VIEW_COLUMNS} columns"),
@@ -225,7 +290,7 @@ fn check_columns(
             for (index, column) in columns.iter().enumerate() {
                 match column.as_str() {
                     Some(id) if properties.iter().any(|(name, _)| name == id) => {
-                        if !seen.insert(id) {
+                        if !unchanged && !seen.insert(id) {
                             findings.push(RefusalDiagnostic::error(
                                 codes::INVALID_PAYLOAD,
                                 format!("column {id:?} is listed more than once"),

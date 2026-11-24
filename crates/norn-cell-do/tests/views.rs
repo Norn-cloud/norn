@@ -738,3 +738,236 @@ fn unrelated_fleet_domain_views_work_identically() -> TestResult {
 
     assert_retire_and_undo(&mut cell, "view", view_id, &view_payload, v1)
 }
+
+fn diagnostic_pointers(value: &Value) -> TestResult<Vec<&str>> {
+    Ok(ptr_array(value, "/diagnostics")?
+        .iter()
+        .filter_map(|d| d.pointer("/span/pointer").and_then(Value::as_str))
+        .collect())
+}
+
+fn seeded_legacy_views_cell(legacy_views: &[(&str, &str, &Value)]) -> TestResult<Cell> {
+    use norn_cell::InstalledDefinitionInput;
+    use norn_cell::retained::{
+        RetainedDefinition, RetainedDefinitionChange, RetainedLifecycle, payload_sha256,
+    };
+    use norn_cell_do::analytics;
+
+    let cell_scope = scope();
+    let mut opened = analytics::provision(NativeEngine::open_in_memory()?, &cell_scope)?;
+    for &(id, title, payload) in legacy_views {
+        let active = opened
+            .store
+            .read()
+            .installed_definitions(None)?
+            .ok_or("missing installed definitions")?;
+        let canonical = String::from_utf8(
+            norn_ir::RuntimeValue::from_json_text(serde_json::to_vec(payload)?)?
+                .canonical_json()?,
+        )?;
+        let change = RetainedDefinitionChange {
+            definition: RetainedDefinition {
+                kind: "view".to_owned(),
+                id: id.to_owned(),
+                revision: 1,
+                lifecycle: RetainedLifecycle::Active,
+                title: title.to_owned(),
+                payload_sha256: payload_sha256(&canonical),
+                payload: canonical,
+                signoff: None,
+            },
+            expected_revision: None,
+        };
+        let input = InstalledDefinitionInput {
+            canonical_set: active.canonical_set,
+            registry: active.registry,
+            receipt_sha256: active.receipt_sha256,
+            admission_receipt: active.admission_receipt,
+            readmission: None,
+            diff: json!({ "added": [], "removed": [], "changed": [], "narrowing": [] }),
+            installed_at: active.installed_at,
+            layout: None,
+        };
+        let model = opened.store.model().clone();
+        opened.store.install_retained_definition(
+            model,
+            &input,
+            Some(active.version),
+            &cell_scope.key(),
+            &change,
+        )?;
+    }
+    let tenant = Tenant::seeded(cell_scope.clone(), &DEMO_GRANTS, opened.store, None)?
+        .with_receipt_handles(Some(&HANDLE_KEY))?;
+    let tokens = TokenPrincipals::new(ISSUER, &jwks(), cell_scope, tenant.caller(), NOW)
+        .map_err(|refusal| format!("{refusal:?}"))?;
+    Ok(Cell {
+        tenant,
+        tokens,
+        now: NOW,
+    })
+}
+
+#[test]
+fn legacy_duplicate_column_view_retires_restores_and_edits_while_new_writes_refuse() -> TestResult {
+    use norn_cell_do::analytics;
+
+    let view_id = "studio.view.legacy_dupes";
+    let legacy_payload = json!({
+        "title": "Legacy duplicate columns",
+        "objectType": analytics::TYPE,
+        "columns": ["metal", "metal", "input"]
+    });
+    let mut cell =
+        seeded_legacy_views_cell(&[(view_id, "Legacy duplicate columns", &legacy_payload)])?;
+
+    // Retire then reinstall through the exact Undo path (expectedVersion = retired revision).
+    assert_retire_and_undo(&mut cell, "view", view_id, &legacy_payload, 1)?;
+
+    // Non-column edits (title/space) on the restored legacy view admit and install cleanly.
+    let mut renamed_payload = legacy_payload.clone();
+    if let Some(obj) = renamed_payload.as_object_mut() {
+        obj.insert(
+            "title".to_owned(),
+            json!("Legacy duplicate columns (renamed)"),
+        );
+        obj.insert("space".to_owned(), json!("Operations"));
+    }
+    let (status, admitted) = cell.post(
+        "/v1/definitions:admit",
+        "admin",
+        &json!({ "kind": "view", "id": view_id, "payload": renamed_payload }),
+    );
+    assert_eq!(status, 200, "{admitted}");
+    assert_eq!(ptr(&admitted, "/admitted")?, &json!(true));
+    let (status, installed) = cell.post(
+        "/v1/definitions:install",
+        "admin",
+        &json!({ "kind": "view", "id": view_id, "payload": renamed_payload, "expectedVersion": 3 }),
+    );
+    assert_eq!(status, 200, "{installed}");
+    assert_eq!(ptr_u64(&installed, "/version")?, 4);
+
+    // Changing the column list while keeping duplicates is refused by the new rule.
+    let bad_edit = json!({
+        "title": "Legacy duplicate columns (changed cols)",
+        "objectType": analytics::TYPE,
+        "columns": ["metal", "metal", "loss"]
+    });
+    let (status, refused) = cell.post(
+        "/v1/definitions:install",
+        "admin",
+        &json!({ "kind": "view", "id": view_id, "payload": bad_edit, "expectedVersion": 4 }),
+    );
+    assert_eq!(status, 422, "{refused}");
+    assert!(
+        diagnostic_pointers(&refused)?.contains(&"/columns/1"),
+        "{refused}"
+    );
+
+    // Cleaning up the column list installs v5; re-introducing duplicates afterward is refused.
+    let clean_edit = json!({
+        "title": "Legacy duplicate columns (cleaned)",
+        "objectType": analytics::TYPE,
+        "columns": ["metal", "input"]
+    });
+    let (status, cleaned) = cell.post(
+        "/v1/definitions:install",
+        "admin",
+        &json!({ "kind": "view", "id": view_id, "payload": clean_edit, "expectedVersion": 4 }),
+    );
+    assert_eq!(status, 200, "{cleaned}");
+    assert_eq!(ptr_u64(&cleaned, "/version")?, 5);
+    let (status, re_refused) = cell.post(
+        "/v1/definitions:install",
+        "admin",
+        &json!({ "kind": "view", "id": view_id, "payload": legacy_payload, "expectedVersion": 5 }),
+    );
+    assert_eq!(status, 422, "{re_refused}");
+    assert!(
+        diagnostic_pointers(&re_refused)?.contains(&"/columns/1"),
+        "{re_refused}"
+    );
+
+    // New creates with duplicate columns are refused.
+    let (status, fresh_refused) = cell.post(
+        "/v1/definitions:install",
+        "admin",
+        &json!({ "kind": "view", "id": "studio.view.fresh_dupes", "payload": legacy_payload }),
+    );
+    assert_eq!(status, 422, "{fresh_refused}");
+    assert!(
+        diagnostic_pointers(&fresh_refused)?.contains(&"/columns/1"),
+        "{fresh_refused}"
+    );
+    Ok(())
+}
+
+#[test]
+fn legacy_over_column_limit_view_retires_restores_and_edits_while_new_writes_refuse() -> TestResult
+{
+    use norn_cell_do::analytics;
+
+    let view_id = "studio.view.legacy_many";
+    let sixty_five: Vec<&str> = vec!["metal"; 65];
+    let legacy_payload = json!({
+        "title": "Legacy wide columns",
+        "objectType": analytics::TYPE,
+        "columns": sixty_five
+    });
+    let mut cell = seeded_legacy_views_cell(&[(view_id, "Legacy wide columns", &legacy_payload)])?;
+
+    // Retire then reinstall through the exact Undo path.
+    assert_retire_and_undo(&mut cell, "view", view_id, &legacy_payload, 1)?;
+
+    // Non-column edit keeps the legacy view editable without trapping the user.
+    let mut renamed_payload = legacy_payload.clone();
+    if let Some(obj) = renamed_payload.as_object_mut() {
+        obj.insert("title".to_owned(), json!("Legacy wide columns (renamed)"));
+    }
+    let (status, admitted) = cell.post(
+        "/v1/definitions:admit",
+        "admin",
+        &json!({ "kind": "view", "id": view_id, "payload": renamed_payload }),
+    );
+    assert_eq!(status, 200, "{admitted}");
+    assert_eq!(ptr(&admitted, "/admitted")?, &json!(true));
+    let (status, installed) = cell.post(
+        "/v1/definitions:install",
+        "admin",
+        &json!({ "kind": "view", "id": view_id, "payload": renamed_payload, "expectedVersion": 3 }),
+    );
+    assert_eq!(status, 200, "{installed}");
+    assert_eq!(ptr_u64(&installed, "/version")?, 4);
+
+    // Column-changing edit that stays above 64 columns is refused at /columns.
+    let sixty_six: Vec<&str> = vec!["metal"; 66];
+    let wider_edit = json!({
+        "title": "Legacy wide columns (wider)",
+        "objectType": analytics::TYPE,
+        "columns": sixty_six
+    });
+    let (status, refused) = cell.post(
+        "/v1/definitions:install",
+        "admin",
+        &json!({ "kind": "view", "id": view_id, "payload": wider_edit, "expectedVersion": 4 }),
+    );
+    assert_eq!(status, 422, "{refused}");
+    assert!(
+        diagnostic_pointers(&refused)?.contains(&"/columns"),
+        "{refused}"
+    );
+
+    // New creates above 64 columns are refused at /columns.
+    let (status, fresh_refused) = cell.post(
+        "/v1/definitions:install",
+        "admin",
+        &json!({ "kind": "view", "id": "studio.view.fresh_many", "payload": legacy_payload }),
+    );
+    assert_eq!(status, 422, "{fresh_refused}");
+    assert!(
+        diagnostic_pointers(&fresh_refused)?.contains(&"/columns"),
+        "{fresh_refused}"
+    );
+    Ok(())
+}

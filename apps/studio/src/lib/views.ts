@@ -1,6 +1,7 @@
 import type { Fetch } from "./cell-read.ts"
 import { CellUnavailable, NO_DATA_CELL, readStudioScope, scopedHostFetch, StudioScopeError, type Finding, type ScopeProvider, type StudioScope } from "./definitions.ts"
-import type { Predicate, SortKey } from "./records-query.ts"
+import type { Predicate, RecordsQuery, SortKey } from "./records-query.ts"
+import { readRecordsAtScope, type RecordsRead } from "./records-source.ts"
 
 /** A saved records view as the cell keeps it (definition kind `view`, VIEW-DEF-1). */
 export interface SavedView {
@@ -44,12 +45,28 @@ export type ViewAdmission =
   | { readonly admitted: true; readonly restatement: string | null }
   | { readonly admitted: false; readonly findings: readonly Finding[] }
 
+export interface ViewRevision {
+  readonly version: number
+  readonly retired: boolean
+}
+
+export type ViewConflict =
+  | { readonly kind: "updated"; readonly version: number }
+  | { readonly kind: "deleted"; readonly version: number | null }
+  | { readonly kind: "unknown" }
+
 export interface SaveViewDraftOutcome {
   readonly view: SavedView
   readonly result: ViewSaved
-  /** Confirmed server revision read after a 409 conflict on an existing view, or null if it could not be obtained. */
-  readonly conflictVersion: number | null
+  /** Confirmed server state read after a 409 conflict, or null when no conflict occurred. */
+  readonly conflict: ViewConflict | null
 }
+
+/** Cache key for a saved-view editor's live record preview, bound to its source scope. */
+export const viewPreviewQueryKey = (
+  scope: StudioScope | null,
+  view: Pick<SavedView, "objectType" | "filter" | "sort">,
+) => ["view-preview", scope?.orgId, scope?.environmentId, view.objectType, JSON.stringify(view.filter ?? null), view.sort ?? ""] as const
 
 const KIND = "view"
 const MAX_TITLE_CHARS = 120
@@ -176,17 +193,43 @@ export function cellViews(
   }
 
   /**
-   * Read the confirmed current revision of a definition (active or retired) in `expectedScope`
-   * after checking that the active workspace still matches. Used for compare-and-set overwrites.
+   * Read the confirmed current revision and lifecycle of a definition (active or retired) in
+   * `expectedScope` after checking that the active workspace still matches.
    */
-  const currentVersion = async (id: string, expectedScope: StudioScope): Promise<number | undefined> => {
+  const currentRevision = async (id: string, expectedScope: StudioScope): Promise<ViewRevision | undefined> => {
     const scopedCall = await verifiedWriteCall(expectedScope)
     const { status, body } = await scopedCall(`/v1/definitions/${encodeURIComponent(id)}`)
     if (status === 404 && body?.code === "definition.not_found") return undefined
     if (status !== 200 || typeof body?.version !== "number") {
       throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
     }
-    return body.version
+    return { version: body.version, retired: body.lifecycle === "retired" }
+  }
+
+  /**
+   * Read a page of records bound explicitly to `expectedScope`. Verifies `/api/me` matches both
+   * before dispatch (refusing with zero `/api/host` requests on mismatch) and after resolution
+   * (discarding any in-flight response that resolves after a scope switch).
+   */
+  const preview = async (
+    objectType: string,
+    query: RecordsQuery,
+    expectedScope: StudioScope,
+    signal?: AbortSignal,
+  ): Promise<RecordsRead> => {
+    const before = await readScope()
+    if (signal?.aborted || !sameScope(before, expectedScope)) {
+      throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
+    }
+    const page = await readRecordsAtScope(objectType, query, expectedScope, fetcher, signal)
+    if (signal?.aborted) {
+      throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
+    }
+    const after = await readScope()
+    if (!sameScope(after, expectedScope)) {
+      throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
+    }
+    return page
   }
 
   const listAll = async (pinnedScope?: StudioScope | null): Promise<readonly StoredView[]> => {
@@ -229,8 +272,10 @@ export function cellViews(
       (await listAll(pinnedScope)).filter(({ view }) => view.objectType === objectType),
     /** Read one view by id in `pinnedScope` (or current active scope); `undefined` when not found or retired. */
     get,
-    /** Read the confirmed server revision for compare-and-set overwrite in `expectedScope`. */
-    currentVersion,
+    /** Read the confirmed server revision and lifecycle for conflict handling in `expectedScope`. */
+    currentRevision,
+    /** Read a record page bound explicitly to `expectedScope`, refusing on workspace switch before or during fetch. */
+    preview,
     /** Side-effect free server check + plain-words restatement bound to `expectedScope`. */
     admit: async (id: string, view: SavedView, expectedScope: StudioScope): Promise<ViewAdmission> => {
       const scopedCall = await verifiedWriteCall(expectedScope)
@@ -267,12 +312,13 @@ export function cellViews(
 export type ViewsClient = ReturnType<typeof cellViews>
 
 /**
- * Save a view draft bound to `scope`. On a 409 conflict for an existing view (`existingId !== undefined`),
- * confirms the server's current revision in the same scope so an explicit overwrite sends a real
- * compare-and-set `expectedVersion` (and withholds overwrite if no revision can be confirmed).
+ * Save a view draft bound to `scope`. On a 409 conflict for an existing view, confirms the
+ * server's current revision and lifecycle in the same scope so an explicit overwrite sends a real
+ * compare-and-set `expectedVersion`, a deletion reports `{ kind: "deleted" }`, and an unreadable
+ * state withholds overwrite.
  */
 export async function saveViewDraft(
-  store: Pick<ViewsClient, "save" | "currentVersion">,
+  store: Pick<ViewsClient, "save" | "currentRevision">,
   params: {
     readonly id: string
     readonly existing: boolean
@@ -282,14 +328,23 @@ export async function saveViewDraft(
   },
 ): Promise<SaveViewDraftOutcome> {
   const result = await store.save(params.id, params.view, params.expectedVersion, params.scope)
-  if (!result.saved && "conflict" in result && params.existing) {
+  if (!result.saved && "conflict" in result) {
+    if (!params.existing) {
+      return { view: params.view, result, conflict: { kind: "unknown" } }
+    }
     try {
-      const latest = await store.currentVersion(params.id, params.scope)
-      return { view: params.view, result, conflictVersion: typeof latest === "number" ? latest : null }
+      const latest = await store.currentRevision(params.id, params.scope)
+      if (latest === undefined) {
+        return { view: params.view, result, conflict: { kind: "deleted", version: null } }
+      }
+      if (latest.retired) {
+        return { view: params.view, result, conflict: { kind: "deleted", version: latest.version } }
+      }
+      return { view: params.view, result, conflict: { kind: "updated", version: latest.version } }
     } catch (error) {
       if (error instanceof StudioScopeError) throw error
-      return { view: params.view, result, conflictVersion: null }
+      return { view: params.view, result, conflict: { kind: "unknown" } }
     }
   }
-  return { view: params.view, result, conflictVersion: null }
+  return { view: params.view, result, conflict: null }
 }

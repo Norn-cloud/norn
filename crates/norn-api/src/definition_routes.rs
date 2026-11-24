@@ -672,7 +672,12 @@ fn validate<E: SqlEngine>(
             flow = checked;
         }
         "dashboard" => dashboard(host, scope, actor, questions, &value, &mut findings)?,
-        "view" => crate::view_definitions::check(host, &value, &mut findings)?,
+        "view" => crate::view_definitions::check(
+            host,
+            &value,
+            retained_view_columns(host, id, replaces)?.as_ref(),
+            &mut findings,
+        )?,
         // A saved question: a bare QuestionIR, admitted as a tile's is.
         "question" => {
             question_findings(
@@ -877,6 +882,25 @@ fn retained_binding_anchor<E: SqlEngine>(
         .map_err(Refusal::host)?
         .filter(|record| record.definition.kind == "binding")
         .and_then(|record| crate::binding_definitions::retained_anchor(&record.definition.payload)))
+}
+
+/// The `objectType` and `columns` of view `id`'s retained revision `replaces`,
+/// when that revision exists and has `kind == "view"`.
+fn retained_view_columns<E: SqlEngine>(
+    host: &DevHost<E>,
+    id: &str,
+    replaces: Option<u64>,
+) -> Result<Option<crate::view_definitions::RetainedViewColumns>, Refusal> {
+    let Some(replaces) = replaces else {
+        return Ok(None);
+    };
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .retained_definition(id, Some(replaces))
+        .map_err(Refusal::host)?
+        .filter(|record| record.definition.kind == "view")
+        .and_then(|record| crate::view_definitions::retained_columns(&record.definition.payload)))
 }
 
 /// The id's current retained revision, if any: what an install would replace.

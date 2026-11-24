@@ -14,7 +14,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import type { Concept, Field } from "../lib/catalog.ts"
-import { NO_DATA_CELL } from "../lib/definitions.ts"
+import { NO_DATA_CELL, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
 import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-source.ts"
@@ -35,7 +35,8 @@ const PAGE_SIZES = [50, 100, LIMITS.maxPageSize] as const
 const HIDDEN_FIELDS = new Set(["id", "label", "display_name"])
 const RECORDED = "Replayed documents the engine produced. The cell doesn't serve live records here yet."
 
-export type Read = (objectType: string, query: RecordsQuery) => Promise<RecordsRead>
+export type Read = (objectType: string, query: RecordsQuery, signal?: AbortSignal) => Promise<RecordsRead>
+const defaultRead: Read = (objectType, query) => readRecords(objectType, query)
 
 const nameOf = (row: GridRow) => isWithheld(row) ? row.record.id : recordName(row.record)
 
@@ -67,9 +68,11 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
 /** The query a grid shows, as a saved view keeps it. */
 export interface GridQuery { readonly filter: Predicate | null; readonly sort: readonly SortKey[]; readonly columns: readonly string[] }
 
-export function RecordsGrid({ concept, read = readRecords, initial, onQuery, timeline = false }: {
+export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQuery, timeline = false }: {
   readonly concept: Concept
   readonly read?: Read
+  /** Optional workspace scope binding for this grid's query cache key. */
+  readonly scope?: StudioScope
   /** The type is a `core.TimeInterval`: the records can also be read as a timeline (lib/timeline.ts). */
   readonly timeline?: boolean
   /** The query to open with: a saved view's. */
@@ -129,20 +132,22 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
     limit: shownTimeline ? LIMITS.maxPageSize : limit,
     ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] },
   }
-  const key = ["records", name, recordsQueryParams(query).toString()] as const
-  const result = useQuery({ queryKey: key, queryFn: () => read(name, query), placeholderData: keepPreviousData, retry: false, enabled: filterOverflow === 0 })
+  const scopePrefix = scope ? [scope.orgId, scope.environmentId] as const : []
+  const key = ["records", ...scopePrefix, name, recordsQueryParams(query).toString()] as const
+  const result = useQuery({ queryKey: key, queryFn: ({ signal }) => read(name, query, signal), placeholderData: keepPreviousData, retry: false, enabled: filterOverflow === 0 })
   const data = result.data
 
   const restart = () => { setCursors([undefined]); setPageIndex(0); setActive(0) }
   useEffect(() => {
     if (data?.kind !== "restart") return
-    void client.removeQueries({ queryKey: ["records", name] })
+    void client.removeQueries({ queryKey: ["records", ...scopePrefix, name] })
     restart()
     setNotice(DATA_CHANGED)
-  }, [data, client, name])
+  }, [data, client, name, scope?.orgId, scope?.environmentId])
 
   // Controls are on only when the last page says the cell applied the query.
-  const page = data?.kind === "page" ? data : undefined
+  const scopeChanged = result.isError && result.error instanceof StudioScopeError
+  const page = !scopeChanged && data?.kind === "page" ? data : undefined
   // While a refused or restarting read is shown, keep what the last page said.
   const lastServed = useRef(false)
   if (page !== undefined) lastServed.current = page.served !== null

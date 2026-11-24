@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { ArrowDown, ArrowUp, Bookmark, Copy, Eye, Pencil, Plus, Shapes, Trash2, Undo2 } from "lucide-react"
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, PageHeader, Panel } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { isWithheld, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./grid/cells.tsx"
 import { FilterEditor, fromPredicate, toPredicate, type DraftClause } from "./grid/filter-editor.tsx"
 import { RecordsGrid } from "./grid/records-grid.tsx"
 import { openedQuery } from "./grid/views-bar.tsx"
@@ -16,8 +17,7 @@ import { NO_DATA_CELL, StudioScopeError, useStudioScope, type Finding, type Stud
 import type { Issue } from "./lib/editor.ts"
 import { useMode } from "./lib/live-transport.ts"
 import { recordName } from "./lib/objects.ts"
-import { LIMITS, sortable, totalText, type SortKey } from "./lib/records-query.ts"
-import { readRecords } from "./lib/records-source.ts"
+import { LIMITS, propertyWithheld, sortable, totalText, type RecordsQuery, type SortKey } from "./lib/records-query.ts"
 import { offersTimeline } from "./lib/timeline.ts"
 import {
   cellViews,
@@ -30,10 +30,13 @@ import {
   sortKeys,
   sortText,
   viewField,
+  viewPreviewQueryKey,
   WORKSPACE_CHANGED_MESSAGE,
   type SavedView,
   type StoredView,
+  type ViewConflict,
   type ViewSaved,
+  type ViewsClient,
 } from "./lib/views.ts"
 import type { MenuEntry } from "./shell.tsx"
 import { useCatalog } from "./sources.tsx"
@@ -53,16 +56,106 @@ function settled(result: ViewSaved) {
 const issuesOf = (findings: readonly Finding[]): readonly Issue[] =>
   findings.map(({ code, message, pointer }) => ({ code, message, field: viewField(pointer) }))
 
-interface RemovedView {
+export interface RemovedView {
   readonly id: string
   readonly version: number
   readonly scope: StudioScope
   readonly view: SavedView
 }
 
-interface ConflictState {
-  /** Confirmed server revision read after a 409 conflict, or null when unavailable. */
-  readonly currentVersion: number | null
+export type ReloadViewOutcome = "reloaded" | "deleted" | "failed"
+
+/** Scope a deleted-view banner to the exact route view id and active workspace scope. */
+export const scopedDeletedView = (
+  removed: RemovedView | undefined,
+  id: string,
+  activeScope: StudioScope | null,
+): RemovedView | undefined =>
+  removed !== undefined && removed.id === id && sameScope(removed.scope, activeScope) ? removed : undefined
+
+/**
+ * Reload the latest server revision after a conflict. Distinguishes an active reload from a
+ * retired/missing view (`"deleted"`, suppressed to null by `views.get`) and from a transport failure.
+ */
+export async function reloadConflictingView(
+  refetch: () => Promise<{ readonly isSuccess: boolean; readonly data: StoredView | null | undefined }>,
+  onLoaded: (stored: StoredView) => void,
+): Promise<ReloadViewOutcome> {
+  const result = await refetch()
+  if (!result.isSuccess) return "failed"
+  if (result.data) {
+    onLoaded(result.data)
+    return "reloaded"
+  }
+  return "deleted"
+}
+
+export function ViewConflictBanner({
+  conflict,
+  canReload,
+  canOverwrite,
+  canCreate,
+  saving,
+  reloading,
+  reloadError,
+  onReload,
+  onOverwrite,
+  onSaveAsNew,
+  onDiscard,
+}: {
+  readonly conflict: ViewConflict
+  readonly canReload: boolean
+  readonly canOverwrite: boolean
+  readonly canCreate: boolean
+  readonly saving: boolean
+  readonly reloading: boolean
+  readonly reloadError: string | null
+  readonly onReload: () => void
+  readonly onOverwrite: (confirmedVersion: number) => void
+  readonly onSaveAsNew: () => void
+  readonly onDiscard?: () => void
+}) {
+  if (conflict.kind === "deleted") {
+    return (
+      <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
+        <span>This view was deleted by someone else.</span>
+        <Button type="button" size="sm" variant="outline" disabled={!canCreate || saving} onClick={onSaveAsNew}>
+          Save as new view
+        </Button>
+        {onDiscard && (
+          <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={onDiscard}>
+            Discard my changes
+          </Button>
+        )}
+      </div>
+    )
+  }
+  return (
+    <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
+      <span>
+        {conflict.kind === "updated"
+          ? `Someone saved version ${conflict.version} of this view since you opened it.`
+          : "Someone saved a newer version of this view since you opened it."}
+      </span>
+      {canReload && (
+        <Button type="button" size="sm" variant="outline" disabled={reloading} onClick={onReload}>
+          {reloading ? "Reloading…" : "Reload theirs"}
+        </Button>
+      )}
+      {canOverwrite && conflict.kind === "updated" && (
+        <Button
+          type="button"
+          size="sm"
+          variant="destructive"
+          disabled={!canCreate || saving}
+          onClick={() => onOverwrite(conflict.version)}
+        >
+          Overwrite with mine
+        </Button>
+      )}
+      {reloadError && <p className="basis-full text-destructive">{reloadError}</p>}
+    </div>
+  )
 }
 
 function UndoDeleteView({ removed, pending, error, onUndo }: {
@@ -269,7 +362,10 @@ export function ViewsPage() {
 }
 
 /** `/views/$id`: open a saved view with its filtered list, record drawer and action sheet. */
-export function ViewDetailPage() {
+export function ViewDetail({ initialRemoved, store = views }: {
+  readonly initialRemoved?: RemovedView
+  readonly store?: ViewsClient
+}) {
   const scope = useStudioScope()
   const activeScope = scope.data ?? null
   const cellAvailable = scope.isSuccess && activeScope !== null
@@ -279,11 +375,11 @@ export function ViewDetailPage() {
   const client = useQueryClient()
   const stored = useQuery({
     queryKey: ["view", id, activeScope?.orgId, activeScope?.environmentId],
-    queryFn: async () => (await views.get(id, activeScope)) ?? null,
+    queryFn: async () => (await store.get(id, activeScope)) ?? null,
     enabled: cellAvailable && id !== "",
     retry: false,
   })
-  const [removed, setRemoved] = useState<RemovedView>()
+  const [removed, setRemoved] = useState<RemovedView | undefined>(initialRemoved)
   const invalidate = () => {
     void client.invalidateQueries({ queryKey: ["views"] })
     void client.invalidateQueries({ queryKey: ["view", id] })
@@ -293,7 +389,7 @@ export function ViewDetailPage() {
     mutationFn: async (from: StoredView) => {
       const copy = duplicateView(from.view)
       const nextId = newViewId(copy.objectType, copy.title)
-      settled(await views.save(nextId, copy, undefined, from.scope))
+      settled(await store.save(nextId, copy, undefined, from.scope))
       return nextId
     },
     onSuccess: (copied) => {
@@ -304,20 +400,20 @@ export function ViewDetailPage() {
 
   const remove = useMutation({
     mutationFn: async (from: StoredView) => {
-      const retired = settled(await views.retire(from.id, from.version, from.scope))
+      const retired = settled(await store.retire(from.id, from.version, from.scope))
       return retired.saved ? { id: from.id, version: retired.version, scope: from.scope, view: from.view } : undefined
     },
     onSuccess: (gone) => { setRemoved(gone); void client.invalidateQueries({ queryKey: ["views"] }) },
   })
 
   const undo = useMutation({
-    mutationFn: async (gone: RemovedView) => settled(await views.save(gone.id, gone.view, gone.version, gone.scope)),
+    mutationFn: async (gone: RemovedView) => settled(await store.save(gone.id, gone.view, gone.version, gone.scope)),
     onSuccess: () => { setRemoved(undefined); invalidate(); void stored.refetch() },
   })
 
   const rename = async (from: StoredView, title: string): Promise<string | null> => {
     try {
-      const res = await views.save(from.id, { ...from.view, title }, from.version, from.scope)
+      const res = await store.save(from.id, { ...from.view, title }, from.version, from.scope)
       if (!res.saved) return "conflict" in res ? "Someone changed this view; reload and try again." : res.findings.map((f) => f.message).join(" ")
       invalidate()
       return null
@@ -326,7 +422,21 @@ export function ViewDetailPage() {
     }
   }
 
-  const active = removed ? undefined : stored.data
+  const deleted = scopedDeletedView(removed, id, activeScope)
+  const active = deleted ? undefined : stored.data
+  const detailScopeMismatch = active != null && !sameScope(activeScope, active.scope)
+  useEffect(() => {
+    if (detailScopeMismatch && active != null) {
+      void client.cancelQueries({ queryKey: ["records", active.scope.orgId, active.scope.environmentId] })
+    }
+  }, [client, detailScopeMismatch, active])
+  const detailRead = useCallback(
+    (objectType: string, query: RecordsQuery, signal?: AbortSignal) =>
+      active != null
+        ? store.preview(objectType, query, active.scope, signal)
+        : Promise.resolve({ kind: "no-cell" as const }),
+    [active, store],
+  )
   const concept = active ? catalog?.byName.get(active.view.objectType) : undefined
   const timeline = catalog !== undefined && concept !== undefined && offersTimeline(catalog, concept)
 
@@ -354,26 +464,33 @@ export function ViewDetailPage() {
 
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
       {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
+      {detailScopeMismatch && <p role="alert" className="text-destructive">{WORKSPACE_CHANGED_MESSAGE}</p>}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
       {(scope.isPending || (cellAvailable && stored.isPending)) && <p className="text-muted-foreground">Reading view…</p>}
       {stored.isError && <EmptyState icon={Bookmark}>{failure(stored.error)}</EmptyState>}
-      {removed && <UndoDeleteView removed={removed} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(removed)} />}
-      {removed && <Button asChild variant="ghost" size="sm"><Link to="/views">Back to views</Link></Button>}
+      {deleted && <UndoDeleteView removed={deleted} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(deleted)} />}
+      {deleted && <Button asChild variant="ghost" size="sm"><Link to="/views">Back to views</Link></Button>}
       {stored.isSuccess && active === null && <EmptyState icon={Bookmark}>No view {id} is saved.</EmptyState>}
       {active && concept === undefined && catalog && (
         <EmptyState icon={Shapes}>Record type {active.view.objectType} is not installed in this cell.</EmptyState>
       )}
-      {active && concept !== undefined && (
+      {active && concept !== undefined && !detailScopeMismatch && (
         <RecordsGrid
-          key={`${active.id}:${active.version}`}
+          key={`${active.scope.orgId}:${active.scope.environmentId}:${active.id}:${active.version}`}
           concept={concept}
+          scope={active.scope}
+          read={detailRead}
           initial={openedQuery(active)}
           timeline={timeline}
         />
       )}
     </section>
   )
+}
+
+export function ViewDetailPage() {
+  return <ViewDetail />
 }
 
 function defaultViewFor(concept: Concept | undefined): SavedView {
@@ -387,14 +504,28 @@ function defaultViewFor(concept: Concept | undefined): SavedView {
   }
 }
 
-export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSaved, onReload }: {
+export function ViewEditor({
+  concepts,
+  stored,
+  activeScope,
+  cellAvailable,
+  onSaved,
+  onReload,
+  onDiscard,
+  store = views,
+  initialConflict = null,
+}: {
   readonly concepts: readonly Concept[]
   readonly stored?: StoredView
   readonly activeScope: StudioScope | null
   readonly cellAvailable: boolean
   readonly onSaved: (saved: { readonly id: string; readonly version: number }) => void
-  readonly onReload?: () => void
+  readonly onReload?: () => Promise<ReloadViewOutcome>
+  readonly onDiscard?: () => void
+  readonly store?: ViewsClient
+  readonly initialConflict?: ViewConflict | null
 }) {
+  const client = useQueryClient()
   // Bind this draft once to the first workspace scope it was loaded from; never silently retarget a write.
   const [draftScope, setDraftScope] = useState<StudioScope | null>(() => stored?.scope ?? activeScope)
   useEffect(() => {
@@ -404,33 +535,54 @@ export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSav
   const [at, setAt] = useState(stored ? { id: stored.id, version: stored.version } : undefined)
   const [findings, setFindings] = useState<readonly Finding[]>([])
   const [restatement, setRestatement] = useState<string | null>(null)
-  const [conflict, setConflict] = useState<ConflictState | null>(null)
+  const [conflict, setConflict] = useState<ViewConflict | null>(initialConflict)
   const [scopeError, setScopeError] = useState<string | null>(null)
+  const [reloading, setReloading] = useState(false)
+  const [reloadError, setReloadError] = useState<string | null>(null)
   const initial = useMemo(() => stored?.view ?? defaultViewFor(concepts[0]), [stored, concepts])
   const saving = useRef(false)
   const [pendingNav, setPendingNav] = useState<{ readonly id: string; readonly version: number } | null>(null)
+  const [pendingDiscard, setPendingDiscard] = useState(false)
   const save = useMutation({
-    mutationFn: async ({ view, confirmedVersion }: { readonly view: SavedView; readonly confirmedVersion?: number }) => {
+    mutationFn: async ({
+      view,
+      confirmedVersion,
+      asNew,
+    }: {
+      readonly view: SavedView
+      readonly confirmedVersion?: number
+      readonly asNew?: boolean
+    }) => {
       if (draftScope === null) throw new StudioScopeError(NO_DATA_CELL)
-      if (scopeMismatch) throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
-      const id = at?.id ?? newViewId(view.objectType, view.title)
-      const expectedVersion = confirmedVersion !== undefined ? confirmedVersion : at?.version
-      return saveViewDraft(views, {
+      if (scopeMismatch || scopeError === WORKSPACE_CHANGED_MESSAGE) {
+        throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
+      }
+      const existing = !asNew && at !== undefined
+      const id = existing ? at.id : newViewId(view.objectType, view.title)
+      const expectedVersion = existing
+        ? (confirmedVersion !== undefined ? confirmedVersion : at.version)
+        : undefined
+      return saveViewDraft(store, {
         id,
-        existing: at !== undefined,
+        existing,
         view,
         expectedVersion,
         scope: draftScope,
       })
     },
-    onSuccess: ({ view, result, conflictVersion }) => {
+    onSuccess: ({ view, result, conflict: nextConflict }) => {
       setScopeError(null)
-      setConflict(!result.saved && "conflict" in result ? { currentVersion: conflictVersion } : null)
+      setReloadError(null)
       setFindings("findings" in result ? result.findings : [])
       if (result.saved) {
+        setConflict(null)
         setAt({ id: result.id, version: result.version })
         editor.markSaved(view)
         setPendingNav({ id: result.id, version: result.version })
+      } else if (nextConflict !== null) {
+        setConflict(nextConflict)
+      } else {
+        setConflict((prev) => (prev?.kind === "deleted" ? prev : null))
       }
     },
     onError: (error) => {
@@ -440,19 +592,22 @@ export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSav
       }
     },
   })
-  const requestSave = (next: SavedView, confirmedVersion?: number) => {
-    const overwriting = confirmedVersion !== undefined
-    if (!cellAvailable || draftScope === null || saving.current || (!overwriting && !editor.dirty)) return
-    if (scopeMismatch) {
+  const requestSave = (next: SavedView, mode: { readonly confirmedVersion?: number; readonly asNew?: boolean } = {}) => {
+    const forced = mode.confirmedVersion !== undefined || mode.asNew === true
+    if (!cellAvailable || draftScope === null || saving.current || (!forced && (!editor.dirty || conflict?.kind === "deleted"))) return
+    if (scopeMismatch || scopeError === WORKSPACE_CHANGED_MESSAGE) {
       setScopeError(WORKSPACE_CHANGED_MESSAGE)
       return
     }
     saving.current = true
-    save.mutate({ view: next, confirmedVersion }, { onSettled: () => { saving.current = false } })
+    save.mutate(
+      { view: next, confirmedVersion: mode.confirmedVersion, asNew: mode.asNew },
+      { onSettled: () => { saving.current = false } },
+    )
   }
   const editor = useEditor<SavedView>({ initial, onSave: (v) => requestSave(v) })
   const { value: view, set } = editor
-  // Navigate only after React commits `editor.dirty === false` so DirtyGuard never blocks a completed save.
+  // Navigate only after React commits `editor.dirty === false` so DirtyGuard never blocks a completed save or discard.
   useEffect(() => {
     if (pendingNav !== null && !editor.dirty) {
       const next = pendingNav
@@ -460,6 +615,42 @@ export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSav
       onSaved(next)
     }
   }, [pendingNav, editor.dirty, onSaved])
+  useEffect(() => {
+    if (pendingDiscard && !editor.dirty) {
+      setPendingDiscard(false)
+      onDiscard?.()
+    }
+  }, [pendingDiscard, editor.dirty, onDiscard])
+
+  const discardChanges = () => {
+    setConflict(null)
+    setReloadError(null)
+    editor.markSaved(view)
+    setPendingDiscard(true)
+  }
+
+  const reloadTheirs = async () => {
+    if (!onReload || reloading) return
+    setReloading(true)
+    setReloadError(null)
+    try {
+      const outcome = await onReload()
+      if (outcome === "deleted") {
+        setConflict({ kind: "deleted", version: null })
+      } else if (outcome === "failed") {
+        setReloadError("Could not reload the latest version of this view.")
+      }
+    } catch (error) {
+      if (error instanceof StudioScopeError && error.message === WORKSPACE_CHANGED_MESSAGE) {
+        setScopeError(error.message)
+        setConflict(null)
+      } else {
+        setReloadError(failure(error))
+      }
+    } finally {
+      setReloading(false)
+    }
+  }
 
   const concept = concepts.find(({ name }) => name === view.objectType) ?? concepts[0]
   const fields = useMemo(() => (concept?.fields ?? []).filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
@@ -492,7 +683,7 @@ export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSav
 
   // Live server admission check (side-effect free), bound to `draftScope`.
   useEffect(() => {
-    if (!cellAvailable || draftScope === null || scopeMismatch || view.title.trim() === "" || view.objectType === "") {
+    if (!cellAvailable || draftScope === null || scopeMismatch || scopeError !== null || view.title.trim() === "" || view.objectType === "") {
       setFindings([])
       setRestatement(null)
       return
@@ -500,7 +691,7 @@ export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSav
     let cancelled = false
     const timer = setTimeout(() => {
       const id = at?.id ?? newViewId(view.objectType, view.title, () => "check")
-      views.admit(id, view, draftScope).then(
+      store.admit(id, view, draftScope).then(
         (admission) => {
           if (cancelled) return
           if (admission.admitted) {
@@ -520,19 +711,35 @@ export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSav
       )
     }, 350)
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [cellAvailable, draftScope, scopeMismatch, at?.id, view])
+  }, [cellAvailable, draftScope, scopeMismatch, scopeError, at?.id, view, store])
 
   const sort = sortKeys(view.sort)
   const columns = view.columns ?? fields.slice(0, 6).map(({ id }) => id)
 
-  // Live bounded preview of matching records.
+  // Live bounded preview of matching records, bound explicitly to `draftScope`.
   const previewQuery = useQuery({
-    queryKey: ["view-preview", draftScope?.orgId, draftScope?.environmentId, view.objectType, JSON.stringify(view.filter ?? null), view.sort ?? ""],
-    queryFn: () => readRecords(view.objectType, { filter: view.filter ?? null, sort, limit: 5 }),
-    enabled: cellAvailable && draftScope !== null && !scopeMismatch && view.objectType !== "",
+    queryKey: viewPreviewQueryKey(draftScope, view),
+    queryFn: ({ signal }) => {
+      if (draftScope === null) throw new StudioScopeError(NO_DATA_CELL)
+      return store.preview(view.objectType, { filter: view.filter ?? null, sort, limit: 5 }, draftScope, signal)
+    },
+    enabled: cellAvailable && draftScope !== null && !scopeMismatch && scopeError === null && view.objectType !== "",
     retry: false,
   })
-  const previewPage = previewQuery.data?.kind === "page" ? previewQuery.data : undefined
+  useEffect(() => {
+    if (scopeMismatch && draftScope !== null) {
+      void client.cancelQueries({ queryKey: ["view-preview", draftScope.orgId, draftScope.environmentId] })
+    }
+  }, [client, scopeMismatch, draftScope])
+  useEffect(() => {
+    if (previewQuery.error instanceof StudioScopeError && previewQuery.error.message === WORKSPACE_CHANGED_MESSAGE) {
+      setScopeError(WORKSPACE_CHANGED_MESSAGE)
+    }
+  }, [previewQuery.error])
+  const previewWorkspaceChanged =
+    previewQuery.error instanceof StudioScopeError && previewQuery.error.message === WORKSPACE_CHANGED_MESSAGE
+  const workspaceAlert = scopeMismatch || previewWorkspaceChanged ? WORKSPACE_CHANGED_MESSAGE : scopeError
+  const previewPage = workspaceAlert === null && previewQuery.data?.kind === "page" ? previewQuery.data : undefined
 
   const issues = issuesOf(findings)
   const invalid = (field: string) => issues.some((i) => i.field === field)
@@ -560,12 +767,12 @@ export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSav
   }
 
   const setSort = (next: readonly SortKey[]) => set((cur) => ({ ...cur, sort: sortText(next) }))
-  const workspaceAlert = scopeMismatch ? WORKSPACE_CHANGED_MESSAGE : scopeError
+  const previewCols = columns.slice(0, 5)
 
   return (
     <div className="space-y-6">
       <DirtyGuard dirty={editor.dirty} />
-      <EditorToolbar editor={editor} onSave={() => requestSave(view)} saving={save.isPending || !cellAvailable || scopeMismatch}>
+      <EditorToolbar editor={editor} onSave={() => requestSave(view)} saving={save.isPending || !cellAvailable || workspaceAlert !== null || conflict?.kind === "deleted"}>
         {at && <Badge variant="outline">Version {at.version}</Badge>}
       </EditorToolbar>
       {workspaceAlert && <p role="alert" className="text-destructive">{workspaceAlert}</p>}
@@ -573,25 +780,19 @@ export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSav
         <p role="alert" className="text-destructive">Not saved. {failure(save.error)}</p>
       )}
       {conflict && !workspaceAlert && (
-        <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
-          <span>
-            {conflict.currentVersion !== null
-              ? `Someone saved version ${conflict.currentVersion} of this view since you opened it.`
-              : "Someone saved a newer version of this view since you opened it."}
-          </span>
-          <Button type="button" size="sm" variant="outline" onClick={() => onReload?.()}>Reload theirs</Button>
-          {at !== undefined && conflict.currentVersion !== null && (
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              disabled={!cellAvailable || save.isPending}
-              onClick={() => requestSave(view, conflict.currentVersion!)}
-            >
-              Overwrite with mine
-            </Button>
-          )}
-        </div>
+        <ViewConflictBanner
+          conflict={conflict}
+          canReload={at !== undefined && onReload !== undefined}
+          canOverwrite={at !== undefined}
+          canCreate={cellAvailable}
+          saving={save.isPending}
+          reloading={reloading}
+          reloadError={reloadError}
+          onReload={() => void reloadTheirs()}
+          onOverwrite={(version) => requestSave(view, { confirmedVersion: version })}
+          onSaveAsNew={() => requestSave(view, { asNew: true })}
+          onDiscard={onDiscard ? discardChanges : undefined}
+        />
       )}
       <ValidationPanel issues={issues} title="The cell refused this view" />
       {restatement && (
@@ -713,7 +914,7 @@ export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSav
             {columns.length > 1 && (
               <ol className="divide-y rounded-lg border text-sm" aria-label="Column order">
                 {columns.map((col, idx) => (
-                  <li key={col} className="flex items-center justify-between px-2.5 py-1">
+                  <li key={`${col}:${idx}`} className="flex items-center justify-between px-2.5 py-1">
                     <span>{col.replaceAll("_", " ")}</span>
                     <span className="flex items-center gap-0.5">
                       <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Move column ${col} up`} disabled={idx === 0} onClick={() => moveColumn(idx, -1)}><ArrowUp className="size-3.5" /></Button>
@@ -772,28 +973,51 @@ export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSav
 
       <Panel label={`Live preview${previewPage?.total ? ` · ${totalText(previewPage.total)}` : ""}`}>
         <div className="border-t px-4 py-3">
-        {previewQuery.isPending && <p className="text-sm text-muted-foreground">Checking matching records…</p>}
-        {previewPage && previewPage.read.document.records.length === 0 && (
+        {workspaceAlert && <p className="text-sm text-destructive">{workspaceAlert}</p>}
+        {!workspaceAlert && previewQuery.isPending && <p className="text-sm text-muted-foreground">Checking matching records…</p>}
+        {!workspaceAlert && previewQuery.isError && <p className="text-sm text-muted-foreground">{failure(previewQuery.error)}</p>}
+        {!workspaceAlert && previewPage && previewPage.read.document.records.length === 0 && (
           <p className="text-sm text-muted-foreground">No records currently match this filter.</p>
         )}
-        {previewPage && previewPage.read.document.records.length > 0 && (
+        {!workspaceAlert && previewPage && previewPage.read.document.records.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-start text-xs text-muted-foreground">
                   <th className="py-1.5 pe-3 text-start font-medium">Record</th>
-                  {columns.slice(0, 5).map((col) => <th key={col} className="px-3 py-1.5 text-start font-medium">{col.replaceAll("_", " ")}</th>)}
+                  {previewCols.map((col, colIdx) => (
+                    <th key={`${col}:${colIdx}`} className="px-3 py-1.5 text-start font-medium">{col.replaceAll("_", " ")}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {previewPage.read.document.records.map((rec) => (
-                  <tr key={rec.id}>
-                    <td className="py-1.5 pe-3 font-medium">{recordName(rec)}</td>
-                    {columns.slice(0, 5).map((col) => (
-                      <td key={col} className="px-3 py-1.5 text-muted-foreground">{String(rec.values[col] ?? "—")}</td>
-                    ))}
-                  </tr>
-                ))}
+                {previewPage.read.document.records.map((rec, index) => {
+                  const row: GridRow = { record: rec, at: `/records/${index}`, numbers: previewPage.read.numbers }
+                  const withheld = isWithheld(row)
+                  return (
+                    <tr key={rec.id} data-withheld={withheld || undefined}>
+                      <td className="py-1.5 pe-3 font-medium">
+                        {withheld ? rec.id : recordName(rec)}
+                        {withheld && previewCols.length === 0 && (
+                          <span className="ms-2 font-normal"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></span>
+                        )}
+                      </td>
+                      {withheld ? (
+                        previewCols.length > 0 && (
+                          <td colSpan={previewCols.length} className="px-3 py-1.5 text-muted-foreground">
+                            <WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark>
+                          </td>
+                        )
+                      ) : (
+                        previewCols.map((col, colIdx) => (
+                          <td key={`${col}:${colIdx}`} className="px-3 py-1.5 text-muted-foreground">
+                            {propertyWithheld(rec, col) ? <WithheldMark /> : String(rec.values[col] ?? "—")}
+                          </td>
+                        ))
+                      )}
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -864,12 +1088,18 @@ export function ViewEditorPage() {
           stored={editorStored ?? undefined}
           activeScope={activeScope}
           cellAvailable={cellAvailable}
-          onReload={() => void stored.refetch().then((r) => {
-            if (r.isSuccess && r.data) {
-              setLatched(r.data)
+          onReload={() => reloadConflictingView(
+            () => stored.refetch(),
+            (next) => {
+              setLatched(next)
               setOpened((n) => n + 1)
-            }
-          })}
+            },
+          )}
+          onDiscard={() => {
+            void client.invalidateQueries({ queryKey: ["views"] })
+            void client.invalidateQueries({ queryKey: ["view", id] })
+            void navigate({ to: "/views", replace: true })
+          }}
           onSaved={(saved) => {
             void client.invalidateQueries({ queryKey: ["views"] })
             void client.invalidateQueries({ queryKey: ["view", saved.id] })

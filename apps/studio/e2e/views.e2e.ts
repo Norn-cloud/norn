@@ -175,6 +175,87 @@ test("views: refuses to write when the active workspace changed after loading th
   expect(cell.installCalls).toHaveLength(0)
 })
 
+test("views: conflict after deletion offers Save as new view and Discard my changes without a dead Reload button", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.deleted_conflict"
+  cell.defs.set(id, {
+    kind: "view",
+    version: 1,
+    retired: false,
+    updatedAtMs: Date.now(),
+    payload: {
+      title: "Conflict after delete",
+      space: "Operations",
+      objectType: "funnel.Application",
+      columns: ["applicant_name", "stage", "score"],
+    },
+  })
+
+  await page.goto(`/views/${id}/edit`)
+  await expect(page.getByLabel("View title")).toHaveValue("Conflict after delete")
+
+  // Another operator deletes (retires) the view while we edit it.
+  cell.defs.set(id, {
+    kind: "view",
+    version: 2,
+    retired: true,
+    updatedAtMs: Date.now(),
+    payload: {
+      title: "Conflict after delete",
+      space: "Operations",
+      objectType: "funnel.Application",
+      columns: ["applicant_name", "stage", "score"],
+    },
+  })
+
+  await page.getByLabel("Description").fill("Edited before noticing delete")
+  await page.getByRole("button", { name: "Save", exact: true }).click()
+
+  await expect(page.getByRole("alert")).toContainText("This view was deleted by someone else.")
+  await expect(page.getByRole("button", { name: "Reload theirs" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Overwrite with mine" })).toHaveCount(0)
+
+  // Choice 1: Save as new view creates a fresh view preserving the draft.
+  await page.getByRole("button", { name: "Save as new view" }).click()
+  await expect(page).toHaveURL(/\/views\/studio\.view\./)
+  await expect(page.getByText("Edited before noticing delete")).toBeVisible()
+
+  // Choice 2: Discard my changes drops the draft and closes the editor to /views.
+  const id2 = "studio.view.funnel_application.deleted_discard"
+  cell.defs.set(id2, {
+    kind: "view",
+    version: 1,
+    retired: false,
+    updatedAtMs: Date.now(),
+    payload: {
+      title: "Discard after delete",
+      space: "Operations",
+      objectType: "funnel.Application",
+      columns: ["applicant_name", "stage", "score"],
+    },
+  })
+  await page.goto(`/views/${id2}/edit`)
+  await expect(page.getByLabel("View title")).toHaveValue("Discard after delete")
+  cell.defs.set(id2, {
+    kind: "view",
+    version: 2,
+    retired: true,
+    updatedAtMs: Date.now(),
+    payload: {
+      title: "Discard after delete",
+      space: "Operations",
+      objectType: "funnel.Application",
+      columns: ["applicant_name", "stage", "score"],
+    },
+  })
+  await page.getByLabel("Description").fill("Discardable edit")
+  await page.getByRole("button", { name: "Save", exact: true }).click()
+  await expect(page.getByRole("alert")).toContainText("This view was deleted by someone else.")
+  await page.getByRole("button", { name: "Discard my changes" }).click()
+  await expect(page).toHaveURL(/\/views$/)
+})
+
 test("views (second domain): create and open an Equipment Fleet Tickets view in a custom Space", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await workspaceCell(page)

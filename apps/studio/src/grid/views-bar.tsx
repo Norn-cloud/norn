@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { NO_DATA_CELL, useStudioScope } from "../lib/definitions.ts"
-import { cellViews, newViewId, sortKeys, sortText, type SavedView, type StoredView, type ViewSaved } from "../lib/views.ts"
+import { cellViews, newViewId, sortKeys, sortText, type SavedView, type StoredView, type ViewSaved, type ViewsClient } from "../lib/views.ts"
 import type { GridQuery } from "./records-grid.tsx"
 
 const views = cellViews()
@@ -54,6 +54,49 @@ function TitleForm({ initial, submit, onDone }: { readonly initial: string; read
   )
 }
 
+export interface ViewsBarNotice {
+  readonly text: string
+  readonly undo?: () => Promise<void>
+}
+
+/**
+ * Build the deletion notice and its retryable Undo callback. When restoration fails (rejected
+ * promise or non-saved response), the error notice keeps `undo` attached so the user can retry;
+ * only a successful restore clears `undo`.
+ */
+export function deletedViewNotice(params: {
+  readonly store: Pick<ViewsClient, "save">
+  readonly gone: StoredView
+  readonly retiredVersion: number
+  readonly setNotice: (notice: ViewsBarNotice) => void
+  readonly onRestored: (restored: StoredView) => Promise<void> | void
+}): ViewsBarNotice {
+  const { store, gone, retiredVersion, setNotice, onRestored } = params
+  let restoring = false
+  const undo = async () => {
+    if (restoring) return
+    restoring = true
+    try {
+      const back = await store
+        .save(gone.id, gone.view, retiredVersion, gone.scope)
+        .catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
+      if (back instanceof Error) {
+        setNotice({ text: `Not restored. ${back.message}`, undo })
+        return
+      }
+      if (!back.saved) {
+        setNotice({ text: problemOf(back) ?? "Not restored.", undo })
+        return
+      }
+      await onRestored({ id: gone.id, version: back.version, scope: gone.scope, view: gone.view })
+      setNotice({ text: `Restored “${gone.view.title}”.` })
+    } finally {
+      restoring = false
+    }
+  }
+  return { text: `Deleted “${gone.view.title}”.`, undo }
+}
+
 /**
  * A type's saved views, kept by the cell as definitions (VIEW-DEF-1): open one, save the grid's
  * query as a new one, update or rename the open one, or delete it, with an undo that installs it
@@ -74,7 +117,7 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
     enabled: scope.isSuccess && activeScope !== null,
     retry: false,
   })
-  const [notice, setNotice] = useState<{ readonly text: string; readonly undo?: () => Promise<void> } | null>(null)
+  const [notice, setNotice] = useState<ViewsBarNotice | null>(null)
   const [creating, setCreating] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const reread = () => client.invalidateQueries({ queryKey: ["views"] })
@@ -111,17 +154,16 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
     await reread()
     onOpen(null)
     // A retired view is installed again as its next version in the same scope: the undo.
-    setNotice({
-      text: `Deleted “${gone.view.title}”.`,
-      undo: async () => {
-        const back = await views.save(gone.id, gone.view, result.version, gone.scope).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
-        if (back instanceof Error) { setNotice({ text: back.message }); return }
-        if (!back.saved) { setNotice({ text: problemOf(back) ?? "Not restored." }); return }
+    setNotice(deletedViewNotice({
+      store: views,
+      gone,
+      retiredVersion: result.version,
+      setNotice,
+      onRestored: async (restored) => {
         await reread()
-        onOpen({ id: gone.id, version: back.version, scope: gone.scope, view: gone.view })
-        setNotice({ text: `Restored “${gone.view.title}”.` })
+        onOpen(restored)
       },
-    })
+    }))
   }
   const changed = open !== null && query !== undefined && differs(open.view, query)
   const tab = (active: boolean) => cn("inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm transition-colors", active ? "bg-card font-medium shadow-node ring-1 ring-node-border" : "text-muted-foreground hover:text-foreground")
