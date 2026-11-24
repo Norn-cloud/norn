@@ -9,9 +9,12 @@
 //!
 //! The cell's `CellHost::resolve_accepted_receipt` (`resolve`) finds
 //! retained evidence only under the current scope, `main` world and declared
-//! manifest, then re-runs reconciliation at the cell's current clock and
-//! state: a re-issued, cancelled or expired command, or a moved relevant-state
-//! pin, refuses `action.receipt_not_accepted`, and a consumed delivery is
+//! manifest, re-derives its dispatch pins, then re-runs reconciliation at the
+//! cell's current clock and state, rechecking the command's authority through
+//! the host's installed [`crate::ResultAuthority`] (T2-RES-1 step 8; a cell
+//! without one serves no receipt effect). A re-issued, cancelled or expired
+//! command, revoked authority or a moved relevant-state pin refuses
+//! `action.receipt_not_accepted`, and a consumed delivery is
 //! `action.receipt_replayed`. The accepted binding carries every pin as a
 //! compare-and-swap read, plus the command state's version, and the delivery
 //! the accepting action commit consumes. That commit is the only consumption
@@ -23,6 +26,7 @@
 //! restores retained evidence, and a fork never resolves it.
 
 use norn_ir::RuntimeValue as Value;
+use norn_ir::canonical::CanonicalJsonError;
 use norn_ir::function::{
     Digest, FreshnessMode, FunctionInvocation, FunctionReceipt, MemberPin, PredicatePin,
 };
@@ -34,8 +38,7 @@ use norn_kernel::receipt_binding::{
 use norn_kernel::result_reconciliation::{
     Acceptance, Classification, CommandState, Completion, DispatchedCommand, InvalidReceipt,
     ReceiptValidator, ReconcileContext, ReconcileError, ReconcilePolicy, Reconciliation,
-    RefusalReason, ResultAuthorizer, ResultAuthzRequest, ResultChecks, ResultDenial, StateView,
-    reconcile,
+    RefusalReason, ResultAuthorizer, ResultChecks, StateView, reconcile,
 };
 use norn_kernel::{CommandId, FactExpectation, FactKey, FactVersion, Generation, LogicalTime};
 use serde::{Deserialize, Serialize};
@@ -65,10 +68,6 @@ pub(crate) const DDL: [&str; 1] = [r#"CREATE TABLE IF NOT EXISTS "_norn_function
   "retained_at" INTEGER NOT NULL,
   "body" TEXT NOT NULL
 )"#];
-
-/// The refusal code of a predicate or collection freshness read, which this
-/// path never qualifies (intake refuses such pins first).
-const UNQUALIFIED_PIN: &str = "action.receipt_effect_unsupported";
 
 /// Why [`SqliteCell::retain_function_receipt`] retained nothing.
 #[derive(Debug, thiserror::Error)]
@@ -107,14 +106,13 @@ impl From<CellError> for ReceiptIntakeError {
     }
 }
 
-/// What a retained row holds: the receipt, the dispatch it reconciled
-/// against, and the executor identity intake authenticated.
+/// What a retained row holds: the receipt and the dispatch it reconciled
+/// against. Intake authenticated the receipt's own `provenance.executor`.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Retained {
     receipt: FunctionReceipt,
     dispatched: DispatchedCommand,
-    executor: String,
 }
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
@@ -124,11 +122,13 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     /// `completion` must carry exactly the receipt this cell recorded as the
     /// pending result of `dispatched`'s command and generation, whose enqueued
     /// payload is the `norn.function/v1` envelope of `dispatched`'s
-    /// invocation; the dispatch digests are re-derived, never trusted. The
-    /// command's persisted [`CommandState`] and `checks` (the receipt
-    /// contract and the command authority's recheck) decide acceptance under
-    /// this cell's scope, `main` and the cell's clock. Only an accepted
-    /// receipt is retained, and retaining it again is a no-op. Nothing is
+    /// invocation. The dispatch, input and dependency digests are re-derived
+    /// from that invocation; the caller-supplied execution profile must match
+    /// the receipt's. The command's persisted [`CommandState`] and `checks`
+    /// (the receipt contract and the command authority's recheck) decide
+    /// acceptance under this cell's scope, `main` and the cell's clock. Only
+    /// an accepted receipt is retained. A retry runs every check again and
+    /// retains nothing new; a retry with another dispatch refuses. Nothing is
     /// committed to the ledger and the delivery stays pending.
     ///
     /// # Errors
@@ -167,19 +167,8 @@ where
     A: ResultAuthorizer + ?Sized,
     R: ReceiptValidator + ?Sized,
 {
+    admissible(store, dispatched)?;
     let invocation = &dispatched.invocation;
-    if store.fork_pin().is_some()
-        || !invocation.dependency.predicates.is_empty()
-        || !invocation.dependency.collections.is_empty()
-        || invocation.freshness == FreshnessMode::DestinationCas
-    {
-        return Err(ReceiptIntakeError::Unsupported);
-    }
-    let repinned = DispatchedCommand::pin(invocation.clone(), dispatched.execution_profile.clone())
-        .map_err(CellError::from)?;
-    if repinned != *dispatched {
-        return Err(ReceiptIntakeError::DispatchMismatch);
-    }
     let reference = completion
         .receipt
         .content_digest()
@@ -189,10 +178,6 @@ where
     let retained_at =
         i64::try_from(now.as_millis()).map_err(|_overflow| CellError::OutOfRange("retained_at"))?;
     let outcome = store.write_tx(|| {
-        if load(store, scope, &reference)?.is_some() {
-            // The digest names this exact receipt, already reconciled.
-            return Ok(Ok(()));
-        }
         let reader = store.read();
         let pending = reader.pending_result(&invocation.command_id, dispatched.generation().0)?;
         let Some(pending) = pending else {
@@ -201,7 +186,7 @@ where
         if !delivers(&pending, completion.receipt, invocation) {
             return Ok(Err(ReceiptIntakeError::DispatchMismatch));
         }
-        let Some((state, _version)) = command_state(&reader, &invocation.command_id)? else {
+        let Some(state) = command_state(&reader, &invocation.command_id)? else {
             return Ok(Err(ReceiptIntakeError::NoCommandState));
         };
         let context = ReconcileContext {
@@ -228,10 +213,18 @@ where
             Err(ReconcileError::View(error)) => return Err(error),
             Err(ReconcileError::Canonical(error)) => return Err(CellError::from(error)),
         }
+        if let Some(existing) = load(&reader, scope, &reference)? {
+            // Every check passed again for this exact receipt; a retry under
+            // another dispatch is not the retained evidence.
+            return Ok(if existing.dispatched == *dispatched {
+                Ok(())
+            } else {
+                Err(ReceiptIntakeError::DispatchMismatch)
+            });
+        }
         let body = serde_json::to_string(&Retained {
             receipt: completion.receipt.clone(),
             dispatched: dispatched.clone(),
-            executor: completion.receipt.provenance.executor.clone(),
         })?;
         store.conn.execute(
             &format!(
@@ -252,13 +245,45 @@ where
     outcome.map(|()| reference)
 }
 
+/// Intake runs only in `main`, for a dispatch whose pins re-derive and whose
+/// freshness this path can fence.
+fn admissible<S: SqlEngine>(
+    store: &CellStore<S>,
+    dispatched: &DispatchedCommand,
+) -> Result<(), ReceiptIntakeError> {
+    let invocation = &dispatched.invocation;
+    if store.fork_pin().is_some()
+        || !invocation.dependency.predicates.is_empty()
+        || !invocation.dependency.collections.is_empty()
+        || invocation.freshness == FreshnessMode::DestinationCas
+    {
+        return Err(ReceiptIntakeError::Unsupported);
+    }
+    if repins(dispatched).map_err(CellError::from)? {
+        Ok(())
+    } else {
+        Err(ReceiptIntakeError::DispatchMismatch)
+    }
+}
+
+/// Whether `dispatched`'s dispatch, input and dependency digests re-derive
+/// from its invocation under its execution profile.
+fn repins(dispatched: &DispatchedCommand) -> Result<bool, CanonicalJsonError> {
+    let repinned = DispatchedCommand::pin(
+        dispatched.invocation.clone(),
+        dispatched.execution_profile.clone(),
+    )?;
+    Ok(repinned == *dispatched)
+}
+
 /// The retained row of `reference` in this scope and `main`, if any.
 fn load<S: SqlEngine>(
-    store: &CellStore<S>,
+    reader: &StoreReader<'_, S>,
     scope: &str,
     reference: &Digest,
 ) -> Result<Option<Retained>, CellError> {
-    let body = store.conn.query_optional(
+    reader.check_live()?;
+    let body = reader.conn.query_optional(
         &format!(
             "SELECT \"body\" FROM \"{TABLE}\" WHERE \"reference\" = ?1 AND \"scope\" = ?2 AND \"world\" = ?3"
         ),
@@ -303,20 +328,18 @@ fn delivers(
     typed && enqueued && recorded
 }
 
-/// The command's persisted reconciliation state and its object version.
+/// The command's persisted reconciliation state.
 fn command_state<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     command_id: &str,
-) -> Result<Option<(CommandState, u64)>, CellError> {
+) -> Result<Option<CommandState>, CellError> {
     let Some(record) = reader.object(MAIN_WORLD, FUNCTION_COMMAND_TYPE, command_id)? else {
         return Ok(None);
     };
-    let Some(state) = record.values.get("state") else {
-        return Ok(None);
-    };
-    Ok(norn_ir::runtime::decode::<CommandState>(state)
-        .ok()
-        .map(|state| (state, record.version)))
+    Ok(record
+        .values
+        .get("state")
+        .and_then(|state| norn_ir::runtime::decode::<CommandState>(state).ok()))
 }
 
 /// Current fact versions in `main`. Predicate and collection pins are never
@@ -333,28 +356,21 @@ impl<S: SqlEngine> StateView for View<'_, '_, S> {
     }
 
     fn predicate_members(&self, _predicate: &PredicatePin) -> Result<Vec<MemberPin>, CellError> {
-        Err(CellError::ComputeRefused(UNQUALIFIED_PIN))
+        Err(CellError::ReceiptPinUnqualified)
     }
 
     fn collection_epoch(&self, _object_type: &str) -> Result<u64, CellError> {
-        Err(CellError::ComputeRefused(UNQUALIFIED_PIN))
+        Err(CellError::ReceiptPinUnqualified)
     }
 }
 
-/// The receipt contract and the executor's authentication are immutable
-/// facts of a retained receipt, established by the intake that retained it.
-/// Resolution re-runs reconciliation for what can change since: scope,
-/// world, generation fencing, cancellation, deadline and freshness. Authority
-/// to publish is the accepting action's own authorization and laws.
-struct RetainedChecks;
+/// The receipt contract is an immutable fact of a retained receipt, checked
+/// by the intake that retained it. Resolution re-runs reconciliation for what
+/// can change since: scope, world, generation fencing, cancellation,
+/// deadline, the command's authority and freshness.
+struct RetainedContract;
 
-impl ResultAuthorizer for RetainedChecks {
-    fn authorize(&self, _request: &ResultAuthzRequest<'_>) -> Result<(), ResultDenial> {
-        Ok(())
-    }
-}
-
-impl ReceiptValidator for RetainedChecks {
+impl ReceiptValidator for RetainedContract {
     fn validate(
         &self,
         _dispatched: &DispatchedCommand,
@@ -394,7 +410,8 @@ impl AcceptedReceiptStore for Resolved {
 }
 
 /// RECEIPT-CONSUME-1: resolve `reference` to a checked binding under this
-/// cell's scope, `main`, `manifest` and current clock and state.
+/// cell's scope, `main`, `manifest`, current clock and state, and the
+/// command authority `authorizer` grants now.
 ///
 /// # Errors
 /// A typed binding refusal, or [`ReceiptBindingError::Store`] for a host
@@ -403,30 +420,51 @@ pub(crate) fn resolve<S: SqlEngine>(
     store: &CellStore<S>,
     scope: &str,
     now: LogicalTime,
+    authorizer: &dyn ResultAuthorizer,
     reference: &ReceiptReference,
     manifest: &Digest,
 ) -> Result<ReceiptBinding<JsonObject>, ReceiptBindingError<CellError>> {
-    let resolved = evidence(store, scope, now, reference.digest(), manifest)?;
+    let resolved = evidence(
+        store,
+        &Lookup {
+            scope,
+            now,
+            authorizer,
+        },
+        reference.digest(),
+        manifest,
+    )?;
     bind_receipt(&resolved, reference)
+}
+
+/// The cell context a lookup resolves under.
+struct Lookup<'a> {
+    scope: &'a str,
+    now: LogicalTime,
+    authorizer: &'a dyn ResultAuthorizer,
 }
 
 fn evidence<S: SqlEngine>(
     store: &CellStore<S>,
-    scope: &str,
-    now: LogicalTime,
+    lookup: &Lookup<'_>,
     reference: &Digest,
     manifest: &Digest,
 ) -> Result<Resolved, ReceiptBindingError<CellError>> {
     if store.fork_pin().is_some() {
         return Ok(Resolved::Unknown);
     }
-    let Some(retained) = load(store, scope, reference).map_err(ReceiptBindingError::Store)? else {
+    let reader = store.read();
+    let Some(retained) =
+        load(&reader, lookup.scope, reference).map_err(ReceiptBindingError::Store)?
+    else {
         return Ok(Resolved::Unknown);
     };
     if retained.receipt.manifest != *manifest {
         return Ok(Resolved::Unknown);
     }
-    let reader = store.read();
+    if !repins(&retained.dispatched)? {
+        return Err(ReceiptBindingError::Mismatch);
+    }
     let receipt = &retained.receipt;
     let Some(pending) = reader
         .pending_result(&receipt.command_id, receipt.run.generation)
@@ -447,15 +485,20 @@ fn evidence<S: SqlEngine>(
     if !delivers(&pending, receipt, &retained.dispatched.invocation) {
         return Err(ReceiptBindingError::Mismatch);
     }
-    let Some((state, version)) =
+    let Some(state) =
         command_state(&reader, &receipt.command_id).map_err(ReceiptBindingError::Store)?
     else {
         return Err(ReceiptBindingError::Mismatch);
     };
+    let view = View(&reader);
+    let state_key = FactKey::new(FUNCTION_COMMAND_TYPE, receipt.command_id.as_str());
+    let state_version = view
+        .fact_version(&state_key)
+        .map_err(ReceiptBindingError::Store)?;
     let context = ReconcileContext {
-        tenant: scope,
+        tenant: lookup.scope,
         world: MAIN_WORLD,
-        now,
+        now: lookup.now,
         policy: ReconcilePolicy::DEFAULT,
     };
     let command = CommandId(receipt.command_id.clone());
@@ -463,11 +506,12 @@ fn evidence<S: SqlEngine>(
         receipt,
         command: &command,
         generation: Generation(receipt.run.generation),
-        authenticated_executor: Some(retained.executor.as_str()),
+        // Intake authenticated this executor for this immutable receipt.
+        authenticated_executor: Some(receipt.provenance.executor.as_str()),
     };
     let checks = ResultChecks {
-        authorizer: &RetainedChecks,
-        validator: &RetainedChecks,
+        authorizer: lookup.authorizer,
+        validator: &RetainedContract,
     };
     let mut acceptance = match reconcile(
         &context,
@@ -475,7 +519,7 @@ fn evidence<S: SqlEngine>(
         &state,
         &completion,
         &checks,
-        &View(&reader),
+        &view,
     ) {
         Ok(Reconciliation::Accepted(acceptance)) => acceptance,
         Ok(Reconciliation::Refused(_refused)) => return Err(ReceiptBindingError::NotAccepted),
@@ -487,8 +531,8 @@ fn evidence<S: SqlEngine>(
     // A re-issue or cancellation between resolution and the accepting
     // commit moves the command state and refuses that commit.
     acceptance.reads.push(FactExpectation {
-        key: FactKey::new(FUNCTION_COMMAND_TYPE, receipt.command_id.as_str()),
-        expected: FactVersion(version),
+        key: state_key,
+        expected: state_version,
     });
     Ok(Resolved::Accepted(Box::new(Evidence {
         acceptance,

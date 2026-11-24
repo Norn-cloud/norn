@@ -13,6 +13,7 @@
     clippy::unwrap_used,
     clippy::panic,
     clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
     missing_docs,
     reason = "durable receipt scenarios"
 )]
@@ -23,6 +24,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use norn_cell::export::Exporter;
 use norn_cell::function_receipt::{
     FUNCTION_COMMAND_TYPE, FUNCTION_PAYLOAD_TYPE, ReceiptIntakeError,
 };
@@ -222,6 +224,17 @@ impl ReceiptValidator for Contract {
     }
 }
 
+/// The command's authority was revoked.
+struct Revoked;
+
+impl ResultAuthorizer for Revoked {
+    fn authorize(&self, _: &ResultAuthzRequest<'_>) -> Result<(), ResultDenial> {
+        Err(ResultDenial {
+            reason: "authority revoked".to_owned(),
+        })
+    }
+}
+
 /// A dispatch of the confirmation Function for `run`, pinned to `ship-1`
 /// at version 1, under `tenant` and `world`.
 fn dispatch(run: &str, tenant: &str, world: &str) -> DispatchedCommand {
@@ -293,13 +306,14 @@ fn object(receipt: &FunctionReceipt) -> JsonObject {
     object
 }
 
-/// A cell whose outside world answers each command with its receipt.
+/// A cell whose outside world answers each command with its receipt, and
+/// which rechecks command authority when it resolves a retained receipt.
 fn open(path: &Path, scope: &str, performed: &[&FunctionReceipt]) -> Sqlite {
     let answers: BTreeMap<String, JsonObject> = performed
         .iter()
         .map(|receipt| (receipt.command_id.clone(), object(receipt)))
         .collect();
-    Sqlite::open(
+    let mut cell = Sqlite::open(
         path,
         Model::from_definitions(&definitions(), &[]).expect("models the run"),
         StoreOptions::default(),
@@ -311,7 +325,9 @@ fn open(path: &Path, scope: &str, performed: &[&FunctionReceipt]) -> Sqlite {
                 .unwrap_or_else(|| panic!("no answer for {}", command.id.0))
         },
     )
-    .expect("opens the durable cell")
+    .expect("opens the durable cell");
+    cell.set_result_authorizer(Some(Box::new(Contract)));
+    cell
 }
 
 fn put(key: FactKey, expected: FactVersion, values: &[(&str, &str)]) -> FactWrite {
@@ -389,6 +405,18 @@ fn retain(
     dispatched: &DispatchedCommand,
     receipt: &FunctionReceipt,
 ) -> Result<Digest, ReceiptIntakeError> {
+    retain_as(cell, dispatched, receipt, Some(EXECUTOR), &Contract)
+}
+
+/// Intake as a sender the host authenticated as `executor`, under
+/// `authority`'s recheck.
+fn retain_as(
+    cell: &mut Sqlite,
+    dispatched: &DispatchedCommand,
+    receipt: &FunctionReceipt,
+    executor: Option<&str>,
+    authority: &dyn ResultAuthorizer,
+) -> Result<Digest, ReceiptIntakeError> {
     let command = dispatched.command_id();
     cell.retain_function_receipt(
         dispatched,
@@ -396,10 +424,10 @@ fn retain(
             receipt,
             command: &command,
             generation: dispatched.generation(),
-            authenticated_executor: Some(EXECUTOR),
+            authenticated_executor: executor,
         },
         &ResultChecks {
-            authorizer: &Contract,
+            authorizer: authority,
             validator: &Contract,
         },
     )
@@ -863,12 +891,10 @@ fn stale_or_expired_evidence_refuses_and_leaves_the_delivery_pending() {
     );
 }
 
-/// A host over the durable cell. `wired: false` declares no receipt
-/// support; `race` commits a competing action between this call's
-/// resolution and its commit.
+/// A host over the durable cell whose `race` commits a competing action
+/// between this call's resolution and its commit.
 struct Host<'a> {
     cell: RefCell<Sqlite>,
-    wired: bool,
     race: RefCell<Option<Race<'a>>>,
 }
 
@@ -917,16 +943,14 @@ impl CellHost for Host<'_> {
         reference: &ReceiptReference,
         manifest: &Digest,
     ) -> Result<Option<ReceiptBinding<JsonObject>>, ReceiptBindingError<CellError>> {
-        if !self.wired {
-            return Ok(None);
-        }
         let binding = self
             .cell
             .borrow()
             .resolve_accepted_receipt(reference, manifest);
         let race = self.race.borrow_mut().take();
         if let Some(race) = race {
-            race(&mut *self.cell.borrow_mut());
+            let mut cell = self.cell.borrow_mut();
+            race(&mut cell);
         }
         binding
     }
@@ -974,7 +998,6 @@ fn concurrent_consumptions_have_exactly_one_winner() {
     });
     let mut host = Host {
         cell: RefCell::new(cell),
-        wired: true,
         race: RefCell::new(Some(race)),
     };
     // Both calls resolved the same pending delivery; the loser's commit
@@ -1070,13 +1093,10 @@ fn a_host_without_receipt_storage_stays_fail_closed() {
     } = fixture(&dir.path().join("cell.sqlite"), "delivered");
     let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
     let base = cell.commits().unwrap().len();
-    let mut host = Host {
-        cell: RefCell::new(cell),
-        wired: false,
-        race: RefCell::new(None),
-    };
+    // A cell with no command-authority recheck serves no receipt effect.
+    cell.set_result_authorizer(None);
     let refused = commit_action(
-        &mut host,
+        &mut cell,
         &catalog,
         &confirm(&action, "run-1", &digest.0, "k1"),
         &Allow,
@@ -1087,9 +1107,9 @@ fn a_host_without_receipt_storage_stays_fail_closed() {
         "action.receipt_effect_unsupported",
         "{refused}"
     );
-    let cell = host.cell.into_inner();
     assert_eq!(status(&cell, "run-1"), waiting());
     assert_eq!(cell.commits().unwrap().len(), base);
+    cell.set_result_authorizer(Some(Box::new(Contract)));
     assert!(still_accepted(&cell, &digest));
     // The intake itself refuses unqualified freshness pins.
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1105,4 +1125,183 @@ fn a_host_without_receipt_storage_stays_fail_closed() {
         ),
         Err(ReceiptIntakeError::Unsupported)
     ));
+}
+
+#[test]
+fn an_intake_retry_reruns_every_check() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    assert_eq!(retain(&mut cell, &dispatched, &receipt).unwrap(), digest);
+    // The same receipt again, but from a sender nobody authenticated, under
+    // revoked authority, or under pins that do not re-derive.
+    let refused = retain_as(&mut cell, &dispatched, &receipt, None, &Contract).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            ReceiptIntakeError::Refused {
+                reason: RefusalReason::Unauthenticated,
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+    let refused =
+        retain_as(&mut cell, &dispatched, &receipt, Some(EXECUTOR), &Revoked).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            ReceiptIntakeError::Refused {
+                reason: RefusalReason::Unauthorized { .. },
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+    let mut forged = dispatched.clone();
+    forged.dependency_token = sha('9');
+    assert!(matches!(
+        retain(&mut cell, &forged, &receipt),
+        Err(ReceiptIntakeError::DispatchMismatch)
+    ));
+    let other = receipt_for(&dispatched, "delivered-elsewhere");
+    assert!(matches!(
+        retain(&mut cell, &dispatched, &other),
+        Err(ReceiptIntakeError::DispatchMismatch)
+    ));
+    assert!(still_accepted(&cell, &digest));
+}
+
+#[test]
+fn revoked_command_authority_refuses_consumption() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let base = cell.commits().unwrap().len();
+    // T2-RES-1 step 8: authority is rechecked when the receipt is consumed.
+    cell.set_result_authorizer(Some(Box::new(Revoked)));
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_not_accepted", "{refused}");
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert_eq!(cell.commits().unwrap().len(), base);
+    assert_eq!(cell.pending_commands().unwrap().len(), 1);
+    cell.set_result_authorizer(Some(Box::new(Contract)));
+    commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k2"),
+        &Allow,
+    )
+    .expect("restored authority consumes the same evidence");
+    assert_eq!(status(&cell, "run-1"), confirmed());
+}
+
+#[test]
+fn a_fork_never_retains_or_resolves_evidence() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let base = cell.store().verified_head().expect("head");
+    let store = cell.store().fork("what-if", &base).expect("forks");
+    let mut fork = Sqlite::new(
+        store,
+        SCOPE,
+        |_command: &Command<JsonObject>| -> JsonObject { panic!("a fork never performs") },
+    )
+    .expect("serves the fork");
+    fork.set_result_authorizer(Some(Box::new(Contract)));
+    let before = fork.store().image().expect("image");
+    assert!(matches!(
+        retain(&mut fork, &dispatched, &receipt),
+        Err(ReceiptIntakeError::Unsupported)
+    ));
+    let refused = commit_action(
+        &mut fork,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_unknown", "{refused}");
+    assert_eq!(status(&fork, "run-1"), waiting());
+    assert_eq!(fork.store().image().expect("image"), before);
+    assert!(still_accepted(&cell, &digest));
+}
+
+#[tokio::test]
+async fn a_restored_cell_holds_no_retained_evidence() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let mut exporter = Exporter::local(&dir.path().join("export")).expect("exporter");
+    let start = exporter.verify().await.expect("verify").head_commit_seq + 1;
+    for seq in start..=cell.store().export_commit_count().expect("count") {
+        exporter
+            .append(
+                &cell
+                    .store()
+                    .export_record(seq)
+                    .expect("journal")
+                    .expect("record"),
+            )
+            .await
+            .expect("append");
+    }
+    let manifest = exporter.verify().await.expect("verified export");
+    let restored_path = dir.path().join("restored.sqlite");
+    norn_cell::CellStore::restore_from(
+        &mut exporter,
+        &restored_path,
+        Model::from_definitions(&definitions(), &[]).expect("models the run"),
+        SCOPE,
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("restores the exported history");
+    // Export carries ledger history, never private receipt evidence: the
+    // restored cell refuses the reference until intake runs again.
+    let mut restored = open(&restored_path, SCOPE, &[&receipt]);
+    assert_eq!(status(&restored, "run-1"), waiting());
+    let refused = commit_action(
+        &mut restored,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_unknown", "{refused}");
+    assert_eq!(status(&restored, "run-1"), waiting());
+    assert!(still_accepted(&cell, &digest));
 }

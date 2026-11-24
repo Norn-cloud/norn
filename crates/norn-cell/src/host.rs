@@ -89,8 +89,14 @@ pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
     /// S6c, S5a: the bookkeeping events the next commit carries, set only
     /// for the span of [`Self::attributed`].
     attached: Vec<norn_ir::RuntimeValue>,
+    /// RECEIPT-CONSUME-1: the Function command-authority recheck run when a
+    /// retained receipt is resolved. Without one, receipts never resolve.
+    result_authorizer: Option<ResultAuthority>,
     events: PhantomData<fn() -> E>,
 }
+
+/// A host's Function command-authority recheck (T2-RES-1 step 8).
+pub type ResultAuthority = Box<dyn norn_kernel::result_reconciliation::ResultAuthorizer + Send>;
 
 impl<E, C, I, S> std::fmt::Debug for SqliteCell<E, C, I, S>
 where
@@ -130,6 +136,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: Box::new(responder),
             published: Vec::new(),
             attached: Vec::new(),
+            result_authorizer: None,
             events: PhantomData,
         })
     }
@@ -160,6 +167,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: self.responder,
             published: self.published,
             attached: self.attached,
+            result_authorizer: self.result_authorizer,
             events: PhantomData,
         }
     }
@@ -167,6 +175,14 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     /// The tenant scope this cell is bound to.
     pub(crate) fn bound_scope(&self) -> &str {
         &self.scope
+    }
+
+    /// RECEIPT-CONSUME-1: install (or, with `None`, remove) the command
+    /// authority recheck that resolving a retained Function receipt runs at
+    /// the cell's current clock (T2-RES-1 step 8). A cell without one serves
+    /// no receipt effect (`action.receipt_effect_unsupported`).
+    pub fn set_result_authorizer(&mut self, authorizer: Option<ResultAuthority>) {
+        self.result_authorizer = authorizer;
     }
 
     /// The store, for in-crate captures the cell makes itself
@@ -1065,7 +1081,7 @@ where
                 .get("payload")
                 .and_then(|payload| payload.get("type"))
                 .and_then(Value::as_str)
-                == Some("norn.function/v1")
+                == Some(crate::function_receipt::FUNCTION_PAYLOAD_TYPE)
         {
             self.dispatch_lineage(&pending, &mut marking_historical_reads, &mut marking_events)?;
         }
@@ -1135,7 +1151,10 @@ where
         // generation state). Its immutable classification freezes exactly
         // the visibility admitted then: a pre-dispatch declassification is
         // respected, and a later one cannot declassify in-flight inputs.
-        let state_key = FactKey::new("norn.FunctionCommand", pending.command.command_id.as_str());
+        let state_key = FactKey::new(
+            crate::function_receipt::FUNCTION_COMMAND_TYPE,
+            pending.command.command_id.as_str(),
+        );
         let state = batch.writes.iter().find_map(|write| match write {
             FactWriteRow::Put {
                 object_type,
@@ -1190,7 +1209,9 @@ where
         let Some(payload) = command.get("payload") else {
             return;
         };
-        if payload.get("type").and_then(Value::as_str) != Some("norn.function/v1") {
+        if payload.get("type").and_then(Value::as_str)
+            != Some(crate::function_receipt::FUNCTION_PAYLOAD_TYPE)
+        {
             return;
         }
         let invocation = payload.get("invocation").and_then(|value| {
@@ -2089,7 +2110,8 @@ where
     }
 
     /// RECEIPT-CONSUME-1: retained Function evidence, re-reconciled under
-    /// this cell's scope, `main` and current clock ([`crate::function_receipt`]).
+    /// this cell's scope, `main`, current clock and installed command
+    /// authority ([`crate::function_receipt`]); unsupported without one.
     fn resolve_accepted_receipt(
         &self,
         reference: &norn_kernel::receipt_binding::ReceiptReference,
@@ -2098,8 +2120,18 @@ where
         Option<norn_kernel::receipt_binding::ReceiptBinding<JsonObject>>,
         norn_kernel::receipt_binding::ReceiptBindingError<CellError>,
     > {
-        crate::function_receipt::resolve(&self.store, &self.scope, self.now, reference, manifest)
-            .map(Some)
+        let Some(authorizer) = self.result_authorizer.as_deref() else {
+            return Ok(None);
+        };
+        crate::function_receipt::resolve(
+            &self.store,
+            &self.scope,
+            self.now,
+            authorizer,
+            reference,
+            manifest,
+        )
+        .map(Some)
     }
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
