@@ -54,7 +54,6 @@ pub use model::{
 };
 pub mod trust;
 pub use trust::TrustLevel;
-mod decimal_sum;
 pub mod decision_question;
 pub mod deontic;
 pub mod entitlement;

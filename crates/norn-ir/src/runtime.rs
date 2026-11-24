@@ -125,9 +125,12 @@ impl From<CanonicalJsonError> for RuntimeValueError {
     }
 }
 
+#[path = "decimal_sum.rs"]
+mod decimal_sum;
+
 /// Exact unordered aggregation of runtime decimal values.
 #[derive(Default)]
-pub struct DecimalSum(crate::decimal_sum::DecimalSum);
+pub struct DecimalSum(decimal_sum::DecimalSum);
 
 impl DecimalSum {
     /// Include an exact decimal within the term-count bound.

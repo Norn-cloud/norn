@@ -1,6 +1,6 @@
 //! Exact aggregation of decimal coefficients, preserving all 28 fractional places.
 
-use super::exact_sum::ExactSum;
+use crate::exact_sum::ExactSum;
 use rust_decimal::Decimal;
 
 /// Splitting at the decimal point avoids ever scaling a large integer by 10^28.
