@@ -31,6 +31,8 @@ use std::collections::BTreeSet;
 use crate::entity_instance::EffectiveCatalog;
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
+mod window;
+
 /// The refusal of anything this dialect does not lower to a typed operator.
 pub const SQL_UNSUPPORTED: &str = "derived.validation.sql_unsupported";
 
@@ -1284,8 +1286,8 @@ impl Lowering<'_> {
                 }
             })
         };
-        // Columns computed before grouping or windowing: grain passthroughs plus each needed value.
-        let mut prepared: Vec<(String, String)> = Vec::new();
+        // Columns computed before grouping: each needed value, its ZEN and where it is written.
+        let mut prepared: Vec<(String, String, usize)> = Vec::new();
         // Every source's id passes through: whatever the joins make the grain,
         // it is among these columns.
         let grain_columns: Vec<String> = std::iter::once(select.from.alias.clone())
@@ -1322,7 +1324,7 @@ impl Lowering<'_> {
                         },
                         |(index, item)| name_of(item, index),
                     );
-                prepared.push((name.clone(), scope.zen(&value, *at)?));
+                prepared.push((name.clone(), scope.zen(&value, *at)?, *at));
                 if let Some(unit) = &grain_unit {
                     if !["day", "week", "month", "quarter", "year"].contains(&unit.as_str()) {
                         return Err(refusal(
@@ -1375,18 +1377,30 @@ impl Lowering<'_> {
                         return Err(refusal("an aggregate takes one column", call.at));
                     };
                     let value_column = format!("{name}_value");
-                    prepared.push((value_column.clone(), scope.zen(arg, call.at)?));
+                    prepared.push((value_column.clone(), scope.zen(arg, call.at)?, call.at));
                     measures.push(json!({"name": name, "fn": function, "column": value_column}));
                 }
             }
             let projected = self.fresh("prepared");
-            let mut columns: Vec<Value> = grain_columns
+            // One value per name. Every source id passes through as itself
+            // (a projection keeps the grain), and the aggregate names a key
+            // by its column, so a key aliased to an id has no plan: it refuses
+            // rather than grouping by the id.
+            let mut columns: Vec<Value> = Vec::new();
+            let mut named: BTreeMap<String, String> = BTreeMap::new();
+            let ids = grain_columns
                 .iter()
-                .map(|column| json!({"name": column, "expression": format!("input.{column}")}))
-                .collect();
-            for (name, expression) in &prepared {
-                if !grain_columns.contains(name) {
-                    columns.push(json!({"name": name, "expression": expression}));
+                .map(|id| (id.clone(), format!("input.{id}"), 0));
+            for (name, expression, at) in ids.chain(prepared) {
+                match named.insert(name.clone(), expression.clone()) {
+                    None => columns.push(json!({"name": name, "expression": expression})),
+                    Some(earlier) if earlier == expression => {}
+                    Some(_) => {
+                        return Err(refusal(
+                            format!("{name:?} names two columns before grouping; alias it apart"),
+                            at,
+                        ));
+                    }
                 }
             }
             self.nodes.insert(
@@ -1447,81 +1461,6 @@ impl Lowering<'_> {
             node = self.window(&node, &windows, &names)?;
         }
         Ok(node)
-    }
-
-    /// One window node over output columns named by the select list.
-    fn window(
-        &mut self,
-        input: &str,
-        windows: &[(String, Ex, usize)],
-        names: &[(Ex, String)],
-    ) -> Result<String, Refusal> {
-        let column_of = |ex: &Ex, at: usize| -> Result<String, Refusal> {
-            let selected = names
-                .iter()
-                .find(|(selected, _)| selected == ex)
-                .map(|(_, name)| name.clone());
-            if let Ex::Column(_, column) = ex {
-                Ok(selected.unwrap_or_else(|| column.clone()))
-            } else {
-                selected.ok_or_else(|| refusal("a window reads a selected column", at))
-            }
-        };
-        let mut over: Option<&Over> = None;
-        let mut columns = Vec::new();
-        for (name, ex, at) in windows {
-            let Ex::Call(call) = ex else {
-                return Err(refusal("expected a window function", *at));
-            };
-            let Some(this) = &call.over else {
-                return Err(refusal("expected OVER", *at));
-            };
-            if over.is_some_and(|first| first != this) {
-                return Err(refusal("windows in one SELECT share one OVER (…)", *at));
-            }
-            over = Some(this);
-            let function = match (call.name.as_str(), call.args.as_slice()) {
-                ("row_number" | "rank" | "dense_rank", []) => {
-                    json!({"name": name, "fn": call.name})
-                }
-                ("lag" | "lead", [value]) => {
-                    json!({"name": name, "fn": call.name, "column": column_of(value, *at)?})
-                }
-                ("lag" | "lead", [value, Ex::Number(offset)]) => {
-                    json!({"name": name, "fn": call.name, "column": column_of(value, *at)?, "offset": offset.parse::<u32>().map_err(|_error| refusal("an offset is a whole number", *at))?})
-                }
-                ("sum", [value]) => {
-                    json!({"name": name, "fn": "running_sum", "column": column_of(value, *at)?})
-                }
-                _ => {
-                    return Err(refusal(
-                        format!(
-                            "{} OVER (…) has no typed window operator",
-                            call.name.to_uppercase()
-                        ),
-                        *at,
-                    ));
-                }
-            };
-            columns.push(function);
-        }
-        let over = over.ok_or_else(|| refusal("expected a window", 0))?;
-        let partition = over
-            .partition
-            .iter()
-            .map(|ex| column_of(ex, 0))
-            .collect::<Result<Vec<_>, _>>()?;
-        let order = over
-            .order
-            .iter()
-            .map(|(ex, descending)| Ok(json!({"column": column_of(ex, 0)?, "direction": if *descending { "desc" } else { "asc" }})))
-            .collect::<Result<Vec<_>, Refusal>>()?;
-        let id = self.fresh("windowed");
-        self.nodes.insert(
-            id.clone(),
-            json!({"op": "window", "input": input, "partitionBy": partition, "orderBy": order, "columns": columns}),
-        );
-        Ok(id)
     }
 }
 

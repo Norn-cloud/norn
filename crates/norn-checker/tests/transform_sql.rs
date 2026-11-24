@@ -188,6 +188,62 @@ fn a_declared_link_join_grouped_by_week_lowers_admits_and_evaluates() {
 }
 
 #[test]
+fn a_group_key_aliased_onto_a_source_id_is_refused_never_grouped_by_the_id() {
+    // #1706: the scan's `id` passed through in place of `id = input.region`,
+    // so two customers in one region came back as two rows with `n = 1`.
+    refused(
+        "SELECT region AS id, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY region",
+        SQL_UNSUPPORTED,
+    );
+    // A joined source's id unaliased is named `id` too, never the base id.
+    refused(
+        "SELECT c.id, COUNT(*) AS n FROM \"shop.Order\" o JOIN \"shop.Customer\" c ON o.customer = c.id GROUP BY c.id",
+        SQL_UNSUPPORTED,
+    );
+    // A group key named like a measure's own value column.
+    refused(
+        "SELECT o.note AS total_value, SUM(o.amount) AS total FROM \"shop.Order\" o GROUP BY o.note",
+        SQL_UNSUPPORTED,
+    );
+    // Grouping by an id under its own name is still the id.
+    compile("SELECT id, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY id").expect("grouped by id");
+}
+
+#[test]
+fn a_group_key_aliased_onto_another_input_column_groups_by_the_expression() {
+    let (_, plan) =
+        compile("SELECT region AS email, COUNT(*) AS n FROM \"shop.Customer\" c GROUP BY region")
+            .expect("admitted");
+    assert_eq!(plan.output_schema().grain, ["email"]);
+    let customers = vec![
+        row("c1", &[("email", s("a@x")), ("region", s("north"))]),
+        row("c2", &[("email", s("b@x")), ("region", s("north"))]),
+    ];
+    let input = TransformInput {
+        rows: BTreeMap::from([("c".to_owned(), customers)]),
+        links: BTreeMap::new(),
+    };
+    let out = evaluate(&plan, &input).expect("evaluated");
+    assert_eq!(out.rows.len(), 1);
+    assert_eq!(out.rows[0].values["email"], s("north"));
+    assert_eq!(out.rows[0].values["n"], num("2"));
+}
+
+#[test]
+fn a_window_modifier_without_a_typed_field_is_refused_never_dropped() {
+    // #1706: `DISTINCT` was dropped, so `[5, 5]` summed to 10.
+    for sql in [
+        "SELECT id, amount, SUM(DISTINCT amount) OVER (ORDER BY id) AS total FROM \"shop.Order\"",
+        "SELECT id, LAG(DISTINCT amount) OVER (ORDER BY id) AS before FROM \"shop.Order\"",
+        "SELECT id, ROW_NUMBER(*) OVER (ORDER BY id) AS n FROM \"shop.Order\"",
+    ] {
+        refused(sql, SQL_UNSUPPORTED);
+    }
+    compile("SELECT id, amount, SUM(amount) OVER (ORDER BY id) AS total FROM \"shop.Order\"")
+        .expect("a running sum is still lowered");
+}
+
+#[test]
 fn a_key_join_and_windows_lower_to_typed_operators() {
     compile(
         "SELECT l.email AS email, l.source AS source, c.region AS region
