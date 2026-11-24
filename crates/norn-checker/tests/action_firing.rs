@@ -88,9 +88,7 @@ fn run(name: &str, case: &Value) -> Vec<Vec<String>> {
             .clone(),
     )
     .expect("action payload decodes");
-    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let object_type = catalog
         .object_type(
             case["object"]["entityArtifactId"]

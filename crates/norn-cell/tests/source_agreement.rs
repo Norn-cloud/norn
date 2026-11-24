@@ -255,7 +255,7 @@ fn load(cell: &mut Cell, system: &str) {
 /// The derived "stock on hand as of each week" question over holdings.
 fn stock_plan() -> QuestionPlan {
     let space = norn_checker::metric::derive::derive_metric_space(
-        &ScopedView::uniform(&fixture_artifacts(), &BTreeSet::new()).expect("one scope"),
+        &ScopedView::uniform(&fixture_artifacts(), &BTreeSet::new()),
         &LawRoot::Entity("canon.Holding".to_owned()),
     )
     .expect("derived space");

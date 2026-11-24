@@ -55,8 +55,7 @@ fn envelope(object: &ObjectTypeDef) -> ArtifactEnvelope {
 fn fixture() -> (CellStore, QuestionPlan) {
     let [event, entry] = types();
     let space = derive_metric_space(
-        &ScopedView::uniform(&[envelope(&event), envelope(&entry)], &BTreeSet::new())
-            .expect("one scope"),
+        &ScopedView::uniform(&[envelope(&event), envelope(&entry)], &BTreeSet::new()),
         &LawRoot::Entity("demo.Entry".to_owned()),
     )
     .expect("derived space");

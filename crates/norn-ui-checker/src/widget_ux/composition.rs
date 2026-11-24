@@ -177,7 +177,7 @@ impl UxChecker<'_, '_, '_> {
             &mut selected_ids,
         );
         let nested_view = ScopedView::of(artifact, &[], self.all, self.registry);
-        let mut nested_findings = lifecycle_findings(artifact, &ux, page_id, &nested_view);
+        let mut nested_findings = page_findings(artifact, &ux, page_id, &nested_view);
         let mut nested = UxChecker::new(
             artifact,
             self.all,
@@ -403,26 +403,32 @@ fn collect_tree_semantic_ids(
     }
 }
 
-/// The backend lifecycle composition findings of the composed page `page_id`
-/// of `widget`, read under the composed widget's own scope.
-fn lifecycle_findings(
+/// The lifecycle composition and catalog findings of the composed page
+/// `page_id` of `widget`, read under the composed widget's own scope and
+/// dependencies.
+fn page_findings(
     widget: &ArtifactEnvelope,
     ux: &WidgetUx,
     page_id: &str,
     view: &ScopedView<'_>,
 ) -> Vec<Diagnostic> {
-    let Some(index) = ux.pages.iter().position(|page| {
-        page.page_id == page_id
-            && page
-                .machine
-                .as_ref()
-                .is_some_and(|machine| machine.lifecycle.is_some())
-    }) else {
+    let Some(index) = ux.pages.iter().position(|page| page.page_id == page_id) else {
         return Vec::new();
     };
+    let names_lifecycle = ux.pages.get(index).is_some_and(|page| {
+        page.machine
+            .as_ref()
+            .is_some_and(|machine| machine.lifecycle.is_some())
+    });
+    let lifecycle = names_lifecycle
+        .then(|| crate::ui_lifecycle::check(widget, ux, view.pool(), view.model()))
+        .unwrap_or_default();
+    let composed =
+        |other: &norn_ir::WidgetArtifactRef| super::composed_ux(widget, view.pool(), other);
     let prefix = format!("/payload/ux/pages/{index}/");
-    crate::ui_lifecycle::check(widget, ux, view.pool(), view.model())
+    lifecycle
         .into_iter()
+        .chain(crate::ui_catalog::check(widget, ux, &composed))
         .filter(|finding| {
             finding
                 .span

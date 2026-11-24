@@ -69,7 +69,7 @@ fn grouped(
     }))
     .expect("artifact");
     let space = derive_metric_space(
-        &ScopedView::uniform(&[artifact], &BTreeSet::new()).expect("one scope"),
+        &ScopedView::uniform(&[artifact], &BTreeSet::new()),
         &LawRoot::Entity(TYPE.to_owned()),
     )
     .expect("derived space");

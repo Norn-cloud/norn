@@ -71,16 +71,16 @@ fn parent_rows_migration_model(owned: bool) -> Model {
                 {"id":"label", "type":{"kind":"text"}}
             ]
         }),
-        json!({
-            "name":"norn.OwnedRows",
-            "properties":[
-                {"id":"parentType", "type":{"kind":"text"}},
-                {"id":"parentKey", "type":{"kind":"text"}},
-                {"id":"collectionId", "type":{"kind":"text"}},
-                {"id":"rowIds", "type":{"kind":"json-ext"}}
-            ]
-        }),
+        owned_rows_record(),
     ])
+}
+
+/// The kernel's owned-row manifest type, exactly as hosts add it.
+fn owned_rows_record() -> serde_json::Value {
+    norn_cell::kernel_record_types()
+        .into_iter()
+        .find(|record| record.name.as_str() == OWNED_ROWS_TYPE)
+        .map_or(serde_json::Value::Null, |record| json!(record))
 }
 
 fn model_with_name_binding_index(model: &Model) -> Model {
@@ -521,13 +521,14 @@ pub(crate) fn model_set(model: &Model, scope: &serde_json::Value) -> String {
             "payload": {"entityVersion": "2.0", "interface": interface}
         })
     }));
-    String::from_utf8(
+    let canonical_set = String::from_utf8(
         Value::from_json(json!(artifacts))
             .expect("artifact set is exact JSON")
             .canonical_json()
             .expect("artifact set canonicalizes"),
     )
-    .expect("canonical artifact set is UTF-8")
+    .expect("canonical artifact set is UTF-8");
+    canonical_set
 }
 
 fn install_input(

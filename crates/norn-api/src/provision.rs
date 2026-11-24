@@ -675,21 +675,25 @@ mod tests {
     }
 
     #[test]
-    fn a_trusted_base_artifact_outside_cell_scope_is_refused() {
-        let mut unit: ArtifactEnvelope = serde_json::from_str(UNITS).unwrap();
+    fn a_trusted_base_artifact_outside_cell_scope_is_refused()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut unit: ArtifactEnvelope = serde_json::from_str(UNITS)?;
         unit.scope = norn_ir::ScopeRef {
             org_id: Some("org_other".into()),
             environment_id: Some("prod".into()),
             ..Default::default()
         };
-        let scoped_units = serde_json::to_string(&unit).unwrap();
-        let base = TrustedBase::from_sources(&[&scoped_units]).unwrap();
+        let scoped_units = serde_json::to_string(&unit)?;
+        let base = TrustedBase::from_sources(&[&scoped_units])
+            .map_err(|refusal| format!("{refusal:?}"))?;
         let body = serde_json::json!({
             "baseSha256": base.sha256(),
             "artifacts": []
         })
         .to_string();
-        let refusal = admit_submission(&base, &cell(), &body).expect_err("base scope conflict");
+        let refusal = admit_submission(&base, &cell(), &body)
+            .err()
+            .ok_or("base scope conflict")?;
         assert_eq!(refusal.code, codes::PROVISION_REFUSED);
         assert!(
             refusal
@@ -698,10 +702,11 @@ mod tests {
                 .any(|d| d.code == codes::SCOPE_CONFLICT),
             "expected scope conflict diagnostic, got: {refusal:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn kernel_model_refuses_cross_scope_supertype() {
+    fn kernel_model_refuses_cross_scope_supertype() -> Result<(), Box<dyn std::error::Error>> {
         let super_narrow: ArtifactEnvelope = serde_json::from_value(serde_json::json!({
             "irVersion": "0.1",
             "artifactId": "shop.SuperNarrow.entity",
@@ -721,8 +726,7 @@ mod tests {
                     "identity": [{ "name": "primary", "properties": ["code"] }]
                 }
             }
-        }))
-        .unwrap();
+        }))?;
         let sub_broad: ArtifactEnvelope = serde_json::from_value(serde_json::json!({
             "irVersion": "0.1",
             "artifactId": "shop.SubBroad.entity",
@@ -742,10 +746,11 @@ mod tests {
                     "properties": []
                 }
             }
-        }))
-        .unwrap();
+        }))?;
         let err = kernel_set::kernel_model(&[super_narrow, sub_broad])
-            .expect_err("cross-scope supertype must fail closed");
+            .err()
+            .ok_or("cross-scope supertype must fail closed")?;
         assert!(matches!(err, KernelRefusal::Refused(_)), "{err:?}");
+        Ok(())
     }
 }

@@ -4,7 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_checker::EffectiveCatalog;
 use norn_checker::entity_scopes::{ScopedView, check_entity_reference_scopes_all};
-use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ObjectTypeDef, ScopeRef};
+use norn_ir::{
+    ArtifactEnvelope, ArtifactKind, EntityRoot, ObjectTypeDef, ObjectTypeName, Property,
+    PropertyConstraints, PropertyId, PropertyType, ResourceStatus, ScopeRef,
+};
 
 use crate::engine::{SqlEngine, params};
 use crate::error::CellError;
@@ -60,6 +63,14 @@ pub(crate) fn parse_cell_scope(raw: &str) -> ScopeRef {
     }
 }
 
+fn bound_scope<E: SqlEngine>(engine: &E) -> Result<Option<String>, CellError> {
+    engine.query_optional(
+        &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+        params!["binding:scope"],
+        |row| row.get::<String>(0),
+    )
+}
+
 /// The cell's authoritative [`ScopeRef`]: `explicit_scope`, which must agree
 /// with any persisted `binding:scope`, or that binding. A cell bound to no
 /// scope has no consumer to check definitions for, so it is refused.
@@ -67,11 +78,7 @@ pub(crate) fn effective_cell_scope<E: SqlEngine>(
     engine: &E,
     explicit_scope: Option<&str>,
 ) -> Result<ScopeRef, CellError> {
-    let bound = engine.query_optional(
-        &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
-        params!["binding:scope"],
-        |row| row.get::<String>(0),
-    )?;
+    let bound = bound_scope(engine)?;
     if let (Some(explicit), Some(bound_val)) = (explicit_scope, bound.as_deref())
         && explicit != bound_val
     {
@@ -189,10 +196,128 @@ pub(crate) fn preflight_candidate<E: SqlEngine>(
     Ok(scope)
 }
 
+/// Refuse to serve the `active` definitions unless `model` is the model they
+/// recorded, the cell is bound to a scope they lie in, and `model` is their
+/// projection (reopen and replayed provisioning).
+pub(crate) fn verify_active<E: SqlEngine>(
+    engine: &E,
+    model: &Model,
+    active: &InstalledDefinitionSet,
+) -> Result<(), CellError> {
+    if active.model_hash != model.model_hash() || active.ddl_hash != model.ddl_hash() {
+        return Err(CellError::SchemaMismatch {
+            expected: format!("{} {}", model.ddl_hash(), model.model_hash()),
+            found: format!("{} {}", active.ddl_hash, active.model_hash),
+        });
+    }
+    let scope = effective_cell_scope(engine, None)?;
+    bind_model(
+        model,
+        &scoped_artifacts(&active.canonical_set, "active", &scope)?,
+    )
+}
+
+/// Bind the cell to `scope` inside the transaction that first activates
+/// definitions for it, so an activated cell is never served under another.
+pub(crate) fn bind_cell_scope<E: SqlEngine>(engine: &E, scope: &str) -> Result<(), CellError> {
+    if bound_scope(engine)?.is_none() {
+        engine.execute(
+            &format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"),
+            params!["binding:scope", scope],
+        )?;
+    }
+    Ok(())
+}
+
+/// The kernel's own record types a host adds beside a tenant's definitions:
+/// action-call receipts and owned-row manifests. A cell model may carry them
+/// only exactly as defined here.
+#[must_use]
+pub fn kernel_record_types() -> Vec<ObjectTypeDef> {
+    let action_call = (
+        norn_kernel::ACTION_CALL_TYPE,
+        &[
+            "actionId",
+            "actionArtifactId",
+            "actionVersion",
+            "effectKind",
+            "actor",
+            "turn",
+            "transition",
+            "from",
+            "to",
+            "ruleBinding",
+        ][..],
+        &[
+            "object",
+            "input",
+            "effectiveInput",
+            "derivedValues",
+            "preconditionOutcomes",
+            "parameterPins",
+            "rowOperations",
+            "trace",
+        ][..],
+    );
+    let owned_rows = (
+        norn_kernel::OWNED_ROWS_TYPE,
+        &["parentType", "parentKey", "collectionId"][..],
+        &["rowIds"][..],
+    );
+    [action_call, owned_rows]
+        .into_iter()
+        .map(|(name, text, json)| {
+            let typed = text
+                .iter()
+                .map(|id| (*id, PropertyType::Text { format: None }))
+                .chain(
+                    json.iter()
+                        .map(|id| (*id, PropertyType::JsonExt { schema: None })),
+                );
+            ObjectTypeDef {
+                immutable: false,
+                name: ObjectTypeName(name.into()),
+                role: None,
+                description: None,
+                status: ResourceStatus::default(),
+                extends: None,
+                implements: vec![],
+                properties: typed
+                    .map(|(id, property_type)| nullable(id, property_type))
+                    .collect(),
+                links: vec![],
+                owned_collections: vec![],
+                identity: vec![],
+                invariants: vec![],
+                lifecycles: vec![],
+                markings: vec![],
+                accounting_leg: None,
+            }
+        })
+        .collect()
+}
+
+fn nullable(id: &str, property_type: PropertyType) -> Property {
+    Property {
+        protected: false,
+        id: PropertyId(id.into()),
+        property_type,
+        description: None,
+        constraints: PropertyConstraints {
+            nullable: true,
+            ..PropertyConstraints::default()
+        },
+        default: None,
+        markings: vec![],
+        computed: None,
+    }
+}
+
 /// Refuse a `model` whose definitions are not those `artifacts` declare: the
-/// same object types and interfaces, besides only the kernel's own record
-/// types, which stay unwired from tenant definitions, and only shared
-/// property types the set declares identically.
+/// same object types and interfaces, besides only the exact
+/// [`kernel_record_types`], and only shared property types the set declares
+/// identically. A cell model projects no object type extension, so a set
+/// declaring one is refused here as at provisioning.
 fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellError> {
     let (mut objects, mut interfaces, mut properties) =
         (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
@@ -215,12 +340,19 @@ fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellE
                     .into_iter()
                     .map(|def| (def.name.0.clone(), def)),
             ),
-            EntityRoot::V2Extension(_) | EntityRoot::V2Markings(_) | EntityRoot::V1(_) => {}
+            EntityRoot::V2Extension(_) => {
+                return Err(refused(format!(
+                    "{:?} extends an object type, which a cell model does not project",
+                    artifact.artifact_id
+                )));
+            }
+            EntityRoot::V2Markings(_) | EntityRoot::V1(_) => {}
         }
     }
+    let kernel = kernel_record_types();
     let modelled: BTreeMap<_, _> = model
         .object_types()
-        .filter(|def| objects.contains_key(def.name.as_str()) || !is_kernel_record_type(def))
+        .filter(|def| objects.contains_key(def.name.as_str()) || !kernel.contains(def))
         .map(|def| (def.name.0.clone(), def.clone()))
         .collect();
     let model_interfaces: BTreeMap<_, _> = model
@@ -237,16 +369,6 @@ fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellE
         ));
     }
     Ok(())
-}
-
-fn is_kernel_record_type(def: &ObjectTypeDef) -> bool {
-    [norn_kernel::ACTION_CALL_TYPE, norn_kernel::OWNED_ROWS_TYPE].contains(&def.name.as_str())
-        && def.extends.is_none()
-        && def.implements.is_empty()
-        && def.links.is_empty()
-        && def.owned_collections.is_empty()
-        && def.lifecycles.is_empty()
-        && def.invariants.is_empty()
 }
 
 impl<E: SqlEngine> CellStore<E> {

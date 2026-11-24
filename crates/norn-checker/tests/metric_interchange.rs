@@ -29,7 +29,6 @@ fn catalog() -> EffectiveCatalog {
         &artifacts,
         &BTreeSet::from([PropertyTypeName("iso4217.currency_code".into())]),
     )
-    .expect("one scope")
     .into_catalog()
 }
 fn definition(source: &str) -> MetricDefinition {

@@ -109,7 +109,7 @@ fn a_flow_quantity_derives_its_sum_and_a_stock_of_the_same_type_only_its_snapsho
     let artifacts = admitted();
     assert_eq!(errors(&artifacts), BTreeSet::new());
     let space = derive_metric_space(
-        &ScopedView::uniform(&artifacts, &BTreeSet::new()).expect("one scope"),
+        &ScopedView::uniform(&artifacts, &BTreeSet::new()),
         &LawRoot::Entity("demo.Delivery".to_owned()),
     )
     .expect("derived space");
@@ -243,7 +243,7 @@ fn partitioned(sources: &[&str]) -> Value {
 
 fn space(artifacts: &[ArtifactEnvelope]) -> norn_checker::metric::derive::MetricSpace {
     derive_metric_space(
-        &ScopedView::uniform(artifacts, &BTreeSet::new()).expect("one scope"),
+        &ScopedView::uniform(artifacts, &BTreeSet::new()),
         &LawRoot::Entity("demo.Delivery".to_owned()),
     )
     .expect("derived space")
@@ -302,9 +302,7 @@ fn a_quantity_with_a_stored_unit_aggregates_only_with_every_source_grouped_or_fi
         .map(|path| path.property.as_str())
         .collect();
     assert_eq!(paths, ["unit", "currency"]);
-    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let ways = ["free", "grouped", "eq", "ne"];
     for unit in ways {
         for currency in ways {
@@ -360,7 +358,7 @@ fn an_amount_aggregates_per_its_stored_currency_unless_it_has_one_code() {
         let artifacts = vec![envelope("demo.Payment.entity", &payment)];
         assert_eq!(errors(&artifacts), BTreeSet::new());
         let space = derive_metric_space(
-            &ScopedView::uniform(&artifacts, &BTreeSet::new()).expect("one scope"),
+            &ScopedView::uniform(&artifacts, &BTreeSet::new()),
             &LawRoot::Entity("demo.Payment".to_owned()),
         )
         .expect("derived space");
@@ -376,9 +374,7 @@ fn an_amount_aggregates_per_its_stored_currency_unless_it_has_one_code() {
             .map(|path| path.property.as_str())
             .collect();
         assert_eq!(paths, if single { vec![] } else { vec!["currency"] });
-        let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
-            .expect("one scope")
-            .into_catalog();
+        let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
         for how in ["free", "grouped", "eq", "ne"] {
             let mut dimensions = vec![json!({"path": {"property": "paid_at"}, "grain": "week"})];
             let mut filters = Vec::new();

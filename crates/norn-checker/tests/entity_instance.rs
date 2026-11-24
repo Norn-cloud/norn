@@ -43,7 +43,6 @@ fn ref_and_interface_constraints_conjoin_on_the_effective_property() {
         &envelopes(&[CATALOG, INTERFACE, SUPPLIER]),
         &std::collections::BTreeSet::new(),
     )
-    .expect("one scope")
     .into_catalog();
     let supplier = catalog
         .object_type("purchasing.Supplier.entity.v2")
@@ -136,9 +135,8 @@ fn property_and_computed_markings_accumulate_from_shared_types_and_interfaces() 
           }}
         }"#,
     ]);
-    let catalog = ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog =
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog();
     let person = catalog
         .object_type("test.person")
         .expect("person artifact defines an object type")
@@ -202,7 +200,6 @@ fn a_finding_blocks_only_the_types_that_depend_on_its_artifact() {
         &envelopes(&[CATALOG, INTERFACE, SUPPLIER, UNKNOWN_SUPERTYPE]),
         &std::collections::BTreeSet::new(),
     )
-    .expect("one scope")
     .into_catalog();
     let blocked = catalog
         .object_type("retail.SeasonalSku.entity.v2")
@@ -247,9 +244,8 @@ fn historical_oversized_type_and_link_names_remain_projectable_but_not_admissibl
     );
     let artifacts = [long_type, customer];
 
-    let catalog = ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog =
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog();
     catalog
         .object_type_named(&long_type_name)
         .expect("historical type is indexed")
@@ -292,7 +288,6 @@ fn historical_oversized_type_and_link_names_remain_projectable_but_not_admissibl
         &[artifacts[0].clone(), invalid_customer],
         &std::collections::BTreeSet::new(),
     )
-    .expect("one scope")
     .into_catalog();
     assert_eq!(
         catalog
@@ -331,10 +326,10 @@ fn defaults_are_materialized_in_instance_encoding() {
         }
     });
     let catalog = ScopedView::uniform(
-        &[serde_json::from_value(artifact).expect("envelope should decode")],
+        &[serde_json::from_value(artifact)
+            .unwrap_or_else(|error| panic!("envelope should decode: {error}"))],
         &std::collections::BTreeSet::new(),
     )
-    .expect("one scope")
     .into_catalog();
     let bin = catalog
         .object_type("retail.Bin.entity.v2")
@@ -395,7 +390,6 @@ fn sku_type(property_type: &str) -> ArtifactEnvelope {
 
 fn availability(artifacts: &[ArtifactEnvelope], artifact_id: &str) -> Result<(), String> {
     ScopedView::uniform(artifacts, &std::collections::BTreeSet::new())
-        .expect("one scope")
         .into_catalog()
         .object_type(artifact_id)
         .expect("the artifact defines an object type")
@@ -652,9 +646,8 @@ fn record_member_refs_enforce_catalog_constraints_and_exact_defaults() {
         .into_iter()
         .map(|value| serde_json::from_value(value).expect("envelope"))
         .collect();
-    let catalog = ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog =
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog();
     let object = catalog
         .object_type("retail.Sku.entity.v2")
         .expect("object")

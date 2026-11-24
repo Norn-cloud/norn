@@ -299,6 +299,61 @@ pub(crate) fn verify_retained(
     installed: &InstalledDefinitionSet,
     scope: &CellScope,
 ) -> Result<Vec<String>, Refusal> {
+    retained_receipt(installed, scope).map(|retained| retained.base_ids)
+}
+
+/// [`verify_retained`], then the set must pass current scoped admission under
+/// that receipt before it supplies executable actions: a historical receipt
+/// attests what was admitted, not that today's checks still admit it.
+pub(crate) fn admit_retained(
+    installed: &InstalledDefinitionSet,
+    scope: &CellScope,
+) -> Result<(), Refusal> {
+    let retained = retained_receipt(installed, scope)?;
+    let sources = norn_checker::ReceiptSources::new(&retained.candidates, &retained.base)
+        .map_err(Refusal::host)?;
+    let base = retained
+        .base
+        .iter()
+        .map(norn_ir::runtime::decode)
+        .collect::<Result<Vec<norn_ir::ArtifactEnvelope>, _>>()
+        .map_err(Refusal::host)?;
+    let context = norn_checker::EntityArtifactSetContext {
+        registry: &std::collections::BTreeSet::new(),
+        base: &base,
+        tenant: None,
+    };
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let checked = norn_checker::check_artifact_set_with_verified_receipt(
+        &sources,
+        &context,
+        &limits,
+        &retained.version,
+    )
+    .map_err(Refusal::host)?;
+    if checked
+        .diagnostics
+        .iter()
+        .any(norn_checker::Diagnostic::is_error)
+    {
+        return Err(Refusal::host(
+            "the retained definitions no longer pass scoped admission",
+        ));
+    }
+    Ok(())
+}
+
+struct Retained {
+    base_ids: Vec<String>,
+    candidates: Vec<RuntimeValue>,
+    base: Vec<RuntimeValue>,
+    version: norn_checker::ReceiptVersion,
+}
+
+fn retained_receipt(
+    installed: &InstalledDefinitionSet,
+    scope: &CellScope,
+) -> Result<Retained, Refusal> {
     let receipt = installed
         .admission_receipt
         .as_deref()
@@ -361,7 +416,12 @@ pub(crate) fn verify_retained(
         &base,
         &limits,
     )
-    .map(|_| base_ids)
+    .map(|version| Retained {
+        base_ids,
+        candidates,
+        base,
+        version,
+    })
     .map_err(|error| {
         if matches!(
             &error,

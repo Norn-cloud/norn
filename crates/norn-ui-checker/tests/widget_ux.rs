@@ -4795,6 +4795,40 @@ fn catalog_edit(change: impl FnOnce(&mut Value)) -> Value {
     widget
 }
 
+/// #1376: another widget's catalog entry resolves only through an exact
+/// required dependency on a widget the owner's scope sees.
+#[test]
+fn an_external_catalog_entry_resolves_only_within_the_owners_scope() {
+    let provider_id = "commerce.catalog_provider.widget";
+    let narrow = json!({ "orgId": "org_demo", "environmentId": "dev", "tenantId": "tenant_alpha" });
+    let mut provider = catalog_widget();
+    provider["artifactId"] = json!(provider_id);
+    provider["payload"]["widgetId"] = json!(provider_id);
+    provider["scope"] = narrow.clone();
+    let version = provider["version"].clone();
+    for (scope, refused) in [(widget()["scope"].clone(), true), (narrow, false)] {
+        let mut consumer = catalog_widget();
+        consumer["scope"] = scope;
+        consumer["dependencies"]
+            .as_array_mut()
+            .req("dependencies")
+            .push(json!({ "artifactId": provider_id, "kind": "widget", "version": version, "required": true }));
+        for node in consumer["payload"]["ux"]["pages"][0]["root"]["children"]
+            .as_array_mut()
+            .req("children")
+            .iter_mut()
+            .filter(|node| node["nodeId"] == "kpi-node")
+        {
+            node["component"]["entry"]["widget"] = json!({ "id": provider_id, "version": version });
+        }
+        let found = widget_findings_with_base(consumer, std::slice::from_ref(&provider));
+        let unknown = found
+            .iter()
+            .any(|finding| finding.code.as_str() == "widget.catalog.unknown_entry");
+        assert_eq!(unknown, refused, "{found:#?}");
+    }
+}
+
 #[test]
 fn catalog_components_join_the_page_only_through_their_contracts() {
     let found = ui_codes(catalog_widget());

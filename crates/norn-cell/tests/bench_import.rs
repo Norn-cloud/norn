@@ -247,9 +247,7 @@ fn country_weekly_quantity(
     store: &mut CellStore,
     artifacts: &[ArtifactEnvelope],
 ) -> serde_json::Value {
-    let catalog = ScopedView::uniform(artifacts, &std::collections::BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog = ScopedView::uniform(artifacts, &std::collections::BTreeSet::new()).into_catalog();
     let mut metric: norn_ir::MetricDefinition = serde_json::from_str(include_str!(
         "../../../fixtures/ir/metrics/net-sales.definition.json"
     ))

@@ -186,7 +186,7 @@ fn historical_env(
     let consumer = artifacts
         .first()
         .or_else(|| base.first())
-        .expect("a definition");
+        .unwrap_or_else(|| panic!("a definition"));
     ScopedView::of(consumer, artifacts, base, &BTreeSet::new())
         .receipt_env(limits)
         .expect("historical definitions")
@@ -251,7 +251,6 @@ fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
     assert_eq!(receipt.type_env.as_ref().unwrap().version, 3);
     receipt.type_env = Some(
         ScopedView::uniform(&artifacts, &BTreeSet::new())
-            .expect("one scope")
             .receipt_env(&limits)
             .unwrap()
             .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
@@ -481,9 +480,8 @@ fn bound_env_is_the_derived_environment_of_the_set() {
     let receipt = receipt(&artifacts);
     let limits = ResourceLimitProfile::norn_limits_v1();
     let env = ScopedView::uniform(&envelopes(&artifacts), &BTreeSet::new())
-        .expect("one scope")
         .receipt_env(&limits)
-        .expect("environment");
+        .unwrap_or_else(|errors| panic!("environment: {errors:?}"));
     assert_eq!(receipt.type_env, Some(env.reference().expect("hash")));
     // Only `actor` is bound at the set level; sites bind `self`/`input`.
     assert_eq!(
@@ -748,15 +746,15 @@ fn historical_receipt_verification_does_not_rerun_current_admission() {
     // bindings; it must not use the current checker's refusal as a reason to
     // reinterpret that historical attestation.
     let type_env = ScopedView::of(
-        &(&candidate_envelopes)[0],
+        &candidate_envelopes[0],
         &candidate_envelopes,
         &base_envelopes,
         &BTreeSet::new(),
     )
     .receipt_env(&limits)
-    .expect("the entity base still supplies its type environment")
+    .unwrap_or_else(|errors| panic!("the entity base supplies its type environment: {errors:?}"))
     .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
-    .expect("environment hash");
+    .unwrap_or_else(|error| panic!("environment hash: {error}"));
     let historical = CheckReceipt {
         checker: CHECKER_NAME.to_owned(),
         checker_version: "0.1.0".to_owned(),
@@ -1040,7 +1038,6 @@ fn val_env_action_json_leaf_and_exact_refinement_share_the_action_dialect() {
     },"required":["payload","amount"],"additionalProperties":false});
     let artifacts = envelopes(&[action]);
     let env = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
         .receipt_env(&ResourceLimitProfile::norn_limits_v1())
         .expect("action dialect binds both leaves");
     assert!(

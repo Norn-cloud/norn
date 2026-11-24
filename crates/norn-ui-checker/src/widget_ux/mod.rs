@@ -96,19 +96,8 @@ pub fn check_widget_ux_set(
         );
         checker.check();
         let nullable_inputs = checker.nullable_form_inputs();
-        let composed = |widget: &norn_ir::WidgetArtifactRef| {
-            let baseline = combined.iter().find(|candidate| {
-                candidate.artifact_id == widget.id
-                    && candidate.version == widget.version
-                    && candidate.kind() == ArtifactKind::Widget
-            })?;
-            let ArtifactPayload::Widget(payload) = &baseline.payload else {
-                return None;
-            };
-            serde_json::to_value(payload.ux.as_value()?)
-                .and_then(serde_json::from_value::<norn_ir::WidgetUx>)
-                .ok()
-        };
+        let composed =
+            |widget: &norn_ir::WidgetArtifactRef| composed_ux(artifact, &combined, widget);
         diagnostics.extend(crate::ui_interaction::check(
             artifact,
             &ux,
@@ -476,6 +465,32 @@ fn finding(owner: &ArtifactEnvelope, path: &str, message: impl Into<String>) -> 
         artifact_id: Some(owner.artifact_id.clone()),
         remediation: Some(DiagnosticRemediation::FixDefinition),
     }
+}
+
+/// The typed UX of `widget` as `owner` may compose it: an exact required
+/// dependency of `owner` that resolves in `all` within a scope `owner` sees.
+pub(crate) fn composed_ux(
+    owner: &ArtifactEnvelope,
+    all: &[ArtifactEnvelope],
+    widget: &norn_ir::WidgetArtifactRef,
+) -> Option<WidgetUx> {
+    let kind = ArtifactKind::Widget;
+    let pinned = owner
+        .dependencies
+        .iter()
+        .any(|dependency| dependency_matches(dependency, &widget.id, &widget.version, &kind));
+    let baseline = all.iter().find(|candidate| {
+        candidate.artifact_id == widget.id
+            && candidate.version == widget.version
+            && candidate.kind() == kind
+            && scope_visible(&owner.scope, &candidate.scope)
+    });
+    let ArtifactPayload::Widget(payload) = &baseline.filter(|_| pinned)?.payload else {
+        return None;
+    };
+    serde_json::to_value(payload.ux.as_value()?)
+        .and_then(serde_json::from_value::<WidgetUx>)
+        .ok()
 }
 
 fn dependency_matches(

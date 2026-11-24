@@ -731,9 +731,7 @@ fn lifecycle_conditions_and_authoritative_runtime_targets_are_admitted() {
         .any(|finding| finding.message.contains("enabledWhen must exactly match"));
     assert!(!has_condition_mismatch);
     let artifacts = vec![decode(entity)];
-    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let object = catalog
         .object_type("test.Record.entity")
         .expect("object lookup")
@@ -998,9 +996,7 @@ fn generated_lifecycle_conditions_use_effective_inherited_narrowing() {
         }),
     );
     let artifacts = vec![decode(base.clone()), decode(child.clone())];
-    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let object = catalog
         .object_type("test.NarrowRecord.entity")
         .expect("lookup")

@@ -11,40 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 /// # Errors
 /// Tenant declarations using SQLite-equivalent reserved names or invalid models refuse.
 pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model, Refusal> {
-    use norn_ir::{ObjectTypeDef, ObjectTypeName, Property, PropertyId, PropertyType};
     let mut snapshot = model.definitions_snapshot();
-    for (name, text_fields, json_fields) in [
-        (
-            norn_kernel::ACTION_CALL_TYPE,
-            &[
-                "actionId",
-                "actionArtifactId",
-                "actionVersion",
-                "effectKind",
-                "actor",
-                "turn",
-                "transition",
-                "from",
-                "to",
-                "ruleBinding",
-            ][..],
-            &[
-                "object",
-                "input",
-                "effectiveInput",
-                "derivedValues",
-                "preconditionOutcomes",
-                "parameterPins",
-                "rowOperations",
-                "trace",
-            ][..],
-        ),
-        (
-            norn_kernel::OWNED_ROWS_TYPE,
-            &["parentType", "parentKey", "collectionId"][..],
-            &["rowIds"][..],
-        ),
-    ] {
+    for record in norn_cell::kernel_record_types() {
+        let name = record.name.as_str();
         if snapshot
             .object_types
             .iter()
@@ -56,45 +25,7 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
         {
             return Err(Refusal::invalid("reserved kernel object type"));
         }
-        let properties = text_fields
-            .iter()
-            .map(|id| (*id, PropertyType::Text { format: None }))
-            .chain(
-                json_fields
-                    .iter()
-                    .map(|id| (*id, PropertyType::JsonExt { schema: None })),
-            )
-            .map(|(id, property_type)| Property {
-                protected: false,
-                id: PropertyId(id.into()),
-                property_type,
-                description: None,
-                constraints: norn_ir::PropertyConstraints {
-                    nullable: true,
-                    ..Default::default()
-                },
-                default: None,
-                markings: vec![],
-                computed: None,
-            })
-            .collect();
-        snapshot.object_types.push(ObjectTypeDef {
-            immutable: false,
-            name: ObjectTypeName(name.into()),
-            role: None,
-            description: None,
-            status: norn_ir::ResourceStatus::default(),
-            extends: None,
-            implements: vec![],
-            properties,
-            links: vec![],
-            owned_collections: vec![],
-            identity: vec![],
-            invariants: vec![],
-            lifecycles: vec![],
-            markings: vec![],
-            accounting_leg: None,
-        });
+        snapshot.object_types.push(record);
     }
     norn_cell::Model::from_snapshot(&snapshot).map_err(Refusal::host)
 }
@@ -108,7 +39,7 @@ pub(crate) struct RetainedActions {
 }
 impl RetainedActions {
     pub(crate) fn load(set: &InstalledDefinitionSet, scope: &CellScope) -> Result<Self, Refusal> {
-        crate::routes::verify_retained(set, scope)?;
+        crate::routes::admit_retained(set, scope)?;
         let RuntimeValue::Array(sources) =
             RuntimeValue::from_json_text(&set.canonical_set).map_err(Refusal::host)?
         else {
@@ -387,4 +318,147 @@ pub(crate) fn target_version<E: norn_cell::engine::SqlEngine>(
             receipt.body.commit_seq,
         )
         .map_err(Refusal::host)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RetainedActions;
+    use crate::scope::CellScope;
+    use norn_checker::entity_scopes::ScopedView;
+    use norn_checker::{EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt};
+    use norn_ir::{ArtifactEnvelope, ResourceLimitProfile, RuntimeValue};
+    use serde_json::{Value, json};
+    use std::collections::BTreeSet;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn envelope(
+        id: &str,
+        kind: &str,
+        scope: &Value,
+        payload: &Value,
+    ) -> serde_json::Result<ArtifactEnvelope> {
+        serde_json::from_value(json!({
+            "irVersion": "0.1", "artifactId": id, "kind": kind, "namespace": "retail", "name": id,
+            "version": "1.0.0", "lifecycle": "draft", "scope": scope, "dependencies": [],
+            "provenance": { "source": "authoring_sdk" }, "payload": payload
+        }))
+    }
+
+    /// A broader writer of a narrower extension's property, as a set admitted
+    /// before scoped admission retains it.
+    fn legacy_set() -> serde_json::Result<Vec<ArtifactEnvelope>> {
+        let sku = json!({ "entityVersion": "2.0", "objectType": {
+            "name": "retail.Sku",
+            "properties": [{ "id": "sku_code", "type": { "kind": "text" } }],
+            "identity": [{ "name": "primary", "properties": ["sku_code"] }]
+        } });
+        let extension = json!({ "entityVersion": "2.0", "objectTypeExtension": {
+            "namespace": "acme",
+            "target": "retail.Sku",
+            "properties": [{ "id": "acme__secret_tag", "type": { "kind": "text" }, "constraints": { "nullable": true } }]
+        } });
+        let writer = json!({
+            "actionId": "retail.write_secret",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "properties": { "sku_code": { "type": "string" }, "acme__secret_tag": { "type": "string" } },
+                "required": ["sku_code"],
+                "additionalProperties": false
+            },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "effectProgram": {
+                "kind": "upsert_input_object",
+                "objectKind": "retail.Sku",
+                "objectIdField": "sku_code",
+                "entityArtifactId": "retail.Sku.entity",
+                "entityArtifactVersion": "1.0.0"
+            },
+            "writes": [
+                { "entityKind": "retail.Sku", "change": "created" },
+                { "entityKind": "retail.Sku", "change": "modified" }
+            ]
+        });
+        Ok(vec![
+            envelope("retail.Sku.entity", "entity", &json!({}), &sku)?,
+            envelope(
+                "acme.SkuExt.entity",
+                "entity",
+                &json!({ "orgId": "org_demo", "environmentId": "dev" }),
+                &extension,
+            )?,
+            envelope(
+                "retail.write_secret",
+                "action",
+                &json!({ "orgId": "org_demo" }),
+                &writer,
+            )?,
+        ])
+    }
+
+    #[test]
+    fn a_retained_set_the_scoped_checks_refuse_supplies_no_actions() -> TestResult {
+        let artifacts = legacy_set()?;
+        let values = artifacts
+            .iter()
+            .map(|artifact| {
+                RuntimeValue::from_json(serde_json::to_value(artifact)?).map_err(Into::into)
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
+        let checked = check_artifact_set_with_receipt(
+            &ReceiptSources::new(&values, &[])?,
+            &context,
+            &limits,
+        )?;
+        assert!(!checked.receipt.admitted, "{:#?}", checked.diagnostics);
+        let narrow = artifacts.get(1).ok_or("extension")?;
+        let mut legacy = checked.receipt;
+        legacy.admitted = true;
+        legacy.diagnostics.count = 0;
+        legacy.diagnostics.errors = 0;
+        let whole_set = ScopedView::of(narrow, &artifacts, &[], &registry)
+            .receipt_env(&limits)
+            .map_err(|errors| format!("{errors:?}"))?;
+        legacy.type_env = Some(whole_set.reference()?);
+        let installed = norn_cell::InstalledDefinitionSet {
+            version: 1,
+            receipt_sha256: legacy.content_sha256()?,
+            admission_receipt: Some(String::from_utf8(legacy.canonical_json()?)?),
+            canonical_set: String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts)?)?,
+            registry: Vec::new(),
+            model_hash: String::new(),
+            ddl_hash: String::new(),
+            installed_at: 1,
+            commit_seq: 1,
+            layout: None,
+            layout_revision: 0,
+        };
+        let scope = CellScope {
+            org_id: "org_demo".to_owned(),
+            environment_id: "dev".to_owned(),
+        };
+        crate::routes::verify_retained(&installed, &scope)
+            .map_err(|refusal| format!("{refusal:?}"))?;
+        let refused = format!(
+            "{:?}",
+            RetainedActions::load(&installed, &scope)
+                .err()
+                .ok_or("actions loaded")?
+        );
+        assert!(
+            refused.contains("no longer pass scoped admission"),
+            "{refused}"
+        );
+        Ok(())
+    }
 }

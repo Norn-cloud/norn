@@ -347,7 +347,11 @@ fn a_scoped_view_derives_catalog_environment_and_metrics_from_its_scope_alone() 
         )?,
     ];
     let registry = BTreeSet::new();
-    assert!(ScopedView::uniform(&pool, &registry).is_none());
+    let mixed = ScopedView::uniform(&pool, &registry).into_catalog();
+    let mixed_sku = mixed
+        .object_type_named("retail.Sku")
+        .and_then(|sku| sku.ok());
+    assert!(mixed_sku.is_some_and(|sku| sku.property("acme__secret_amount").is_none()));
     let limits = ResourceLimitProfile::norn_limits_v1();
     for (scope, sees) in [
         (tenant("tenant_a"), true),

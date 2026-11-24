@@ -1718,7 +1718,7 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
         set.extend(read(&format!("registry/packs/{name}/artifacts")));
     }
     let space = norn_checker::metric::derive::derive_metric_space(
-        &ScopedView::uniform(&set, &std::collections::BTreeSet::new()).expect("one scope"),
+        &ScopedView::uniform(&set, &std::collections::BTreeSet::new()),
         &norn_ir::LawRoot::Entity("canon.Holding".to_owned()),
     )
     .unwrap_or_else(|findings| panic!("the registry packs derive: {findings:#?}"));

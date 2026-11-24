@@ -1194,7 +1194,7 @@ fn model_and_source_check_clean_on_their_own() {
     );
     assert_eq!(findings, [], "{findings:#?}");
     let artifacts = model_artifacts();
-    let view = ScopedView::uniform(&artifacts, &BTreeSet::new()).expect("one scope");
+    let view = ScopedView::uniform(&artifacts, &BTreeSet::new());
     assert!(MappingModel::of(&view).is_ok());
 }
 

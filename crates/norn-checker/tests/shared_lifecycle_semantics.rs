@@ -77,9 +77,8 @@ fn effective_lifecycles_equal_the_checker_machines() {
     let by_name: BTreeMap<&str, &ObjectTypeDef> =
         defs.iter().map(|def| (def.name.as_str(), def)).collect();
     let lookup = |name: &str| by_name.get(name).copied();
-    let catalog = ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog =
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog();
     for def in &defs {
         let name = def.name.as_str();
         let checker = catalog
@@ -111,9 +110,8 @@ fn immutable_states_are_inherited_through_lifecycle_redeclaration() {
     base["lifecycles"][0]["immutable"] = json!(["submitted"]);
     let child = object_type("rush-purchase-order.object-type.json");
     let artifacts = [envelope(&base), envelope(&child)];
-    let catalog = ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog =
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog();
     let child = catalog
         .object_type("commerce.RushPurchaseOrder.entity")
         .expect("child is defined")
@@ -224,9 +222,8 @@ fn lifecycle_over_an_extension_property_is_effective() {
         defs.iter().map(|def| (def.name.as_str(), def)).collect();
     let lookup = |name: &str| by_name.get(name).copied();
 
-    let catalog = ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog =
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog();
     let checker = catalog
         .object_type("commerce.AcmeTicket.entity")
         .expect("defined")

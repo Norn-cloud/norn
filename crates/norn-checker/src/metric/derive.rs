@@ -952,11 +952,10 @@ mod ontology_derived_measures {
 
     fn space(artifacts: &[ArtifactEnvelope]) -> MetricSpace {
         derive_metric_space(
-            &crate::entity_scopes::ScopedView::uniform(artifacts, &BTreeSet::new())
-                .expect("one scope"),
+            &crate::entity_scopes::ScopedView::uniform(artifacts, &BTreeSet::new()),
             &scope(),
         )
-        .expect("derived space")
+        .unwrap_or_else(|findings| panic!("derived space: {findings:?}"))
     }
 
     fn yield_question(space: &MetricSpace) -> QuestionIR {

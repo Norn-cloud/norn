@@ -1,7 +1,8 @@
-//! Security #1376 regression suite: shared cell-scope enforcement at
-//! `CellStore::install_definitions` and `CellStore::check_definitions_in_scope`.
+//! Security #1376 regression suite: shared cell-scope and model binding
+//! enforcement at install, check, reopen and the cell's scope binding.
 
-use norn_cell::{CellError, CellStore, InstalledDefinitionInput, Model};
+use norn_cell::engine::{NativeEngine, SqlEngine};
+use norn_cell::{CellError, CellStore, InstalledDefinitionInput, Model, StoreOptions};
 use norn_ir::{ArtifactEnvelope, ObjectTypeDef};
 use serde_json::{Value, json};
 
@@ -238,5 +239,115 @@ fn definitions_are_checked_for_a_bound_scope_against_the_model_their_set_project
         );
     }
     store.install_definitions(model, input_for(&[item])?, Some(0), "org_demo/dev")?;
+    Ok(())
+}
+
+fn org_item() -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
+    entity_envelope(
+        "defs.Item.entity",
+        "defs.Item",
+        &json!({ "orgId": "org_demo", "environmentId": "dev" }),
+        None,
+    )
+}
+
+#[test]
+fn an_activated_cell_is_bound_to_its_install_scope() -> TestResult {
+    let model = item_model()?;
+    let mut store = CellStore::open_in_memory(model.clone())?;
+    store.install_definitions(model, input_for(&[org_item()?])?, Some(0), "org_demo/dev")?;
+    let rebound = store.bind("scope", "org_other/dev");
+    assert!(
+        matches!(&rebound, Err(CellError::BindingMismatch { .. })),
+        "{rebound:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_reopened_cell_serves_its_definitions_only_under_its_bound_scope() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("cell.sqlite");
+    let model = item_model()?;
+    let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+    store.install_definitions(
+        model.clone(),
+        input_for(&[org_item()?])?,
+        Some(0),
+        "org_demo/dev",
+    )?;
+    drop(store);
+    drop(CellStore::open(
+        &path,
+        model.clone(),
+        StoreOptions::default(),
+    )?);
+    NativeEngine::open(&path, StoreOptions::default())?
+        .execute_batch(r#"DELETE FROM "_norn_meta" WHERE "key" = 'binding:scope'"#)?;
+    let reopened = CellStore::open(&path, model, StoreOptions::default());
+    assert!(
+        matches!(&reopened, Err(CellError::DefinitionMigrationRefused(_))),
+        "{:?}",
+        reopened.err()
+    );
+    Ok(())
+}
+
+#[test]
+fn only_the_exact_kernel_record_types_ride_beside_a_definition_set() -> TestResult {
+    let item: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "defs.Item",
+        "properties": [{ "id": "code", "type": { "kind": "text" } }],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    }))?;
+    let exact = norn_cell::kernel_record_types();
+    let mut tampered = exact.clone();
+    let action_call = tampered.first_mut().ok_or("action call record")?;
+    action_call.properties.push(serde_json::from_value(
+        json!({ "id": "exfiltrated", "type": { "kind": "text" }, "constraints": { "nullable": true } }),
+    )?);
+    for (records, admitted) in [(tampered, false), (exact, true)] {
+        let mut types = vec![item.clone()];
+        types.extend(records);
+        let model = Model::from_definitions(&types, &[])?;
+        let mut store = CellStore::open_in_memory(model.clone())?;
+        let installed =
+            store.install_definitions(model, input_for(&[org_item()?])?, Some(0), "org_demo/dev");
+        assert_eq!(installed.is_ok(), admitted, "{:?}", installed.err());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_definition_set_with_an_extension_is_refused_at_the_cell() -> TestResult {
+    let extension: ArtifactEnvelope = serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "artifactId": "acme.ItemExt.entity",
+        "kind": "entity",
+        "namespace": "acme",
+        "name": "ItemExt",
+        "version": "1.0.0",
+        "lifecycle": "draft",
+        "scope": { "orgId": "org_demo", "environmentId": "dev" },
+        "dependencies": [],
+        "provenance": { "source": "authoring_sdk" },
+        "payload": { "entityVersion": "2.0", "objectTypeExtension": {
+            "namespace": "acme",
+            "target": "defs.Item",
+            "properties": [{ "id": "acme__note", "type": { "kind": "text" }, "constraints": { "nullable": true } }]
+        } }
+    }))?;
+    let model = item_model()?;
+    let mut store = CellStore::open_in_memory(model.clone())?;
+    let refused = store.install_definitions(
+        model,
+        input_for(&[org_item()?, extension])?,
+        Some(0),
+        "org_demo/dev",
+    );
+    assert!(
+        matches!(&refused, Err(CellError::DefinitionMigrationRefused(_))),
+        "{refused:?}"
+    );
     Ok(())
 }

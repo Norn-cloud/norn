@@ -2524,13 +2524,8 @@ impl<E: SqlEngine> CellStore<E> {
                 });
             }
         }
-        if let Some(active) = Self::read_active_definitions(conn)?
-            && (active.model_hash != model.model_hash() || active.ddl_hash != model.ddl_hash())
-        {
-            return Err(CellError::SchemaMismatch {
-                expected: format!("{} {}", model.ddl_hash(), model.model_hash()),
-                found: format!("{} {}", active.ddl_hash, active.model_hash),
-            });
+        if let Some(active) = Self::read_active_definitions(conn)? {
+            crate::definition_scope::verify_active(conn, model, &active)?;
         }
         Ok(())
     }
@@ -3215,12 +3210,15 @@ impl<E: SqlEngine> CellStore<E> {
                         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                         params![key], |row| row.get::<String>(0),
                     );
-                    let active = Self::read_active_definitions(&self.conn)?;
-                    if binding("binding:provision")?.as_deref() != Some(identity)
-                        || binding("binding:scope")?.as_deref() != Some(batch.scope.as_str())
-                        || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
+                    let active = Self::read_active_definitions(&self.conn)?.filter(|set| {
+                        set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()
+                    });
+                    let (Some(active), true) = (active, binding("binding:provision")?.as_deref() == Some(identity)
+                        && binding("binding:scope")?.as_deref() == Some(batch.scope.as_str()))
+                    else {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
-                    }
+                    };
+                    crate::definition_scope::verify_active(&self.conn, &self.model, &active)?;
                     let pass = RefCell::default();
                     let verified = self.verify_history(&pass)?;
                     refuse_pin_past(self.fork.as_ref(), verified.head.commits)?;
@@ -3248,6 +3246,7 @@ impl<E: SqlEngine> CellStore<E> {
                     retained,
                     Some(batch.scope.as_str()),
                 )?;
+                crate::definition_scope::bind_cell_scope(&self.conn, batch.scope.as_str())?;
                 self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
                     &self.conn,

@@ -50,9 +50,8 @@ pub(crate) fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
     artifact["provenance"] = json!({"source":"import","sourcePath":"synthetic:scrap-yield-k1.csv"});
     artifact["payload"] = json!({"entityVersion":"2.0","objectType":object});
     let artifact: ArtifactEnvelope = serde_json::from_value(artifact).expect("typed artifact");
-    let catalog = ScopedView::uniform(&[artifact], &std::collections::BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog =
+        ScopedView::uniform(&[artifact], &std::collections::BTreeSet::new()).into_catalog();
     let model = Model::from_definitions(&[object], &[]).expect("model");
     let mut out: MetricDefinition = serde_json::from_str(include_str!(
         "../../../../fixtures/ir/metrics/net-sales.definition.json"
@@ -260,10 +259,9 @@ pub(crate) fn loss_plan() -> QuestionPlan {
     artifact["namespace"] = json!("demo");
     artifact["payload"] = json!({"entityVersion":"2.0","objectType":store.model().object_types().next().expect("conversion")});
     let catalog = ScopedView::uniform(
-        &[serde_json::from_value(artifact).expect("typed model")],
+        &[serde_json::from_value(artifact).unwrap_or_else(|error| panic!("typed model: {error}"))],
         &std::collections::BTreeSet::new(),
     )
-    .expect("one scope")
     .into_catalog();
     let mut metric = base
         .definitions()
@@ -319,9 +317,8 @@ pub(crate) fn admit_on(
         .expect("tree"),
     )
     .expect("payload");
-    let catalog = ScopedView::uniform(&artifacts[..1], &std::collections::BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog =
+        ScopedView::uniform(&artifacts[..1], &std::collections::BTreeSet::new()).into_catalog();
     norn_checker::metric::compute::admit(definitions, question, &catalog, 100).expect("admitted")
 }
 pub(crate) type QualityHost = norn_cell::SqliteCell<
@@ -483,9 +480,7 @@ pub(crate) mod fanout {
                 artifact
             })
             .collect();
-        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new())
-            .expect("one scope")
-            .into_catalog()
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog()
     }
     pub(crate) fn fanout_fixture() -> Fixture {
         let (seed, seed_plan, mut context) = fixture();

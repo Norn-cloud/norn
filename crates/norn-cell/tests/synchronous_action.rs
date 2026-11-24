@@ -834,9 +834,8 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
         "{findings:?}"
     );
     let env = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
         .receipt_env(&norn_ir::ResourceLimitProfile::norn_limits_v1())
-        .unwrap();
+        .unwrap_or_else(|errors| panic!("type environment: {errors:?}"));
     let rule = SynchronousRule::admit(
         action.synchronous_rule.clone().unwrap(),
         &writer,

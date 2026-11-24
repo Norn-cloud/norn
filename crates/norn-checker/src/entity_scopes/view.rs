@@ -112,14 +112,20 @@ impl<'a> ScopedView<'a> {
         Self::bound(&scope, artifacts, &[], registry)
     }
 
-    /// The view every artifact of `artifacts` shares, when they all have one
-    /// scope; `None` for a set spanning several, which needs a consumer.
+    /// The view of the one scope every artifact of `artifacts` shares; for a
+    /// set spanning several, of the global scope, which sees only what is
+    /// unscoped: a mixed set needs a consumer to see more.
     #[must_use]
     pub fn uniform(
         artifacts: &'a [ArtifactEnvelope],
         registry: &BTreeSet<PropertyTypeName>,
-    ) -> Option<Self> {
-        shared_scope(artifacts).map(|scope| Self::bound(&scope, artifacts, &[], registry))
+    ) -> Self {
+        Self::bound(
+            &shared_scope(artifacts).unwrap_or_default(),
+            artifacts,
+            &[],
+            registry,
+        )
     }
 
     /// The visible installed base, then the visible candidates.
@@ -190,13 +196,13 @@ impl<'a> ScopedView<'a> {
     /// The registry-aware expression environment under `norn.limits/1`, when
     /// it derives.
     pub(crate) fn env(&self) -> Option<&ZenTypeEnv> {
-        self.env
-            .get_or_init(|| {
-                let limits = ResourceLimitProfile::norn_limits_v1();
-                self.type_env(EnvOptions::from_limit_profile(&limits), false)
-                    .ok()
-            })
-            .as_ref()
+        self.env.get_or_init(|| self.limited_env().ok()).as_ref()
+    }
+
+    /// The registry-aware expression environment under `norn.limits/1`.
+    pub(crate) fn limited_env(&self) -> Result<ZenTypeEnv, Vec<EnvError>> {
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        self.type_env(EnvOptions::from_limit_profile(&limits), false)
     }
 
     /// The expression environment of the visible definitions; `for_checking`

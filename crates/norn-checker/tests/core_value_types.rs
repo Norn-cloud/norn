@@ -431,7 +431,6 @@ fn retained_env_v2_decimal_binding_receipt_verifies_and_relabelling_to_v3_refuse
     // Historical main-era norn.expr.env/2 receipt pinned to origin/main's literal
     // digest (without decimalBindingOwners) must verify and recover by hash.
     let derived = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
         .receipt_env(&limits)
         .map_err(|err| format!("derive env: {err:?}"))?;
     let v2_bytes = String::from_utf8(derived.canonical_json_at_version(TypeEnvVersion::V2)?)?;
@@ -543,12 +542,10 @@ fn new_env_v3_receipts_distinguish_inherited_vs_redeclared_decimal_binding_owner
     );
 
     let inherited_v2 = ScopedView::uniform(&set_inherited, &BTreeSet::new())
-        .expect("one scope")
         .receipt_env(&limits)
         .map_err(|err| format!("derive inherited: {err:?}"))?
         .reference_at_version(TypeEnvVersion::V2)?;
     let redeclared_v2 = ScopedView::uniform(&set_redeclared, &BTreeSet::new())
-        .expect("one scope")
         .receipt_env(&limits)
         .map_err(|err| format!("derive redeclared: {err:?}"))?
         .reference_at_version(TypeEnvVersion::V2)?;

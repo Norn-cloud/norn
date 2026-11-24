@@ -491,9 +491,7 @@ fn effective_lifecycles_are_the_declared_list_narrowed_along_inheritance() {
         envelope(purchase_order_entity()),
         envelope(rush_purchase_order_entity()),
     ];
-    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let order = catalog
         .object_type("commerce.PurchaseOrder.entity")
         .expect("defined")
@@ -827,9 +825,7 @@ fn an_action_fires_from_the_source_states_of_the_objects_own_lifecycle() {
         envelope(purchase_order_entity()),
         envelope(rush_purchase_order_entity()),
     ];
-    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let effective = |artifact_id: &str| {
         catalog
             .object_type(artifact_id)

@@ -204,9 +204,8 @@ fn declared(
         .expect("tree"),
     )
     .expect("payload");
-    let catalog = ScopedView::uniform(&artifacts[..1], &std::collections::BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog =
+        ScopedView::uniform(&artifacts[..1], &std::collections::BTreeSet::new()).into_catalog();
     let mut question = plan.question().clone();
     question.filters.clear();
     question.dimensions = serde_json::from_value(dimensions.clone()).expect("dimensions");
@@ -1101,7 +1100,7 @@ mod snapshot {
         }))
         .expect("artifact");
         let space = norn_checker::metric::derive::derive_metric_space(
-            &ScopedView::uniform(&[artifact], &BTreeSet::new()).expect("one scope"),
+            &ScopedView::uniform(&[artifact], &BTreeSet::new()),
             &LawRoot::Entity(TYPE.to_owned()),
         )
         .expect("derived space");
@@ -1467,8 +1466,7 @@ mod linked_time {
     fn fixture(group_by: &serde_json::Value, debit_only: bool) -> (CellStore, QuestionPlan) {
         let [event, entry] = types();
         let space = derive_metric_space(
-            &ScopedView::uniform(&[envelope(&event), envelope(&entry)], &BTreeSet::new())
-                .expect("one scope"),
+            &ScopedView::uniform(&[envelope(&event), envelope(&entry)], &BTreeSet::new()),
             &LawRoot::Entity("demo.Entry".to_owned()),
         )
         .expect("derived space");

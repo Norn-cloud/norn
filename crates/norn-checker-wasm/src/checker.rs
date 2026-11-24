@@ -5,7 +5,6 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use norn_checker::agent::{AgentContext, ToolBinding, agent_payload_syntax, check_agent};
-use norn_checker::entity_scopes::ScopedView;
 use norn_checker::function::{
     admit_function_manifest, check_function_invocation, check_function_receipt,
     decode_function_invocation, decode_function_manifest, decode_function_receipt,
@@ -13,7 +12,7 @@ use norn_checker::function::{
 use norn_checker::receipt::{CHECKER_VERSION, EXPR_PROFILE, RECEIPT_FORMAT};
 use norn_checker::{
     DIAGNOSTICS_FORMAT, Diagnostic, EntityArtifactSetContext, TenantLayer, declared_lifecycles,
-    decode_artifact_json, diagnostics_to_json,
+    decode_artifact_json, diagnostics_to_json, entity_scopes::ScopedView,
 };
 use norn_expr::{Expression, Type, ZenTypeEnv};
 use norn_ir::canonical::CanonicalJsonError;
@@ -418,18 +417,13 @@ fn environment(
     envelopes: &[ArtifactEnvelope],
     self_type: Option<&str>,
 ) -> Result<ZenTypeEnv, Vec<Value>> {
-    let limits = ResourceLimitProfile::norn_limits_v1();
     let view = ScopedView::declaring(self_type.unwrap_or_default(), envelopes, &BTreeSet::new());
+    let limits = ResourceLimitProfile::norn_limits_v1();
     let env = view.receipt_env(&limits).map_err(|errors| {
+        let underivable = norn_checker::receipt::codes::ENVIRONMENT_UNDERIVABLE;
         errors
             .iter()
-            .map(|error| {
-                expression_finding(
-                    norn_checker::receipt::codes::ENVIRONMENT_UNDERIVABLE,
-                    &error.to_string(),
-                    None,
-                )
-            })
+            .map(|error| expression_finding(underivable, &error.to_string(), None))
             .collect::<Vec<_>>()
     })?;
     match self_type {

@@ -991,9 +991,7 @@ fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
     artifacts.push(read(
         "registry/privacy/artifacts/privacy.markings.entity.json",
     ));
-    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let metric: MetricDefinition = serde_json::from_value(json!({
         "name": "demo.holdings",
         "label": "demo.holdings",

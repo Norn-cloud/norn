@@ -203,9 +203,7 @@ fn id_collision_admission_preserves_inherited_key_root_and_normalization() {
             artifact
         })
         .collect::<Vec<_>>();
-    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     for name in ["identity.Root", "identity.Child", "identity.Sibling"] {
         let object = catalog
             .object_type_named(name)

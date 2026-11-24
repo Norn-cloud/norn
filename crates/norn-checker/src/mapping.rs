@@ -72,9 +72,7 @@ use norn_ir::mapping::{
     ObjectMap,
 };
 use norn_ir::source_schema::{ConstraintKind, NormalizedType, Origin, SourceField, SourceSchemaIr};
-use norn_ir::{
-    EntityRoot, InterfaceName, MarkingId, ObjectTypeName, ResourceLimitProfile, ZenExpression,
-};
+use norn_ir::{EntityRoot, InterfaceName, MarkingId, ObjectTypeName, ZenExpression};
 
 use compile::compile_mapping;
 pub use compile::{
@@ -541,23 +539,18 @@ impl MappingModel {
     /// The type environment's derivation errors, as
     /// `artifact_set.expression.environment_underivable` findings.
     pub fn of(view: &ScopedView<'_>) -> Result<Self, Vec<Diagnostic>> {
-        let limits = ResourceLimitProfile::norn_limits_v1();
-        let env = view
-            .type_env(EnvOptions::from_limit_profile(&limits), false)
-            .map_err(|errors| {
-                errors
-                    .into_iter()
-                    .map(|reason| {
-                        error(
-                            ENVIRONMENT_UNDERIVABLE,
-                            format!(
-                                "the mapping model's type environment cannot be derived: {reason}"
-                            ),
-                            Span::pointer(""),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })?;
+        let env = view.limited_env().map_err(|errors| {
+            errors
+                .into_iter()
+                .map(|reason| {
+                    error(
+                        ENVIRONMENT_UNDERIVABLE,
+                        format!("the mapping model's type environment cannot be derived: {reason}"),
+                        Span::pointer(""),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })?;
         let (artifacts, catalog) = (view.pool(), view.catalog());
         let mut types = BTreeMap::new();
         for artifact in artifacts {

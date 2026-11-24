@@ -844,9 +844,7 @@ fn two_installed_versions_of_one_type_bind_only_what_admission_binds() {
     let mut newer_child = serde_json::to_value(&child).expect("envelope encodes");
     newer_child["version"] = json!("2.0.0");
     let base = [envelope(newer_child), child, parent];
-    let effective = ScopedView::uniform(&base, &BTreeSet::new())
-        .expect("one scope")
-        .into_catalog();
+    let effective = ScopedView::uniform(&base, &BTreeSet::new()).into_catalog();
     assert!(matches!(
         effective.object_type("shop.RushRequest.entity"),
         Some(Err(_))
