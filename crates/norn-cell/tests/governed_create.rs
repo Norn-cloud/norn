@@ -1402,3 +1402,60 @@ fn a_stamped_create_at_its_event_ceiling_refuses_one_attached_event() {
         ActionOutcome::Committed { .. }
     ));
 }
+
+/// CREATE-WRITER-1 (Astra round 7): only a valid writer value folds into the
+/// create. An invalid `set` followed by a valid `set` of the same property
+/// stays applied after the create, so the later value cannot mask it and the
+/// whole commit refuses; the valid value alone commits.
+#[test]
+fn a_create_writer_cannot_mask_an_invalid_value_with_a_later_set() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut definitions = types();
+    let invoice = definitions
+        .iter_mut()
+        .find(|definition| definition.name.as_str() == INVOICE)
+        .unwrap();
+    let mut constrained = serde_json::to_value(&*invoice).unwrap();
+    for property in constrained["properties"].as_array_mut().unwrap() {
+        if property["id"] == "total" {
+            property["constraints"] = json!({"min": "0"});
+        }
+    }
+    *invoice = serde_json::from_value(constrained).unwrap();
+    let members = Members::of(&[SUBMITTER]);
+    let submit_action = action("ledger.invoice.submit");
+    let patch = |total: &str| {
+        format!(
+            "{{op: 'patch', objectType: 'ledger.Invoice', key: event.input.invoice_id, patch: {{total: {total}}}}}"
+        )
+    };
+    for (facts, commits) in [
+        (format!("[{}, {}]", patch("-1"), patch("105")), false),
+        (format!("[{}]", patch("105")), true),
+    ] {
+        let rules = [writer_emitting(&facts)];
+        let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
+        let path = directory.path().join(format!("mask-{commits}.sqlite"));
+        let mut cell = open(&path, &definitions, &[]);
+        seed_tax_codes(&mut cell);
+        let dump = cell.store().read().dump().unwrap();
+        let created = call(
+            &submit_action,
+            SUBMITTER,
+            submit("INV-1", "STD", 100),
+            "s-1",
+        );
+        let outcome = commit_action(&mut cell, &catalog, &created, &members);
+        if commits {
+            assert!(matches!(outcome.unwrap(), ActionOutcome::Committed { .. }));
+            assert_eq!(
+                integer(&values(&cell, INVOICE, "INV-1").unwrap(), "total"),
+                105
+            );
+        } else {
+            assert!(outcome.is_err(), "{outcome:?}");
+            assert_eq!(cell.store().read().dump().unwrap(), dump);
+            assert!(values(&cell, INVOICE, "INV-1").is_none());
+        }
+    }
+}

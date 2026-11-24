@@ -73,9 +73,11 @@ pub(super) fn creator_stamp(
 /// CREATE-WRITER-1: fold the writer's `set`s of ordinary properties of the
 /// created target into its create, so the commit records one `created` event
 /// with the object's final values; the store proves every event of a commit
-/// against that object's one committed snapshot. A `set` of a protected,
-/// computed, lifecycle or undeclared property stays a separate change, which
-/// preparation refuses as it refuses any such write.
+/// against that object's one committed snapshot. Only a value that satisfies
+/// the property's effective contract folds. A `set` of a protected,
+/// computed, lifecycle or undeclared property, or of an invalid value, stays
+/// a separate change applied after the create, so a later valid `set` cannot
+/// mask it and preparation or admission refuses the whole commit.
 fn fold_into_create(
     catalog: &TypeCatalog<'_>,
     target: &FactKey,
@@ -94,9 +96,14 @@ fn fold_into_create(
             && *object_type == target.object_type
             && *key == target.key
             && !lifecycles.contains(property)
-            && effective
-                .and_then(|effective| effective.property(property.as_str()))
-                .is_some_and(|declared| !declared.protected() && !declared.computed)
+            && effective.is_some_and(|effective| {
+                effective
+                    .property(property.as_str())
+                    .is_some_and(|declared| !declared.protected())
+                    && effective
+                        .check_stored_property_value(property.as_str(), value)
+                        .is_ok()
+            })
             && let Some(FactChange::Create { values, .. }) = changes.first_mut()
         {
             values.insert(property.as_str().to_owned(), value.clone());
