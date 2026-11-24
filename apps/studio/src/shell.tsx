@@ -7,11 +7,12 @@ import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, CircleEllipsis, CloudOff, Keyboard, LayoutGrid, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
+import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, CircleEllipsis, CloudOff, Code2, Keyboard, LayoutGrid, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
+import { CustomThemeDialog } from "@/components/custom-theme-dialog"
 import { AppearanceProvider, SHELLS, SKINS, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
 import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
 import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
@@ -274,8 +275,10 @@ function ViewAndLanguage() {
 
 /** Interactive skin & shell chrome tray powered by the first-party `@ui-sdk/core` + `@ui-sdk/react` ChromeDock primitive. */
 function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: "top" | "bottom"; readonly variant?: "bar" | "dock" }) {
-  const { skin, setSkin, shell, setShell } = useAppearance()
+  const { skin, setSkin, shell, setShell, customTheme } = useAppearance()
+  const [themeDialogOpen, setThemeDialogOpen] = useState(false)
   return (
+    <>
     <ChromeDock
       value={skin}
       items={SKINS.map(({ id }) => id)}
@@ -301,7 +304,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
               <span>Skin</span>
-              <span className="capitalize text-foreground">{skin}</span>
+              <span className="truncate capitalize text-foreground">{customTheme ? customTheme.name : skin}</span>
             </div>
             <div role="group" aria-label="Skin" className="grid grid-cols-2 gap-1.5">
               {SKINS.map((option) => (
@@ -340,9 +343,24 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
               })}
             </div>
           </div>
+          <div className="h-px bg-border/80" />
+          <button
+            type="button"
+            data-slot="custom-theme-trigger"
+            onClick={() => setThemeDialogOpen(true)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            <span className="flex items-center gap-1.5">
+              <Code2 aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <span>Custom theme JSON…</span>
+            </span>
+            {customTheme && <span className="truncate text-[0.6875rem] text-muted-foreground">Active</span>}
+          </button>
         </div>
       </ChromeDockTray>
     </ChromeDock>
+    <CustomThemeDialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen} />
+    </>
   )
 }
 
@@ -1053,9 +1071,10 @@ export function Shell(props: {
   readonly initialSkin?: Skin
   readonly initialShell?: ShellChrome
 }) {
+  const scopeKey = `${props.account.user.id}:${props.account.organization?.id ?? ""}:${props.account.environmentId ?? ""}`
   return (
     <AppearanceProvider initialSkin={props.initialSkin} initialShell={props.initialShell}>
-      <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
+      <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined} scopeKey={scopeKey}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
     </AppearanceProvider>
   )
 }

@@ -5,7 +5,7 @@ import { ValidationPanel } from "@/components/editor"
 import { Button } from "@/components/ui/button"
 import { evaluateQuestion, traceQuestion, type Evaluation } from "@/lib/evaluate"
 import { readDocument } from "@/lib/exact"
-import { NO_DATA_CELL } from "@/lib/definitions"
+import { NO_DATA_CELL, type StudioScope } from "@/lib/definitions"
 import type { QuestionAnswer } from "@/lib/transport"
 import { fieldOf, type QuestionCatalog } from "./builder.tsx"
 import { AnswerView, RefusedNote } from "./answer-view.tsx"
@@ -45,7 +45,7 @@ export const answerRead = (question: unknown, catalog: QuestionCatalog, result: 
  * Run one admitted question in the cell: its answer, as a published one reads
  * (withheld and suppressed values included), or why there is none.
  */
-export function RunQuestion({ question, catalog, label = "Run", compact = false, title, auto = false }: {
+export function RunQuestion({ question, catalog, label = "Run", compact = false, title, auto = false, scope }: {
   readonly question: unknown
   readonly catalog: QuestionCatalog
   readonly label?: string
@@ -54,8 +54,10 @@ export function RunQuestion({ question, catalog, label = "Run", compact = false,
   readonly title?: string
   /** Run once as soon as it is shown (the question was just admitted): the button then reads "Run again". */
   readonly auto?: boolean
+  /** Originating workspace scope bound to this question, preventing evaluation/trace drift across workspace switches. */
+  readonly scope?: StudioScope | null
 }) {
-  const run = useMutation({ mutationFn: () => evaluateQuestion(question) })
+  const run = useMutation({ mutationFn: () => evaluateQuestion(question, undefined, scope) })
   const { mutate } = run
   // Once per mount: StrictMode replays effects in development, and a second evaluate would be a second read of the cell.
   const asked = useRef(false)
@@ -65,7 +67,7 @@ export function RunQuestion({ question, catalog, label = "Run", compact = false,
     <div className="space-y-3">
       <Button type="button" size="sm" variant={compact ? "outline" : "default"} disabled={run.isPending} onClick={() => run.mutate()}><Play />{run.isPending ? "Running…" : result || auto ? "Run again" : label}</Button>
       {run.isError && <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : String(run.error)}</p>}
-      {result?.kind === "answer" && <AnswerView read={answerRead(question, catalog, result)} title={title} heading="h3" fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, answeredAt(result.read.document))} onStale={() => run.mutate()} />}
+      {result?.kind === "answer" && <AnswerView read={answerRead(question, catalog, result)} title={title} heading="h3" originScope={scope} fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, answeredAt(result.read.document), scope)} onStale={() => run.mutate()} />}
       {result?.kind === "not-a-question" && <ValidationPanel title="The cell refused this question" issues={result.findings.map(({ code, message, pointer }) => ({ code, message, field: fieldOf(pointer) }))} />}
       {result?.kind === "refused" && <RefusedNote refusal={result.refusal} />}
       {result && result.kind !== "answer" && result.kind !== "refused" && result.kind !== "not-a-question" && <p role="status" className="text-sm text-muted-foreground">{notRun(result)}</p>}

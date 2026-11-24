@@ -1,12 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { BarChart3, Blend, Bookmark, BookMarked, ChartLine, Columns2, Database, FileDiff, Fingerprint, GitCompareArrows, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
+import { BarChart3, Blend, Bookmark, BookMarked, ChartLine, Columns2, Database, FileDiff, Fingerprint, GitCompareArrows, House, Inbox, LayoutDashboard, Map as MapIcon, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode, useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import { CellUnavailable } from "@/lib/definitions"
+import { CellUnavailable, scopeFromAccount } from "@/lib/definitions"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { endSession, useAccount, type Account } from "@/lib/session"
 import { applyAppearance, storedShellChrome, storedSkin } from "@/lib/appearance"
+import { storedCustomTheme } from "@/lib/studio-theme"
+import "./bones/registry.ts"
 import { isSectionVisible, useLearningCapabilities } from "@/lib/learning/capabilities"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
@@ -43,6 +45,7 @@ const SECTIONS: readonly Section[] = [
   { path: "/learning/proposals", label: "Proposals", icon: FileDiff, perspective: "workspace", group: "Learning" },
   // Builder: how the model is made.
   { path: "/sources", label: "Sources", icon: Database, perspective: "builder", group: "Model", kind: "source", useMenu: useSourcesMenu, paths: ["/objects"] },
+  { path: "/map", label: "Semantic map", icon: MapIcon, perspective: "builder", group: "Model", kind: "objectType" },
   { path: "/transforms", label: "Transforms", icon: Blend, perspective: "builder", group: "Model", kind: "transform" },
   { path: "/canvas", label: "Canvas", icon: Network, perspective: "builder", group: "Logic" },
   { path: "/rules", label: "Rules", icon: ShieldCheck, perspective: "builder", group: "Logic", kind: "guarantee", useMenu: useRulesMenu },
@@ -58,7 +61,16 @@ const SECTIONS: readonly Section[] = [
 function SignedInShell({ account, sidekick }: { readonly account: Account; readonly sidekick: boolean }) {
   const learning = useLearningCapabilities()
   const sections = useMemo(() => SECTIONS.filter((section) => isSectionVisible(section.path, learning)), [learning])
-  return <Shell sections={sections} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account} onSignOut={() => void signOut()} />
+  const sidekickScopeKey = `${account.user.id}:${account.organization?.id ?? ""}:${account.environmentId ?? ""}`
+  const sidekickScope = scopeFromAccount(account)
+  return (
+    <Shell
+      sections={sections}
+      assistant={sidekick ? { title: "Sidekick", content: <Sidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
+      account={account}
+      onSignOut={() => void signOut()}
+    />
+  )
 }
 
 /**
@@ -106,11 +118,15 @@ const queryClient = new QueryClient({
 const root = createRootRoute({ component: Root })
 const router = createRouter({ routeTree: routeTree(root) })
 
-// Dark and light are peers: follow the reader's system setting; apply persisted skin & shell before first paint.
+// Dark and light are peers: follow the reader's system setting unless a custom theme pins an explicit appearance.
 const dark = window.matchMedia("(prefers-color-scheme: dark)")
-const applyScheme = () => document.documentElement.classList.toggle("dark", dark.matches)
+const applyScheme = () => {
+  const forced = document.documentElement.dataset.forcedAppearance
+  if (forced === "dark" || forced === "light") return
+  document.documentElement.classList.toggle("dark", dark.matches)
+}
 applyScheme()
-applyAppearance(storedSkin(), storedShellChrome())
+applyAppearance(storedSkin(), storedShellChrome(), undefined, storedCustomTheme())
 dark.addEventListener("change", applyScheme)
 
 // An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.

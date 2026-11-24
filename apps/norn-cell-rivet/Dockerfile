@@ -3,7 +3,9 @@
 #   docker build -f apps/norn-cell-rivet/Dockerfile -t norn-cell-rivet .
 # It joins the engine named by RIVET_ENDPOINT and serves the router on
 # the platform's PORT (8787 by default); see apps/norn-cell-rivet/README.md.
-FROM rust:1.98.0-bookworm@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922 AS build
+# The toolchain CI builds the workspace with (.github/workflows/ci-policy.yml): an older one does not
+# compile the shared crates (norn-kernel iterates `&Box<[FactKey; 2]>`, which Rust 1.98 refuses).
+FROM rust:1.100.0-bookworm@sha256:1b9dc70890ec494e466c87f5ad41ad544bfb30ea6acc99a3e068c47a4ae3f23e AS build
 WORKDIR /src
 COPY . .
 # Its own workspace and lockfile (crates/norn-cell-rivet/Cargo.toml says why).

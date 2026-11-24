@@ -138,7 +138,7 @@ pub fn builtin_registered(function_id: &str, version: u32) -> bool {
     matches!(norn_builtins::resolve(function_id, version), Ok(Some(_)))
 }
 
-/// Workers/Durable Objects SQLite adapter (celld and workerd).
+/// Workers/Durable Objects SQLite adapter (workerd).
 #[cfg(target_arch = "wasm32")]
 pub mod workers;
 

@@ -1,0 +1,24 @@
+{
+  "sourceId": "standards.iana-tzdb-2025b",
+  "releaseId": "2025b",
+  "repository": "https://github.com/BurntSushi/jiff",
+  "distribution": "https://static.crates.io/crates/jiff-tzdb/jiff-tzdb-0.1.4.crate",
+  "crateVersion": "0.1.4",
+  "crateSha256": "c1283705eb0a21404d2bfd6eef2a7593d240bc42a0bdb39db0ad6fa2ec026524",
+  "vcsCommit": "3ff4513edf2cab9174dab3f2871b2dbfe3b9d740",
+  "upstreamData": "IANA Time Zone Database 2025b (public domain per IANA tzdb LICENSE; compiled to slim rearguard TZif by jiff-tzdb 0.1.4)",
+  "copyright": "Copyright (c) 2015 Andrew Gallant",
+  "purpose": "Versioned offline IANA tzdb 2025b TZif bundle (597 canonical/link zones excluding Factory) for deterministic Norn temporal evaluation and naming-series calendar rendering",
+  "license": "MIT",
+  "redistribution": "permitted",
+  "files": [
+    {
+      "path": "crates/norn-expr/data/tzdb/LICENSE-MIT",
+      "sha256": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"
+    },
+    {
+      "path": "crates/norn-expr/data/tzdb/2025b.tzdb",
+      "sha256": "6b6514f7fed817ad3cf616de4532c6ec7da85929336b7a2956b8f9f40f5fbf59"
+    }
+  ]
+}
