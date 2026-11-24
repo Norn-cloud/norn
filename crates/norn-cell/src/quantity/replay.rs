@@ -5,7 +5,7 @@ use super::{
     prepare_quantity, to_i64,
 };
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Ledger {
     state: QuantityState,
     reservations: BTreeMap<String, (QuantityReservation, i64)>,
@@ -36,17 +36,17 @@ fn put(rows: &mut Rows, count: usize, row: Vec<SqlValue>) -> Result<(), CellErro
     Ok(())
 }
 
-#[derive(Default)]
-struct Replay {
+#[derive(Default, Clone)]
+pub(crate) struct QuantityReplay {
     ledgers: BTreeMap<(String, String), Ledger>,
     heads: Rows,
     balances: Rows,
-    history: Rows,
     reservations: Rows,
-    postings: Rows,
     timers: Rows,
+    floor: u64,
 }
-impl Replay {
+
+impl QuantityReplay {
     #[allow(
         clippy::too_many_lines,
         reason = "one ruled request updates its complete derived projections"
@@ -56,15 +56,16 @@ impl Replay {
         body: &crate::store::ReceiptBody,
         request: &super::QuantityRequest,
         result: &norn_kernel::quantity::QuantityResult,
+        history: &mut Rows,
+        postings: &mut Rows,
     ) -> Result<(), CellError> {
         let Self {
             ledgers,
             heads,
             balances,
-            history,
             reservations,
-            postings,
             timers,
+            ..
         } = self;
         let world = &body.world;
         let id = &request.ledger_id;
@@ -230,6 +231,235 @@ impl Replay {
         }
         Ok(())
     }
+
+    fn step_receipt(
+        &mut self,
+        receipt: &Receipt,
+        history: &mut Rows,
+        postings: &mut Rows,
+    ) -> Result<(), CellError> {
+        let body = &receipt.body;
+        if body.logical_time < self.floor {
+            return Err(QuantityError::Corrupt.into());
+        }
+        self.floor = body.logical_time;
+        let Some(requests) = &body.quantity else {
+            return Ok(());
+        };
+        let results = body
+            .quantity_result
+            .as_ref()
+            .ok_or(QuantityError::Corrupt)?;
+        if requests.is_empty()
+            || requests.len() > 100
+            || requests.len() != results.len()
+            || requests
+                .iter()
+                .map(|request| &request.ledger_id)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != requests.len()
+        {
+            return Err(QuantityError::Corrupt.into());
+        }
+        let mut timers = Vec::new();
+        for (request, result) in requests.iter().zip(results.iter()) {
+            self.request(body, request, result, history, postings)?;
+            if let Some((id, value)) = &result.reservation
+                && value.status == "open"
+            {
+                timers.push(super::expiry_timer_id(&body.world, &request.ledger_id, id)?);
+            }
+        }
+        let scheduled: Vec<_> = body
+            .scheduled
+            .iter()
+            .filter(|id| id.starts_with(super::EXPIRY_TIMER_PREFIX))
+            .cloned()
+            .collect();
+        if scheduled != timers {
+            return Err(QuantityError::Corrupt.into());
+        }
+        Ok(())
+    }
+
+    fn live_rows(&self, stage: LiveStage) -> Rows {
+        match stage {
+            LiveStage::Timers => self.timers.clone(),
+            LiveStage::Ledgers => self.heads.clone(),
+            LiveStage::Balances => self.balances.clone(),
+            LiveStage::Reservations => self.reservations.clone(),
+        }
+    }
+
+    fn is_live_empty(&self) -> bool {
+        self.timers.is_empty()
+            && self.heads.is_empty()
+            && self.balances.is_empty()
+            && self.reservations.is_empty()
+    }
+}
+
+mod scrub;
+pub(crate) use scrub::QuantityScrub;
+
+const ROW_PAGE: usize = 256;
+const ROW_PAGE_I64: i64 = 256;
+
+#[derive(Clone, Copy)]
+enum LiveStage {
+    Timers,
+    Ledgers,
+    Balances,
+    Reservations,
+}
+
+impl LiveStage {
+    const fn next(self) -> Option<Self> {
+        match self {
+            Self::Timers => Some(Self::Ledgers),
+            Self::Ledgers => Some(Self::Balances),
+            Self::Balances => Some(Self::Reservations),
+            Self::Reservations => None,
+        }
+    }
+}
+
+enum PageStep {
+    Done {
+        read: usize,
+    },
+    More {
+        next_cursor: Vec<SqlValue>,
+        remaining: Rows,
+    },
+}
+
+fn row_limit(expected_len: usize) -> Result<i64, CellError> {
+    let limit = expected_len.checked_add(1).ok_or(QuantityError::Corrupt)?;
+    i64::try_from(limit).map_err(|_range| QuantityError::Corrupt.into())
+}
+
+fn check_no_rows<S: SqlEngine>(
+    engine: &S,
+    sql: &str,
+    params: &[SqlValue],
+) -> Result<(), CellError> {
+    if !engine.query(sql, params)?.is_empty() {
+        return Err(QuantityError::Corrupt.into());
+    }
+    Ok(())
+}
+
+fn remove_matching_rows(
+    rows: Vec<Vec<SqlValue>>,
+    count: usize,
+    is_history: bool,
+    expected: &mut Rows,
+) -> Result<(), CellError> {
+    for row in rows {
+        let mut row_key = key(&row, count)?;
+        if is_history {
+            let version = row.get(7).ok_or(QuantityError::Corrupt)?;
+            row_key.extend(key(std::slice::from_ref(version), 1)?);
+        }
+        if expected.remove(&row_key).as_ref() != Some(&row) {
+            return Err(QuantityError::Corrupt.into());
+        }
+    }
+    Ok(())
+}
+
+fn match_page_rows(
+    rows: Vec<Vec<SqlValue>>,
+    count: usize,
+    is_history: bool,
+    mut expected: Rows,
+    cursor_indices: &[usize],
+) -> Result<PageStep, CellError> {
+    let read = rows.len();
+    let page_full = read >= ROW_PAGE;
+    let mut next_cursor = Vec::new();
+    if page_full {
+        let last = rows.last().ok_or(QuantityError::Corrupt)?;
+        next_cursor.reserve(cursor_indices.len());
+        for &index in cursor_indices {
+            next_cursor.push(last.get(index).ok_or(QuantityError::Corrupt)?.clone());
+        }
+    }
+    remove_matching_rows(rows, count, is_history, &mut expected)?;
+    if page_full {
+        return Ok(PageStep::More {
+            next_cursor,
+            remaining: expected,
+        });
+    }
+    if !expected.is_empty() {
+        return Err(QuantityError::Corrupt.into());
+    }
+    Ok(PageStep::Done { read })
+}
+
+fn verify_live_page<S: SqlEngine>(
+    engine: &S,
+    stage: LiveStage,
+    cursor: &[SqlValue],
+    expected: Rows,
+) -> Result<PageStep, CellError> {
+    let (sql_first, sql_next, count, indices): (&str, &str, usize, &[usize]) = match stage {
+        LiveStage::Timers => (
+            r#"SELECT timer_id,due,timer,commit_seq FROM "_norn_timer" WHERE "timer_id">='norn.quantity.expiry/' AND "timer_id"<'norn.quantity.expiry0' ORDER BY "timer_id" LIMIT ?1"#,
+            r#"SELECT timer_id,due,timer,commit_seq FROM "_norn_timer" WHERE "timer_id">='norn.quantity.expiry/' AND "timer_id"<'norn.quantity.expiry0' AND "timer_id">?1 ORDER BY "timer_id" LIMIT ?2"#,
+            1,
+            &[0],
+        ),
+        LiveStage::Ledgers => (
+            r#"SELECT world,ledger,version,pack,unrestricted,defined_at FROM "_norn_quantity_ledger" ORDER BY "world","ledger" LIMIT ?1"#,
+            r#"SELECT world,ledger,version,pack,unrestricted,defined_at FROM "_norn_quantity_ledger" WHERE ("world","ledger")>(?1,?2) ORDER BY "world","ledger" LIMIT ?3"#,
+            2,
+            &[0, 1],
+        ),
+        LiveStage::Balances => (
+            r#"SELECT world,ledger,account,unit,layer,posted,held,version FROM "_norn_quantity_balance" ORDER BY "world","ledger","account","unit","layer" LIMIT ?1"#,
+            r#"SELECT world,ledger,account,unit,layer,posted,held,version FROM "_norn_quantity_balance" WHERE ("world","ledger","account","unit","layer")>(?1,?2,?3,?4,?5) ORDER BY "world","ledger","account","unit","layer" LIMIT ?6"#,
+            5,
+            &[0, 1, 2, 3, 4],
+        ),
+        LiveStage::Reservations => (
+            r#"SELECT world,ledger,id,record,version,commit_seq,created_at FROM "_norn_quantity_reservation" ORDER BY "world","ledger","id" LIMIT ?1"#,
+            r#"SELECT world,ledger,id,record,version,commit_seq,created_at FROM "_norn_quantity_reservation" WHERE ("world","ledger","id")>(?1,?2,?3) ORDER BY "world","ledger","id" LIMIT ?4"#,
+            3,
+            &[0, 1, 2],
+        ),
+    };
+    let rows = if cursor.is_empty() {
+        engine.query(sql_first, &[ROW_PAGE_I64.into()])?
+    } else {
+        let mut params = cursor.to_vec();
+        params.push(ROW_PAGE_I64.into());
+        engine.query(sql_next, &params)?
+    };
+    match_page_rows(rows, count, false, expected, indices)
+}
+
+fn verify_table_rows<S: SqlEngine>(
+    engine: &S,
+    table: &str,
+    columns: &str,
+    count: usize,
+    is_history: bool,
+    mut expected: Rows,
+) -> Result<(), CellError> {
+    let limit = row_limit(expected.len())?;
+    let rows = engine.query(
+        &format!("SELECT {columns} FROM \"{table}\" LIMIT ?1"),
+        &[limit.into()],
+    )?;
+    remove_matching_rows(rows, count, is_history, &mut expected)?;
+    if !expected.is_empty() {
+        return Err(QuantityError::Corrupt.into());
+    }
+    Ok(())
 }
 
 #[allow(
@@ -241,129 +471,46 @@ pub(crate) fn verify<S: SqlEngine>(
     receipts: impl IntoIterator<Item = Result<Receipt, CellError>>,
 ) -> Result<(), CellError> {
     super::clock_floor(engine)?;
-    let mut replay = Replay::default();
-    let mut floor = 0;
+    let mut replay = QuantityReplay::default();
+    let mut history = Rows::new();
+    let mut postings = Rows::new();
     for receipt in receipts {
         let receipt = receipt?;
-        let body = &receipt.body;
-        if body.logical_time < floor {
-            return Err(QuantityError::Corrupt.into());
-        }
-        floor = body.logical_time;
-        if let Some(requests) = &body.quantity {
-            let results = body
-                .quantity_result
-                .as_ref()
-                .ok_or(QuantityError::Corrupt)?;
-            if requests.is_empty()
-                || requests.len() > 100
-                || requests.len() != results.len()
-                || requests
-                    .iter()
-                    .map(|request| &request.ledger_id)
-                    .collect::<BTreeSet<_>>()
-                    .len()
-                    != requests.len()
-            {
-                return Err(QuantityError::Corrupt.into());
-            }
-            let mut timers = Vec::new();
-            for (request, result) in requests.iter().zip(results.iter()) {
-                replay.request(body, request, result)?;
-                if let Some((id, value)) = &result.reservation
-                    && value.status == "open"
-                {
-                    timers.push(super::expiry_timer_id(&body.world, &request.ledger_id, id)?);
-                }
-            }
-            let scheduled: Vec<_> = body
-                .scheduled
-                .iter()
-                .filter(|id| id.starts_with(super::EXPIRY_TIMER_PREFIX))
-                .cloned()
-                .collect();
-            if scheduled != timers {
-                return Err(QuantityError::Corrupt.into());
-            }
+        replay.step_receipt(&receipt, &mut history, &mut postings)?;
+    }
+    for stage in [
+        LiveStage::Timers,
+        LiveStage::Ledgers,
+        LiveStage::Balances,
+        LiveStage::Reservations,
+    ] {
+        let (mut cursor, mut remaining) = (Vec::new(), replay.live_rows(stage));
+        while let PageStep::More {
+            next_cursor,
+            remaining: rest,
+        } = verify_live_page(engine, stage, &cursor, remaining)?
+        {
+            cursor = next_cursor;
+            remaining = rest;
         }
     }
-    let Replay {
-        heads,
-        balances,
-        history,
-        reservations,
-        postings,
-        mut timers,
-        ..
-    } = replay;
-    let limit = to_i64(
-        u64::try_from(timers.len())
-            .map_err(|_range| QuantityError::Corrupt)?
-            .checked_add(1)
-            .ok_or(QuantityError::Corrupt)?,
-        "quantity timer count",
-    )?;
-    for row in engine.query(r#"SELECT timer_id,due,timer,commit_seq FROM "_norn_timer" WHERE "timer_id">='norn.quantity.expiry/' AND "timer_id"<'norn.quantity.expiry0' LIMIT ?1"#, &[limit.into()])? {
-        if timers.remove(&key(&row, 1)?).as_ref() != Some(&row) { return Err(QuantityError::Corrupt.into()); }
-    }
-    if !timers.is_empty() {
-        return Err(QuantityError::Corrupt.into());
-    }
-    for (table, columns, count, mut expected) in [
-        (
-            "_norn_quantity_ledger",
-            "world,ledger,version,pack,unrestricted,defined_at",
-            2,
-            heads,
-        ),
-        (
-            "_norn_quantity_balance",
-            "world,ledger,account,unit,layer,posted,held,version",
-            5,
-            balances,
-        ),
+    for (table, cols, count, is_history, expected) in [
         (
             "_norn_quantity_history",
             "world,ledger,account,unit,layer,posted,held,version,commit_seq",
             5,
+            true,
             history,
-        ),
-        (
-            "_norn_quantity_reservation",
-            "world,ledger,id,record,version,commit_seq,created_at",
-            3,
-            reservations,
         ),
         (
             "_norn_quantity_posting",
             "world,ledger,id,record,reverses,version,commit_seq",
             3,
+            false,
             postings,
         ),
     ] {
-        // One surplus row suffices to refuse; never materialize an attacker-
-        // enlarged cache beyond the number of rows the immutable fold proved.
-        let limit = expected
-            .len()
-            .checked_add(1)
-            .ok_or(QuantityError::Corrupt)?;
-        let limit = i64::try_from(limit).map_err(|_range| QuantityError::Corrupt)?;
-        for row in engine.query(
-            &format!("SELECT {columns} FROM \"{table}\" LIMIT ?1"),
-            &[limit.into()],
-        )? {
-            let mut row_key = key(&row, count)?;
-            if table == "_norn_quantity_history" {
-                let version = row.get(7).ok_or(QuantityError::Corrupt)?;
-                row_key.extend(key(std::slice::from_ref(version), 1)?);
-            }
-            if expected.remove(&row_key).as_ref() != Some(&row) {
-                return Err(QuantityError::Corrupt.into());
-            }
-        }
-        if !expected.is_empty() {
-            return Err(QuantityError::Corrupt.into());
-        }
+        verify_table_rows(engine, table, cols, count, is_history, expected)?;
     }
     Ok(())
 }

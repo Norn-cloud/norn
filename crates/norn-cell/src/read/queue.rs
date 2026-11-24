@@ -176,6 +176,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine or decode errors.
     pub fn outbox_command(&self, command_id: &str) -> Result<Option<OutboxCommand>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             &format!(
                 "SELECT \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\" FROM \"{OUTBOX}\" WHERE \"command_id\" = ?1"
@@ -219,6 +220,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQLite errors.
     pub fn perform_claimed(&self, command_id: &str, generation: u64) -> Result<bool, CellError> {
+        self.check_live()?;
         let found: Option<i64> = self
             .conn
             .query_optional(
@@ -266,6 +268,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         requester: (&str, &str, &str),
         waiting: bool,
     ) -> Result<Vec<(String, u64)>, CellError> {
+        self.check_live()?;
         let (subject, actor_kind, role_table) = requester;
         let approved = crate::decision_ledger::APPROVED_CALL;
         let select = format!(
@@ -308,6 +311,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         bindings: &[SqlValue],
         limit: &str,
     ) -> Result<Vec<PendingCommand>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 "SELECT \"position\", \"commit_seq\", \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\", \"result\" FROM \"{OUTBOX}\" WHERE {base} {filter} ORDER BY \"position\"{limit}"
@@ -356,6 +360,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine or decode errors.
     pub fn pending_timers(&self) -> Result<Vec<PendingTimer>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 "SELECT \"commit_seq\", \"timer_id\", \"due\", \"timer\" FROM \"{TIMER}\" ORDER BY \"due\", \"timer_id\""
@@ -383,6 +388,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine or decode errors.
     pub fn pending_timer(&self, timer_id: &str) -> Result<Option<PendingTimer>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             r#"SELECT "commit_seq","timer_id","due","timer" FROM "_norn_timer" WHERE "timer_id"=?1 LIMIT 1"#,
             params![timer_id],
@@ -398,6 +404,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine or decode errors.
     pub fn has_pending_timer(&self, timer_id: &str) -> Result<bool, CellError> {
+        self.check_live()?;
         Ok(self
             .conn
             .query_optional(
@@ -414,6 +421,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine or decode errors.
     pub fn next_timer_due(&self) -> Result<Option<u64>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             r#"SELECT "due" FROM "_norn_timer" INDEXED BY "_norn_timer/due" ORDER BY "due","timer_id" LIMIT 1"#,
             params![],
@@ -429,6 +437,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine or decode errors.
     pub fn next_timer_due_after(&self, after: u64) -> Result<Option<u64>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             r#"SELECT "due" FROM "_norn_timer" INDEXED BY "_norn_timer/due" WHERE "due">?1 ORDER BY "due","timer_id" LIMIT 1"#,
             params![to_i64(after, "timer time")?],
@@ -444,6 +453,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine or decode errors.
     pub fn due_timer(&self, now: u64) -> Result<Option<PendingTimer>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             r#"SELECT "commit_seq","timer_id","due","timer" FROM "_norn_timer" INDEXED BY "_norn_timer/ordinary_due" WHERE ("timer_id"<'norn.quantity.expiry/' OR "timer_id">='norn.quantity.expiry0') AND "due"<=?1 ORDER BY "due","timer_id" LIMIT 1"#,
             params![to_i64(now, "timer time")?],
@@ -462,6 +472,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine or decode errors.
     pub fn due_timers(&self, now: u64, limit: usize) -> Result<Vec<PendingTimer>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             r#"SELECT "commit_seq","timer_id","due","timer" FROM "_norn_timer" INDEXED BY "_norn_timer/ordinary_due" WHERE ("timer_id"<'norn.quantity.expiry/' OR "timer_id">='norn.quantity.expiry0') AND "due"<=?1 ORDER BY "due","timer_id" LIMIT ?2"#,
             params![
@@ -490,6 +501,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// Storage or decoding errors.
     pub fn due_quantity_timer(&self, now: u64) -> Result<Option<PendingTimer>, CellError> {
+        self.check_live()?;
         self.conn.query_optional(
             r#"SELECT "commit_seq","timer_id","due","timer" FROM "_norn_timer" INDEXED BY "_norn_timer/quantity_due" WHERE "timer_id" >= 'norn.quantity.expiry/' AND "timer_id" < 'norn.quantity.expiry0' AND "due"<=?1 ORDER BY "due","timer_id" LIMIT 1"#,
             params![to_i64(now, "quantity expiry time")?], |row| Ok(PendingTimer {
@@ -505,6 +517,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine or decode errors.
     pub fn pending_observations(&self) -> Result<Vec<PendingObservation>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" WHERE \"consumed_commit_seq\" IS NULL ORDER BY \"position\""
@@ -534,6 +547,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         observation_id: &str,
     ) -> Result<Option<PendingObservation>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?1 AND \"consumed_commit_seq\" IS NULL"
@@ -558,6 +572,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine or decode errors.
     pub fn runs(&self, command_id: &str) -> Result<Vec<RunRecord>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 "SELECT \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\" FROM \"{RUN}\" WHERE \"command_id\" = ?1 ORDER BY \"generation\", \"attempt\""
@@ -597,6 +612,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine errors.
     pub fn executions(&self) -> Result<u64, CellError> {
+        self.check_live()?;
         let count: i64 = self.conn.query_row(
             &format!("SELECT COUNT(*) FROM \"{RUN}\""),
             params![],
@@ -613,6 +629,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine errors.
     pub fn is_pending(&self, consumption: &Consumption) -> Result<bool, CellError> {
+        self.check_live()?;
         match consumption {
             Consumption::Timer {
                 timer_id,

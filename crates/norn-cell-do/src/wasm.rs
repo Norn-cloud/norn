@@ -143,6 +143,18 @@ pub struct Reply {
     pub policy_error: Option<String>,
 }
 
+#[wasm_bindgen(inline_js = r#"
+export function key_field(keys, name) {
+  if (keys === null || keys === undefined) return undefined;
+  if (typeof keys === "string") return name === "lineage" ? keys : undefined;
+  const value = keys[name];
+  return typeof value === "string" ? value : undefined;
+}
+"#)]
+extern "C" {
+    fn key_field(keys: &JsValue, name: &str) -> Option<String>;
+}
+
 #[wasm_bindgen]
 impl NornCell {
     /// Whether this build accepts fixture principals ([`crate::fixtures_enabled`]):
@@ -167,8 +179,12 @@ impl NornCell {
     /// use; any other scope is served if it was provisioned, else vacant.
     /// `issuer` and `jwks` are the pinned token issuer and its key document
     /// (fetched at `now_ms`, Unix milliseconds); without the `fixtures` feature
-    /// both are required. `lineage_key` is the stage secret
-    /// (`NORN_LINEAGE_KEY`) that keys the analytics cell's lineage handles.
+    /// both are required. `keys` carries the stage secrets as
+    /// `{ lineage, checkpoint }` (or a plain string for `lineage` alone):
+    /// `lineage` (`NORN_LINEAGE_KEY`) keys the analytics cell's lineage
+    /// handles, and `checkpoint` (`NORN_CHECKPOINT_KEY`, 64 hexadecimal
+    /// digits) authenticates the cell's open checkpoint (OPEN-CHECKPOINT-1,
+    /// #1551).
     ///
     /// # Errors
     /// Seeding failed, the storage holds a cell this host cannot serve, no
@@ -181,17 +197,23 @@ impl NornCell {
         environment_id: String,
         issuer: Option<String>,
         jwks: Option<String>,
-        lineage_key: Option<String>,
+        keys: &JsValue,
         now_ms: f64,
     ) -> Result<Self, JsValue> {
         crate::incident::install_panic_log();
-        let lineage_key = lineage_key.map(String::into_bytes);
+        let lineage_key = key_field(keys, "lineage").map(String::into_bytes);
+        let checkpoint_key = key_field(keys, "checkpoint")
+            .map(|hex| norn_cell::CheckpointKey::from_hex(&hex))
+            .transpose()
+            .map_err(|error| JsValue::from_str(&format!("NORN_CHECKPOINT_KEY: {error}")))?;
+        let engine =
+            move |storage: JsValue| WorkersEngine::new(storage).with_checkpoint_key(checkpoint_key);
         let scope = CellScope {
             org_id,
             environment_id,
         };
         let tenant = (if scope == seed::demo_scope() {
-            let store = seed::provision(WorkersEngine::new(storage), &scope).map_err(rejected)?;
+            let store = seed::provision(engine(storage), &scope).map_err(rejected)?;
             // The demo cell publishes no questions: its decisions and action
             // calls answer with the lineage-keyed receipt handles.
             Tenant::seeded(scope.clone(), &DEMO_GRANTS, store, None)
@@ -202,7 +224,7 @@ impl NornCell {
                 plan,
                 definitions,
                 catalog,
-            } = analytics::provision(WorkersEngine::new(storage), &scope).map_err(rejected)?;
+            } = analytics::provision(engine(storage), &scope).map_err(rejected)?;
             let questions = DemoQuestions::new(plan, scope.clone())
                 .try_with_handle_key(lineage_key.as_deref())
                 .map_err(rejected)?
@@ -212,7 +234,7 @@ impl NornCell {
             Tenant::open(
                 scope.clone(),
                 &DEMO_GRANTS,
-                Box::new(move || Ok(WorkersEngine::new(storage.clone()))),
+                Box::new(move || Ok(engine(storage.clone()))),
                 lineage_key.as_deref(),
             )
         })
@@ -406,10 +428,20 @@ impl NornCell {
         Ok(())
     }
 
+    /// Whether the served cell has been fenced by the history scrub (S12).
+    fn is_fenced(&self) -> bool {
+        self.tenant
+            .serving_host()
+            .is_some_and(norn_api::timers::is_fenced)
+    }
+
     /// SYNC-ONE-1: claim the next connection due on its schedule at `now_ms`
     /// (checked and marked in this one call), as its own principal.
     #[wasm_bindgen(js_name = syncDue)]
     pub fn sync_due(&mut self, now_ms: f64) -> Option<String> {
+        if self.is_fenced() {
+            return None;
+        }
         let host = self.tenant.serving_host()?;
         let connect = self.connect.as_mut()?;
         // A schedule the cell's records cannot be read back for claims nothing.
@@ -435,6 +467,16 @@ impl NornCell {
     /// A host failure reading the cell.
     #[wasm_bindgen(js_name = nextDue)]
     pub fn next_due(&mut self, now_ms: f64) -> Result<Option<f64>, JsValue> {
+        if self
+            .tenant
+            .serving_host()
+            .is_some_and(norn_api::timers::is_fence_persist_pending)
+        {
+            return Ok(earliest(
+                Some(millis(now_ms).saturating_add(norn_api::timers::FENCE_RETRY_MS)),
+                None,
+            ));
+        }
         let cell = self
             .tenant
             .next_due()
@@ -464,7 +506,12 @@ impl NornCell {
     }
 
     /// The next scheduled sync, with the schedule read back from the cell.
+    /// Returns `Ok(None)` when the cell is fenced so alarm cleanup finishes
+    /// cleanly instead of throwing `cell.fenced` (S12, #1551 round 5).
     fn sync_next(&mut self, now_ms: f64) -> Result<Option<u64>, JsValue> {
+        if self.is_fenced() {
+            return Ok(None);
+        }
         let (Some(host), Some(connect)) = (self.tenant.serving_host(), self.connect.as_mut())
         else {
             return Ok(None);

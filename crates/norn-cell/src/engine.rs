@@ -248,6 +248,23 @@ pub trait SqlEngine {
         Ok(None)
     }
 
+    /// External-writer revision of the database (`PRAGMA data_version` on
+    /// native SQLite, constant `Some(0)` on exclusive single-connection
+    /// engines such as Durable Objects and Rivet), readable both inside and
+    /// outside a transaction (OPEN-CHECKPOINT-1 S10, #1551).
+    ///
+    /// Equal values across two transactions prove no other connection wrote
+    /// to the database file in between.
+    ///
+    /// # Errors
+    /// Backend revision-read failures.
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+        Ok(match self.read_isolation() {
+            ReadIsolation::ExclusiveSynchronous => Some(0),
+            ReadIsolation::Revisioned => None,
+        })
+    }
+
     /// A store has accepted this engine's database. A host applies here the
     /// persistent settings it deferred at open, so that a refused open
     /// leaves the file exactly as found (ENGINE-UPGRADE-1, #1504).
@@ -256,6 +273,15 @@ pub trait SqlEngine {
     /// Backend errors applying the deferred settings.
     fn admitted(&self) -> Result<(), CellError> {
         Ok(())
+    }
+
+    /// OPEN-CHECKPOINT-1 (#1551 round 4): the host's open-checkpoint key,
+    /// held outside the cell file and given by the host when it opens the
+    /// engine. Only a checkpoint whose MAC verifies under it shortens an
+    /// open; with none, every open verifies from genesis and the cell
+    /// records no checkpoint.
+    fn checkpoint_key(&self) -> Option<crate::open_checkpoint::CheckpointKey> {
+        None
     }
 
     /// Run `f`, the trusted writes of one definitions install, as the only
@@ -274,7 +300,6 @@ pub trait SqlEngine {
     ) -> Result<T, CellError> {
         f()
     }
-
     /// Decode the first row; absence is an error.
     ///
     /// # Errors
@@ -380,10 +405,6 @@ macro_rules! params {
 }
 pub(crate) use params;
 
-// The shared transaction glue of callback-style hosts. Crate-private: the
-// Workers engine uses it; only the test-only `fault-injection` feature
-// publishes it, for the native harness and its mutants. Compiled only where
-// it is used: on Workers (wasm32) and with that feature.
 #[cfg(any(target_arch = "wasm32", feature = "fault-injection"))]
 #[cfg_attr(
     not(feature = "fault-injection"),
@@ -392,96 +413,7 @@ pub(crate) use params;
         reason = "public only when the fault-injection feature re-exports it"
     )
 )]
-mod transact {
-    use crate::CellError;
-
-    /// A host's callback-style transaction primitive, such as a Durable Object's
-    /// `storage.transactionSync` (TXN-ATOMIC-1). [`run_transaction`] holds the
-    /// decision logic every such host shares; an implementation supplies only
-    /// the primitive and its host-specific thrown values.
-    pub trait Transact {
-        /// What the primitive and its callback throw (a `JsValue` on Workers).
-        type Thrown;
-
-        /// Runs `callback` synchronously inside one transaction: commits when it
-        /// returns `Ok`, rolls back and rethrows when it returns `Err`, and
-        /// throws its own value when the engine fails.
-        ///
-        /// # Errors
-        /// The callback's thrown value, or the engine's.
-        fn transaction_sync<F: FnMut() -> Result<(), Self::Thrown>>(
-            &self,
-            callback: &mut F,
-        ) -> Result<(), Self::Thrown>;
-
-        /// The value the callback throws to roll back after the transaction body
-        /// failed (the rollback marker).
-        fn rollback_marker(&self) -> Self::Thrown;
-
-        /// Whether `thrown` is the rollback marker, rethrown unchanged.
-        fn is_rollback_marker(&self, thrown: &Self::Thrown) -> bool;
-
-        /// The value the callback throws if the primitive calls it twice.
-        fn callback_reused(&self) -> Self::Thrown;
-
-        /// The engine error for any other thrown value.
-        fn engine_error(&self, thrown: &Self::Thrown) -> CellError;
-    }
-
-    struct Active<'a>(&'a std::cell::Cell<bool>);
-
-    impl Drop for Active<'_> {
-        fn drop(&mut self) {
-            self.0.set(false);
-        }
-    }
-
-    /// [`SqlEngine::transaction`](super::SqlEngine::transaction) over a
-    /// [`Transact`] primitive (TXN-ATOMIC-1).
-    ///
-    /// A transaction already open on `active` is refused here, not by the
-    /// engine. Otherwise `f` runs once inside the primitive's transaction; its
-    /// `Err` makes the callback throw the rollback marker, so the primitive rolls
-    /// back, and the caller gets `f`'s own (typed) error. Any other throw is an
-    /// engine error, and a commit without `f`'s success is reported as one.
-    ///
-    /// # Errors
-    /// `f`'s error after rollback, a nested transaction, or an engine error.
-    pub fn run_transaction<H: Transact, T, X: From<CellError>>(
-        host: &H,
-        active: &std::cell::Cell<bool>,
-        f: impl FnOnce() -> Result<T, X>,
-    ) -> Result<T, X> {
-        if active.replace(true) {
-            return Err(CellError::Engine("nested transaction refused".into()).into());
-        }
-        let _active = Active(active);
-        let mut operation = Some(f);
-        let mut output = None;
-        let mut callback = || -> Result<(), H::Thrown> {
-            let Some(f) = operation.take() else {
-                return Err(host.callback_reused());
-            };
-            let result = f();
-            let failed = result.is_err();
-            output = Some(result);
-            if failed {
-                Err(host.rollback_marker())
-            } else {
-                Ok(())
-            }
-        };
-        let result = host.transaction_sync(&mut callback);
-        match (result, output) {
-            (Err(thrown), Some(Err(refusal))) if host.is_rollback_marker(&thrown) => Err(refusal),
-            (Err(thrown), _) => Err(host.engine_error(&thrown).into()),
-            (Ok(()), Some(Ok(value))) => Ok(value),
-            (Ok(()), None | Some(Err(_))) => {
-                Err(CellError::Engine("transaction callback/rollback missing".into()).into())
-            }
-        }
-    }
-}
+mod transact;
 #[cfg(feature = "fault-injection")]
 pub use transact::{Transact, run_transaction};
 #[cfg(all(target_arch = "wasm32", not(feature = "fault-injection")))]
@@ -543,6 +475,8 @@ pub struct NativeEngine {
     target: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// The journal mode an open asked for, applied once a store admits the file.
     journal_mode: std::cell::Cell<Option<&'static str>>,
+    /// The host's open-checkpoint key ([`SqlEngine::checkpoint_key`]).
+    checkpoint_key: Option<crate::open_checkpoint::CheckpointKey>,
 }
 
 #[cfg(feature = "native")]
@@ -561,7 +495,8 @@ impl NativeEngine {
         path: &std::path::Path,
         options: crate::store::StoreOptions,
     ) -> Result<Self, CellError> {
-        let engine = Self::configured(rusqlite::Connection::open(path)?)?;
+        let mut engine = Self::configured(rusqlite::Connection::open(path)?)?;
+        engine.checkpoint_key = options.checkpoint_key;
         crate::engine_release::admission(&engine)?;
         let conn = &engine.conn;
         engine.journal_mode.set(Some(match options.journal_mode {
@@ -725,7 +660,19 @@ impl NativeEngine {
             definitions,
             target,
             journal_mode: std::cell::Cell::new(None),
+            checkpoint_key: None,
         })
+    }
+
+    /// The same engine holding the host's open-checkpoint key (an in-memory
+    /// engine, which has no [`crate::StoreOptions`]).
+    #[must_use]
+    pub fn with_checkpoint_key(
+        mut self,
+        key: Option<crate::open_checkpoint::CheckpointKey>,
+    ) -> Self {
+        self.checkpoint_key = key;
+        self
     }
 
     /// Close the native file before publishing a staged restore.
@@ -758,7 +705,8 @@ impl crate::fork::ForkEngine for NativeEngine {
             }
         }
         conn.execute_batch("PRAGMA foreign_keys = ON")?;
-        Self::configured(conn)
+        // A fork keeps the host's key: its checkpoint is the base's.
+        Ok(Self::configured(conn)?.with_checkpoint_key(self.checkpoint_key))
     }
 }
 
@@ -924,6 +872,10 @@ impl SqlEngine for NativeEngine {
         ReadIsolation::Revisioned
     }
 
+    fn checkpoint_key(&self) -> Option<crate::open_checkpoint::CheckpointKey> {
+        self.checkpoint_key
+    }
+
     fn admitted(&self) -> Result<(), CellError> {
         if let Some(mode) = self.journal_mode.take() {
             let _applied: String =
@@ -956,13 +908,20 @@ impl SqlEngine for NativeEngine {
         if !self.conn.is_autocommit() {
             return Ok(None);
         }
+        let Some(external) = self.external_data_version()? else {
+            return Ok(None);
+        };
+        Ok(Some((self.conn.total_changes(), external)))
+    }
+
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
         let _counted = StatementCount::start(&self.conn, &[]);
         let external: i64 = self
             .conn
             .query_row("PRAGMA data_version", [], |row| row.get(0))?;
         let external = u64::try_from(external)
             .map_err(|_negative| CellError::OutOfRange("SQLite cache revision"))?;
-        Ok(Some((self.conn.total_changes(), external)))
+        Ok(Some(external))
     }
 
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {

@@ -28,7 +28,7 @@ use norn_cell::engine_release::{
 use norn_cell::export::Exporter;
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
-    CellError, CellStore, CommitOutcome, InstalledDefinitionInput, JournalMode, Model,
+    CellError, CellStore, CommitOutcome, InstalledDefinitionInput, JournalMode, LedgerHead, Model,
     RestoreError, StoreOptions,
 };
 use serde_json::Value;
@@ -37,10 +37,11 @@ const STORAGE_V1: &str = include_str!("fixtures/engine-storage-v1.json");
 const STORAGE_V2: &str = include_str!("fixtures/engine-storage-v2.json");
 const STORAGE_V3: &str = include_str!("fixtures/engine-storage-v3.json");
 const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
+const STORAGE_V5: &str = include_str!("fixtures/engine-storage-v5.json");
 
-/// The marking history storage version (#1547) adds the partial index of the
-/// version marking labels that are not empty to every older cell; no row
-/// changes.
+/// The marking history storage version (storage version 5, #1547) adds the
+/// partial index of the version marking labels that are not empty to every
+/// older cell; no row changes.
 fn add_marking_history_index(image: &mut Value) {
     image["schema"]
         .as_array_mut()
@@ -108,6 +109,177 @@ fn add_approval_recovery_tables(image: &mut Value, approved_calls: &Value) {
     );
 }
 
+/// The cell's transparency root, as the open checkpoint records it.
+fn receipts_root(store: &CellStore<NativeEngine>) -> String {
+    use std::fmt::Write as _;
+    store
+        .transparency_checkpoint()
+        .expect("root")
+        .as_bytes()
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            write!(hex, "{byte:02x}").expect("hex");
+            hex
+        })
+}
+
+/// Norn1 hash of `value`, as the engine content-addresses its own data.
+fn norn1<T: serde::Serialize>(value: &T) -> String {
+    use norn_ir::canonical::{HashProfile, canonical_json_of};
+    HashProfile::Norn1.hash_canonical_bytes(&canonical_json_of(value).expect("canonical"))
+}
+
+/// The open checkpoint's quantity digest, folded here independently over the
+/// `(commit, receipt digest)` of each receipt that carries quantity (S1,
+/// #1551).
+fn quantity_receipts(store: &CellStore<NativeEngine>) -> String {
+    store
+        .read()
+        .receipts()
+        .expect("receipts")
+        .iter()
+        .filter(|receipt| receipt.body.quantity.is_some())
+        .fold(
+            norn1(&"norn.open-checkpoint.quantity/1"),
+            |digest, receipt| {
+                norn1(&(
+                    digest.as_str(),
+                    receipt.body.commit_seq,
+                    receipt.hash.as_str(),
+                ))
+            },
+        )
+}
+
+/// The last export record at or before the head, as the open checkpoint
+/// pins it (S2, #1551 round 2): its commit and digest, or none.
+fn export_pin(store: &CellStore<NativeEngine>, commits: u64) -> (Value, Value) {
+    (1..=commits)
+        .rev()
+        .find_map(|commit| {
+            store
+                .export_record(commit)
+                .expect("export record")
+                .map(|record| (commit.into(), record.hash().expect("record digest").into()))
+        })
+        .unwrap_or((Value::Null, Value::Null))
+}
+
+/// The open checkpoint's definitions digest, folded here independently over
+/// every retained definition version (#1551 round 3).
+fn definitions_digest(store: &CellStore<NativeEngine>) -> String {
+    store
+        .read()
+        .installed_definition_versions()
+        .expect("definition versions")
+        .iter()
+        .fold(
+            norn1(&"norn.open-checkpoint.definitions/1"),
+            |digest, version| norn1(&(digest.as_str(), norn1(version).as_str())),
+        )
+}
+
+/// Storage version 6 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`,
+/// and the upgrading open records in it the head it verified, with the root
+/// of its receipts, the digest of its quantity receipts, the last export
+/// record it covers and the digest of its definition versions: the one row
+/// it writes besides the stamp. The row's MAC (#1551 round 4) is checked
+/// here independently: HMAC-SHA256 under the test key over the row and the
+/// cell's identity.
+fn add_open_checkpoint(
+    expected: &mut Value,
+    after: &Value,
+    head: &LedgerHead,
+    root: &str,
+    quantity: &str,
+    pins: &((Value, Value), String),
+) {
+    let entry = after["schema"]
+        .as_array()
+        .expect("schema")
+        .iter()
+        .find(|entry| entry["name"] == "_norn_open_checkpoint")
+        .expect("the upgrade adds the open checkpoint table")
+        .clone();
+    assert_eq!(entry["type"], "table");
+    let ((export_seq, export_hash), definitions) = pins;
+    let cell_id = after["tables"]["_norn_meta"]["rows"]
+        .as_array()
+        .expect("meta rows")
+        .iter()
+        .find(|row| row[1] == "binding:cell_id")
+        .and_then(|row| row[2].as_str())
+        .expect("the fixture is bound to a cell identity")
+        .to_owned();
+    let export = if export_seq.is_null() {
+        Value::Null
+    } else {
+        serde_json::json!([export_seq, export_hash])
+    };
+    let message = norn_ir::canonical::canonical_json_of(&serde_json::json!([
+        "norn.open-checkpoint.mac/1",
+        cell_id,
+        head.commits,
+        head.seq,
+        head.hash,
+        root,
+        null,
+        quantity,
+        export,
+        definitions
+    ]))
+    .expect("mac message");
+    let mac = {
+        use hmac::{KeyInit as _, Mac as _};
+        let mut mac = hmac::Hmac::<transparency_sha2::Sha256>::new_from_slice(&test_key_bytes())
+            .expect("key");
+        mac.update(&message);
+        mac.finalize()
+            .into_bytes()
+            .iter()
+            .fold(String::new(), |mut hex, byte| {
+                use std::fmt::Write as _;
+                let _infallible = write!(hex, "{byte:02x}");
+                hex
+            })
+    };
+    expected["schema"]
+        .as_array_mut()
+        .expect("schema")
+        .push(entry);
+    for (index_name, table_name) in [
+        (
+            "_norn_quantity_history/commit_seq",
+            "_norn_quantity_history",
+        ),
+        (
+            "_norn_quantity_posting/commit_seq",
+            "_norn_quantity_posting",
+        ),
+    ] {
+        let index = after["schema"]
+            .as_array()
+            .expect("schema")
+            .iter()
+            .find(|entry| entry["name"] == index_name)
+            .unwrap_or_else(|| panic!("the v6 upgrade adds {index_name}"))
+            .clone();
+        assert_eq!(index["type"], "index");
+        assert_eq!(index["table"], table_name);
+        expected["schema"]
+            .as_array_mut()
+            .expect("schema")
+            .push(index);
+    }
+    expected["tables"].as_object_mut().expect("tables").insert(
+        "_norn_open_checkpoint".to_owned(),
+        serde_json::json!({
+            "columns": ["rowid", "id", "commits", "seq", "hash", "receipts_root", "boundary_seq", "boundary_commit", "quantity_receipts", "export_seq", "export_hash", "definitions", "mac"],
+            "rows": [[1, 1, head.commits, head.seq, head.hash, root, null, null, quantity, export_seq, export_hash, definitions, mac]],
+        }),
+    );
+}
+
 /// The catalog is compared by name: a recreated index takes a new place.
 fn by_name(image: &mut Value) {
     if let Some(schema) = image["schema"].as_array_mut() {
@@ -128,8 +300,32 @@ fn raw(path: &Path) -> NativeEngine {
     NativeEngine::open(path, StoreOptions::default()).expect("engine")
 }
 
+/// This test process's checkpoint key: random, from SQLite's
+/// `randomblob`, the same for every open in the process.
+fn test_key_bytes() -> [u8; 32] {
+    static KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    *KEY.get_or_init(|| {
+        let engine = NativeEngine::open_in_memory().expect("engine");
+        let rows = engine
+            .query("SELECT randomblob(32)", &[])
+            .expect("random bytes");
+        let [SqlValue::Blob(bytes)] = &rows[0][..] else {
+            panic!("random bytes {rows:?}");
+        };
+        bytes.clone().try_into().expect("32 bytes")
+    })
+}
+
+/// Opens with the test key, as a keyed host opens (#1551 round 4).
+fn keyed() -> StoreOptions {
+    StoreOptions {
+        checkpoint_key: Some(norn_cell::CheckpointKey::from_bytes(test_key_bytes())),
+        ..StoreOptions::default()
+    }
+}
+
 fn open(path: &Path) -> Result<CellStore<NativeEngine>, CellError> {
-    CellStore::open(path, engine_fixture::model(), StoreOptions::default())
+    CellStore::open(path, engine_fixture::model(), keyed())
 }
 
 /// Write `stamp` as another engine would, below this engine's admission.
@@ -177,7 +373,7 @@ fn bytes(path: &Path) -> Vec<u8> {
 fn wal() -> StoreOptions {
     StoreOptions {
         journal_mode: JournalMode::Wal,
-        ..StoreOptions::default()
+        ..keyed()
     }
 }
 
@@ -251,6 +447,9 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     // receipt under the new engine.
     let mut store = open(&path).expect("a v1 cell opens on this engine");
     let head = store.read().verify_ledger().expect("the ledger verifies");
+    let root = receipts_root(&store);
+    let quantity = quantity_receipts(&store);
+    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
     assert_eq!(head.commits, 3);
     let receipts = store.read().receipts().expect("receipts");
     assert_eq!(receipts.len(), 3);
@@ -307,6 +506,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     // The v1 fixture holds no decision, so nothing is backfilled.
     add_approval_recovery_tables(&mut expected, &serde_json::json!([]));
     add_marking_history_index(&mut expected);
+    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -328,6 +528,9 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     by_name(&mut reopened);
     assert_eq!(reopened, catalog, "a current open writes nothing");
     let mut store = open(&path).expect("reopen");
+    // A new idempotency key waits for the history scrub (#1551 round 4),
+    // which the host's due-work clock runs.
+    assert_eq!(store.scrub_to_end(), norn_cell::ScrubStatus::Idle);
     let mut next = engine_fixture::batches()[1].clone();
     next.idempotency_key = Some("after-upgrade".to_owned());
     next.logical_time = 4_000;
@@ -371,7 +574,10 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     );
 
     let mut store = open(&path).expect("a v2 cell opens on this engine");
+    let root = receipts_root(&store);
+    let quantity = quantity_receipts(&store);
     let head = store.read().verify_ledger().expect("the ledger verifies");
+    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
     assert_eq!(head.commits, engine_fixture::COMMITS);
     let receipts = store.read().receipts().expect("receipts");
     assert_eq!(
@@ -429,6 +635,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     expected["storage"] = STORAGE_VERSION.into();
     add_approval_recovery_tables(&mut expected, approved);
     add_marking_history_index(&mut expected);
+    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -472,6 +679,9 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
 
     let mut store = open(&path).expect("a v3 cell opens on this engine");
     let head = store.read().verify_ledger().expect("the ledger verifies");
+    let root = receipts_root(&store);
+    let quantity = quantity_receipts(&store);
+    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
     assert_eq!(head.commits, engine_fixture::COMMITS);
     let receipts = store.read().receipts().expect("receipts");
     assert_eq!(
@@ -525,12 +735,13 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
     add_marking_history_index(&mut expected);
+    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
     assert_eq!(
         catalog, expected,
-        "the upgrade writes the stamp and the marking history index alone"
+        "the upgrade writes the stamp, the marking history index and the open checkpoint alone"
     );
     assert_eq!(
         engine_release::admission(&raw(&path)).expect("admission"),
@@ -548,8 +759,10 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
 
 /// A cell the last storage version 4 engine wrote opens on this engine with
 /// its ledger and receipts intact. Step 5 (#1547) creates the marking history
-/// index from the rows the cell holds: the upgrade restamps the cell, adds
-/// that index, and changes no row.
+/// index and step 6 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`:
+/// the upgrading open verifies the whole history and records its head and
+/// receipt root there. The next open verifies from that checkpoint and writes
+/// nothing.
 #[test]
 fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     let image: Value = serde_json::from_str(STORAGE_V4).expect("fixture");
@@ -566,6 +779,9 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
 
     let mut store = open(&path).expect("a v4 cell opens on this engine");
     let head = store.read().verify_ledger().expect("the ledger verifies");
+    let root = receipts_root(&store);
+    let quantity = quantity_receipts(&store);
+    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
     assert_eq!(head.commits, engine_fixture::COMMITS);
     let receipts = store.read().receipts().expect("receipts");
     for (batch, receipt) in engine_fixture::batches().iter().zip(&receipts) {
@@ -574,6 +790,7 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
             CommitOutcome::Committed(_) => panic!("a recorded commit was committed again"),
         }
     }
+    assert_eq!(store.verified_head().expect("head"), head);
     drop(store);
 
     let after = engine_fixture::image_of(&path);
@@ -588,19 +805,96 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
     add_marking_history_index(&mut expected);
+    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
     assert_eq!(
         catalog, expected,
-        "the upgrade writes the stamp and the marking history index alone"
+        "the upgrade writes the stamp, the marking history index and the open checkpoint alone"
     );
     assert_eq!(
         engine_release::admission(&raw(&path)).expect("admission"),
         Admission::Current
     );
+
+    // A reopen verifies from the checkpoint and writes nothing.
+    let store = open(&path).expect("reopen");
+    assert_eq!(store.read().verify_ledger().expect("ledger"), head);
+    drop(store);
+    let mut reopened = engine_fixture::image_of(&path);
+    by_name(&mut reopened);
+    assert_eq!(reopened, catalog, "a current open writes nothing");
 }
 
+/// A cell the last storage version 5 engine wrote (#1547's marking history
+/// index already in place) opens on this engine with its ledger and receipts
+/// intact. Step 6 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`:
+/// the upgrading open verifies the whole history and records its head and
+/// receipt root there, the one row it writes besides the stamp. The next open
+/// verifies from that checkpoint and writes nothing.
+#[test]
+fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
+    let image: Value = serde_json::from_str(STORAGE_V5).expect("fixture");
+    assert_eq!(image["storage"], 5, "the fixture records storage version 5");
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    engine_fixture::load(&image, &path);
+    let before = engine_fixture::image_of(&path);
+    assert_eq!(before, image, "the image loads losslessly");
+    assert_eq!(
+        engine_release::admission(&raw(&path)).expect("admission"),
+        Admission::Upgrade { from: 5 }
+    );
+
+    let mut store = open(&path).expect("a v5 cell opens on this engine");
+    let head = store.read().verify_ledger().expect("the ledger verifies");
+    let root = receipts_root(&store);
+    let quantity = quantity_receipts(&store);
+    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
+    assert_eq!(head.commits, engine_fixture::COMMITS);
+    let receipts = store.read().receipts().expect("receipts");
+    for (batch, receipt) in engine_fixture::batches().iter().zip(&receipts) {
+        match store.commit(batch).expect("replay") {
+            CommitOutcome::Replayed(replayed) => assert_eq!(&replayed, receipt),
+            CommitOutcome::Committed(_) => panic!("a recorded commit was committed again"),
+        }
+    }
+    assert_eq!(store.verified_head().expect("head"), head);
+    drop(store);
+
+    let after = engine_fixture::image_of(&path);
+    let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
+    let mut expected = before;
+    let stamp_row = expected["tables"]["_norn_meta"]["rows"]
+        .as_array_mut()
+        .expect("meta rows")
+        .iter_mut()
+        .find(|row| row[1] == STAMP_KEY)
+        .expect("the v5 cell is stamped");
+    stamp_row[2] = stamp.into();
+    expected["storage"] = STORAGE_VERSION.into();
+    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
+    let mut catalog = after;
+    by_name(&mut catalog);
+    by_name(&mut expected);
+    assert_eq!(
+        catalog, expected,
+        "the upgrade writes the stamp and the open checkpoint alone"
+    );
+    assert_eq!(
+        engine_release::admission(&raw(&path)).expect("admission"),
+        Admission::Current
+    );
+
+    // A reopen verifies from the checkpoint and writes nothing.
+    let store = open(&path).expect("reopen");
+    assert_eq!(store.read().verify_ledger().expect("ledger"), head);
+    drop(store);
+    let mut reopened = engine_fixture::image_of(&path);
+    by_name(&mut reopened);
+    assert_eq!(reopened, catalog, "a current open writes nothing");
+}
 #[test]
 fn a_failed_open_rolls_the_upgrade_back() {
     let dir = tempfile::tempdir().expect("directory");
