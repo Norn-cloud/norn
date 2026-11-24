@@ -402,6 +402,40 @@ test("a refused read is the cell's error, not an empty page", async () => {
   await expect(transport.objectPage("shop.Product")).rejects.toThrow("the read request is not authorized")
 })
 
+test("once the mode query settles on an outage, page reads reuse its error instead of probing /v1/definitions until Retry", async () => {
+  const definitionReads: string[] = []
+  let gatewayDown = true
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") return Response.json(ME)
+    definitionReads.push(url)
+    return gatewayDown
+      ? new Response("<html><body>502 Bad Gateway</body></html>", { status: 502, headers: { "content-type": "text/html" } })
+      : new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  const client = new QueryClient()
+  try {
+    const query = modeQuery({ orgId: ME.organization.id, environmentId: ME.environmentId })
+    await expect(client.fetchQuery({ ...query, retryDelay: 0 })).rejects.toThrow("did not answer (502)")
+    // The initial read plus MODE_AUTO_RETRIES (3) bounded retries, then the mode query settles.
+    expect(definitionReads).toHaveLength(4)
+
+    // A page read through the transport (a catalog query's own retry) gets the settled error without a new probe.
+    await expect(currentMode()).rejects.toThrow("did not answer (502)")
+    expect(definitionReads).toHaveLength(4)
+
+    // Retry forgets the settled outage: the next read probes the cell again and connects.
+    gatewayDown = false
+    refreshMode()
+    await expect(currentMode()).resolves.toMatchObject({ kind: "live" })
+    expect(definitionReads).toHaveLength(5)
+  } finally {
+    fetch.mockRestore()
+    client.clear()
+  }
+})
+
 test("syncStudioScopeChange(client, undefined) immediately flips mounted scope observers to pending without writing null", () => {
   const client = new QueryClient()
   const scopeA = { orgId: "org_a", environmentId: "env_a" }
