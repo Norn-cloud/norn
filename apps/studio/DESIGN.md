@@ -153,19 +153,45 @@ is the split Studio's CSS and the StudioTheme validator already use (`studio-the
   starts from the same inherited palette and passes the same validator.
 - `--knot` (#5b52f0 / #7c74ff) is reserved for the Norn mark.
 
-Measured pairs (WCAG 2.x relative luminance; the lowest surface of canvas, card, well, well-hover and
-popover for text; canvas, card and well for the ring). Floors: 4.5:1 text, 3:1 ring and indicator.
+Measured pairs, reproducible from the values in this section and in `src/index.css`:
 
-| Skin / scheme | CTA ink on fill | on hover fill | `--action` text (min) | `--link` (min) | `--ring` (min) | `--dock-indicator` on dock |
-| --- | --- | --- | --- | --- | --- | --- |
-| open L | 5.43 | 6.83 | 4.68 | 5.88 | 4.98 | 6.05 |
-| open D | 5.43 | 6.83 | 5.64 | 6.43 | 5.38 | 5.71 |
-| polar L | 16.97 | 13.29 | 15.41 | 15.41 | 7.16 | 15.30 |
-| polar D | 16.74 | 14.50 | 14.42 | 12.49 | 6.70 | 14.42 |
-| luma L | 5.86 | 6.88 | 5.23 | 5.62 | 5.32 | 6.05 |
-| luma D | 5.09 | 4.67 | 4.52 | 5.79 | 4.93 | 5.71 |
-| glass L | 5.43 | 6.83 | 4.80 | 6.04 | 4.80 | 3.66 |
-| glass D | 5.43 | 6.83 | 5.38 | 6.14 | 5.23 | 6.64 |
+- **Formula:** WCAG 2.x relative luminance and contrast ratio, on sRGB hex.
+- **Compositing:** a translucent value (`rgb(… / a)`) is composited over the opaque colour behind
+  it, rounding each channel to 8 bits at every step (the `mix` in `test/contrast.test.ts`). Layer
+  order, back to front:
+  - canvas: `--canvas` (opaque in every skin);
+  - card: `--card` over canvas;
+  - well: `--well` over card over canvas (a well is always inset in a card);
+  - well-hover: `--well-hover` over well over card over canvas (a hovered row inside a well);
+  - popover: `--popover` over canvas;
+  - dock: `--dock-surface` over canvas.
+- **Surface sets:** text roles (`--action`, `--link`, `--foreground` as figure, `--muted-foreground`
+  as unit) take the minimum over canvas, card, well, well-hover and popover; `--ring` over canvas,
+  card and well; `--dock-indicator` on the dock; CTA ink on its two fills.
+- **Palettes:** `open` and `polar` use section 4.1. `luma` and `glass` use their `index.css`
+  surfaces and inherit `open`'s text tokens from section 4.1 (`--foreground`, `--muted-foreground`)
+  and, for `glass`, its action row. Their composited surfaces:
+
+  | Skin / scheme | canvas | card | well | well-hover | popover | dock |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | luma L | #f3f4f6 | #fafafb | #fafafb | #f1f2f5 | #ffffff | #1d1d20 |
+  | luma D | #0b0b0e | #17171d | #17171d | #1d1d24 | #1f1f27 | #222226 |
+  | glass L | #eef1f8 | #f9fafc | #f6f7fc | #eef2fa | #fdfdfe | #3f414a |
+  | glass D | #0b0d17 | #131623 | #1a1e2f | #23283e | #181c2d | #111320 |
+
+Floors: 4.5:1 text, 3:1 ring and indicator. Each minimum names the surface that sets it
+(c canvas, k card, w well, h well-hover, p popover).
+
+| Skin / scheme | CTA ink on fill | on hover fill | `--action` text | `--link` | `--ring` | `--dock-indicator` on dock | figure / unit |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| open L | 5.43 | 6.83 | 4.68 h | 5.88 h | 4.98 w | 6.05 | 14.82 h / 4.64 h |
+| open D | 5.43 | 6.83 | 5.64 h | 6.43 h | 5.38 w | 5.71 | 13.27 h / 5.67 h |
+| polar L | 16.97 | 13.29 | 15.41 h | 15.41 h | 7.16 c | 15.30 | 15.41 h / 5.75 h |
+| polar D | 16.74 | 14.50 | 14.42 h | 12.49 h | 6.70 w | 14.42 | 15.19 h / 5.89 h |
+| luma L | 5.86 | 6.88 | 5.23 h | 5.62 h | 5.32 c | 6.05 | 15.36 h / 4.81 h |
+| luma D | 5.09 | 4.67 | 4.52 p | 5.79 p | 4.93 k | 5.71 | 13.87 p / 5.93 p |
+| glass L | 5.43 | 6.83 | 4.80 c | 6.04 c | 4.80 c | 3.66 | 15.21 c / 4.76 c |
+| glass D | 5.43 | 6.83 | 5.23 h | 5.97 h | 5.23 w | 6.64 | 12.32 h / 5.27 h |
 
 ### 4.3 Status: dots and text are separate tokens
 
@@ -331,8 +357,12 @@ Shells own frame chrome and navigation only. A view never knows which shell it i
   - Destination: 40px round button (`size-[40px]`), 18px icon, `aria-label` = its name,
     `aria-current="page"` when active, active fill `--dock-well`. Attention marker: 6px
     `--dock-indicator` dot at `top-[7px] end-[7px]` with a 2px `--dock-surface` ring. The dot is
-    never the only signal: the destination's accessible name carries the state too (for example
-    "Inbox, new activity" via `aria-description` or a visually hidden span; TARGET).
+    never the only signal: the destination's accessible name carries the state too (TARGET). The
+    name is one complete `aria-label` that includes the state, for example
+    `aria-label="Inbox, 3 need attention"` (or `"Inbox, new activity"` when there is no count),
+    and the tooltip shows the same text. Do not extend an explicit `aria-label` with a hidden
+    child (the label overrides it) or with `aria-description` (that is a description, not the
+    name).
   - ≥ 640px: icon-only with a top tooltip carrying the label.
   - **< 640px: every destination shows its label** under the icon (`--text-meta`) and every target
     is at least **44 × 44 CSS px** (written in px, since `size-10` is only 36px at the 90% root).
@@ -456,21 +486,31 @@ numbers as current; stale data carries its "as of" time.
 ### 12.3 Refused and withheld (mandatory)
 
 A refusal renders **only what the server sent**. The wire type is `Refusal`
-(`crates/norn-api/src/refusal.rs`, `norn/refusal@2`; typed in the SDK by #1686 and in Studio as the
-`refused` arm of `CallResult`, `src/lib/actions.ts`). Its fields split into what every refusal
-carries and what only some disclose:
+(`crates/norn-api/src/refusal.rs`, `norn/refusal@2`; typed in the SDK by #1686). Studio's `refused`
+arm of `CallResult` (`src/lib/actions.ts`) is a **lossy projection** of it today; see "Studio
+today" below. The wire fields split into what every refusal carries and what only some disclose:
 
 | Field | Always sent | Renders as |
 | --- | --- | --- |
 | `message` | yes | The card or footer title, verbatim. |
 | `code` | yes | Mono, step 1, muted, after the title (`scope.denied`). |
-| `category` | yes | Chooses the icon and next step: `visibility` / `permission` → lock, no retry; `conflict` / `precondition` → reload; `limit` → wait; `invalid` → fix the input; `internal` → incident. |
-| `retryable` | yes | Shows Retry only when `true`. |
+| `category` | yes | (TARGET in Studio) Chooses the icon and next step: `visibility` / `permission` → lock, no retry; `conflict` / `precondition` → reload; `limit` → wait; `invalid` → fix the input; `internal` → incident. |
+| `retryable` | yes | (TARGET in Studio) Shows Retry only when `true`. |
 | `explanation` | yes (may be generic) | One plain sentence under the title. |
 | `reason` (law, subject, values, pin) | optional (null when not disclosed) | A "What refused" Props section: the law's name, the subject, and the checked values by path. |
 | `diagnostics` | optional (absent when empty) | A list of findings, each with its code and pointer. |
 | `incidentId` | optional (internal refusals) | Mono, with copy, in the footer line. |
 | `decidedAt` (Studio call path) | optional | "Refused at <time>" in the sub line. |
+
+**Studio today (CURRENT; gap in section 18).** `refusalOf` in `src/lib/actions.ts` keeps `code`,
+`message`, `diagnostics` and the optional `explanation`, `reason`, `decidedAt` and `incidentId`. It
+**drops `category` and `retryable`**, and types `explanation` as optional although the wire always
+sends it. `src/lib/screen/call.ts` copies the same fields into its `refused` phase. The catalog read
+(`listActions`) keeps only `status`, `code` and `message`. So a renderer fed by `CallResult` cannot
+draw the category icon or the server-directed Retry yet. **TARGET:** both arms and the `refused`
+phase carry `category` and `retryable` verbatim and `explanation` as required. Until then a
+renderer shows no category icon and no Retry on a refusal, and never infers either from the HTTP
+status or the code.
 
 **Absent sections render nothing:** no "Policy: —", no "unknown", no placeholder, no text the
 browser composed to sound specific. A bare opaque denial (the one read denial in
@@ -501,8 +541,8 @@ reduced by `src/lib/screen/call.ts`). Each arm has one rendering:
 | `pending` | HTTP 202, `decision` { `id`, `expiresAtMs` } | Held dot, "Sent for approval", the decision id (mono) and its expiry. Nothing committed; no receipt is shown. |
 | `refused` | `Refusal` (section 12.3) | The refusal replaces the primary action. |
 | `no-cell` | no cell is connected | An unavailable state that says no cell is connected and how to start one (`norn dev`); no Retry loop. |
-| `unavailable` | the cell does not serve action routes (404 without a refusal, or 503) | "This cell doesn't take actions from Studio yet." No Retry. |
-| (thrown) | network failure | "Couldn't reach the cell", with Retry. |
+| `unavailable` | **every** HTTP 404 or 503 from the action route (CURRENT). `callAction` checks the status before using the body, so a 404 or 503 that carries a typed `Refusal` is also reported as `unavailable` and its refusal is dropped; `listActions` does the same for the catalog. TARGET: a 404 or 503 whose body is a `Refusal` resolves to `refused` (section 18). | "This cell doesn't take actions from Studio yet." No Retry. |
+| (thrown) | network failure, a malformed 202, or another non-2xx whose body is not a `Refusal` (`CellUnavailable`); reduced to `failed` with reason `error` | "Couldn't reach the cell", with Retry. |
 
 - **One idempotency key per user intent.** The draft holds one `idempotencyKey`; a retry of the same
   intent resends the same key (so a lost response replays instead of committing twice); editing the
@@ -667,7 +707,7 @@ Same token, different values. "Pick" is what this spec adopts.
 | open L | `--line`, `--action-dot`, `--action-soft`, `--popup-shadow`, `--sheet-shadow` | — | defined | app's | New tokens Studio lacks. `--action-fill` is dropped: muted text on it fails (section 4.2). |
 | open L | `--font-sans` | Geist only | Geist + Cairo | Geist + Cairo | RTL first-class. |
 | open D | `--primary` (CTA fill) / ink | #2e60e0 / #ffffff | #5b8cff / #ffffff | #2e60e0 / #ffffff | White on the app's #5b8cff is 3.16:1. #2e60e0 is 5.43:1 and matches light. |
-| open D | `--action` (accent text) | #6b98ff | #5b8cff | #6b98ff | Studio's; ≥ 5.64:1 on every dark surface. #2e60e0 as text would be 3.58 / 3.36 / 3.13 / 2.88:1 on canvas, card, well, hover. `--link` #7da4ff is 7.98:1 on canvas; `--ring` #5b8cff is 6.14:1. |
+| open D | `--action` (accent text) | #6b98ff | #5b8cff | #6b98ff | Studio's; ≥ 5.64:1 on every dark surface. #2e60e0 as text would be 3.58 / 3.36 / 3.13 / 2.88:1 on canvas, card, well, hover. `--link` #7da4ff is 7.98:1 on canvas; `--ring` #5b8cff is 6.14:1 on canvas and 5.38:1 on the well (its minimum). |
 | open D | `--destructive-text` | #f07b73 | #ff6b6f | #ff6b6f | The app's passes (6.14:1 on well) and matches its dot. |
 | open D | `--panel-shadow` | `inset 0 1px 0 rgb(255 255 255/.02)` | same | same | — |
 | polar L | `--radius-panel` / `--radius-well` | 0.75rem / 0.5rem (10.8 / 7.2px) | 16px / 11px | 16px / 11px | Non-negotiable 1. |
@@ -774,6 +814,15 @@ Measured on `origin/main` at `ff0f95bd5e`. **Not fixed here**; the restyle lane 
   `learning/episodes-page.tsx`, `learning/episode-page.tsx`; vendored `components/ui/*`
   (`dropdown-menu`, `button`, `toggle`, `input-group`, `sidebar`, `sheet`) when touched.
 - [ ] No Arabic font; no `<bdi>` discipline for ids and money.
+
+**Refusals and call outcomes (`src/lib/actions.ts`, `src/lib/screen/call.ts`)**
+
+- [ ] `refusalOf` drops the wire's `category` and `retryable` and makes `explanation` optional; the
+  `refused` arm of `CallResult` and the `refused` call phase carry neither, so no screen can show the
+  category icon or a server-directed Retry (section 12.3).
+- [ ] `listActions`' `refused` arm keeps only `status`, `code` and `message`.
+- [ ] `callAction` and `listActions` map every 404 and 503 to `unavailable` without using the body,
+  so a typed `Refusal` on those statuses is never shown (section 12.4).
 
 **Agent operability**
 
