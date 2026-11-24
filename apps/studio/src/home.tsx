@@ -84,11 +84,11 @@ function AskBar() {
   }
   return (
     <form onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <InputGroup className="h-11 rounded-lg border-border bg-card dark:bg-card">
-        <InputGroupAddon><Sparkles aria-hidden /></InputGroupAddon>
+      <InputGroup className="h-12 rounded-2xl border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) dark:bg-card">
+        <InputGroupAddon><Sparkles aria-hidden className="text-muted-foreground" /></InputGroupAddon>
         <InputGroupInput aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)} />
         <InputGroupAddon align="inline-end">
-          <InputGroupButton type="submit" size="sm" variant="default" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
+          <InputGroupButton type="submit" size="sm" variant="default" className="rounded-full px-3.5" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
     </form>
@@ -137,7 +137,7 @@ function KeyNumbers() {
       <h2 id="key-numbers" className="text-section font-medium">Key numbers</h2>
       {metrics.isPending && <Skeleton className="h-28 rounded-lg" />}
       {metrics.isError && <p className="text-sm text-muted-foreground">{metrics.error.message}</p>}
-      {metrics.data && picked.length === 0 && <div className="rounded-lg border"><EmptyState icon={Sigma}>No admitted measure adds up on its own yet.</EmptyState></div>}
+      {metrics.data && picked.length === 0 && <div className="rounded-xl border border-(--panel-border) bg-card"><EmptyState icon={Sigma}>No admitted measure adds up on its own yet.</EmptyState></div>}
       {shown.length > 0 && (
         <StatStrip>
           {shown.map(({ metric, answer }) => {
