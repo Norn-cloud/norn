@@ -1,3 +1,4 @@
+import { orderLifecycleStates } from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
 import type { Field, Lifecycle } from "./catalog.ts"
 import { member } from "./exact.ts"
 import { groupDigits, readableTime } from "./format.ts"
@@ -76,20 +77,19 @@ export function declaredLifecycleStates(lifecycle: Lifecycle, field?: Field): re
 }
 
 /**
- * A lifecycle's states in the order the declared transitions first reach them from the initial
- * states, with any unreachable declared states appended last (matching `<norn-lifecycle-view>`).
+ * A lifecycle's states in the canonical display order shared with `<norn-lifecycle-view>`:
+ * grouped by shortest distance from an initial state, peers in declared order, unreachable
+ * declared states last.
  */
 export function lifecycleStates(lifecycle: Lifecycle, declared?: readonly string[]): readonly string[] {
-  const order = [...lifecycle.initial]
-  for (let index = 0; index < order.length; index += 1) {
-    for (const transition of lifecycle.transitions ?? []) {
-      if (transition.from.includes(order[index] ?? "") && !order.includes(transition.to)) order.push(transition.to)
-    }
-  }
-  for (const state of declared ?? []) {
-    if (!order.includes(state)) order.push(state)
-  }
-  return order
+  const states = declared === undefined
+    ? declaredLifecycleStates(lifecycle)
+    : [...new Set([...declared, ...declaredLifecycleStates(lifecycle)])]
+  return orderLifecycleStates({
+    states,
+    initial: lifecycle.initial,
+    transitions: lifecycle.transitions ?? [],
+  })
 }
 
 /** The record's position in a lifecycle and the steps the definition declares from there. */

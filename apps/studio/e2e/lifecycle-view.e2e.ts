@@ -137,11 +137,22 @@ interface FacetsState {
 }
 
 /** Stand-in live cell serving definitions, records, scoped facets (`object_facets.rs`), and WebSocket live refresh. */
-async function lifecycleCell(page: Page, initial: Record<string, FacetsState>) {
+async function lifecycleCell(
+  page: Page,
+  initial: Record<string, FacetsState>,
+  options: {
+    readonly includeWidget?: boolean
+    readonly onSubscribe?: (sub: { readonly id: string; readonly path: string; readonly property: string; readonly sendSnapshot: () => void }) => void
+  } = {},
+) {
   await session(page)
-  const artifacts = purchaseOrderArtifacts()
+  const allArtifacts = purchaseOrderArtifacts()
+  const artifacts = options.includeWidget === false
+    ? allArtifacts.filter((artifact) => (artifact as { kind?: unknown }).kind !== "widget")
+    : allArtifacts
   const facetsByProp: Record<string, FacetsState> = { ...initial }
   const facetRequests: URL[] = []
+  const refusedPaths: string[] = []
   const subs = new Map<string, { ws: { send: (data: string) => void }; path: string; seq: number }>()
   let revision = 1
 
@@ -206,15 +217,34 @@ async function lifecycleCell(page: Page, initial: Record<string, FacetsState>) {
       const msg = JSON.parse(String(raw)) as { type: string; id: string; path: string }
       if (msg.type === "unsubscribe") { subs.delete(msg.id); return }
       if (msg.type !== "subscribe") return
+      // Protocol-faithful check matching `apps/norn-cell-do/subscribe.mjs` and `crates/norn-cell-rivet/src/live.rs`.
+      if (typeof msg.path !== "string" || msg.path.length > 512 || !msg.path.startsWith("/v1/") || msg.path.startsWith("/v1/subscribe") || msg.path.includes("..")) {
+        refusedPaths.push(msg.path)
+        ws.send(JSON.stringify({ type: "refused", id: msg.id, code: "live.not_subscribable", message: "a subscription names one of this cell's GET routes" }))
+        return
+      }
       subs.set(msg.id, { ws, path: msg.path, seq: revision })
-      const current = snapshotFor(msg.path)
-      ws.send(JSON.stringify({ type: "snapshot", id: msg.id, status: current.status, digest: `rev-${revision}`, body: current.body }))
+      const sendSnapshot = () => {
+        const current = snapshotFor(msg.path)
+        ws.send(JSON.stringify({ type: "snapshot", id: msg.id, status: current.status, digest: `rev-${revision}`, body: current.body }))
+      }
+      if (options.onSubscribe) {
+        const parsed = new URL(msg.path, "https://cell")
+        options.onSubscribe({ id: msg.id, path: msg.path, property: parsed.searchParams.get("properties") ?? "status", sendSnapshot })
+      } else {
+        sendSnapshot()
+      }
     })
     ws.onClose(() => { for (const [id, sub] of subs) if (sub.ws === ws) subs.delete(id) })
   })
 
   return {
     facetRequests,
+    refusedPaths,
+    setFacets(property: string, next: FacetsState) {
+      facetsByProp[property] = next
+      revision += 1
+    },
     publish(property: string, next: FacetsState) {
       facetsByProp[property] = next
       revision += 1
@@ -478,5 +508,133 @@ test.describe("Records page Lifecycle view mode", () => {
     await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("15")
     await expect(statusView.locator(".norn-life")).toHaveAttribute("data-machine-state", "showing")
     expect(statusReads).toBeGreaterThanOrEqual(2)
+  })
+
+  test("records page: newer first socket snapshot arriving before older initial GET reconciles to newest count", async ({ page }) => {
+    let resolveSocketSent!: () => void
+    const socketSent = new Promise<void>((resolve) => { resolveSocketSent = resolve })
+    let statusGetCalls = 0
+    await lifecycleCell(
+      page,
+      {
+        status: okFacets("status", { draft: 2, submitted: 0 }),
+        payment_status: okFacets("payment_status", { unpaid: 2 }),
+      },
+      {
+        includeWidget: false,
+        onSubscribe: (sub) => {
+          sub.sendSnapshot()
+          if (sub.property === "status") resolveSocketSent()
+        },
+      },
+    )
+    await page.route("**/api/host/v1/objects/commerce.PurchaseOrder:facets**", async (route: Route) => {
+      const url = new URL(route.request().url())
+      if (url.searchParams.get("properties") === "status") {
+        statusGetCalls += 1
+        if (statusGetCalls === 1) {
+          // Hold the stale initial GET (draft=1) until after the newer WebSocket snapshot (draft=2) is delivered on the page's event loop.
+          await socketSent
+          await page.evaluate(() => new Promise<void>((resolve) => queueMicrotask(resolve)))
+          const stale = okFacets("status", { draft: 1, submitted: 0 })
+          return route.fulfill({ status: stale.status, json: stale.body })
+        }
+      }
+      return route.fallback()
+    })
+    await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+    const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("2")
+    expect(statusGetCalls).toBe(2)
+  })
+
+  test("records page: older initial GET finishing before newer first socket snapshot reconciles to newest count", async ({ page }) => {
+    let sendHeldSnapshot: (() => void) | null = null
+    let statusGetCalls = 0
+    const cell = await lifecycleCell(
+      page,
+      {
+        status: okFacets("status", { draft: 1, submitted: 0 }),
+        payment_status: okFacets("payment_status", { unpaid: 1 }),
+      },
+      {
+        includeWidget: false,
+        onSubscribe: (sub) => {
+          if (sub.property === "status") {
+            sendHeldSnapshot = sub.sendSnapshot
+          } else {
+            sub.sendSnapshot()
+          }
+        },
+      },
+    )
+    await page.route("**/api/host/v1/objects/commerce.PurchaseOrder:facets**", (route: Route) => {
+      const url = new URL(route.request().url())
+      if (url.searchParams.get("properties") === "status") statusGetCalls += 1
+      return route.fallback()
+    })
+    await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+    const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("1")
+    await expect.poll(() => sendHeldSnapshot !== null).toBe(true)
+    cell.setFacets("status", okFacets("status", { draft: 2, submitted: 0 }))
+    sendHeldSnapshot!()
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("2")
+    expect(statusGetCalls).toBe(2)
+  })
+
+  test("records page: filter paths past the 512-byte live limit surface live-updates-off and support manual Refresh", async ({ page }) => {
+    const cell = await lifecycleCell(page, {
+      status: okFacets("status", { draft: 4, submitted: 2 }),
+      payment_status: okFacets("payment_status", { unpaid: 6 }),
+    })
+    await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+    const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("4")
+    await expect(statusView.locator('[data-region="live-off"]')).toBeHidden()
+
+    // Apply 6 short equality clauses via the real Filter editor (produces a >512-byte scoped live path).
+    await page.getByRole("button", { name: /^Filter/ }).click()
+    for (let i = 1; i < 6; i += 1) await page.getByRole("button", { name: "Add condition" }).click()
+    for (let i = 1; i <= 6; i += 1) {
+      await page.getByLabel(`Condition ${i} value`).fill(`PO-10${i}`)
+    }
+    await page.getByRole("button", { name: "Apply" }).click()
+
+    await expect.poll(() => cell.refusedPaths.some((p) => p.length > 512 && p.includes("properties=status"))).toBe(true)
+    await expect(statusView.locator(".norn-life")).toHaveAttribute("data-live-updates", "off")
+    await expect(statusView.locator(".norn-life")).toHaveAttribute("data-live-refusal-code", "live.not_subscribable")
+    await expect(statusView.locator('[data-region="live-off"]')).toBeVisible()
+    await expect(statusView.locator('[data-region="live-off"]')).toContainText("Live updates are off; counts show the last read.")
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("4")
+    await shoot(page, "records-live-off")
+
+    // Cell changes while live updates are off; clicking Refresh reads the latest counts.
+    cell.setFacets("status", okFacets("status", { draft: 9, submitted: 3 }))
+    await statusView.getByRole("button", { name: "Refresh" }).click()
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("9")
+    await expect(card(statusView, "submitted").locator("[data-count]")).toHaveText("3")
+  })
+
+  test("unattributed findings render without a witness stepper and never highlight states", async ({ page }) => {
+    const view = await specimen(page, "lifecycle-view/counts")
+    await expect(card(view, "draft").locator("[data-count]")).toHaveText("12")
+    await view.evaluate((element) => {
+      const host = element as HTMLElement & { options: Record<string, unknown> }
+      host.options = {
+        ...host.options,
+        findings: [{
+          code: "widget.lifecycle.stuck",
+          message: "page state `done` with the object `draft`",
+          witness: null,
+          unattributed: true,
+        }],
+      }
+    })
+    await expect(view.locator("[data-finding-unattributed]")).toHaveCount(1)
+    await expect(view.locator("[data-finding-unattributed]")).toContainText("Unattributed finding")
+    await expect(view.locator("[data-pick]")).toHaveCount(0)
+    await expect(view.locator('[data-region="stepper"]')).toHaveCount(0)
+    await expect(view.locator("[data-current]")).toHaveCount(0)
   })
 })

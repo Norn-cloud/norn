@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
-import { type ArrowRoute, type Box, type LifecycleDoc, type LifecycleFinding, type Point, countsFrom, isFacetsAnswer, layout, lifecycleStateRole, routeArrow, stepState } from "../src/elements/lifecycle-view.ts"
+import { type ArrowRoute, type Box, type LifecycleDoc, type LifecycleFinding, type LifecycleViewDocument, type LiveAnswer, type LiveSubscriptionRefusal, type Point, countsFrom, createLifecycleReadController, isFacetsAnswer, layout, lifecycleStateRole, orderLifecycleStates, routeArrow, stepState } from "../src/elements/lifecycle-view.ts"
 
 const ORDER: LifecycleDoc = {
   property: "status",
@@ -21,12 +21,28 @@ const ORDER: LifecycleDoc = {
 
 test("states are laid out by distance from the start; a state no run reaches goes last", () => {
   expect(layout(ORDER)).toEqual([["draft"], ["submitted"], ["approved", "rejected", "cancelled"], ["received"], ["archived"]])
+  expect(orderLifecycleStates(ORDER)).toEqual(["draft", "submitted", "approved", "rejected", "cancelled", "received", "archived"])
   expect(lifecycleStateRole(ORDER, "draft", "en")).toBe("start")
   expect(lifecycleStateRole(ORDER, "received", "en")).toBe("ending")
   expect(lifecycleStateRole(ORDER, "approved", "en")).toBe("can rest here")
   expect(lifecycleStateRole(ORDER, "draft", "ar")).toBe("البداية")
   expect(lifecycleStateRole(ORDER, "received", "ar")).toBe("نهاية")
   expect(lifecycleStateRole(ORDER, "approved", "ar")).toBe("يمكن أن يستقر هنا")
+})
+
+test("peer branches follow declared enum order even when transitions are declared in reverse", () => {
+  const branching: LifecycleDoc = {
+    property: "status",
+    states: ["start", "approved", "rejected"],
+    initial: ["start"],
+    terminal: ["approved", "rejected"],
+    transitions: [
+      { id: "reject", from: ["start"], to: "rejected" },
+      { id: "approve", from: ["start"], to: "approved" },
+    ],
+  }
+  expect(layout(branching)).toEqual([["start"], ["approved", "rejected"]])
+  expect(orderLifecycleStates(branching)).toEqual(["start", "approved", "rejected"])
 })
 
 test("counts are the cell's: an omitted state is 0 only when otherRows is 0, and lowerBound marks every count", () => {
@@ -93,6 +109,209 @@ test("a counterexample steps by its witness: taken lifecycle transitions and whe
   expect(stepState(ORDER, stuck, 1)).toEqual({ transitions: new Set(), state: null })
   expect(stepState(ORDER, stuck, 2)).toEqual({ transitions: new Set(["submit"]), state: "submitted" })
   expect(stepState(ORDER, stuck, 4)).toEqual({ transitions: new Set(["submit", "reject", "revise"]), state: "draft" })
+  expect(stepState(ORDER, { code: "widget.lifecycle.stuck", message: "unattributed", witness: null, unattributed: true }, 2)).toEqual({ transitions: new Set(), state: null })
+})
+
+const VIEW_DOC = JSON.parse(readFileSync(join(import.meta.dir, "../src/elements/lifecycle-view.widget.json"), "utf8")) as LifecycleViewDocument
+const VIEW_MACHINE = VIEW_DOC.payload.ux.pages[0]!.machine
+
+const facetsAnswer = (draftCount: number, digest?: string): LiveAnswer => ({
+  status: 200,
+  body: {
+    rows: draftCount,
+    withheldRows: 0,
+    quarantinedRows: 0,
+    lowerBound: false,
+    facets: [{ property: "status", values: [{ value: "draft", count: draftCount }], otherRows: 0, nulls: 0 }],
+  },
+  ...(digest ? { digest } : {}),
+})
+
+const draftCountOf = (answer: LiveAnswer | null): number | null => {
+  if (!answer || !isFacetsAnswer(answer.body)) return null
+  return answer.body.facets[0]?.values.find((entry) => entry.value === "draft")?.count ?? null
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => { resolve = r })
+  return { promise, resolve }
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 10))
+
+describe("first-snapshot and initial-GET reconciliation", () => {
+  test("socket first snapshot (count=2) arriving BEFORE older in-flight GET (count=1) reconciles to 2", async () => {
+    const firstGet = deferred<LiveAnswer>()
+    const secondGet = deferred<LiveAnswer>()
+    const reads: Promise<LiveAnswer>[] = [firstGet.promise, secondGet.promise]
+    let readCalls = 0
+    let emitSnapshot!: (answer: LiveAnswer) => void
+    const seenCounts: (number | null)[] = []
+
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      read: () => {
+        const next = reads[readCalls++]
+        if (!next) throw new Error(`unexpected read #${readCalls}`)
+        return next
+      },
+      changes: (listener) => {
+        emitSnapshot = listener
+        return () => {}
+      },
+      onState: (state, last) => {
+        if (state === "showing") seenCounts.push(draftCountOf(last))
+      },
+    })
+
+    // 1. Newer socket snapshot (count=2) arrives while initial GET is still in flight.
+    emitSnapshot(facetsAnswer(2, "rev-2"))
+    expect(controller.state()).toBe("reading")
+
+    // 2. Older initial GET (count=1) resolves afterward.
+    firstGet.resolve(facetsAnswer(1))
+    await settle()
+
+    // Controller must NOT settle at stale 1; it issues a reconciliation GET.
+    expect(readCalls).toBe(2)
+    secondGet.resolve(facetsAnswer(2))
+    await settle()
+
+    expect(controller.state()).toBe("showing")
+    expect(draftCountOf(controller.lastAnswer())).toBe(2)
+    expect(seenCounts).toEqual([2])
+    controller.dispose()
+  })
+
+  test("older initial GET (count=1) resolving BEFORE newer socket first snapshot (count=2) reconciles to 2", async () => {
+    const firstGet = deferred<LiveAnswer>()
+    const secondGet = deferred<LiveAnswer>()
+    const reads: Promise<LiveAnswer>[] = [firstGet.promise, secondGet.promise]
+    let readCalls = 0
+    let emitSnapshot!: (answer: LiveAnswer) => void
+
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      read: () => {
+        const next = reads[readCalls++]
+        if (!next) throw new Error(`unexpected read #${readCalls}`)
+        return next
+      },
+      changes: (listener) => {
+        emitSnapshot = listener
+        return () => {}
+      },
+      onState: () => {},
+    })
+
+    // 1. Initial GET (count=1) resolves first.
+    firstGet.resolve(facetsAnswer(1))
+    await settle()
+    expect(controller.state()).toBe("showing")
+    expect(draftCountOf(controller.lastAnswer())).toBe(1)
+    expect(readCalls).toBe(1)
+
+    // 2. Newer first socket snapshot (count=2) arrives next.
+    emitSnapshot(facetsAnswer(2, "rev-2"))
+    await settle()
+    expect(readCalls).toBe(2)
+    secondGet.resolve(facetsAnswer(2))
+    await settle()
+
+    expect(controller.state()).toBe("showing")
+    expect(draftCountOf(controller.lastAnswer())).toBe(2)
+    controller.dispose()
+  })
+
+  test("stale socket first snapshot (count=1) arriving BEFORE newer GET (count=2) never regresses to 1", async () => {
+    const firstGet = deferred<LiveAnswer>()
+    const secondGet = deferred<LiveAnswer>()
+    const reads: Promise<LiveAnswer>[] = [firstGet.promise, secondGet.promise]
+    let readCalls = 0
+    let emitSnapshot!: (answer: LiveAnswer) => void
+
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      read: () => reads[readCalls++]!,
+      changes: (listener) => {
+        emitSnapshot = listener
+        return () => {}
+      },
+      onState: () => {},
+    })
+
+    emitSnapshot(facetsAnswer(1, "rev-1"))
+    firstGet.resolve(facetsAnswer(2))
+    await settle()
+    expect(readCalls).toBe(2)
+    secondGet.resolve(facetsAnswer(2))
+    await settle()
+    expect(draftCountOf(controller.lastAnswer())).toBe(2)
+    controller.dispose()
+  })
+
+  test("matching initial GET and first socket snapshot issue only one GET in either arrival order", async () => {
+    for (const socketFirst of [true, false]) {
+      const firstGet = deferred<LiveAnswer>()
+      let readCalls = 0
+      let emitSnapshot!: (answer: LiveAnswer) => void
+      const controller = createLifecycleReadController({
+        machine: VIEW_MACHINE,
+        read: () => {
+          readCalls += 1
+          return firstGet.promise
+        },
+        changes: (listener) => {
+          emitSnapshot = listener
+          return () => {}
+        },
+        onState: () => {},
+      })
+      if (socketFirst) {
+        emitSnapshot(facetsAnswer(2, "rev-2"))
+        firstGet.resolve(facetsAnswer(2))
+      } else {
+        firstGet.resolve(facetsAnswer(2))
+        await settle()
+        emitSnapshot(facetsAnswer(2, "rev-2"))
+      }
+      await settle()
+      expect(readCalls).toBe(1)
+      expect(draftCountOf(controller.lastAnswer())).toBe(2)
+      controller.dispose()
+    }
+  })
+
+  test("live refusal surfaces live-updates-off and manual refresh fetches latest counts", async () => {
+    let count = 5
+    let emitRefused!: (refusal: LiveSubscriptionRefusal) => void
+    const refusals: (LiveSubscriptionRefusal | null)[] = []
+
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      read: async () => facetsAnswer(count),
+      changes: (_listener, onRefused) => {
+        emitRefused = onRefused!
+        return () => {}
+      },
+      onState: () => {},
+      onLiveRefusal: (refusal) => refusals.push(refusal),
+    })
+
+    await settle()
+    expect(draftCountOf(controller.lastAnswer())).toBe(5)
+
+    emitRefused({ code: "live.not_subscribable", message: "a subscription names one of this cell's GET routes" })
+    expect(controller.liveRefusal()).toEqual({ code: "live.not_subscribable", message: "a subscription names one of this cell's GET routes" })
+    expect(refusals).toEqual([controller.liveRefusal()])
+
+    count = 9
+    controller.refresh()
+    await settle()
+    expect(draftCountOf(controller.lastAnswer())).toBe(9)
+    controller.dispose()
+  })
 })
 
 // A property over generated lifecycles, in both directions: on the board's grid (11rem cards,

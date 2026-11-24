@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
+import { layout, orderLifecycleStates } from "../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
 import type { Concept, Lifecycle } from "../src/lib/catalog.ts"
 import type { Checker } from "../src/lib/canvas/checker.ts"
 import { LocaleProvider } from "../src/lib/locale.tsx"
+import { declaredLifecycleStates, lifecycleStates } from "../src/lib/objects.ts"
 import { LifecycleStepper } from "../src/components/lifecycle-stepper.tsx"
 import { findingsFor } from "../src/components/lifecycle-view.tsx"
 
@@ -152,4 +154,170 @@ test("findingsFor matches the exact widget page machine by pointer and ignores n
   const paymentFindings = findingsFor("commerce.PurchaseOrder", "payment_status", [widget], checker)
   expect(paymentFindings).toHaveLength(1)
   expect(paymentFindings[0]?.pageState).toBe("settled")
+})
+
+test("findingsFor requires a canonical RFC 6901 page pointer when two pages share one lifecycle, leaving missing or invalid pointers unattributed with no witness", () => {
+  const twoPageWidget = {
+    artifactId: "commerce.two_pages.widget",
+    kind: "widget",
+    payload: {
+      ux: {
+        pages: [
+          {
+            machine: {
+              initialStateId: "open_zero",
+              transitions: [{ transitionId: "on-accepted", target: "done_zero" }],
+              lifecycle: { objectType: "commerce.PurchaseOrder", property: "status" },
+            },
+          },
+          {
+            machine: {
+              initialStateId: "open_one",
+              transitions: [{ transitionId: "on-accepted", target: "done_one" }],
+              lifecycle: { objectType: "commerce.PurchaseOrder", property: "status" },
+            },
+          },
+          {
+            machine: {
+              initialStateId: "paying",
+              transitions: [{ transitionId: "on-paid", target: "settled" }],
+              lifecycle: { objectType: "commerce.PurchaseOrder", property: "payment_status" },
+            },
+          },
+        ],
+      },
+    },
+  }
+  const witness = { steps: [{ edge: 1, moves: [{ side: "ui" as const, label: "on-accepted" }, { side: "backend" as const, label: "submit" }] }] }
+  const checker: Checker = () => ({
+    admitted: false,
+    diagnostics: {
+      diagnostics: [
+        // Canonical page 0 -> attributed to page 0.
+        {
+          code: "widget.lifecycle.stuck",
+          severity: "error",
+          message: "page 0 stuck",
+          span: { pointer: "/payload/ux/pages/0/machine/states/2" },
+          artifactId: "commerce.two_pages.widget",
+          witness,
+        },
+        // Canonical page 1 -> attributed to page 1.
+        {
+          code: "widget.lifecycle.stuck",
+          severity: "error",
+          message: "page 1 stuck",
+          span: { pointer: "/payload/ux/pages/1/machine/states/2" },
+          artifactId: "commerce.two_pages.widget",
+          witness,
+        },
+        // Non-canonical leading zero `/pages/01/` (forbidden by RFC 6901) -> unattributed, no witness attached.
+        {
+          code: "widget.lifecycle.stuck",
+          severity: "error",
+          message: "leading zero pointer",
+          span: { pointer: "/payload/ux/pages/01/machine/states/2" },
+          artifactId: "commerce.two_pages.widget",
+          witness,
+        },
+        // Missing pointer -> unattributed, never selects page 0.
+        {
+          code: "widget.lifecycle.stuck",
+          severity: "error",
+          message: "missing pointer",
+          span: null,
+          artifactId: "commerce.two_pages.widget",
+          witness,
+        },
+        // Unrecognized pointer -> unattributed, never selects page 0.
+        {
+          code: "widget.lifecycle.stuck",
+          severity: "error",
+          message: "unrecognized pointer",
+          span: { pointer: "/payload/ux/other" },
+          artifactId: "commerce.two_pages.widget",
+          witness,
+        },
+        // Out-of-bounds page index -> unattributed.
+        {
+          code: "widget.lifecycle.stuck",
+          severity: "error",
+          message: "out of bounds pointer",
+          span: { pointer: "/payload/ux/pages/9/machine/states/0" },
+          artifactId: "commerce.two_pages.widget",
+          witness,
+        },
+        // Canonical pointer to page 2 (different lifecycle: payment_status) -> excluded from status.
+        {
+          code: "widget.lifecycle.stuck",
+          severity: "error",
+          message: "payment page stuck",
+          span: { pointer: "/payload/ux/pages/2/machine/states/1" },
+          artifactId: "commerce.two_pages.widget",
+          witness: { steps: [{ edge: 2, moves: [{ side: "ui" as const, label: "on-paid" }] }] },
+        },
+      ],
+    },
+  })
+
+  const statusFindings = findingsFor("commerce.PurchaseOrder", "status", [twoPageWidget], checker)
+  expect(statusFindings.map((f) => ({
+    message: f.message,
+    pageState: f.pageState,
+    unattributed: f.unattributed ?? false,
+    hasWitness: f.witness != null,
+  }))).toEqual([
+    { message: "page 0 stuck", pageState: "done_zero", unattributed: false, hasWitness: true },
+    { message: "page 1 stuck", pageState: "done_one", unattributed: false, hasWitness: true },
+    { message: "leading zero pointer", pageState: undefined, unattributed: true, hasWitness: false },
+    { message: "missing pointer", pageState: undefined, unattributed: true, hasWitness: false },
+    { message: "unrecognized pointer", pageState: undefined, unattributed: true, hasWitness: false },
+    { message: "out of bounds pointer", pageState: undefined, unattributed: true, hasWitness: false },
+  ])
+})
+
+test("record stepper and type-wide graph derive identical peer branch order from one shared ordering", () => {
+  const branching: Lifecycle = {
+    property: "status",
+    initial: ["start"],
+    terminal: ["approved", "rejected"],
+    transitions: [
+      { id: "reject", from: ["start"], to: "rejected" },
+      { id: "approve", from: ["start"], to: "approved" },
+    ],
+  }
+  const branchingConcept: Concept = {
+    ...concept,
+    fields: [{
+      id: "status",
+      label: "Status",
+      labelLang: "en",
+      valueLabels: new Map([["start", "Start"], ["approved", "Approved"], ["rejected", "Rejected"]]),
+      type: "One of: start, approved, rejected",
+      optional: false,
+      decimal: undefined,
+      scalar: { kind: "enum", values: ["start", "approved", "rejected"] },
+    }],
+    lifecycles: [branching],
+  }
+  const declared = declaredLifecycleStates(branching, branchingConcept.fields[0])
+  const doc = { property: branching.property, states: declared, initial: branching.initial, terminal: branching.terminal ?? [], transitions: branching.transitions ?? [] }
+  const graphOrder = layout(doc).flat()
+  const sharedOrder = orderLifecycleStates(doc)
+  const stepperOrder = lifecycleStates(branching, declared)
+  expect(graphOrder).toEqual(["start", "approved", "rejected"])
+  expect(sharedOrder).toEqual(graphOrder)
+  expect(stepperOrder).toEqual(graphOrder)
+
+  const html = renderToStaticMarkup(
+    <LocaleProvider initial="en">
+      <LifecycleStepper
+        lifecycle={branching}
+        concept={branchingConcept}
+        record={{ objectType: "core.Example", id: "x", scope: "s", version: 1, values: { status: "start" } }}
+      />
+    </LocaleProvider>,
+  )
+  const renderedStates = [...html.matchAll(/data-state="([^"]+)"/g)].map((match) => match[1])
+  expect(renderedStates).toEqual(["start", "approved", "rejected"])
 })

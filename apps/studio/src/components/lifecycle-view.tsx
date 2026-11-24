@@ -54,7 +54,7 @@ export function LifecycleView({ concept, lifecycle, filter = null }: {
   const terminal = lifecycle.terminal ?? []
   const states = declaredLifecycleStates(lifecycle, field)
   const findings = findingsFor(concept.name, lifecycle.property, definitions.data?.document, checker.data)
-  const findingsKey = JSON.stringify(findings.map(({ code, message, pageState }) => [code, message, pageState ?? ""]))
+  const findingsKey = JSON.stringify(findings.map(({ code, message, pageState, unattributed, witness }) => [code, message, pageState ?? "", Boolean(unattributed), witness?.steps.length ?? -1]))
   const path = facetsPath(concept.name, filter, [lifecycle.property])
   const propertyLabel = field?.label ?? sentence(lifecycle.property)
   const filtered = filter !== null && filter.all.length > 0
@@ -78,7 +78,7 @@ export function LifecycleView({ concept, lifecycle, filter = null }: {
           try { body = text === "" ? undefined : JSON.parse(text) } catch { body = undefined }
           return { status: response.status, body }
         },
-        changes: (listener) => liveAnswer(path, scope, listener),
+        changes: (listener, onRefused) => liveAnswer(path, scope, listener, onRefused),
       } : {}),
       findings,
       locale: locale === "ar" ? "ar" : "en",
@@ -121,9 +121,15 @@ type Envelope = {
   readonly payload?: { readonly ux?: { readonly pages?: readonly { readonly machine?: PageMachine }[] } }
 }
 
-const PAGE_POINTER = /^\/payload\/ux\/pages\/(\d+)(?:\/|$)/
+// RFC 6901 array index: "0" or [1-9][0-9]* (leading zeros like "01" are forbidden), followed only by valid JSON Pointer tokens.
+const PAGE_POINTER = /^\/payload\/ux\/pages\/(0|[1-9]\d*)(?:\/(?:[^~/]|~[01])*)*$/
 
-/** The checker's `widget.lifecycle.*` findings with a witness, for widget pages whose machines act on this lifecycle. */
+/**
+ * The checker's `widget.lifecycle.*` findings with a witness, for widget pages whose machines act
+ * on this lifecycle. Attribution requires a canonical RFC 6901 page pointer; a finding from a
+ * matching widget with a missing, non-canonical, or out-of-bounds pointer attaches no witness and
+ * is returned as unattributed so it can never be attributed to the wrong page.
+ */
 export function findingsFor(
   objectType: string,
   property: string,
@@ -140,22 +146,26 @@ export function findingsFor(
     widgets.set(artifact.artifactId, pages)
   }
   if (widgets.size === 0) return []
-  const machineOf = (artifactId: string | null, pointer: string | undefined): PageMachine | undefined => {
-    if (artifactId === null) return undefined
-    const pages = widgets.get(artifactId)
-    if (!pages) return undefined
-    const match = pointer ? PAGE_POINTER.exec(pointer) : null
-    if (match) {
-      const candidate = pages[Number(match[1])]?.machine
-      return candidate?.lifecycle?.objectType === objectType && candidate.lifecycle.property === property ? candidate : undefined
-    }
-    return pages.find((page) => page.machine?.lifecycle?.objectType === objectType && page.machine.lifecycle.property === property)?.machine
-  }
   const results: LifecycleFinding[] = []
   for (const finding of checker(definitions).diagnostics.diagnostics) {
     if (!finding.code.startsWith("widget.lifecycle.") || finding.witness == null || !Array.isArray(finding.witness.steps)) continue
-    const machine = machineOf(finding.artifactId, finding.span?.pointer)
-    if (!machine) continue
+    if (finding.artifactId === null) continue
+    const pages = widgets.get(finding.artifactId)
+    if (!pages) continue
+    const pointer = finding.span?.pointer
+    const match = typeof pointer === "string" ? PAGE_POINTER.exec(pointer) : null
+    const pageIndex = match ? Number(match[1]) : -1
+    if (!match || !Number.isSafeInteger(pageIndex) || pageIndex < 0 || pageIndex >= pages.length) {
+      results.push({
+        code: finding.code,
+        message: finding.message,
+        witness: null,
+        unattributed: true,
+      })
+      continue
+    }
+    const machine = pages[pageIndex]?.machine
+    if (machine?.lifecycle?.objectType !== objectType || machine.lifecycle.property !== property) continue
     // Where the run leaves the page: the target of its last page move in the widget's own machine.
     const lastPage = [...finding.witness.steps].reverse().flatMap((step) => step.moves).find((move) => move.side === "ui")?.label
     const pageState = lastPage === undefined ? machine.initialStateId : machine.transitions?.find((transition) => transition.transitionId === lastPage)?.target
