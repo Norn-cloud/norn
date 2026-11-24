@@ -951,3 +951,369 @@ fn a_store_during_a_download_leaves_the_download_intact() {
     );
     assert_eq!(daemon.attempts(&of).len(), 0);
 }
+
+fn send_path(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    authorization: Option<&str>,
+    body: &str,
+) -> Vec<u8> {
+    let mut stream = TcpStream::connect(addr).unwrap();
+    let authorization = authorization.map_or_default(|value| format!("authorization: {value}\r\n"));
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nhost: olapd\r\n{authorization}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    response
+}
+
+fn by_v2(addr: SocketAddr, issuer: &Issuer, of: &TenantId, op: &str, body: &str) -> Vec<u8> {
+    let full_op = format!("v2/{op}");
+    let credential = mint(issuer, of, &full_op, body);
+    send_path(
+        addr,
+        "POST",
+        &format!("/v2/{op}"),
+        Some(&format!("Bearer {credential}")),
+        body,
+    )
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyEvaluateWire {
+    population: u64,
+    excluded: Vec<String>,
+    buckets: Vec<serde_json::Value>,
+    #[serde(default)]
+    unlinked: u64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyProfileWire {
+    rows: u64,
+    quarantined: u64,
+    columns: Vec<serde_json::Value>,
+}
+
+struct MissingProvenanceEngine;
+
+impl norn_cell::analytics::AnalyticalEngine for MissingProvenanceEngine {
+    fn engine_id(&self) -> norn_cell::analytics::AnalyticalEngineId {
+        norn_cell::analytics::AnalyticalEngineId::DataFusion
+    }
+    fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
+        norn_cell::analytics::EngineCapabilities::duckdb_default()
+    }
+    fn mirror_frontier(
+        &self,
+        _request: &norn_cell::analytics::FrontierRequest,
+    ) -> norn_cell::analytics::EngineOutcome<norn_cell::analytics::FrontierResponse> {
+        Ok(norn_cell::analytics::FrontierResponse { frontier: 0 })
+    }
+    fn mirror_sync(
+        &self,
+        _request: &norn_cell::analytics::SyncRequest,
+    ) -> norn_cell::analytics::EngineOutcome<norn_cell::analytics::FrontierResponse> {
+        Ok(norn_cell::analytics::FrontierResponse { frontier: 0 })
+    }
+    fn evaluate_question(
+        &self,
+        _request: &norn_cell::analytics::EvaluateRequest,
+    ) -> norn_cell::analytics::EngineOutcome<norn_cell::analytics::EvaluateResponse> {
+        Ok(norn_cell::analytics::EvaluateResponse {
+            population: 0,
+            excluded: Vec::new(),
+            buckets: Vec::new(),
+            unlinked: 0,
+            provenance: None,
+        })
+    }
+    fn query_members(
+        &self,
+        _request: &norn_cell::analytics::MembersRequest,
+    ) -> norn_cell::analytics::EngineOutcome<norn_cell::analytics::MembersResponse> {
+        Ok(norn_cell::analytics::MembersResponse {
+            members: Vec::new(),
+        })
+    }
+    fn load_dataset(
+        &self,
+        _request: &LoadRequest,
+        _file: &Path,
+    ) -> norn_cell::analytics::EngineOutcome<norn_cell::analytics::LoadResponse> {
+        Err(norn_cell::analytics::EngineRefusal {
+            code: "analytics.engine".to_owned(),
+            detail: "stub".to_owned(),
+        })
+    }
+    fn land_dataset(
+        &self,
+        _request: &LandRequest,
+        _fetch: &mut dyn FnMut(std::fs::File) -> norn_cell::analytics::EngineOutcome<()>,
+    ) -> norn_cell::analytics::EngineOutcome<LandResponse> {
+        Err(norn_cell::analytics::EngineRefusal {
+            code: "analytics.engine".to_owned(),
+            detail: "stub".to_owned(),
+        })
+    }
+    fn settle_dataset(
+        &self,
+        _request: &norn_cell::analytics::SettleRequest,
+    ) -> norn_cell::analytics::EngineOutcome<LandResponse> {
+        Err(norn_cell::analytics::EngineRefusal {
+            code: "analytics.engine".to_owned(),
+            detail: "stub".to_owned(),
+        })
+    }
+    fn store_dataset(
+        &self,
+        _request: &StoreRequest,
+        _send: &mut dyn FnMut(&Path, &Path) -> norn_cell::analytics::EngineOutcome<()>,
+    ) -> norn_cell::analytics::EngineOutcome<LandResponse> {
+        Err(norn_cell::analytics::EngineRefusal {
+            code: "analytics.engine".to_owned(),
+            detail: "stub".to_owned(),
+        })
+    }
+    fn store_dataset_json(
+        &self,
+        _body: &norn_cell::analytics::StoreBody,
+        _send: &mut dyn FnMut(&Path, &Path) -> norn_cell::analytics::EngineOutcome<()>,
+    ) -> norn_cell::analytics::EngineOutcome<Box<serde_json::value::RawValue>> {
+        Err(norn_cell::analytics::EngineRefusal {
+            code: "analytics.engine".to_owned(),
+            detail: "stub".to_owned(),
+        })
+    }
+    fn query_lineage(
+        &self,
+        _request: &norn_cell::analytics::LineageRequest,
+    ) -> norn_cell::analytics::EngineOutcome<norn_cell::analytics::LineageResponse> {
+        Err(norn_cell::analytics::EngineRefusal {
+            code: "analytics.engine".to_owned(),
+            detail: "stub".to_owned(),
+        })
+    }
+    fn query_page(
+        &self,
+        _request: &norn_cell::analytics::PageRequest,
+    ) -> norn_cell::analytics::EngineOutcome<norn_cell::analytics::PageResponse> {
+        Err(norn_cell::analytics::EngineRefusal {
+            code: "analytics.engine".to_owned(),
+            detail: "stub".to_owned(),
+        })
+    }
+    fn profile_objects(
+        &self,
+        _request: &norn_cell::analytics::ProfileRequest,
+    ) -> norn_cell::analytics::EngineOutcome<norn_cell::analytics::ProfileResponse> {
+        Ok(norn_cell::analytics::ProfileResponse {
+            rows: 0,
+            quarantined: 0,
+            columns: Vec::new(),
+            provenance: None,
+        })
+    }
+    fn export_dataset(
+        &self,
+        _request: &norn_cell::analytics::ExportRequest,
+    ) -> norn_cell::analytics::EngineOutcome<PathBuf> {
+        Err(norn_cell::analytics::EngineRefusal {
+            code: "analytics.engine".to_owned(),
+            detail: "stub".to_owned(),
+        })
+    }
+    fn admit_transform(
+        &self,
+        _plan: &norn_checker::transform::TransformPlan,
+    ) -> Result<Box<dyn norn_cell::analytics::AdmittedTransform>, norn_cell::CellError> {
+        Err(norn_cell::CellError::ComputeRefused(
+            "core.compute.unsupported_engine",
+        ))
+    }
+}
+
+fn compat_bodies(of: &TenantId) -> (String, String) {
+    let source = norn_cell::analytics::Source::Mirror {
+        world: WORLD.to_owned(),
+        table: "shop.Sale".to_owned(),
+        frontier: 0,
+        scope: "org_compat/prod".to_owned(),
+        excluded: Vec::new(),
+        model: None,
+    };
+    let eval_body = serde_json::to_string(&norn_cell::analytics::EvaluateRequest {
+        tenant: of.clone(),
+        source: source.clone(),
+        query: norn_cell::analytics::Lowered {
+            filters: Vec::new(),
+            window: norn_cell::analytics::Window {
+                column: "occurred_at".to_owned(),
+                start: (1_700_000_000, 0),
+                end: (1_900_000_000, 0),
+            },
+            dimensions: Vec::new(),
+            operands: vec![norn_cell::analytics::Operand {
+                column: "amount".to_owned(),
+                filters: Vec::new(),
+            }],
+            as_of: None,
+            time_link: None,
+        },
+        inline_members: 100,
+    })
+    .unwrap();
+    let profile_body = serde_json::to_string(&norn_cell::analytics::ProfileRequest {
+        tenant: of.clone(),
+        source,
+        columns: vec!["amount".to_owned()],
+    })
+    .unwrap();
+    (eval_body, profile_body)
+}
+
+#[test]
+fn olapd_v1_omits_provenance_for_legacy_consumers_and_v2_enforces_it() {
+    let host = issuer("k1", 77);
+    let daemon = daemon(&[&host]);
+    let of = tenant("org_compat/prod");
+    let schema_pin = "pin-compat-v1";
+    let init = serde_json::to_string(&norn_cell::analytics::FrontierRequest {
+        tenant: of.clone(),
+        world: WORLD.to_owned(),
+        tables: vec![TableSchema {
+            name: "shop.Sale".to_owned(),
+            pin: schema_pin.to_owned(),
+            columns: vec![
+                Column {
+                    id: "amount".to_owned(),
+                    kind: ColumnKind::Decimal { scale: 2 },
+                    nullable: false,
+                    laws: Vec::new(),
+                },
+                Column {
+                    id: "occurred_at".to_owned(),
+                    kind: ColumnKind::Timestamp,
+                    nullable: false,
+                    laws: Vec::new(),
+                },
+            ],
+        }],
+        links: Vec::new(),
+    })
+    .unwrap();
+    let initialized = daemon.by(&host, &of, "frontier", &init);
+    assert_eq!(status(&initialized), "200", "{}", body(&initialized));
+    let (eval_body, profile_body) = compat_bodies(&of);
+
+    // (a) Legacy /v1/evaluate and /v1/profile omit `provenance` and decode under legacy deny_unknown_fields.
+    let v1_eval = daemon.by(&host, &of, "evaluate", &eval_body);
+    assert_eq!(status(&v1_eval), "200", "{}", body(&v1_eval));
+    assert!(!body(&v1_eval).contains("provenance"), "{}", body(&v1_eval));
+    let decoded_v1_eval: LegacyEvaluateWire = serde_json::from_str(&body(&v1_eval)).unwrap();
+    assert_eq!(decoded_v1_eval.population, 0);
+
+    let v1_prof = daemon.by(&host, &of, "profile", &profile_body);
+    assert_eq!(status(&v1_prof), "200", "{}", body(&v1_prof));
+    assert!(!body(&v1_prof).contains("provenance"), "{}", body(&v1_prof));
+    let decoded_v1_prof: LegacyProfileWire = serde_json::from_str(&body(&v1_prof)).unwrap();
+    assert_eq!(decoded_v1_prof.rows, 0);
+
+    // OLAP-03: a v1 credential never authorizes a v2 route.
+    let v1_cred = mint(&host, &of, "evaluate", &eval_body);
+    let cross = send_path(
+        daemon.addr,
+        "POST",
+        "/v2/evaluate",
+        Some(&format!("Bearer {v1_cred}")),
+        &eval_body,
+    );
+    assert_eq!(status(&cross), "401", "{}", body(&cross));
+
+    // (b) /v2/evaluate and /v2/profile emit and verify full provenance including schema_pin & Exact freshness.
+    let v2_eval = by_v2(daemon.addr, &host, &of, "evaluate", &eval_body);
+    assert_eq!(status(&v2_eval), "200", "{}", body(&v2_eval));
+    let eval_resp: norn_cell::analytics::EvaluateResponse =
+        serde_json::from_str(&body(&v2_eval)).unwrap();
+    let eval_prov = eval_resp
+        .provenance
+        .expect("v2 evaluate carries provenance");
+    assert_eq!(
+        eval_prov.engine,
+        norn_cell::analytics::AnalyticalEngineId::DuckDb
+    );
+    assert_eq!(
+        eval_prov.freshness,
+        Some(norn_cell::compute::Freshness::Exact)
+    );
+    let expected_source = norn_cell::analytics::Source::Mirror {
+        world: WORLD.to_owned(),
+        table: "shop.Sale".to_owned(),
+        frontier: 0,
+        scope: "org_compat/prod".to_owned(),
+        excluded: Vec::new(),
+        model: None,
+    };
+    assert!(
+        eval_prov
+            .verify_against(&of, &expected_source, Some(schema_pin))
+            .is_ok()
+    );
+
+    let v2_prof = by_v2(daemon.addr, &host, &of, "profile", &profile_body);
+    assert_eq!(status(&v2_prof), "200", "{}", body(&v2_prof));
+    let prof_resp: norn_cell::analytics::ProfileResponse =
+        serde_json::from_str(&body(&v2_prof)).unwrap();
+    let prof_prov = norn_cell::analytics::verify_profile_provenance(
+        &prof_resp,
+        &of,
+        &expected_source,
+        Some(schema_pin),
+    )
+    .expect("v2 profile provenance verifies");
+    assert_eq!(
+        prof_prov.engine,
+        norn_cell::analytics::AnalyticalEngineId::DuckDb
+    );
+}
+
+#[test]
+fn olapd_v2_refuses_missing_provenance_fail_closed() {
+    let host = issuer("k1", 78);
+    let of = tenant("org_compat/prod");
+    let (eval_body, profile_body) = compat_bodies(&of);
+    let stub_dir = tempfile::tempdir().unwrap();
+    let stub_keys = stub_dir.path().join("keyring");
+    write_keyring(&stub_keys, &[&host]);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stub_addr = listener.local_addr().unwrap();
+    let stub_clock = Arc::new(ManualClock::at(NOW));
+    let stub_engine: Arc<dyn norn_cell::analytics::AnalyticalEngine> =
+        Arc::new(MissingProvenanceEngine);
+    std::thread::spawn(move || {
+        norn_cell_do::olapd::serve_engine(
+            &listener,
+            stub_keys,
+            &stub_engine,
+            stub_clock,
+            Arc::new(NoSeam),
+        )
+    });
+    // Missing provenance on /v2/evaluate and /v2/profile fails closed.
+    let stub_v2_eval = by_v2(stub_addr, &host, &of, "evaluate", &eval_body);
+    assert_eq!(status(&stub_v2_eval), "500", "{}", body(&stub_v2_eval));
+    let stub_v2_prof = by_v2(stub_addr, &host, &of, "profile", &profile_body);
+    assert_eq!(status(&stub_v2_prof), "500", "{}", body(&stub_v2_prof));
+    // Legacy /v1/evaluate and /v1/profile still answer cleanly without provenance.
+    let stub_v1_eval = by_at(stub_addr, &host, &of, "evaluate", &eval_body);
+    assert_eq!(status(&stub_v1_eval), "200", "{}", body(&stub_v1_eval));
+    let stub_v1_prof = by_at(stub_addr, &host, &of, "profile", &profile_body);
+    assert_eq!(status(&stub_v1_prof), "200", "{}", body(&stub_v1_prof));
+}

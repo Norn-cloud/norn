@@ -655,11 +655,14 @@ impl Engine {
                 excluded,
                 buckets,
                 unlinked,
-                provenance: Some(SnapshotProvenance::new(
-                    AnalyticalEngineId::DuckDb,
-                    request.tenant.clone(),
-                    ReadSnapshot::from_source(&request.source),
-                )),
+                provenance: Some(
+                    SnapshotProvenance::new(
+                        AnalyticalEngineId::DuckDb,
+                        request.tenant.clone(),
+                        scope.read_snapshot(&request.source),
+                    )
+                    .with_freshness(crate::compute::Freshness::Exact),
+                ),
             })
         })
     }
@@ -1301,6 +1304,7 @@ impl Engine {
     pub fn profile(&self, request: &ProfileRequest) -> Outcome<ProfileResponse> {
         self.with(&request.tenant, |conn| {
             let scope = Scope::new(conn, &request.source)?;
+            scope.verify_mirror_rows(conn, &request.source)?;
             let rows = query_u64(
                 conn,
                 &Frag::fmt(
@@ -1319,11 +1323,14 @@ impl Engine {
                 rows,
                 quarantined,
                 columns,
-                provenance: Some(SnapshotProvenance::new(
-                    AnalyticalEngineId::DuckDb,
-                    request.tenant.clone(),
-                    ReadSnapshot::from_source(&request.source),
-                )),
+                provenance: Some(
+                    SnapshotProvenance::new(
+                        AnalyticalEngineId::DuckDb,
+                        request.tenant.clone(),
+                        scope.read_snapshot(&request.source),
+                    )
+                    .with_freshness(crate::compute::Freshness::Exact),
+                ),
             })
         })
     }
@@ -1718,6 +1725,8 @@ struct Scope {
     at: Option<(String, u64)>,
     /// At a knowledge cutoff, the model every version read must be of.
     model: Option<String>,
+    /// Active mirror table schema pin generation read from `:meta`.
+    schema_pin: Option<String>,
 }
 
 impl Scope {
@@ -1740,7 +1749,12 @@ impl Scope {
                         format!("the mirror is at {reached}"),
                     ));
                 }
+                let schema_pin = meta(conn, &format!("pin:{table}"))?
+                    .ok_or_else(|| refusal(STALE, "mirror schema pin is missing"))?;
                 let schema = schema_of(conn, &format!("schema:{table}"))?;
+                if schema.pin != schema_pin {
+                    return Err(refusal(STALE, "mirror schema pin disagrees with schema"));
+                }
                 let at = Frag::bind("?", Sql::UBigInt(*frontier));
                 let all = Frag::fmt(
                     "(\":w\" = {} AND \":from\" <= {} AND (\":to\" IS NULL OR \":to\" > {}))",
@@ -1764,6 +1778,7 @@ impl Scope {
                     excluded: excluded.clone(),
                     at: Some((world.clone(), *frontier)),
                     model: model.clone(),
+                    schema_pin: Some(schema_pin),
                 })
             }
             Source::Dataset { table, load } => {
@@ -1787,9 +1802,45 @@ impl Scope {
                     excluded: Vec::new(),
                     at: None,
                     model: None,
+                    schema_pin: None,
                 })
             }
         }
+    }
+
+    /// Enforce mirror row scope and model pin on non-question reads (`profile`),
+    /// matching [`Engine::evaluate`].
+    fn verify_mirror_rows(&self, conn: &Connection, source: &Source) -> Outcome<()> {
+        let Source::Mirror { scope, .. } = source else {
+            return Ok(());
+        };
+        let other_scope = Frag::fmt(
+            &format!(
+                "SELECT count(*) FROM {} WHERE {{}} AND \":scope\" <> {{}}",
+                self.table
+            ),
+            &[&self.all, &Frag::bind("?", Sql::Text(scope.clone()))],
+        );
+        if query_u64(conn, &other_scope)? > 0 {
+            return Err(refusal(STALE, "a row of another scope"));
+        }
+        if let Some(model) = &self.model {
+            let other_model = Frag::fmt(
+                &format!(
+                    "SELECT count(*) FROM {} WHERE {{}} AND \":model\" <> {{}}",
+                    self.table
+                ),
+                &[&self.all, &Frag::bind("?", Sql::Text(model.clone()))],
+            );
+            if query_u64(conn, &other_model)? > 0 {
+                return Err(refusal(UNSUPPORTED, "a version of another model"));
+            }
+        }
+        Ok(())
+    }
+
+    fn read_snapshot(&self, source: &Source) -> ReadSnapshot {
+        ReadSnapshot::from_source_with_schema(source, self.schema_pin.clone())
     }
 
     fn column(&self, id: &str) -> Outcome<&Column> {

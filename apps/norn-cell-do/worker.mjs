@@ -219,7 +219,8 @@ export class Cell {
    */
   async engine(call) {
     try {
-      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+      const path = call.op.startsWith("v2/") ? `/${call.op}` : `/v1/${call.op}`;
+      const response = await fetch(`${this.env.NORN_OLAP_URL}${path}`, {
         method: "POST",
         headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
         body: call.body,
@@ -238,7 +239,8 @@ export class Cell {
   /** The engine's file for a streamed call, or its refusal for the cell to map. */
   async stream(call) {
     try {
-      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+      const path = call.op.startsWith("v2/") ? `/${call.op}` : `/v1/${call.op}`;
+      const response = await fetch(`${this.env.NORN_OLAP_URL}${path}`, {
         method: "POST",
         headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
         body: call.body,

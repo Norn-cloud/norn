@@ -19,12 +19,14 @@ pub mod backend;
 pub mod engine;
 mod lower;
 mod mirror;
+mod store_body;
 
 pub use assemble::{Prepared, bucket_value};
 pub use backend::{
     AdmittedTransform, AnalyticalEngine, AnalyticalEngineId, AnalyticalRefusal, Capability,
     EngineCapabilities, EngineOutcome, ProtectionReason, ReadSnapshot, SnapshotProvenance,
-    StoreBody, verify_profile_provenance,
+    StoreBody, dispatch_evaluate, dispatch_members, required_evaluate_capabilities,
+    required_members_capabilities, verify_profile_provenance,
 };
 pub use lower::{lower, table_schema};
 pub use mirror::MirrorBatch;
@@ -35,13 +37,13 @@ pub use mirror::MirrorBatch;
 pub struct TenantId(String);
 
 impl TenantId {
-    /// ANALYTICS-TENANT-1: the database of the cell bound to `scope_key`.
+    /// A tenant's analytics database: hex SHA-256 of its verified cell scope key.
     #[must_use]
     pub fn of_scope(scope_key: &str) -> Self {
         Self(hex(&Sha256::digest(scope_key.as_bytes())))
     }
 
-    /// The file stem; 64 lowercase hex digits, so never a path.
+    /// The file stem (64 lowercase hex digits, never a path).
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -102,8 +104,7 @@ pub enum ColumnKind {
     Timestamp,
     /// A calendar date: its text and the ordering key of its UTC midnight.
     Date,
-    /// Any other value, kept as canonical JSON; it can be exported but never
-    /// filtered, grouped or summed.
+    /// Any other value, kept as canonical JSON; exportable only (never filtered, grouped, or summed).
     Opaque,
 }
 

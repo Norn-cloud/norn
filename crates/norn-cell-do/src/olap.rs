@@ -8,7 +8,10 @@ use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport};
 use norn_api::olap_credential::{Issuer, body_digest};
 use norn_cell::analytics::TenantId;
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
-use norn_cell::analytics::{AnalyticalEngine, AnalyticalEngineId, EngineOutcome, EngineRefusal};
+use norn_cell::analytics::{
+    AnalyticalEngine, EngineCapabilities, EngineOutcome, EngineRefusal, dispatch_evaluate,
+    dispatch_members,
+};
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 use serde::Serialize;
 
@@ -105,8 +108,8 @@ impl<A: AnalyticalEngine> InProcess<A> {
 
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 impl<A: AnalyticalEngine> Transport for InProcess<A> {
-    fn engine_id(&self) -> AnalyticalEngineId {
-        self.0.engine_id()
+    fn capabilities(&self) -> EngineCapabilities {
+        self.0.capabilities()
     }
     fn resumed(&self) -> Option<EngineAnswer> {
         None
@@ -116,9 +119,37 @@ impl<A: AnalyticalEngine> Transport for InProcess<A> {
         let (status, body) = match call.op.as_str() {
             "frontier" => Self::run(&call.body, |r| engine.mirror_frontier(r)),
             "sync" => Self::run(&call.body, |r| engine.mirror_sync(r)),
-            "evaluate" => Self::run(&call.body, |r| engine.evaluate_question(r)),
-            "members" => Self::run(&call.body, |r| engine.query_members(r)),
-            "profile" => Self::run(&call.body, |r| engine.profile_objects(r)),
+            "evaluate" => Self::run(&call.body, |r| {
+                let mut resp = dispatch_evaluate(engine, r)?;
+                resp.provenance = None;
+                Ok(resp)
+            }),
+            "v2/evaluate" => Self::run(&call.body, |r| {
+                let resp = dispatch_evaluate(engine, r)?;
+                if resp.provenance.is_none() {
+                    return Err(EngineRefusal {
+                        code: "analytics.engine".to_owned(),
+                        detail: "v2 evaluate response omitted provenance".to_owned(),
+                    });
+                }
+                Ok(resp)
+            }),
+            "members" => Self::run(&call.body, |r| dispatch_members(engine, r)),
+            "profile" => Self::run(&call.body, |r| {
+                let mut resp = engine.profile_objects(r)?;
+                resp.provenance = None;
+                Ok(resp)
+            }),
+            "v2/profile" => Self::run(&call.body, |r| {
+                let resp = engine.profile_objects(r)?;
+                if resp.provenance.is_none() {
+                    return Err(EngineRefusal {
+                        code: "analytics.engine".to_owned(),
+                        detail: "v2 profile response omitted provenance".to_owned(),
+                    });
+                }
+                Ok(resp)
+            }),
             "page" => Self::run(&call.body, |r| engine.query_page(r)),
             "lineage" => Self::run(&call.body, |r| engine.query_lineage(r)),
             _ => (404, String::new()),

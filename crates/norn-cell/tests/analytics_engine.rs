@@ -85,7 +85,7 @@ fn ask(
         .analytics_prepare(plan, context, &tenant())
         .map_err(|e| code(&e))?;
     // An engine fault keeps its detail: it never equals a Core 03 refusal.
-    let response = engine.evaluate(&prepared.request).map_err(|r| {
+    let response = engine.evaluate(prepared.request()).map_err(|r| {
         if r.code == "analytics.engine" {
             format!("{}: {}", r.code, r.detail)
         } else {
@@ -337,7 +337,8 @@ fn an_answer_at_an_earlier_frontier_reads_only_versions_current_then() {
     let earlier = store
         .analytics_prepare(&plan, context, &tenant())
         .expect("prepared")
-        .request;
+        .request()
+        .clone();
     commit(
         &mut store,
         vec![
@@ -434,8 +435,8 @@ fn a_population_past_the_bound_answers_with_digests_that_paging_recomputes() {
             let page = engine
                 .members(&MembersRequest {
                     tenant: tenant(),
-                    source: prepared.request.source.clone(),
-                    query: prepared.request.query.clone(),
+                    source: prepared.request().source.clone(),
+                    query: prepared.request().query.clone(),
                     group: group.clone(),
                     after: after.clone(),
                     limit: 2,
@@ -465,13 +466,40 @@ fn a_row_of_another_scope_refuses_as_stale() {
     let mut request = store
         .analytics_prepare(&plan, context, &tenant())
         .expect("prepared")
-        .request;
+        .request()
+        .clone();
     if let Source::Mirror { scope, .. } = &mut request.source {
         *scope = "another".into();
     }
     assert_eq!(
         engine.evaluate(&request).expect_err("refused").code,
         "core.compute.stale_input"
+    );
+    assert_eq!(
+        engine
+            .profile(&norn_cell::analytics::ProfileRequest {
+                tenant: request.tenant.clone(),
+                source: request.source.clone(),
+                columns: vec!["recovered".to_owned()],
+            })
+            .expect_err("profile refuses wrong scope")
+            .code,
+        "core.compute.stale_input"
+    );
+    if let Source::Mirror { scope, model, .. } = &mut request.source {
+        *scope = "synthetic".into();
+        *model = Some("wrong-model-hash".into());
+    }
+    assert_eq!(
+        engine
+            .profile(&norn_cell::analytics::ProfileRequest {
+                tenant: request.tenant,
+                source: request.source,
+                columns: vec!["recovered".to_owned()],
+            })
+            .expect_err("profile refuses wrong model")
+            .code,
+        "core.compute.unsupported_engine"
     );
 }
 
@@ -2032,7 +2060,7 @@ mod known_at {
         let prepared = store
             .analytics_prepare_known_at(plan, context.clone(), &tenant(), cutoff)
             .map_err(|e| code(&e))?;
-        let response = engine.evaluate(&prepared.request).map_err(|r| r.code)?;
+        let response = engine.evaluate(prepared.request()).map_err(|r| r.code)?;
         let mut answer = store
             .analytics_answer_known_at(prepared, response)
             .map_err(|e| code(&e))?;

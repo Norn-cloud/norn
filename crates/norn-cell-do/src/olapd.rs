@@ -51,7 +51,8 @@ use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
     AnalyticalEngine, EngineOutcome, EngineRefusal, EvaluateRequest, ExportRequest,
     FrontierRequest, LandRequest, LandResponse, LineageRequest, MembersRequest, PageRequest,
-    ProfileRequest, SettleRequest, StoreBody, SyncRequest, TenantId,
+    ProfileRequest, SettleRequest, StoreBody, SyncRequest, TenantId, dispatch_evaluate,
+    dispatch_members,
 };
 use norn_kernel::LogicalTime;
 use serde::Serialize;
@@ -345,7 +346,14 @@ impl Gate {
     fn admit(&self, request: &Request) -> Result<TenantId, Denied> {
         let digest = body_digest(&request.body);
         let keyring = read_keyring(&self.keys_file);
-        let op = request.path.strip_prefix("/v1/").unwrap_or_default();
+        let op = if let Some(v1) = request.path.strip_prefix("/v1/") {
+            v1
+        } else if request.path.starts_with("/v2/") {
+            // Credential op for v2 routes is "v2/<op>" so v1 and v2 credentials never cross-verify.
+            request.path.strip_prefix('/').unwrap_or_default()
+        } else {
+            ""
+        };
         let credential = request
             .authorization
             .as_deref()
@@ -480,9 +488,37 @@ fn connection(
     match request.path.as_str() {
         "/v1/frontier" => call.answer(|r: FrontierRequest| engine.mirror_frontier(&r)),
         "/v1/sync" => call.answer(|r: SyncRequest| engine.mirror_sync(&r)),
-        "/v1/evaluate" => call.answer(|r: EvaluateRequest| engine.evaluate_question(&r)),
-        "/v1/members" => call.answer(|r: MembersRequest| engine.query_members(&r)),
-        "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile_objects(&r)),
+        "/v1/evaluate" => call.answer(|r: EvaluateRequest| {
+            let mut resp = dispatch_evaluate(engine, &r)?;
+            resp.provenance = None;
+            Ok(resp)
+        }),
+        "/v2/evaluate" => call.answer(|r: EvaluateRequest| {
+            let resp = dispatch_evaluate(engine, &r)?;
+            if resp.provenance.is_none() {
+                return Err(refusal(
+                    "analytics.engine",
+                    "v2 evaluate response omitted provenance",
+                ));
+            }
+            Ok(resp)
+        }),
+        "/v1/members" => call.answer(|r: MembersRequest| dispatch_members(engine, &r)),
+        "/v1/profile" => call.answer(|r: ProfileRequest| {
+            let mut resp = engine.profile_objects(&r)?;
+            resp.provenance = None;
+            Ok(resp)
+        }),
+        "/v2/profile" => call.answer(|r: ProfileRequest| {
+            let resp = engine.profile_objects(&r)?;
+            if resp.provenance.is_none() {
+                return Err(refusal(
+                    "analytics.engine",
+                    "v2 profile response omitted provenance",
+                ));
+            }
+            Ok(resp)
+        }),
         "/v1/page" => call.answer(|r: PageRequest| engine.query_page(&r)),
         "/v1/lineage" => call.answer(|r: LineageRequest| engine.query_lineage(&r)),
         "/v1/land" => call.answer(|r: LandRequest| land(engine, &r)),

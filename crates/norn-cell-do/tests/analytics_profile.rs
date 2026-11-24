@@ -34,6 +34,33 @@ fn profile_of(response: &server::Response) -> Value {
     document
 }
 
+struct StaleProfileTransport(InProcess);
+
+impl norn_api::analytics_routes::Transport for StaleProfileTransport {
+    fn resumed(&self) -> Option<norn_api::analytics_routes::EngineAnswer> {
+        self.0.resumed()
+    }
+    fn call(
+        &self,
+        call: &norn_api::analytics_routes::EngineCall,
+    ) -> Option<norn_api::analytics_routes::EngineAnswer> {
+        let mut answer = self.0.call(call)?;
+        if call.op == "v2/profile"
+            && answer.status == 200
+            && let Ok(mut resp) =
+                serde_json::from_str::<norn_cell::analytics::ProfileResponse>(&answer.body)
+        {
+            if let Some(prov) = &mut resp.provenance {
+                prov.freshness = Some(norn_cell::compute::Freshness::Stale);
+            }
+            if let Ok(encoded) = serde_json::to_string(&resp) {
+                answer.body = encoded;
+            }
+        }
+        Some(answer)
+    }
+}
+
 #[test]
 fn the_engine_profile_equals_the_exact_profile_of_every_demo_type() {
     let scope = seed::demo_scope();
@@ -54,7 +81,7 @@ fn the_engine_profile_equals_the_exact_profile_of_every_demo_type() {
     );
     let names = host.object_type_names().unwrap();
     assert_ne!(names.len(), 0);
-    for name in names {
+    for name in &names {
         let path = format!("/v1/objects/{name}:profile");
         let request = server::Request {
             method: "GET",
@@ -71,6 +98,21 @@ fn the_engine_profile_equals_the_exact_profile_of_every_demo_type() {
         assert_eq!(engine_document["engine"], "duckdb", "{name}");
         assert_eq!(profile_of(&engine), profile_of(&exact), "{name}");
     }
+
+    // Stale or non-exact profile provenance fails closed with HTTP 409 (matching OpenAPI `:profile`).
+    let stale_transport = StaleProfileTransport(transport);
+    let first = names.first().expect("at least one demo type");
+    let stale_req = server::Request {
+        method: "GET",
+        path: &format!("/v1/objects/{first}:profile"),
+        query: SCOPE,
+        authorization: MEMBER,
+        now: 0,
+        body: "",
+    };
+    let stale_resp = server::analytics(&host, &principals, &stale_transport, None, &stale_req)
+        .expect("profile route");
+    assert_eq!(stale_resp.status, 409, "{}", stale_resp.body);
 }
 
 /// The alpha's shape: the seeded demo cell's derived metrics answered on its

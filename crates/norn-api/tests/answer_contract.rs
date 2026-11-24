@@ -60,7 +60,7 @@ fn retained_answer_documents_validate_against_their_projected_schemas() {
 /// enum-checking client (the generated Python and TypeScript SDKs) accepts it.
 /// A new runtime engine joins this list with its contract entry.
 #[test]
-fn every_runtime_engine_validates_against_the_contract() {
+fn every_runtime_engine_validates_against_the_contract() -> Result<(), Box<dyn std::error::Error>> {
     use norn_cell::compute::Engine;
     let engines = [
         (Engine::Ivm, "ivm"),
@@ -68,25 +68,21 @@ fn every_runtime_engine_validates_against_the_contract() {
         (Engine::Duckdb, "duckdb"),
         (Engine::DataFusion, "datafusion"),
     ];
-    let contract: Value =
-        serde_json::from_str(&norn_api::openapi::openapi_json().expect("contract"))
-            .expect("contract JSON");
+    let contract: Value = serde_json::from_str(&norn_api::openapi::openapi_json()?)?;
     let schema = json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "allOf": [{ "$ref": "#/components/schemas/NornQueryResult" }],
         "components": contract["components"],
     });
-    let validator = jsonschema::validator_for(&schema).expect("contract schema compiles");
+    let validator = jsonschema::validator_for(&schema)?;
     let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo/answers");
-    let answer: Value = serde_json::from_str(
-        &std::fs::read_to_string(format!("{directory}/scrap-yield.k1.answer.json"))
-            .expect("retained answer"),
-    )
-    .expect("answer JSON");
+    let answer: Value = serde_json::from_str(&std::fs::read_to_string(format!(
+        "{directory}/scrap-yield.k1.answer.json"
+    ))?)?;
     for (engine, wire) in engines {
-        let encoded = serde_json::to_value(engine).expect("engine");
+        let encoded = serde_json::to_value(engine)?;
         assert_eq!(encoded, json!(wire), "{engine:?} wire name");
-        let decoded: Engine = serde_json::from_value(encoded.clone()).expect("round-trip engine");
+        let decoded: Engine = serde_json::from_value(encoded.clone())?;
         assert_eq!(decoded, engine);
         let mut document = answer.clone();
         document["engine"] = encoded;
@@ -97,4 +93,5 @@ fn every_runtime_engine_validates_against_the_contract() {
         assert_eq!(errors.len(), 0, "{engine:?}: {errors:#?}");
     }
     assert!(serde_json::from_str::<Engine>("\"data_fusion\"").is_err());
+    Ok(())
 }

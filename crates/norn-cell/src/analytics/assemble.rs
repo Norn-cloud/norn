@@ -63,8 +63,7 @@ fn key_of(value: &RuntimeValue) -> Result<String, CellError> {
 /// A question prepared at the cell's verified head for the engine.
 #[derive(Debug, Clone)]
 pub struct Prepared {
-    /// What to send the engine.
-    pub request: EvaluateRequest,
+    request: EvaluateRequest,
     plan: QuestionPlan,
     context: QueryContext,
     exclusions: BTreeMap<String, String>,
@@ -72,8 +71,36 @@ pub struct Prepared {
     query_pin: String,
     definition_pin: String,
     model_pin: String,
+    /// Active mirror table schema pin generation (`None` for loaded datasets).
+    schema_pin: Option<String>,
     /// At a knowledge cutoff: the cutoff and the receipt it is pinned to.
     known_at: Option<(crate::KnowledgeCutoff, Option<String>)>,
+}
+
+impl Prepared {
+    /// Immutable view of the prepared engine request.
+    #[must_use]
+    pub const fn request(&self) -> &EvaluateRequest {
+        &self.request
+    }
+
+    /// Expected mirror table schema pin generation (`None` for loaded datasets).
+    #[must_use]
+    pub fn schema_pin(&self) -> Option<&str> {
+        self.schema_pin.as_deref()
+    }
+
+    /// Active cell model hash pinned at preparation time.
+    #[must_use]
+    pub fn model_pin(&self) -> &str {
+        &self.model_pin
+    }
+
+    /// Whether this preparation requires historical/bitemporal execution.
+    #[must_use]
+    pub fn is_historical(&self) -> bool {
+        self.known_at.is_some() || self.plan.as_of()
+    }
 }
 
 impl<E: SqlEngine> CellStore<E> {
@@ -205,6 +232,10 @@ impl<E: SqlEngine> CellStore<E> {
                     exclusions,
                 )
             };
+        let schema_pin = match &source {
+            Source::Mirror { table, .. } => Some(self.analytics_table(table)?.pin),
+            Source::Dataset { .. } => None,
+        };
         let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
         let request = EvaluateRequest {
             tenant: tenant.clone(),
@@ -221,6 +252,7 @@ impl<E: SqlEngine> CellStore<E> {
             query_pin,
             definition_pin,
             model_pin: self.model().model_hash().to_owned(),
+            schema_pin,
             known_at: cutoff.map(|cutoff| (cutoff, receipt)),
         })
     }
@@ -362,18 +394,81 @@ impl<E: SqlEngine> CellStore<E> {
         self.assemble_answer(prepared, response, true)
     }
 
-    fn assemble_answer(
+    /// Cell-produced empty answer when the caller's population gate denied
+    /// reading the grain. Performs no engine call and fabricates no
+    /// [`SnapshotProvenance`], attributing the empty authorized result directly
+    /// to [`crate::compute::Engine::Cell`].
+    ///
+    /// # Errors
+    /// A moved head/model/dataset or a store error.
+    pub fn analytics_empty_authorized_answer(
         &self,
         prepared: Prepared,
-        response: EvaluateResponse,
-        strict_law_read: bool,
     ) -> Result<QueryResult, CellError> {
+        self.verify_prepared_still_current(&prepared)?;
+        let Prepared {
+            plan,
+            context,
+            revision,
+            query_pin,
+            definition_pin,
+            ..
+        } = prepared;
+        let mut result = crate::compute::materialize(
+            &plan,
+            (context, BTreeMap::new()),
+            revision,
+            query_pin,
+            definition_pin,
+            &BTreeMap::new(),
+        )?;
+        result.rows = BTreeMap::new();
+        result.unlinked = 0;
+        result.engine = crate::compute::Engine::Cell;
+        let evidence = crate::compute::FindingEvidence {
+            context: &result.context,
+            exclusions: &result.exclusions,
+        };
+        result.lineage_ref = crate::codec::hash_json(&(
+            &result.query_pin,
+            &result.revision,
+            evidence,
+            &result.rows,
+        ))?;
+        Ok(result)
+    }
+
+    /// ASOF-KNOWLEDGE-1: cell-produced empty historical answer when the
+    /// caller's population gate denied reading the grain.
+    ///
+    /// # Errors
+    /// As [`Self::analytics_empty_authorized_answer`], or a preparation without a cutoff.
+    pub fn analytics_empty_authorized_answer_known_at(
+        &self,
+        prepared: Prepared,
+    ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
+        let (cutoff, receipt) = prepared
+            .known_at
+            .clone()
+            .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+        let result = self.analytics_empty_authorized_answer(prepared)?;
+        Ok(crate::compute::HistoricalQuestionResult {
+            world: norn_kernel::World::Historical {
+                commit: norn_kernel::CommitId(
+                    receipt.unwrap_or_else(|| crate::system::GENESIS_HASH.into()),
+                ),
+            },
+            knowledge_time_ms: cutoff.recorded_at.as_millis(),
+            result,
+        })
+    }
+
+    fn verify_prepared_still_current(&self, prepared: &Prepared) -> Result<(), CellError> {
         if prepared.known_at.is_some() || prepared.plan.as_of() {
             self.read().check_history("historical analytics")?;
         } else {
             self.read().check_live()?;
         }
-        // Verify model pin and snapshot-actually-read provenance before assembling.
         if self.model().model_hash() != prepared.model_pin {
             return Err(AnalyticalRefusal::StaleRead {
                 detail: "cell model pin changed since preparation".to_owned(),
@@ -396,6 +491,16 @@ impl<E: SqlEngine> CellStore<E> {
                 .into());
             }
         }
+        Ok(())
+    }
+
+    fn assemble_answer(
+        &self,
+        prepared: Prepared,
+        response: EvaluateResponse,
+        strict_law_read: bool,
+    ) -> Result<QueryResult, CellError> {
+        self.verify_prepared_still_current(&prepared)?;
         let provenance =
             response
                 .provenance
@@ -403,7 +508,11 @@ impl<E: SqlEngine> CellStore<E> {
                 .ok_or_else(|| AnalyticalRefusal::StaleRead {
                     detail: "analytical response omitted snapshot provenance".to_owned(),
                 })?;
-        provenance.verify_against(&prepared.request.tenant, &prepared.request.source)?;
+        provenance.verify_against(
+            &prepared.request.tenant,
+            &prepared.request.source,
+            prepared.schema_pin.as_deref(),
+        )?;
         let engine_id = provenance.engine;
         let provenance_copy = provenance.clone();
         let Prepared {
@@ -438,11 +547,11 @@ impl<E: SqlEngine> CellStore<E> {
             &BTreeMap::new(),
         )?;
         if let Some(reported_freshness) = provenance_copy.freshness
-            && reported_freshness != result.freshness
+            && reported_freshness != crate::compute::Freshness::Exact
+            && result.freshness == crate::compute::Freshness::Exact
         {
             return Err(AnalyticalRefusal::StaleRead {
-                detail: "analytical response freshness disagreed with cell freshness policy"
-                    .to_owned(),
+                detail: "analytical engine reported non-exact snapshot freshness".to_owned(),
             }
             .into());
         }

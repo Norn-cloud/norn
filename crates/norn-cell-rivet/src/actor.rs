@@ -1005,7 +1005,7 @@ impl CellActor {
             .to_owned();
         let sent = self
             .http
-            .post(format!("{url}/v1/{op}"))
+            .post(if op.starts_with("v2/") { format!("{url}/{op}") } else { format!("{url}/v1/{op}") })
             // OLAP-CRED-1: the credential the cell minted for this call.
             .bearer_auth(
                 call.get("credential")
