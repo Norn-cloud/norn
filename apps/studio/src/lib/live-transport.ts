@@ -60,9 +60,10 @@ export function countsOf(document: unknown): ObjectCounts {
 /** What the Studio Worker answers when this deployment has no Norn host configured (worker/index.ts). */
 const NO_HOST = "No Norn host is connected to this deployment."
 
-export async function readMode(fetcher: Fetch): Promise<Mode> {
+export async function readMode(fetcher: Fetch, signal?: AbortSignal): Promise<Mode> {
   let scope: StudioScope | null
-  try { scope = await readStudioScope(fetcher) } catch (error) {
+  try { scope = await readStudioScope(fetcher, signal) } catch (error) {
+    signal?.throwIfAborted()
     // No session server (a preview without the Worker, one that reports no scope, or no session): nothing is connected.
     // A session server that failed to answer (a network error or a 5xx) is not "nothing connected": it is an
     // outage, raised so Studio says it is reconnecting and retries, never swapping a live cell for the recording.
@@ -70,10 +71,12 @@ export async function readMode(fetcher: Fetch): Promise<Mode> {
     if (error instanceof CellUnavailable || error instanceof StudioScopeError) return { kind: "recorded" }
     throw error
   }
+  signal?.throwIfAborted()
   if (scope === null) return { kind: "recorded" }
   const active = scope
-  const response = await scopedHostFetch(fetcher, "/api/host", async () => active)("/v1/definitions", { headers: { accept: "application/json" } })
+  const response = await scopedHostFetch(fetcher, "/api/host", async () => active)("/v1/definitions", { headers: { accept: "application/json" }, signal })
   const text = await response.text()
+  signal?.throwIfAborted()
   // Only this deployment's own "no host connected" answer means there is no cell; any other 503 is a cell that
   // did not answer (a busy or restarting host), raised and retried rather than replaced by the recording.
   if (response.status === 404 || (response.status === 503 && (() => { try { return (JSON.parse(text) as { error?: unknown }).error === NO_HOST } catch { return false } })())) return { kind: "recorded" }
@@ -131,7 +134,7 @@ const browserFetch: Fetch = (input, init) => fetch(input, init)
 export function currentMode(signal?: AbortSignal): Promise<Mode> {
   if (mode === undefined || mode.controller.signal.aborted) {
     const controller = new AbortController()
-    const result = readMode((input, init) => browserFetch(input, { ...init, signal: controller.signal }))
+    const result = readMode(browserFetch, controller.signal)
       .catch((error: unknown) => {
         if (mode?.result === result) refreshMode()
         throw error
@@ -140,7 +143,7 @@ export function currentMode(signal?: AbortSignal): Promise<Mode> {
   }
   const probe = mode
   if (signal === undefined) return probe.result
-  const abort = () => probe.controller.abort()
+  const abort = () => probe.controller.abort(signal.reason)
   if (signal.aborted) abort()
   else signal.addEventListener("abort", abort, { once: true })
   return probe.result.finally(() => signal.removeEventListener("abort", abort))

@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
-import { QueryClient, QueryObserver } from "@tanstack/react-query"
+import { QueryClient, QueryObserver, queryOptions } from "@tanstack/react-query"
 import { NotServed, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode } from "../src/lib/live-transport.ts"
+import { recordedTransport, transport } from "../src/lib/transport.ts"
 
 const ME = { user: { id: "user:dev", name: "user:dev", email: "" }, organization: { id: "local", name: "shop", role: "local developer" }, environmentId: "dev" }
 const DEFINITIONS = '{"admitted":true,"version":3,"artifacts":[{"artifactId":"shop.Product.entity","version":"0.1.0","payload":{"scale":2.50}}]}'
@@ -73,6 +74,68 @@ test("Retry cancels the transport's shared probe before starting its replacement
     unsubscribe?.()
     client.clear()
     refreshMode()
+    fetch.mockRestore()
+  }
+})
+
+test("Retry during the session body read leaves the catalog and mode caches live", async () => {
+  const client = new QueryClient()
+  const observer = new QueryObserver(client, modeQuery)
+  const catalogQuery = queryOptions({ queryKey: ["catalog"], queryFn: transport.catalog })
+  let markBodyReading = () => {}
+  const bodyReading = new Promise<void>((resolve) => { markBodyReading = resolve })
+  let finishCatalog = () => {}
+  const catalogReady = new Promise<void>((resolve) => { finishCatalog = resolve })
+  let firstSignal: AbortSignal | undefined
+  const fetchProbe = async (...[input, init]: Parameters<typeof globalThis.fetch>) => {
+    if (input !== "/api/me") {
+      await catalogReady
+      return new Response(DEFINITIONS)
+    }
+    if (firstSignal !== undefined) return Response.json(ME)
+    const signal = init?.signal
+    if (!signal) throw new Error("expected a cancellable probe")
+    firstSignal = signal
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"organization":'))
+        signal.addEventListener("abort", () => controller.error(signal.reason), { once: true })
+      },
+      pull() { markBodyReading() },
+    }, { highWaterMark: 0 }))
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }),
+  )
+  const recorded = spyOn(recordedTransport, "catalog").mockResolvedValue({ document: [], numbers: new Map(), origin: "recorded" })
+  refreshMode()
+  let unsubscribe: (() => void) | undefined
+  try {
+    const firstCatalog = client.fetchQuery(catalogQuery).catch((error: unknown) => error)
+    await bodyReading
+    unsubscribe = observer.subscribe(() => {})
+    const retry = retryMode(client)
+
+    expect(firstSignal?.reason).toBeInstanceOf(DOMException)
+    expect(await firstCatalog).toBe(firstSignal?.reason)
+    expect(client.getQueryData(catalogQuery.queryKey)).toBeUndefined()
+    expect(client.getQueryData(modeQuery.queryKey)).toBeUndefined()
+
+    const nextCatalog = client.fetchQuery(catalogQuery)
+    finishCatalog()
+    await retry
+    const catalog = await nextCatalog
+    expect(catalog.origin).toBe("live")
+    expect(catalog.document.map((artifact) => artifact.artifactId)).toEqual(["shop.Product.entity"])
+    expect(client.getQueryData(catalogQuery.queryKey)?.origin).toBe("live")
+    expect(client.getQueryData(modeQuery.queryKey)).toMatchObject({ kind: "live", catalog })
+    expect(recorded).not.toHaveBeenCalled()
+  } finally {
+    finishCatalog()
+    unsubscribe?.()
+    client.clear()
+    refreshMode()
+    recorded.mockRestore()
     fetch.mockRestore()
   }
 })

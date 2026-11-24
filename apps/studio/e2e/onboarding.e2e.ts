@@ -179,7 +179,7 @@ test("#1414: a workspace without a cell stays current while Studio shows recorde
   await expect(current).toHaveAttribute("aria-checked", "true")
   await expect(current).toContainText("No cell yet")
   await expect(menu.getByRole("menuitemradio", { name: "Recorded demo" })).toBeVisible()
-  await expect(menu.getByRole("menuitemradio", { name: "Recorded demo" })).toHaveAttribute("aria-checked", "false")
+  await expect(menu.getByRole("menuitemradio", { name: "Recorded demo" })).toHaveAttribute("aria-checked", "true")
   await shoot(page, "switcher-no-cell")
 })
 

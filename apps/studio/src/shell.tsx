@@ -144,7 +144,7 @@ function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
         : recordedWorkspace
       : { name: organization?.name ?? "Workspace", detail: mode.isError || mode.failureCount > 0 ? "Can't reach the cell · retrying" : slow ? "Connecting to cell…" : "Connecting…" }
   const workspaceOpen = organization != null || live
-  return { live, open, active, workspaceOpen, recordedSelection: recorded && !workspaceOpen ? recordedWorkspace?.id : undefined }
+  return { live, open, active, workspaceOpen, recordedSelection: recorded ? recordedWorkspace?.id : undefined }
 }
 
 /** An example dataset entry that opens here: published benchmark results, or the recording while no cell is connected. */
