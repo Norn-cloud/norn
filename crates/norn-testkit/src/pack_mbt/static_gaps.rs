@@ -492,8 +492,27 @@ fn collect_referenced_fields(
                 .find(|ty| ty.name.as_str() == parent.as_str())
         });
     }
-    for law in &pack.laws {
-        if law.subject != object_type.name.as_str() {
+    let governed_subjects = collect_governed_subjects(pack, object_type);
+    let governed_law_ids: Option<BTreeSet<String>> = catalog
+        .governing_laws(&object_type.name)
+        .ok()
+        .map(|envelopes| {
+            envelopes
+                .into_iter()
+                .map(|env| env.artifact_id.clone())
+                .collect()
+        });
+    for (idx, law) in pack.laws.iter().enumerate() {
+        let applies = governed_law_ids.as_ref().map_or_else(
+            || governed_subjects.contains(law.subject.as_str()),
+            |ids| {
+                pack.law_envelopes
+                    .get(idx)
+                    .is_some_and(|env| ids.contains(&env.artifact_id))
+                    || governed_subjects.contains(law.subject.as_str())
+            },
+        );
+        if !applies {
             continue;
         }
         if let Some(cond) = &law.condition {
@@ -504,6 +523,36 @@ fn collect_referenced_fields(
         }
     }
     refs
+}
+
+fn collect_governed_subjects(pack: &AdmittedPack, object_type: &ObjectTypeDef) -> BTreeSet<String> {
+    let mut governed_subjects = BTreeSet::new();
+    let mut walk_subj = Some(object_type);
+    while let Some(def) = walk_subj {
+        if !governed_subjects.insert(def.name.as_str().to_owned()) {
+            break;
+        }
+        for iface_name in &def.implements {
+            governed_subjects.insert(iface_name.as_str().to_owned());
+            if let Some(iface) = pack
+                .interfaces
+                .iter()
+                .find(|i| i.name.as_str() == iface_name.as_str())
+            {
+                for owner in
+                    iface.contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
+                {
+                    governed_subjects.insert(owner.name.as_str().to_owned());
+                }
+            }
+        }
+        walk_subj = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    governed_subjects
 }
 
 fn detect_orphan_fields(
@@ -523,9 +572,9 @@ fn detect_orphan_fields(
         .map(|prop| prop.as_str().to_owned())
         .collect();
 
-    for prop in &object_type.properties {
-        let name = prop.id.as_str();
-        if prop.is_read_only() || prop.default.is_some() || lifecycle_props.contains(name) {
+    for prop in effective_properties(pack, object_type) {
+        let name = prop.id;
+        if prop.read_only_or_default || lifecycle_props.contains(name) {
             continue;
         }
         if let Some(sources) = refs.get(name)
@@ -543,7 +592,64 @@ fn detect_orphan_fields(
     }
 }
 
-fn is_financial_or_ledger_type(object_type: &ObjectTypeDef) -> Option<String> {
+struct EffectiveProp<'a> {
+    id: &'a str,
+    property_type: &'a PropertyType,
+    read_only_or_default: bool,
+}
+
+fn effective_properties<'a>(
+    pack: &'a AdmittedPack,
+    object_type: &'a ObjectTypeDef,
+) -> Vec<EffectiveProp<'a>> {
+    let mut seen_props = BTreeSet::new();
+    let mut effective_props = Vec::new();
+    let mut walk_ty = Some(object_type);
+    let mut visited_ty = BTreeSet::new();
+    while let Some(def) = walk_ty {
+        if !visited_ty.insert(def.name.as_str().to_owned()) {
+            break;
+        }
+        for prop in &def.properties {
+            if seen_props.insert(prop.id.as_str().to_owned()) {
+                effective_props.push(EffectiveProp {
+                    id: prop.id.as_str(),
+                    property_type: &prop.property_type,
+                    read_only_or_default: prop.is_read_only() || prop.default.is_some(),
+                });
+            }
+        }
+        for iface_name in &def.implements {
+            if let Some(iface) = pack
+                .interfaces
+                .iter()
+                .find(|i| i.name.as_str() == iface_name.as_str())
+            {
+                for owner in
+                    iface.contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
+                {
+                    for prop in &owner.properties {
+                        if seen_props.insert(prop.id.as_str().to_owned()) {
+                            effective_props.push(EffectiveProp {
+                                id: prop.id.as_str(),
+                                property_type: &prop.property_type,
+                                read_only_or_default: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        walk_ty = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    effective_props
+}
+
+fn is_financial_or_ledger_type(pack: &AdmittedPack, object_type: &ObjectTypeDef) -> Option<String> {
     if object_type.accounting_leg.is_some() {
         return Some("declares accountingLeg".to_owned());
     }
@@ -564,11 +670,11 @@ fn is_financial_or_ledger_type(object_type: &ObjectTypeDef) -> Option<String> {
             return Some(format!("financial/ledger entity name contains '{keyword}'"));
         }
     }
-    for prop in &object_type.properties {
-        if let PropertyType::Ref { name, .. } = &prop.property_type
+    for prop in effective_properties(pack, object_type) {
+        if let PropertyType::Ref { name, .. } = prop.property_type
             && name.as_str().contains("money")
         {
-            return Some(format!("carries money property '{}'", prop.id.as_str()));
+            return Some(format!("carries money property '{}'", prop.id));
         }
     }
     None
@@ -646,7 +752,7 @@ fn detect_immutable_financial_reversal_gap(
     {
         return;
     }
-    let Some(financial_reason) = is_financial_or_ledger_type(object_type) else {
+    let Some(financial_reason) = is_financial_or_ledger_type(pack, object_type) else {
         return;
     };
     match classify_reversal_coverage(pack, object_type.name.as_str()) {

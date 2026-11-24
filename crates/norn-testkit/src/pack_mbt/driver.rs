@@ -198,6 +198,7 @@ where
             seq = seq.saturating_add(1);
             verify_immutable_entity(pack, object_type, make_host, coverage, seq)?;
             totals.immutable = totals.immutable.saturating_add(1);
+            continue;
         }
         for lifecycle in catalog.lifecycles(&object_type.name).into_values() {
             let paths = bfs_paths_to_states(&lifecycle);

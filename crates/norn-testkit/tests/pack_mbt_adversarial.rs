@@ -1381,3 +1381,327 @@ fn observed_sqlite_cell_credits_invariant_law_alongside_linked_predicate_law() -
     );
     Ok(())
 }
+
+fn link_only_recheck_pack() -> Result<AdmittedPack, String> {
+    let raw = vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "lo.Account.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "lo", "name": "Account", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "lo.Account",
+                    "properties": [
+                        {"id": "account_id", "type": {"kind": "text"}},
+                        {"id": "active", "type": {"kind": "boolean"}}
+                    ]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "lo.Charge.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "lo", "name": "Charge", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "lo.Charge",
+                    "properties": [
+                        {"id": "charge_id", "type": {"kind": "text"}},
+                        {"id": "total", "type": {"kind": "decimal", "scale": 2}}
+                    ],
+                    "links": [{
+                        "id": "account",
+                        "target": "lo.Account",
+                        "cardinality": {"from": "many", "to": "one", "required": false}
+                    }],
+                    "invariants": [
+                        {"id": "positive_total", "expression": "self.total > 0", "message": "total must be positive"}
+                    ]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "lo.Charge.active_account.law", "version": "1.0.0",
+            "kind": "law", "namespace": "lo", "name": "Linked active account", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "lawVersion": "0.1",
+                "id": "lo.Charge.active_account",
+                "owner": "lo",
+                "severity": "error",
+                "rationale": "When linked to an account, that account must be active.",
+                "provenance": {"source": "authoring_sdk"},
+                "scope": {"root": {"kind": "entity", "id": "lo.Charge"}, "objectTypes": ["lo.Charge"]},
+                "subject": "lo.Charge",
+                "condition": "self.account != null",
+                "modality": {"kind": "always"},
+                "response": {"kind": "predicate", "expression": "self.account.active == true"}
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "lo.Charge.positive_total.law", "version": "1.0.0",
+            "kind": "law", "namespace": "lo", "name": "Invariant total positive", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "lawVersion": "0.1",
+                "id": "lo.Charge.positive_total_law",
+                "owner": "lo",
+                "severity": "error",
+                "rationale": "All charges satisfy positive_total.",
+                "provenance": {"source": "authoring_sdk"},
+                "scope": {"root": {"kind": "entity", "id": "lo.Charge"}, "objectTypes": ["lo.Charge"]},
+                "subject": "lo.Charge",
+                "modality": {"kind": "always"},
+                "response": {"kind": "invariant", "objectType": "lo.Charge", "invariantId": "positive_total"}
+            }
+        }),
+    ];
+    let envelopes: Vec<ArtifactEnvelope> = raw
+        .into_iter()
+        .map(|val| serde_json::from_value(val).map_err(|e| format!("{e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    AdmittedPack::from_envelopes("link_only_recheck", &envelopes)
+}
+
+#[test]
+fn observed_sqlite_cell_records_hold_on_link_only_commit() -> Result<(), String> {
+    let pack = link_only_recheck_pack()?;
+    let model = Model::from_definitions_with_interfaces(
+        &pack.object_types,
+        &pack.property_types,
+        &pack.interfaces,
+    )
+    .map_err(|e| format!("model: {e}"))?
+    .with_governing_laws(&pack.law_envelopes)
+    .map_err(|e| format!("laws: {e}"))?;
+    let recorder = Arc::new(DomainCoverageRecorder::new());
+    let mut cell = FactSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
+        .map_err(|e| format!("open: {e}"))?
+        .into_observed(Arc::clone(&recorder));
+
+    let account_key = FactKey::new("lo.Account", "acct-1");
+    let charge_key = FactKey::new("lo.Charge", "chg-1");
+    cell.commit(CellCommit {
+        writes: vec![
+            FactWrite {
+                key: account_key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: runtime_obj(&[
+                        ("account_id", RuntimeValue::String("acct-1".to_owned())),
+                        ("active", RuntimeValue::Bool(true)),
+                    ]),
+                },
+            },
+            FactWrite {
+                key: charge_key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: runtime_obj(&[
+                        ("charge_id", RuntimeValue::String("chg-1".to_owned())),
+                        ("total", dec("15.00")?),
+                    ]),
+                },
+            },
+        ],
+        ..CellCommit::empty()
+    })
+    .map_err(|e| format!("seed commit: {e}"))?;
+    // Before linking, `self.account != null` is NotApplicable, so active_account has 0 holds.
+    assert_eq!(
+        recorder
+            .snapshot()
+            .law_holds
+            .get("lo.Charge.active_account"),
+        None
+    );
+    assert_eq!(
+        recorder
+            .snapshot()
+            .law_holds
+            .get("lo.Charge.positive_total_law"),
+        Some(&1)
+    );
+
+    // Link-only commit (zero fact writes): activates & satisfies lo.Charge.active_account.
+    cell.commit(CellCommit {
+        links: vec![LinkWrite {
+            key: LinkKey::new(charge_key, "account", account_key),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .map_err(|e| format!("link-only commit: {e}"))?;
+    let snap = recorder.snapshot();
+    assert_eq!(
+        snap.law_holds.get("lo.Charge.active_account"),
+        Some(&1),
+        "link-only commit activating a linked law must credit law_holds"
+    );
+    assert_eq!(
+        snap.law_holds.get("lo.Charge.positive_total_law"),
+        Some(&1),
+        "link-only commit must not double-credit unrelated non-linked laws"
+    );
+    Ok(())
+}
+
+fn inherited_immutability_raw_envelopes() -> Vec<serde_json::Value> {
+    vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "inh.ImmParent.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "inh", "name": "ImmParent", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "inh.ImmParent",
+                    "immutable": true,
+                    "properties": [
+                        {"id": "imm_id", "type": {"kind": "text"}},
+                        {"id": "memo", "type": {"kind": "text"}},
+                        {"id": "status", "default": "open", "type": {"kind": "enum", "values": [{"value": "open"}, {"value": "closed"}]}}
+                    ],
+                    "lifecycles": [{
+                        "property": "status",
+                        "initial": ["open"],
+                        "terminal": ["closed"],
+                        "transitions": [{"id": "close", "from": ["open"], "to": "closed"}]
+                    }]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "inh.ImmChild.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "inh", "name": "ImmChild", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "inh.ImmChild",
+                    "extends": "inh.ImmParent",
+                    "properties": [{"id": "tag", "type": {"kind": "text"}}]
+                }
+            }
+        }),
+    ]
+}
+
+fn inherited_links_and_immutability_pack() -> Result<AdmittedPack, String> {
+    let mut raw = vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "inh.Account.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "inh", "name": "Account", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "inh.Account",
+                    "properties": [
+                        {"id": "account_id", "type": {"kind": "text"}},
+                        {"id": "active", "type": {"kind": "boolean"}}
+                    ]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "inh.BaseOrder.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "inh", "name": "BaseOrder", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "inh.BaseOrder",
+                    "properties": [
+                        {"id": "order_id", "type": {"kind": "text"}},
+                        {"id": "audit_note", "type": {"kind": "text"}},
+                        {"id": "status", "default": "open", "type": {"kind": "enum", "values": [{"value": "open"}, {"value": "done"}]}}
+                    ],
+                    "links": [{
+                        "id": "account",
+                        "target": "inh.Account",
+                        "cardinality": {"from": "many", "to": "one", "required": true}
+                    }],
+                    "lifecycles": [{
+                        "property": "status",
+                        "initial": ["open"],
+                        "terminal": ["done"],
+                        "transitions": [{"id": "complete", "from": ["open"], "to": "done"}]
+                    }]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "inh.SpecialOrder.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "inh", "name": "SpecialOrder", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "inh.SpecialOrder",
+                    "extends": "inh.BaseOrder",
+                    "properties": [
+                        {"id": "priority", "type": {"kind": "text"}}
+                    ]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "inh.BaseOrder.audit_note.law", "version": "1.0.0",
+            "kind": "law", "namespace": "inh", "name": "Base order audit note", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "lawVersion": "0.1",
+                "id": "inh.BaseOrder.audit_note",
+                "owner": "inh",
+                "severity": "error",
+                "rationale": "Base orders and subtypes must carry a non-empty audit note.",
+                "provenance": {"source": "authoring_sdk"},
+                "scope": {"root": {"kind": "entity", "id": "inh.BaseOrder"}, "objectTypes": ["inh.BaseOrder"]},
+                "subject": "inh.BaseOrder",
+                "modality": {"kind": "always"},
+                "response": {"kind": "predicate", "expression": "self.audit_note != ''"}
+            }
+        }),
+    ];
+    raw.extend(inherited_immutability_raw_envelopes());
+    let envelopes: Vec<ArtifactEnvelope> = raw
+        .into_iter()
+        .map(|val| serde_json::from_value(val).map_err(|e| format!("{e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    AdmittedPack::from_envelopes("inh_pack", &envelopes)
+}
+
+#[test]
+fn inherited_required_links_laws_and_immutability_pass_mbt_dst_and_gaps() -> Result<(), String> {
+    let pack = inherited_links_and_immutability_pack()?;
+    let mbt = run_pack_mbt(&pack, |_| BareHost::open(&pack, true, false))?;
+    assert!(mbt.valid_transitions_run >= 2);
+    let dst = run_pack_dst(
+        &pack,
+        PackDstConfig {
+            seed: [0x33; 32],
+            cases: 12,
+            max_steps: 10,
+            entities_per_type: 1,
+        },
+        |_| BareHost::open(&pack, true, false),
+    )?;
+    assert_eq!(dst.cases_run, 12);
+
+    let gaps = analyze_static_gaps(&pack);
+    assert!(
+        gaps.defects().iter().any(|g| matches!(
+            g,
+            StructuralGap::OrphanField { object_type, property, .. }
+                if object_type == "inh.SpecialOrder" && property == "audit_note"
+        )),
+        "inherited parent-type law reading audit_note must report OrphanField on subtype:\n{gaps}"
+    );
+    Ok(())
+}

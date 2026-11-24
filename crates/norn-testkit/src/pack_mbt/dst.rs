@@ -16,9 +16,8 @@ use norn_kernel::cell_host::{
     FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey,
 };
 use norn_kernel::pack_mbt_support::{
-    DecisionOutput, FactChange, LawExampleVerdict as Verdict, Lifecycle, ObjectTypeDef,
-    ObjectTypeName, PropertyId, Transition, TransitionId, ZenExpression,
-    evaluate_law_example_runtime as evaluate_law_example,
+    DecisionOutput, FactChange, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyId, Transition,
+    TransitionId,
 };
 use norn_kernel::{
     CellCommit, CommitError, DecisionRefusal, DecisionTurn, TypeCatalog, World, commit_decision,
@@ -389,54 +388,81 @@ impl<H: PackHost> DstCaseState<'_, H> {
         let before = self.host.ledger_len();
         let already_exists = self.model.contains_key(&(type_idx, slot));
 
+        let meta = CreateStepOutcome {
+            id_pair: (type_idx, slot),
+            ty_name,
+            key: &key,
+            init_state,
+            values: values.clone(),
+            required_links: Vec::new(),
+            already_exists,
+            before,
+        };
         if graph.direct_links.is_empty() {
-            let slice =
-                load_slice(self.host, [key.clone()]).map_err(|e| format!("load_slice: {e}"))?;
-            let output = DecisionOutput {
-                facts: vec![FactChange::Create {
+            let res = self.commit_single_fact(
+                &key,
+                format!("dst-create-{nonce}"),
+                FactChange::Create {
                     object_type: target.object_type.name.clone(),
                     key: id,
-                    values: values.clone(),
-                }],
-                links: Vec::new(),
-                commands: Vec::new(),
-                timers: Vec::new(),
-            };
-            let turn = DecisionTurn {
-                id: format!("dst-create-{nonce}"),
-                now: self.host.logical_now(),
-                world: World::Main,
-                consumes: None,
-            };
-            let res = commit_decision(self.host, self.catalog, &slice, &turn, &output);
-            return self.finish_create_step(
-                CreateStepOutcome {
-                    id_pair: (type_idx, slot),
-                    ty_name,
-                    key: &key,
-                    init_state,
                     values,
-                    required_links: Vec::new(),
-                    already_exists,
-                    before,
                 },
-                res.map(|_| ()),
-            );
+            )?;
+            return self.finish_create_step(meta, res);
         }
 
-        self.step_create_linked(
-            CreateStepOutcome {
-                id_pair: (type_idx, slot),
-                ty_name,
-                key: &key,
-                init_state,
-                values,
-                required_links: Vec::new(),
-                already_exists,
-                before,
-            },
-            graph,
-        )
+        self.step_create_linked(meta, graph)
+    }
+
+    fn commit_single_fact(
+        &mut self,
+        key: &FactKey,
+        turn_id: String,
+        change: FactChange,
+    ) -> Result<Result<(), DecisionRefusal<H::Error>>, String> {
+        let slice = load_slice(self.host, [key.clone()]).map_err(|e| format!("load_slice: {e}"))?;
+        let output = DecisionOutput {
+            facts: vec![change],
+            links: Vec::new(),
+            commands: Vec::new(),
+            timers: Vec::new(),
+        };
+        let turn = DecisionTurn {
+            id: turn_id,
+            now: self.host.logical_now(),
+            world: World::Main,
+            consumes: None,
+        };
+        Ok(commit_decision(self.host, self.catalog, &slice, &turn, &output).map(|_| ()))
+    }
+
+    fn refuse_duplicate_linked_create(
+        &mut self,
+        ty_name: &str,
+        key: &FactKey,
+        values: JsonObject,
+        before: usize,
+    ) -> Result<(), String> {
+        let loaded = self.host.load(key).map_err(|e| format!("load: {e}"))?;
+        let res = self.host.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put { values },
+            }],
+            ..CellCommit::empty()
+        });
+        match res {
+            Err(CommitError::Conflict { .. }) => {
+                if !loaded.exists() {
+                    return Err(format!("expected {key} to exist on duplicate create"));
+                }
+                ensure_unchanged(self.host, before, "duplicate linked create refusal")
+            }
+            other => Err(format!(
+                "duplicate linked create for {ty_name} returned {other:?}"
+            )),
+        }
     }
 
     fn step_create_linked(
@@ -455,26 +481,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
             ..
         } = meta;
         if already_exists {
-            let loaded = self.host.load(key).map_err(|e| format!("load: {e}"))?;
-            let res = self.host.commit(CellCommit {
-                writes: vec![FactWrite {
-                    key: key.clone(),
-                    expected: FactVersion::ABSENT,
-                    mutation: FactMutation::Put { values },
-                }],
-                ..CellCommit::empty()
-            });
-            return match res {
-                Err(CommitError::Conflict { .. }) => {
-                    if !loaded.exists() {
-                        return Err(format!("expected {key} to exist on duplicate create"));
-                    }
-                    ensure_unchanged(self.host, before, "duplicate linked create refusal")
-                }
-                other => Err(format!(
-                    "duplicate linked create for {ty_name} returned {other:?}"
-                )),
-            };
+            return self.refuse_duplicate_linked_create(ty_name, key, values, before);
         }
 
         let predicted_subject = self
@@ -490,6 +497,15 @@ impl<H: PackHost> DstCaseState<'_, H> {
             .chain(graph.direct_links.iter())
             .map(|lw| lw.key.clone())
             .collect();
+        let expected_law_violation = super::law_parity::predict_linked_create_law_violation(
+            self.pack,
+            self.catalog,
+            &self.snapshot_facts(),
+            &self.extra_links,
+            &predicted_setup,
+            (key, &predicted_subject),
+            &all_link_keys,
+        );
         graph.setup_writes.push(FactWrite {
             key: key.clone(),
             expected: FactVersion::ABSENT,
@@ -501,8 +517,8 @@ impl<H: PackHost> DstCaseState<'_, H> {
             links: graph.setup_links,
             ..CellCommit::empty()
         });
-        match res {
-            Ok(_) => {
+        match (expected_law_violation, res) {
+            (false, Ok(_)) => {
                 if self.host.ledger_len() != before.saturating_add(1) {
                     return Err("linked create did not append 1 ledger entry".to_owned());
                 }
@@ -524,7 +540,12 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 );
                 Ok(())
             }
-            Err(err) => Err(format!("linked create for {ty_name} failed: {err}")),
+            (true, Err(CommitError::Law { .. } | CommitError::InvariantViolation { .. })) => {
+                ensure_unchanged(self.host, before, "law/invariant refusal on linked create")
+            }
+            (law_viol, other) => Err(format!(
+                "linked create mismatch for {ty_name} (law_violated={law_viol}): {other:?}"
+            )),
         }
     }
 
@@ -610,26 +631,17 @@ impl<H: PackHost> DstCaseState<'_, H> {
         let prop = target.lifecycle.property.as_str();
         let id = entity_id(type_idx, slot);
         let key = FactKey::new(ty_name, &id);
-        let slice = load_slice(self.host, [key.clone()]).map_err(|e| format!("load_slice: {e}"))?;
-        let output = DecisionOutput {
-            facts: vec![FactChange::Transition {
+        let before = self.host.ledger_len();
+        let res = self.commit_single_fact(
+            &key,
+            format!("dst-tr-{nonce}"),
+            FactChange::Transition {
                 object_type: ObjectTypeName(ty_name.to_owned()),
                 key: id,
                 lifecycle: PropertyId(prop.to_owned()),
                 transition: TransitionId(transition.id.as_str().to_owned()),
-            }],
-            links: Vec::new(),
-            commands: Vec::new(),
-            timers: Vec::new(),
-        };
-        let turn = DecisionTurn {
-            id: format!("dst-tr-{nonce}"),
-            now: self.host.logical_now(),
-            world: World::Main,
-            consumes: None,
-        };
-        let before = self.host.ledger_len();
-        let res = commit_decision(self.host, self.catalog, &slice, &turn, &output);
+            },
+        )?;
         let current = self.model.get(&(type_idx, slot)).cloned();
 
         let Some(entry) = current else {
@@ -676,7 +688,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 entry,
                 before,
             },
-            res.map(|_| ()),
+            res,
         )
     }
 
@@ -695,23 +707,36 @@ impl<H: PackHost> DstCaseState<'_, H> {
             before,
         } = check;
         let guard_eval = evaluate_guards(&transition.guards, &entry.values);
+        let obj_immutable = self
+            .targets
+            .get(id_pair.0)
+            .is_some_and(|t| super::coverage::is_effectively_immutable(self.pack, t.object_type));
         let mut proposed_values = entry.values.clone();
         proposed_values.insert(prop.to_owned(), JsonValue::String(transition.to.clone()));
-        let expected_law_violation = self.predict_law_violation(ty_name, &proposed_values);
+        let expected_law_violation = self.predict_law_violation(key, &proposed_values);
 
-        match (guard_eval, expected_law_violation, res) {
-            (GuardEval::False, _, Err(DecisionRefusal::GuardFalse { .. })) => {
+        match (guard_eval, obj_immutable, expected_law_violation, res) {
+            (GuardEval::False, _, _, Err(DecisionRefusal::GuardFalse { .. })) => {
                 ensure_unchanged(self.host, before, "guard false refusal")
             }
-            (GuardEval::Error(_), _, Err(DecisionRefusal::GuardError { .. })) => {
+            (GuardEval::Error(_), _, _, Err(DecisionRefusal::GuardError { .. })) => {
                 ensure_unchanged(self.host, before, "guard error refusal")
+            }
+            (GuardEval::True, true, _, Err(DecisionRefusal::InvalidOutput { reason }))
+                if reason.ends_with(" is immutable") =>
+            {
+                ensure_unchanged(self.host, before, "immutable object transition refusal")?;
+                self.coverage
+                    .hit_immutable_refusal(ty_name, "<object>", "<immutable_object>");
+                Ok(())
             }
             (
                 GuardEval::True,
+                false,
                 true,
                 Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }),
             ) => ensure_unchanged(self.host, before, "post-transition law refusal"),
-            (GuardEval::True, false, Ok(())) => {
+            (GuardEval::True, false, false, Ok(())) => {
                 if self.host.ledger_len() != before.saturating_add(1) {
                     return Err("valid transition did not append 1 ledger entry".to_owned());
                 }
@@ -736,8 +761,8 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 });
                 Ok(())
             }
-            (guard, law_viol, other) => Err(format!(
-                "transition oracle mismatch for {ty_name} '{}' from '{}' (guard={guard:?}, law_violated={law_viol}): {other:?}",
+            (guard, imm, law_viol, other) => Err(format!(
+                "transition oracle mismatch for {ty_name} '{}' from '{}' (guard={guard:?}, obj_immutable={imm}, law_violated={law_viol}): {other:?}",
                 transition.id.as_str(),
                 entry.state
             )),
@@ -757,52 +782,58 @@ impl<H: PackHost> DstCaseState<'_, H> {
             return Ok(());
         };
         let ty_name = target.object_type.name.as_str();
-        let lc_prop = target.lifecycle.property.as_str();
         let id = entity_id(type_idx, slot);
         let key = FactKey::new(ty_name, &id);
-        let slice = load_slice(self.host, [key.clone()]).map_err(|e| format!("load_slice: {e}"))?;
-        let output = DecisionOutput {
-            facts: vec![FactChange::Set {
+        let before = self.host.ledger_len();
+        let res = self.commit_single_fact(
+            &key,
+            format!("dst-mut-{nonce}"),
+            FactChange::Set {
                 object_type: ObjectTypeName(ty_name.to_owned()),
                 key: id,
                 property: PropertyId(mut_prop.clone()),
                 value: mut_val.clone(),
-            }],
-            links: Vec::new(),
-            commands: Vec::new(),
-            timers: Vec::new(),
-        };
-        let turn = DecisionTurn {
-            id: format!("dst-mut-{nonce}"),
-            now: self.host.logical_now(),
-            world: World::Main,
-            consumes: None,
-        };
-        let before = self.host.ledger_len();
-        let res = commit_decision(self.host, self.catalog, &slice, &turn, &output);
-        let is_immutable = target
-            .lifecycle
-            .immutable
-            .iter()
-            .any(|state| state == &existing.state);
+            },
+        )?;
+        let imm_lc = super::law_parity::immutable_lifecycle_state(
+            self.catalog,
+            &target.object_type.name,
+            &existing.values,
+        );
+        let obj_immutable =
+            super::coverage::is_effectively_immutable(self.pack, target.object_type);
         let mut proposed_values = existing.values.clone();
         proposed_values.insert(mut_prop.clone(), mut_val.clone());
-        let expected_law_violation = self.predict_law_violation(ty_name, &proposed_values);
+        let expected_law_violation = self.predict_law_violation(&key, &proposed_values);
 
-        match (is_immutable, expected_law_violation, res) {
-            (true, _, Err(refusal @ DecisionRefusal::ImmutableStateWrite { .. })) => {
+        match (imm_lc, obj_immutable, expected_law_violation, res) {
+            (
+                Some((imm_prop, imm_state)),
+                _,
+                _,
+                Err(refusal @ DecisionRefusal::ImmutableStateWrite { .. }),
+            ) => {
                 self.host.record_decision_refusal(&refusal);
                 ensure_unchanged(self.host, before, "immutable state mutation refusal")?;
                 self.coverage
-                    .hit_immutable_refusal(ty_name, lc_prop, existing.state);
+                    .hit_immutable_refusal(ty_name, imm_prop, imm_state);
+                Ok(())
+            }
+            (None, true, _, Err(DecisionRefusal::InvalidOutput { reason }))
+                if reason.ends_with(" is immutable") =>
+            {
+                ensure_unchanged(self.host, before, "immutable object mutation refusal")?;
+                self.coverage
+                    .hit_immutable_refusal(ty_name, "<object>", "<immutable_object>");
                 Ok(())
             }
             (
+                None,
                 false,
                 true,
                 Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }),
             ) => ensure_unchanged(self.host, before, "law/invariant violation on mutate"),
-            (false, false, Ok(_)) => {
+            (None, false, false, Ok(())) => {
                 if self.host.ledger_len() != before.saturating_add(1) {
                     return Err("valid mutation did not append 1 ledger entry".to_owned());
                 }
@@ -828,66 +859,41 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 }
                 Ok(())
             }
-            (imm, law_viol, other) => Err(format!(
-                "mutation oracle mismatch for {ty_name}.{mut_prop} (immutable={imm}, law_violated={law_viol}): {other:?}"
+            (imm_state, imm_obj, law_viol, other) => Err(format!(
+                "mutation oracle mismatch for {ty_name}.{mut_prop} (immutable_state={imm_state:?}, obj_immutable={imm_obj}, law_violated={law_viol}): {other:?}"
             )),
         }
     }
 
-    fn predict_law_violation(&self, ty_name: &str, proposed: &JsonObject) -> bool {
-        let obj_val = JsonValue::Object(proposed.clone());
-        let mut walk_ty = self
-            .pack
-            .object_types
-            .iter()
-            .find(|ty| ty.name.as_str() == ty_name);
-        while let Some(def) = walk_ty {
-            let inv_fails = |expr: &ZenExpression| {
-                evaluate_guards(std::slice::from_ref(expr), proposed) == GuardEval::False
-            };
-            if def.invariants.iter().any(|inv| inv_fails(&inv.expression)) {
-                return true;
-            }
-            let iface_violated = def.implements.iter().any(|iface_name| {
-                self.pack
-                    .interfaces
-                    .iter()
-                    .find(|i| i.name.as_str() == iface_name.as_str())
-                    .is_some_and(|iface| {
-                        iface
-                            .contract_owners(|n| self.pack.interfaces.iter().find(|i| i.name == *n))
-                            .into_iter()
-                            .flat_map(|owner| &owner.invariants)
-                            .any(|inv| inv_fails(&inv.expression))
-                    })
-            });
-            if iface_violated {
-                return true;
-            }
-            walk_ty = def.extends.as_ref().and_then(|parent| {
-                self.pack
-                    .object_types
-                    .iter()
-                    .find(|ty| ty.name.as_str() == parent.as_str())
-            });
-        }
-        let ty_name_obj = ObjectTypeName(ty_name.to_owned());
-        if let Ok(envelopes) = self.catalog.governing_laws(&ty_name_obj) {
-            for env in envelopes {
-                if let Some(pos) = self
-                    .pack
-                    .law_envelopes
-                    .iter()
-                    .position(|e| e.artifact_id == env.artifact_id)
-                    && let Some(law) = self.pack.laws.get(pos)
-                    && law.exceptions.is_empty()
-                    && matches!(evaluate_law_example(law, &obj_val), Ok(Verdict::Violated))
-                {
-                    return true;
-                }
+    fn snapshot_facts(&self) -> BTreeMap<FactKey, (JsonObject, FactVersion)> {
+        let mut facts = self.extra_facts.clone();
+        for ((type_idx, slot), entity) in &self.model {
+            if let Some(target) = self.targets.get(*type_idx) {
+                let key = FactKey::new(
+                    target.object_type.name.as_str(),
+                    entity_id(*type_idx, *slot),
+                );
+                facts.insert(key, (entity.values.clone(), entity.version));
             }
         }
-        false
+        facts
+    }
+
+    fn predict_law_violation(&self, key: &FactKey, proposed: &JsonObject) -> bool {
+        let mut facts = self.snapshot_facts();
+        let next_ver = facts.get(key).map_or(FactVersion(1), |(_, ver)| {
+            FactVersion(ver.0.saturating_add(1))
+        });
+        facts.insert(key.clone(), (proposed.clone(), next_ver));
+        super::law_parity::predict_oracle_law_violation(
+            &super::law_parity::OracleGraph {
+                pack: self.pack,
+                catalog: self.catalog,
+                facts: &facts,
+                links: &self.extra_links,
+            },
+            std::slice::from_ref(key),
+        )
     }
 
     fn assert_complete_model_matches(&self) -> Result<(), String> {
@@ -895,14 +901,13 @@ impl<H: PackHost> DstCaseState<'_, H> {
         for (type_idx, target) in self.targets.iter().enumerate() {
             let ty_name = target.object_type.name.as_str();
             for slot in 0..slots {
-                let id = entity_id(type_idx, slot);
-                let key = FactKey::new(ty_name, &id);
-                let loaded = self
-                    .host
-                    .load(&key)
-                    .map_err(|err| format!("load {key}: {err}"))?;
+                let key = FactKey::new(ty_name, entity_id(type_idx, slot));
                 match self.model.get(&(type_idx, slot)) {
                     None => {
+                        let loaded = self
+                            .host
+                            .load(&key)
+                            .map_err(|e| format!("load {key}: {e}"))?;
                         if loaded.exists() {
                             return Err(format!(
                                 "oracle divergence: {key} unexpectedly exists in host (version={:?})",
@@ -911,71 +916,60 @@ impl<H: PackHost> DstCaseState<'_, H> {
                         }
                     }
                     Some(expected) => {
-                        if !loaded.exists() {
-                            return Err(format!("oracle divergence: {key} disappeared from host"));
-                        }
-                        if loaded.version != expected.version {
-                            return Err(format!(
-                                "oracle divergence on {key} version: expected {:?}, got {:?}",
-                                expected.version, loaded.version
-                            ));
-                        }
-                        if loaded.values.as_ref() != Some(&expected.values) {
-                            return Err(format!(
-                                "oracle divergence on {key} values: expected {:?}, got {:?}",
-                                expected.values, loaded.values
-                            ));
-                        }
+                        self.assert_fact_matches(&key, &expected.values, expected.version)?;
                         for link_key in &expected.required_links {
-                            let link_state = self
-                                .host
-                                .load_link(link_key)
-                                .map_err(|err| format!("load_link {link_key}: {err}"))?;
-                            if !link_state.exists() {
-                                return Err(format!(
-                                    "oracle divergence: required link {link_key} missing from host"
-                                ));
-                            }
+                            self.assert_link_exists(link_key)?;
                         }
                     }
                 }
             }
         }
-        self.assert_extra_graph_matches()
-    }
-
-    fn assert_extra_graph_matches(&self) -> Result<(), String> {
         for (key, (expected_values, expected_version)) in &self.extra_facts {
-            let loaded = self
-                .host
-                .load(key)
-                .map_err(|err| format!("load setup {key}: {err}"))?;
-            if !loaded.exists() {
-                return Err(format!("oracle divergence: setup object {key} missing"));
-            }
-            if loaded.version != *expected_version {
-                return Err(format!(
-                    "oracle divergence on setup {key} version: expected {expected_version:?}, got {:?}",
-                    loaded.version
-                ));
-            }
-            if loaded.values.as_ref() != Some(expected_values) {
-                return Err(format!(
-                    "oracle divergence on setup {key} values: expected {expected_values:?}, got {:?}",
-                    loaded.values
-                ));
-            }
+            self.assert_fact_matches(key, expected_values, *expected_version)?;
         }
         for link_key in &self.extra_links {
-            let link_state = self
-                .host
-                .load_link(link_key)
-                .map_err(|err| format!("load_link {link_key}: {err}"))?;
-            if !link_state.exists() {
-                return Err(format!(
-                    "oracle divergence: transitive link {link_key} missing from host"
-                ));
-            }
+            self.assert_link_exists(link_key)?;
+        }
+        Ok(())
+    }
+
+    fn assert_fact_matches(
+        &self,
+        key: &FactKey,
+        expected_values: &JsonObject,
+        expected_version: FactVersion,
+    ) -> Result<(), String> {
+        let loaded = self
+            .host
+            .load(key)
+            .map_err(|e| format!("load {key}: {e}"))?;
+        if !loaded.exists() {
+            return Err(format!("oracle divergence: {key} missing from host"));
+        }
+        if loaded.version != expected_version {
+            return Err(format!(
+                "oracle divergence on {key} version: expected {expected_version:?}, got {:?}",
+                loaded.version
+            ));
+        }
+        if loaded.values.as_ref() != Some(expected_values) {
+            return Err(format!(
+                "oracle divergence on {key} values: expected {expected_values:?}, got {:?}",
+                loaded.values
+            ));
+        }
+        Ok(())
+    }
+
+    fn assert_link_exists(&self, link_key: &LinkKey) -> Result<(), String> {
+        let state = self
+            .host
+            .load_link(link_key)
+            .map_err(|e| format!("load_link {link_key}: {e}"))?;
+        if !state.exists() {
+            return Err(format!(
+                "oracle divergence: link {link_key} missing from host"
+            ));
         }
         Ok(())
     }

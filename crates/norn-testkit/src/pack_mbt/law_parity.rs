@@ -5,19 +5,25 @@
 //! agreement on law pin `(artifact_id, law_id)`, subject key, and
 //! `DataQualityOutcome::NotSatisfied`.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use norn_kernel::cell_host::{FactKey, FactMutation, FactVersion, FactWrite, JsonValue};
-use norn_kernel::governing_laws::LawEvaluationError;
+use norn_kernel::cell_host::{
+    FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey,
+};
+use norn_kernel::governing_laws::{
+    LawEvaluationError, LinkTargets, LinkedTarget, evaluate_linked, reads_links,
+};
 use norn_kernel::pack_mbt_support::{
-    DataQualityOutcome, DataQualityRuleRef, LawExampleVerdict as Verdict, LawIR,
-    evaluate_law_example_runtime as evaluate_law_example, law_content_pin,
+    DataQualityOutcome, DataQualityRuleRef, LawExampleVerdict as Verdict, LawIR, ObjectTypeDef,
+    ObjectTypeName, ZenExpression, evaluate_law_example_runtime as evaluate_law_example,
+    law_content_pin,
 };
 use norn_kernel::{CellCommit, CommitError, CommitReceipt, TypeCatalog};
 
 use super::coverage::DomainCoverage;
 use super::driver::{assert_zero_ledger_writes, with_cov};
-use super::synth::collect_required_link_graph;
+use super::synth::{GuardEval, collect_required_link_graph, evaluate_guards};
 use super::{AdmittedPack, LawExampleCase, PackHost};
 
 pub(crate) fn run_law_example_parity_phase<H, F>(
@@ -252,4 +258,283 @@ fn check_law_runtime_outcome<H: PackHost>(
             example.name
         )),
     }
+}
+
+/// Shadow fact/link graph used by the DST oracle to predict governing-law and
+/// invariant outcomes independently of the host under test.
+pub(crate) struct OracleGraph<'a> {
+    pub(crate) pack: &'a AdmittedPack,
+    pub(crate) catalog: &'a TypeCatalog<'a>,
+    pub(crate) facts: &'a BTreeMap<FactKey, (JsonObject, FactVersion)>,
+    pub(crate) links: &'a BTreeSet<LinkKey>,
+}
+
+struct ShadowLinks<'a> {
+    pack: &'a AdmittedPack,
+    facts: &'a BTreeMap<FactKey, (JsonObject, FactVersion)>,
+    links: &'a BTreeSet<LinkKey>,
+    subject: FactKey,
+}
+
+impl LinkTargets for ShadowLinks<'_> {
+    fn target(&mut self, link: &str) -> Result<Option<LinkedTarget>, LawEvaluationError> {
+        let mut matches = self.links.iter().filter(|edge| {
+            edge.link == link
+                && edge.source.key == self.subject.key
+                && oracle_is_a(
+                    self.pack,
+                    self.subject.object_type.as_str(),
+                    edge.source.object_type.as_str(),
+                )
+        });
+        let Some(edge) = matches.next() else {
+            return Ok(None);
+        };
+        if matches.next().is_some() {
+            return Err(LawEvaluationError::Unsupported(format!(
+                "more than one target on link {link}"
+            )));
+        }
+        let Some((values, version)) = self.facts.get(&edge.target) else {
+            return Err(LawEvaluationError::Unsupported(format!(
+                "missing target {} for link {link}",
+                edge.target
+            )));
+        };
+        Ok(Some(LinkedTarget {
+            key: edge.target.clone(),
+            version: version.0,
+            values: values.clone(),
+        }))
+    }
+
+    fn sources(
+        &mut self,
+        _role: &str,
+        source: &ObjectTypeName,
+        link: &str,
+    ) -> Result<Vec<LinkedTarget>, LawEvaluationError> {
+        let mut out = Vec::new();
+        for edge in self.links {
+            if edge.link != link
+                || edge.target.key != self.subject.key
+                || !oracle_is_a(
+                    self.pack,
+                    self.subject.object_type.as_str(),
+                    edge.target.object_type.as_str(),
+                )
+            {
+                continue;
+            }
+            if !oracle_is_a(self.pack, edge.source.object_type.as_str(), source.as_str()) {
+                continue;
+            }
+            let Some((values, version)) = self.facts.get(&edge.source) else {
+                continue;
+            };
+            out.push(LinkedTarget {
+                key: edge.source.clone(),
+                version: version.0,
+                values: values.clone(),
+            });
+        }
+        Ok(out)
+    }
+}
+
+pub(crate) fn immutable_lifecycle_state(
+    catalog: &TypeCatalog<'_>,
+    object_type: &ObjectTypeName,
+    values: &JsonObject,
+) -> Option<(String, String)> {
+    catalog
+        .lifecycles(object_type)
+        .into_iter()
+        .find_map(|(prop_id, lc)| {
+            let current = values.get(prop_id.as_str()).and_then(JsonValue::as_str)?;
+            lc.immutable
+                .iter()
+                .any(|s| s == current)
+                .then(|| (prop_id.as_str().to_owned(), current.to_owned()))
+        })
+}
+
+fn oracle_is_a(pack: &AdmittedPack, concrete: &str, declared: &str) -> bool {
+    if concrete == declared {
+        return true;
+    }
+    let Some(start) = pack
+        .object_types
+        .iter()
+        .find(|ty| ty.name.as_str() == concrete)
+    else {
+        return false;
+    };
+    let mut visited = BTreeSet::new();
+    let mut walk: Option<&ObjectTypeDef> = Some(start);
+    while let Some(def) = walk {
+        if !visited.insert(def.name.as_str().to_owned()) {
+            break;
+        }
+        if def.name.as_str() == declared {
+            return true;
+        }
+        for iface_name in &def.implements {
+            if iface_name.as_str() == declared {
+                return true;
+            }
+            if let Some(iface) = pack
+                .interfaces
+                .iter()
+                .find(|i| i.name.as_str() == iface_name.as_str())
+                && iface
+                    .contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
+                    .into_iter()
+                    .any(|owner| owner.name.as_str() == declared)
+            {
+                return true;
+            }
+        }
+        walk = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    false
+}
+
+fn entity_invariants_violated(pack: &AdmittedPack, ty_name: &str, proposed: &JsonObject) -> bool {
+    let inv_fails = |expr: &ZenExpression| {
+        evaluate_guards(std::slice::from_ref(expr), proposed) == GuardEval::False
+    };
+    let mut visited = BTreeSet::new();
+    let mut walk_ty = pack
+        .object_types
+        .iter()
+        .find(|ty| ty.name.as_str() == ty_name);
+    while let Some(def) = walk_ty {
+        if !visited.insert(def.name.as_str().to_owned()) {
+            break;
+        }
+        if def.invariants.iter().any(|inv| inv_fails(&inv.expression)) {
+            return true;
+        }
+        let iface_violated = def.implements.iter().any(|iface_name| {
+            pack.interfaces
+                .iter()
+                .find(|i| i.name.as_str() == iface_name.as_str())
+                .is_some_and(|iface| {
+                    iface
+                        .contract_owners(|n| pack.interfaces.iter().find(|i| i.name == *n))
+                        .into_iter()
+                        .flat_map(|owner| &owner.invariants)
+                        .any(|inv| inv_fails(&inv.expression))
+                })
+        });
+        if iface_violated {
+            return true;
+        }
+        walk_ty = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    false
+}
+
+/// Predicts whether committing `touched_keys` into `graph` will be refused by
+/// any direct/inherited entity invariant or any direct/inherited/linked
+/// governing law (on either a written subject or a linked neighbor).
+pub(crate) fn predict_oracle_law_violation(
+    graph: &OracleGraph<'_>,
+    touched_keys: &[FactKey],
+) -> bool {
+    let mut linked_neighbors = BTreeSet::new();
+    for key in touched_keys {
+        let Some((proposed, _)) = graph.facts.get(key) else {
+            continue;
+        };
+        if entity_invariants_violated(graph.pack, key.object_type.as_str(), proposed) {
+            return true;
+        }
+        let mut links = ShadowLinks {
+            pack: graph.pack,
+            facts: graph.facts,
+            links: graph.links,
+            subject: key.clone(),
+        };
+        let mut remaining = 10_000_u64;
+        match evaluate_linked(graph.catalog, key, proposed, &mut links, &mut remaining) {
+            Ok(failures) if !failures.is_empty() => return true,
+            Err(_) => return true,
+            Ok(_) => {}
+        }
+        for edge in graph.links {
+            if edge.source == *key && edge.target != *key {
+                linked_neighbors.insert(edge.target.clone());
+            } else if edge.target == *key && edge.source != *key {
+                linked_neighbors.insert(edge.source.clone());
+            }
+        }
+    }
+    for neighbor in linked_neighbors {
+        if touched_keys.contains(&neighbor) {
+            continue;
+        }
+        if !reads_links(graph.catalog, &neighbor.object_type).unwrap_or(false) {
+            continue;
+        }
+        let Some((values, _)) = graph.facts.get(&neighbor) else {
+            continue;
+        };
+        let mut links = ShadowLinks {
+            pack: graph.pack,
+            facts: graph.facts,
+            links: graph.links,
+            subject: neighbor.clone(),
+        };
+        let mut remaining = 10_000_u64;
+        match evaluate_linked(graph.catalog, &neighbor, values, &mut links, &mut remaining) {
+            Ok(failures) if !failures.is_empty() => return true,
+            Err(_) => return true,
+            Ok(_) => {}
+        }
+    }
+    false
+}
+
+/// Predicts whether an atomic linked-create commit will violate any entity
+/// invariant or governing law over `base_facts`/`base_links` augmented with
+/// `setup_writes`, `(subject_key, subject_values)`, and `new_links`.
+pub(crate) fn predict_linked_create_law_violation(
+    pack: &AdmittedPack,
+    catalog: &TypeCatalog<'_>,
+    base_facts: &BTreeMap<FactKey, (JsonObject, FactVersion)>,
+    base_links: &BTreeSet<LinkKey>,
+    setup_writes: &[(FactKey, JsonObject)],
+    subject: (&FactKey, &JsonObject),
+    new_links: &[LinkKey],
+) -> bool {
+    let mut facts = base_facts.clone();
+    for (setup_key, effective) in setup_writes {
+        facts.insert(setup_key.clone(), (effective.clone(), FactVersion(1)));
+    }
+    facts.insert(subject.0.clone(), (subject.1.clone(), FactVersion(1)));
+    let mut links = base_links.clone();
+    for lk in new_links {
+        links.insert(lk.clone());
+    }
+    let mut touched: Vec<FactKey> = setup_writes.iter().map(|(k, _)| k.clone()).collect();
+    touched.push(subject.0.clone());
+    predict_oracle_law_violation(
+        &OracleGraph {
+            pack,
+            catalog,
+            facts: &facts,
+            links: &links,
+        },
+        &touched,
+    )
 }

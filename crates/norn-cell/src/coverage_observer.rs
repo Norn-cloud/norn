@@ -243,6 +243,12 @@ struct WrittenObjectSnapshot {
     values: BTreeMap<String, RuntimeValue>,
 }
 
+/// Written objects and link endpoints touched by a commit.
+struct CommitTargets {
+    written: Vec<WrittenObjectSnapshot>,
+    link_endpoints: Vec<FactKey>,
+}
+
 /// Test-mode wrapper around [`SqliteCell`] that records domain-model coverage
 /// on every commit without modifying production [`SqliteCell`] layout.
 #[derive(Debug)]
@@ -294,10 +300,8 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
         &self.recorder
     }
 
-    fn capture_written_objects<Ev, Cmd, Inp>(
-        commit: &CellCommit<Ev, Cmd, Inp>,
-    ) -> Vec<WrittenObjectSnapshot> {
-        commit
+    fn capture_commit_targets<Ev, Cmd, Inp>(commit: &CellCommit<Ev, Cmd, Inp>) -> CommitTargets {
+        let written = commit
             .writes
             .iter()
             .filter_map(|write| match &write.mutation {
@@ -307,19 +311,28 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 }),
                 FactMutation::Delete => None,
             })
-            .collect()
+            .collect();
+        let mut link_endpoints = Vec::with_capacity(commit.links.len().saturating_mul(2));
+        for lw in &commit.links {
+            link_endpoints.push(lw.key.source.clone());
+            link_endpoints.push(lw.key.target.clone());
+        }
+        CommitTargets {
+            written,
+            link_endpoints,
+        }
     }
 
     fn record_commit_outcome(
         &self,
-        written: &[WrittenObjectSnapshot],
+        targets: &CommitTargets,
         is_observed: bool,
         result: &Result<CommitReceipt, CommitError<CellError>>,
     ) {
         match result {
             Ok(receipt) => {
                 let finding_violated = self.record_committed_ledger_events(receipt.seq.0);
-                self.record_active_law_holds(written, is_observed, &finding_violated);
+                self.record_active_law_holds(targets, is_observed, &finding_violated);
             }
             Err(CommitError::ImmutableObject { key }) => {
                 self.recorder.record_immutable_refusal(ImmutableRefusalKey {
@@ -508,54 +521,121 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
 
     fn record_active_law_holds(
         &self,
-        written: &[WrittenObjectSnapshot],
+        targets: &CommitTargets,
         is_observed: bool,
         finding_violated: &BTreeSet<(String, String, String)>,
     ) {
         let model = self.inner.store().model();
         let reader = self.inner.store().read();
-        for item in written {
-            let ty_name = item.key.object_type.as_str();
-            let Ok(artifacts) = model.governing_laws(ty_name) else {
-                continue;
-            };
-            if artifacts.is_empty() {
-                continue;
-            }
-            let effective_values = reader
-                .object(MAIN_WORLD, ty_name, &item.key.key)
-                .ok()
-                .flatten()
-                .map_or_else(|| item.values.clone(), |record| record.values);
-            for artifact in &artifacts {
-                let Some(law) = decode_law_artifact(artifact) else {
-                    continue;
-                };
-                if !law.exceptions.is_empty() {
-                    continue;
-                }
-                if is_observed
-                    && finding_violated.contains(&(
-                        ty_name.to_owned(),
-                        item.key.key.clone(),
-                        law.id.clone(),
-                    ))
-                {
-                    continue;
-                }
-                if evaluate_single_law_hold(
-                    model,
-                    &reader,
-                    artifact,
-                    &law,
-                    &item.key,
-                    &effective_values,
-                ) {
-                    self.recorder.record_law_hold(law.id);
+        let ctx = SubjectHoldCtx {
+            model,
+            reader: &reader,
+            is_observed,
+            finding_violated,
+        };
+        let mut direct_keys = BTreeSet::new();
+        let mut linked_only_keys = BTreeSet::new();
+
+        for item in &targets.written {
+            direct_keys.insert(item.key.clone());
+            self.record_subject_law_holds(&ctx, &item.key, Some(&item.values), false);
+            // A write to an object referenced by a link can re-evaluate
+            // linked governing laws on the connected neighbor.
+            if let Ok(edges) =
+                reader.links_touching(MAIN_WORLD, item.key.object_type.as_str(), &item.key.key)
+            {
+                for edge in edges {
+                    let src = FactKey::new(edge.source_type, edge.source);
+                    let dst = FactKey::new(edge.target_type, edge.target);
+                    if src != item.key {
+                        linked_only_keys.insert(src);
+                    }
+                    if dst != item.key {
+                        linked_only_keys.insert(dst);
+                    }
                 }
             }
         }
+        for key in &targets.link_endpoints {
+            if !direct_keys.contains(key) {
+                linked_only_keys.insert(key.clone());
+            }
+        }
+        for key in linked_only_keys {
+            if !direct_keys.contains(&key) {
+                self.record_subject_law_holds(&ctx, &key, None, true);
+            }
+        }
     }
+
+    fn record_subject_law_holds(
+        &self,
+        ctx: &SubjectHoldCtx<'_, S>,
+        key: &FactKey,
+        fallback_values: Option<&BTreeMap<String, RuntimeValue>>,
+        linked_laws_only: bool,
+    ) {
+        let ty_name = key.object_type.as_str();
+        let Ok(artifacts) = ctx.model.governing_laws(ty_name) else {
+            return;
+        };
+        if artifacts.is_empty() {
+            return;
+        }
+        let Some(effective_values) = ctx
+            .reader
+            .object(MAIN_WORLD, ty_name, &key.key)
+            .ok()
+            .flatten()
+            .map(|record| record.values)
+            .or_else(|| fallback_values.cloned())
+        else {
+            return;
+        };
+        for artifact in &artifacts {
+            let Some(law) = decode_law_artifact(artifact) else {
+                continue;
+            };
+            if !law.exceptions.is_empty() {
+                continue;
+            }
+            if linked_laws_only {
+                let single = [artifact.clone()];
+                let single_catalog = ctx.model.type_catalog().with_governing_laws(&single);
+                if !norn_kernel::governing_laws::reads_links(&single_catalog, &key.object_type)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+            }
+            if ctx.is_observed
+                && ctx.finding_violated.contains(&(
+                    ty_name.to_owned(),
+                    key.key.clone(),
+                    law.id.clone(),
+                ))
+            {
+                continue;
+            }
+            if evaluate_single_law_hold(
+                ctx.model,
+                ctx.reader,
+                artifact,
+                &law,
+                key,
+                &effective_values,
+            ) {
+                self.recorder.record_law_hold(law.id);
+            }
+        }
+    }
+}
+
+struct SubjectHoldCtx<'a, S: SqlEngine> {
+    model: &'a crate::model::Model,
+    reader: &'a crate::read::StoreReader<'a, S>,
+    is_observed: bool,
+    finding_violated: &'a BTreeSet<(String, String, String)>,
 }
 
 fn evaluate_single_law_hold<S: SqlEngine>(
@@ -742,9 +822,9 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let written = Self::capture_written_objects(&commit);
+        let targets = Self::capture_commit_targets(&commit);
         let result = self.inner.commit(commit);
-        self.record_commit_outcome(&written, false, &result);
+        self.record_commit_outcome(&targets, false, &result);
         result
     }
 
@@ -754,9 +834,9 @@ where
         proof: norn_kernel::action_commit::ActionReferenceReads,
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let written = Self::capture_written_objects(&commit);
+        let targets = Self::capture_commit_targets(&commit);
         let result = self.inner.commit_action_references(commit, proof, quantity);
-        self.record_commit_outcome(&written, false, &result);
+        self.record_commit_outcome(&targets, false, &result);
         result
     }
 
@@ -766,11 +846,11 @@ where
         requests: &[norn_ir::quantity_ledger::QuantityRequest],
         idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let written = Self::capture_written_objects(&commit);
+        let targets = Self::capture_commit_targets(&commit);
         let result = self
             .inner
             .commit_action_quantity(commit, requests, idempotency_key);
-        self.record_commit_outcome(&written, false, &result);
+        self.record_commit_outcome(&targets, false, &result);
         result
     }
 
@@ -779,9 +859,9 @@ where
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let written = Self::capture_written_objects(&commit);
+        let targets = Self::capture_commit_targets(&commit);
         let result = self.inner.commit_owned_rows(commit, proof);
-        self.record_commit_outcome(&written, false, &result);
+        self.record_commit_outcome(&targets, false, &result);
         result
     }
 
@@ -793,9 +873,9 @@ where
     where
         E: From<ObservationEvent>,
     {
-        let written = Self::capture_written_objects(&commit);
+        let targets = Self::capture_commit_targets(&commit);
         let result = self.inner.commit_observed(commit, authorization);
-        self.record_commit_outcome(&written, true, &result);
+        self.record_commit_outcome(&targets, true, &result);
         result
     }
 

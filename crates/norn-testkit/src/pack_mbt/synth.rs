@@ -171,35 +171,94 @@ fn effective_required_links(
     pack: &AdmittedPack,
     object_type: &ObjectTypeDef,
 ) -> Vec<(String, String, Vec<Property>)> {
-    let mut seen = BTreeSet::new();
-    let mut out = Vec::new();
-    for link in &object_type.links {
-        if link.cardinality.required && seen.insert(link.id.as_str().to_owned()) {
-            out.push((
-                link.id.as_str().to_owned(),
-                link.target.as_str().to_owned(),
-                link.properties.clone(),
-            ));
+    let mut by_id: BTreeMap<String, (String, bool, Vec<Property>)> = BTreeMap::new();
+    let mut visited_types = BTreeSet::new();
+    let mut walk_ty = Some(object_type);
+    while let Some(def) = walk_ty {
+        if !visited_types.insert(def.name.as_str().to_owned()) {
+            break;
         }
-    }
-    for iface_name in &object_type.implements {
-        if let Some(iface) = pack
-            .interfaces
-            .iter()
-            .find(|i| i.name.as_str() == iface_name.as_str())
-        {
-            for link in &iface.links {
-                if link.cardinality.required && seen.insert(link.id.as_str().to_owned()) {
-                    out.push((
-                        link.id.as_str().to_owned(),
+        for link in &def.links {
+            by_id
+                .entry(link.id.as_str().to_owned())
+                .and_modify(|entry| entry.1 |= link.cardinality.required)
+                .or_insert_with(|| {
+                    (
                         link.target.as_str().to_owned(),
-                        Vec::new(),
-                    ));
+                        link.cardinality.required,
+                        link.properties.clone(),
+                    )
+                });
+        }
+        for iface_name in &def.implements {
+            if let Some(iface) = pack
+                .interfaces
+                .iter()
+                .find(|i| i.name.as_str() == iface_name.as_str())
+            {
+                for owner in
+                    iface.contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
+                {
+                    for link in &owner.links {
+                        by_id
+                            .entry(link.id.as_str().to_owned())
+                            .and_modify(|entry| entry.1 |= link.cardinality.required)
+                            .or_insert_with(|| {
+                                (
+                                    link.target.as_str().to_owned(),
+                                    link.cardinality.required,
+                                    Vec::new(),
+                                )
+                            });
+                    }
                 }
             }
         }
+        walk_ty = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
     }
-    out
+    by_id
+        .into_iter()
+        .filter_map(|(id, (target, required, props))| required.then_some((id, target, props)))
+        .collect()
+}
+
+fn type_matches_target(pack: &AdmittedPack, candidate: &ObjectTypeDef, target_name: &str) -> bool {
+    let mut visited = BTreeSet::new();
+    let mut walk = Some(candidate);
+    while let Some(def) = walk {
+        if !visited.insert(def.name.as_str().to_owned()) {
+            break;
+        }
+        if def.name.as_str() == target_name {
+            return true;
+        }
+        for iface_name in &def.implements {
+            if iface_name.as_str() == target_name {
+                return true;
+            }
+            if let Some(iface) = pack
+                .interfaces
+                .iter()
+                .find(|i| i.name.as_str() == iface_name.as_str())
+                && iface
+                    .contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
+                    .into_iter()
+                    .any(|owner| owner.name.as_str() == target_name)
+            {
+                return true;
+            }
+        }
+        walk = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    false
 }
 
 fn resolve_concrete_link_target<'a>(
@@ -210,11 +269,9 @@ fn resolve_concrete_link_target<'a>(
         .iter()
         .find(|ty| ty.name.as_str() == target_name)
         .or_else(|| {
-            pack.object_types.iter().find(|ty| {
-                ty.implements
-                    .iter()
-                    .any(|iface| iface.as_str() == target_name)
-            })
+            pack.object_types
+                .iter()
+                .find(|ty| type_matches_target(pack, ty, target_name))
         })
 }
 
