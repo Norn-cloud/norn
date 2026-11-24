@@ -1,0 +1,189 @@
+//! Security #1376 regression suite: shared cell-scope enforcement at
+//! `CellStore::install_definitions` and `CellStore::check_definitions_in_scope`.
+
+use norn_cell::{CellError, CellStore, InstalledDefinitionInput, Model};
+use norn_ir::{ArtifactEnvelope, ObjectTypeDef};
+use serde_json::{Value, json};
+
+type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+fn entity_envelope(
+    id: &str,
+    name: &str,
+    scope: &Value,
+    extends: Option<&str>,
+) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
+    let mut object_type = json!({
+        "name": name,
+        "properties": [{ "id": "code", "type": { "kind": "text" } }],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    });
+    if let (Some(parent), Some(map)) = (extends, object_type.as_object_mut()) {
+        map.insert("extends".to_owned(), json!(parent));
+        map.insert("properties".to_owned(), json!([]));
+        map.remove("identity");
+    }
+    Ok(serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "artifactId": id,
+        "kind": "entity",
+        "namespace": "defs",
+        "name": id,
+        "version": "1.0.0",
+        "lifecycle": "draft",
+        "scope": scope,
+        "dependencies": [],
+        "provenance": { "source": "authoring_sdk" },
+        "payload": {
+            "entityVersion": "2.0",
+            "objectType": object_type
+        }
+    }))?)
+}
+
+fn input_for(
+    artifacts: &[ArtifactEnvelope],
+) -> Result<InstalledDefinitionInput, Box<dyn std::error::Error>> {
+    let canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(artifacts)?)?;
+    Ok(InstalledDefinitionInput {
+        canonical_set,
+        registry: vec![],
+        receipt_sha256: "a".repeat(64),
+        admission_receipt: None,
+        readmission: None,
+        diff: json!({}),
+        installed_at: 1,
+        layout: None,
+    })
+}
+
+fn item_model() -> Result<Model, Box<dyn std::error::Error>> {
+    let def: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "defs.Item",
+        "properties": [{ "id": "code", "type": { "kind": "text" } }],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    }))?;
+    Ok(Model::from_definitions(&[def], &[])?)
+}
+
+#[test]
+fn install_definitions_refuses_artifact_outside_cell_scope() -> TestResult {
+    let model = item_model()?;
+    let mut store = CellStore::open_in_memory(model.clone())?;
+
+    // Different orgId must fail closed.
+    let wrong_org = entity_envelope(
+        "defs.Item.entity",
+        "defs.Item",
+        &json!({ "orgId": "org_other", "environmentId": "dev" }),
+        None,
+    )?;
+    let err = store.install_definitions(
+        model.clone(),
+        input_for(std::slice::from_ref(&wrong_org))?,
+        Some(0),
+        "org_demo/dev",
+    );
+    assert!(
+        matches!(&err, Err(CellError::DefinitionMigrationRefused(_))),
+        "install_definitions must refuse wrong-org artifact: {err:?}"
+    );
+    let checked = store.check_definitions_in_scope(
+        &model,
+        &input_for(&[wrong_org])?,
+        Some(0),
+        "org_demo/dev",
+    );
+    assert!(
+        matches!(&checked, Err(CellError::DefinitionMigrationRefused(_))),
+        "check_definitions_in_scope must refuse wrong-org artifact: {checked:?}"
+    );
+
+    // Narrower tenant-scoped extension must fail closed against org_demo/dev cell scope.
+    let valid_item = entity_envelope(
+        "defs.Item.entity",
+        "defs.Item",
+        &json!({ "orgId": "org_demo", "environmentId": "dev" }),
+        None,
+    )?;
+    let narrow_ext: ArtifactEnvelope = serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "artifactId": "acme.ItemExt.entity",
+        "kind": "entity",
+        "namespace": "acme",
+        "name": "ItemExt",
+        "version": "1.0.0",
+        "lifecycle": "draft",
+        "scope": { "orgId": "org_demo", "environmentId": "dev", "tenantId": "tenant_alpha" },
+        "dependencies": [],
+        "provenance": { "source": "authoring_sdk" },
+        "payload": {
+            "entityVersion": "2.0",
+            "objectTypeExtension": {
+                "namespace": "acme",
+                "target": "defs.Item",
+                "properties": [{
+                    "id": "acme__secret",
+                    "type": { "kind": "text" },
+                    "constraints": { "nullable": true }
+                }]
+            }
+        }
+    }))?;
+    let ext_err = store.install_definitions(
+        model.clone(),
+        input_for(&[valid_item.clone(), narrow_ext])?,
+        Some(0),
+        "org_demo/dev",
+    );
+    assert!(
+        matches!(&ext_err, Err(CellError::DefinitionMigrationRefused(_))),
+        "install_definitions must refuse narrower tenant extension outside cell scope: {ext_err:?}"
+    );
+
+    // Same cell scope succeeds.
+    store.install_definitions(model, input_for(&[valid_item])?, Some(0), "org_demo/dev")?;
+    Ok(())
+}
+
+#[test]
+fn install_definitions_refuses_cross_scope_supertype_inside_cell_set() -> TestResult {
+    let super_def: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "defs.Base",
+        "properties": [{ "id": "code", "type": { "kind": "text" } }],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    }))?;
+    let sub_def: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "defs.Child",
+        "extends": "defs.Base",
+        "properties": []
+    }))?;
+    let model = Model::from_definitions(&[super_def, sub_def], &[])?;
+    let mut store = CellStore::open_in_memory(model.clone())?;
+
+    // Both artifacts individually pass org_demo/dev cell visibility, but global defs.Child
+    // extending org_demo/dev defs.Base is a cross-scope entity reference and must fail closed.
+    let base_scoped = entity_envelope(
+        "defs.Base.entity",
+        "defs.Base",
+        &json!({ "orgId": "org_demo", "environmentId": "dev" }),
+        None,
+    )?;
+    let child_global = entity_envelope(
+        "defs.Child.entity",
+        "defs.Child",
+        &json!({}),
+        Some("defs.Base"),
+    )?;
+    let err = store.install_definitions(
+        model,
+        input_for(&[base_scoped, child_global])?,
+        Some(0),
+        "org_demo/dev",
+    );
+    assert!(
+        matches!(&err, Err(CellError::DefinitionMigrationRefused(_))),
+        "install_definitions must refuse cross-scope supertype edge inside canonical_set: {err:?}"
+    );
+    Ok(())
+}

@@ -5,8 +5,7 @@ use std::collections::BTreeSet;
 
 use norn_checker::artifact_set::codes::INCOMPATIBLE_SCOPE;
 use norn_checker::{
-    ArtifactRef, Diagnostic, EntityArtifactSetContext, check_artifact_set,
-    check_artifact_set_entity_model,
+    Diagnostic, EntityArtifactSetContext, check_artifact_set, check_artifact_set_entity_model,
 };
 use norn_ir::{ArtifactEnvelope, PropertyTypeName};
 use serde_json::{Value, json};
@@ -755,396 +754,175 @@ fn lifecycle_writes_and_rule_bindings_cannot_target_out_of_scope_extensions() ->
     Ok(())
 }
 
-fn assert_consumer_scopes(
-    build: impl Fn(&str, &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>>,
-    prefix: &str,
-    extra_base: &[ArtifactEnvelope],
-) -> TestResult {
+fn decide_link_rule(
+    id: &str,
+    scope: &Value,
+    link_name: &str,
+) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
+    let mut output_schema = decide_output_schema();
+    if let Some(props) = output_schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+    {
+        props.insert(
+            "links".to_owned(),
+            json!({
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "op": { "type": "string", "enum": ["add"] },
+                        "sourceType": { "type": "string", "enum": ["retail.Sku"] },
+                        "sourceKey": { "type": "string" },
+                        "link": { "type": "string", "enum": [link_name] },
+                        "targetType": { "type": "string", "enum": ["retail.Partner"] },
+                        "targetKey": { "type": "string" }
+                    },
+                    "required": ["op", "sourceType", "sourceKey", "link", "targetType", "targetKey"],
+                    "additionalProperties": false
+                }
+            }),
+        );
+    }
+    if let Some(req) = output_schema
+        .get_mut("required")
+        .and_then(Value::as_array_mut)
+    {
+        req.push(json!("links"));
+    }
+    envelope(
+        id,
+        "rule",
+        scope,
+        &json!([]),
+        &json!({
+            "ruleId": id,
+            "ruleVersion": "2.0",
+            "contract": "decide",
+            "scopeRequired": ["orgId", "environmentId"],
+            "triggers": [{ "on": "modified", "objectType": "retail.Sku" }],
+            "slice": [{ "name": "sku", "objectType": "retail.Sku", "key": "triggerObject" }],
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "slice": {
+                        "type": "object",
+                        "properties": {
+                            "sku": {
+                                "type": "object",
+                                "properties": { "sku_code": { "type": "string" } },
+                                "required": ["sku_code"],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": ["sku"],
+                        "additionalProperties": false
+                    },
+                    "event": {
+                        "type": "object",
+                        "properties": { "kind": { "type": "string" } },
+                        "required": ["kind"],
+                        "additionalProperties": false
+                    }
+                },
+                "required": ["slice", "event"],
+                "additionalProperties": false
+            },
+            "outputSchema": output_schema,
+            "graph": {
+                "nodes": [
+                    { "id": "in", "type": "inputNode", "name": "input" },
+                    { "id": "out", "type": "outputNode", "name": "output" }
+                ],
+                "edges": [{ "id": "e1", "sourceId": "in", "targetId": "out" }]
+            }
+        }),
+    )
+}
+
+#[test]
+fn decision_links_cannot_target_out_of_scope_extensions_or_types() -> TestResult {
     let global = json!({});
+    let tenant_a = json!({ "tenantId": "tenant_a" });
+    let tenant_b = json!({ "tenantId": "tenant_b" });
     let sku = base_sku(&global)?;
     let partner = partner_entity(&global)?;
-    let same = json!({ "orgId": "org_a", "businessUnitId": "bu_a" });
-    let ext_a = sku_extension("acme.SkuExt.entity", &same)?;
-    let broader = json!({ "orgId": "org_a" });
-    let sibling = json!({ "orgId": "org_a", "businessUnitId": "bu_b" });
-    let narrower = json!({
-        "orgId": "org_a",
-        "businessUnitId": "bu_a",
-        "workspaceId": "ws_child"
-    });
+    let ext_a = sku_extension("acme.SkuExt.entity", &tenant_a)?;
 
     for in_base in [false, true] {
-        let mut base = vec![sku.clone(), partner.clone()];
-        base.extend(extra_base.iter().cloned());
-        if in_base {
-            base.push(ext_a.clone());
-        }
-        let run =
-            |suffix: &str, scope: &Value| -> Result<Vec<Diagnostic>, Box<dyn std::error::Error>> {
-                let id = format!("retail.{prefix}_{suffix}");
-                let consumer = build(&id, scope)?;
-                let cands = if in_base {
-                    vec![consumer]
-                } else {
-                    vec![ext_a.clone(), consumer]
-                };
-                Ok(check_set(&cands, &base))
+        let base = if in_base {
+            vec![sku.clone(), partner.clone(), ext_a.clone()]
+        } else {
+            vec![sku.clone(), partner.clone()]
+        };
+        let run = |rule: ArtifactEnvelope| {
+            let cands = if in_base {
+                vec![rule]
+            } else {
+                vec![ext_a.clone(), rule]
             };
-
-        let id_broader = format!("retail.{prefix}_broader");
-        let id_sibling = format!("retail.{prefix}_sibling");
-        let id_same = format!("retail.{prefix}_same");
-        let id_narrow = format!("retail.{prefix}_narrow");
-
-        let f_broader = run("broader", &broader)?;
-        assert!(
-            !errors_for(&f_broader, &id_broader).is_empty(),
-            "{prefix} in_base={in_base}: broader must fail: {f_broader:#?}"
+            check_set(&cands, &base)
+        };
+        assert_refused(
+            &run(decide_link_rule(
+                "retail.link_global",
+                &global,
+                "acme__secret_partner",
+            )?),
+            "retail.link_global",
+            &format!("in_base={in_base} global decision link over narrower extension"),
         );
-        let f_sibling = run("sibling", &sibling)?;
-        assert!(
-            !errors_for(&f_sibling, &id_sibling).is_empty(),
-            "{prefix} in_base={in_base}: sibling must fail: {f_sibling:#?}"
+        assert_refused(
+            &run(decide_link_rule(
+                "retail.link_beta",
+                &tenant_b,
+                "acme__secret_partner",
+            )?),
+            "retail.link_beta",
+            &format!("in_base={in_base} sibling decision link over extension"),
         );
-        let f_same = run("same", &same)?;
-        assert!(
-            errors_for(&f_same, &id_same).is_empty(),
-            "{prefix} in_base={in_base}: same scope must succeed: {f_same:#?}"
-        );
-        let f_narrow = run("narrow", &narrower)?;
-        assert!(
-            errors_for(&f_narrow, &id_narrow).is_empty(),
-            "{prefix} in_base={in_base}: narrower scope must succeed: {f_narrow:#?}"
+        assert_admitted(
+            &run(decide_link_rule(
+                "retail.link_alpha",
+                &tenant_a,
+                "acme__secret_partner",
+            )?),
+            "retail.link_alpha",
+            &format!("in_base={in_base} same-scope decision link over extension"),
         );
     }
     Ok(())
 }
 
 #[test]
-fn laws_cannot_observe_out_of_scope_extensions() -> TestResult {
-    let sku_dep = json!([{
-        "artifactId": "retail.Sku.entity",
-        "kind": "entity",
-        "version": "1.0.0",
-        "required": true
-    }]);
-    assert_consumer_scopes(
-        |id, scope| {
-            envelope(
-                id,
-                "law",
-                scope,
-                &sku_dep,
-                &json!({
-                    "lawVersion": "0.1",
-                    "id": id,
-                    "owner": "retail",
-                    "provenance": { "source": "authoring_sdk" },
-                    "scope": { "root": { "kind": "company", "id": "org_a" }, "objectTypes": ["retail.Sku"] },
-                    "subject": "retail.Sku",
-                    "modality": { "kind": "always" },
-                    "response": { "kind": "predicate", "expression": "self.acme__secret_amount >= 0" },
-                    "severity": "error",
-                    "rationale": "secret amount non-negative"
-                }),
-            )
-        },
-        "law",
-        &[],
-    )
-}
+fn installed_base_extension_or_subtype_targeting_narrower_candidate_is_refused() -> TestResult {
+    let global = json!({});
+    let tenant_a = json!({ "tenantId": "tenant_a" });
+    let partner = partner_entity(&global)?;
+    let base_global_ext = sku_extension("acme.BaseGlobalExt.entity", &global)?;
+    let cand_alpha_sku = base_sku(&tenant_a)?;
+    let ext_findings = check_entities(
+        std::slice::from_ref(&cand_alpha_sku),
+        &[partner, base_global_ext],
+    );
+    assert!(
+        ext_findings
+            .iter()
+            .any(|d| d.is_error() && d.code.as_str() == INCOMPATIBLE_SCOPE),
+        "installed-base global extension targeting narrower candidate must be refused: {ext_findings:#?}"
+    );
 
-#[test]
-fn models_cannot_observe_out_of_scope_extensions() -> TestResult {
-    assert_consumer_scopes(
-        |id, scope| {
-            envelope(
-                id,
-                "model",
-                scope,
-                &json!([]),
-                &json!({
-                    "modelId": id,
-                    "title": "Secret model",
-                    "version": "1.0.0",
-                    "input": { "kind": "objectType", "objectType": "retail.Sku" },
-                    "features": ["acme__secret_amount"],
-                    "outputs": [
-                        { "id": "score", "type": { "kind": "decimal", "scale": 2 }, "nullable": false }
-                    ],
-                    "trust": "opaque",
-                    "method": { "label": "linear" }
-                }),
-            )
-        },
-        "model",
-        &[],
-    )
-}
-
-#[test]
-fn views_cannot_observe_out_of_scope_extensions() -> TestResult {
-    let sku_dep = json!([{
-        "artifactId": "retail.Sku.entity",
-        "kind": "entity",
-        "version": "1.0.0",
-        "required": true
-    }]);
-    assert_consumer_scopes(
-        |id, scope| {
-            envelope(
-                id,
-                "derived",
-                scope,
-                &sku_dep,
-                &json!({
-                    "viewVersion": "0.1",
-                    "viewId": id,
-                    "inputs": [{
-                        "alias": "skus",
-                        "kind": "entity",
-                        "artifactId": "retail.Sku.entity",
-                        "version": "1.0.0"
-                    }],
-                    "outputSchema": {},
-                    "maintenance": "recompute_on_read",
-                    "calc": {
-                        "kind": "relational",
-                        "output": "proj",
-                        "nodes": {
-                            "scan": { "op": "scan", "input": "skus" },
-                            "proj": {
-                                "op": "project",
-                                "input": "scan",
-                                "columns": [
-                                    { "name": "id", "expression": "input.id" },
-                                    { "name": "sku_code", "expression": "input.sku_code" },
-                                    { "name": "secret", "expression": "input.acme__secret_amount" }
-                                ]
-                            }
-                        }
-                    }
-                }),
-            )
-        },
-        "view",
-        &[],
-    )
-}
-
-#[test]
-fn labels_cannot_target_out_of_scope_extensions() -> TestResult {
-    assert_consumer_scopes(
-        |id, scope| {
-            envelope(
-                id,
-                "labels",
-                scope,
-                &json!([]),
-                &json!({
-                    "labelsVersion": "0.1",
-                    "entries": [{
-                        "target": {
-                            "kind": "property",
-                            "objectType": "retail.Sku",
-                            "property": "acme__secret_tag"
-                        },
-                        "label": { "en": "Secret tag" }
-                    }]
-                }),
-            )
-        },
-        "labels",
-        &[],
-    )
-}
-
-fn mapping_source_schema() -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
-    envelope(
-        "erp.source_schema",
-        "source_schema",
-        &json!({}),
-        &json!([]),
-        &json!({
-            "format": "norn.source-schema/1",
-            "source": { "system": "ERPNext", "instance": "erp.example.test", "version": "15.0.0" },
-            "observedAt": "2026-09-30T10:00:00Z",
-            "adapter": { "name": "norn.importers.frappe", "version": "0.1.0" },
-            "rawMetadata": {
-                "uri": "evidence://frappe/erp.example.test/meta/items.json",
-                "sha256": "91442427d8192f8908dc1d972b02508709de5bd3b700cb4faa76eeda0a3d5c7b"
-            },
-            "datasets": [{ "id": "Item", "nativeName": "Item", "namespace": "Stock", "kind": "document" }],
-            "fields": [
-                {
-                    "dataset": "Item",
-                    "name": "name",
-                    "ordinal": 0,
-                    "nativeType": "Data",
-                    "typeCandidate": { "type": "string", "origin": "declared" },
-                    "required": true
-                },
-                {
-                    "dataset": "Item",
-                    "name": "item_name",
-                    "ordinal": 1,
-                    "nativeType": "Data",
-                    "typeCandidate": { "type": "string", "origin": "declared" },
-                    "required": true
-                },
-                {
-                    "dataset": "Item",
-                    "name": "secret_tag",
-                    "ordinal": 2,
-                    "nativeType": "Data",
-                    "typeCandidate": { "type": "string", "origin": "declared" },
-                    "required": false
-                }
-            ]
-        }),
-    )
-}
-
-fn mapping_entities(
-    ext_scope: &Value,
-) -> Result<(ArtifactEnvelope, ArtifactEnvelope, ArtifactEnvelope), Box<dyn std::error::Error>> {
-    let iface = envelope(
-        "retail.CatalogItem.interface",
-        "entity",
-        &json!({}),
-        &json!([]),
-        &json!({
-            "entityVersion": "2.0",
-            "interface": {
-                "name": "retail.CatalogItem",
-                "properties": [{ "id": "sku_code", "type": { "kind": "text" } }]
-            }
-        }),
+    let base_global_sub = subtype(
+        "retail.BaseGlobalSub.entity",
+        "retail.BaseGlobalSub",
+        &global,
     )?;
-    let sku_impl = envelope(
-        "retail.MappedSku.entity",
-        "entity",
-        &json!({}),
-        &json!([]),
-        &json!({
-            "entityVersion": "2.0",
-            "objectType": {
-                "name": "retail.MappedSku",
-                "implements": ["retail.CatalogItem"],
-                "properties": [
-                    { "id": "sku_code", "type": { "kind": "text" } },
-                    { "id": "title", "type": { "kind": "text" } }
-                ],
-                "identity": [{ "name": "primary", "properties": ["sku_code"] }]
-            }
-        }),
-    )?;
-    let mapped_ext = envelope(
-        "acme.MappedSkuExt.entity",
-        "entity",
-        ext_scope,
-        &json!([]),
-        &json!({
-            "entityVersion": "2.0",
-            "objectTypeExtension": {
-                "namespace": "acme",
-                "target": "retail.MappedSku",
-                "properties": [{
-                    "id": "acme__secret_tag",
-                    "type": { "kind": "text" },
-                    "constraints": { "nullable": true }
-                }]
-            }
-        }),
-    )?;
-    Ok((iface, sku_impl, mapped_ext))
-}
-
-#[test]
-fn mappings_cannot_write_out_of_scope_extensions() -> TestResult {
-    let ext_same = json!({ "orgId": "org_a", "businessUnitId": "bu_a" });
-    let (iface, sku_impl, mapped_ext) = mapping_entities(&ext_same)?;
-    let source_schema = mapping_source_schema()?;
-    let source_hash = ArtifactRef::of(&source_schema)?.sha256;
-    let build = |id: &str, scope: &Value| {
-        envelope(
-            id,
-            "mapping",
-            scope,
-            &json!([
-                { "artifactId": "erp.source_schema", "kind": "source_schema", "version": "1.0.0", "required": true },
-                { "artifactId": "retail.CatalogItem.interface", "kind": "entity", "version": "1.0.0", "required": true },
-                { "artifactId": "retail.MappedSku.entity", "kind": "entity", "version": "1.0.0", "required": true }
-            ]),
-            &json!({
-                "format": "norn.mapping/1",
-                "source": {
-                    "schemaId": "erp.source_schema",
-                    "version": "1.0.0",
-                    "sha256": source_hash
-                },
-                "interfaces": ["retail.CatalogItem.interface"],
-                "maps": [{
-                    "id": "sku",
-                    "source": { "dataset": "Item" },
-                    "target": {
-                        "entity": "retail.MappedSku.entity",
-                        "interface": "retail.CatalogItem.interface"
-                    },
-                    "subject": "input.name",
-                    "sourceRecord": "input.name",
-                    "properties": [
-                        { "property": "sku_code", "value": "input.name" },
-                        { "property": "title", "value": "input.item_name" },
-                        { "property": "acme__secret_tag", "value": "input.secret_tag" }
-                    ]
-                }]
-            }),
-        )
-    };
-
-    let broader = json!({ "orgId": "org_a" });
-    let sibling = json!({ "orgId": "org_a", "businessUnitId": "bu_b" });
-    let narrower = json!({
-        "orgId": "org_a",
-        "businessUnitId": "bu_a",
-        "workspaceId": "ws_child"
-    });
-    for in_base in [false, true] {
-        let mut base = vec![iface.clone(), sku_impl.clone(), source_schema.clone()];
-        if in_base {
-            base.push(mapped_ext.clone());
-        }
-        let run =
-            |id: &str, scope: &Value| -> Result<Vec<Diagnostic>, Box<dyn std::error::Error>> {
-                let mapping = build(id, scope)?;
-                let cands = if in_base {
-                    vec![mapping]
-                } else {
-                    vec![mapped_ext.clone(), mapping]
-                };
-                Ok(check_set(&cands, &base))
-            };
-        assert_refused(
-            &run("retail.map_broader", &broader)?,
-            "retail.map_broader",
-            "broader mapping",
-        );
-        assert_refused(
-            &run("retail.map_sibling", &sibling)?,
-            "retail.map_sibling",
-            "sibling mapping",
-        );
-        assert_admitted(
-            &run("retail.map_same", &ext_same)?,
-            "retail.map_same",
-            "same-scope mapping",
-        );
-        assert_admitted(
-            &run("retail.map_narrow", &narrower)?,
-            "retail.map_narrow",
-            "narrower mapping",
-        );
-    }
+    let sub_findings = check_entities(&[cand_alpha_sku], &[base_global_sub]);
+    assert!(
+        sub_findings
+            .iter()
+            .any(|d| d.is_error() && d.code.as_str() == INCOMPATIBLE_SCOPE),
+        "installed-base global subtype extending narrower candidate must be refused: {sub_findings:#?}"
+    );
     Ok(())
 }

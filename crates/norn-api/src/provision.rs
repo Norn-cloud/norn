@@ -413,6 +413,26 @@ pub fn admit_submission(
         ));
     }
     let tenant = tenant_artifacts(cell, &request.artifacts, refused)?;
+    let base_outside: Vec<RefusalDiagnostic> = base
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            norn_checker::scope_conflict(&cell.as_scope_ref(), &artifact.scope).is_some()
+        })
+        .map(|artifact| {
+            RefusalDiagnostic::error(
+                codes::SCOPE_CONFLICT,
+                format!(
+                    "{} in the trusted base is scoped outside the cell being provisioned",
+                    artifact.artifact_id
+                ),
+                "/baseSha256",
+            )
+        })
+        .collect();
+    if !base_outside.is_empty() {
+        return Err(refused(base_outside));
+    }
     let mut artifacts = base.artifacts.clone();
     artifacts.extend(tenant.iter().cloned());
     kernel_set::admit_kernel_set_with_base(&artifacts, &base.ids).map_err(|refusal| match refusal {
@@ -652,5 +672,80 @@ mod tests {
                 .status,
             400
         );
+    }
+
+    #[test]
+    fn a_trusted_base_artifact_outside_cell_scope_is_refused() {
+        let mut unit: ArtifactEnvelope = serde_json::from_str(UNITS).unwrap();
+        unit.scope = norn_ir::ScopeRef {
+            org_id: Some("org_other".into()),
+            environment_id: Some("prod".into()),
+            ..Default::default()
+        };
+        let scoped_units = serde_json::to_string(&unit).unwrap();
+        let base = TrustedBase::from_sources(&[&scoped_units]).unwrap();
+        let body = serde_json::json!({
+            "baseSha256": base.sha256(),
+            "artifacts": []
+        })
+        .to_string();
+        let refusal = admit_submission(&base, &cell(), &body).expect_err("base scope conflict");
+        assert_eq!(refusal.code, codes::PROVISION_REFUSED);
+        assert!(
+            refusal
+                .diagnostics
+                .iter()
+                .any(|d| d.code == codes::SCOPE_CONFLICT),
+            "expected scope conflict diagnostic, got: {refusal:?}"
+        );
+    }
+
+    #[test]
+    fn kernel_model_refuses_cross_scope_supertype() {
+        let super_narrow: ArtifactEnvelope = serde_json::from_value(serde_json::json!({
+            "irVersion": "0.1",
+            "artifactId": "shop.SuperNarrow.entity",
+            "kind": "entity",
+            "namespace": "shop",
+            "name": "SuperNarrow",
+            "version": "1.0.0",
+            "lifecycle": "draft",
+            "scope": { "orgId": "org_a", "environmentId": "prod", "tenantId": "tenant_alpha" },
+            "dependencies": [],
+            "provenance": { "source": "authoring_sdk" },
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "shop.SuperNarrow",
+                    "properties": [{ "id": "code", "type": { "kind": "text" } }],
+                    "identity": [{ "name": "primary", "properties": ["code"] }]
+                }
+            }
+        }))
+        .unwrap();
+        let sub_broad: ArtifactEnvelope = serde_json::from_value(serde_json::json!({
+            "irVersion": "0.1",
+            "artifactId": "shop.SubBroad.entity",
+            "kind": "entity",
+            "namespace": "shop",
+            "name": "SubBroad",
+            "version": "1.0.0",
+            "lifecycle": "draft",
+            "scope": { "orgId": "org_a", "environmentId": "prod" },
+            "dependencies": [],
+            "provenance": { "source": "authoring_sdk" },
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "shop.SubBroad",
+                    "extends": "shop.SuperNarrow",
+                    "properties": []
+                }
+            }
+        }))
+        .unwrap();
+        let err = kernel_set::kernel_model(&[super_narrow, sub_broad])
+            .expect_err("cross-scope supertype must fail closed");
+        assert!(matches!(err, KernelRefusal::Refused(_)), "{err:?}");
     }
 }

@@ -332,7 +332,7 @@ pub(crate) fn quality_fixture() -> (QualityHost, QuestionPlan, QueryContext) {
     encoded["invariants"] = json!([{"id":"recovery_bound","expression":"self.recovered <= self.input","message":"Recovered mass exceeds source input"}]);
     object = serde_json::from_value(encoded).expect("invariant");
     let model = Model::from_definitions(&[object.clone()], &[]).expect("model");
-    let artifact = json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
+    let artifact = json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
     let mut store = CellStore::open_in_memory(model.clone()).expect("store");
     store
         .install_definitions(

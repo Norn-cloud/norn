@@ -11,9 +11,11 @@ use norn_ir::metric::{
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot, LawSeverity,
     MetricDefinition, PropertyAdditivity, PropertyId, PropertyType, PropertyTypeName, QuestionIR,
+    ScopeRef,
 };
 
 use crate::entity_instance::{EffectiveCatalog, EffectiveKind, EffectiveObjectType};
+use crate::entity_scopes::{entity_object_type_owners, scope_visible, visible_artifacts};
 use crate::{Diagnostic, Span};
 
 use super::{codes, compute, field_name};
@@ -145,18 +147,51 @@ pub fn derive_metric_space(
     registry: &BTreeSet<PropertyTypeName>,
     scope: &LawRoot,
 ) -> Result<MetricSpace, Vec<Diagnostic>> {
+    derive_metric_space_inner(artifacts, registry, scope, None)
+}
+
+/// METRIC-DERIVE-1 at an explicit consumer envelope scope `consumer`:
+/// filters `artifacts` to [`scope_visible`] definitions before resolving
+/// extensions, supertypes, interfaces, and conservation laws.
+///
+/// # Errors
+/// As [`derive_metric_space`].
+pub fn derive_metric_space_for_scope(
+    artifacts: &[ArtifactEnvelope],
+    registry: &BTreeSet<PropertyTypeName>,
+    scope: &LawRoot,
+    consumer: &ScopeRef,
+) -> Result<MetricSpace, Vec<Diagnostic>> {
+    let visible = visible_artifacts(artifacts, consumer);
+    derive_metric_space_inner(&visible, registry, scope, Some(consumer))
+}
+
+fn derive_metric_space_inner(
+    artifacts: &[ArtifactEnvelope],
+    registry: &BTreeSet<PropertyTypeName>,
+    scope: &LawRoot,
+    consumer: Option<&ScopeRef>,
+) -> Result<MetricSpace, Vec<Diagnostic>> {
     let findings = crate::verification::check_law_set(artifacts, &[], registry);
     if !findings.is_empty() {
         return Err(findings);
     }
-    let mut catalog = EffectiveCatalog::from_artifacts_with_registry(artifacts, registry);
+    let mut catalog = match consumer {
+        Some(consumer) => EffectiveCatalog::for_scope(artifacts, registry, consumer),
+        None => EffectiveCatalog::from_artifacts_with_registry(artifacts, registry),
+    };
+    let owners = entity_object_type_owners(artifacts, &[]);
     let laws = conservation_laws(artifacts, scope);
     let mut evidence: BTreeMap<String, Vec<ConservationSource>> = BTreeMap::new();
     for name in catalog.object_type_names() {
         let Some(Ok(object)) = catalog.object_type_named(name) else {
             continue;
         };
-        for (law, source) in &laws {
+        let owner_scope = consumer.or_else(|| owners.get(name).map(|artifact| &artifact.scope));
+        for (law_scope, law, source) in &laws {
+            if owner_scope.is_some_and(|target| !scope_visible(target, law_scope)) {
+                continue;
+            }
             if applies(law, object) && compatible_terms(object, source) {
                 evidence
                     .entry(name.to_owned())
@@ -213,7 +248,7 @@ pub fn derive_metric_space(
 fn conservation_laws(
     artifacts: &[ArtifactEnvelope],
     scope: &LawRoot,
-) -> Vec<(LawIR, ConservationSource)> {
+) -> Vec<(ScopeRef, LawIR, ConservationSource)> {
     let mut laws: Vec<_> = artifacts
         .iter()
         .filter(|artifact| matches!(artifact.payload, ArtifactPayload::Law(_)))
@@ -240,6 +275,7 @@ fn conservation_laws(
             let bytes = norn_canonical::canonical_json_of(artifact).ok()?;
             let digest = norn_canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes);
             Some((
+                artifact.scope.clone(),
                 law,
                 ConservationSource {
                     law: String::new(),
@@ -249,18 +285,18 @@ fn conservation_laws(
                 },
             ))
         })
-        .map(|(law, mut source)| {
+        .map(|(law_scope, law, mut source)| {
             source.law.clone_from(&law.id);
-            (law, source)
+            (law_scope, law, source)
         })
         .collect();
     laws.sort_by(|left, right| {
-        left.1
+        left.2
             .law
-            .cmp(&right.1.law)
-            .then(left.1.digest.cmp(&right.1.digest))
+            .cmp(&right.2.law)
+            .then(left.2.digest.cmp(&right.2.digest))
     });
-    laws.dedup_by(|left, right| left.1 == right.1);
+    laws.dedup_by(|left, right| left.0 == right.0 && left.2 == right.2);
     laws
 }
 

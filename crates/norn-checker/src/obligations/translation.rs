@@ -84,7 +84,10 @@ impl ApprovedContract {
             .chain(&source.artifacts)
             .cloned()
             .collect();
-        let catalog = EffectiveCatalog::from_artifacts_with_registry(&pool, registry);
+        let mut scoped: BTreeMap<
+            crate::entity_scopes::ScopeKey,
+            (Vec<ArtifactEnvelope>, EffectiveCatalog),
+        > = BTreeMap::new();
         let laws = challenge.body().get("lawStatements");
         let goals = challenge
             .body()
@@ -103,7 +106,20 @@ impl ApprovedContract {
                     .and_then(|index| usize::try_from(index).ok())
                     .and_then(|index| laws?.get(index)?.get("artifactId")?.as_str())
                     .ok_or(ChallengeError::Closure)?;
-                Ok((id.to_owned(), lower(&pool, &catalog, id)))
+                let scope = pool
+                    .iter()
+                    .find(|artifact| {
+                        artifact.kind() == ArtifactKind::Law && artifact.artifact_id == id
+                    })
+                    .map_or_default(|artifact| artifact.scope.clone());
+                let (visible_pool, catalog) = scoped
+                    .entry(crate::entity_scopes::scope_key(&scope))
+                    .or_insert_with(|| {
+                        let visible = crate::entity_scopes::visible_artifacts(&pool, &scope);
+                        let catalog = EffectiveCatalog::for_scope(&visible, registry, &scope);
+                        (visible, catalog)
+                    });
+                Ok((id.to_owned(), lower(visible_pool, catalog, id)))
             })
             .collect::<Result<_, ChallengeError>>()?;
         Ok(Batch { challenge, goals })

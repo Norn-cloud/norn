@@ -173,9 +173,20 @@ impl UxChecker<'_, '_, '_> {
             &mut selected_stack,
             &mut selected_ids,
         );
+        let nested_catalog = norn_checker::entity_scopes::effective_catalog_for_scope(
+            self.all,
+            self.registry,
+            &artifact.scope,
+        );
         let mut nested_findings = Vec::new();
-        let mut nested =
-            UxChecker::new(artifact, self.all, self.catalog, &ux, &mut nested_findings);
+        let mut nested = UxChecker::new(
+            artifact,
+            self.all,
+            &nested_catalog,
+            self.registry,
+            &ux,
+            &mut nested_findings,
+        );
         nested.enforce_effect_root = false;
         nested.composition_stack.clone_from(&self.composition_stack);
         nested.composition_stack.insert(identity);

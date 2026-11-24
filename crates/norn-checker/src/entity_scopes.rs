@@ -3,18 +3,19 @@
 //! Every `EntityIR` v2 definition (object type, supertype, interface,
 //! extension, shared property type catalog) carries its enclosing
 //! [`ArtifactEnvelope::scope`]. A consumer in scope `S` may observe only
-//! definitions whose scope satisfies [`scope_visible(S, target)`] — i.e.
+//! definitions whose scope satisfies [`scope_visible`] — i.e.
 //! [`crate::artifact_set::scope_conflict`] returns `None` across every scope
 //! dimension (`orgId`, `tenantId`, `workspaceId`, `environmentId`,
 //! `businessUnitId`).
 
+mod refs;
+
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{EntityDefinitions, EnvOptions, ZenTypeEnv};
+use norn_expr::{EntityDefinitions, EnvOptions, TypeEnvRef, ZenTypeEnv};
 use norn_ir::{
-    ArtifactEnvelope, ArtifactPayload, EntityRoot, InterfaceDef, JsonValue, ObjectTypeDef,
-    PropertyType, PropertyTypeDef, PropertyTypeName, ResourceLimitProfile, ResourceStatus,
-    ScopeRef,
+    ArtifactEnvelope, ArtifactPayload, EntityRoot, JsonValue, PropertyTypeDef, PropertyTypeName,
+    ResourceLimitProfile, ScopeRef,
 };
 
 use crate::artifact_set::{scope_conflict, scope_finding};
@@ -22,6 +23,9 @@ use crate::entity_artifacts::{Decoded, Layer, decode_v2};
 use crate::entity_instance::{EffectiveCatalog, EffectiveObjectType};
 use crate::entity_lowering::entity_object_type;
 use crate::{Diagnostic, Span};
+
+pub(crate) use refs::check_entity_reference_scopes;
+pub use refs::check_entity_reference_scopes_all;
 
 /// Deterministic map key for caching per-scope entity projections.
 pub type ScopeKey = [Option<String>; 5];
@@ -55,6 +59,43 @@ pub fn visible_artifacts(pool: &[ArtifactEnvelope], consumer: &ScopeRef) -> Vec<
         .collect()
 }
 
+impl EffectiveCatalog {
+    /// Build the catalog of `artifacts` (see the type docs). Narrower
+    /// extensions are never merged into broader object types.
+    #[must_use]
+    pub fn from_artifacts(artifacts: &[ArtifactEnvelope]) -> Self {
+        Self::from_artifacts_with_registry(artifacts, &BTreeSet::new())
+    }
+
+    /// Build the catalog of `artifacts` against the registry (Norn Core)
+    /// value type names `registry`, so a type whose `ref` names a registry
+    /// type is available. Narrower extensions are never merged into broader
+    /// object types; each object type resolves against artifacts visible from
+    /// its own declaring scope.
+    #[must_use]
+    pub fn from_artifacts_with_registry(
+        artifacts: &[ArtifactEnvelope],
+        registry: &BTreeSet<PropertyTypeName>,
+    ) -> Self {
+        if has_narrower_extension(artifacts) {
+            return catalog_by_declaring_scope(artifacts, registry);
+        }
+        Self::build_single_layer(artifacts, registry)
+    }
+
+    /// Build the catalog of `artifacts` visible to a consumer in `consumer`
+    /// against `registry`.
+    #[must_use]
+    pub fn for_scope(
+        artifacts: &[ArtifactEnvelope],
+        registry: &BTreeSet<PropertyTypeName>,
+        consumer: &ScopeRef,
+    ) -> Self {
+        let visible = visible_artifacts(artifacts, consumer);
+        Self::build_single_layer(&visible, registry)
+    }
+}
+
 /// Build an [`EffectiveCatalog`] visible to a consumer in `consumer`.
 #[must_use]
 pub fn effective_catalog_for_scope(
@@ -62,8 +103,303 @@ pub fn effective_catalog_for_scope(
     registry: &BTreeSet<PropertyTypeName>,
     consumer: &ScopeRef,
 ) -> EffectiveCatalog {
-    let visible = visible_artifacts(pool, consumer);
-    EffectiveCatalog::from_artifacts_with_registry(&visible, registry)
+    EffectiveCatalog::for_scope(pool, registry, consumer)
+}
+
+/// Build an [`EffectiveCatalog`] where each `EntityIR` v2 object type is
+/// resolved strictly against artifacts visible from its own declaring scope.
+pub(crate) fn catalog_by_declaring_scope(
+    artifacts: &[ArtifactEnvelope],
+    registry: &BTreeSet<PropertyTypeName>,
+) -> EffectiveCatalog {
+    let mut out = EffectiveCatalog::default();
+    let mut by_scope: BTreeMap<ScopeKey, (ScopeRef, Vec<&str>)> = BTreeMap::new();
+    for artifact in artifacts {
+        if let Decoded::Root(root) = decode_v2(artifact) {
+            match *root {
+                EntityRoot::V2(_) => {
+                    by_scope
+                        .entry(scope_key(&artifact.scope))
+                        .or_insert_with(|| (artifact.scope.clone(), Vec::new()))
+                        .1
+                        .push(artifact.artifact_id.as_str());
+                }
+                EntityRoot::V2Interface(iface) => {
+                    out.interface_names
+                        .insert(iface.interface.name.as_str().to_owned());
+                }
+                EntityRoot::V2Extension(_)
+                | EntityRoot::V2PropertyTypes(_)
+                | EntityRoot::V2Markings(_)
+                | EntityRoot::V1(_) => {}
+            }
+        }
+    }
+    let cross_findings = check_cross_scope_duplicates(artifacts, &[]);
+    for (_, (scope, ids)) in by_scope {
+        let scoped = EffectiveCatalog::for_scope(artifacts, registry, &scope);
+        for id in ids {
+            let Some(entry) = scoped.by_artifact.get(id) else {
+                continue;
+            };
+            let blocked = cross_findings
+                .iter()
+                .find(|finding| finding.artifact_id.as_deref() == Some(id));
+            let result = match (blocked, entry) {
+                (None, Ok(object_type)) => {
+                    let name = object_type.name.as_str().to_owned();
+                    out.by_name
+                        .entry(name.clone())
+                        .or_insert_with(|| id.to_owned());
+                    out.lineages
+                        .entry(name.clone())
+                        .or_insert_with(|| object_type.lineage.clone());
+                    if let Some(links) = scoped.links_by_name.get(&name) {
+                        out.links_by_name
+                            .entry(name)
+                            .or_insert_with(|| links.clone());
+                    }
+                    Ok(object_type.clone())
+                }
+                (Some(finding), _) | (None, Err(finding)) => Err(finding.clone()),
+            };
+            out.by_artifact.entry(id.to_owned()).or_insert(result);
+        }
+    }
+    out.add_v1_artifacts(artifacts);
+    out
+}
+
+/// Whether `artifacts` contains any `EntityIR` v2 extension whose scope is
+/// strictly narrower than (or not visible from) its target object type's scope.
+#[must_use]
+pub(crate) fn has_narrower_extension(artifacts: &[ArtifactEnvelope]) -> bool {
+    let target_scopes = v2_object_type_scopes(artifacts);
+    artifacts.iter().any(|artifact| {
+        let Decoded::Root(root) = decode_v2(artifact) else {
+            return false;
+        };
+        let EntityRoot::V2Extension(ext) = *root else {
+            return false;
+        };
+        target_scopes
+            .get(ext.object_type_extension.target.as_str())
+            .is_some_and(|target_scope| !scope_visible(target_scope, &artifact.scope))
+    })
+}
+
+fn v2_object_type_scopes(artifacts: &[ArtifactEnvelope]) -> BTreeMap<String, &ScopeRef> {
+    let mut scopes = BTreeMap::new();
+    for artifact in artifacts {
+        if let Decoded::Root(root) = decode_v2(artifact)
+            && let EntityRoot::V2(def) = *root
+        {
+            scopes
+                .entry(def.object_type.name.0)
+                .or_insert(&artifact.scope);
+        }
+    }
+    scopes
+}
+
+fn bind_exact_schemas(
+    mut env: ZenTypeEnv,
+    artifacts: &[ArtifactEnvelope],
+) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
+    for artifact in artifacts {
+        if matches!(
+            &artifact.payload,
+            ArtifactPayload::Rule(_) | ArtifactPayload::Action(_)
+        ) {
+            let payload_value = artifact.payload.to_json_value();
+            let Some(payload) = payload_value.as_object() else {
+                continue;
+            };
+            for member in ["inputSchema", "outputSchema"] {
+                if let Some(schema) = payload.get(member) {
+                    let name = format!(
+                        "exact.{}.{}.{}",
+                        artifact.artifact_id, artifact.version, member
+                    );
+                    let bound = if matches!(&artifact.payload, ArtifactPayload::Action(_))
+                        && member == "inputSchema"
+                    {
+                        env.bind_exact_action_schema(&name, schema)
+                    } else {
+                        env.bind_exact_schema(&name, schema)
+                    };
+                    env = bound.map_err(|reason| {
+                        vec![norn_expr::EnvError::Unresolved {
+                            site: name,
+                            name: reason,
+                        }]
+                    })?;
+                }
+            }
+        }
+    }
+    Ok(env)
+}
+
+/// Derive the ZEN Expression type environment of `base` and `artifacts` without
+/// merging narrower extensions into broader object types.
+///
+/// # Errors
+/// Every [`norn_expr::EnvError`] of the derivation.
+pub(crate) fn derive_unscoped_type_env(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
+    let combined: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
+    let target_scopes = v2_object_type_scopes(&combined);
+    let mut layer = Layer::default();
+    for (index, artifact) in combined.iter().enumerate() {
+        let Decoded::Root(root) = decode_v2(artifact) else {
+            continue;
+        };
+        if let EntityRoot::V2Extension(ext) = root.as_ref()
+            && target_scopes
+                .get(ext.object_type_extension.target.as_str())
+                .is_some_and(|target_scope| !scope_visible(target_scope, &artifact.scope))
+        {
+            continue;
+        }
+        layer.push(index, *root);
+    }
+    let catalog: Vec<PropertyTypeDef> = layer.catalog.iter().map(|(_, def)| def.clone()).collect();
+    let definitions = EntityDefinitions {
+        property_types: &catalog,
+        interfaces: &layer.interfaces,
+        object_types: &layer.object_types,
+        extensions: &layer.extensions,
+    };
+    let env = ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
+    bind_exact_schemas(env, &combined)
+}
+
+/// Derive the ZEN Expression type environment visible to a consumer in `consumer`
+/// (including exact rule/action schemas visible to `consumer`).
+///
+/// # Errors
+/// Every [`norn_expr::EnvError`] of the derivation.
+pub fn derive_receipt_type_env_for_scope(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+    consumer: &ScopeRef,
+) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
+    let visible: Vec<ArtifactEnvelope> = base
+        .iter()
+        .chain(artifacts)
+        .filter(|artifact| scope_visible(consumer, &artifact.scope))
+        .cloned()
+        .collect();
+    let mut layer = Layer::default();
+    for (index, artifact) in visible.iter().enumerate() {
+        if let Decoded::Root(root) = decode_v2(artifact) {
+            layer.push(index, *root);
+        }
+    }
+    let catalog: Vec<PropertyTypeDef> = layer.catalog.iter().map(|(_, def)| def.clone()).collect();
+    let definitions = EntityDefinitions {
+        property_types: &catalog,
+        interfaces: &layer.interfaces,
+        object_types: &layer.object_types,
+        extensions: &layer.extensions,
+    };
+    let env = ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
+    bind_exact_schemas(env, &visible)
+}
+
+/// Derive the scoped ZEN Expression type environment for every distinct scope
+/// present in `base` and `artifacts`.
+///
+/// # Errors
+/// Every [`norn_expr::EnvError`] from the first consumer scope that cannot derive.
+pub fn derive_scoped_type_envs(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> Result<BTreeMap<ScopeKey, ZenTypeEnv>, Vec<norn_expr::EnvError>> {
+    let mut scopes: BTreeMap<ScopeKey, ScopeRef> = BTreeMap::new();
+    for artifact in base.iter().chain(artifacts) {
+        scopes
+            .entry(scope_key(&artifact.scope))
+            .or_insert_with(|| artifact.scope.clone());
+    }
+    if scopes.is_empty() {
+        let global = ScopeRef::default();
+        scopes.insert(scope_key(&global), global);
+    }
+    let mut out = BTreeMap::new();
+    for (key, scope) in scopes {
+        let env = derive_receipt_type_env_for_scope(artifacts, base, limits, &scope)?;
+        out.insert(key, env);
+    }
+    Ok(out)
+}
+
+/// Derive the scope-bound [`TypeEnvRef`] pinned by an admission receipt at
+/// `version`.
+///
+/// Validates that every distinct consumer scope in `base` and `artifacts` has a
+/// derivable [`ZenTypeEnv`]. When no extension is narrower than its target type,
+/// returns the canonical single-environment reference verbatim; when narrower
+/// extensions cause scopes to observe distinct environments, hashes the sorted
+/// `(scope, typeEnv)` map together with the unscoped base reference under Norn1.
+///
+/// # Errors
+/// Derivation errors (`Err(Ok(errors))`) or canonical hashing errors
+/// (`Err(Err(error))`).
+pub fn derive_receipt_type_env_ref_at_version(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+    version: norn_expr::env::TypeEnvVersion,
+) -> Result<TypeEnvRef, Result<Vec<norn_expr::EnvError>, norn_canonical::CanonicalJsonError>> {
+    let scoped = derive_scoped_type_envs(artifacts, base, limits).map_err(Ok)?;
+    let base_env = derive_unscoped_type_env(artifacts, base, limits).map_err(Ok)?;
+    let base_ref = base_env.reference_at_version(version).map_err(Err)?;
+    let combined: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
+    if !has_narrower_extension(&combined) {
+        return Ok(base_ref);
+    }
+    let mut scopes_map: BTreeMap<ScopeKey, ScopeRef> = BTreeMap::new();
+    for artifact in &combined {
+        scopes_map
+            .entry(scope_key(&artifact.scope))
+            .or_insert_with(|| artifact.scope.clone());
+    }
+    let mut entries = Vec::new();
+    for (key, env) in &scoped {
+        let Some(scope) = scopes_map.get(key) else {
+            continue;
+        };
+        let env_ref = env.reference_at_version(version).map_err(Err)?;
+        entries.push(serde_json::json!({
+            "scope": scope,
+            "typeEnv": {
+                "id": env_ref.id,
+                "version": env_ref.version,
+                "sha256": env_ref.sha256,
+            }
+        }));
+    }
+    let payload = serde_json::json!({
+        "base": {
+            "id": base_ref.id,
+            "version": base_ref.version,
+            "sha256": base_ref.sha256,
+        },
+        "scopes": entries,
+    });
+    let sha256 = crate::receipt::hash_serde_json(&payload).map_err(Err)?;
+    Ok(TypeEnvRef {
+        id: base_ref.id,
+        version: base_ref.version,
+        sha256,
+    })
 }
 
 /// Build a [`ZenTypeEnv`] visible to a consumer in `consumer`.
@@ -254,388 +590,6 @@ pub(crate) fn upsert_extension_scope_findings(
         }
     }
     findings
-}
-
-/// Indexed `EntityIR` v2 definitions across `base` and `artifacts`, retaining
-/// the defining [`ArtifactEnvelope`] (and its [`ScopeRef`]) for each name.
-struct EntityIndex<'a> {
-    object_types: BTreeMap<String, (&'a ArtifactEnvelope, ObjectTypeDef)>,
-    interfaces: BTreeMap<String, (&'a ArtifactEnvelope, InterfaceDef)>,
-    property_types: BTreeMap<String, (&'a ArtifactEnvelope, PropertyTypeDef)>,
-}
-
-impl<'a> EntityIndex<'a> {
-    fn build(artifacts: &'a [ArtifactEnvelope], base: &'a [ArtifactEnvelope]) -> Self {
-        let mut index = Self {
-            object_types: BTreeMap::new(),
-            interfaces: BTreeMap::new(),
-            property_types: BTreeMap::new(),
-        };
-        for artifact in base.iter().chain(artifacts) {
-            let Decoded::Root(root) = decode_v2(artifact) else {
-                continue;
-            };
-            match *root {
-                EntityRoot::V2(root) => {
-                    index
-                        .object_types
-                        .entry(root.object_type.name.0.clone())
-                        .or_insert((artifact, root.object_type));
-                }
-                EntityRoot::V2Interface(root) => {
-                    index
-                        .interfaces
-                        .entry(root.interface.name.0.clone())
-                        .or_insert((artifact, root.interface));
-                }
-                EntityRoot::V2PropertyTypes(root) => {
-                    for def in root.property_types {
-                        index
-                            .property_types
-                            .entry(def.name.0.clone())
-                            .or_insert((artifact, def));
-                    }
-                }
-                EntityRoot::V2Extension(_) | EntityRoot::V2Markings(_) | EntityRoot::V1(_) => {}
-            }
-        }
-        index
-    }
-
-    fn check_object_chain(
-        &self,
-        owner: &ArtifactEnvelope,
-        start: &str,
-        pointer: &str,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let mut visited_types = BTreeSet::new();
-        let mut visited_ifaces = BTreeSet::new();
-        let mut next = Some(start.to_owned());
-        while let Some(name) = next.take() {
-            if !visited_types.insert(name.clone()) {
-                break;
-            }
-            let Some((target, def)) = self.object_types.get(&name) else {
-                break;
-            };
-            if let Some(diagnostic) = scope_finding(owner, target, pointer) {
-                out.push(diagnostic);
-                return;
-            }
-            for iface in &def.implements {
-                if self.check_interface_chain_inner(
-                    owner,
-                    iface.as_str(),
-                    pointer,
-                    &mut visited_ifaces,
-                    out,
-                ) {
-                    return;
-                }
-            }
-            next = def
-                .extends
-                .as_ref()
-                .map(|parent| parent.as_str().to_owned());
-        }
-    }
-
-    fn check_interface_chain(
-        &self,
-        owner: &ArtifactEnvelope,
-        start: &str,
-        pointer: &str,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let mut visited = BTreeSet::new();
-        let _ = self.check_interface_chain_inner(owner, start, pointer, &mut visited, out);
-    }
-
-    fn check_interface_chain_inner(
-        &self,
-        owner: &ArtifactEnvelope,
-        start: &str,
-        pointer: &str,
-        visited: &mut BTreeSet<String>,
-        out: &mut Vec<Diagnostic>,
-    ) -> bool {
-        let mut pending = vec![start.to_owned()];
-        while let Some(name) = pending.pop() {
-            if !visited.insert(name.clone()) {
-                continue;
-            }
-            let Some((target, def)) = self.interfaces.get(&name) else {
-                continue;
-            };
-            if let Some(diagnostic) = scope_finding(owner, target, pointer) {
-                out.push(diagnostic);
-                return true;
-            }
-            pending.extend(def.extends.iter().map(|parent| parent.as_str().to_owned()));
-        }
-        false
-    }
-
-    fn check_named_object(
-        &self,
-        owner: &ArtifactEnvelope,
-        name: &str,
-        pointer: &str,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        if let Some((target, _)) = self.object_types.get(name) {
-            out.extend(scope_finding(owner, target, pointer));
-        }
-    }
-
-    fn check_replacement<N>(
-        &self,
-        owner: &ArtifactEnvelope,
-        status: &ResourceStatus<N>,
-        as_str: impl Fn(&N) -> &str,
-        pointer: &str,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        let ResourceStatus::Deprecated {
-            replaced_by: Some(name),
-            ..
-        } = status
-        else {
-            return;
-        };
-        let name = as_str(name);
-        if let Some((target, _)) = self.object_types.get(name) {
-            out.extend(scope_finding(owner, target, pointer));
-        } else if let Some((target, _)) = self.interfaces.get(name) {
-            out.extend(scope_finding(owner, target, pointer));
-        }
-    }
-
-    fn check_property_type(
-        &self,
-        owner: &ArtifactEnvelope,
-        property_type: &PropertyType,
-        pointer: &str,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        match property_type {
-            PropertyType::Ref { name, .. } => {
-                let name_pointer = format!("{pointer}/name");
-                let mut visited = BTreeSet::new();
-                let mut current = Some(name.as_str().to_owned());
-                while let Some(ref_name) = current.take() {
-                    if !visited.insert(ref_name.clone()) {
-                        break;
-                    }
-                    let Some((target, def)) = self.property_types.get(&ref_name) else {
-                        break;
-                    };
-                    if let Some(diagnostic) = scope_finding(owner, target, &name_pointer) {
-                        out.push(diagnostic);
-                        break;
-                    }
-                    current = if let PropertyType::Ref { name, .. } = &def.property_type {
-                        Some(name.as_str().to_owned())
-                    } else {
-                        None
-                    };
-                }
-            }
-            PropertyType::Record { members } => {
-                for (index, member) in members.iter().enumerate() {
-                    self.check_property_type(
-                        owner,
-                        &member.property_type,
-                        &format!("{pointer}/members/{index}/type"),
-                        out,
-                    );
-                }
-            }
-            PropertyType::Text { .. }
-            | PropertyType::Integer { .. }
-            | PropertyType::Decimal { .. }
-            | PropertyType::DecimalBinding { .. }
-            | PropertyType::Boolean {}
-            | PropertyType::Timestamp { .. }
-            | PropertyType::Date {}
-            | PropertyType::Duration {}
-            | PropertyType::Enum { .. }
-            | PropertyType::JsonExt { .. } => {}
-        }
-    }
-
-    fn check_links(
-        &self,
-        owner: &ArtifactEnvelope,
-        prefix: &str,
-        links: &[norn_ir::Link],
-        out: &mut Vec<Diagnostic>,
-    ) {
-        for (index, link) in links.iter().enumerate() {
-            self.check_named_object(
-                owner,
-                link.target.as_str(),
-                &format!("{prefix}/links/{index}/target"),
-                out,
-            );
-            for (prop_index, prop) in link.properties.iter().enumerate() {
-                self.check_property_type(
-                    owner,
-                    &prop.property_type,
-                    &format!("{prefix}/links/{index}/properties/{prop_index}/type"),
-                    out,
-                );
-            }
-        }
-    }
-    fn check_object_type(
-        &self,
-        artifact: &ArtifactEnvelope,
-        def: &ObjectTypeDef,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        if let Some(parent) = &def.extends {
-            self.check_object_chain(
-                artifact,
-                parent.as_str(),
-                "/payload/objectType/extends",
-                out,
-            );
-        }
-        for (i, iface) in def.implements.iter().enumerate() {
-            self.check_interface_chain(
-                artifact,
-                iface.as_str(),
-                &format!("/payload/objectType/implements/{i}"),
-                out,
-            );
-        }
-        self.check_links(artifact, "/payload/objectType", &def.links, out);
-        for (i, coll) in def.owned_collections.iter().enumerate() {
-            self.check_named_object(
-                artifact,
-                coll.child_type.as_str(),
-                &format!("/payload/objectType/ownedCollections/{i}/childType"),
-                out,
-            );
-        }
-        self.check_replacement(
-            artifact,
-            &def.status,
-            norn_ir::ObjectTypeName::as_str,
-            "/payload/objectType/status/replacedBy",
-            out,
-        );
-        for (i, prop) in def.properties.iter().enumerate() {
-            self.check_property_type(
-                artifact,
-                &prop.property_type,
-                &format!("/payload/objectType/properties/{i}/type"),
-                out,
-            );
-        }
-    }
-
-    fn check_interface(
-        &self,
-        artifact: &ArtifactEnvelope,
-        def: &InterfaceDef,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        for (i, parent) in def.extends.iter().enumerate() {
-            self.check_interface_chain(
-                artifact,
-                parent.as_str(),
-                &format!("/payload/interface/extends/{i}"),
-                out,
-            );
-        }
-        for (i, link) in def.links.iter().enumerate() {
-            self.check_named_object(
-                artifact,
-                link.target.as_str(),
-                &format!("/payload/interface/links/{i}/target"),
-                out,
-            );
-        }
-        self.check_replacement(
-            artifact,
-            &def.status,
-            norn_ir::InterfaceName::as_str,
-            "/payload/interface/status/replacedBy",
-            out,
-        );
-        for (i, prop) in def.properties.iter().enumerate() {
-            self.check_property_type(
-                artifact,
-                &prop.property_type,
-                &format!("/payload/interface/properties/{i}/type"),
-                out,
-            );
-        }
-    }
-
-    fn check_extension(
-        &self,
-        artifact: &ArtifactEnvelope,
-        ext: &norn_ir::ObjectTypeExtension,
-        out: &mut Vec<Diagnostic>,
-    ) {
-        self.check_object_chain(
-            artifact,
-            ext.target.as_str(),
-            "/payload/objectTypeExtension/target",
-            out,
-        );
-        self.check_links(artifact, "/payload/objectTypeExtension", &ext.links, out);
-        for (i, prop) in ext.properties.iter().enumerate() {
-            self.check_property_type(
-                artifact,
-                &prop.property_type,
-                &format!("/payload/objectTypeExtension/properties/{i}/type"),
-                out,
-            );
-        }
-    }
-}
-
-/// Check every candidate `EntityIR` v2 artifact's entity-to-entity references
-/// (supertypes, interfaces, extension targets, link targets, owned collection
-/// child types, replacements, and `ref` property types) against both
-/// `artifacts` and installed `base` across all scope dimensions.
-pub(crate) fn check_entity_reference_scopes(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-) -> Vec<Diagnostic> {
-    let index = EntityIndex::build(artifacts, base);
-    let mut out = Vec::new();
-    for artifact in artifacts {
-        let Decoded::Root(root) = decode_v2(artifact) else {
-            continue;
-        };
-        match *root {
-            EntityRoot::V2(root) => index.check_object_type(artifact, &root.object_type, &mut out),
-            EntityRoot::V2Interface(root) => {
-                index.check_interface(artifact, &root.interface, &mut out);
-            }
-            EntityRoot::V2Extension(root) => {
-                index.check_extension(artifact, &root.object_type_extension, &mut out);
-            }
-            EntityRoot::V2PropertyTypes(root) => {
-                for (i, def) in root.property_types.iter().enumerate() {
-                    index.check_property_type(
-                        artifact,
-                        &def.property_type,
-                        &format!("/payload/propertyTypes/{i}/type"),
-                        &mut out,
-                    );
-                }
-            }
-            EntityRoot::V2Markings(_) | EntityRoot::V1(_) => {}
-        }
-    }
-    out
 }
 
 /// Ensure name uniqueness across scope boundaries when candidates are checked
@@ -882,4 +836,40 @@ pub(crate) fn action_model_parts(
         true,
     );
     (catalog, env)
+}
+
+/// Build the type environment and effective catalog for `MappingModel`.
+///
+/// # Errors
+/// Environment derivation failures as `ENVIRONMENT_UNDERIVABLE` diagnostics.
+pub(crate) fn mapping_model_parts(
+    artifacts: &[ArtifactEnvelope],
+    consumer: Option<&ScopeRef>,
+) -> Result<(ZenTypeEnv, EffectiveCatalog), Vec<Diagnostic>> {
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let env_res = match consumer {
+        Some(scope) => derive_receipt_type_env_for_scope(artifacts, &[], &limits, scope),
+        None => derive_unscoped_type_env(artifacts, &[], &limits),
+    };
+    let env = env_res.map_err(|errors| {
+        errors
+            .into_iter()
+            .map(|reason| Diagnostic {
+                witness: None,
+                code: crate::DiagnosticCode::new(crate::receipt::codes::ENVIRONMENT_UNDERIVABLE),
+                severity: norn_ir::DiagnosticSeverity::Error,
+                message: format!(
+                    "the mapping model's type environment cannot be derived: {reason}"
+                ),
+                span: Some(Span::pointer("")),
+                artifact_id: None,
+                remediation: Some(norn_ir::DiagnosticRemediation::FixDefinition),
+            })
+            .collect::<Vec<_>>()
+    })?;
+    let catalog = match consumer {
+        Some(scope) => EffectiveCatalog::for_scope(artifacts, &BTreeSet::new(), scope),
+        None => EffectiveCatalog::from_artifacts(artifacts),
+    };
+    Ok((env, catalog))
 }

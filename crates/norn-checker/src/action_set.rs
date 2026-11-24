@@ -2524,13 +2524,14 @@ pub(crate) struct AdmittedType<'m, 'a> {
 }
 
 impl<'a> Admission<'a> {
-    pub(crate) fn new(
+    pub(crate) fn for_scope(
         artifacts: &'a [ArtifactEnvelope],
         base: &'a [ArtifactEnvelope],
         registry: &BTreeSet<PropertyTypeName>,
+        consumer: &ScopeRef,
     ) -> Self {
         Self {
-            model: Model::new(artifacts, base, registry, true),
+            model: Model::for_scope(artifacts, base, registry, true, consumer),
             artifacts,
             base,
         }

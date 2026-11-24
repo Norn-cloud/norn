@@ -73,8 +73,7 @@ use norn_ir::mapping::{
 };
 use norn_ir::source_schema::{ConstraintKind, NormalizedType, Origin, SourceField, SourceSchemaIr};
 use norn_ir::{
-    ArtifactEnvelope, EntityRoot, InterfaceName, MarkingId, ObjectTypeName, ResourceLimitProfile,
-    ZenExpression,
+    ArtifactEnvelope, EntityRoot, InterfaceName, MarkingId, ObjectTypeName, ScopeRef, ZenExpression,
 };
 
 use compile::compile_mapping;
@@ -86,9 +85,8 @@ pub use set::{check_mapping_artifacts, compile_mapping_artifact, mapping_key};
 pub use snapshot_lint::lint_observed_deviations;
 
 use crate::entity_artifacts::{Decoded, decode_v2};
-use crate::entity_instance::EffectiveCatalog;
 use crate::property_types::error;
-use crate::receipt::{codes::ENVIRONMENT_UNDERIVABLE, derive_type_env};
+use crate::receipt::codes::ENVIRONMENT_UNDERIVABLE;
 use crate::{Diagnostic, Span};
 
 /// Stable `mapping.validation.*` (T2) and `mapping.model.*` (T3) codes.
@@ -542,22 +540,14 @@ impl MappingModel {
     /// The type environment's derivation errors, as
     /// `artifact_set.expression.environment_underivable` findings.
     pub fn from_artifacts(artifacts: &[ArtifactEnvelope]) -> Result<Self, Vec<Diagnostic>> {
-        let env = derive_type_env(artifacts, &[], &ResourceLimitProfile::norn_limits_v1())
-            .map_err(|errors| {
-                errors
-                    .into_iter()
-                    .map(|reason| {
-                        error(
-                            ENVIRONMENT_UNDERIVABLE,
-                            format!(
-                                "the mapping model's type environment cannot be derived: {reason}"
-                            ),
-                            Span::pointer(""),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })?;
-        let catalog = EffectiveCatalog::from_artifacts(artifacts);
+        Self::from_artifacts_with_scope(artifacts, None)
+    }
+
+    pub(crate) fn from_artifacts_with_scope(
+        artifacts: &[ArtifactEnvelope],
+        consumer: Option<&ScopeRef>,
+    ) -> Result<Self, Vec<Diagnostic>> {
+        let (env, catalog) = crate::entity_scopes::mapping_model_parts(artifacts, consumer)?;
         let mut types = BTreeMap::new();
         for artifact in artifacts {
             if let Some(Ok(object_type)) = catalog.object_type(&artifact.artifact_id) {

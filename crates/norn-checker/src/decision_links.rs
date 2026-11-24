@@ -30,6 +30,7 @@ use crate::action_set::{Model, codes as action_codes};
 use crate::artifact_set::scope_finding;
 use crate::entity_artifacts::EntityArtifactSetContext;
 use crate::entity_instance::{EffectiveKind, EffectiveProperty};
+use crate::entity_scopes::{ScopeKey, scope_key};
 use crate::envelope::invalid_diagnostic;
 use crate::jdm_profile::codes as jdm_codes;
 use crate::lifecycle_writes::codes as lifecycle_codes;
@@ -207,11 +208,20 @@ pub fn check_decision_links_set(
     if decisions.is_empty() {
         return Vec::new();
     }
-    let model = Model::new(artifacts, context.base, context.registry, true);
+    let mut models: BTreeMap<ScopeKey, Model<'_>> = BTreeMap::new();
     let mut findings = Vec::new();
     for (artifact, output) in &decisions {
         if let Some(schema) = LinkSchema::of(output) {
-            findings.extend(decision_links_findings(artifact, &schema, &model));
+            let model = models.entry(scope_key(&artifact.scope)).or_insert_with(|| {
+                Model::for_scope(
+                    artifacts,
+                    context.base,
+                    context.registry,
+                    true,
+                    &artifact.scope,
+                )
+            });
+            findings.extend(decision_links_findings(artifact, &schema, model));
         }
     }
     findings
@@ -509,8 +519,11 @@ fn resolve_endpoint_types<'a>(
                 &pointer,
             )),
             Some(defined) => {
-                findings.extend(scope_finding(artifact, defined.artifact, &pointer));
-                resolved.push(*kind);
+                if let Some(error) = scope_finding(artifact, defined.artifact, &pointer) {
+                    findings.push(error);
+                } else {
+                    resolved.push(*kind);
+                }
             }
         }
     }

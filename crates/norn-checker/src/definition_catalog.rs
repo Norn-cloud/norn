@@ -2,6 +2,7 @@
 use crate::action_set::{Admission, AdmittedType};
 use crate::entity_artifacts::{Decoded, Layer, decode_v2};
 use crate::entity_lowering::{EntityForm, entity_object_type};
+use crate::entity_scopes::{ScopeKey, scope_key, scope_visible};
 use crate::lifecycle_writes::{FactSchema, fact_decisions};
 use crate::receipt::ArtifactRef;
 /// Failure to compute a projected artifact's semantic identity.
@@ -17,7 +18,7 @@ use norn_ir::{
     BusinessPackRoot, EntityRoot, FactChangeOp, LawIR, LawResponse, Lifecycle, ObjectTypeDef,
     Property, PropertyType, PropertyTypeDef, PropertyTypeName,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 /// Project admitted candidates and installed artifacts into sorted catalog rows.
 ///
 /// Call only after `check_artifact_set` admits the set. This slice projects
@@ -31,25 +32,15 @@ pub fn project(
     registry: &BTreeSet<PropertyTypeName>,
 ) -> Result<DefinitionCatalog, CatalogError> {
     let all: Vec<&ArtifactEnvelope> = artifacts.iter().chain(base).collect();
-    let mut layer = Layer::default();
-    for (index, artifact) in base.iter().chain(artifacts).enumerate() {
-        if let Decoded::Root(root) = decode_v2(artifact) {
-            layer.push(index, *root);
-        }
-    }
-    let mut rows = Rows {
-        property_types: layer.catalog.into_iter().map(|(_, def)| def).collect(),
-        ..Rows::default()
-    };
+    let mut rows = Rows::default();
     for artifact in &all {
         let mut layer = crate::entity_artifacts::Layer::default();
-        let context = std::iter::once(*artifact).chain(
-            all.iter()
-                .copied()
-                .filter(|other| other.artifact_id != artifact.artifact_id),
-        );
-        for (index, artifact) in context.enumerate() {
-            if let Decoded::Root(root) = decode_v2(artifact) {
+        let context = std::iter::once(*artifact).chain(all.iter().copied().filter(|other| {
+            other.artifact_id != artifact.artifact_id
+                && scope_visible(&artifact.scope, &other.scope)
+        }));
+        for (index, item) in context.enumerate() {
+            if let Decoded::Root(root) = decode_v2(item) {
                 layer.push(index, *root);
             }
         }
@@ -72,26 +63,54 @@ pub fn project(
         });
     }
     let combined: Vec<_> = all.iter().map(|artifact| (*artifact).clone()).collect();
-    let effective = crate::EffectiveCatalog::from_artifacts_with_registry(&combined, registry);
+    let mut scoped_catalogs: BTreeMap<ScopeKey, crate::EffectiveCatalog> = BTreeMap::new();
+    let mut scoped_property_types: BTreeMap<ScopeKey, Vec<PropertyTypeDef>> = BTreeMap::new();
     for artifact in &all {
-        rows.entity(artifact, &effective);
+        let sk = scope_key(&artifact.scope);
+        let property_types = scoped_property_types.entry(sk.clone()).or_insert_with(|| {
+            let mut layer = Layer::default();
+            for (index, item) in base
+                .iter()
+                .chain(artifacts)
+                .filter(|item| scope_visible(&artifact.scope, &item.scope))
+                .enumerate()
+            {
+                if let Decoded::Root(root) = decode_v2(item) {
+                    layer.push(index, *root);
+                }
+            }
+            layer.catalog.into_iter().map(|(_, def)| def).collect()
+        });
+        rows.property_types.clone_from(property_types);
+        let effective = scoped_catalogs.entry(sk).or_insert_with(|| {
+            crate::EffectiveCatalog::for_scope(&combined, registry, &artifact.scope)
+        });
+        rows.entity(artifact, effective);
         rows.depends_on(artifact, &all);
     }
-    let admission = Admission::new(artifacts, base, registry);
+    let mut admissions: BTreeMap<ScopeKey, Admission<'_>> = BTreeMap::new();
     for artifact in &all {
+        let admission = admissions
+            .entry(scope_key(&artifact.scope))
+            .or_insert_with(|| Admission::for_scope(artifacts, base, registry, &artifact.scope));
         if matches!(artifact.payload, ArtifactPayload::Action(_)) {
-            rows.action(artifact, &admission);
+            rows.action(artifact, admission);
         }
         if matches!(artifact.payload, ArtifactPayload::Mapping(_)) {
-            rows.mapping(artifact, &admission);
+            rows.mapping(artifact, admission);
         }
         if matches!(artifact.payload, ArtifactPayload::Law(_)) {
-            rows.law(artifact, &all, &admission);
+            rows.law(artifact, &all, admission);
         }
     }
     for (artifact, output) in fact_decisions(all.iter().copied()) {
         if let Some(schema) = FactSchema::of(&output) {
-            rows.fact_writes(artifact, &schema, &admission);
+            let admission = admissions
+                .entry(scope_key(&artifact.scope))
+                .or_insert_with(|| {
+                    Admission::for_scope(artifacts, base, registry, &artifact.scope)
+                });
+            rows.fact_writes(artifact, &schema, admission);
         }
     }
     Ok(rows.finish())

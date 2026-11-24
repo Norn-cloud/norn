@@ -38,6 +38,7 @@ pub mod compute;
 pub mod dataset_laws;
 pub mod dataset_manifest;
 pub mod decision_ledger;
+mod definition_scope;
 pub mod due_retry;
 pub mod engine;
 pub mod engine_release;

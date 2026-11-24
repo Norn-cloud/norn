@@ -93,9 +93,9 @@ pub fn check_mapping_artifacts(
     let mut models: BTreeMap<ScopeKey, Result<MappingModel, Vec<Diagnostic>>> = BTreeMap::new();
     let mut path_refused = false;
     for (artifact, mapping) in &mappings {
-        let model = models.entry(scope_key(&artifact.scope)).or_insert_with(|| {
-            MappingModel::from_artifacts(&entity_artifacts(artifacts, base, &artifact.scope))
-        });
+        let model = models
+            .entry(scope_key(&artifact.scope))
+            .or_insert_with(|| scoped_model(artifacts, base, &artifact.scope));
         if let Ok(model) = &*model {
             out.extend(missing_path_bindings(
                 artifact, mapping, model, artifacts, base,
@@ -688,8 +688,7 @@ pub fn compile_mapping_artifact(
             Span::pointer(""),
         )]));
     };
-    let model = MappingModel::from_artifacts(&entity_artifacts(artifacts, base, &mapping.scope))
-        .map_err(locate)?;
+    let model = scoped_model(artifacts, base, &mapping.scope).map_err(locate)?;
     let source =
         resolve_source(&document, artifacts, base).map_err(|finding| locate(vec![*finding]))?;
     compile_checked(mapping, &document, &source, &model, artifacts, base).map_err(locate)
@@ -990,4 +989,12 @@ fn dependency_findings(artifact: &ArtifactEnvelope, mapping: &MappingIr) -> Vec<
         }
     }
     out
+}
+
+fn scoped_model(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    scope: &norn_ir::ScopeRef,
+) -> Result<MappingModel, Vec<Diagnostic>> {
+    MappingModel::from_artifacts_with_scope(&entity_artifacts(artifacts, base, scope), Some(scope))
 }

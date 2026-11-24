@@ -319,9 +319,14 @@ fn check_artifact_set_with_receipt_inner(
     }
     let mut type_env = None;
     if !diagnostics.iter().any(Diagnostic::is_error) {
-        match norn_checker::derive_type_env(artifacts, context.base, limits) {
-            Ok(env) => type_env = Some(env.reference()?),
-            Err(errors) => diagnostics.extend(errors.iter().map(|error| Diagnostic {
+        match norn_checker::entity_scopes::derive_receipt_type_env_ref_at_version(
+            artifacts,
+            context.base,
+            limits,
+            norn_expr::env::TypeEnvVersion::V3,
+        ) {
+            Ok(env_ref) => type_env = Some(env_ref),
+            Err(Ok(errors)) => diagnostics.extend(errors.iter().map(|error| Diagnostic {
                 witness: None,
                 code: DiagnosticCode::new(norn_checker::receipt::codes::ENVIRONMENT_UNDERIVABLE),
                 severity: DiagnosticSeverity::Error,
@@ -332,6 +337,7 @@ fn check_artifact_set_with_receipt_inner(
                 artifact_id: None,
                 remediation: Some(DiagnosticRemediation::FixDefinition),
             })),
+            Err(Err(error)) => return Err(error.into()),
         }
     }
     let has_errors = diagnostics.iter().any(Diagnostic::is_error);

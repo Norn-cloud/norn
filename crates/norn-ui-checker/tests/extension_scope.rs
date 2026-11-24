@@ -237,3 +237,137 @@ fn widget_cannot_bind_out_of_scope_extension_property() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn narrower_widget_cannot_compose_broader_widget_reading_narrower_extension() -> TestResult {
+    let ext_scope = json!({
+        "orgId": "org_demo",
+        "environmentId": "dev",
+        "tenantId": "tenant_alpha"
+    });
+    let broader_scope = json!({
+        "orgId": "org_demo",
+        "environmentId": "dev"
+    });
+    let ext = order_extension(&ext_scope)?;
+    let retained_broader_widget = widget_displaying_extension(broader_scope)?;
+    let composed_narrower_widget = decode(json!({
+        "irVersion": "0.1",
+        "artifactId": "commerce.widget.alpha_host",
+        "kind": "widget",
+        "namespace": "commerce",
+        "name": "Alpha host",
+        "version": "1.0.0",
+        "lifecycle": "draft",
+        "scope": ext_scope,
+        "dependencies": [{
+            "artifactId": "commerce.widget.orders",
+            "kind": "widget",
+            "version": "1.0.0",
+            "required": true
+        }],
+        "provenance": { "source": "authoring_sdk" },
+        "payload": {
+            "widgetVersion": "0.1",
+            "widgetId": "commerce.widget.alpha_host",
+            "title": "Alpha host",
+            "ux": {
+                "uxVersion": "1.0",
+                "app": {
+                    "appId": "alpha-host",
+                    "title": { "en": "Alpha host" },
+                    "homePageId": "host-home",
+                    "shell": { "navigation": [] }
+                },
+                "pages": [{
+                    "pageId": "host-home",
+                    "title": { "en": "Host" },
+                    "route": "/host",
+                    "contextParams": [],
+                    "root": {
+                        "nodeId": "host-compose",
+                        "semanticId": "host-compose",
+                        "component": {
+                            "kind": "compose",
+                            "widget": { "id": "commerce.widget.orders", "version": "1.0.0" },
+                            "pageId": "orders"
+                        },
+                        "children": []
+                    }
+                }],
+                "dataBindings": [],
+                "actionBindings": [],
+                "fields": [],
+                "forms": [],
+                "actionPlacements": [],
+                "navigation": [],
+                "overrides": []
+            }
+        }
+    }))?;
+
+    let mut base = base_artifacts()?;
+    base.push(ext);
+    base.push(retained_broader_widget);
+    let findings = check_artifact_set(
+        &[composed_narrower_widget],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &base,
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.is_error() && d.artifact_id.as_deref() == Some("commerce.widget.alpha_host")),
+        "narrower widget must not admit a retained broader widget that references a narrower extension: {findings:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn ui_receipt_binds_scope_keyed_type_env_for_narrower_extension() -> TestResult {
+    let alpha_scope = json!({
+        "orgId": "org_demo",
+        "environmentId": "dev",
+        "workspaceId": "ws_alpha"
+    });
+    let beta_scope = json!({
+        "orgId": "org_demo",
+        "environmentId": "dev",
+        "workspaceId": "ws_beta"
+    });
+    let ext_a = order_extension(&alpha_scope)?;
+    let ext_b = order_extension(&beta_scope)?;
+    let base = base_artifacts()?;
+    let to_rv =
+        |a: &ArtifactEnvelope| -> Result<norn_ir::RuntimeValue, Box<dyn std::error::Error>> {
+            Ok(norn_ir::RuntimeValue::from_json(serde_json::to_value(a)?)?)
+        };
+    let base_rv: Vec<_> = base.iter().map(to_rv).collect::<Result<_, _>>()?;
+    let reg = BTreeSet::new();
+    let ctx = EntityArtifactSetContext {
+        registry: &reg,
+        base: &base,
+        tenant: None,
+    };
+    let limits = norn_ir::ResourceLimitProfile::norn_limits_v1();
+    let checked_a = norn_ui_checker::check_artifact_set_with_receipt(
+        &norn_checker::ReceiptSources::new(&[to_rv(&ext_a)?], &base_rv)?,
+        &ctx,
+        &limits,
+    )?;
+    let checked_b = norn_ui_checker::check_artifact_set_with_receipt(
+        &norn_checker::ReceiptSources::new(&[to_rv(&ext_b)?], &base_rv)?,
+        &ctx,
+        &limits,
+    )?;
+    assert!(checked_a.receipt.admitted, "{:#?}", checked_a.diagnostics);
+    assert!(checked_b.receipt.admitted, "{:#?}", checked_b.diagnostics);
+    assert_ne!(
+        checked_a.receipt.type_env, checked_b.receipt.type_env,
+        "UI receipt typeEnv digest must reflect extension scope"
+    );
+    Ok(())
+}

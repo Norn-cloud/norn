@@ -26,13 +26,15 @@ use norn_expr::Type;
 use norn_expr::schema::Schema;
 use norn_ir::{
     ActionRoot, ArtifactDependency, ArtifactEnvelope, ArtifactKind, ArtifactPayload, JsonValue,
-    WidgetActionPlacement, WidgetDataBinding, WidgetDataQuery, WidgetForm, WidgetPage,
-    WidgetSelectionMode, WidgetUx, WidgetUxActionBinding,
+    PropertyTypeName, WidgetActionPlacement, WidgetDataBinding, WidgetDataQuery, WidgetForm,
+    WidgetPage, WidgetSelectionMode, WidgetUx, WidgetUxActionBinding,
 };
 
 use norn_checker::entity_instance::{EffectiveCatalog, EffectiveProperty};
 use norn_checker::entity_lowering::entity_object_type;
-use norn_checker::entity_scopes::{ScopeKey, effective_catalog_for_scope, scope_key};
+use norn_checker::entity_scopes::{
+    ScopeKey, effective_catalog_for_scope, scope_key, scope_visible,
+};
 use norn_checker::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
     EntityArtifactSetContext, Span,
@@ -90,7 +92,14 @@ pub fn check_widget_ux_set(
         let catalog = catalogs.entry(key.clone()).or_insert_with(|| {
             effective_catalog_for_scope(&combined, context.registry, &artifact.scope)
         });
-        let mut checker = UxChecker::new(artifact, &combined, catalog, &ux, &mut diagnostics);
+        let mut checker = UxChecker::new(
+            artifact,
+            &combined,
+            catalog,
+            context.registry,
+            &ux,
+            &mut diagnostics,
+        );
         checker.check();
         let nullable_inputs = checker.nullable_form_inputs();
         let composed = |widget: &norn_ir::WidgetArtifactRef| {
@@ -140,6 +149,7 @@ struct UxChecker<'a, 'u, 'd> {
     owner: &'a ArtifactEnvelope,
     all: &'a [ArtifactEnvelope],
     catalog: &'a EffectiveCatalog,
+    registry: &'a BTreeSet<PropertyTypeName>,
     ux: &'u WidgetUx,
     diagnostics: RefCell<&'d mut Vec<Diagnostic>>,
     pages: BTreeMap<&'u str, &'u WidgetPage>,
@@ -226,6 +236,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
         owner: &'a ArtifactEnvelope,
         all: &'a [ArtifactEnvelope],
         catalog: &'a EffectiveCatalog,
+        registry: &'a BTreeSet<PropertyTypeName>,
         ux: &'u WidgetUx,
         diagnostics: &'d mut Vec<Diagnostic>,
     ) -> Self {
@@ -233,6 +244,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             owner,
             all,
             catalog,
+            registry,
             ux,
             diagnostics: RefCell::new(diagnostics),
             pages: ux
@@ -425,6 +437,15 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             );
             return None;
         };
+        if !scope_visible(&self.owner.scope, &artifact.scope) {
+            self.error(
+                path,
+                format!(
+                    "referenced artifact {id:?}@{version:?} is not visible from this widget's scope"
+                ),
+            );
+            return None;
+        }
         Some(artifact)
     }
 
