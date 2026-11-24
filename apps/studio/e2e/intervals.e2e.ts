@@ -146,10 +146,13 @@ test("picker: the search field and its list are named; arrows and Enter pick by 
   await expect(list.getByRole("option").first()).toBeVisible()
   // The list opens under the field, at least as wide as it, inside the sheet: nothing scrolls the sheet sideways.
   // The sheet is the outer dialog; the open list is a dialog inside it.
-  const [popup, field, panel] = await Promise.all([page.getByRole("dialog", { name: "Choose a equipment" }).boundingBox(), equipment.boundingBox(), form.first().boundingBox()])
-  expect(popup!.width).toBeGreaterThanOrEqual(field!.width - 1)
-  expect(popup!.x).toBeGreaterThanOrEqual(panel!.x - 1)
-  expect(popup!.x + popup!.width).toBeLessThanOrEqual(panel!.x + panel!.width + 1)
+  // It opens from 95% scale, so it is measured once settled.
+  const [field, panel] = await Promise.all([equipment.boundingBox(), form.first().boundingBox()])
+  const popup = page.getByRole("dialog", { name: "Choose a equipment" })
+  await expect.poll(async () => (await popup.boundingBox())!.width).toBeGreaterThanOrEqual(field!.width - 1)
+  const settled = (await popup.boundingBox())!
+  expect(settled.x).toBeGreaterThanOrEqual(panel!.x - 1)
+  expect(settled.x + settled.width).toBeLessThanOrEqual(panel!.x + panel!.width + 1)
   await search.fill("fork")
   await expect(list.getByRole("option")).toHaveText([/Forklift\s*equipment\/2/, /Use the id/])
   await shoot(page, "picker-named")
