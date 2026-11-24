@@ -1414,3 +1414,74 @@ fn a_parked_call_by_id_is_its_requesters_alone() {
         assert!(!by_id.response.body.contains(&parked), "{role}");
     }
 }
+
+/// #1486 (Two-World Non-Interference): incident identifiers returned to
+/// callers are 128-bit random tokens (`inc-<32 lowercase hex>`) with no
+/// isolate-wide sequence counter or clock. Triggering internal errors for
+/// Tenant B between two Tenant A errors changes nothing distinguishable in
+/// Tenant A's incident format or numbering, while the operator log still
+/// records each incident with its monotonic `(seq N)`.
+#[test]
+fn incident_ids_do_not_leak_another_tenants_errors() {
+    let parse_opaque = |response: &Response| -> String {
+        assert_eq!(response.status, 500, "{}", response.body);
+        let doc = json_of(response);
+        let id = doc["incidentId"]
+            .as_str()
+            .expect("internal refusal carries incidentId")
+            .to_owned();
+        let hex = id
+            .strip_prefix("inc-")
+            .unwrap_or_else(|| panic!("expected inc- prefix: {id}"));
+        assert_eq!(
+            hex.len(),
+            32,
+            "incident id must be 128-bit lowercase hex without a sequence suffix: {id}"
+        );
+        assert!(
+            hex.bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+            "incident id must be lowercase hex only: {id}"
+        );
+        assert!(
+            !hex.contains('-'),
+            "incident id must not expose a counter separator: {id}"
+        );
+        id
+    };
+
+    let internal = |cause: &str| norn_api::refusal::Refusal::host(cause);
+
+    // World 1: 17 Tenant B internal errors occur between Tenant A's two errors.
+    let a1 = parse_opaque(&norn_cell_do::incident::respond(internal("tenant-a-1")));
+    for index in 0..17 {
+        let b = parse_opaque(&norn_cell_do::incident::respond(internal(&format!(
+            "tenant-b-{index}"
+        ))));
+        assert_ne!(b, a1);
+    }
+    let a2 = parse_opaque(&norn_cell_do::incident::respond(internal("tenant-a-2")));
+
+    // World 2: 0 Tenant B internal errors occur between Tenant A's two errors.
+    let a3 = parse_opaque(&norn_cell_do::incident::respond(internal("tenant-a-3")));
+    let a4 = parse_opaque(&norn_cell_do::incident::respond(internal("tenant-a-4")));
+
+    let all: std::collections::BTreeSet<&str> =
+        [a1.as_str(), a2.as_str(), a3.as_str(), a4.as_str()]
+            .into_iter()
+            .collect();
+    assert_eq!(all.len(), 4, "incident ids must be distinct: {all:?}");
+
+    // Operator logs retain `(seq N)` ordering strictly server-side.
+    let logged = norn_cell_do::incident::recent();
+    for id in [&a1, &a2, &a3, &a4] {
+        let line = logged
+            .iter()
+            .find(|line| line.contains(id.as_str()))
+            .unwrap_or_else(|| panic!("missing log line for {id}"));
+        assert!(
+            line.contains(" (seq "),
+            "server log must retain per-isolate sequence for operators: {line}"
+        );
+    }
+}

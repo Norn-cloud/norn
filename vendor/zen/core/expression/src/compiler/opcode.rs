@@ -24,6 +24,10 @@ pub enum Opcode {
         scale: u32,
     },
     ExactSiteEnd,
+    /// VAL-ROUND: suspend any enclosing rounding site for non-destination
+    /// subexpressions (ternary conditions and non-`round` call arguments).
+    ExactSiteSuspend,
+    ExactSiteResume,
     PushNull,
     PushBool(bool),
     PushString(Arc<str>),
