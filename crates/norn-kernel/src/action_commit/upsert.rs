@@ -1,7 +1,9 @@
+use std::collections::BTreeSet;
+
 use norn_ir::{ActionRoot, FactChange, ObjectTypeName, ResourceLimitProfile, UpsertWriteMode};
 
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
-use crate::decision_commit::{FactEvent, TypeCatalog};
+use crate::decision_commit::{CreatorStamp, FactEvent, TypeCatalog};
 use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::type_series;
@@ -9,6 +11,7 @@ use crate::naming_series::type_series;
 use super::input::check_action_record_size;
 use super::series::commit_upsert_series;
 use super::slice::{ActionSliceContext, check_action_preconditions, load_action_slice};
+use super::transition::{WriterTarget, writer_output};
 use super::types::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionCall, ActionCallRecord, ActionInputPreparation,
     ActionOutcome, ActionRefusal, EnvelopePolicy, NamingSeriesInspectionRequest, Pending,
@@ -34,6 +37,36 @@ pub(super) fn upsert_stored_input(
         }
     }
     values
+}
+
+/// ACTOR-STAMP-1: the creator stamp of a governed create: each protected
+/// property of `target` whose value is the action's server stamp of the
+/// verified principal ([`ActionRoot::actor_stamped_fields`]). Any other
+/// protected value stays refused when the create is prepared (FA-PROTECT-1).
+pub(super) fn creator_stamp(
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    target: &FactKey,
+    values: &JsonObject,
+) -> Option<CreatorStamp> {
+    let effective = catalog.effective_type(&target.object_type)?;
+    let stamped = call.action.actor_stamped_fields();
+    let properties: BTreeSet<String> = values
+        .iter()
+        .filter(|(property, value)| {
+            stamped.contains(property.as_str())
+                && value.as_str() == Some(call.actor.as_str())
+                && effective
+                    .property(property.as_str())
+                    .is_some_and(norn_checker::EffectiveProperty::protected)
+        })
+        .map(|(property, _)| property.clone())
+        .collect();
+    (!properties.is_empty()).then(|| CreatorStamp {
+        key: target.clone(),
+        properties,
+        principal: call.actor.clone(),
+    })
 }
 
 #[allow(
@@ -65,10 +98,18 @@ where
         .clone()
         .unwrap_or_else(|| ObjectTypeName(object_kind.to_owned()));
     check_kind(catalog, &object_type, object_kind)?;
+    // CREATE-WRITER-1: the writer's closure is resolved before any host read.
+    let rule = crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
     let naming_series = type_series(catalog, &object_type);
     if matches!(write_mode, UpsertWriteMode::CreateOnly)
         && let Some(series) = naming_series.as_ref()
     {
+        if rule.is_some() {
+            // A generated key's allocation retries are not qualified with a writer.
+            return Err(ActionRefusal::UnsupportedEffect {
+                action_id: action.action_id.clone(),
+            });
+        }
         if series.key_properties != [norn_ir::PropertyId(object_id_field.to_owned())]
             || preparation.effective_input.contains_key(object_id_field)
         {
@@ -148,7 +189,7 @@ where
         action_artifact_id: Some(call.action_artifact_id.to_owned()),
         action_version: Some(call.action_version.to_owned()),
         effect_kind: Some("upsert_input_object".to_owned()),
-        rule_binding: None,
+        rule_binding: rule.map(|rule| rule.binding(call)).transpose()?,
         object: target.clone(),
         input: call.input.clone(),
         effective_input: preparation.recorded_effective_input(),
@@ -181,7 +222,7 @@ where
         return Ok(outcome);
     }
 
-    let slice = load_action_slice(
+    let mut slice = load_action_slice(
         &ActionSliceContext {
             host,
             catalog,
@@ -214,7 +255,13 @@ where
     if let Some(quantity) = &action.quantity_effect {
         business_input.remove(&quantity.balance_versions_field);
     }
-    let changes = match write_mode {
+    // ACTOR-STAMP-1: only a create-only create stamps protected creator properties.
+    let stamp = if matches!(write_mode, UpsertWriteMode::CreateOnly) && !state.exists() {
+        creator_stamp(catalog, call, &target, &business_input)
+    } else {
+        None
+    };
+    let mut changes = match write_mode {
         UpsertWriteMode::Upsert | UpsertWriteMode::CreateOnly if !state.exists() => {
             vec![FactChange::Create {
                 object_type: object_type.clone(),
@@ -271,6 +318,27 @@ where
                 .collect()
         }
     };
+    // CREATE-WRITER-1 (#1101): the writer computes the created object's
+    // remaining fields and its declared side effects from the input and the
+    // captured slice; they commit with the create as one receipt.
+    let decision_links = match rule {
+        Some(rule) => {
+            let (facts, links) = writer_output(
+                host,
+                call,
+                rule,
+                &mut preparation,
+                authorizer,
+                &mut slice,
+                &target,
+                WriterTarget::Created,
+                limits,
+            )?;
+            changes.extend(facts);
+            links
+        }
+        None => Vec::new(),
+    };
     commit_effect(
         host,
         catalog,
@@ -293,8 +361,9 @@ where
             recorded,
             record,
             series_candidate: None,
-            decision_links: Vec::new(),
+            decision_links,
             receipt: None,
+            creator_stamp: stamp,
         },
         EnvelopePolicy { limits, meter },
     )

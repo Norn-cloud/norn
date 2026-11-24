@@ -133,6 +133,10 @@ pub mod codes {
     /// the action can bypass allocation for an existing series key.
     pub const NAMING_SERIES_TARGET_MISMATCH: &str =
         "artifact_set.action.naming_series_target_mismatch";
+    /// ACTOR-INDEPENDENT-1: an independent-actor check names a property that
+    /// is not a protected text property of an existing transition target, so
+    /// a caller-controlled value could satisfy it.
+    pub const INDEPENDENT_ACTOR: &str = "artifact_set.action.independent_actor";
     /// D66: a string-enum input writes no enum property.
     pub const INPUT_ENUM_UNBOUND: &str = "action.validation.input_enum_unbound";
     /// D66: a string-enum input admits a value its target property does not declare.
@@ -322,11 +326,19 @@ fn synchronous_rule_findings(
                     && candidate.kind() == ArtifactKind::Rule
             })
             .collect();
+        // CREATE-WRITER-1 (#1101): a writer composes with a transition of an
+        // existing target or with a create of a new one.
         let valid = !pin.artifact_id.trim().is_empty()
             && !pin.version.trim().is_empty()
             && matches!(
                 root.effect_program.as_ref(),
-                Some(ActionEffectProgram::FireTransition { .. })
+                Some(
+                    ActionEffectProgram::FireTransition { .. }
+                        | ActionEffectProgram::UpsertInputObject {
+                            write_mode: UpsertWriteMode::CreateOnly,
+                            ..
+                        }
+                )
             )
             && matched.len() == 1
             && artifact.dependencies.iter().any(|dependency| {
@@ -356,7 +368,7 @@ fn synchronous_rule_findings(
             }
         } else {
             findings.push(finding("action.validation.invalid_payload",
-                "synchronousRule requires a transition action, one exact decide artifact and a required dependency at that version, with scope covered by the action".to_owned(),
+                "synchronousRule requires a transition or create-only action, one exact decide artifact and a required dependency at that version, with scope covered by the action".to_owned(),
                 artifact, "/payload/synchronousRule"));
         }
     }
@@ -417,6 +429,7 @@ fn check_action(
     findings.extend(synchronous_rule_findings(artifact, root, artifacts, base));
     findings.extend(quantity_effect_findings(artifact, root, model));
     findings.extend(create_link_findings(artifact, root, model));
+    findings.extend(actor_binding_findings(artifact, root, model));
     let writer = synchronous_writer_payload(root, artifacts, base);
     let mut targets: BTreeSet<(&str, WriteChange)> = BTreeSet::new();
     if let Some(writer) = &writer {
@@ -2817,6 +2830,122 @@ fn create_link_findings(
     findings
 }
 
+/// One finding at an input schema property, escaped as JSON Pointer segments.
+fn input_property_finding(
+    code: &str,
+    message: String,
+    artifact: &ArtifactEnvelope,
+    field: &str,
+) -> Diagnostic {
+    let mut diagnostic = finding(code, message, artifact, "");
+    diagnostic.span = Some(Span::from_segments([
+        "payload",
+        "inputSchema",
+        "properties",
+        field,
+    ]));
+    diagnostic
+}
+
+/// Ring 0 for trusted actor provenance (#1091, #1101).
+///
+/// ACTOR-STAMP-1: a protected property of an upsert target is never written
+/// from caller input. The only admitted write is a create-only stamp: an
+/// input field whose sole derivation is the verified principal
+/// ([`norn_ir::ACTOR_SUBJECT_STAMP`], `inputRequired: false`), so a caller
+/// never supplies it and no update overwrites the recorded principal.
+///
+/// ACTOR-INDEPENDENT-1: each `independentOf` property is a protected text
+/// property of the existing target a `fire_transition` reads, never a field
+/// a caller, import or update could set.
+fn actor_binding_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    model: &Model<'_>,
+) -> Vec<Diagnostic> {
+    let mut findings = Vec::new();
+    let program = root.effect_program.as_ref();
+    let kind = program.map(|program| program.target().object_kind);
+    let view = kind.and_then(|kind| model.effective_object_type_named(kind));
+    let protected = |field: &str| {
+        view.and_then(|view| view.property(field))
+            .is_some_and(EffectiveProperty::protected)
+    };
+    if let (Some(ActionEffectProgram::UpsertInputObject { write_mode, .. }), Some(kind)) =
+        (program, kind)
+        && let Some(JsonValue::Object(properties)) = root.input_schema.get("properties")
+    {
+        let stamped = root.actor_stamped_fields();
+        for field in properties.keys().filter(|field| protected(field.as_str())) {
+            let message = match (stamped.contains(field), write_mode) {
+                (true, UpsertWriteMode::CreateOnly) => continue,
+                (true, UpsertWriteMode::Upsert | UpsertWriteMode::DraftOnly { .. }) => format!(
+                    "the stamp of protected property {field:?} of {kind:?} requires writeMode create_only; an update would overwrite the recorded principal"
+                ),
+                (false, _) => format!(
+                    "the upsert writes input property {field:?}, a protected actor property of {kind:?}, from caller input; stamp it from the verified principal instead (derive {:?} with inputRequired false, `fromCaller`)",
+                    norn_ir::ACTOR_SUBJECT_STAMP
+                ),
+            };
+            findings.push(input_property_finding(
+                codes::TARGET_NOT_WRITABLE,
+                message,
+                artifact,
+                field,
+            ));
+        }
+    }
+    let transition = matches!(program, Some(ActionEffectProgram::FireTransition { .. }));
+    let mut seen = BTreeSet::new();
+    for (index, property) in root.independent_of.iter().enumerate() {
+        let resolved = view.and_then(|view| view.property(property.as_str()));
+        if let Some(reason) =
+            independent_actor_reason(transition, seen.insert(property.as_str()), resolved)
+        {
+            findings.push(finding(
+                codes::INDEPENDENT_ACTOR,
+                format!("independentOf {:?} {reason}", property.as_str()),
+                artifact,
+                &format!("/payload/independentOf/{index}"),
+            ));
+        }
+    }
+    findings
+}
+
+/// ACTOR-INDEPENDENT-1: why one `independentOf` property cannot prove that
+/// the verified principal differs from the recorded actor, if it cannot.
+fn independent_actor_reason(
+    transition: bool,
+    first: bool,
+    resolved: Option<&EffectiveProperty>,
+) -> Option<&'static str> {
+    if !transition {
+        return Some(
+            "requires a fire_transition effect: only an existing target records a prior actor",
+        );
+    }
+    if !first {
+        return Some("names the property twice");
+    }
+    let Some(property) = resolved else {
+        return Some("names no stored property of the effect target");
+    };
+    if !property.protected() {
+        return Some(
+            "names a property a caller, import or update can write; only a protected actor property (a server-stamped principal) proves independence",
+        );
+    }
+    if matches!(
+        property.kind,
+        EffectiveKind::Base(norn_ir::PropertyType::Text { .. })
+    ) {
+        None
+    } else {
+        Some("names a protected property that is not text, so it cannot hold a principal id")
+    }
+}
+
 #[cfg(test)]
 mod synchronous_rule_tests {
     #![allow(
@@ -2997,5 +3126,168 @@ mod writer_footprint_tests {
             );
         }
         assert!(synchronous_writer_targets(&schema(&[], &["create"])).is_none());
+    }
+}
+
+#[cfg(test)]
+mod actor_binding_tests {
+    use super::*;
+
+    fn artifacts() -> Vec<ArtifactEnvelope> {
+        serde_json::from_str(include_str!(
+            "../../norn-cell/tests/fixtures/governed-create.json"
+        ))
+        .expect("generated fixture")
+    }
+
+    fn root(artifacts: &[ArtifactEnvelope], id: &str) -> (ArtifactEnvelope, ActionRoot) {
+        let artifact = artifacts
+            .iter()
+            .find(|artifact| artifact.artifact_id == id)
+            .expect("fixture action")
+            .clone();
+        let root = decode_action(&artifact).expect("action root");
+        (artifact, root)
+    }
+
+    fn codes_at(findings: &[Diagnostic]) -> Vec<(String, String)> {
+        findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.code.as_str().to_owned(),
+                    finding
+                        .span
+                        .as_ref()
+                        .map(|span| span.pointer.clone())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    /// CREATE-WRITER-1 / ACTOR-STAMP-1 / ACTOR-INDEPENDENT-1: the typed pack
+    /// (writer-computed create, stamped creator, independent approver) admits.
+    #[test]
+    fn governed_create_with_stamped_creator_and_independent_approver_admits() {
+        let artifacts = artifacts();
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            base: &[],
+            registry: &registry,
+            tenant: None,
+        };
+        let findings = crate::check_artifact_set(&artifacts, &context);
+        assert_eq!(findings, [], "{findings:?}");
+    }
+
+    /// ACTOR-STAMP-1 (Ring 0): a protected creator written from caller input,
+    /// re-derived after its stamp, or stamped by an update refuses.
+    #[test]
+    fn caller_writable_protected_creator_refuses() {
+        let artifacts = artifacts();
+        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let (artifact, admitted) = root(&artifacts, "ledger.invoice.submit.action");
+        assert_eq!(actor_binding_findings(&artifact, &admitted, &model), []);
+        let creator = (
+            codes::TARGET_NOT_WRITABLE.to_owned(),
+            "/payload/inputSchema/properties/submitted_by".to_owned(),
+        );
+
+        let mut caller_written = admitted.clone();
+        caller_written.derive.clear();
+        assert_eq!(
+            codes_at(&actor_binding_findings(&artifact, &caller_written, &model)),
+            [creator.clone()]
+        );
+
+        let mut laundered = admitted.clone();
+        laundered.derive.push(norn_ir::ActionInputDerivation {
+            field: "submitted_by".into(),
+            expression: ZenExpression("'person:someone-else'".into()),
+            input_required: false,
+        });
+        assert_eq!(
+            codes_at(&actor_binding_findings(&artifact, &laundered, &model)),
+            [creator.clone()]
+        );
+
+        for mode in [
+            UpsertWriteMode::Upsert,
+            UpsertWriteMode::DraftOnly {
+                lifecycle: PropertyId("status".into()),
+                state: "submitted".into(),
+            },
+        ] {
+            let mut overwrite = admitted.clone();
+            let Some(ActionEffectProgram::UpsertInputObject { write_mode, .. }) =
+                overwrite.effect_program.as_mut()
+            else {
+                panic!("the submit action upserts");
+            };
+            *write_mode = mode;
+            assert_eq!(
+                codes_at(&actor_binding_findings(&artifact, &overwrite, &model)),
+                [creator.clone()]
+            );
+        }
+    }
+
+    /// ACTOR-INDEPENDENT-1 (Ring 0): independence is read only from a
+    /// protected text actor of an existing transition target.
+    #[test]
+    fn independent_actor_check_on_a_caller_controlled_field_refuses() {
+        let artifacts = artifacts();
+        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let (artifact, admitted) = root(&artifacts, "ledger.invoice.approve.action");
+        assert_eq!(actor_binding_findings(&artifact, &admitted, &model), []);
+        for (property, index) in [("tax_code", 0), ("unknown", 0), ("submitted_by", 1)] {
+            let mut root = admitted.clone();
+            if index == 0 {
+                root.independent_of = vec![PropertyId(property.into())];
+            } else {
+                root.independent_of.push(PropertyId(property.into()));
+            }
+            assert_eq!(
+                codes_at(&actor_binding_findings(&artifact, &root, &model)),
+                [(
+                    codes::INDEPENDENT_ACTOR.to_owned(),
+                    format!("/payload/independentOf/{index}")
+                )],
+                "{property}"
+            );
+        }
+        let (create, mut created) = root(&artifacts, "ledger.invoice.submit.action");
+        created.independent_of = vec![PropertyId("submitted_by".into())];
+        assert_eq!(
+            codes_at(&actor_binding_findings(&create, &created, &model)),
+            [(
+                codes::INDEPENDENT_ACTOR.to_owned(),
+                "/payload/independentOf/0".to_owned()
+            )]
+        );
+    }
+
+    /// CREATE-WRITER-1: a writer composes with a create-only create, never
+    /// with an upsert that could silently update an existing record.
+    #[test]
+    fn create_writer_requires_create_only() {
+        let artifacts = artifacts();
+        let (artifact, admitted) = root(&artifacts, "ledger.invoice.submit.action");
+        assert_eq!(
+            synchronous_rule_findings(&artifact, &admitted, &artifacts, &[]),
+            []
+        );
+        let mut upsert = admitted;
+        let Some(ActionEffectProgram::UpsertInputObject { write_mode, .. }) =
+            upsert.effect_program.as_mut()
+        else {
+            panic!("the submit action upserts");
+        };
+        *write_mode = UpsertWriteMode::Upsert;
+        assert_ne!(
+            synchronous_rule_findings(&artifact, &upsert, &artifacts, &[]),
+            []
+        );
     }
 }

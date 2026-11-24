@@ -2515,6 +2515,7 @@ fn prepare_decision_with_limits_and_source_owned_targets<X>(
         limits,
         AdmissionOrigin::Command,
         source_owned_targets,
+        None,
     )
 }
 
@@ -2533,6 +2534,7 @@ pub(crate) fn prepare_decision_with_links_validated<X>(
         limits,
         AdmissionOrigin::Command,
         &BTreeSet::new(),
+        None,
     )
 }
 
@@ -2555,6 +2557,7 @@ pub(crate) fn prepare_owned_rows<X>(
         limits,
         AdmissionOrigin::OwnedRows,
         &BTreeSet::new(),
+        None,
     )
 }
 
@@ -2582,6 +2585,7 @@ pub(crate) fn prepare_observed_properties<X>(
         &EnvelopeLimits::V1,
         AdmissionOrigin::Observation,
         &BTreeSet::new(),
+        None,
     )
 }
 
@@ -2592,6 +2596,57 @@ enum AdmissionOrigin {
     OwnedRows,
 }
 
+/// ACTOR-STAMP-1: the protected creator properties one governed create may
+/// write, each only with the verified principal that executes the call.
+///
+/// The kernel builds it from the action's server-stamp derivations; no
+/// caller, rule output, observation or update can construct one, so every
+/// other write of a protected property keeps refusing (FA-PROTECT-1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CreatorStamp {
+    /// The object the action creates.
+    pub(crate) key: FactKey,
+    /// The protected properties stamped with the principal.
+    pub(crate) properties: BTreeSet<String>,
+    /// The verified execution principal.
+    pub(crate) principal: String,
+}
+
+impl CreatorStamp {
+    /// Whether `value` of `property` on `key` is exactly this stamp.
+    fn permits(&self, key: &FactKey, property: &str, value: &JsonValue) -> bool {
+        self.key == *key
+            && self.properties.contains(property)
+            && value.as_str() == Some(self.principal.as_str())
+    }
+}
+
+/// ACTOR-STAMP-1: prepare an action's changes, admitting the one protected
+/// creator stamp of the object it creates (and nothing else protected).
+pub(crate) fn prepare_action_decision<X>(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    output: &DecisionOutput,
+    limits: &EnvelopeLimits,
+    stamp: Option<&CreatorStamp>,
+) -> Result<PreparedDecision, DecisionRefusal<X>> {
+    prepare_decision_with_limits_for(
+        catalog,
+        slice,
+        turn,
+        output,
+        limits,
+        AdmissionOrigin::Command,
+        &BTreeSet::new(),
+        stamp,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "origin, source ownership and the creator stamp are explicit admission inputs"
+)]
 fn prepare_decision_with_limits_for<X>(
     catalog: &TypeCatalog<'_>,
     slice: &FactSlice,
@@ -2600,6 +2655,7 @@ fn prepare_decision_with_limits_for<X>(
     limits: &EnvelopeLimits,
     origin: AdmissionOrigin,
     source_owned_targets: &BTreeSet<FactKey>,
+    stamp: Option<&CreatorStamp>,
 ) -> Result<PreparedDecision, DecisionRefusal<X>> {
     if !turn.world.is_writable() {
         return Err(DecisionRefusal::ReadOnlyWorld);
@@ -2627,6 +2683,7 @@ fn prepare_decision_with_limits_for<X>(
             change,
             origin,
             source_owned_targets,
+            stamp,
         )?);
     }
     // Preserve the granular events above, then append one aggregate event per
@@ -2947,6 +3004,7 @@ fn apply_change<X>(
     change: &FactChange,
     origin: AdmissionOrigin,
     source_owned_targets: &BTreeSet<FactKey>,
+    stamp: Option<&CreatorStamp>,
 ) -> Result<FactEvent, DecisionRefusal<X>> {
     let key = match change {
         // Only a write to an object the decision read is resolved: a create
@@ -3029,10 +3087,18 @@ fn apply_change<X>(
             .property(property)
             .is_some_and(norn_checker::EffectiveProperty::protected)
     };
+    let stamped = |property: &str, value: &JsonValue| {
+        origin == AdmissionOrigin::Command
+            && stamp.is_some_and(|stamp| stamp.permits(&key, property, value))
+    };
     let forbidden = match change {
+        // ACTOR-STAMP-1: a command create writes a protected property only
+        // as the kernel's stamp of the verified principal.
         FactChange::Create { values, .. } => {
             origin != AdmissionOrigin::OwnedRows
-                && values.keys().any(|property| protected(property.as_str()))
+                && values.iter().any(|(property, value)| {
+                    protected(property.as_str()) && !stamped(property.as_str(), value)
+                })
         }
         FactChange::Set { property, .. } => protected(property.as_str()),
         FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
@@ -3478,6 +3544,7 @@ mod field_authority_tests {
                     &change,
                     origin,
                     &BTreeSet::new(),
+                    None,
                 )
                 .unwrap_err();
                 assert_eq!(
@@ -3559,12 +3626,112 @@ mod field_authority_tests {
                 &change,
                 AdmissionOrigin::Command,
                 &BTreeSet::new(),
+                None,
             )
             .unwrap_err();
             assert_eq!(error.code(), "decision.invalid_output", "{change:?}");
             assert_eq!(working[&key].values, values);
             assert!(!working[&key].written);
         }
+    }
+
+    /// ACTOR-STAMP-1: a creator stamp admits exactly its own create, of its
+    /// own protected property, with its own principal, on the command path.
+    /// Every other protected write keeps refusing (FA-PROTECT-1).
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test fixtures require successful setup")]
+    fn creator_stamp_admits_only_its_principal_on_its_own_create() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Note", "properties": [{ "id": "owner",
+                "type": { "kind": "text" }, "protected": true }]
+        }))
+        .unwrap();
+        let catalog = TypeCatalog::new([&object]);
+        let key = FactKey::new("test.Note", "one");
+        let stamp = super::CreatorStamp {
+            key: key.clone(),
+            properties: BTreeSet::from(["owner".to_owned()]),
+            principal: "person:creator".to_owned(),
+        };
+        let create = |key: &FactKey, owner: &str| FactChange::Create {
+            object_type: key.object_type.clone(),
+            key: key.key.clone(),
+            values: JsonObject::from([("owner".to_owned(), JsonValue::String(owner.into()))]),
+        };
+        let apply = |change: &FactChange, origin, stamp| {
+            apply_change::<std::convert::Infallible>(
+                &catalog,
+                &FactSlice::new(),
+                &mut BTreeMap::new(),
+                change,
+                origin,
+                &BTreeSet::new(),
+                stamp,
+            )
+        };
+        assert!(
+            apply(
+                &create(&key, "person:creator"),
+                AdmissionOrigin::Command,
+                Some(&stamp)
+            )
+            .is_ok()
+        );
+        let other = FactKey::new("test.Note", "two");
+        for (change, origin, stamp) in [
+            (
+                create(&key, "person:creator"),
+                AdmissionOrigin::Command,
+                None,
+            ),
+            (
+                create(&key, "person:spoofed"),
+                AdmissionOrigin::Command,
+                Some(&stamp),
+            ),
+            (
+                create(&other, "person:creator"),
+                AdmissionOrigin::Command,
+                Some(&stamp),
+            ),
+            (
+                create(&key, "person:creator"),
+                AdmissionOrigin::Observation,
+                Some(&stamp),
+            ),
+        ] {
+            let error = apply(&change, origin, stamp).unwrap_err();
+            assert_eq!(error.code(), "decision.invalid_output", "{change:?}");
+        }
+        let mut working = BTreeMap::from([(
+            key.clone(),
+            Working {
+                expected: FactVersion(1),
+                values: Some(JsonObject::from([(
+                    "owner".to_owned(),
+                    JsonValue::String("person:creator".into()),
+                )])),
+                written: false,
+            },
+        )]);
+        let overwrite = FactChange::Set {
+            object_type: key.object_type.clone(),
+            key: key.key.clone(),
+            property: norn_ir::PropertyId("owner".into()),
+            value: JsonValue::String("person:creator".into()),
+        };
+        let error = apply_change::<std::convert::Infallible>(
+            &catalog,
+            &FactSlice::new(),
+            &mut working,
+            &overwrite,
+            AdmissionOrigin::Command,
+            &BTreeSet::new(),
+            Some(&stamp),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "decision.invalid_output");
+        assert!(!working[&key].written);
     }
 
     #[test]

@@ -494,10 +494,27 @@ and restore requirements are not implemented by the pure helpers alone.
 
 ## Bounded synchronous action profile
 
+CREATE-WRITER-1 (#1101): a governed create is an `upsert_input_object` effect
+with `writeMode: create_only` and a pinned `synchronousRule`. The existence
+precondition is must-not-exist: an existing id refuses with
+`action.write_mode_failed` (no silent upsert). The kernel creates the target
+from the action's business input, applying declared defaults and the
+lifecycle's initial state; the writer then computes the record's remaining
+fields with `set`/`patch` changes on the created target and may create or
+modify other declared objects. The writer never creates, transitions or deletes
+the primary target, and every other change follows the closed writer contract
+below. The created target is authorized as its complete proposed state; laws
+run on the whole proposed state; the create, the writer's changes and the call
+receipt commit as one transaction. A generated (naming-series) key does not
+compose with a writer and refuses. Named scenarios (`governed_create.rs`):
+`submitter_creates_and_only_an_independent_approver_decides` and
+`writer_create_refuses_an_existing_target_and_a_violated_law_atomically`.
+
 TXN-RULE-1 / TXN-CLOSED-1: an action may name one exact `synchronousRule`
-artifactId/version and must declare the same required Rule dependency. Initial
-admission accepts this contract only on transition actions and requires one
-matching `decide` artifact whose required scope is covered by the action.
+artifactId/version and must declare the same required Rule dependency.
+Admission accepts this contract on transition actions and on create-only upsert
+actions (CREATE-WRITER-1), and requires one matching `decide` artifact whose
+required scope is covered by the action.
 Missing, ambiguous, wrong-version, wrong-contract or uncovered-scope bindings
 refuse. Unknown pin members and null pins refuse strict decoding.
 

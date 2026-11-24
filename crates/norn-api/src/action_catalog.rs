@@ -537,4 +537,37 @@ mod tests {
         proposed.slice.clear();
         assert_eq!(existing_targets(&proposed), []);
     }
+
+    /// ACTOR-STAMP-1 / ACTION-ACTOR-1 (#1091): a server-stamped creator is
+    /// never a caller field. The published form omits it from the properties
+    /// and the required list, in both neutral fixture domains.
+    #[test]
+    fn stamped_creator_is_stripped_from_the_caller_schema() {
+        let artifacts: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../norn-cell/tests/fixtures/governed-create.json"
+        ))
+        .unwrap();
+        for (id, field) in [
+            ("ledger.invoice.submit", "submitted_by"),
+            ("supply.transfer.request", "requested_by"),
+        ] {
+            let payload = artifacts
+                .iter()
+                .find(|artifact| artifact["payload"]["actionId"] == id)
+                .unwrap()["payload"]
+                .clone();
+            assert!(payload["inputSchema"]["properties"].get(field).is_some());
+            let action: ActionRoot = serde_json::from_value(payload).unwrap();
+            let schema = caller_input_schema(&action).unwrap();
+            assert!(schema["properties"].get(field).is_none(), "{id}");
+            assert!(
+                !schema["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|required| required.as_str() == Some(field)),
+                "{id}"
+            );
+        }
+    }
 }

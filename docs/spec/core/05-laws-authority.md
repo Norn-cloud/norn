@@ -25,13 +25,14 @@ Admission validates structured slots and grounded normative precedence, then res
 
 Specialisation/containment adds conjunctions. Refuse inherited-law replacement, precondition strengthening, input-domain narrowing or removal through changed containment. A solver result cannot authorize weakening. Permissions do not require an event, defeat physical laws or grant runtime access. Default deny and mandatory scope are enforced by the existing server/kernel authority; no UI-specific permission engine.
 
-**AUTH-SYNC-WRITER-1:** the Cedar schema for a synchronous transition action
-includes its primary target and the declared writer types, including effective
-subtypes. Catalog invocation entry points remain primary targets. Schema
-projection grants no permission: the actual policy, scope and capability grant
-still authorize every current/proposed resource, and the kernel still checks
-the closed writer footprint. Unbound or non-transition actions retain their
-existing target projection. The finite four-type writer domain is checked over
+**AUTH-SYNC-WRITER-1:** the Cedar schema for a synchronous transition or
+create-only (CREATE-WRITER-1) action includes its primary target and the
+declared writer types, including effective subtypes. Catalog invocation entry
+points remain primary targets. Schema projection grants no permission: the
+actual policy, scope and capability grant still authorize every
+current/proposed resource, and the kernel still checks the closed writer
+footprint. Unbound actions and other effects retain their existing target
+projection. The finite four-type writer domain is checked over
 all subsets with and without a synchronous binding; real PDP cases retain
 wrong-scope, wrong-role, absent-policy and absent-grant refusals.
 
@@ -42,6 +43,10 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 **LAW-INTERFACE-1:** a retained law whose subject, entity root and sole scoped object type name one object type or interface T governs T and every type that extends or implements T, directly or transitively, as one instance per governed type; a diamond adds no second instance. An `Invariant` response binds only when T's effective contract and the governed type's effective contract each hold exactly one invariant with that id and both name the same owner. Findings keep the law's own pin and the invariant's original owner. Every other inherited, mixed or effective-instance scope still refuses with `core.laws.unsupported_semantics`.
 
 **ACTION-ACTOR-1:** Evidence/approval actions derive principal identity only from authenticated `actor.subjectId` and retain it in kernel call receipts, so independent-person checks compare retained receipt principals rather than caller-supplied actors, approval flags or session counts.
+
+**ACTOR-STAMP-1 (#1091, #1101):** a record's historical creator is a `protected` property (FA-PROTECT-1) stamped from the verified execution principal. The only admitted write is a create-only create whose input field of the same name has exactly one derivation, `actor.subjectId` with `inputRequired: false` (authored as `fromCaller`). So the caller never supplies it: a public catalog omits it and a supplied value refuses with `action.invalid_input`. Ring 0 (`norn-checker`) refuses, with `artifact_set.action.target_not_writable`, an upsert that writes a protected property from any other input field (including a stamp that a later derivation rewrites) or stamps it on a mode that can update. At commit the kernel builds the stamp itself (target key, protected properties, principal) and admits a protected value only when it equals that principal on that create; every other protected write keeps refusing: a create or update from caller input, a writer's `set`, an observation/import, an owned-row or bulk update, and a delete. The stamped creator is immutable history. Named scenarios: `caller_supplied_creator_is_refused_and_never_offered`, `protected_creator_cannot_be_spoofed_or_overwritten_at_commit`, `creator_stamp_admits_only_its_principal_on_its_own_create`, `caller_writable_protected_creator_refuses` and `stamped_creator_is_stripped_from_the_caller_schema`.
+
+**ACTOR-INDEPENDENT-1:** an action's `independentOf` names protected text actor properties of the existing target its `fire_transition` reads. At commit the kernel refuses with `action.permission_denied` when the verified principal equals a recorded actor, or when the property records no principal; the target's read version is fenced, so a concurrent change conflicts. Ring 0 refuses, with `artifact_set.action.independent_actor`, an `independentOf` that names a caller-writable, unknown, duplicated or non-text property, or that sits on any effect other than a transition. The recorded creator is history; the deciding principal's current authority is resolved by the host's scoped authority mapper at every check, including the commit's, so membership revoked between preparation and commit refuses (AUTH-ATTENUATE-1). Named scenarios: `submitter_creates_and_only_an_independent_approver_decides`, `custodian_authority_is_current_at_commit_and_independent_of_the_requester` and `independent_actor_check_on_a_caller_controlled_field_refuses`. Evidence: runtime-enforced and example-based, not a proof.
 
 **LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
 

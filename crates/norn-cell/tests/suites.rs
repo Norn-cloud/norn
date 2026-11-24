@@ -36,6 +36,8 @@ mod commit_path;
 mod dataset_laws;
 #[path = "explorer_documents.rs"]
 mod explorer_documents;
+#[path = "governed_create.rs"]
+mod governed_create;
 #[path = "jewelry_pricing.rs"]
 mod jewelry_pricing;
 #[path = "label_identity.rs"]

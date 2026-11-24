@@ -159,12 +159,21 @@ pub(crate) fn resolve<'a, X>(
     let Some(pin) = &call.action.synchronous_rule else {
         return Ok(None);
     };
+    // CREATE-WRITER-1 (#1101): a writer composes with a transition of an
+    // existing target or with the create of a new one; never an upsert that
+    // could silently update, a draft patch, or an owned-row mutation.
     if !matches!(
         call.action.effect_program,
-        Some(norn_ir::ActionEffectProgram::FireTransition { .. })
+        Some(
+            norn_ir::ActionEffectProgram::FireTransition { .. }
+                | norn_ir::ActionEffectProgram::UpsertInputObject {
+                    write_mode: norn_ir::UpsertWriteMode::CreateOnly,
+                    ..
+                }
+        )
     ) {
         return Err(refused(
-            "only transition actions admit a synchronous writer",
+            "only transition and create-only actions admit a synchronous writer",
         ));
     }
     let mut matching = catalog

@@ -399,6 +399,12 @@ declare module "@norn/authoring" {
       /** Literal defaults; numbers are exact decimal literals. */
       readonly defaults?: { readonly [P in keyof S["Type"]]?: S["Type"][P] }
       readonly lifecycles?: ReadonlyArray<LifecycleSpec<EffectiveProperties<E, I, S["Type"]>>>
+      /**
+       * FA-PROTECT-1 / ACTOR-STAMP-1: properties no caller, import, update or
+       * bulk write may set. A governed create stamps one from the verified
+       * principal through `fromCaller`; it is immutable afterwards.
+       */
+      readonly protected?: ReadonlyArray<keyof S["Type"] & string>
     }
 
     /** An EntityIR v2 object type. */
@@ -555,6 +561,12 @@ declare module "@norn/authoring" {
        * supplied value is refused.
        */
       readonly fromCaller?: ReadonlyArray<keyof I["Type"] & string>
+      /**
+       * ACTOR-INDEPENDENT-1: protected actor properties of the effect target
+       * (a server-stamped creator) whose recorded principal must differ from
+       * the verified caller. Checked against the committed target at commit.
+       */
+      readonly independentOf?: ReadonlyArray<string>
     }
 
     /** An ActionIR action. */
