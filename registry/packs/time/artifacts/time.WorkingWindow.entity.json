@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Recurring local wall-clock operating window materialized to UTC intervals through checked timezone resolution.",
+      "description": "Recurring local wall-clock operating window (HH:MM or HH:MM:SS) materialized to UTC intervals through checked timezone resolution.",
       "identity": [
         {
           "name": "primary",

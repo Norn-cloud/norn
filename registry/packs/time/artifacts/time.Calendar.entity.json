@@ -43,32 +43,28 @@
         {
           "id": "iana_timezone",
           "type": {
-            "kind": "text"
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
           }
         },
         {
           "default": "reject",
           "id": "dst_policy",
           "type": {
-            "kind": "enum",
-            "values": [
-              {
-                "value": "reject"
-              },
-              {
-                "value": "earlier"
-              },
-              {
-                "value": "later"
-              }
-            ]
+            "kind": "ref",
+            "name": "core.time.dst_policy"
           }
         },
         {
+          "default": "2025b",
           "id": "tzdb_version",
           "type": {
-            "kind": "ref",
-            "name": "core.code"
+            "kind": "enum",
+            "values": [
+              {
+                "value": "2025b"
+              }
+            ]
           }
         },
         {

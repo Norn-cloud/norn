@@ -14,7 +14,7 @@
           "https://www.w3.org/TR/vocab-org/"
         ],
         "externalIri": "https://www.w3.org/ns/org#OrganizationalUnit",
-        "justification": "W3C ORG OrganizationalUnit models branches and departments.",
+        "justification": "W3C ORG org:OrganizationalUnit (canonical RDF IRI http://www.w3.org/ns/org#OrganizationalUnit; HTTPS form required by Norn ontology_pack checker).",
         "mappingId": "map.norn.org.unit.w3c-org",
         "relation": "close_match",
         "reviewedAt": "2026-11-23T00:00:00Z",
@@ -28,7 +28,7 @@
           "https://www.w3.org/TR/vocab-org/"
         ],
         "externalIri": "https://www.w3.org/ns/org#Post",
-        "justification": "W3C ORG Post models budgeted roles that exist independently of holders.",
+        "justification": "W3C ORG org:Post (canonical RDF IRI http://www.w3.org/ns/org#Post; HTTPS form required by Norn ontology_pack checker).",
         "mappingId": "map.norn.org.post.w3c-org",
         "relation": "close_match",
         "reviewedAt": "2026-11-23T00:00:00Z",
@@ -42,7 +42,7 @@
           "https://www.w3.org/TR/vocab-org/"
         ],
         "externalIri": "https://www.w3.org/ns/org#Membership",
-        "justification": "W3C ORG Membership models time-bounded agent-to-unit role assignments.",
+        "justification": "W3C ORG org:Membership (canonical RDF IRI http://www.w3.org/ns/org#Membership; HTTPS form required by Norn ontology_pack checker).",
         "mappingId": "map.norn.org.membership.w3c-org",
         "relation": "close_match",
         "reviewedAt": "2026-11-23T00:00:00Z",
@@ -56,7 +56,7 @@
           "https://www.w3.org/TR/owl-time/"
         ],
         "externalIri": "https://www.w3.org/2006/time#TRS",
-        "justification": "OWL-Time temporal reference system concept paired with pinned IANA tzdb policy.",
+        "justification": "OWL-Time time:TRS paired with pinned IANA tzdb 2025b policy (canonical RDF IRI http://www.w3.org/2006/time#TRS; HTTPS form required by Norn ontology_pack checker).",
         "mappingId": "map.norn.time.calendar.w3c-time",
         "relation": "related_match",
         "reviewedAt": "2026-11-23T00:00:00Z",
@@ -156,6 +156,13 @@
             "minCount": 1,
             "targetTermId": "norn.org.person",
             "valueType": "term_ref"
+          },
+          {
+            "fieldId": "unit",
+            "maxCount": 1,
+            "minCount": 1,
+            "targetTermId": "norn.org.unit",
+            "valueType": "term_ref"
           }
         ],
         "shapeId": "shape.norn.org.membership",
@@ -239,10 +246,10 @@
           }
         ],
         "importMode": "map_only",
-        "license": "W3C-20150513",
+        "license": "PDDL-1.0",
         "redistribution": "reference_only",
-        "releaseId": "w3c-rec-20140116",
-        "releasedAt": "2014-01-16",
+        "releaseId": "0.8@2014-04-12",
+        "releasedAt": "2014-04-12",
         "retrievedAt": "2026-11-23",
         "sourceId": "source.w3c-org"
       },
@@ -255,10 +262,10 @@
           }
         ],
         "importMode": "map_only",
-        "license": "W3C-20150513",
+        "license": "CC-BY-4.0",
         "redistribution": "reference_only",
-        "releaseId": "w3c-rec-20171019",
-        "releasedAt": "2017-10-19",
+        "releaseId": "2016@2017-04-06",
+        "releasedAt": "2017-04-06",
         "retrievedAt": "2026-11-23",
         "sourceId": "source.w3c-time"
       }

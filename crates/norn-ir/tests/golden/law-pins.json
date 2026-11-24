@@ -26,5 +26,10 @@
   "registry/packs/hr/artifacts/hr.Roster.published_requires_receipt.law.json#/payload": "sha256:4349d697bed570214d0f29ece4587d34c55e4997632e436eea02870a7bfb91ec",
   "registry/packs/hr/artifacts/hr.ShiftRequirement.positive_coverage.law.json#/payload": "sha256:81746bde50a857cd7523561fc10594ba0767a6db6cde47a7682e73f18e1905f3",
   "registry/packs/loc-eg/artifacts/loc_eg.LaborProfile.statutory_floors.law.json#/payload": "sha256:58a85d106392d3c1882b34b37c0e4e31b8fb25c157ea82382bd76ba0962afd00",
-  "registry/packs/ml/artifacts/ml.promotion_policy.law.json#/payload": "sha256:28490dcafd59948a98dcb621e09fe8eb69004c9de0f61ac2ce3402364e76803c"
+  "registry/packs/ml/artifacts/ml.promotion_policy.law.json#/payload": "sha256:28490dcafd59948a98dcb621e09fe8eb69004c9de0f61ac2ce3402364e76803c",
+  "registry/packs/org/artifacts/org.Membership.valid_date_range.law.json#/payload": "sha256:d25a5848ab1f3b022f26ac19f64274c9eebb563ed8bb86d870bf35913ef5dae2",
+  "registry/packs/org/artifacts/org.OrgUnit.kind_is_organization.law.json#/payload": "sha256:6080d2c140f5ba403474e4290209fe11ea6896305387cfd18b389505f5425df7",
+  "registry/packs/time/artifacts/time.Calendar.tzdb_version_pinned.law.json#/payload": "sha256:a880f79483b00fbaa61d9e63a171703fd24e6b74e5f383159d1a15e8c8007a1d",
+  "registry/packs/time/artifacts/time.MaterializedWindow.resolved_matches_bounds.law.json#/payload": "sha256:fb478c7ee0005cff5b68bf6c10cc628cbfe75e12ded2d7bab55a5634fdf1a36f",
+  "registry/packs/time/artifacts/time.WorkingWindow.valid_local_window.law.json#/payload": "sha256:52fb226a2cb7eadcb8b445a193885a67da44144d05b9e1463b02b8fe19a41fc9"
 }
