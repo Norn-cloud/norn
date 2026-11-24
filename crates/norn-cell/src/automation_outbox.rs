@@ -96,13 +96,13 @@ pub use continuation::{
     AUTOMATION_MATCHER_VERSION, AutomationContinuationCursor, AutomationOutboxContinuation,
     current_engine_version,
 };
+pub use evidence::AutomationInlineEvidence;
+use evidence::{commit_has_nfc_ambiguous_target, inline_evidence};
 use trigger_index::{
     Page1Cache, RulePage, TriggerMatcher, WatchedRule, query_action_rules_page,
     query_row_rules_page,
 };
 pub(crate) use trigger_index::{sync_trigger_index, void_retired};
-pub use evidence::AutomationInlineEvidence;
-use evidence::{commit_has_nfc_ambiguous_target, inline_evidence};
 
 /// The transactional trigger outbox table.
 pub(crate) const AUTOMATION_OUTBOX: &str = "_norn_automation_outbox";
@@ -232,7 +232,6 @@ pub struct AutomationTriggerCandidate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voided_commit_seq: Option<u64>,
 }
-
 
 fn row_rule_matches(
     matcher: &TriggerMatcher,
@@ -377,7 +376,6 @@ pub(crate) struct RecordedAutomation {
     pub(crate) continuation: Option<AutomationOutboxContinuation>,
     pub(crate) inline: Option<AutomationInlineEvidence>,
 }
-
 
 /// Record matching automation trigger candidates inside the triggering commit's
 /// `SQLite` transaction (Pass 1: row-write triggers; Pass 2: `event:action`
@@ -862,26 +860,26 @@ fn insert_candidate<E: SqlEngine>(
 
 #[cfg(all(test, feature = "native"))]
 mod tests {
+    use super::evidence::nfc_ambiguous;
     use super::trigger_index::{
         KIND_ACTION, KIND_CREATED, KIND_LIFECYCLE_ENTERED, KIND_UPDATED, row_rules_for_root_sql,
     };
-    use super::evidence::nfc_ambiguous;
     use super::*;
     use crate::Model;
     use crate::flow_run::RunStarter;
-    use crate::store::FactWriteRow;
-    use norn_ir::FactChange;
-    use std::collections::BTreeSet;
     use crate::retained::{
         RetainedAuthority, RetainedDefinition, RetainedDefinitionChange, RetainedLifecycle,
         payload_sha256,
     };
+    use crate::store::FactWriteRow;
     use crate::store::{
         CellStore, CommitOutcome, CommitPoint, InstalledDefinitionInput, MAIN_WORLD, StoreOptions,
     };
     use crate::test_door::TestCommit as _;
+    use norn_ir::FactChange;
     use norn_ir::{ObjectTypeDef, ObjectTypeName};
     use serde_json::json;
+    use std::collections::BTreeSet;
 
     type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
