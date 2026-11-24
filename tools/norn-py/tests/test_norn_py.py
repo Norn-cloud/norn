@@ -24,8 +24,10 @@ Covers all 6 Sol blocking review findings:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -33,22 +35,28 @@ from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from unittest import mock
 
 from norn_py import (
     Concept,
+    Date,
     DeploymentSpec,
     DynamicSym,
     EnvelopeOptions,
     Expr,
     Field,
+    FieldMeta,
     Link,
+    Marking,
     MarkingDecl,
+    Money,
     NonJsonValueError,
     NornFloatRefusalError,
     NornTracingError,
     PackManifest,
     PropertyTypeSpec,
     Quantity,
+    Rate,
     SecretRef,
     Sym,
     Timestamp,
@@ -59,8 +67,11 @@ from norn_py import (
     canonical_norn1_bytes,
     canonical_norn1_sha256,
     compose_packs,
+    date_before,
+    date_type,
     decimal_type,
     elaborate_file,
+    field_default,
     fn_ref,
     integer,
     interval_gap_seconds,
@@ -68,7 +79,11 @@ from norn_py import (
     invariant,
     lifecycle,
     link,
+    mask_last_n,
+    mask_redacted,
+    parse_date,
     preflight_source,
+    rate_type,
     resolve_annotation,
     sandbox_subprocess_cmd,
     sandbox_subprocess_env,
@@ -78,6 +93,12 @@ from norn_py import (
     transition,
     validate_callback_ast,
     verify_deterministic_elaboration,
+)
+from norn_py.sandbox import (
+    MAX_SOURCE_BYTES,
+    _apply_posix_resource_limits,
+    _compute_clamped_rlimit,
+    _read_source_bounded,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -151,6 +172,54 @@ class TestHostIsolationBoundary(unittest.TestCase):
                 elaborate_file(bad_base, scope={"orgId": "o", "environmentId": "dev"})
             self.assertEqual(ctx2.exception.code, "NORN-PY-ELABORATION")
             self.assertIn("NORN-PY-FORBIDDEN-SYNTAX", str(ctx2.exception))
+
+    def test_bounded_source_read_refuses_oversized_file_without_unbounded_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            small_cap_file = Path(tmp) / "oversized_small.py"
+            small_cap_file.write_bytes(b"x = 1\n" * 20)
+            with self.assertRaises(NornTracingError) as ctx_small:
+                _read_source_bounded(small_cap_file, "oversized_small.py", max_bytes=32)
+            self.assertEqual(ctx_small.exception.code, "NORN-PY-UNBOUNDED")
+
+            big_file = Path(tmp) / "oversized_max.py"
+            big_file.write_bytes(b"#" * (MAX_SOURCE_BYTES + 16))
+            with self.assertRaises(NornTracingError) as ctx_big:
+                elaborate_file(big_file, scope={"orgId": "o", "environmentId": "dev"})
+            self.assertEqual(ctx_big.exception.code, "NORN-PY-UNBOUNDED")
+
+    def test_posix_rlimit_preserves_stricter_inherited_soft_limit_and_fails_closed(self) -> None:
+        if os.name != "posix":
+            self.skipTest("POSIX resource limits test requires POSIX")
+
+        # Pure clamping check: stricter inherited soft limit (2) MUST NOT be raised to desired (15).
+        self.assertEqual(_compute_clamped_rlimit(2, 60, 15, -1), (2, 15))
+        self.assertEqual(_compute_clamped_rlimit(-1, -1, 15, -1), (15, 15))
+        self.assertEqual(_compute_clamped_rlimit(5, 10, 20, -1), (5, 10))
+
+        # Live child subprocess check: inherit stricter RLIMIT_CPU soft=2, hard=30, then apply target=15.
+        probe = (
+            "import json, resource\n"
+            "from norn_py.sandbox import _apply_posix_resource_limits\n"
+            "resource.setrlimit(resource.RLIMIT_CPU, (2, 30))\n"
+            "_apply_posix_resource_limits(15, 1024 * 1024 * 1024)\n"
+            "soft, hard = resource.getrlimit(resource.RLIMIT_CPU)\n"
+            "print(json.dumps({'soft': soft, 'hard': hard}))\n"
+        )
+        out = subprocess.check_output(
+            [sys.executable, "-s", "-S", "-B", "-P", "-c", probe],
+            env=sandbox_subprocess_env(NORN_PY_ROOT),
+            text=True,
+        )
+        limits = json.loads(out)
+        self.assertEqual(limits["soft"], 2)
+        self.assertEqual(limits["hard"], 15)
+
+        # Fail-closed check: setrlimit errors MUST propagate, never be silently swallowed.
+        import resource
+
+        with mock.patch.object(resource, "setrlimit", side_effect=OSError("rlimit denied")):
+            with self.assertRaises(OSError):
+                _apply_posix_resource_limits(10, 1024 * 1024 * 1024)
 
 
 # ------------------------------------------------------------------ 2. Pre-tracing Callback AST Validation
@@ -237,7 +306,22 @@ class TestPreTracingCallbackValidation(unittest.TestCase):
         bad_nested_lambda = lambda s: (lambda x: x)(s.a)  # noqa: E731
         with self.assertRaises(NornTracingError) as ctx_lam:
             validate_callback_ast(bad_nested_lambda)
-        self.assertEqual(ctx_lam.exception.code, "NORN-PY-FORBIDDEN-CALL")
+        self.assertIn(ctx_lam.exception.code, ("NORN-PY-AMBIGUOUS-CALLBACK", "NORN-PY-FORBIDDEN-CALL"))
+
+    def test_ambiguous_multi_lambda_line_fails_closed(self) -> None:
+        # Outer lambda spans the inner lambda on the same line, matching 2 AST candidates -> fail closed.
+        ambiguous_nested = lambda s: (lambda y: y)(s.a)  # noqa: E731
+        with self.assertRaises(NornTracingError) as ctx_nested:
+            validate_callback_ast(ambiguous_nested)
+        self.assertEqual(ctx_nested.exception.code, "NORN-PY-AMBIGUOUS-CALLBACK")
+
+        # Two sibling lambdas on one line whose synthetic code object lacks column positions -> fail closed.
+        f1, _f2 = (lambda s: s.a > 0, lambda s: s.a < 10)  # noqa: E731
+        stripped_code = f1.__code__.replace(co_linetable=b"")
+        f1_no_pos = types.FunctionType(stripped_code, f1.__globals__, f1.__name__)
+        with self.assertRaises(NornTracingError) as ctx_no_pos:
+            validate_callback_ast(f1_no_pos)
+        self.assertEqual(ctx_no_pos.exception.code, "NORN-PY-AMBIGUOUS-CALLBACK")
 
     def test_runtime_expr_coercion_refusals_still_enforced(self) -> None:
         s = DynamicSym("self", ("hours", "name", "starts_at", "ends_at"), "hr.Shift")
@@ -367,6 +451,73 @@ class TestNoSilentDropsAndClosedIR(unittest.TestCase):
             )
         self.assertEqual(ctx_mask.exception.code, "NORN-PY-RAW-IR")
 
+    def test_mask_spec_is_immutable_and_isolated_from_to_ir_mutation(self) -> None:
+        m = mask_last_n(4)
+        with self.assertRaises(AttributeError):
+            m._inner = mask_redacted()._inner
+        ir_copy = m.to_ir()
+        ir_copy["kind"] = "tampered"
+        ir_copy["count"] = 999
+        self.assertEqual(m.to_ir(), {"count": 4, "kind": "last-n"})
+
+    def test_link_unsupported_metadata_is_explicitly_rejected(self) -> None:
+        opts = EnvelopeOptions(scope={"orgId": "o", "environmentId": "dev"}, source_path="test.py")
+
+        class _Node(Concept, name="test.LinkNode", title="Node", version="0.1.0"):
+            id: Field[str]
+
+        # Interface link with `acyclic=True` MUST fail closed (never silently dropped)
+        class _BadIfaceAcyclic(
+            Concept,
+            name="test.BadIfaceAcyclic",
+            title="Bad iface",
+            version="0.1.0",
+            interface=True,
+        ):
+            parent: Annotated[Field[Link[_Node]], link(_Node, acyclic=True)]
+
+        with self.assertRaises(NornTracingError) as c_acyc:
+            _BadIfaceAcyclic.lower(opts, globalns={"_Node": _Node})
+        self.assertEqual(c_acyc.exception.code, "NORN-PY-SCHEMA")
+
+        # Interface link with `inverse=...` MUST fail closed
+        class _BadIfaceInverse(
+            Concept,
+            name="test.BadIfaceInverse",
+            title="Bad iface",
+            version="0.1.0",
+            interface=True,
+        ):
+            parent: Annotated[Field[Link[_Node]], link(_Node, inverse="children")]
+
+        with self.assertRaises(NornTracingError) as c_inv:
+            _BadIfaceInverse.lower(opts, globalns={"_Node": _Node})
+        self.assertEqual(c_inv.exception.code, "NORN-PY-SCHEMA")
+
+        # Link with property Marking MUST fail closed
+        class _BadLinkMarking(Concept, name="test.BadLinkMarking", title="Bad link", version="0.1.0"):
+            parent: Annotated[Field[Link[_Node]], link(_Node), Marking("pii.x")]
+
+        with self.assertRaises(NornTracingError) as c_mark:
+            _BadLinkMarking.lower(opts, globalns={"_Node": _Node})
+        self.assertEqual(c_mark.exception.code, "NORN-PY-SCHEMA")
+
+        # Link with default MUST fail closed
+        class _BadLinkDefault(Concept, name="test.BadLinkDefault", title="Bad link", version="0.1.0"):
+            parent: Annotated[Field[Link[_Node]], link(_Node)] = field_default("x")  # type: ignore[arg-type]
+
+        with self.assertRaises(NornTracingError) as c_def:
+            _BadLinkDefault.lower(opts, globalns={"_Node": _Node})
+        self.assertEqual(c_def.exception.code, "NORN-PY-SCHEMA")
+
+        # Link with FieldMeta(description=...) MUST fail closed (must pass description to link(...))
+        class _BadLinkMeta(Concept, name="test.BadLinkMeta", title="Bad link", version="0.1.0"):
+            parent: Annotated[Field[Link[_Node]], link(_Node), FieldMeta(description="ignored")]
+
+        with self.assertRaises(NornTracingError) as c_meta:
+            _BadLinkMeta.lower(opts, globalns={"_Node": _Node})
+        self.assertEqual(c_meta.exception.code, "NORN-PY-SCHEMA")
+
 
 # ------------------------------------------------------------------ 4. Real Determinism
 
@@ -459,12 +610,23 @@ class TestCanonicalNorn1AndTsParity(unittest.TestCase):
             hours: Annotated[Field[Quantity[Literal["h"]]], decimal_type(2, unit=UnitRef("ucum", "h"))]
             starts_at: Annotated[Field[Timestamp], timestamp_type("utc")]
             ends_at: Annotated[Field[Timestamp], timestamp_type("utc")]
+            start_date: Annotated[Field[Date], date_type()]
+            end_date: Annotated[Field[Date], date_type()]
 
         s = _Shift.sym("self")
         self.assertEqual((s.hours > Decimal("0")).zen, "self.hours > 0")
         self.assertEqual(
             timestamp_before(s.starts_at, s.ends_at).zen,
             "timestamp(self.starts_at) < timestamp(self.ends_at)",
+        )
+        self.assertEqual(
+            date_before(s.start_date, s.end_date).zen,
+            "date(self.start_date) < date(self.end_date)",
+        )
+        # Matches tools/norn-ts/src/builder/expr.ts:406 exactly: dateBefore always wraps operands in date(...).
+        self.assertEqual(
+            date_before(parse_date(s.start_date), s.end_date).zen,
+            "date(date(self.start_date)) < date(self.end_date)",
         )
         self.assertEqual(
             between(s.hours, Decimal("1.00"), Decimal("12.00")).zen,
@@ -610,6 +772,8 @@ export const Privacy = Norn.markings({
 const WindowBounds = Schema.Struct({
   starts_at: Norn.timestamp("utc"),
   ends_at: Norn.timestamp("utc"),
+  effective_from: Norn.date(),
+  effective_to: Norn.date(),
 })
 
 export const TimeWindow = Norn.interfaceType({
@@ -621,6 +785,8 @@ export const TimeWindow = Norn.interfaceType({
   properties: Schema.Struct({
     starts_at: Norn.timestamp("utc"),
     ends_at: Norn.timestamp("utc"),
+    effective_from: Norn.date(),
+    effective_to: Norn.date(),
     timezone: Schema.NullOr(Schema.String),
   }),
   invariants: [
@@ -628,6 +794,11 @@ export const TimeWindow = Norn.interfaceType({
       id: "proper_window",
       message: "starts_at must be strictly before ends_at",
       expression: Norn.expression(WindowBounds, (self) => Norn.timestampBefore(self.starts_at, self.ends_at)),
+    },
+    {
+      id: "ordered_dates",
+      message: "effective_from must precede effective_to",
+      expression: Norn.expression(WindowBounds, (self) => Norn.dateBefore(self.effective_from, self.effective_to)),
     },
   ],
 })
@@ -651,6 +822,8 @@ const BookingProperties = Schema.Struct({
   id: Schema.String,
   starts_at: Norn.timestamp("utc"),
   ends_at: Norn.timestamp("utc"),
+  effective_from: Norn.date(),
+  effective_to: Norn.date(),
   timezone: Schema.NullOr(Schema.String),
   hours: Norn.decimal(2, { unit: { system: "ucum", code: "h" } }),
   status: Schema.Literals(["draft", "submitted", "approved"]),
@@ -707,6 +880,7 @@ from typing import Annotated, Literal
 
 from norn_py import (
     Concept,
+    Date,
     DependencyPin,
     Expr,
     Field,
@@ -719,6 +893,8 @@ from norn_py import (
     Sym,
     Timestamp,
     UnitRef,
+    date_before,
+    date_type,
     decimal_type,
     field_default,
     invariant,
@@ -758,11 +934,17 @@ class TimeWindow(
 ):
     starts_at: Annotated[Field[Timestamp], timestamp_type("utc")]
     ends_at: Annotated[Field[Timestamp], timestamp_type("utc")]
+    effective_from: Annotated[Field[Date], date_type()]
+    effective_to: Annotated[Field[Date], date_type()]
     timezone: Field[str | None]
 
     @invariant("proper_window", message="starts_at must be strictly before ends_at")
     def _proper_window(s: Sym[TimeWindow]) -> Expr[bool]:
         return timestamp_before(s.starts_at, s.ends_at)
+
+    @invariant("ordered_dates", message="effective_from must precede effective_to")
+    def _ordered_dates(s: Sym[TimeWindow]) -> Expr[bool]:
+        return date_before(s.effective_from, s.effective_to)
 
 
 class Worker(
@@ -800,6 +982,8 @@ class Booking(
     id: Field[str]
     starts_at: Annotated[Field[Timestamp], timestamp_type("utc")]
     ends_at: Annotated[Field[Timestamp], timestamp_type("utc")]
+    effective_from: Annotated[Field[Date], date_type()]
+    effective_to: Annotated[Field[Date], date_type()]
     timezone: Field[str | None]
     hours: Annotated[Field[Quantity[Literal["h"]]], decimal_type(2, unit=HOURS)]
     status: Field[BookingStatus] = field_default(BookingStatus.DRAFT)
@@ -827,24 +1011,129 @@ class Booking(
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
-            ts_artifacts = json.loads(ts_out.read_text(encoding="utf-8"))
-            ts_source_path = ts_artifacts[0]["provenance"]["sourcePath"]
+
+            # Compute canonical JSON, compact Norn1 bytes, and Norn1 SHA-256 on the TypeScript side
+            # using `tools/norn-ts/src/canonical.ts` + Node crypto (never Python hashing both sides!).
+            ts_hash_script = """
+import { readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { canonicalJson, toJson } from "./src/canonical.ts"
+
+const DOMAIN = Buffer.from("norn.canonical.json/norn1\\0", "utf8")
+const norn1Sha = (bytes: Buffer) => createHash("sha256").update(DOMAIN).update(bytes).digest("hex")
+
+const artifacts = JSON.parse(readFileSync(process.env.NORN_TS_OUT!, "utf8"))
+const canonicalText = canonicalJson(artifacts)
+const compactBytes = Buffer.from(JSON.stringify(toJson(artifacts)), "utf8")
+const perArtifact = artifacts.map((a: unknown) => {
+  const b = Buffer.from(JSON.stringify(toJson(a)), "utf8")
+  return {
+    canonicalText: canonicalJson(a),
+    compactUtf8: b.toString("utf8"),
+    norn1Sha256: norn1Sha(b),
+  }
+})
+process.stdout.write(JSON.stringify({
+  sourcePath: artifacts[0].provenance.sourcePath,
+  count: artifacts.length,
+  canonicalText,
+  compactUtf8: compactBytes.toString("utf8"),
+  norn1Sha256: norn1Sha(compactBytes),
+  perArtifact,
+}))
+"""
+            ts_hash_proc = subprocess.run(
+                [bun, "-e", ts_hash_script],
+                cwd=NORN_TS_ROOT,
+                env={**os.environ, "NORN_TS_OUT": str(ts_out)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(ts_hash_proc.returncode, 0, ts_hash_proc.stderr or ts_hash_proc.stdout)
+            ts_digest = json.loads(ts_hash_proc.stdout)
 
             py_result = verify_deterministic_elaboration(
                 py_file,
                 scope={"environmentId": "dev", "orgId": "org_demo"},
-                source_path=ts_source_path,
+                source_path=str(ts_digest["sourcePath"]),
             )
 
-            self.assertEqual(len(py_result.artifacts), len(ts_artifacts))
-            self.assertEqual(py_result.norn1_bytes, canonical_norn1_bytes(ts_artifacts))
-            self.assertEqual(py_result.norn1_sha256, canonical_norn1_sha256(ts_artifacts))
-            self.assertEqual(py_result.canonical_text, canonical_json(ts_artifacts))
+            self.assertEqual(len(py_result.artifacts), ts_digest["count"])
+            self.assertEqual(py_result.canonical_text, ts_digest["canonicalText"])
+            self.assertEqual(py_result.norn1_bytes, ts_digest["compactUtf8"].encode())
+            self.assertEqual(py_result.norn1_sha256, ts_digest["norn1Sha256"])
 
-            # Also assert per-artifact Norn1 byte & SHA-256 parity
-            for py_art, ts_art in zip(py_result.artifacts, ts_artifacts, strict=True):
-                self.assertEqual(canonical_norn1_bytes(py_art), canonical_norn1_bytes(ts_art))
-                self.assertEqual(canonical_norn1_sha256(py_art), canonical_norn1_sha256(ts_art))
+            # Assert per-artifact parity against TS's own canonicalizer & SHA-256 digest
+            for py_art, ts_entry in zip(py_result.artifacts, ts_digest["perArtifact"], strict=True):
+                self.assertEqual(canonical_json(py_art), ts_entry["canonicalText"])
+                self.assertEqual(canonical_norn1_bytes(py_art), ts_entry["compactUtf8"].encode())
+                self.assertEqual(canonical_norn1_sha256(py_art), ts_entry["norn1Sha256"])
+
+    def test_hr_pilot_admitted_by_rust_checker_wasm_when_available(self) -> None:
+        """Run real `checker.checkArtifactSet` via Bun/WASM when norn-checker-wasm is installed."""
+        bun = shutil.which("bun")
+        if bun is None or not (NORN_TS_ROOT / "node_modules" / "typescript").exists():
+            self.skipTest("bun or tools/norn-ts/node_modules unavailable")
+
+        candidate_dirs = [
+            os.environ.get("NORN_CHECKER_WASM_PKG"),
+            str(Path.home() / ".cache" / "norn" / "runtime" / "checker-wasm"),
+            str(NORN_TS_ROOT / "checker"),
+        ]
+        pkg_dir = next(
+            (
+                d
+                for d in candidate_dirs
+                if d
+                and (Path(d) / "norn_checker_wasm.js").is_file()
+                and (Path(d) / "norn_checker_wasm_bg.wasm").is_file()
+            ),
+            None,
+        )
+        if pkg_dir is None:
+            self.skipTest(
+                "norn-checker-wasm package not present locally "
+                "(set NORN_CHECKER_WASM_PKG or install ~/.cache/norn/runtime/checker-wasm)"
+            )
+
+        py_result = verify_deterministic_elaboration(
+            HR_PILOT,
+            scope={"environmentId": "dev", "orgId": "org_demo"},
+            source_path="tools/norn-py/examples/hr_pilot.py",
+        )
+        core_units = REPO_ROOT / "registry" / "core" / "artifacts" / "core.units.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            cand_path = Path(tmp) / "hr_pilot_artifacts.json"
+            cand_path.write_text(py_result.canonical_text, encoding="utf-8")
+            check_script = """
+import { readFileSync } from "node:fs"
+import { loadChecker } from "./src/checker-abi.ts"
+import { checkPack } from "./src/pack.ts"
+
+const checker = await loadChecker(process.env.NORN_WASM_PKG_DIR!)
+if (!checker) throw new Error("failed to load norn-checker-wasm")
+const artifacts = JSON.parse(readFileSync(process.env.NORN_CAND_PATH!, "utf8"))
+const coreUnits = JSON.parse(readFileSync(process.env.NORN_CORE_UNITS_PATH!, "utf8"))
+const report = checkPack(checker, artifacts, [coreUnits])
+process.stdout.write(JSON.stringify(report))
+"""
+            proc = subprocess.run(
+                [bun, "-e", check_script],
+                cwd=NORN_TS_ROOT,
+                env={
+                    **os.environ,
+                    "NORN_CAND_PATH": str(cand_path),
+                    "NORN_CORE_UNITS_PATH": str(core_units),
+                    "NORN_WASM_PKG_DIR": pkg_dir,
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+            report = json.loads(proc.stdout)
+            self.assertTrue(report["admitted"], f"Rust checker refused hr_pilot.py: {report}")
 
 
 # ------------------------------------------------------------------ 6. Real Static Typing & Consistency
@@ -916,6 +1205,56 @@ class TestStaticTypingAndAnnotationConsistency(unittest.TestCase):
             _BadBoolAsInt.lower(opts, globalns=locals())
         self.assertEqual(c7.exception.code, "NORN-PY-TYPE-MISMATCH")
 
+        # 8. Money[Literal["EUR"]] paired with currency="USD" -> currency mismatch
+        class _BadMoneyCurrency(Concept, name="test.BadMoneyCurrency", title="Bad", version="0.1.0"):
+            amount: Annotated[Field[Money[Literal["EUR"]]], decimal_type(2, currency="USD")]
+
+        with self.assertRaises(NornTracingError) as c8:
+            _BadMoneyCurrency.lower(opts, globalns=locals())
+        self.assertEqual(c8.exception.code, "NORN-PY-TYPE-MISMATCH")
+
+        # 9. Money[str] (non-Literal tag) -> refused
+        class _BadMoneyNonLit(Concept, name="test.BadMoneyNonLit", title="Bad", version="0.1.0"):
+            amount: Annotated[Field[Money[str]], decimal_type(2, currency="currency")]
+
+        with self.assertRaises(NornTracingError) as c9:
+            _BadMoneyNonLit.lower(opts, globalns=locals())
+        self.assertEqual(c9.exception.code, "NORN-PY-TYPE-MISMATCH")
+
+        # 10. Rate[Literal["USD"], Literal["h"]] paired with per_unit=UnitRef("ucum", "d") -> unit mismatch
+        class _BadRateUnit(Concept, name="test.BadRateUnit", title="Bad", version="0.1.0"):
+            hourly_rate: Annotated[
+                Field[Rate[Literal["USD"], Literal["h"]]],
+                rate_type(2, currency="USD", per_unit=UnitRef("ucum", "d")),
+            ]
+
+        with self.assertRaises(NornTracingError) as c10:
+            _BadRateUnit.lower(opts, globalns=locals())
+        self.assertEqual(c10.exception.code, "NORN-PY-TYPE-MISMATCH")
+
+        # 11. Rate[Literal["EUR"], Literal["h"]] paired with currency="USD" -> currency mismatch
+        class _BadRateCurrency(Concept, name="test.BadRateCurrency", title="Bad", version="0.1.0"):
+            hourly_rate: Annotated[
+                Field[Rate[Literal["EUR"], Literal["h"]]],
+                rate_type(2, currency="USD", per_unit=UnitRef("ucum", "h")),
+            ]
+
+        with self.assertRaises(NornTracingError) as c11:
+            _BadRateCurrency.lower(opts, globalns=locals())
+        self.assertEqual(c11.exception.code, "NORN-PY-TYPE-MISMATCH")
+
+        # 12. Valid Money and Rate annotations elaborate cleanly
+        class _GoodMoneyAndRate(Concept, name="test.GoodMoneyAndRate", title="Good", version="0.1.0"):
+            currency: Field[str]
+            salary: Annotated[Field[Money[Literal["currency"]]], decimal_type(2, currency="currency")]
+            hourly_rate: Annotated[
+                Field[Rate[Literal["currency"], Literal["h"]]],
+                rate_type(2, currency="currency", per_unit=UnitRef("ucum", "h")),
+            ]
+
+        good_ir = _GoodMoneyAndRate.lower(opts, globalns=locals())
+        self.assertIsInstance(good_ir, dict)
+
     def test_mypy_strict_positive_and_negative_typing_fixtures(self) -> None:
         mypy_bin = shutil.which("mypy")
         if mypy_bin is None:
@@ -973,7 +1312,7 @@ class Record(Concept, name="t.Record", title="Record", version="0.1.0"):
     ends_at: Annotated[Field[Timestamp], timestamp_type("utc")]
     hours: Annotated[Field[Quantity[Literal["h"]]], decimal_type(2, unit=HOURS)]
     days: Annotated[Field[Quantity[Literal["d"]]], decimal_type(2, unit=DAYS)]
-    pay: Annotated[Field[Money[Literal["USD"]]], decimal_type(2, currency="currency")]
+    pay: Annotated[Field[Money[Literal["currency"]]], decimal_type(2, currency="currency")]
     status: Field[Status] = field_default(Status.DRAFT)
     emp: Annotated[Field[Link[Employee]], link(Employee)]
     other_emp: Annotated[Field[Link[Employee]], link(Employee)]

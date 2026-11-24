@@ -36,6 +36,7 @@ import decimal
 import enum
 import json
 import math
+import os
 import subprocess
 import sys
 import types
@@ -477,25 +478,66 @@ def _install_audit_hook(allowed_code: types.CodeType) -> None:
     sys.addaudithook(_hook)
 
 
+def _compute_clamped_rlimit(
+    current_soft: int,
+    current_hard: int,
+    desired: int,
+    rlim_infinity: int,
+) -> tuple[int, int]:
+    """Clamp `desired` so we never raise an inherited soft or hard rlimit."""
+    if desired < 0:
+        raise ValueError(f"rlimit desired value must be non-negative, got {desired}")
+    new_hard = desired if current_hard == rlim_infinity else min(current_hard, desired)
+    new_soft = new_hard if current_soft == rlim_infinity else min(current_soft, new_hard)
+    return new_soft, new_hard
+
+
 def _apply_posix_resource_limits(cpu_seconds: int, memory_bytes: int) -> None:
-    """Apply POSIX CPU, address-space, and zero-file-size limits inside the child process."""
-    try:
-        import resource
-    except ImportError:
+    """Apply fail-closed POSIX CPU, address-space, and zero-file-size limits inside the child process."""
+    if os.name != "posix":
         return
 
-    def _cap(limit_const: int, target: int) -> None:
-        try:
-            _soft, hard = resource.getrlimit(limit_const)
-            effective = target if hard == resource.RLIM_INFINITY else min(target, hard)
-            resource.setrlimit(limit_const, (effective, effective))
-        except (OSError, ValueError):
-            pass
+    import resource
 
-    _cap(resource.RLIMIT_CPU, max(1, cpu_seconds))
+    def _cap(limit_const: int, target: int) -> None:
+        cur_soft, cur_hard = resource.getrlimit(limit_const)
+        new_soft, new_hard = _compute_clamped_rlimit(cur_soft, cur_hard, target, resource.RLIM_INFINITY)
+        resource.setrlimit(limit_const, (new_soft, new_hard))
+
+    if cpu_seconds < 1:
+        raise ValueError(f"cpu_seconds must be >= 1, got {cpu_seconds}")
+    if memory_bytes < 1:
+        raise ValueError(f"memory_bytes must be >= 1, got {memory_bytes}")
+
+    _cap(resource.RLIMIT_CPU, cpu_seconds)
     _cap(resource.RLIMIT_FSIZE, 0)
     if hasattr(resource, "RLIMIT_AS"):
         _cap(resource.RLIMIT_AS, memory_bytes)
+
+
+def _read_source_bounded(
+    file_path: Path,
+    rel_source_path: str,
+    *,
+    max_bytes: int = MAX_SOURCE_BYTES,
+) -> str:
+    """Read at most `max_bytes + 1` bytes from disk, failing closed before buffering oversized files."""
+    with file_path.open("rb") as fh:
+        raw = fh.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise NornTracingError(
+            "NORN-PY-UNBOUNDED",
+            f"source exceeds {max_bytes} byte limit",
+            SourceSpan(rel_source_path, 1, 0),
+        )
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise NornTracingError(
+            "NORN-PY-SYNTAX",
+            f"source is not valid UTF-8: {exc}",
+            SourceSpan(rel_source_path, 1, 0),
+        ) from exc
 
 
 def _elaborate_in_current_process(
@@ -568,8 +610,8 @@ def elaborate_file(
 ) -> ElaborationResult:
     """Elaborate an authored `.py` file inside an isolated deterministic subprocess."""
     file_path = Path(path).resolve()
-    source = file_path.read_text(encoding="utf-8")
     rel_source_path = source_path if source_path is not None else str(path)
+    source = _read_source_bounded(file_path, rel_source_path)
 
     # Run Layer 1 preflight locally first for instant crisp diagnostics.
     preflight_source(source, rel_source_path)

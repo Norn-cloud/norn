@@ -262,7 +262,7 @@ def _render_node(node: _ExprNode, span: SourceSpan | None = None) -> str:
         return f"{_operand(node.condition, span)} ? {_operand(node.yes, span)} : {_operand(node.no, span)}"
     if isinstance(node, _CallNode):
         if node.fn == "dateBefore":
-            return f"{_render_node(node.args[0], span)} < {_render_node(node.args[1], span)}"
+            return f"date({_render_node(node.args[0], span)}) < date({_render_node(node.args[1], span)})"
         if node.fn == "timestampBefore":
             return f"{_render_node(node.args[0], span)} < {_render_node(node.args[1], span)}"
         if node.fn == "timestampAtOrBefore":
@@ -701,7 +701,7 @@ def date_before(left: Expr[Date], right: Expr[Date]) -> Expr[bool]:
     span = capture_caller_span()
     l_expr = _require_expr(left, "date_before() left", span)
     r_expr = _require_expr(right, "date_before() right", span)
-    return _make_expr(_CallNode("dateBefore", (_as_date(l_expr._node), _as_date(r_expr._node))), span)
+    return _make_expr(_CallNode("dateBefore", (l_expr._node, r_expr._node)), span)
 
 
 def timestamp_before(left: Expr[Timestamp], right: Expr[Timestamp]) -> Expr[bool]:
@@ -948,19 +948,42 @@ def _find_callback_node(fn: Callable[..., object], span: SourceSpan | None) -> t
                 for lineno, _end_line, col, _end_col in code.co_positions()
                 if lineno == first_line and col is not None
             }
-            for cand in candidates:
-                if cand.col_offset in pos_cols or any(
+            matched = [
+                cand
+                for cand in candidates
+                if cand.col_offset in pos_cols
+                or any(
                     cand.col_offset <= col <= (cand.end_col_offset or cand.col_offset)
                     for col in pos_cols
-                ):
-                    return filename, cand
-            return filename, candidates[0]
+                )
+            ]
+            if len(matched) == 1:
+                return filename, matched[0]
+            raise NornTracingError(
+                "NORN-PY-AMBIGUOUS-CALLBACK",
+                f"multiple lambdas share line {first_line} in {filename} and bytecode positions "
+                f"matched {len(matched)} candidates (expected exactly 1); place each callback on its own line",
+                span or SourceSpan(filename, first_line),
+            )
     else:
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == fn_name:
-                dec_line = node.decorator_list[0].lineno if node.decorator_list else None
-                if node.lineno == first_line or dec_line == first_line:
-                    return filename, node
+        fn_matches = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == fn_name
+            and (
+                node.lineno == first_line
+                or (bool(node.decorator_list) and node.decorator_list[0].lineno == first_line)
+            )
+        ]
+        if len(fn_matches) == 1:
+            return filename, fn_matches[0]
+        if len(fn_matches) > 1:
+            raise NornTracingError(
+                "NORN-PY-AMBIGUOUS-CALLBACK",
+                f"multiple definitions of {fn_name!r} share line {first_line} in {filename}",
+                span or SourceSpan(filename, first_line),
+            )
 
     raise NornTracingError(
         "NORN-PY-CALLBACK-SOURCE",

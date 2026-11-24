@@ -330,7 +330,28 @@ class LinkSpec:
     acyclic: bool = False
     description: str | None = None
 
-    def to_ir(self, link_id: str, *, for_interface: bool = False) -> dict[str, object]:
+    def to_ir(
+        self,
+        link_id: str,
+        *,
+        for_interface: bool = False,
+        span: SourceSpan | None = None,
+    ) -> dict[str, object]:
+        if for_interface:
+            if self.acyclic:
+                raise NornTracingError(
+                    "NORN-PY-SCHEMA",
+                    f"interface link {link_id!r} cannot declare `acyclic=True` "
+                    "(EntityIR v2 InterfaceLink does not support acyclic)",
+                    span,
+                )
+            if self.inverse is not None:
+                raise NornTracingError(
+                    "NORN-PY-SCHEMA",
+                    f"interface link {link_id!r} cannot declare `inverse={self.inverse!r}` "
+                    "(EntityIR v2 InterfaceLink does not support inverse)",
+                    span,
+                )
         card: dict[str, object] = {
             "from": self.from_,
             "required": True if self.required else OMIT,
@@ -481,52 +502,108 @@ def invariant(
 # ------------------------------------------------------------------ Markings Catalog
 
 
+@dataclass(frozen=True, slots=True)
+class _RedactedMask:
+    def to_ir(self) -> dict[str, object]:
+        return {"kind": "redacted"}
+
+
+@dataclass(frozen=True, slots=True)
+class _NullMask:
+    def to_ir(self) -> dict[str, object]:
+        return {"kind": "null"}
+
+
+@dataclass(frozen=True, slots=True)
+class _RefuseMask:
+    def to_ir(self) -> dict[str, object]:
+        return {"kind": "refuse"}
+
+
+@dataclass(frozen=True, slots=True)
+class _LastNMask:
+    count: int
+
+    def to_ir(self) -> dict[str, object]:
+        return {"count": self.count, "kind": "last-n"}
+
+
+@dataclass(frozen=True, slots=True)
+class _PseudonymMask:
+    subject: str
+
+    def to_ir(self) -> dict[str, object]:
+        return {"kind": "pseudonym", "subject": self.subject}
+
+
+type _InnerMaskSpec = _RedactedMask | _NullMask | _RefuseMask | _LastNMask | _PseudonymMask
+
+
 @final
 class MaskSpec:
-    """Closed masking strategy specification (prevents raw dict smuggling into MarkingDecl)."""
+    """Closed immutable masking strategy specification backed by frozen typed variants."""
 
-    __slots__ = ("_ir",)
-    _ir: dict[str, object]
+    __slots__ = ("_inner",)
+    _inner: _InnerMaskSpec
 
     def __init_subclass__(cls, **kwargs: object) -> NoReturn:
         raise NornTracingError("NORN-PY-RAW-IR", "MaskSpec cannot be subclassed")
 
-    def __init__(self, *, _ir: dict[str, object] | None = None, _token: object = None) -> None:
-        if _token is not _MASK_TOKEN or _ir is None:
+    def __init__(self, *, _inner: _InnerMaskSpec | None = None, _token: object = None) -> None:
+        if _token is not _MASK_TOKEN or _inner is None:
             raise NornTracingError(
                 "NORN-PY-RAW-IR",
                 "MaskSpec cannot be constructed from raw dicts; use mask_redacted(), mask_null(), "
                 "mask_last_n(), mask_refuse(), or mask_pseudonym()",
                 capture_caller_span(),
             )
-        object.__setattr__(self, "_ir", _ir)
+        object.__setattr__(self, "_inner", _inner)
+
+    def __setattr__(self, _name: str, _value: object) -> NoReturn:
+        raise AttributeError("MaskSpec instances are immutable")
+
+    def __delattr__(self, _name: str) -> NoReturn:
+        raise AttributeError("MaskSpec instances are immutable")
 
     def to_ir(self) -> dict[str, object]:
-        return dict(self._ir)
+        return self._inner.to_ir()
+
+    def __eq__(self, other: object) -> bool:
+        return type(other) is MaskSpec and self._inner == other._inner
+
+    def __hash__(self) -> int:
+        return hash(self._inner)
+
+    def __repr__(self) -> str:
+        return f"MaskSpec({self._inner!r})"
+
+
+def _make_mask(inner: _InnerMaskSpec) -> MaskSpec:
+    return MaskSpec(_inner=inner, _token=_MASK_TOKEN)
 
 
 def mask_redacted() -> MaskSpec:
-    return MaskSpec(_ir={"kind": "redacted"}, _token=_MASK_TOKEN)
+    return _make_mask(_RedactedMask())
 
 
 def mask_null() -> MaskSpec:
-    return MaskSpec(_ir={"kind": "null"}, _token=_MASK_TOKEN)
+    return _make_mask(_NullMask())
 
 
 def mask_refuse() -> MaskSpec:
-    return MaskSpec(_ir={"kind": "refuse"}, _token=_MASK_TOKEN)
+    return _make_mask(_RefuseMask())
 
 
 def mask_last_n(count: int) -> MaskSpec:
     if isinstance(count, bool) or isinstance(count, float) or not isinstance(count, int) or count < 0:
         raise NornTracingError("NORN-PY-SCHEMA", f"mask_last_n count must be a non-negative int, got {count!r}")
-    return MaskSpec(_ir={"count": count, "kind": "last-n"}, _token=_MASK_TOKEN)
+    return _make_mask(_LastNMask(count=count))
 
 
 def mask_pseudonym(subject: str) -> MaskSpec:
     if not isinstance(subject, str) or not subject:
         raise NornTracingError("NORN-PY-SCHEMA", f"mask_pseudonym subject must be a non-empty str, got {subject!r}")
-    return MaskSpec(_ir={"kind": "pseudonym", "subject": subject}, _token=_MASK_TOKEN)
+    return _make_mask(_PseudonymMask(subject=subject))
 
 
 @dataclass(frozen=True, slots=True)
@@ -957,6 +1034,24 @@ def _unwrap_field_wrapper(annotation: Any) -> tuple[Any, bool]:
     return annotation, False
 
 
+def _extract_literal_tag(
+    type_arg: Any,
+    kind_label: str,
+    field_name: str,
+    span: SourceSpan | None,
+) -> str:
+    if get_origin(type_arg) is Literal:
+        lit_args = get_args(type_arg)
+        if len(lit_args) == 1 and isinstance(lit_args[0], str) and lit_args[0]:
+            return lit_args[0]
+    raise NornTracingError(
+        "NORN-PY-TYPE-MISMATCH",
+        f"field {field_name!r} {kind_label} type argument must be a single non-empty string Literal[...], "
+        f"got {type_arg!r}",
+        span,
+    )
+
+
 def _validate_base_matches_spec(
     field_name: str,
     base: Any,
@@ -981,15 +1076,20 @@ def _validate_base_matches_spec(
                     f"field {field_name!r} has base Quantity[...] but decimal spec has no matching unit",
                     span,
                 )
-            if args and get_origin(args[0]) is Literal:
-                lit_args = get_args(args[0])
-                if len(lit_args) == 1 and isinstance(lit_args[0], str) and lit_args[0] != inner.unit.code:
-                    raise NornTracingError(
-                        "NORN-PY-TYPE-MISMATCH",
-                        f"field {field_name!r} declares Quantity[Literal[{lit_args[0]!r}]] "
-                        f"which conflicts with UnitRef code {inner.unit.code!r}",
-                        span,
-                    )
+            if len(args) != 1:
+                raise NornTracingError(
+                    "NORN-PY-TYPE-MISMATCH",
+                    f"field {field_name!r} Quantity[...] requires exactly 1 unit type argument",
+                    span,
+                )
+            unit_tag = _extract_literal_tag(args[0], "Quantity[U]", field_name, span)
+            if unit_tag != inner.unit.code:
+                raise NornTracingError(
+                    "NORN-PY-TYPE-MISMATCH",
+                    f"field {field_name!r} declares Quantity[Literal[{unit_tag!r}]] "
+                    f"which conflicts with UnitRef code {inner.unit.code!r}",
+                    span,
+                )
             return
         if origin is Money:
             if inner.currency is None or inner.per_unit is not None or inner.unit is not None:
@@ -999,12 +1099,48 @@ def _validate_base_matches_spec(
                     "(without unit/per_unit)",
                     span,
                 )
+            if len(args) != 1:
+                raise NornTracingError(
+                    "NORN-PY-TYPE-MISMATCH",
+                    f"field {field_name!r} Money[...] requires exactly 1 currency type argument",
+                    span,
+                )
+            currency_tag = _extract_literal_tag(args[0], "Money[C]", field_name, span)
+            if currency_tag != inner.currency:
+                raise NornTracingError(
+                    "NORN-PY-TYPE-MISMATCH",
+                    f"field {field_name!r} declares Money[Literal[{currency_tag!r}]] "
+                    f"which conflicts with currency {inner.currency!r}",
+                    span,
+                )
             return
         if origin is Rate:
-            if inner.currency is None or inner.per_unit is None:
+            if inner.currency is None or inner.per_unit is None or inner.unit is not None:
                 raise NornTracingError(
                     "NORN-PY-TYPE-MISMATCH",
                     f"field {field_name!r} has base Rate[...] but spec must use rate_type(currency=..., per_unit=...)",
+                    span,
+                )
+            if len(args) != 2:
+                raise NornTracingError(
+                    "NORN-PY-TYPE-MISMATCH",
+                    f"field {field_name!r} Rate[C, U] requires currency and unit type arguments",
+                    span,
+                )
+            currency_tag = _extract_literal_tag(args[0], "Rate[C, U] currency", field_name, span)
+            unit_tag = _extract_literal_tag(args[1], "Rate[C, U] unit", field_name, span)
+            if currency_tag != inner.currency:
+                raise NornTracingError(
+                    "NORN-PY-TYPE-MISMATCH",
+                    f"field {field_name!r} declares Rate[Literal[{currency_tag!r}], ...] "
+                    f"which conflicts with currency {inner.currency!r}",
+                    span,
+                )
+            if unit_tag != inner.per_unit.code:
+                raise NornTracingError(
+                    "NORN-PY-TYPE-MISMATCH",
+                    f"field {field_name!r} declares Rate[..., Literal[{unit_tag!r}]] "
+                    f"which conflicts with per_unit code {inner.per_unit.code!r}",
                     span,
                 )
             return
@@ -1378,7 +1514,32 @@ class Concept:
             resolved_ann = resolve_annotation(raw_ann, namespace_bindings, span)
             spec, nullable, field_markings, meta = _extract_property_and_meta(field_name, resolved_ann, span)
             if isinstance(spec, LinkSpec):
-                links_ir.append(spec.to_ir(field_name, for_interface=cls.__norn_is_interface__))
+                if field_markings:
+                    raise NornTracingError(
+                        "NORN-PY-SCHEMA",
+                        f"link {cls.__norn_name__}.{field_name} cannot declare property markings {list(field_markings)!r}",
+                        span,
+                    )
+                class_link_default = cls.__norn_field_defaults__.get(field_name, OMIT)
+                if meta.default is not None or class_link_default is not OMIT:
+                    raise NornTracingError(
+                        "NORN-PY-SCHEMA",
+                        f"link {cls.__norn_name__}.{field_name} cannot declare a default value",
+                        span,
+                    )
+                if meta.description is not None:
+                    raise NornTracingError(
+                        "NORN-PY-SCHEMA",
+                        f"link {cls.__norn_name__}.{field_name} must pass description=... to link(...), not FieldMeta",
+                        span,
+                    )
+                if nullable and spec.required:
+                    raise NornTracingError(
+                        "NORN-PY-SCHEMA",
+                        f"link {cls.__norn_name__}.{field_name} cannot be both nullable (`| None`) and `required=True`",
+                        span,
+                    )
+                links_ir.append(spec.to_ir(field_name, for_interface=cls.__norn_is_interface__, span=span))
                 continue
 
             class_default = cls.__norn_field_defaults__.get(field_name, OMIT)
