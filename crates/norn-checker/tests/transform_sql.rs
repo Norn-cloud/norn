@@ -297,6 +297,22 @@ fn a_source_column_is_never_read_through_another_sources_flattened_name() {
 }
 
 #[test]
+fn a_joined_column_is_read_only_from_a_source_that_has_it() {
+    // #1706 r3: Customer has no `at`; `placed."at"` flattened to Order's `placed_at`.
+    let joined = "FROM \"shop.Order\" o JOIN \"shop.Customer\" placed ON o.customer = placed.id";
+    refused(
+        &format!("SELECT placed.\"at\" AS at_time {joined}"),
+        SQL_UNSUPPORTED,
+    );
+    // Order's own `placed_at` is still read: no Customer column flattens onto it.
+    let (_, plan) = compile(&format!(
+        "SELECT o.placed_at AS placed_time, placed.region AS region {joined}"
+    ))
+    .expect("admitted");
+    assert!(plan.output_schema().column("placed_time").is_some());
+}
+
+#[test]
 fn a_modifier_on_a_group_key_or_coalesce_is_refused_never_dropped() {
     // #1706 r1: `OVER`/`DISTINCT` on a calendar key lowered to plain weekly grouping.
     refused(

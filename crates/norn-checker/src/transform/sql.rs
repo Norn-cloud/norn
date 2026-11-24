@@ -31,6 +31,7 @@ use std::collections::BTreeSet;
 use crate::entity_instance::EffectiveCatalog;
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
+mod scope;
 mod window;
 
 /// The refusal of anything this dialect does not lower to a typed operator.
@@ -1004,85 +1005,8 @@ struct Scope {
     /// Alias → (object type, column prefix in the joined row).
     aliases: BTreeMap<String, (String, String)>,
     base: String,
-}
-
-impl Scope {
-    fn column(&self, alias: Option<&str>, column: &str, at: usize) -> Result<String, Refusal> {
-        let alias = alias.unwrap_or(&self.base);
-        let (_, prefix) = self
-            .aliases
-            .get(alias)
-            .ok_or_else(|| refusal(format!("no source is named {alias:?}"), at))?;
-        let name = format!("{prefix}{column}");
-        // The joined row is flat: a name belongs to the source with the
-        // longest prefix it starts with, so `o.c_region` is never `c.region`.
-        if self
-            .aliases
-            .values()
-            .any(|(_, other)| other.len() > prefix.len() && name.starts_with(other.as_str()))
-        {
-            return Err(refusal(
-                format!("{alias}.{column} would read another source's column {name:?}"),
-                at,
-            ));
-        }
-        Ok(name)
-    }
-
-    /// ZEN over `input.<column>` for a row expression; aggregates and windows refuse.
-    fn zen(&self, ex: &Ex, at: usize) -> Result<String, Refusal> {
-        Ok(match ex {
-            Ex::Column(alias, column) => {
-                zen_column(&self.column(alias.as_deref(), column, at)?, at)?
-            }
-            Ex::Number(number) => zen_number(number),
-            Ex::Text(text) => zen_text(text, at)?,
-            Ex::Bool(flag) => flag.to_string(),
-            Ex::Null => "null".to_owned(),
-            // Every compound form is wrapped whole: ZEN binds `not` looser
-            // than `??`, so an unwrapped `not (a) ?? b` would read as
-            // `not (a ?? b)`.
-            Ex::Not(inner) => format!("(not ({}))", self.zen(inner, at)?),
-            Ex::Negate(inner) => format!("(-({}))", self.zen(inner, at)?),
-            Ex::Binary(op, left, right) => {
-                format!("({} {op} {})", self.zen(left, at)?, self.zen(right, at)?)
-            }
-            Ex::IsNull(inner, negated) => format!(
-                "({} {} null)",
-                self.zen(inner, at)?,
-                if *negated { "!=" } else { "==" }
-            ),
-            Ex::Case(condition, then, otherwise) => format!(
-                "({} ? {} : {})",
-                self.zen(condition, at)?,
-                self.zen(then, at)?,
-                self.zen(otherwise, at)?
-            ),
-            Ex::Coalesce(args) => {
-                if args.len() < 2 {
-                    return Err(refusal("COALESCE takes two or more values", at));
-                }
-                // Nested left to right, so the tree does not rest on how ZEN
-                // associates `??`.
-                let mut parts = args.iter().map(|arg| self.zen(arg, at));
-                let first = parts
-                    .next()
-                    .ok_or_else(|| refusal("COALESCE takes two or more values", at))??;
-                parts.try_fold(
-                    first,
-                    |left, right: Result<String, Refusal>| -> Result<String, Refusal> {
-                        Ok(format!("({left} ?? {})", right?))
-                    },
-                )?
-            }
-            Ex::Call(call) => {
-                return Err(refusal(
-                    format!("{} is not a row expression here", call.name.to_uppercase()),
-                    call.at,
-                ));
-            }
-        })
-    }
+    /// Alias → the columns its scan reads: `id` and its stored properties.
+    columns: BTreeMap<String, BTreeSet<String>>,
 }
 
 struct Lowering<'c> {
@@ -1144,6 +1068,22 @@ impl Lowering<'_> {
     fn fresh(&mut self, stem: &str) -> String {
         self.counter = self.counter.saturating_add(1);
         format!("{stem}_{}", self.counter)
+    }
+
+    /// The columns a scan of `object_type` reads: `id` and stored properties.
+    fn columns(&self, object_type: &str) -> BTreeSet<String> {
+        let object = self
+            .catalog
+            .object_type_named(object_type)
+            .and_then(Result::ok);
+        let stored = object.into_iter().flat_map(|object| {
+            let properties = object
+                .properties
+                .iter()
+                .filter(|property| !property.computed);
+            properties.map(|property| property.id.as_str().to_owned())
+        });
+        std::iter::once("id".to_owned()).chain(stored).collect()
     }
 
     fn scan(&mut self, source: &Source, at: usize) -> Result<String, Refusal> {
@@ -1241,6 +1181,8 @@ impl Lowering<'_> {
             };
             json!({"key": {"left": [scope.column(Some(&outer), &outer_column, join.at)?], "right": key}})
         };
+        let columns = self.columns(&join.source.name);
+        scope.columns.insert(alias.clone(), columns);
         scope
             .aliases
             .insert(alias, (join.source.name.clone(), prefix.clone()));
@@ -1265,6 +1207,7 @@ impl Lowering<'_> {
                 (select.from.name.clone(), String::new()),
             )]),
             base: select.from.alias.clone(),
+            columns: BTreeMap::from([(select.from.alias.clone(), self.columns(&select.from.name))]),
         };
         for join in &select.joins {
             node = self.join(&node, &mut scope, join)?;
@@ -2353,6 +2296,7 @@ mod properties {
                     ("shop.Order".to_owned(), String::new()),
                 )]),
                 base: "o".to_owned(),
+                columns: std::collections::BTreeMap::new(),
             };
             let catalog = EffectiveCatalog::from_artifacts_with_registry(&pool(), &BTreeSet::new());
             let plan = match lower_sql(&sql, &catalog) {
