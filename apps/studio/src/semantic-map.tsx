@@ -50,7 +50,7 @@ function islandStatusLabel(island: SemanticIsland, attentionStatus: SemanticMapA
   if (attentionStatus === "loading") return "Loading alerts…"
   if (attentionStatus === "unavailable") return "Alerts unavailable"
   if (island.ruleHoldings > 0 && island.sourceErrors > 0) {
-    return `${island.ruleHoldings}${island.ruleHoldingsApproximate ? "+" : ""} holdings · ${island.sourceErrors} sync`
+    return `${island.ruleHoldings}${island.ruleHoldingsApproximate ? "+" : ""} rule holdings · ${island.sourceErrors} sync`
   }
   if (island.ruleHoldings > 0) {
     return `${island.ruleHoldings}${island.ruleHoldingsApproximate ? "+" : ""} rule ${island.ruleHoldings === 1 ? "holding" : "holdings"}`
@@ -58,6 +58,7 @@ function islandStatusLabel(island: SemanticIsland, attentionStatus: SemanticMapA
   if (island.sourceErrors > 0) {
     return `${island.sourceErrors} sync ${island.sourceErrors === 1 ? "error" : "errors"}`
   }
+  if (island.attention === "unknown") return "None in returned slice"
   return "No open alerts"
 }
 
@@ -506,8 +507,8 @@ export function SemanticMapPage() {
       >
         {(map) => {
           const alerts = map.totals.alerts
-          const alertTotal = alerts ? alerts.heldBack + alerts.sourceErrors : null
-          const alertApprox = alerts ? (alerts.heldBackApproximate || alerts.sourceErrorsApproximate) : false
+          const alertTotal = alerts ? alerts.ruleHoldings + alerts.sourceErrors : null
+          const alertApprox = alerts ? (alerts.ruleHoldingsApproximate || alerts.sourceErrorsApproximate) : false
           const alertValue = alertTotal === null ? "—" : `${alertTotal}${alertApprox ? "+" : ""}`
           const alertSub = map.attentionStatus === "recorded"
             ? "live alerts require a connected cell"
@@ -516,9 +517,9 @@ export function SemanticMapPage() {
               : map.attentionStatus === "unavailable"
                 ? "live inbox alerts unavailable"
                 : alertTotal && alertTotal > 0
-                  ? `${alerts!.heldBack}${alerts!.heldBackApproximate ? "+" : ""} held · ${alerts!.sourceErrors}${alerts!.sourceErrorsApproximate ? "+" : ""} sync`
-                  : alerts?.scanLimit
-                    ? `none found within ${alerts.scanLimit.toLocaleString("en-US")}-row scan`
+                  ? `${alerts!.ruleHoldings}${alerts!.ruleHoldingsApproximate ? "+" : ""} rule holdings · ${alerts!.sourceErrors}${alerts!.sourceErrorsApproximate ? "+" : ""} sync`
+                  : alerts?.bounded
+                    ? "none reported within inbox scan bounds"
                     : "no open alerts reported"
 
           return (
@@ -526,7 +527,7 @@ export function SemanticMapPage() {
               <StatStrip>
                 <KpiTile label="Islands" value={map.totals.islands} sub={`${map.totals.bridges} cross-island bridges`} />
                 <KpiTile label="Object types" value={map.totals.objectTypes} sub={`${map.totals.links} declared links`} />
-                <KpiTile label="Admitted laws" value={map.totals.laws} sub="enforced at every commit" />
+                <KpiTile label="Admitted laws" value={map.totals.laws} sub="scoped across object types" />
                 <KpiTile label="Inbox alerts" value={alertValue} sub={alertSub} />
               </StatStrip>
 

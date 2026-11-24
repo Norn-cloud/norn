@@ -51,10 +51,18 @@ function sampleCatalog(): Catalog {
     feeds: ["app.Site"],
     schema: undefined,
   }
+  const secondarySystem: SourceSystem = {
+    id: "mapping.gamma_secondary",
+    name: "Gamma Feed",
+    datasets: ["gamma_items"],
+    feeds: ["app.Item"],
+    schema: undefined,
+  }
   const itemFacts = new Map<string, readonly Source[]>([
     ["code", [{ kind: "field", field: "item_code" }]],
     ["state", [{ kind: "gap", reason: "not_in_source", note: "Computed downstream" }]],
     ["empty_field", [{ kind: "empty" }]],
+    ["nested_empty", [{ kind: "nested", dataset: "lines", collection: "items", where: "true", value: { kind: "empty" } }]],
   ])
   const item = concept({
     name: "app.Item",
@@ -80,7 +88,10 @@ function sampleCatalog(): Catalog {
         owner: "ops",
       },
     ],
-    feeds: [{ system: "Shared Connector", mappingId: "mapping.alpha_primary", dataset: "alpha_items", facts: itemFacts, ignored: [] }],
+    feeds: [
+      { system: "Shared Connector", mappingId: "mapping.alpha_primary", dataset: "alpha_items", facts: itemFacts, ignored: [] },
+      { system: "Gamma Feed", mappingId: "mapping.gamma_secondary", dataset: "gamma_items", facts: new Map(), ignored: [] },
+    ],
   })
   const batch = concept({
     name: "app.Batch",
@@ -104,7 +115,7 @@ function sampleCatalog(): Catalog {
   const concepts = [item, batch, site, unmapped]
   return {
     concepts,
-    systems: [alphaSystem, betaSystem],
+    systems: [alphaSystem, betaSystem, secondarySystem],
     byName: new Map(concepts.map((c) => [c.name, c])),
   }
 }
@@ -135,12 +146,12 @@ test("buildSemanticMap preserves distinct same-named mappings by mappingId, bund
   })
 })
 
-test("buildSemanticMap uses server inbox sections for alert totals, joins source_error by mapping_id, highlights sync-error islands under Attention lens, and counts only real mapped fields", () => {
+test("buildSemanticMap reflects server rule-holding sums, avoids false green on bounded inbox slices, surfaces secondary feed sync errors, and excludes nested empty mappings", () => {
   const inbox = {
     scanLimit: 500,
     sections: [
-      { kind: "held_back", count: 2, approximate: true },
-      { kind: "source_error", count: 1, approximate: false },
+      { kind: "held_back", count: 3, approximate: true },
+      { kind: "source_error", count: 2, approximate: false },
     ],
     items: [
       {
@@ -169,16 +180,23 @@ test("buildSemanticMap uses server inbox sections for alert totals, joins source
         target: "/connections",
         values: { mapping_id: "mapping.beta_secondary", system: "Shared Connector", status: "failed" },
       },
+      {
+        kind: "source_error",
+        id: "conn_gamma",
+        target: "/connections",
+        values: { mapping_id: "mapping.gamma_secondary", system: "Gamma Feed", status: "failed" },
+      },
     ],
   } as unknown as Inbox
 
   const projection = buildSemanticMap(sampleCatalog(), { kind: "live", inbox })
-  // Workspace alert summary comes from server sections (not double-counted from per-rule groups).
+  // Workspace alert summary comes from server sections (rule holdings, explicitly flagged as bounded).
   expect(projection.totals.alerts).toEqual({
-    heldBack: 2,
-    heldBackApproximate: true,
-    sourceErrors: 1,
+    ruleHoldings: 3,
+    ruleHoldingsApproximate: true,
+    sourceErrors: 2,
     sourceErrorsApproximate: false,
+    bounded: true,
     scanLimit: 500,
   })
 
@@ -187,10 +205,13 @@ test("buildSemanticMap uses server inbox sections for alert totals, joins source
   const core = projection.islandsById.get("core:model")!
 
   expect(alpha.ruleHoldings).toBe(3)
+  // Secondary feed mapping.gamma_secondary feeds app.Item inside alpha's island, so its sync error surfaces on alpha.
+  expect(alpha.sourceErrors).toBe(1)
   expect(alpha.attention).toBe("critical")
   expect(beta.sourceErrors).toBe(1)
   expect(beta.attention).toBe("critical")
-  expect(core.attention).toBe("none")
+  // Bounded inbox must NEVER mark unseen islands green ("none"); core stays "unknown".
+  expect(core.attention).toBe("unknown")
 
   // Attention lens must NOT dim beta even though beta's only alert is a source sync error.
   expect(islandMatchesLens(beta, "attention", "")).toBe(true)
@@ -201,7 +222,7 @@ test("buildSemanticMap uses server inbox sections for alert totals, joins source
   expect(nodeMatchesLens(item, "attention")).toBe(true)
   expect(nodeMatchesQuery(item, "restricted.code")).toBe(true)
 
-  // Dossier counts only actual mapped fields (excluding gap & empty) and surfaces gap count + artifactId.
+  // Dossier counts only actual mapped fields (excluding gap, empty, and nested empty) and surfaces gap count + artifactId.
   const itemDossier = provenanceForNode(projection, "app.Item")!
   expect(itemDossier.node.artifactId).toBe("entity:app.Item")
   expect(itemDossier.sourceFeeds).toEqual([
@@ -211,6 +232,13 @@ test("buildSemanticMap uses server inbox sections for alert totals, joins source
       dataset: "alpha_items",
       mappedFields: 1,
       gapCount: 1,
+    },
+    {
+      system: "Gamma Feed",
+      mappingId: "mapping.gamma_secondary",
+      dataset: "gamma_items",
+      mappedFields: 0,
+      gapCount: 0,
     },
   ])
 })

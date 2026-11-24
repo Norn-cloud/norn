@@ -520,10 +520,13 @@ export function validateStudioThemeContrast(theme: StudioTheme): readonly Studio
     const osBackdrop = scheme === "dark" ? OPAQUE_DARK : OPAQUE_LIGHT
     const at = (token: string, backdrop: Rgba): Rgba => compositeOver(parseColorRgba(effective[token]!)!, backdrop)
 
-    const shell = at("shell", osBackdrop)
+    // `body` paints `bg-canvas` (`index.css`), so translucent shell/background layers composite over `canvas`.
+    const canvas = at("canvas", osBackdrop)
+    const shell = at("shell", canvas)
     const bg = at("background", shell)
     const card = at("card", bg)
     const well = at("well", card)
+    const muted = at("muted", card)
     const popover = at("popover", bg)
     const secondary = at("secondary", bg)
     const accent = at("accent", bg)
@@ -537,11 +540,13 @@ export function validateStudioThemeContrast(theme: StudioTheme): readonly Studio
 
     const checks: [string, string, Rgba, number][] = [
       ["foreground (on background)", effective.foreground!, bg, 4.5],
+      ["foreground (on muted)", effective.foreground!, muted, 4.5],
       ["card-foreground (on card)", effective["card-foreground"]!, card, 4.5],
       ["popover-foreground (on popover)", effective["popover-foreground"]!, popover, 4.5],
       ["muted-foreground (on background)", effective["muted-foreground"]!, bg, 4.5],
       ["muted-foreground (on card)", effective["muted-foreground"]!, card, 4.5],
       ["muted-foreground (on well)", effective["muted-foreground"]!, well, 4.5],
+      ["muted-foreground (on muted)", effective["muted-foreground"]!, muted, 4.5],
       ["secondary-foreground (on secondary)", effective["secondary-foreground"]!, secondary, 4.5],
       ["accent-foreground (on accent)", effective["accent-foreground"]!, accent, 4.5],
       ["sidebar-foreground (on sidebar)", effective["sidebar-foreground"]!, sidebar, 4.5],

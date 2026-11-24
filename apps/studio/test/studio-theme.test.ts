@@ -116,6 +116,28 @@ test("parseStudioTheme enforces WCAG AA contrast across text, hover buttons, pop
     colors: { shell: "rgb(0 0 0 / 0.1)", background: "rgb(0 0 0 / 0.05)", foreground: "#fafafa" },
   })
   expect(translucentShell.ok).toBe(false)
+
+  // Muted surface pair: muted matching muted-foreground produces 1:1 text on muted badges and must be rejected.
+  const badMuted = parseStudioTheme({
+    version: 1,
+    name: "Same Muted",
+    baseSkin: "polar",
+    appearance: "light",
+    colors: { muted: "#585861" },
+  })
+  expect(badMuted.ok).toBe(false)
+  if (!badMuted.ok) expect(badMuted.issues.some((i) => i.path.includes("muted"))).toBe(true)
+
+  // Forced dark theme with white canvas and transparent shell/background composites over body's bg-canvas (#fff).
+  const whiteCanvasDark = parseStudioTheme({
+    version: 1,
+    name: "White Canvas Dark",
+    baseSkin: "polar",
+    appearance: "dark",
+    colors: { canvas: "#ffffff", shell: "rgb(0 0 0 / 0)", background: "rgb(0 0 0 / 0)" },
+  })
+  expect(whiteCanvasDark.ok).toBe(false)
+  if (!whiteCanvasDark.ok) expect(whiteCanvasDark.issues.some((i) => i.path.includes("foreground"))).toBe(true)
 })
 
 test("forced appearance and omitted baseSkin use the exact same scheme and skin for validation and rendering", () => {

@@ -350,18 +350,16 @@ test("Semantic Map (/map) renders monochrome islands, bundled bridges, zoom-in e
 test("boneyard-js renders UI-shape bone skeletons inside container bounds with zero horizontal overflow while pending", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: "dark" })
-  await session(page)
   await page.route("**/api/**", async (route) => {
     const url = route.request().url()
-    if (url.includes("/api/me")) {
-      return route.fulfill({ status: 200, json: { authenticated: true, user: { id: "u1", name: "Ada", email: "ada@example.com" }, organization: { id: "o1", name: "Demo", role: "admin" }, cell: { org: "o1", env: "prod" } } })
-    }
     if (url.includes("/v1/definitions")) {
-      await new Promise((resolve) => setTimeout(resolve, 1500))
+      await new Promise((resolve) => setTimeout(resolve, 2500))
       return route.fulfill({ status: 404, json: { error: "not found" } })
     }
     return route.fulfill({ status: 404, json: { error: "not found" } })
   })
+  // Register session AFTER the catch-all **/api/** route so /api/me serves environmentId: "analytics".
+  await session(page)
   await page.goto("/map")
   const skeleton = page.locator('[data-slot="bone-skeleton"][data-bone="semantic-map"]')
   await expect(skeleton).toBeVisible()

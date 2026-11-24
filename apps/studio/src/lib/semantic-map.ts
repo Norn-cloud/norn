@@ -97,10 +97,13 @@ export interface SemanticMapProjection {
     readonly laws: number
     /** Workspace-level alert summary directly from server inbox sections (null when live inbox is not available). */
     readonly alerts: {
-      readonly heldBack: number
-      readonly heldBackApproximate: boolean
+      /** Sum of per-rule holdings reported by inbox `held_back` section (one record held by two rules counts twice). */
+      readonly ruleHoldings: number
+      readonly ruleHoldingsApproximate: boolean
       readonly sourceErrors: number
       readonly sourceErrorsApproximate: boolean
+      /** True when inbox sections/items are capped or scanned with a bound (unseen islands cannot be marked healthy). */
+      readonly bounded: boolean
       readonly scanLimit: number | undefined
     } | null
   }
@@ -134,14 +137,26 @@ function titleCase(token: string): string {
     .join(" ")
 }
 
+function isMappedSource(source: Source): boolean {
+  if (source.kind === "gap" || source.kind === "empty") return false
+  if (source.kind === "nested") return isMappedSource(source.value)
+  return true
+}
+
+function isGapSource(source: Source): boolean {
+  if (source.kind === "gap") return true
+  if (source.kind === "nested") return isGapSource(source.value)
+  return false
+}
+
 function countFeedFacts(facts: ReadonlyMap<string, readonly Source[]>): { mappedFields: number; gapCount: number } {
   let mappedFields = 0
   let gapCount = 0
   for (const sources of facts.values()) {
     if (sources.length === 0) continue
-    if (sources.some((s) => s.kind !== "gap" && s.kind !== "empty")) {
+    if (sources.some(isMappedSource)) {
       mappedFields += 1
-    } else if (sources.every((s) => s.kind === "gap")) {
+    } else if (sources.every(isGapSource)) {
       gapCount += 1
     }
   }
@@ -183,16 +198,20 @@ export function buildSemanticMap(
   const liveInbox = attention.kind === "live" ? attention.inbox : undefined
   const holdingsByType = new Map<string, { count: number; approximate: boolean }>()
   const sourceErrorsBySystemId = new Map<string, number>()
+  let returnedHoldingsSum = 0
+  let returnedSourceErrors = 0
 
   if (liveInbox) {
     for (const item of liveInbox.items) {
       if (item.kind === "held_back") {
+        returnedHoldingsSum += item.count
         const current = holdingsByType.get(item.objectType) ?? { count: 0, approximate: false }
         holdingsByType.set(item.objectType, {
           count: current.count + item.count,
           approximate: current.approximate || Boolean(item.approximate),
         })
       } else if (item.kind === "source_error") {
+        returnedSourceErrors += 1
         const mappingId = typeof item.values.mapping_id === "string" ? item.values.mapping_id : undefined
         const systemName = typeof item.values.system === "string"
           ? item.values.system
@@ -206,6 +225,25 @@ export function buildSemanticMap(
       }
     }
   }
+
+  const heldSection = liveInbox?.sections.find((s) => s.kind === "held_back")
+  const sourceSection = liveInbox?.sections.find((s) => s.kind === "source_error")
+  // Inbox caps returned groups/source rows even when section totals are exact; never mark
+  // unseen islands/nodes green if any alert fell outside the returned slice or was approximate.
+  const holdingsBounded = Boolean(
+    liveInbox && (
+      heldSection?.approximate
+      || (heldSection?.count ?? 0) > returnedHoldingsSum
+      || liveInbox.scanLimit !== undefined
+    ),
+  )
+  const sourcesBounded = Boolean(
+    liveInbox && (
+      sourceSection?.approximate
+      || (sourceSection?.count ?? 0) > returnedSourceErrors
+    ),
+  )
+  const inboxBounded = holdingsBounded || sourcesBounded
 
   const islandBuckets = new Map<string, {
     id: string
@@ -262,7 +300,9 @@ export function buildSemanticMap(
         ? "unknown"
         : held.count > 0
           ? "critical"
-          : "none"
+          : holdingsBounded
+            ? "unknown"
+            : "none"
       const node: SemanticNode = {
         id: concept.name,
         artifactId: concept.artifactId ?? concept.name,
@@ -290,12 +330,27 @@ export function buildSemanticMap(
     const markingCount = new Set(nodes.flatMap((node) => node.markings)).size
     const ruleHoldings = nodes.reduce((sum, node) => sum + node.ruleHoldings, 0)
     const ruleHoldingsApproximate = nodes.some((node) => node.ruleHoldingsApproximate)
-    const sourceErrors = bucket.system ? (sourceErrorsBySystemId.get(bucket.system.id) ?? 0) : 0
+    // Count sync errors from the island's primary system AND any secondary feeding systems on its concepts
+    // (deduplicated by system id so a failed secondary feed never disappears from Attention).
+    const islandSystemIds = new Set<string>()
+    if (bucket.system) islandSystemIds.add(bucket.system.id)
+    for (const concept of bucket.concepts) {
+      for (const feed of concept.feeds) {
+        const matched = resolveSystem(feed.mappingId, feed.system)
+        if (matched) islandSystemIds.add(matched.id)
+      }
+    }
+    let sourceErrors = 0
+    for (const sysId of islandSystemIds) {
+      sourceErrors += sourceErrorsBySystemId.get(sysId) ?? 0
+    }
     const islandAttention: MapAttentionTone = !liveInbox
       ? "unknown"
       : (ruleHoldings > 0 || sourceErrors > 0)
         ? "critical"
-        : "none"
+        : inboxBounded
+          ? "unknown"
+          : "none"
     const subtitle = bucket.kind === "system" && bucket.system
       ? `${bucket.system.datasets.length} source ${bucket.system.datasets.length === 1 ? "dataset" : "datasets"}`
       : bucket.kind === "core"
@@ -358,17 +413,14 @@ export function buildSemanticMap(
     .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id))
 
   const alerts = liveInbox
-    ? (() => {
-        const heldSection = liveInbox.sections.find((s) => s.kind === "held_back")
-        const sourceSection = liveInbox.sections.find((s) => s.kind === "source_error")
-        return {
-          heldBack: heldSection?.count ?? 0,
-          heldBackApproximate: Boolean(heldSection?.approximate),
-          sourceErrors: sourceSection?.count ?? 0,
-          sourceErrorsApproximate: Boolean(sourceSection?.approximate),
-          scanLimit: liveInbox.scanLimit,
-        }
-      })()
+    ? {
+        ruleHoldings: heldSection?.count ?? 0,
+        ruleHoldingsApproximate: Boolean(heldSection?.approximate),
+        sourceErrors: sourceSection?.count ?? 0,
+        sourceErrorsApproximate: Boolean(sourceSection?.approximate),
+        bounded: inboxBounded,
+        scanLimit: liveInbox.scanLimit,
+      }
     : null
 
   return {
