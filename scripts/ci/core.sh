@@ -486,21 +486,28 @@ PY
       local runnable_docs_raw
       local -a runnable_docs_args
       runnable_docs_raw=$(
-        grep -oE 'cargo test --locked -p [a-z-]+ (--test [a-z_]+|--lib)' docs/authoring/runnable/status.md |
-          python3 -c 'import sys
+        python3 - docs/authoring/runnable/status.md <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+commands = [cmd for cmd in re.findall(r"`([^`]+)`", text) if re.match(r"^cargo\s+test(?:\s|$)", cmd)]
+if not commands:
+    sys.exit(f"integration-authoring: no runnable-docs release tests found in {path}")
+pattern = re.compile(r"^cargo test --locked -p ([a-z0-9-]+) (?:(--lib)|--test ([a-z0-9_]+)) (?!-)\S+(?: -- .+)?$")
 pkgs, targets = set(), set()
-for line in sys.stdin:
-    parts = line.split()
-    pkgs.add(parts[4])
-    targets.add(tuple(parts[5:]))
-if not pkgs or not targets:
-    sys.exit("integration-authoring: no runnable-docs release tests found in docs/authoring/runnable/status.md")
+for cmd in commands:
+    match = pattern.fullmatch(cmd)
+    if not match:
+        sys.exit(f"integration-authoring: unsupported runnable-docs cargo test command in {path}: {cmd}")
+    pkgs.add(match.group(1))
+    targets.add(("--lib",) if match.group(2) else ("--test", match.group(3)))
 for pkg in sorted(pkgs):
-    print("-p"); print(pkg)
+    print("-p")
+    print(pkg)
 for target in sorted(targets):
     for arg in target:
         print(arg)
-'
+PY
       )
       mapfile -t runnable_docs_args <<< "$runnable_docs_raw"
       cargo test --locked --no-run "${runnable_docs_args[@]}"
@@ -640,15 +647,20 @@ weights = {
 }
 # Shared compile costs amortized once per bundle containing any task in the group:
 # - Test: workspace test binaries (test/* and phase/test-shards).
-# - WasmPkg: norn-checker-wasm wasm-release LTO + wasm-opt -Oz package, plus
-#   target/debug/{norn,norn-dev-host} reused by integration-clients after integration-authoring.
+# - WasmPkg: norn-checker-wasm wasm-release LTO + wasm-opt -Oz package (charged only for
+#   actual WASM consumers). integration-clients shares the WasmPkg coalescing/pruning group
+#   so it co-locates with integration-authoring and reuses target/debug/{norn,norn-dev-host},
+#   without charging wasm_compile_seconds when packed alone.
 compile_seconds = 216
 wasm_compile_seconds = 300
-wasm_pkg_tasks = {"phase/integration-authoring", "phase/integration-wasm", "phase/integration-clients", "phase/browser"}
+wasm_compile_tasks = {"phase/integration-authoring", "phase/integration-wasm", "phase/browser"}
+wasm_group_tasks = wasm_compile_tasks | {"phase/integration-clients"}
 def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
+def in_wasm_group(task):
+    return task in wasm_group_tasks
 def compiles_wasm_pkg(task):
-    return task in wasm_pkg_tasks
+    return task in wasm_compile_tasks
 def cold_cost(task):
     return (weights[task]
             + (compile_seconds if compiles_tests(task) else 0)
@@ -685,8 +697,8 @@ max_bundles = 3
 # makespan or total CPU time.
 def pack_once(ordered, count, coalesce_test, coalesce_wasm):
     test_group = [task for task in ordered if compiles_tests(task)]
-    wasm_group = [task for task in ordered if compiles_wasm_pkg(task)]
-    other = [task for task in ordered if not compiles_tests(task) and not compiles_wasm_pkg(task)]
+    wasm_group = [task for task in ordered if in_wasm_group(task)]
+    other = [task for task in ordered if not compiles_tests(task) and not in_wasm_group(task)]
     items = []
     if coalesce_test and test_group:
         items.append(test_group)

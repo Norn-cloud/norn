@@ -98,6 +98,13 @@ impl Task {
             BuildGroup::None
         }
     }
+
+    fn compiles_wasm_pkg(self) -> bool {
+        matches!(
+            self.name,
+            "phase/integration-authoring" | "phase/integration-wasm" | "phase/browser"
+        )
+    }
 }
 
 fn slice_cost(tasks: &[Task]) -> u32 {
@@ -110,10 +117,7 @@ fn slice_cost(tasks: &[Task]) -> u32 {
     {
         total = total.saturating_add(COMPILE_SECONDS);
     }
-    if tasks
-        .iter()
-        .any(|task| task.build_group(true) == BuildGroup::WasmPkg)
-    {
+    if tasks.iter().any(|task| task.compiles_wasm_pkg()) {
         total = total.saturating_add(WASM_COMPILE_SECONDS);
     }
     total
@@ -134,20 +138,18 @@ impl Bin {
             .tasks
             .iter()
             .any(|task| task.build_group(true) == BuildGroup::Test);
-        let mut has_wasm = self
-            .tasks
-            .iter()
-            .any(|task| task.build_group(true) == BuildGroup::WasmPkg);
+        let mut has_wasm = self.tasks.iter().any(|task| task.compiles_wasm_pkg());
         let mut total = self
             .tasks
             .iter()
             .fold(0_u32, |acc, task| acc.saturating_add(task.weight));
         for task in extra {
             total = total.saturating_add(task.weight);
-            match task.build_group(true) {
-                BuildGroup::Test => has_test = true,
-                BuildGroup::WasmPkg => has_wasm = true,
-                BuildGroup::None => {}
+            if task.build_group(true) == BuildGroup::Test {
+                has_test = true;
+            }
+            if task.compiles_wasm_pkg() {
+                has_wasm = true;
             }
         }
         if has_test {
@@ -842,6 +844,67 @@ mod tests {
                 ("phase/integration-authoring", false),
                 ("phase/integration-wasm", false),
                 ("phase/doc", true),
+            ]
+        );
+    }
+
+    #[test]
+    fn integration_clients_shares_pruning_affinity_without_wasm_compile_cost() {
+        let clients = WEIGHTS
+            .iter()
+            .find_map(|&(name, weight)| {
+                (name == "phase/integration-clients").then_some(Task { name, weight })
+            })
+            .expect("phase/integration-clients weight");
+        let authoring = WEIGHTS
+            .iter()
+            .find_map(|&(name, weight)| {
+                (name == "phase/integration-authoring").then_some(Task { name, weight })
+            })
+            .expect("phase/integration-authoring weight");
+
+        // Standalone phase/integration-clients bin does NOT include WASM_COMPILE_SECONDS.
+        let standalone = Bin {
+            tasks: vec![clients],
+        };
+        assert_eq!(standalone.cost(), clients.weight);
+        assert_eq!(Bin::default().added_cost(clients), clients.weight);
+
+        // Co-located phase/integration-authoring + phase/integration-clients charges
+        // WASM_COMPILE_SECONDS once and does not prune between them.
+        let combined = Bin {
+            tasks: vec![authoring, clients],
+        };
+        assert_eq!(
+            combined.cost(),
+            authoring.weight + clients.weight + WASM_COMPILE_SECONDS
+        );
+        assert_eq!(
+            Bin {
+                tasks: vec![authoring]
+            }
+            .cost_with(&[clients]),
+            authoring.weight + clients.weight + WASM_COMPILE_SECONDS
+        );
+
+        let bundle = Bundle {
+            id: "b0".into(),
+            tasks: vec![
+                "phase/integration-authoring".into(),
+                "phase/integration-clients".into(),
+            ],
+        };
+        let mut calls = Vec::new();
+        execute(&bundle, true, |task, prune| {
+            calls.push((task.name, prune));
+            Ok(())
+        })
+        .expect("execute");
+        assert_eq!(
+            calls,
+            [
+                ("phase/integration-authoring", false),
+                ("phase/integration-clients", false),
             ]
         );
     }
