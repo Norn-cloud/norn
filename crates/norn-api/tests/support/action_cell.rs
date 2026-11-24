@@ -74,7 +74,7 @@ where
 }
 
 /// [`admitted_store`] on `engine`.
-fn admitted_store_on<E, P, X>(engine: E, documents: &[Value], prepare: P) -> CellStore<E>
+pub(crate) fn admitted_store_on<E, P, X>(engine: E, documents: &[Value], prepare: P) -> CellStore<E>
 where
     E: norn_cell::engine::SqlEngine,
     P: FnOnce(&Model) -> Result<Model, X>,

@@ -62,6 +62,8 @@ mod mapping_process;
 mod migration;
 pub mod mining;
 mod observation_quality;
+mod open_checkpoint;
+pub use open_checkpoint::CheckpointKey;
 pub mod provision;
 pub use observation_quality::AuthoritativePage;
 mod identity;
@@ -75,6 +77,8 @@ mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
 pub mod retained;
+mod scrub;
+pub use scrub::ScrubStatus;
 pub mod source_agreement;
 pub mod source_provenance;
 pub mod store;

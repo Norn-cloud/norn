@@ -2148,8 +2148,14 @@ impl norn_cell::engine::SqlEngine for TxHookEngine {
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, norn_cell::CellError> {
         self.inner.read_cache_revision()
     }
+    fn external_data_version(&self) -> Result<Option<u64>, norn_cell::CellError> {
+        self.inner.external_data_version()
+    }
     fn admitted(&self) -> Result<(), norn_cell::CellError> {
         self.inner.admitted()
+    }
+    fn checkpoint_key(&self) -> Option<norn_cell::CheckpointKey> {
+        self.inner.checkpoint_key()
     }
     fn definition_writes<T>(
         &self,

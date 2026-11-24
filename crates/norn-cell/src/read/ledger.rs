@@ -11,11 +11,18 @@ use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::payload_storage::EVENT_BYTES;
 use crate::reactive::DecodeBudget;
-use crate::store::{InstalledDefinitionSet, Receipt, ReceiptBody};
-use crate::system::{
-    DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
-    DEFINITION_VERSION, GENESIS_HASH, LEDGER, RECEIPT,
-};
+use crate::store::Receipt;
+use crate::system::{GENESIS_HASH, LEDGER, RECEIPT};
+
+/// Where a ledger verification from a checkpoint takes the quantity
+/// boundary in force at that checkpoint (OPEN-CHECKPOINT-1).
+#[derive(Debug, Clone, Copy)]
+enum BoundaryAtCheckpoint {
+    /// From the reader's cache, else by reading the receipts.
+    Lookup,
+    /// As the open checkpoint recorded it (`None`: the cell had none).
+    Known(Option<crate::quantity::FormatBoundary>),
+}
 
 /// One ledger entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -86,185 +93,6 @@ impl LedgerHead {
     }
 }
 
-pub(crate) fn active_definition_version(engine: &impl SqlEngine) -> Result<Option<u64>, CellError> {
-    let version: Option<i64> = engine.query_optional(
-        &format!("SELECT \"version\" FROM \"{DEFINITION_ACTIVE}\" WHERE \"id\" = 1"),
-        params![],
-        |row| row.get(0),
-    )?;
-    version
-        .map(|version| to_u64(version, "definitions version"))
-        .transpose()
-}
-
-pub(crate) fn validate_active_definition_pointer(
-    engine: &impl SqlEngine,
-) -> Result<Option<u64>, CellError> {
-    // One statement pins both values to the same SQLite snapshot, including
-    // when another CellStore installs definitions on a separate connection.
-    let (active, latest): (Option<i64>, Option<i64>) = engine.query_row(
-        &format!(
-            "SELECT (SELECT \"version\" FROM \"{DEFINITION_ACTIVE}\" WHERE \"id\" = 1), \
-             (SELECT \"version\" FROM \"{DEFINITION_VERSION}\" ORDER BY \"version\" DESC LIMIT 1)"
-        ),
-        params![],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    let active = active
-        .map(|version| to_u64(version, "definitions version"))
-        .transpose()?;
-    let latest = latest
-        .map(|version| to_u64(version, "definitions version"))
-        .transpose()?;
-    match (active, latest) {
-        (None, None) => Ok(None),
-        (Some(active), Some(latest)) if active == latest && active > 0 => Ok(Some(active)),
-        (active, latest) => Err(CellError::LedgerCorrupt {
-            seq: active.or(latest).unwrap_or(0),
-            reason: "active definitions pointer does not name the latest retained version"
-                .to_owned(),
-        }),
-    }
-}
-
-pub(crate) fn definition_by_version(
-    engine: &impl SqlEngine,
-    version: u64,
-) -> Result<Option<InstalledDefinitionSet>, CellError> {
-    let version_sql = to_i64(version, "definitions version")?;
-    let row = engine.query_optional(
-        &format!(
-            "SELECT \"version\", \"receipt_sha256\", \"canonical_set\", \"model_hash\", \"ddl_hash\", \"installed_at\", \"commit_seq\" FROM \"{DEFINITION_VERSION}\" WHERE \"version\" = ?1"
-        ),
-        params![version_sql],
-        |row| {
-            Ok(InstalledDefinitionSet {
-                version: to_u64(row.get(0)?, "definitions version")?,
-                receipt_sha256: row.get(1)?,
-                admission_receipt: None,
-                canonical_set: row.get(2)?,
-                registry: Vec::new(),
-                model_hash: row.get(3)?,
-                ddl_hash: row.get(4)?,
-                installed_at: to_u64(row.get(5)?, "definitions installed_at")?,
-                commit_seq: to_u64(row.get(6)?, "definitions commit_seq")?,
-                layout: None,
-                layout_revision: 0,
-            })
-        },
-    )?;
-    let Some(mut installed) = row else {
-        return Ok(None);
-    };
-    if definition_registry_table_exists(engine)? {
-        installed.registry = definition_registry_for_version(engine, version)?;
-    }
-    if definition_admission_receipt_table_exists(engine)? {
-        installed.admission_receipt = definition_admission_receipt_for_version(engine, version)?;
-    }
-    (installed.layout, installed.layout_revision) = definition_layout_for_version(engine, version)?;
-    Ok(Some(installed))
-}
-
-fn definition_layout_for_version(
-    engine: &impl SqlEngine,
-    version: u64,
-) -> Result<(Option<String>, u64), CellError> {
-    if !definition_layout_table_exists(engine)? {
-        return Ok((None, 0));
-    }
-    let row = engine.query_optional(
-        &format!(
-            "SELECT \"layout_revision\", \"sidecar\" FROM \"{DEFINITION_LAYOUT}\" WHERE \"version\" = ?1"
-        ),
-        params![to_i64(version, "definitions version")?],
-        |row| {
-            Ok((
-                to_u64(row.get(0)?, "layout revision")?,
-                row.get::<String>(1)?,
-            ))
-        },
-    )?;
-    Ok(row.map_or((None, 0), |(revision, sidecar)| (Some(sidecar), revision)))
-}
-
-fn definition_layout_table_exists(engine: &impl SqlEngine) -> Result<bool, CellError> {
-    let exists = engine
-        .query_optional(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            params![DEFINITION_LAYOUT],
-            |row| row.get::<i64>(0),
-        )?
-        .is_some();
-    Ok(exists)
-}
-
-fn definition_registry_table_exists(engine: &impl SqlEngine) -> Result<bool, CellError> {
-    let exists = engine
-        .query_optional(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            params![DEFINITION_REGISTRY],
-            |row| row.get::<i64>(0),
-        )?
-        .is_some();
-    Ok(exists)
-}
-
-fn definition_admission_receipt_table_exists(engine: &impl SqlEngine) -> Result<bool, CellError> {
-    let exists = engine
-        .query_optional(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            params![DEFINITION_ADMISSION_RECEIPT],
-            |row| row.get::<i64>(0),
-        )?
-        .is_some();
-    Ok(exists)
-}
-
-fn definition_admission_receipt_for_version(
-    engine: &impl SqlEngine,
-    version: u64,
-) -> Result<Option<String>, CellError> {
-    engine.query_optional(
-        &format!(
-            "SELECT \"receipt\" FROM \"{DEFINITION_ADMISSION_RECEIPT}\" WHERE \"version\" = ?1"
-        ),
-        params![to_i64(version, "definitions version")?],
-        |row| row.get::<String>(0),
-    )
-}
-
-fn definition_registry_for_version(
-    engine: &impl SqlEngine,
-    version: u64,
-) -> Result<Vec<String>, CellError> {
-    let registry = engine.query_optional(
-        &format!("SELECT \"registry\" FROM \"{DEFINITION_REGISTRY}\" WHERE \"version\" = ?1"),
-        params![to_i64(version, "definitions version")?],
-        |row| row.get::<String>(0),
-    )?;
-    let Some(registry) = registry else {
-        return Ok(Vec::new());
-    };
-    Ok(serde_json::from_str(&registry)?)
-}
-
-fn definition_from_row(row: &SqlRow) -> Result<InstalledDefinitionSet, CellError> {
-    Ok(InstalledDefinitionSet {
-        version: to_u64(row.get(0)?, "definitions version")?,
-        receipt_sha256: row.get(1)?,
-        admission_receipt: None,
-        canonical_set: row.get(2)?,
-        registry: Vec::new(),
-        model_hash: row.get(3)?,
-        ddl_hash: row.get(4)?,
-        installed_at: to_u64(row.get(5)?, "definitions installed_at")?,
-        commit_seq: to_u64(row.get(6)?, "definitions commit_seq")?,
-        layout: None,
-        layout_revision: 0,
-    })
-}
-
 impl<E: SqlEngine> StoreReader<'_, E> {
     /// The next commit sequence number.
     pub(crate) fn next_commit_seq(&self) -> Result<u64, CellError> {
@@ -295,6 +123,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine or decode errors.
     pub fn ledger(&self, from: u64) -> Result<Vec<LedgerEntry>, CellError> {
+        // S8 (#1551): `ledger(from)` reads entries with `seq >= from`;
+        // anything covering the checkpoint waits until the scrub finishes.
+        self.check_ledger(from.saturating_sub(1))?;
         self.ledger_range(from, None)
     }
 
@@ -306,6 +137,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine or decode errors.
     pub fn ledger_page(&self, after: u64, limit: usize) -> Result<Vec<LedgerEntry>, CellError> {
+        // S8 (#1551 round 4): an entry is served on its own hash, which does
+        // not prove it is the chain's; entries the open checkpoint covers
+        // wait until the scrub has verified the chain through them.
+        self.check_ledger(after)?;
         // No stored sequence exceeds the host's exact-integer bound, so a cursor at or past it
         // has nothing after it.
         match i64::try_from(after) {
@@ -544,6 +379,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         limit: usize,
         budget: &mut DecodeBudget,
     ) -> Result<Option<Vec<LedgerEntry>>, CellError> {
+        // S8 (#1551): check the scrub barrier before scanning ledger rows.
+        self.check_ledger(after)?;
         if limit == 0 {
             return Ok(Some(Vec::new()));
         }
@@ -576,148 +413,53 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.ledger_page(after, length_rows.len()).map(Some)
     }
 
-    /// The active retained definition version without loading its payload.
-    ///
-    /// # Errors
-    /// SQL errors or a dangling active-version pointer.
-    pub fn active_definitions_version(&self) -> Result<Option<u64>, CellError> {
-        validate_active_definition_pointer(self.conn)
-    }
-
-    /// ADMIT-CACHE-1 (#1533): the active definitions' identity, its version
-    /// and admission receipt digest, without loading its payload: what a host
-    /// keys the work it does once per definitions version by.
-    ///
-    /// # Errors
-    /// SQL errors or a dangling active-version pointer.
-    pub fn active_definitions_identity(&self) -> Result<Option<(u64, String)>, CellError> {
-        let Some(version) = validate_active_definition_pointer(self.conn)? else {
-            return Ok(None);
-        };
-        let digest: Option<String> = self.conn.query_optional(
-            &format!(
-                "SELECT \"receipt_sha256\" FROM \"{DEFINITION_VERSION}\" WHERE \"version\" = ?1"
-            ),
-            params![to_i64(version, "definitions version")?],
-            |row| row.get(0),
-        )?;
-        let Some(digest) = digest else {
-            return Err(CellError::LedgerCorrupt {
-                seq: version,
-                reason: "active definitions pointer has no retained version".to_owned(),
-            });
-        };
-        Ok(Some((version, digest)))
-    }
-
-    /// Whether a retained definition set is installed at `version`, without
-    /// loading it: exactly `installed_definitions(Some(version)).is_some()`
-    /// for any version at or below the active one.
-    ///
-    /// # Errors
-    /// SQL errors.
-    pub(crate) fn definitions_version_retained(&self, version: u64) -> Result<bool, CellError> {
-        Ok(self
-            .conn
-            .query_optional(
-                &format!("SELECT 1 FROM \"{DEFINITION_VERSION}\" WHERE \"version\" = ?1"),
-                params![to_i64(version, "definitions version")?],
-                |row| row.get::<i64>(0),
-            )?
-            .is_some())
-    }
-
-    /// The retained definition set at `version`, or the active set when
-    /// `version` is `None`.
-    ///
-    /// # Errors
-    ///
-    /// SQL, decoding, or a dangling active-version pointer.
-    pub fn installed_definitions(
+    /// Read at most `limit` ledger entries starting at `from`, decoding packed
+    /// payloads and checking entry hashes while charging exact SQL rows read to
+    /// `budget` (durable fact proofs are driven resumably by the caller).
+    pub(crate) fn scrub_ledger_page(
         &self,
-        version: Option<u64>,
-    ) -> Result<Option<InstalledDefinitionSet>, CellError> {
-        let version = if let Some(version) = version {
-            version
-        } else {
-            let Some(version) = validate_active_definition_pointer(self.conn)? else {
-                return Ok(None);
-            };
-            version
-        };
-        let installed = definition_by_version(self.conn, version)?;
-        if installed.is_none()
-            && version == validate_active_definition_pointer(self.conn)?.unwrap_or(0)
-        {
-            return Err(CellError::LedgerCorrupt {
-                seq: version,
-                reason: "active definitions pointer has no retained version".to_owned(),
-            });
-        }
-        Ok(installed)
-    }
-
-    /// The active definition version in force at `commit_seq`, derived from
-    /// the retained version rows rather than from user-emittable ledger data.
-    ///
-    /// # Errors
-    ///
-    /// SQL, decoding, sequence-range, or receipt-integrity errors.
-    pub fn definitions_version_at(&self, commit_seq: u64) -> Result<Option<u64>, CellError> {
-        if commit_seq == 0 {
-            return Ok(None);
-        }
-        let row: Option<(i64, String, String)> = self.conn.query_optional(
-            &format!(
-                "SELECT \"commit_seq\", \"receipt\", \"receipt_hash\" FROM \"{RECEIPT}\" WHERE \"commit_seq\" <= ?1 ORDER BY \"commit_seq\" DESC LIMIT 1"
-            ),
-            params![to_i64(commit_seq, "commit_seq")?],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
-        let Some((stored_seq, serialized, stored_hash)) = row else {
-            return Ok(None);
-        };
-        let stored_seq = to_u64(stored_seq, "commit_seq")?;
-        let body: ReceiptBody = serde_json::from_str(&serialized)?;
-        if body.commit_seq != stored_seq || stored_hash != hash_json(&body)? {
-            return Err(CellError::LedgerCorrupt {
-                seq: stored_seq,
-                reason: "definitions-version receipt does not verify".to_owned(),
-            });
-        }
-        Ok((body.definitions_version != 0).then_some(body.definitions_version))
-    }
-
-    /// All retained definition versions in ascending order.
-    ///
-    /// # Errors
-    ///
-    /// SQL or decoding errors.
-    pub fn installed_definition_versions(&self) -> Result<Vec<InstalledDefinitionSet>, CellError> {
+        from: u64,
+        limit: usize,
+        budget: &mut crate::scrub::RowBudget,
+    ) -> Result<Vec<LedgerEntry>, CellError> {
+        let limit = i64::try_from(limit)
+            .unwrap_or(MAX_SAFE_INTEGER)
+            .min(MAX_SAFE_INTEGER);
         let rows = self.conn.query(
             &format!(
-                "SELECT \"version\", \"receipt_sha256\", \"canonical_set\", \"model_hash\", \"ddl_hash\", \"installed_at\", \"commit_seq\" FROM \"{DEFINITION_VERSION}\" ORDER BY \"version\""
+                "SELECT \"seq\", \"commit_seq\", \"world\", \"event\", \"prev_hash\", \"hash\" FROM \"{LEDGER}\" WHERE \"seq\" >= ?1 ORDER BY \"seq\" LIMIT ?2"
             ),
-            params![],
+            params![to_i64(from, "seq")?, limit],
         )?;
-        let has_registry_table = definition_registry_table_exists(self.conn)?;
-        let has_admission_receipt_table = definition_admission_receipt_table_exists(self.conn)?;
-        rows.into_iter()
-            .map(|values| {
-                let mut installed = definition_from_row(&SqlRow(values))?;
-                if has_registry_table {
-                    installed.registry =
-                        definition_registry_for_version(self.conn, installed.version)?;
-                }
-                if has_admission_receipt_table {
-                    installed.admission_receipt =
-                        definition_admission_receipt_for_version(self.conn, installed.version)?;
-                }
-                (installed.layout, installed.layout_revision) =
-                    definition_layout_for_version(self.conn, installed.version)?;
-                Ok(installed)
-            })
-            .collect()
+        budget.charge(rows.len());
+        let mut out = Vec::with_capacity(rows.len());
+        for values in rows {
+            let row = SqlRow(values);
+            let seq = to_u64(row.get(0)?, "seq")?;
+            let commit_seq = to_u64(row.get(1)?, "commit_seq")?;
+            let world: String = row.get(2)?;
+            let event: String = row.get(3)?;
+            let prev_hash: String = row.get(4)?;
+            let hash: String = row.get(5)?;
+            let decoded = crate::payload_storage::decode_event_budgeted(
+                self.conn, seq, &world, &event, budget,
+            )?;
+            if entry_hash(seq, commit_seq, &world, &decoded, &prev_hash)? != hash {
+                return Err(CellError::LedgerCorrupt {
+                    seq,
+                    reason: "entry hash does not verify".to_owned(),
+                });
+            }
+            out.push(LedgerEntry {
+                seq,
+                commit_seq,
+                world,
+                event: decoded,
+                prev_hash,
+                hash,
+            });
+        }
+        Ok(out)
     }
 
     fn ledger_range(&self, from: u64, limit: Option<usize>) -> Result<Vec<LedgerEntry>, CellError> {
@@ -760,9 +502,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 prev_hash: row.get(4)?,
                 hash: row.get(5)?,
             };
-            // Result placeholders must never escape when their encoding index
-            // is missing or changed. Valid legacy lookalikes retain their own hash.
-            if entry.event.get("type").and_then(Value::as_str) == Some("command.result")
+            // Every served entry still hashes to its stored digest, so an
+            // event changed in place is never served, also one before an
+            // open checkpoint that no open re-reads (#1551 round 2). Result
+            // placeholders must never escape when their encoding index is
+            // missing or changed; a diagnosis read (`verify` off) checks them
+            // alone. Valid legacy lookalikes retain their own hash.
+            if (verify || entry.event.get("type").and_then(Value::as_str) == Some("command.result"))
                 && entry_hash(
                     entry.seq,
                     entry.commit_seq,
@@ -773,7 +519,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             {
                 return Err(CellError::LedgerCorrupt {
                     seq: entry.seq,
-                    reason: "command result payload does not verify".to_owned(),
+                    reason: "entry hash does not verify".to_owned(),
                 });
             }
             if verify {
@@ -830,6 +576,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// SQL engine or decode errors; [`CellError::LedgerCorrupt`] when a
     /// receipt's lookup columns disagree with its hashed body.
     pub fn receipts(&self) -> Result<Vec<Receipt>, CellError> {
+        self.check_live()?;
         self.receipts_from(0)
     }
 
@@ -837,13 +584,22 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// # Errors
     ///
-    /// SQL engine or receipt decode errors.
+    /// SQL engine or receipt decode errors; [`CellError::Verifying`] when
+    /// no receipt is found while the scrub has not finished verifying covered
+    /// receipts (S4); [`CellError::Fenced`] on a fenced cell.
     pub fn receipt_by_idempotency_key(
         &self,
         world: &str,
         key: &str,
     ) -> Result<Option<Receipt>, CellError> {
-        receipt_by_key(self.conn, world, key)
+        self.check_live()?;
+        let found = receipt_by_key(self.conn, world, key)?;
+        if found.is_none() {
+            // S4 (#1551): a lookup miss cannot conclude "first commit" until
+            // the scrub has verified every covered receipt's lookup columns.
+            self.check_receipt_miss()?;
+        }
+        Ok(found)
     }
 
     /// Receipts with `commit_seq >= from`, in commit order.
@@ -878,6 +634,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// SQL engine or decode errors; [`CellError::LedgerCorrupt`] when a
     /// receipt's lookup columns disagree with its hashed body.
     pub fn receipts_after(&self, after: u64, limit: usize) -> Result<Vec<Receipt>, CellError> {
+        self.check_live()?;
         let limit = i64::try_from(limit)
             .unwrap_or(MAX_SAFE_INTEGER)
             .min(MAX_SAFE_INTEGER);
@@ -890,13 +647,35 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         decode_receipts(rows)
     }
 
+    /// Read at most `limit` receipts after `after` (unfiltered when `after == 0`
+    /// so malformed non-positive sequence numbers are never hidden).
+    pub(crate) fn receipts_page_from(
+        &self,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<Receipt>, CellError> {
+        if after == 0 {
+            let limit = i64::try_from(limit)
+                .unwrap_or(MAX_SAFE_INTEGER)
+                .min(MAX_SAFE_INTEGER);
+            let rows = self.conn.query(
+                &format!(
+                    "SELECT \"commit_seq\", \"world\", \"idempotency_key\", \"request_hash\", \"receipt\", \"receipt_hash\" FROM \"{RECEIPT}\" ORDER BY \"commit_seq\" LIMIT ?1"
+                ),
+                params![limit],
+            )?;
+            return decode_receipts(rows);
+        }
+        self.receipts_after(after, limit)
+    }
+
     /// Iterate retained receipts in bounded pages, including an unfiltered first
     /// page so malformed nonpositive sequence numbers cannot be hidden.
     pub(crate) fn receipt_stream(&self) -> impl Iterator<Item = Result<Receipt, CellError>> + '_ {
         self.receipt_stream_from(0)
     }
 
-    fn receipt_stream_from(
+    pub(crate) fn receipt_stream_from(
         &self,
         checkpoint: u64,
     ) -> impl Iterator<Item = Result<Receipt, CellError>> + '_ {
@@ -946,6 +725,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         limit: usize,
         budget: &mut DecodeBudget,
     ) -> Result<Option<Vec<Receipt>>, CellError> {
+        self.check_live()?;
         let limit = i64::try_from(limit)
             .unwrap_or(MAX_SAFE_INTEGER)
             .min(MAX_SAFE_INTEGER);
@@ -977,6 +757,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// As [`Self::receipts_after`].
     pub fn receipt_at(&self, commit_seq: u64) -> Result<Option<Receipt>, CellError> {
+        self.check_live()?;
         if commit_seq == 0 {
             return Ok(None);
         }
@@ -992,6 +773,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine errors or an out-of-range commit sequence.
     pub fn receipt_hash_at(&self, commit_seq: u64) -> Result<Option<String>, CellError> {
+        self.check_live()?;
         if commit_seq == 0 {
             return Ok(None);
         }
@@ -1034,13 +816,34 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .map(|(head, _)| head)
     }
 
+    pub(crate) fn verify_ledger_with_boundary(
+        &self,
+        checkpoint: &LedgerHead,
+    ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
+        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Lookup)
+    }
+
+    /// [`Self::verify_ledger_with_boundary`] from an open checkpoint that
+    /// names the quantity boundary in force at it (OPEN-CHECKPOINT-1), so no
+    /// receipt before it is read to find the boundary. The boundary is still
+    /// checked against the cell's recorded pointer and against every
+    /// quantity event after the checkpoint.
+    pub(crate) fn verify_ledger_from_open_checkpoint(
+        &self,
+        checkpoint: &LedgerHead,
+        boundary: Option<crate::quantity::FormatBoundary>,
+    ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
+        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Known(boundary))
+    }
+
     #[allow(
         clippy::too_many_lines,
         reason = "one pass: the anchor, the hash chain, receipt tiling and quantity boundary"
     )]
-    pub(crate) fn verify_ledger_with_boundary(
+    fn verify_ledger_after(
         &self,
         checkpoint: &LedgerHead,
+        known_boundary: BoundaryAtCheckpoint,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
         let base = checkpoint.seq;
         let anchor_corrupt = || CellError::LedgerCorrupt {
@@ -1060,8 +863,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 return Err(anchor_corrupt());
             }
         }
+        // S1 (#1551 round 2): logical time never goes back across receipts,
+        // checked here, in the one verifier every open and checkpoint write
+        // shares, from the anchor receipt's own time (0 from genesis).
+        let mut time_floor = 0_u64;
         if checkpoint.commits > 0 {
             let anchor = self.receipts_after(checkpoint.commits.saturating_sub(1), 1)?;
+            time_floor = anchor
+                .first()
+                .map_or(0, |receipt| receipt.body.logical_time);
             if !anchor.first().is_some_and(|receipt| {
                 receipt.body.commit_seq == checkpoint.commits
                     && receipt.body.ledger_head == checkpoint.hash
@@ -1078,10 +888,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Err(anchor_corrupt());
         }
 
-        let mut boundary = self
-            .quantity_boundary
+        let known = match known_boundary {
+            BoundaryAtCheckpoint::Known(boundary) => Some(boundary),
+            BoundaryAtCheckpoint::Lookup => None,
+        };
+        let mut boundary = known
+            .unwrap_or(self.quantity_boundary)
             .filter(|boundary| boundary.seq <= base);
-        if base > 0 && self.quantity_boundary.is_none() {
+        if base > 0 && known.is_none() && self.quantity_boundary.is_none() {
             boundary = crate::quantity::format_boundary(self.conn)?
                 .filter(|boundary| boundary.seq <= base);
         }
@@ -1101,6 +915,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             if receipt.body.commit_seq != expected_commit {
                 return Err(corrupt("commit sequence gap"));
             }
+            if receipt.body.logical_time < time_floor {
+                return Err(corrupt("receipt logical time goes back"));
+            }
+            time_floor = receipt.body.logical_time;
             if receipt.body.quantity.is_some() != receipt.body.quantity_result.is_some()
                 || (receipt.body.quantity_intent.is_some() && receipt.body.quantity.is_none())
                 || receipt.body.quantity.as_ref().is_some_and(|requests| {
@@ -1115,9 +933,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             {
                 return Err(corrupt("quantity receipt provenance is incomplete"));
             }
-            if hash_json(&receipt.body)? != receipt.hash {
-                return Err(corrupt("receipt hash does not verify"));
-            }
+            // The stream's decode verified the receipt hash.
             if receipt.body.first_event_seq != next(expected_seq, "seq")? {
                 return Err(corrupt("receipt span does not continue the ledger"));
             }
@@ -1153,16 +969,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 {
                     return Err(corrupt("an event does not belong to its receipt"));
                 }
-                let hash = entry_hash(
-                    entry.seq,
-                    entry.commit_seq,
-                    &entry.world,
-                    &entry.event,
-                    &prev,
-                )?;
-                if hash != entry.hash {
-                    return Err(event_corrupt("entry hash does not verify"));
-                }
+                // `ledger_range` served the entry only because it hashes, over
+                // its own `prev_hash`, to its stored digest; that is `prev`.
+                let hash = entry.hash.clone();
                 if receipt.body.quantity.is_some() {
                     if let Some(marker) = crate::quantity::boundary_marker(&entry, &receipt.body)?
                         && boundary.replace(marker).is_some()
@@ -1224,6 +1033,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 }
             }
         }
+        let tail = LedgerHead {
+            seq: expected_seq,
+            hash: prev,
+            commits: expected_commit,
+        };
         if let Some(entry) = self
             .ledger_range(
                 if expected_seq == 0 {
@@ -1244,14 +1058,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if base == 0 {
             crate::quantity::verify_projections(self.conn, self.receipt_stream())?;
         }
-        Ok((
-            LedgerHead {
-                seq: expected_seq,
-                hash: prev,
-                commits: expected_commit,
-            },
-            boundary,
-        ))
+        Ok((tail, boundary))
     }
 }
 
