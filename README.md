@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-3,516 records across 169 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+3,780 records across 171 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -178,60 +178,62 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
-| `tests.rust.count` | 4,226 | count (single) | boat, github-hosted, local | 26 | 1,990 / 4,226 | ▁▁▂▂▂▃▄▄▄▄▄▅▅▅▅▆▆▅▆▆▆▆▇███ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-api.count` | 266 | count (single) | github-hosted, local | 23 | 9 / 266 | ▁▁▁▁▁▁▂▂▂▂▂▃▄▄▄▄▄▄▄▇▇██ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-authz.count` | 52 | count (single) | github-hosted, local | 23 | 50 / 52 | ▁▁▁▁▁██████████████████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-builtins.count` | 14 | count (single) | github-hosted, local | 11 | 14 / 14 | ▁▁▁▁▁▁▁▁▁▁▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-canonical.count` | 40 | count (single) | github-hosted, local | 23 | 25 / 40 | ▁▄▄▄▄▄▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅██ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-cell-do.count` | 371 | count (single) | github-hosted, local | 13 | 8 / 371 | ▁▁▂▂▃▃▃▃▃▆███ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-cell.count` | 760 | count (single) | github-hosted, local | 23 | 337 / 760 | ▁▁▁▂▂▄▄▄▅▅▅▅▅▅▆▆▆▆▆▇███ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-checker-wasm.count` | 30 | count (single) | github-hosted, local | 23 | 19 / 30 | ▁▁▁▂▂▂▂▂▂▄█████████████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-checker.count` | 1,494 | count (single) | github-hosted, local | 25 | 783 / 1,494 | ▁▂▂▃▃▄▅▅▅▅▆▆▆▆▆▆▆▇▇▇▇████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-cli.count` | 18 | count (single) | github-hosted, local | 20 | 1 / 18 | ▁▁▂▂▂▂▅▆▆▆▆▆▇▇▇▇████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-datalog.count` | 26 | count (single) | github-hosted, local | 13 | 12 / 26 | ▁▁▁▁▁▁▁██████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-dataplane.count` | 2 | count (single) | github-hosted, local | 20 | 2 / 2 | ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-decisions.count` | 65 | count (single) | github-hosted, local | 23 | 29 / 65 | ▁▁▁▁███████████████████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-expr.count` | 171 | count (single) | github-hosted, local | 23 | 119 / 171 | ▁▂▂▂▅▅▆▆▆▆▆▆▆▆▇▇▇▇█████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-formats.count` | 70 | count (single) | github-hosted | 9 | 42 / 70 | ▁▁▁▂▂▂▂██ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-graph.count` | 25 | count (single) | github-hosted, local | 23 | 25 / 25 | ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-ir.count` | 240 | count (single) | github-hosted, local | 23 | 169 / 240 | ▁▁▁▁▂▂▅▅▅▆▇▇▇▇▇▇▇▇▇████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-kernel.count` | 398 | count (single) | github-hosted, local | 23 | 274 / 398 | ▁▁▁▁▂▄▄▅▅▆▇████████████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-projections.count` | 58 | count (single) | github-hosted, local | 23 | 54 / 58 | ▆▁▃▃▃▅▆▆▆▆▆▆▆▆▆▆▆▆▆████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-skeleton-guard.count` | 116 | count (single) | github-hosted, local | 23 | 74 / 116 | ▁▃▄▄▄▄▇▇▇▇▅▅▅▅▅▇▇▇█████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.crate.norn-testkit.count` | 10 | count (single) | github-hosted, local | 23 | 10 / 15 | ████████████████████▁▁▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
+| `tests.rust.count` | 4,389 | count (single) | boat, github-hosted, local | 27 | 1,990 / 4,389 | ▁▁▂▂▂▃▃▄▄▄▄▄▅▅▅▆▆▅▅▅▆▆▇▇███ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-api.count` | 270 | count (single) | github-hosted, local | 24 | 9 / 270 | ▁▁▁▁▁▁▂▂▂▂▂▃▄▄▄▄▄▄▄▇▇███ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-authz.count` | 52 | count (single) | github-hosted, local | 24 | 50 / 52 | ▁▁▁▁▁███████████████████ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-builtins.count` | 15 | count (single) | github-hosted, local | 12 | 14 / 15 | ▁▁▁▁▁▁▁▁▁▁▁█ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-canonical.count` | 40 | count (single) | github-hosted, local | 24 | 25 / 40 | ▁▄▄▄▄▄▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅███ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-cell-do.count` | 384 | count (single) | github-hosted, local | 14 | 8 / 384 | ▁▁▂▂▂▃▃▃▃▆▇███ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-cell-rivet.count` | 6 | count (single) | github-hosted | 1 | 6 / 6 | ▁ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-cell.count` | 784 | count (single) | github-hosted, local | 24 | 337 / 784 | ▁▁▁▂▂▃▄▄▄▄▄▅▅▅▆▆▆▆▆▇▇███ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-checker-wasm.count` | 30 | count (single) | github-hosted, local | 24 | 19 / 30 | ▁▁▁▂▂▂▂▂▂▄██████████████ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-checker.count` | 1,512 | count (single) | github-hosted, local | 26 | 783 / 1,512 | ▁▂▂▂▃▄▅▅▅▅▆▆▆▆▆▆▆▆▆▇▇█████ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-cli.count` | 19 | count (single) | github-hosted, local | 21 | 1 / 19 | ▁▁▂▂▂▂▅▆▆▆▆▆▇▇▇▇█████ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-datalog.count` | 26 | count (single) | github-hosted, local | 14 | 12 / 26 | ▁▁▁▁▁▁▁███████ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-dataplane.count` | 2 | count (single) | github-hosted, local | 21 | 2 / 2 | ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-decisions.count` | 66 | count (single) | github-hosted, local | 24 | 29 / 66 | ▁▁▁▁▇▇▇▇▇▇██████████████ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-expr.count` | 188 | count (single) | github-hosted, local | 24 | 119 / 188 | ▁▂▂▂▄▄▅▅▅▅▅▅▅▅▅▅▅▅▆▆▆▆▆█ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-formats.count` | 70 | count (single) | github-hosted | 10 | 42 / 70 | ▁▁▁▂▂▂▂███ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-graph.count` | 25 | count (single) | github-hosted, local | 24 | 25 / 25 | ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-ir.count` | 241 | count (single) | github-hosted, local | 24 | 169 / 241 | ▁▁▁▁▂▂▅▅▅▆▆▇▇▇▇▇▇▇▇█████ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-kernel.count` | 412 | count (single) | github-hosted, local | 24 | 274 / 412 | ▁▁▁▁▂▃▄▅▅▅▆▇▇▇▇▇▇▇▇▇▇▇▇█ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-projections.count` | 58 | count (single) | github-hosted, local | 24 | 54 / 58 | ▆▁▃▃▃▅▆▆▆▆▆▆▆▆▆▆▆▆▆█████ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-skeleton-guard.count` | 179 | count (single) | github-hosted, local | 24 | 74 / 179 | ▁▂▂▂▂▂▃▃▃▃▂▂▂▂▃▃▃▃▄▄▄▄▄█ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.crate.norn-testkit.count` | 10 | count (single) | github-hosted, local | 24 | 10 / 15 | ████████████████████▁▁▁▁ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
 | `tests.rust.norn_checker.count` | 1,283 | count (single) | boat | 2 | 1,283 / 1,318 | █▁ | `20e8feb4b0` | [link](https://github.com/Norn-cloud/norn/pull/1223) |
-| `tests.rust.proptest_blocks.count` | 147 | count (single) | github-hosted, local | 23 | 8 / 147 | ▁▁▁▁▃▄▅▆▆▆▆▇▇▇▇▇▇▇▇████ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
-| `tests.rust.tokio.count` | 38 | count (single) | github-hosted, local | 23 | 26 / 38 | ▁▁▁▂▂▂▂▂▂▂▂▂▂▃▅▅▅▅▅▆███ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45174416172) |
+| `tests.rust.proptest_blocks.count` | 149 | count (single) | github-hosted, local | 24 | 8 / 149 | ▁▁▁▁▃▄▅▅▆▆▆▇▇▇▇▇▇▇▇█████ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
+| `tests.rust.tokio.count` | 39 | count (single) | github-hosted, local | 24 | 26 / 39 | ▁▁▁▂▂▂▂▂▂▂▂▂▂▃▅▅▅▅▅▆▇▇▇█ | `a549c2dbb1` | [link](https://github.com/Norn-cloud/norn/actions/runs/45405301495) |
 
 ## CI task times (GitHub-hosted, never ratcheted)
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
 | `ci.core.bundle.b2.peak_disk_used_gib` | 66,317,406,208 | bytes (single) | boat | 2 | 66,317,406,208 / 80,086,061,056 | █▁ | `ae22979719` | [link](https://github.com/Norn-cloud/norn/pull/1248) |
-| `ci.core.run.s` | 2,825 | s (single) | github-hosted | 223 | 35 / 9,710 | ▃▃▃▃▃▂▂▃▃▂▂▂▂▂▂▂▃▂▂▂▂▃▂▃▃▃▃▃▃▄▃▄▄▃▃▃▃▃▃▃ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.phase.browser.s` | 678 | s (single) | boat, github-hosted | 87 | 0 / 712 | ▄▄▃▃▃▄▄▄▄▄▃▆▆▆▇▆▆▆█▇▆▆▆▆▆▇▆█▆██▆▆█▆▇▆▆▆█ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.phase.clippy.s` | 91 | s (single) | boat, github-hosted | 134 | 42 / 144 | ▅▆▃▃▃▄▃▃▃▅▄▆▆▄▃▄▄▅▆▄▆▄▅▅▇▅▅▅▆▆▄▇▇▅▄█▅▆▅▄ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.phase.doc.s` | 76 | s (single) | boat, github-hosted | 134 | 16 / 93 | ▃▅▅▄▂▃▆▄▂▄█▆▄▄▄▇▃▃▄▅▄▄▆▄▆▆▆▇▇▆▅▄▅▅▆▆▄▆▆▆ | `efc32b8165` | [link](https://github.com/Norn-cloud/norn/actions/runs/45041472787) |
-| `ci.core.task.phase.doctest.s` | 66 | s (single) | github-hosted | 131 | 11 / 72 | ▃▄▄▃▄▄▄▃▁▂▂▁▂▁▁▂▂▂▂▁▂▂▂▂▂▂▁▂▂▃▅▅▆▅▅▇▅█▅▇ | `b5e208c77b` | [link](https://github.com/Norn-cloud/norn/actions/runs/44954220431) |
-| `ci.core.task.phase.duckdb.s` | 618 | s (single) | github-hosted | 52 | 370 / 980 | ▂▃▁▂▂▂▂▂█▄▇▄▅█▅▆█▅▄▄▄▇▅▄▄█▄█▄▇▄▄▇▄▅▄▄▄▄▄ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.phase.features.s` | 500 | s (single) | github-hosted | 134 | 296 / 1,161 | ▃▃▄▅▄▃▃▅█▄▄▆▄▄▄▇▇▇▄▄▇▄▅▄▅▄▃█▇▄▄▇▄▄▅▄▄▄▄▃ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.phase.guards.s` | 362 | s (single) | boat, github-hosted | 144 | 104 / 935 | ▆▄▅▅▅▅▁▁▂▁▄▄▆▅▄▅▄▅▅▅▅▅▄▃▃▄▃▃▄▃▅▄▅▄▄▄▄▄▁▃ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.phase.integration-authoring.s` | 1,050 | s (single) | github-hosted | 1 | 1,050 / 1,050 | ▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.phase.integration-clients.s` | 89 | s (single) | github-hosted | 1 | 89 / 89 | ▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.phase.integration-wasm.s` | 385 | s (single) | github-hosted | 1 | 385 / 385 | ▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
+| `ci.core.run.s` | 3,772 | s (single) | github-hosted | 228 | 35 / 9,710 | ▂▂▃▃▂▂▂▂▂▂▂▃▂▂▂▂▃▂▃▃▃▃▃▃▄▃▄▄▃▃▃▃▃▃▃▃▃▃▄▄ | `76924f6ef5` | [link](https://github.com/Norn-cloud/norn/actions/runs/45308914225) |
+| `ci.core.task.phase.browser.s` | 334 | s (single) | boat, github-hosted | 98 | 0 / 717 | ▆▆▆▇▆▆▆█▇▆▆▆▆▆▇▆█▆██▆▆█▆▇▆▆▆██▆▇▇▆▇▄▄▄▄▄ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
+| `ci.core.task.phase.clippy.s` | 83 | s (single) | boat, github-hosted | 137 | 42 / 144 | ▃▃▄▃▃▃▅▄▆▆▄▃▄▄▅▆▄▆▄▅▅▇▅▅▅▆▆▄▇▇▅▄█▅▆▅▄▄▄▄ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
+| `ci.core.task.phase.doc.s` | 41 | s (single) | boat, github-hosted | 137 | 16 / 93 | ▄▂▃▆▄▂▄█▆▄▄▄▇▃▃▄▅▄▄▆▄▆▆▆▇▇▆▅▄▅▅▆▆▄▆▆▆▆▃▃ | `76924f6ef5` | [link](https://github.com/Norn-cloud/norn/actions/runs/45308914225) |
+| `ci.core.task.phase.doctest.s` | 34 | s (single) | github-hosted | 132 | 11 / 72 | ▄▄▃▄▄▄▃▁▂▂▁▂▁▁▂▂▂▂▁▂▂▂▂▂▂▁▂▂▃▅▅▆▅▅▇▅█▅▇▄ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
+| `ci.core.task.phase.duckdb.s` | 1,070 | s (single) | github-hosted | 65 | 370 / 1,289 | ▅▄▄▅▃▃▃▃▅▃▃▃▅▃▆▃▅▃▃▅▃▄▃▃▃▃▃▄▅▅▄█▅▆▅▄▅▆▄▆ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
+| `ci.core.task.phase.features.s` | 485 | s (single) | github-hosted | 154 | 296 / 1,161 | ▇▄▅▄▅▄▃█▇▄▄▇▄▄▅▄▄▄▄▃▃▂▂▂▂▃▃▂▂▂▂▁▂▃▂▂▂▃▁▃ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
+| `ci.core.task.phase.guards.s` | 287 | s (single) | boat, github-hosted | 155 | 104 / 935 | ▄▆▅▄▅▄▅▅▅▅▅▄▃▃▄▃▃▄▃▅▄▅▄▄▄▄▄▁▃▃▂▁▁▂▁▃▃▃▃▃ | `8a50b82974` | [link](https://github.com/Norn-cloud/norn/actions/runs/45389716510) |
+| `ci.core.task.phase.integration-authoring.s` | 1,027 | s (single) | github-hosted | 8 | 981 / 1,443 | ▂▁▃▁▃▁█▂ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
+| `ci.core.task.phase.integration-clients.s` | 43 | s (single) | github-hosted | 5 | 43 / 96 | ▇█▄▂▁ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
+| `ci.core.task.phase.integration-wasm.s` | 173 | s (single) | github-hosted | 12 | 137 / 769 | ▄▄▄▇█▇▇▃▁▁▃▁ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
 | `ci.core.task.phase.integration.s` | 1,676 | s (single) | boat, github-hosted | 153 | 275 / 2,092 | ▄▃▄▄▃▃▂▄▃▃▃▅▅▄▅▄▅▆▄█▄▅▆▄▇█▄▇▆▇▅▅▅▅▅▇▄▅▅▆ | `efc32b8165` | [link](https://github.com/Norn-cloud/norn/actions/runs/45041472787) |
-| `ci.core.task.phase.provenance.s` | 6 | s (single) | boat, github-hosted | 119 | 6 / 34 | ▂▃▃▃▄▃▃▃▂▂▃▂▂▃▃▃▃▃▂▂▂▃▁▃▃▃▃▁▃▂▂▃▂▂▂▂▂▂▃▁ | `efc32b8165` | [link](https://github.com/Norn-cloud/norn/actions/runs/45041472787) |
-| `ci.core.task.phase.test-shards.s` | 5 | s (single) | github-hosted | 129 | 5 / 18 | ▄▄▄▄▆▅▆█▅▄▅▄▄█▅▇▄▄▄▃▇▄▄▄▇▄▆▄▄▄▄▄▄▅▅▄▅▄▁▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.phase.wasm.s` | 194 | s (single) | boat, github-hosted | 124 | 42 / 274 | ▃▆▄▃▃▃▅▃▃▃▇▅▄▄▃▆▄▄▅▄▃▄▄▅▆▄▅▅▄█▄▅▄▃▅▄▅▃▅▆ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.test.heavy-1.s` | 20 | s (single) | github-hosted | 137 | 14 / 99 | ▇▅▄▅▆▆▄▇▆▂▂▁▁▁▁▁▂▁▂▁▁▁▁▂▁▁▁▂▁▂▁▂▁▁▁▁▁▁▁▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.test.heavy-2.s` | 141 | s (single) | github-hosted | 150 | 119 / 815 | ▅▅▅▅▅▇▆▇█▆▅▅▅▅█▅▇▅▁▁▁▂▁▁▁▂▁▁▂▁▂▁▁▁▁▁▁▁▁▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.test.heavy-3.s` | 80 | s (single) | github-hosted | 141 | 56 / 597 | ▆▆▆▇▇▆▂▂▁▂▁▁▁▁▁▂▁▂▁▁▁▂▁▁▁▁▁▁▁▁▂▂▁▁▁▁▁▁▁▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.test.heavy-4.s` | 26 | s (single) | github-hosted | 138 | 17 / 526 | ▆▆▆▆▇▆▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.test.heavy-5.s` | 29 | s (single) | github-hosted | 137 | 19 / 71 | ▇██▅▅█▅█▆▄▄▃▂▂▂▂▄▂▄▁▁▂▁▄▂▂▂▄▂▄▂▃▁▂▂▂▂▂▁▂ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.test.heavy-6.s` | 53 | s (single) | github-hosted | 128 | 35 / 472 | ▂▁▁▁▂▂▁▂▁▁▁▁▁▂▁▂▁▁▁▁▂▁▁▁▂▁▂▁▇▇▇▇▇▇█▇█▇▅▁ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.test.rest-1.s` | 650 | s (single) | github-hosted | 137 | 453 / 1,524 | ▄▄▄▆██▄▆▅▅▄▅▅▅▅▇█▄▄▄▇▄▄▄█▄▄█▄▆▄▄▅▄▅█▄▄▂▂ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.test.rest-2.s` | 744 | s (single) | github-hosted | 130 | 132 / 1,131 | ▅▅▅▅▅▇▆▆▅▅▆▇▇▅▅▇▄▄▄▇▄▅▅▅▅▄▅▅█▃▂▂▂▂▂▄▂▂▅▅ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
-| `ci.core.task.test.rest-3.s` | 616 | s (single) | github-hosted | 133 | 97 / 930 | ▄▄▄▅▅█▅▂▄▃▃▂▂▃▄▃▂▂▆▃▃▃▆▃▃▃▄▄▃▆▄▄▄▄▄▄▄▄▆▅ | `79ab945a4a` | [link](https://github.com/Norn-cloud/norn/actions/runs/45058039493) |
+| `ci.core.task.phase.provenance.s` | 7 | s (single) | boat, github-hosted | 122 | 6 / 34 | ▃▄▃▃▃▂▂▃▂▂▃▃▃▃▃▂▂▂▃▁▃▃▃▃▁▃▂▂▃▂▂▂▂▂▂▃▁▁▂▁ | `76924f6ef5` | [link](https://github.com/Norn-cloud/norn/actions/runs/45308914225) |
+| `ci.core.task.phase.rivet.s` | 162 | s (single) | github-hosted | 9 | 79 / 468 | █▃▂▂▁▂▃▁▂ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
+| `ci.core.task.phase.test-shards.s` | 7 | s (single) | github-hosted | 139 | 4 / 18 | ▅▅▅█▅▇▅▄▅▃▇▄▅▄▇▅▇▅▅▅▅▄▄▅▅▅▅▅▁▁▂▁▁▁▂▁▁▁▃▃ | `76924f6ef5` | [link](https://github.com/Norn-cloud/norn/actions/runs/45308914225) |
+| `ci.core.task.phase.wasm.s` | 96 | s (single) | boat, github-hosted | 137 | 42 / 274 | ▄▃▆▄▄▅▄▃▄▄▅▆▄▅▅▄█▄▅▄▃▅▄▅▃▅▆▄▃▄▅▆▄▄▄▃▃▃▅▃ | `8a50b82974` | [link](https://github.com/Norn-cloud/norn/actions/runs/45389716510) |
+| `ci.core.task.test.heavy-1.s` | 75 | s (single) | github-hosted | 147 | 14 / 99 | ▂▁▁▁▁▁▂▁▂▁▁▁▁▂▁▁▁▂▁▂▁▂▁▁▁▁▁▁▁▁▁▁▁▄▅▃▄▄▆▆ | `76924f6ef5` | [link](https://github.com/Norn-cloud/norn/actions/runs/45308914225) |
+| `ci.core.task.test.heavy-2.s` | 261 | s (single) | github-hosted | 160 | 119 / 815 | ▅▅▅▅█▅▇▅▁▁▁▂▁▁▁▂▁▁▂▁▂▁▁▁▁▁▁▁▁▁▂▁▁▂▂▁▂▂▂▂ | `76924f6ef5` | [link](https://github.com/Norn-cloud/norn/actions/runs/45308914225) |
+| `ci.core.task.test.heavy-3.s` | 146 | s (single) | github-hosted | 157 | 56 / 597 | ▁▂▁▁▁▂▁▁▁▁▁▁▁▁▂▂▁▁▁▁▁▁▁▁▁▁▄▄▃▄▄▄▄▄▄▄▂▂▂▂ | `76924f6ef5` | [link](https://github.com/Norn-cloud/norn/actions/runs/45308914225) |
+| `ci.core.task.test.heavy-4.s` | 82 | s (single) | github-hosted | 153 | 17 / 526 | ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▂▂▂▂▂▂▂▂▂▂▂ | `76924f6ef5` | [link](https://github.com/Norn-cloud/norn/actions/runs/45308914225) |
+| `ci.core.task.test.heavy-5.s` | 90 | s (single) | github-hosted | 147 | 19 / 92 | ▃▂▂▂▂▂▃▂▃▁▁▂▁▃▂▂▂▃▂▃▂▂▁▂▂▂▂▂▁▂▂▁▂▅▇▄▆▅██ | `76924f6ef5` | [link](https://github.com/Norn-cloud/norn/actions/runs/45308914225) |
+| `ci.core.task.test.heavy-6.s` | 125 | s (single) | github-hosted | 138 | 35 / 472 | ▁▁▁▂▁▂▁▁▁▁▂▁▁▁▂▁▂▁▇▇▇▇▇▇█▇█▇▅▁▁▁▁▂▂▂▂▂▂▂ | `76924f6ef5` | [link](https://github.com/Norn-cloud/norn/actions/runs/45308914225) |
+| `ci.core.task.test.rest-1.s` | 384 | s (single) | github-hosted | 151 | 373 / 1,524 | ▅▇█▄▄▄▇▅▄▄█▄▄█▅▆▄▅▅▅▅█▅▅▃▃▂▂▂▂▂▂▂▃▂▁▁▃▃▁ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
+| `ci.core.task.test.rest-2.s` | 898 | s (single) | github-hosted | 149 | 132 / 1,443 | ▆▄▄▄▄▄▄▄▄▆▃▂▂▂▂▂▃▂▂▄▄▅▄▄▄▄▄▅▄▄▄▇▄▄▇▇▇█▇▅ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
+| `ci.core.task.test.rest-3.s` | 563 | s (single) | github-hosted | 145 | 97 / 930 | ▂▃▄▃▂▂▆▃▃▃▆▃▃▃▄▄▃▆▄▄▄▄▄▄▄▄▆▅▄▄▄▅▅▆▄▅▅▇█▅ | `cfdaa7127c` | [link](https://github.com/Norn-cloud/norn/actions/runs/45396637393) |
 
 ## Latest caveats
 
@@ -363,6 +365,7 @@ What limits each metric's latest value, in the measurer's words.
 - `tests.rust.crate.norn-builtins.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-canonical.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-cell-do.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
+- `tests.rust.crate.norn-cell-rivet.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-cell.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-checker-wasm.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
 - `tests.rust.crate.norn-checker.count`: Static count at one commit with git grep over tracked .rs files under crates/ (vendor/ and third_party/ excluded): #[test] counts text occurrences, the baseline's method; tokio and proptest count attribute/block lines. Declared tests, not executed ones: proptest cases, doctests, #[ignore] and cfg-gated tests are not told apart. Machine-independent.
