@@ -30,23 +30,26 @@ Use this skill whenever designing or building a business application, vertical p
    - Declare `initial`, `terminal`, `immutable`, and explicit `transitions`.
    - **No self-transitions:** Every transition must leave one state and enter a different state (`from: ["draft"], to: "calculated"`, with a separate `reopen` transition if recalculation is allowed).
 3. **Laws + Witnesses (`Norn.law` + `Norn.example`):**
-   - Pair every critical business invariant with at least one `expect: "holds"` and one `expect: "violated"` `Norn.example`.
+   - For untimed single-value predicate laws, pair the `Norn.law` with at least one `expect: "holds"` and one `expect: "violated"` `Norn.example`. (Timed laws, progress laws, and non-predicate responses are outside the single-value evaluator and produce `law.example.unsupported`.)
 4. **Fail-Closed Authority (`Norn.access` + `Norn.markings`):**
    - Every governed action should declare `scopeRequired: ["orgId", "environmentId"]`, `idempotent: true`, `ledgered: true`, and `access` (accepting either a definition reference or an `{ artifactId, version }` pin).
-   - Structure access policies with `Norn.access({ id, title, version, rules: [...] })`. Every rule requires `ruleId`, `actions`, `resourceType`, and `scope: { dimensions: [...] }`, plus explicit conditions for authorized roles and target markings.
-   - Authorize disclosure of restricted fields with a rule granting `actions: ["norn.reveal"]` on `resourceType: "norn.Marking"` gated by marking and role/scope conditions; the cell redacts unauthorized fields **before serialization**.
+   - Structure access policies with `Norn.access({ id, title, version, rules: [...] })`. Every rule requires `ruleId`, `actions`, `resourceType`, and `scope: { dimensions: [...] }`; `allOf` conditions are optional (add role/attribute checks where needed).
+   - Authorize disclosure of restricted fields with a separate rule granting `actions: ["norn.reveal"]` (or `"norn.declassify"`) on `resourceType: "norn.Marking"` with `marking` conditions — admission reserves `marking` conditions strictly for `norn.reveal` / `norn.declassify` on `norn.Marking`, not ordinary action rules. The cell redacts unauthorized fields **before serialization**.
 5. **Multilingual Labels (`Norn.labels`):**
    - Attach operator-facing labels and enum translations directly to the IR so UIs stay thin and consistent across locales.
 
 ## Authoring & Verification Loop (CLI + MCP)
 
-`norn check` requires the Rust checker WASM locally (`NORN_CHECKER_WASM_PKG`) and can admit with warnings — inspect diagnostics even when `admitted: true`.
+Note that two executables share the `norn` name:
+- **TypeScript authoring CLI (`tools/norn-ts`):** Runs `profile`, source `check`, `compile`, `explain`, `plan`, `apply`, and `dev` against TypeScript definitions. `check` requires the Rust checker WASM locally (`NORN_CHECKER_WASM_PKG`) and can admit with warnings — inspect diagnostics even when `admitted: true`.
+- **Rust CLI (`crates/norn-cli`):** Runs stdio `norn mcp` (`norn.capabilities` and `norn.check` only) and `norn check` over **compiled IR**.
 
 ```bash
+# TypeScript authoring CLI (tools/norn-ts):
 # 1. Verify a source file stays inside the supported authoring profile
 norn profile "$SOURCE_FILE"
 
-# 2. Run authoritative Rust checker admission
+# 2. Run authoritative Rust checker admission on TypeScript sources
 norn check src/ --org "$ORG_ID" --env "$ENV_ID"
 
 # 3. Compile canonical IR bundle (for provisioning or archival)
@@ -62,5 +65,5 @@ norn apply src/ --url "$CELL_URL" --org "$ORG_ID" --env "$ENV_ID" --token-env NO
 ```
 
 ### MCP Interfaces
-- **Local stdio (`norn mcp`):** Exposes `norn.capabilities` and `norn.check` only (do not assume `explain`, `plan`, or `apply` exist on stdio MCP).
+- **Local stdio (Rust `norn mcp`):** Exposes `norn.capabilities` and `norn.check` (compiled IR) only — do not assume `explain`, `plan`, or `apply` exist on stdio MCP.
 - **Installed-cell discovery:** Query the cell's HTTP MCP endpoint (`POST /v1/mcp`) for the capabilities admitted on a live tenant scope.

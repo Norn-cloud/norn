@@ -21,12 +21,12 @@ All three hosts run the `norn-cell` + `norn-api` Rust kernel, with explicit diff
 
 Scoped via `?orgId=<org>&environmentId=<env>`:
 
-- `POST /v1/cell:provision` — Atomically initializes a vacant scope (`HOST-PROVISION-ATOMIC`) as an authorized owner. Distinct from revision-checked updates:
-  - First provision conflicts return `409 cell.provision_conflict`.
-  - Revision-checked updates with a stale `baseSha256` return `409 cell.base_mismatch`.
+- `POST /v1/cell:provision` — Atomically initializes a vacant scope (`HOST-PROVISION-ATOMIC`) as an authorized owner:
+  - A `baseSha256` that does not match the host's trusted base returns `cell.base_mismatch`.
+  - A conflicting repeat provision returns `409 cell.provision_conflict`.
 - `POST /v1/cell/definitions:plan` — Dry-runs candidate IR updates against live cell state without writing (hosted cells only).
-- `POST /v1/cell/definitions:apply` — Atomically admits and installs a checked update into the cell's SQLite store (hosted cells only).
-- `POST /v1/actions/{actionId}` — Executes a governed action with JSON body `{ input, idempotencyKey }` (header alone is insufficient). Mint one opaque `idempotencyKey` per user intent and reuse it on retry. Returns one of three public outcomes: **`receipt`** (committed), **`pending`** (HTTP `202` pending decision, not yet committed), or **`refused`** (`403`/`409`/`422`).
+- `POST /v1/cell/definitions:apply` — Atomically admits and installs a checked update into the cell's SQLite store using `expectedVersion` (hosted cells only; a stale revision returns `409 defs.stale`).
+- `POST /v1/actions/{actionId}` — Executes a governed action with JSON body `{ input, idempotencyKey }` (header alone is insufficient). Mint one opaque `idempotencyKey` per user intent and reuse it on retry. Returns one of three public outcomes: **`receipt`** (committed — or `outcome: "replayed"` on identical retry — carrying receipt hash/keyed handle, commit sequence, and logical time), **`pending`** (HTTP `202` pending decision, not yet committed), or **`refused`** (structured refusals across `400`, `403`, `409`, `410`, `413`, `422`, and `429`).
 - `GET /v1/subscribe` (`norn.live.v1`) — Authenticated WebSocket live read subscription on Rivet and DO hosts (re-evaluates subscribed GET routes under the caller's principal after commits and pushes changed answers).
 - `POST /v1/access:decide` — Bounded connector authorization checks for the verified principal.
 - `POST /v1/mcp` — HTTP MCP endpoint exposing the cell's installed capabilities to agents (distinct from local stdio `norn mcp`, which exposes `norn.capabilities` and `norn.check` only).

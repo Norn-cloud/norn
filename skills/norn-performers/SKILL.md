@@ -21,11 +21,11 @@ Declare external capabilities with typed signatures and invoke them from compile
 ```ts
 const dispatchTransfer = Norn.fn<TransferInput, TransferOutput, TransferError>({
   id: "acme.provider.dispatch_transfer",
-  version: 1,
+  version: "1",
 })
 
-// Inside a compiled action/workflow:
-Norn.perform("dispatch", dispatchTransfer, input)
+// Inside a compiled Norn.flow Effect.gen body (never discard the yielded effect):
+const out = yield* Norn.perform("dispatch", dispatchTransfer, input)
 ```
 
 ## Outbox & External Effect Safety (Core-07 / D03)

@@ -63,9 +63,9 @@ Core semantic CSS variables:
 ## Action Calls, Redaction & Local Development
 
 - **Three public action outcomes (`CallResult`):** Every action dispatch must handle **`receipt | pending | refused`**:
-  - `receipt`: committed mutation with signed cell receipt.
+  - `receipt`: committed mutation (or `outcome: "replayed"` on an identical retry) carrying the receipt hash or keyed handle, commit sequence, and logical time.
   - `pending`: HTTP `202` carrying a pending approval/decision — **no business mutation has committed yet**.
-  - `refused`: authoritative cell refusal (`403`/`409`/`422`) — surface the structured refusal message honestly; never swallow failures or optimistically fake commits.
+  - `refused`: authoritative cell refusal (`400` invalid input, `403` forbidden, `409` conflict/stale, `410` expired approval, `413` oversized request, `422` law/domain violation, `429` declared limit) — surface the structured refusal message honestly; never swallow failures or optimistically fake commits.
   - *(Note: Studio's current private client in `apps/studio/src/lib/actions.ts` also surfaces transport states `no-cell` and `unavailable`.)*
 - **Idempotency key rule:** Mint **one opaque `idempotencyKey` per user intent** (e.g., per button click/submission), reuse it across retries of that same attempt, and mint a fresh key for a second user intent even with identical input. Send `{ input, idempotencyKey }` in the `POST /v1/actions/{actionId}` JSON body (a header alone is insufficient).
 - **Zero mock mode in production UIs:** Use the real `norn dev` runtime for local integration — never ship mock data arrays, fake client-side business math, or dev role switchers in production bundles.
