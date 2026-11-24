@@ -73,7 +73,7 @@ Tenants may supply a **brand token overlay** (accent, focus ring, surface tint, 
 
 ### Performance & loading discipline (TARGET)
 
-- **Load on intent:** Use TanStack Router `defaultPreload: "intent"` (`defaultPreloadDelay: 50`) and `autoCodeSplitting`; warm critical queries in route loaders and lazy-load heavy tools (`@xyflow/react`, `recharts`, `shiki`, WASM checker, optional WebGL shader) on hover/focus/activation.
+- **Load on intent:** Use TanStack Router `defaultPreload: "intent"` (`defaultPreloadDelay: 50`) and lazy route chunks via `Route.lazy()` on the programmatic `createRoute` tree (or `autoCodeSplitting` if Studio adopts file-based routing); warm critical queries in route loaders and lazy-load heavy tools (`@xyflow/react`, `recharts`, `shiki`, WASM checker, optional WebGL shader) on hover/focus/activation.
 - **Cold-entry budgets & profiling:** Gate first-view JS/CSS Brotli budgets in CI, enable React Compiler auto-memoization, and profile heavy filtering/typing interactions (`LCP <= 2.5s`, `INP <= 200ms`, `CLS <= 0.1`). Keep **React DOM 19** as the default renderer; alternative synchronous renderers (such as TanStack Redact) require measured Boat proof of both cold-entry wins and zero INP/portal regressions.
 
 ### Swappable shell presets
