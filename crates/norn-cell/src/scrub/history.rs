@@ -32,16 +32,23 @@ pub(super) const WAKE_ROW_BUDGET: usize = 256;
 pub(super) const LEDGER_ENTRY_MAX_ROWS: usize = 4;
 const RECEIPT_PAGE_CAP: usize = 16;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum AnchorStage {
+    #[default]
+    Ledger,
+    ExportPin,
+    DefPinInit,
+    DefPinRunning,
+    Done,
+}
+
 #[derive(Clone, Default)]
 struct AnchorState {
-    ledger_checked: bool,
+    stage: AnchorStage,
     anchor_receipt: Option<Receipt>,
     anchor_durable: Option<DurableEventCursor>,
-    export_pin_checked: bool,
     export_pin_cursor: Option<ExportDecodeCursor>,
-    def_pin_started: bool,
     def_install: Option<DefInstallCursor>,
-    genesis_empty_checked: bool,
 }
 
 #[derive(Clone)]
@@ -60,10 +67,17 @@ struct ActiveCommit {
     def_install: Option<DefInstallCursor>,
 }
 
+#[derive(Clone, Default)]
+enum CachedCellId {
+    #[default]
+    Unloaded,
+    Loaded(Option<CellId>),
+}
+
 #[derive(Clone)]
 struct ExportScanState {
     checked_through: u64,
-    current_id: Option<Option<CellId>>,
+    current_id: CachedCellId,
     active_seq: Option<u64>,
     cursor: Option<ExportDecodeCursor>,
 }
@@ -108,7 +122,7 @@ impl HistoryCursor {
             active: None,
             export_scan: ExportScanState {
                 checked_through,
-                current_id: None,
+                current_id: CachedCellId::Unloaded,
                 active_seq: None,
                 cursor: None,
             },
@@ -208,7 +222,7 @@ impl HistoryCursor {
             if !self.step_anchor_definitions(store, reader, start_cp, budget)? {
                 return Ok(false);
             }
-        } else if target_commits == 0 && !self.anchor.genesis_empty_checked {
+        } else if target_commits == 0 && self.anchor.stage != AnchorStage::Done {
             if budget.exhausted() {
                 return Ok(false);
             }
@@ -220,7 +234,7 @@ impl HistoryCursor {
                     reason: "unexpected receipt in empty history".to_owned(),
                 });
             }
-            self.anchor.genesis_empty_checked = true;
+            self.anchor.stage = AnchorStage::Done;
         }
         self.anchor_checked = true;
         Ok(true)
@@ -236,10 +250,10 @@ impl HistoryCursor {
                 return Ok(false);
             }
             self.anchor.anchor_durable = None;
-            self.anchor.ledger_checked = true;
+            self.anchor.stage = AnchorStage::ExportPin;
             return Ok(true);
         }
-        if self.anchor.ledger_checked {
+        if self.anchor.stage != AnchorStage::Ledger {
             return Ok(true);
         }
         let base = self.ledger.seq;
@@ -274,7 +288,7 @@ impl HistoryCursor {
             if self.ledger.hash != GENESIS_HASH {
                 return Err(anchor_corrupt());
             }
-            self.anchor.ledger_checked = true;
+            self.anchor.stage = AnchorStage::ExportPin;
             return Ok(true);
         }
         if budget.remaining() < LEDGER_ENTRY_MAX_ROWS {
@@ -290,13 +304,12 @@ impl HistoryCursor {
             && let Some(receipt) = self.anchor.anchor_receipt.as_ref()
             && let Some(mut durable) =
                 DurableEventCursor::new(&entry.world, entry.commit_seq, receipt, &entry.event)?
+            && !durable.step(reader, &self.versions, budget)?
         {
-            if !durable.step(reader, &self.versions, budget)? {
-                self.anchor.anchor_durable = Some(durable);
-                return Ok(false);
-            }
+            self.anchor.anchor_durable = Some(durable);
+            return Ok(false);
         }
-        self.anchor.ledger_checked = true;
+        self.anchor.stage = AnchorStage::ExportPin;
         Ok(true)
     }
 
@@ -306,7 +319,7 @@ impl HistoryCursor {
         start_cp: &OpenCheckpoint,
         budget: &mut RowBudget,
     ) -> Result<bool, CellError> {
-        if self.anchor.export_pin_checked {
+        if self.anchor.stage != AnchorStage::ExportPin {
             return Ok(true);
         }
         if self.anchor.export_pin_cursor.is_none() {
@@ -322,7 +335,7 @@ impl HistoryCursor {
                 ));
             }
             let Some(pin) = &start_cp.export else {
-                self.anchor.export_pin_checked = true;
+                self.anchor.stage = AnchorStage::DefPinInit;
                 return Ok(true);
             };
             self.anchor.export_pin_cursor = Some(
@@ -348,7 +361,7 @@ impl HistoryCursor {
         budget.charge(2);
         crate::cell_identity::check_export_record_identity(&record, current.as_ref())?;
         self.anchor.export_pin_cursor = None;
-        self.anchor.export_pin_checked = true;
+        self.anchor.stage = AnchorStage::DefPinInit;
         Ok(true)
     }
 
@@ -360,7 +373,7 @@ impl HistoryCursor {
         budget: &mut RowBudget,
     ) -> Result<bool, CellError> {
         let commits = start_cp.head.commits;
-        if !self.anchor.def_pin_started {
+        if self.anchor.stage == AnchorStage::DefPinInit {
             if open_checkpoint::definitions_digest(&self.versions, commits)? != start_cp.definitions
             {
                 return Err(open_checkpoint::corrupt(
@@ -418,7 +431,7 @@ impl HistoryCursor {
                 self.anchor.def_install = Some(DefInstallCursor::new(index, receipt));
             }
             self.walk = walk;
-            self.anchor.def_pin_started = true;
+            self.anchor.stage = AnchorStage::DefPinRunning;
         }
         if let Some(install) = self.anchor.def_install.as_mut() {
             if !install.step(store, reader, &self.versions, budget)? {
@@ -426,6 +439,7 @@ impl HistoryCursor {
             }
             self.anchor.def_install = None;
         }
+        self.anchor.stage = AnchorStage::Done;
         Ok(true)
     }
 
@@ -628,11 +642,12 @@ impl HistoryCursor {
                 };
                 self.export_scan.active_seq = Some(seq);
             }
-            if self.export_scan.current_id.is_none() {
+            if matches!(self.export_scan.current_id, CachedCellId::Unloaded) {
                 if budget.remaining() < 2 {
                     return Ok(());
                 }
-                self.export_scan.current_id = Some(crate::cell_identity::read(engine)?);
+                self.export_scan.current_id =
+                    CachedCellId::Loaded(crate::cell_identity::read(engine)?);
                 budget.charge(2);
             }
             let Some(seq) = self.export_scan.active_seq else {
@@ -658,11 +673,10 @@ impl HistoryCursor {
             let Some(record) = cursor.step(engine, budget)? else {
                 return Ok(());
             };
-            let current = self
-                .export_scan
-                .current_id
-                .as_ref()
-                .and_then(Option::as_ref);
+            let current = match &self.export_scan.current_id {
+                CachedCellId::Loaded(id) => id.as_ref(),
+                CachedCellId::Unloaded => None,
+            };
             crate::cell_identity::check_export_record_identity(&record, current)?;
             self.export_scan.cursor = None;
             self.export_scan.active_seq = None;

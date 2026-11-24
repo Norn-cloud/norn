@@ -4641,11 +4641,12 @@ fn trace_context_is_strictly_optional_persists_in_receipts_and_refuses_malformed
     assert!(norn_kernel::ActionCallRecord::from_values(&corrupt).is_none());
 }
 
-/// S7/S5b (#1551 round 7): a no-op action addressed via an ancestor type whose
+/// S7/S5b (#1551 round 7): an action addressed via an ancestor type whose
 /// declared slice read retained the target under its concrete subtype must
-/// commit cleanly (not refuse as stale against version 0) and report version N.
+/// commit cleanly (not refuse as stale against version 0) and report the
+/// concrete target's post-commit version.
 #[test]
-fn ancestor_addressed_noop_action_with_subtype_slice_read_commits_and_reports_version() {
+fn ancestor_addressed_action_with_subtype_slice_read_commits_and_reports_version() {
     let mut types = order_types();
     types[0].properties.push(
         serde_json::from_value(json!({
@@ -4689,7 +4690,8 @@ fn ancestor_addressed_noop_action_with_subtype_slice_read_commits_and_reports_ve
     });
     let bump: ActionRoot = serde_json::from_value(bump_payload.clone()).unwrap();
     let mut bump_call = call(&bump, "SO-sub", "bump-1");
-    bump_call.input = json_object(json!({ "so_number": "SO-sub", "note": "ready" }));
+    bump_call.input =
+        serde_json::from_value(json!({ "so_number": "SO-sub", "note": "ready" })).unwrap();
     bump_call.object_type = Some(ObjectTypeName(subtype.to_owned()));
     let ActionOutcome::Committed { target_version, .. } =
         commit_action(&mut cell, &catalog, &bump_call, &Allow).unwrap()
@@ -4711,16 +4713,37 @@ fn ancestor_addressed_noop_action_with_subtype_slice_read_commits_and_reports_ve
     noop_payload["preconditions"] = json!(["slice.reviewed.note == \"ready\""]);
     let noop: ActionRoot = serde_json::from_value(noop_payload).unwrap();
     let mut noop_call = call(&noop, "SO-sub", "noop-ancestor-1");
-    noop_call.input = json_object(json!({ "so_number": "SO-sub", "note": "ready" }));
+    noop_call.input =
+        serde_json::from_value(json!({ "so_number": "SO-sub", "note": "ready" })).unwrap();
     noop_call.object_type = Some(ObjectTypeName(ORDER.to_owned()));
 
-    let outcome = commit_action(&mut cell, &catalog, &noop_call, &Allow)
-        .expect("ancestor-addressed no-op with subtype slice read must not refuse as stale");
+    struct AllowSlice;
+    impl ActionAuthorizer for AllowSlice {
+        fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+        fn authorize_read(
+            &self,
+            _: &norn_kernel::ActionReadAuthzRequest<'_>,
+        ) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+        fn authorize_read_type(
+            &self,
+            _: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+        ) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+    }
+
+    let outcome = commit_action(&mut cell, &catalog, &noop_call, &AllowSlice)
+        .expect("ancestor-addressed action with subtype slice read must not refuse as stale");
     let ActionOutcome::Committed { target_version, .. } = outcome else {
         panic!("expected fresh commit");
     };
-    assert_eq!(target_version, FactVersion(2));
+    assert_eq!(target_version, FactVersion(3));
+    assert_eq!(cell.load(&concrete).unwrap().version, FactVersion(3));
 
-    let replayed = commit_action(&mut cell, &catalog, &noop_call, &Allow).unwrap();
+    let replayed = commit_action(&mut cell, &catalog, &noop_call, &AllowSlice).unwrap();
     assert!(matches!(replayed, ActionOutcome::Replayed { .. }));
 }

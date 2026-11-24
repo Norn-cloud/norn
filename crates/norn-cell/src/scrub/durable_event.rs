@@ -107,13 +107,13 @@ impl EmissionScan {
         {
             return Err(unproven_event());
         }
-        Ok(EmissionStep::Snapshot(snapshot))
+        Ok(EmissionStep::Snapshot(Box::new(snapshot)))
     }
 }
 
 enum EmissionStep {
     Yield,
-    Snapshot(FactSnapshot),
+    Snapshot(Box<FactSnapshot>),
     Done,
 }
 
@@ -465,7 +465,7 @@ fn step_modified_evolution<E: SqlEngine>(
             };
             evo.materialized =
                 materialize_historical_values(model, &evo.object_type, &evo.materialized)?;
-            evo.previous_hash = installed.model_hash.clone();
+            evo.previous_hash.clone_from(&installed.model_hash);
         }
         evo.next_version = evo.next_version.saturating_add(1);
     }
@@ -512,7 +512,7 @@ fn step_created<E: SqlEngine>(
         }
         match state.scan.next_snapshot(reader, budget)? {
             EmissionStep::Yield => return Ok(false),
-            EmissionStep::Snapshot(snapshot) => state.pending_snapshot = Some(snapshot),
+            EmissionStep::Snapshot(snapshot) => state.pending_snapshot = Some(*snapshot),
             EmissionStep::Done => {}
         }
     }

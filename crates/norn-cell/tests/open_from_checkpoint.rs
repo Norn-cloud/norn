@@ -2764,7 +2764,9 @@ fn restart_scrub_after_large_sibling_suffix_stays_within_512_row_bound() {
     let final_commits = initial.saturating_add(600);
     let mut sibling = open(&path).expect("sibling open");
     for n in initial..final_commits {
-        sibling.commit(&put(n)).expect("sibling commit");
+        let mut batch = put(n);
+        batch.idempotency_key = None;
+        sibling.commit(&batch).expect("sibling commit");
     }
     drop(sibling);
 
@@ -2808,10 +2810,20 @@ fn quantity_scrub_after_large_sibling_suffix_stays_within_512_total_rows_per_wak
     assert!(matches!(store.scrub_step(), ScrubStatus::Verifying { .. }));
 
     // 270 quantity commits (> 256) would exceed 512 total rows if selector + receipts
-    // both used LIMIT 512 in a single wake.
+    // both used LIMIT 512 in a single wake. Advance the sibling past Phase::Receipts
+    // so idempotent quantity commits are admitted while keeping history_ready() false
+    // (so the sibling never advances _norn_open_checkpoint).
     let added = 270_u64;
     let final_commits = EVERY.saturating_add(added);
     let mut sibling = open(&path).expect("sibling open");
+    while matches!(
+        sibling.scrub_step(),
+        ScrubStatus::Verifying {
+            phase: "receipts",
+            ..
+        }
+    ) {}
+    assert!(!history_ready(&sibling));
     for n in EVERY..final_commits {
         commit_quantity(&mut sibling, n, &post(0, &format!("sib-{n}"), "fund", 1));
     }

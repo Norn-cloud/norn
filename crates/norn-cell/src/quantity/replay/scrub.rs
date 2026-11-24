@@ -406,8 +406,8 @@ impl QuantityScrub {
                 }));
                 Ok(false)
             }
-            PageStep::Done { .. } => match live.stage.next() {
-                Some(next_stage) => {
+            PageStep::Done { .. } => {
+                if let Some(next_stage) = live.stage.next() {
                     self.tail = Some(TailState::Live(LiveTail {
                         stage: next_stage,
                         cursor: Vec::new(),
@@ -415,8 +415,7 @@ impl QuantityScrub {
                         ..live
                     }));
                     Ok(false)
-                }
-                None => {
+                } else {
                     let live_after = reader.next_commit_seq()?.saturating_sub(1);
                     if live_after < live.checked_db_commits {
                         return Err(QuantityError::Corrupt.into());
@@ -432,7 +431,7 @@ impl QuantityScrub {
                     check_beyond_tail(engine, live.checked_db_commits)?;
                     Ok(true)
                 }
-            },
+            }
         }
     }
 }
