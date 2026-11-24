@@ -65,7 +65,7 @@ struct PutRow<'c> {
 }
 
 /// The admitted projection and the exact ordered successors used to construct it.
-/// Observation preparation can build a Projection, but cannot obtain a PostState.
+/// Observation preparation returns only the projected rows and edges.
 pub(crate) struct PostState<'c, 'a, V: ?Sized> {
     projection: Projection<'c, 'a, V>,
     plan: VersionPlan,
