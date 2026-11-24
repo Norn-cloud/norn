@@ -1,5 +1,6 @@
 import { AlertCircle, Clock, CloudOff, Inbox, RefreshCw, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
+import { BoneSkeleton, type StudioBoneName } from "@/components/bone-skeleton"
 import { CopyId } from "@/components/copy-id"
 import { EmptyState } from "@/components/panel"
 import { Button } from "@/components/ui/button"
@@ -208,7 +209,9 @@ export interface LoadStateProps<T> {
   readonly error?: unknown
   readonly isFetching?: boolean
   readonly onRetry?: () => void
-  /** Skeleton shape while loading, or a custom ReactNode. */
+  /** Named boneyard-js UI-shape skeleton capture from `src/bones/registry.ts`. */
+  readonly bone?: StudioBoneName
+  /** Skeleton shape while loading (or fallback when `bone` is unregistered), or a custom ReactNode. */
   readonly skeleton?: SkeletonKind | ReactNode
   /** Accessible label for the skeleton region. */
   readonly loadingLabel?: string
@@ -237,6 +240,7 @@ export function LoadState<T>({
   error,
   isFetching = false,
   onRetry,
+  bone,
   skeleton = "list",
   loadingLabel = "Loading",
   slowAfterMs = SLOW_WAIT_MS,
@@ -281,11 +285,14 @@ export function LoadState<T>({
         </div>
       )
     }
+    const fallbackSkeleton = typeof skeleton === "string"
+      ? <SkeletonBlock kind={skeleton as SkeletonKind} label={loadingLabel} />
+      : skeleton
     return (
       <div className="space-y-2.5" data-load-state={wait === "slow" ? "slow" : "loading"}>
-        {typeof skeleton === "string"
-          ? <SkeletonBlock kind={skeleton as SkeletonKind} label={loadingLabel} />
-          : skeleton}
+        {bone
+          ? <BoneSkeleton name={bone} loading label={loadingLabel} fallback={fallbackSkeleton} />
+          : fallbackSkeleton}
         {wait === "slow" && (
           <div role="status" className="flex flex-wrap items-center gap-2 px-1 text-meta text-muted-foreground">
             <Clock aria-hidden className="size-3.5 shrink-0" />
