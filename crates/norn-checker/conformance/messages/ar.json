@@ -2774,6 +2774,10 @@
       "message": "الأداة الرسومية تشير إلى '{$artifactId}' دون إعلانه كتبعية",
       "review": "needs_review"
     },
+    "widget.validation.ring1_required": {
+      "message": "تتطلب أدوات الأداة الرسومية التحقق عبر norn-ui-checker في Ring-1 ولا يمكن قبولها بواسطة norn-checker في Ring-0 وحده",
+      "review": "needs_review"
+    },
     "widget.validation.unsafe_action_binding": {
       "message": "ربط الإجراء يجب أن يستهدف إجراء Norn أو أمر عملية، لا تعديلًا خامًا",
       "review": "needs_review"

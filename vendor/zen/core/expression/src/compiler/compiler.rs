@@ -288,7 +288,9 @@ impl<'arena, 'bytecode_ref> CompilerInner<'arena, 'bytecode_ref> {
                 on_true,
                 on_false,
             } => {
+                self.emit(Opcode::ExactSiteSuspend);
                 self.compile_node(condition)?;
+                self.emit(Opcode::ExactSiteResume);
                 let otherwise = self.emit(Opcode::Jump(Jump::IfFalse, 0));
 
                 self.emit(Opcode::Pop);
@@ -484,8 +486,12 @@ impl<'arena, 'bytecode_ref> CompilerInner<'arena, 'bytecode_ref> {
                         });
                     }
 
-                    for i in 0..arguments.len() {
-                        self.compile_argument(kind, arguments, i)?;
+                    if !arguments.is_empty() {
+                        self.emit(Opcode::ExactSiteSuspend);
+                        for i in 0..arguments.len() {
+                            self.compile_argument(kind, arguments, i)?;
+                        }
+                        self.emit(Opcode::ExactSiteResume);
                     }
 
                     Ok(self.emit(Opcode::CallFunction {
