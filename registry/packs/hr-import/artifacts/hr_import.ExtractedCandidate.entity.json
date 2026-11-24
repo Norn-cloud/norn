@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Untrusted OCR/VLM-extracted HR record carrying 3-timestamp bitemporal provenance (extracted_at, observed_at, effective_on) and gated promotion.",
+      "description": "Untrusted extracted HR proposal carrying 3-timestamp bitemporal provenance, content digest, explicit dispute state, and immutable terminal promotion/rejection/supersession.",
       "identity": [
         {
           "name": "primary",
@@ -21,7 +21,9 @@
       "lifecycles": [
         {
           "immutable": [
-            "promoted"
+            "promoted",
+            "rejected",
+            "superseded"
           ],
           "initial": [
             "staged"
@@ -29,7 +31,8 @@
           "property": "status",
           "terminal": [
             "promoted",
-            "rejected"
+            "rejected",
+            "superseded"
           ],
           "transitions": [
             {
@@ -45,7 +48,7 @@
                 "quarantined"
               ],
               "guards": [
-                "(self.open_error_count == 0) and (self.review_receipt_digest != null)"
+                "((self.dispute_state == 'clean') and (self.review_receipt_digest != null)) and (self.reviewed_by_user_id != null)"
               ],
               "id": "promote",
               "to": "promoted"
@@ -57,6 +60,14 @@
               ],
               "id": "reject",
               "to": "rejected"
+            },
+            {
+              "from": [
+                "staged",
+                "quarantined"
+              ],
+              "id": "supersede",
+              "to": "superseded"
             }
           ]
         }
@@ -71,6 +82,15 @@
           "description": "Source upload batch from which this candidate was extracted.",
           "id": "batch",
           "target": "hr_import.SourceBatch"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "description": "Prior quarantined or disputed candidate superseded by this corrected candidate (append-only Core 07 lineage).",
+          "id": "supersedes",
+          "target": "hr_import.ExtractedCandidate"
         }
       ],
       "name": "hr_import.ExtractedCandidate",
@@ -102,7 +122,19 @@
           }
         },
         {
-          "id": "confidence_bps",
+          "id": "source_record_key",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "payload_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "confidence_bp",
           "type": {
             "kind": "integer"
           }
@@ -134,10 +166,21 @@
           }
         },
         {
-          "default": "0",
-          "id": "open_error_count",
+          "default": "clean",
+          "id": "dispute_state",
           "type": {
-            "kind": "integer"
+            "kind": "enum",
+            "values": [
+              {
+                "value": "clean"
+              },
+              {
+                "value": "quarantined"
+              },
+              {
+                "value": "disputed"
+              }
+            ]
           }
         },
         {
@@ -145,6 +188,15 @@
             "nullable": true
           },
           "id": "review_receipt_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "reviewed_by_user_id",
           "type": {
             "kind": "text"
           }
@@ -166,6 +218,9 @@
               },
               {
                 "value": "rejected"
+              },
+              {
+                "value": "superseded"
               }
             ]
           }

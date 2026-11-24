@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Raw content-addressed upload batch (BlobRef) captured from WhatsApp exports, spreadsheets, schedule photos, or ERP dumps before untrusted extraction.",
+      "description": "Content-addressed upload batch implementing Core 07 norn.SourceDocument before untrusted extraction.",
       "identity": [
         {
           "name": "primary",
@@ -17,6 +17,9 @@
             "id"
           ]
         }
+      ],
+      "implements": [
+        "norn.SourceDocument"
       ],
       "lifecycles": [
         {
@@ -98,7 +101,31 @@
           }
         },
         {
-          "id": "blob_ref",
+          "id": "document_uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "document_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "media_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor_version",
           "type": {
             "kind": "text"
           }

@@ -26,7 +26,7 @@
     },
     "rationale": "OCR/VLM extraction confidence is expressed in integer basis points in [0, 10000] so downstream review gates never compare malformed scores.",
     "response": {
-      "expression": "self.confidence_bps >= 0 and self.confidence_bps <= 10000",
+      "expression": "(self.confidence_bp >= 0) and (self.confidence_bp <= 10000)",
       "kind": "predicate"
     },
     "scope": {

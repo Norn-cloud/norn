@@ -1,0 +1,182 @@
+{
+  "artifactId": "hr_import.FieldEvidence.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Extracted field evidence",
+  "namespace": "hr_import",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Field-level provenance anchor implementing Core 07 norn.SourceEvidence (exact document digest, page, normalized bounding box, line/row anchor, and extractor pin).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "norn.SourceEvidence"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Source batch document from which this field evidence was anchored.",
+          "id": "batch",
+          "target": "hr_import.SourceBatch"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Extracted candidate supported or disputed by this field evidence.",
+          "id": "candidate",
+          "target": "hr_import.ExtractedCandidate"
+        }
+      ],
+      "name": "hr_import.FieldEvidence",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "subject_property",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "subject_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "subject_key",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "document_uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "document_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "media_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "page",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "bbox_x",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "bbox_y",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "bbox_w",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "bbox_h",
+          "type": {
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "text",
+          "markings": [
+            "pii.raw_chat_media"
+          ],
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "extractor_version",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "confidence_bp",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "source_anchor",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "record_digest",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.FieldEvidence.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

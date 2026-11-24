@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr_import.SourceBatch.content_addressed.law",
+  "dependencies": [
+    {
+      "artifactId": "hr_import.SourceBatch.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Source batches carry non-empty Core 07 SourceDocument provenance",
+  "namespace": "hr_import",
+  "payload": {
+    "id": "hr_import.SourceBatch.content_addressed",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr_import",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr-import/hr_import.ts"
+    },
+    "rationale": "Every ingested source batch must bind its exact document URI, content digest, media type, and extractor version per Core 07 OBS-EVIDENCE-1.",
+    "response": {
+      "expression": "((((self.document_uri != '') and (self.document_digest != '')) and (self.media_type != '')) and (self.extractor != '')) and (self.extractor_version != '')",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr_import.SourceBatch"
+      ],
+      "root": {
+        "id": "hr_import.SourceBatch",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr_import.SourceBatch"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.SourceBatch.content_addressed.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

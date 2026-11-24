@@ -2,15 +2,20 @@
  * Fail-closed action-level AccessIR policy for HR historical import actions (#1594).
  *
  * `hr_import_worker` may quarantine nonconforming candidates during untrusted
- * extraction, but NEVER promotes or rejects candidates into authoritative HR
- * state; promotion and rejection require human HR review authority.
+ * extraction, but NEVER promotes, rejects, supersedes candidates, or resolves
+ * findings; every promotion or finding disposition requires human HR authority.
  */
 import { Norn } from "@norn/authoring"
 import {
+  DataQualityFinding,
   ExtractedCandidate,
   PromoteCandidate,
   QuarantineCandidate,
   RejectCandidate,
+  RejectFinding,
+  ResolveFinding,
+  SupersedeCandidate,
+  SupersedeFinding,
 } from "./hr_import.ts"
 
 export const HrImportAccess = Norn.access({
@@ -32,9 +37,22 @@ export const HrImportAccess = Norn.access({
       ],
     },
     {
-      ruleId: "promote_or_reject_candidate",
-      actions: [PromoteCandidate, RejectCandidate],
+      ruleId: "decide_candidate",
+      actions: [PromoteCandidate, RejectCandidate, SupersedeCandidate],
       resourceType: ExtractedCandidate,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [
+        {
+          role: {
+            anyOf: ["hr_manager", "hr_admin", "owner"],
+          },
+        },
+      ],
+    },
+    {
+      ruleId: "resolve_or_supersede_finding",
+      actions: [ResolveFinding, SupersedeFinding, RejectFinding],
+      resourceType: DataQualityFinding,
       scope: { dimensions: ["org", "environment"] },
       allOf: [
         {

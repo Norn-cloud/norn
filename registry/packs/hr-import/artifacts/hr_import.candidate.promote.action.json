@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "hr_import.candidate.promote",
-    "description": "Promote a reviewed candidate into authoritative HR state once zero error findings remain and a review receipt is recorded.",
+    "description": "Promote a clean reviewed candidate anchored to verified norn.SourceEvidence matching its SourceBatch document digest.",
     "effectProgram": {
       "entityArtifactId": "hr_import.ExtractedCandidate.entity",
       "entityArtifactVersion": "0.1.0",
@@ -26,12 +26,20 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "batchId": {
+          "type": "string"
+        },
         "candidateId": {
+          "type": "string"
+        },
+        "evidenceId": {
           "type": "string"
         }
       },
       "required": [
-        "candidateId"
+        "candidateId",
+        "batchId",
+        "evidenceId"
       ],
       "type": "object"
     },
@@ -53,7 +61,8 @@
       "type": "object"
     },
     "preconditions": [
-      "slice.candidate.open_error_count == 0 and slice.candidate.review_receipt_digest != null"
+      "((slice.batch.id in map(slice.candidate_batch as b, b.id)) and (slice.candidate.id in map(slice.evidence_candidate as c, c.id))) and (slice.batch.id in map(slice.evidence_batch as b, b.id))",
+      "(((slice.candidate.dispute_state == 'clean') and (slice.candidate.review_receipt_digest != null)) and (slice.candidate.reviewed_by_user_id != null)) and (slice.evidence.document_digest == slice.batch.document_digest)"
     ],
     "scopeRequired": [
       "orgId",
@@ -69,6 +78,56 @@
         },
         "name": "candidate",
         "objectType": "hr_import.ExtractedCandidate"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "batchId"
+          }
+        },
+        "name": "batch",
+        "objectType": "hr_import.SourceBatch"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "evidenceId"
+          }
+        },
+        "name": "evidence",
+        "objectType": "hr_import.FieldEvidence"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "candidate",
+            "link": "batch"
+          }
+        },
+        "name": "candidate_batch",
+        "objectType": "hr_import.SourceBatch"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "evidence",
+            "link": "candidate"
+          }
+        },
+        "name": "evidence_candidate",
+        "objectType": "hr_import.ExtractedCandidate"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "evidence",
+            "link": "batch"
+          }
+        },
+        "name": "evidence_batch",
+        "objectType": "hr_import.SourceBatch"
       }
     ],
     "title": "Promote extracted candidate",

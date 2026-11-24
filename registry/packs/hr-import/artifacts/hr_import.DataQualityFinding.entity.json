@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Replay-stable quarantine finding attached to an ExtractedCandidate when imported data violates schema, temporal, or domain constraints.",
+      "description": "Replay-stable quarantine or Core 07 FEED-CONFLICT finding attached to an ExtractedCandidate; terminal resolution states are strictly immutable and require audited receipt evidence (never silently waived).",
       "identity": [
         {
           "name": "primary",
@@ -20,18 +20,27 @@
       ],
       "lifecycles": [
         {
+          "immutable": [
+            "resolved",
+            "superseded",
+            "rejected"
+          ],
           "initial": [
             "open"
           ],
           "property": "status",
           "terminal": [
             "resolved",
-            "waived"
+            "superseded",
+            "rejected"
           ],
           "transitions": [
             {
               "from": [
                 "open"
+              ],
+              "guards": [
+                "(((self.resolution_action != null) and (self.resolution_receipt_digest != null)) and (self.resolved_by_user_id != null)) and (self.resolution_reason != null)"
               ],
               "id": "resolve",
               "to": "resolved"
@@ -40,8 +49,21 @@
               "from": [
                 "open"
               ],
-              "id": "waive",
-              "to": "waived"
+              "guards": [
+                "((((self.resolution_action ?? '') == 'accept_second_as_correction') and (self.resolution_receipt_digest != null)) and (self.resolved_by_user_id != null)) and (self.resolution_reason != null)"
+              ],
+              "id": "supersede",
+              "to": "superseded"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "guards": [
+                "((((self.resolution_action ?? '') == 'reject_candidate') and (self.resolution_receipt_digest != null)) and (self.resolved_by_user_id != null)) and (self.resolution_reason != null)"
+              ],
+              "id": "reject",
+              "to": "rejected"
             }
           ]
         }
@@ -53,8 +75,26 @@
             "required": true,
             "to": "one"
           },
-          "description": "Extracted candidate quarantined or annotated by this finding.",
+          "description": "Extracted candidate quarantined or disputed by this finding.",
           "id": "candidate",
+          "target": "hr_import.ExtractedCandidate"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional field evidence anchor pinpointing where the violation or conflict was observed.",
+          "id": "evidence",
+          "target": "hr_import.FieldEvidence"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional superseding candidate that resolved this finding via append-only correction.",
+          "id": "superseded_by",
           "target": "hr_import.ExtractedCandidate"
         }
       ],
@@ -74,6 +114,32 @@
           }
         },
         {
+          "id": "finding_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "schema_violation"
+              },
+              {
+                "value": "missing_anchor"
+              },
+              {
+                "value": "low_confidence"
+              },
+              {
+                "value": "duplicate_key"
+              },
+              {
+                "value": "feed_conflict"
+              },
+              {
+                "value": "domain_law_violation"
+              }
+            ]
+          }
+        },
+        {
           "id": "severity",
           "type": {
             "kind": "enum",
@@ -88,13 +154,98 @@
           }
         },
         {
+          "id": "quarantine_disposition",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "quarantined"
+              },
+              {
+                "value": "disputed"
+              },
+              {
+                "value": "advisory"
+              }
+            ]
+          }
+        },
+        {
           "id": "field_path",
           "type": {
             "kind": "text"
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "law_pin",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "conflicting_payload_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
           "id": "message",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "resolution_action",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "accept_first"
+              },
+              {
+                "value": "accept_second_as_correction"
+              },
+              {
+                "value": "reject_candidate"
+              },
+              {
+                "value": "revalidated_correction"
+              }
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "resolution_receipt_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "resolved_by_user_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "resolution_reason",
           "type": {
             "kind": "text"
           }
@@ -112,7 +263,10 @@
                 "value": "resolved"
               },
               {
-                "value": "waived"
+                "value": "superseded"
+              },
+              {
+                "value": "rejected"
               }
             ]
           }

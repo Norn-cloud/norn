@@ -1,0 +1,51 @@
+{
+  "artifactId": "hr_import.DataQualityFinding.terminal_requires_audit_evidence.law",
+  "dependencies": [
+    {
+      "artifactId": "hr_import.DataQualityFinding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Terminal data quality findings require explicit resolution action, receipt, reviewer, and reason",
+  "namespace": "hr_import",
+  "payload": {
+    "condition": "self.status != 'open'",
+    "id": "hr_import.DataQualityFinding.terminal_requires_audit_evidence",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr_import",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr-import/hr_import.ts"
+    },
+    "rationale": "Findings are never silently waived; every resolved, superseded, or rejected finding must record its Core 07 resolution action, receipt digest, reviewer identity, and reason.",
+    "response": {
+      "expression": "(((self.resolution_action != null) and (self.resolution_receipt_digest != null)) and (self.resolved_by_user_id != null)) and (self.resolution_reason != null)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr_import.DataQualityFinding"
+      ],
+      "root": {
+        "id": "hr_import.DataQualityFinding",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr_import.DataQualityFinding"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.DataQualityFinding.terminal_requires_audit_evidence.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -11,10 +11,10 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Promoted candidates must have zero open errors and an accepted review receipt",
+  "name": "Promoted candidates must be clean with an authenticated review receipt and reviewer",
   "namespace": "hr_import",
   "payload": {
-    "condition": "self.status == \"promoted\"",
+    "condition": "self.status == 'promoted'",
     "id": "hr_import.ExtractedCandidate.promoted_requires_clean_review",
     "lawVersion": "0.1",
     "modality": {
@@ -25,9 +25,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/hr-import/hr_import.ts"
     },
-    "rationale": "Untrusted OCR/VLM candidates cannot be promoted into authoritative HR records while error findings remain open or without an authenticated review receipt.",
+    "rationale": "Untrusted extracted candidates cannot be promoted into authoritative HR records while quarantined or disputed, or without an authenticated review receipt and reviewer identity.",
     "response": {
-      "expression": "self.open_error_count == 0 and self.review_receipt_digest != null",
+      "expression": "((self.dispute_state == 'clean') and (self.review_receipt_digest != null)) and (self.reviewed_by_user_id != null)",
       "kind": "predicate"
     },
     "scope": {

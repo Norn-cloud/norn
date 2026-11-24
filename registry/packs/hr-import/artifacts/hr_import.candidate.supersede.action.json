@@ -1,0 +1,136 @@
+{
+  "artifactId": "hr_import.candidate.supersede.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Supersede extracted candidate",
+  "namespace": "hr_import",
+  "payload": {
+    "access": {
+      "artifactId": "hr_import.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr_import.candidate.supersede",
+    "description": "Mark a staged or quarantined candidate immutably superseded once a clean replacement candidate explicitly links to it via `supersedes`.",
+    "effectProgram": {
+      "entityArtifactId": "hr_import.ExtractedCandidate.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "candidateId",
+      "objectKind": "hr_import.ExtractedCandidate",
+      "transition": "supersede"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "batchId": {
+          "type": "string"
+        },
+        "candidateId": {
+          "type": "string"
+        },
+        "replacementCandidateId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId",
+        "replacementCandidateId",
+        "batchId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((input.candidateId != input.replacementCandidateId) and (slice.batch.id in map(slice.candidate_batch as b, b.id))) and (slice.candidate.id in map(slice.replacement_supersedes as c, c.id))) and (slice.replacement.dispute_state == 'clean')"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "candidateId"
+          }
+        },
+        "name": "candidate",
+        "objectType": "hr_import.ExtractedCandidate"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "replacementCandidateId"
+          }
+        },
+        "name": "replacement",
+        "objectType": "hr_import.ExtractedCandidate"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "batchId"
+          }
+        },
+        "name": "batch",
+        "objectType": "hr_import.SourceBatch"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "candidate",
+            "link": "batch"
+          }
+        },
+        "name": "candidate_batch",
+        "objectType": "hr_import.SourceBatch"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "replacement",
+            "link": "supersedes"
+          }
+        },
+        "name": "replacement_supersedes",
+        "objectType": "hr_import.ExtractedCandidate"
+      }
+    ],
+    "title": "Supersede extracted candidate",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr_import.ExtractedCandidate"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.candidate.supersede.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

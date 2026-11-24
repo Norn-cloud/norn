@@ -38,7 +38,8 @@
       {
         "actions": [
           "hr_import.candidate.promote",
-          "hr_import.candidate.reject"
+          "hr_import.candidate.reject",
+          "hr_import.candidate.supersede"
         ],
         "allOf": [
           {
@@ -52,7 +53,33 @@
           }
         ],
         "resourceType": "hr_import.ExtractedCandidate",
-        "ruleId": "promote_or_reject_candidate",
+        "ruleId": "decide_candidate",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr_import.finding.resolve",
+          "hr_import.finding.supersede",
+          "hr_import.finding.reject"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "hr_manager",
+                "hr_admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "hr_import.DataQualityFinding",
+        "ruleId": "resolve_or_supersede_finding",
         "scope": {
           "dimensions": [
             "org",

@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr_import.FieldEvidence.valid_anchor.law",
+  "dependencies": [
+    {
+      "artifactId": "hr_import.FieldEvidence.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Field evidence carries valid page, normalized bounding box, and confidence bounds",
+  "namespace": "hr_import",
+  "payload": {
+    "id": "hr_import.FieldEvidence.valid_anchor",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr_import",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr-import/hr_import.ts"
+    },
+    "rationale": "Core 07 norn.SourceEvidence boxes are resolution-independent page fractions in [0, 1] on page >= 1 with optional basis-point confidence in [0, 10000].",
+    "response": {
+      "expression": "((((((((((((self.page >= 1) and (self.bbox_x >= 0)) and (self.bbox_x <= 1)) and (self.bbox_y >= 0)) and (self.bbox_y <= 1)) and (self.bbox_w >= 0)) and (self.bbox_w <= 1)) and (self.bbox_h >= 0)) and (self.bbox_h <= 1)) and (self.document_digest != '')) and (self.source_anchor != '')) and (self.record_digest != '')) and ((self.confidence_bp == null) or (((self.confidence_bp ?? 0) >= 0) and ((self.confidence_bp ?? 0) <= 10000)))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr_import.FieldEvidence"
+      ],
+      "root": {
+        "id": "hr_import.FieldEvidence",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr_import.FieldEvidence"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.FieldEvidence.valid_anchor.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

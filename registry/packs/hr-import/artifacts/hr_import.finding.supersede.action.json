@@ -1,0 +1,137 @@
+{
+  "artifactId": "hr_import.finding.supersede.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Supersede data quality finding",
+  "namespace": "hr_import",
+  "payload": {
+    "access": {
+      "artifactId": "hr_import.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr_import.finding.supersede",
+    "description": "Immutably supersede an open finding bound to its candidate and superseding correction candidate (`accept_second_as_correction`).",
+    "effectProgram": {
+      "entityArtifactId": "hr_import.DataQualityFinding.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "findingId",
+      "objectKind": "hr_import.DataQualityFinding",
+      "transition": "supersede"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateId": {
+          "type": "string"
+        },
+        "findingId": {
+          "type": "string"
+        },
+        "replacementCandidateId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "findingId",
+        "candidateId",
+        "replacementCandidateId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "findingId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "findingId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.candidate.id in map(slice.finding_candidate as c, c.id)) and (slice.replacement.id in map(slice.finding_superseded_by as c, c.id))",
+      "((((slice.finding.status == 'open') and ((slice.finding.resolution_action ?? '') == 'accept_second_as_correction')) and (slice.finding.resolution_receipt_digest != null)) and (slice.finding.resolved_by_user_id != null)) and (slice.finding.resolution_reason != null)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "findingId"
+          }
+        },
+        "name": "finding",
+        "objectType": "hr_import.DataQualityFinding"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "candidateId"
+          }
+        },
+        "name": "candidate",
+        "objectType": "hr_import.ExtractedCandidate"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "replacementCandidateId"
+          }
+        },
+        "name": "replacement",
+        "objectType": "hr_import.ExtractedCandidate"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "finding",
+            "link": "candidate"
+          }
+        },
+        "name": "finding_candidate",
+        "objectType": "hr_import.ExtractedCandidate"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "finding",
+            "link": "superseded_by"
+          }
+        },
+        "name": "finding_superseded_by",
+        "objectType": "hr_import.ExtractedCandidate"
+      }
+    ],
+    "title": "Supersede data quality finding",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "hr_import.DataQualityFinding"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.finding.supersede.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

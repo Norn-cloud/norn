@@ -1,0 +1,51 @@
+{
+  "artifactId": "hr_import.DataQualityFinding.feed_conflict_is_disputed.law",
+  "dependencies": [
+    {
+      "artifactId": "hr_import.DataQualityFinding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "FEED-CONFLICT findings must be error-severity, disputed, and carry the conflicting digest",
+  "namespace": "hr_import",
+  "payload": {
+    "condition": "self.finding_kind == 'feed_conflict'",
+    "id": "hr_import.DataQualityFinding.feed_conflict_is_disputed",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr_import",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr-import/hr_import.ts"
+    },
+    "rationale": "Core 07 FEED-CONFLICT requires same-key differing-payload observations to be marked error-severity disputed with the conflicting payload digest retained.",
+    "response": {
+      "expression": "((self.severity == 'error') and (self.quarantine_disposition == 'disputed')) and (self.conflicting_payload_digest != null)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr_import.DataQualityFinding"
+      ],
+      "root": {
+        "id": "hr_import.DataQualityFinding",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr_import.DataQualityFinding"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.DataQualityFinding.feed_conflict_is_disputed.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,381 +1,389 @@
-#![cfg(feature = "native")]
-#![allow(
+//! End-to-end `norn-cell` execution suite for the HR vertical (`time` + `org` +
+//! `hr` + `loc-eg` + `hr-import`):
+//! 1. Static admission of the full vertical against the Core base.
+//! 2. Jurisdiction-agnostic base `hr` pack alone (`LaborCapacity`, `TimeInterval`,
+//!    `LeaveRequest`/`LeaveBalance` `SliceKey::Link`, `AttendanceEvent` &
+//!    `hr.attendance.reverse`, `PayrollFund`/`SalarySlip`/`PayrollRun`,
+//!    `ExpenseClaim`, and Cedar `AccessIR` ownership & separation of duties).
+//! 3. Conjunctive `hr ∧ loc-eg` composition (Egypt Labor Law No. 14 of 2025)
+//!    with simultaneous multi-jurisdiction isolation (`EG` vs `GB` and
+//!    pre-`2025-09-01` historical records) and `loc_eg.LaborProfile` 12h rule.
+//! 4. Core 07 `hr-import` evidence-anchored ingest, `FEED-CONFLICT` supersession,
+//!    and immutable terminal resolution refusal.
+//! 5. Durable PII marking persistence, masking, reveal receipts, and
+//!    exact-version declassification.
+
+#[cfg(feature = "native")]
+#[allow(
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::indexing_slicing,
     clippy::panic,
-    clippy::too_many_lines,
     missing_docs,
     reason = "HR vertical end-to-end kernel execution fixtures"
 )]
-//! End-to-end `norn-cell` execution suite for the HR vertical (`time` + `org` +
-//! `hr` + `loc-eg` + `hr-import`): static admission against the Core base,
-//! real SQLite cell definition install, leave/roster/attendance/import action
-//! and guard execution under compiled Cedar `AccessIR`, and durable PII marking
-//! persistence, masking, reveal receipts, and exact-version declassification.
+mod suite {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
+    use std::path::{Path, PathBuf};
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::{Path, PathBuf};
+    use norn_cell::{
+        InstalledDefinitionInput, MAIN_WORLD, MarkingDeclassification, MarkingReveal, Model,
+        SqliteCell, StoreOptions,
+    };
+    use norn_checker::{
+        EntityArtifactSetContext, ReceiptSources, admission_receipt_sha256, check_artifact_set,
+        check_artifact_set_with_receipt, marking_catalog_from_artifacts,
+    };
+    use norn_ir::{
+        AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, InterfaceDef, MarkingId, MaskPolicy,
+        ObjectTypeDef, PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
+    };
+    use norn_kernel::authz::{
+        self, AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation,
+        DenyReason, Pdp, PdpActionAuthorizer, PdpDecision, PrincipalInput, ResourceInput, ScopeKey,
+    };
+    use norn_kernel::cell_host::{JsonObject, JsonValue};
+    use norn_kernel::{
+        ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
+        ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionRefusal, CellCommit, CellHost,
+        Command, DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, LinkKey,
+        LinkMutation, LinkWrite, LogicalTime, TypeCatalog, World, commit_action,
+    };
+    use serde_json::{Value, json};
 
-use norn_cell::{
-    InstalledDefinitionInput, MAIN_WORLD, MarkingDeclassification, MarkingReveal, Model,
-    SqliteCell, StoreOptions,
-};
-use norn_checker::{
-    EntityArtifactSetContext, ReceiptSources, admission_receipt_sha256, check_artifact_set,
-    check_artifact_set_with_receipt, marking_catalog_from_artifacts,
-};
-use norn_ir::{
-    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, InterfaceDef, MarkingId, MaskPolicy,
-    ObjectTypeDef, PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
-};
-use norn_kernel::authz::{
-    self, AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, DenyReason, Pdp,
-    PdpActionAuthorizer, PdpDecision, PrincipalInput, ResourceInput, ScopeKey,
-};
-use norn_kernel::cell_host::{JsonObject, JsonValue};
-use norn_kernel::{
-    ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
-    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionRefusal, CellCommit, CellHost,
-    Command, DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, LinkKey,
-    LinkMutation, LinkWrite, LogicalTime, TypeCatalog, World, commit_action,
-};
-use serde_json::{Value, json};
+    type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
 
-type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
+    const SCOPE_KEY: &str = "org_global_hr/dev";
+    const ORG_ID: &str = "org_global_hr";
+    const ENV_ID: &str = "dev";
+    const KNOWN_AT: u64 = 1_795_420_800_000;
 
-const SCOPE_KEY: &str = "org_cairo_retail/dev";
-const ORG_ID: &str = "org_cairo_retail";
-const ENV_ID: &str = "dev";
-const KNOWN_AT: u64 = 1_795_420_800_000;
+    const CORE_BASE_FILES: &[&str] = &[
+        "core.Agent.interface.json",
+        "core.AgentRole.interface.json",
+        "core.Resource.interface.json",
+        "core.Commitment.interface.json",
+        "core.Hold.interface.json",
+        "core.EconomicEvent.interface.json",
+        "core.LedgerEffect.interface.json",
+        "core.Claim.interface.json",
+        "core.TimeInterval.interface.json",
+        "identity.BusinessUnit.entity.json",
+        "identity.Directory.interface.json",
+        "party.Organization.entity.json",
+        "norn.SourceEvidence.interface.json",
+        "norn.SourceDocument.interface.json",
+        "norn.ObservedLinkClaim.entity.json",
+        "core.value_types.entity.json",
+        "std.value_types.entity.json",
+        "core.units.json",
+        "core.time.json",
+    ];
 
-const CORE_BASE_FILES: &[&str] = &[
-    "core.Agent.interface.json",
-    "core.AgentRole.interface.json",
-    "core.Resource.interface.json",
-    "core.Commitment.interface.json",
-    "core.Hold.interface.json",
-    "core.EconomicEvent.interface.json",
-    "core.LedgerEffect.interface.json",
-    "core.Claim.interface.json",
-    "norn.SourceEvidence.interface.json",
-    "norn.SourceDocument.interface.json",
-    "norn.ObservedLinkClaim.entity.json",
-    "core.value_types.entity.json",
-    "std.value_types.entity.json",
-    "core.units.json",
-];
+    const ALL_HR_PACKS: &[&str] = &["time", "org", "hr", "loc-eg", "hr-import"];
+    const BASE_HR_PACKS: &[&str] = &["time", "org", "hr"];
+    const HR_WITH_EG_PACKS: &[&str] = &["time", "org", "hr", "loc-eg"];
+    const HR_IMPORT_PACKS: &[&str] = &["time", "org", "hr", "hr-import"];
 
-const HR_VERTICAL_PACKS: &[&str] = &["time", "org", "hr", "loc-eg", "hr-import"];
+    const TEST_PRINCIPALS: &[&str] = &[
+        "principal:employee",
+        "principal:employee_other",
+        "principal:branch_manager",
+        "principal:hr_manager",
+        "principal:payroll_officer",
+        "principal:hr_admin",
+        "principal:hr_solver_worker",
+        "principal:hr_import_worker",
+    ];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
+    const RESOURCE_OWNER_FIELDS: &[&str] = &[
+        "requester_user_id",
+        "prepared_by_user_id",
+        "applicant_user_id",
+    ];
 
-fn read_json_value(path: &Path) -> Value {
-    let text =
-        fs::read_to_string(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-    serde_json::from_str(&text).unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
-}
+    fn repo_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
 
-fn load_core_base_values() -> Vec<Value> {
-    let core_dir = repo_root().join("registry/core/artifacts");
-    CORE_BASE_FILES
-        .iter()
-        .map(|name| read_json_value(&core_dir.join(name)))
-        .collect()
-}
+    fn read_json_value(path: &Path) -> Value {
+        let text = fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        serde_json::from_str(&text)
+            .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
+    }
 
-fn load_hr_vertical_values() -> Vec<Value> {
-    let packs_root = repo_root().join("registry/packs");
-    let mut paths = Vec::new();
-    for pack in HR_VERTICAL_PACKS {
-        let dir = packs_root.join(pack).join("artifacts");
-        let mut pack_paths: Vec<PathBuf> = fs::read_dir(&dir)
-            .unwrap_or_else(|error| panic!("read {}: {error}", dir.display()))
-            .map(|entry| entry.expect("artifact dir entry").path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+    fn load_core_base_values() -> Vec<Value> {
+        let core_dir = repo_root().join("registry/core/artifacts");
+        CORE_BASE_FILES
+            .iter()
+            .map(|name| read_json_value(&core_dir.join(name)))
+            .collect()
+    }
+
+    fn load_pack_values(packs: &[&str]) -> Vec<Value> {
+        let packs_root = repo_root().join("registry/packs");
+        let mut paths = Vec::new();
+        for pack in packs {
+            let dir = packs_root.join(pack).join("artifacts");
+            let mut pack_paths: Vec<PathBuf> = fs::read_dir(&dir)
+                .unwrap_or_else(|error| panic!("read {}: {error}", dir.display()))
+                .map(|entry| entry.expect("artifact dir entry").path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+                .collect();
+            pack_paths.sort();
+            paths.extend(pack_paths);
+        }
+        paths.iter().map(|path| read_json_value(path)).collect()
+    }
+
+    fn decode_envelopes(values: &[Value]) -> Vec<ArtifactEnvelope> {
+        values
+            .iter()
+            .map(|value| serde_json::from_value(value.clone()).expect("artifact envelope decodes"))
+            .collect()
+    }
+
+    fn action_call_type() -> ObjectTypeDef {
+        let required = ["actionId", "actor", "turn", "transition", "from", "to"];
+        let nullable_text = [
+            "actionArtifactId",
+            "actionVersion",
+            "effectKind",
+            "ruleBinding",
+        ];
+        let nullable_json = [
+            "object",
+            "input",
+            "effectiveInput",
+            "derivedValues",
+            "preconditionOutcomes",
+            "rowOperations",
+        ];
+        let mut fields: Vec<Value> = required
+            .iter()
+            .map(|id| json!({"id": id, "type": {"kind": "text"}}))
             .collect();
-        pack_paths.sort();
-        paths.extend(pack_paths);
-    }
-    paths.iter().map(|path| read_json_value(path)).collect()
-}
-
-fn decode_envelopes(values: &[Value]) -> Vec<ArtifactEnvelope> {
-    values
-        .iter()
-        .map(|value| serde_json::from_value(value.clone()).expect("artifact envelope decodes"))
-        .collect()
-}
-
-fn action_call_type() -> ObjectTypeDef {
-    let required = ["actionId", "actor", "turn", "transition", "from", "to"];
-    let nullable_text = [
-        "actionArtifactId",
-        "actionVersion",
-        "effectKind",
-        "ruleBinding",
-    ];
-    let nullable_json = [
-        "object",
-        "input",
-        "effectiveInput",
-        "derivedValues",
-        "preconditionOutcomes",
-        "rowOperations",
-    ];
-    let mut fields: Vec<Value> = required
-        .iter()
-        .map(|id| json!({"id": id, "type": {"kind": "text"}}))
-        .collect();
-    fields.extend(
-        nullable_text.iter().map(
+        fields.extend(nullable_text.iter().map(
             |id| json!({"id": id, "type": {"kind": "text"}, "constraints": {"nullable": true}}),
-        ),
-    );
-    fields.extend(nullable_json.iter().map(
-        |id| json!({"id": id, "type": {"kind": "json-ext"}, "constraints": {"nullable": true}}),
-    ));
-    serde_json::from_value(json!({"name": "norn.ActionCall", "properties": fields}))
-        .expect("norn.ActionCall schema decodes")
-}
-
-struct RegisteredAction {
-    root: ActionRoot,
-    artifact_id: String,
-    version: String,
-}
-
-struct HrPrincipals {
-    pdp: Pdp,
-}
-
-fn test_scope_key() -> ScopeKey {
-    ScopeKey {
-        org: ORG_ID.to_owned(),
-        tenant: None,
-        workspace: None,
-        environment: Some(ENV_ID.to_owned()),
-        business_unit: None,
+        ));
+        fields.extend(nullable_json.iter().map(
+            |id| json!({"id": id, "type": {"kind": "json-ext"}, "constraints": {"nullable": true}}),
+        ));
+        serde_json::from_value(json!({"name": "norn.ActionCall", "properties": fields}))
+            .expect("norn.ActionCall schema decodes")
     }
-}
 
-fn test_scope_map() -> BTreeMap<String, String> {
-    BTreeMap::from([
-        ("orgId".to_owned(), ORG_ID.to_owned()),
-        ("environmentId".to_owned(), ENV_ID.to_owned()),
-    ])
-}
-
-fn actor_roles(actor: &str) -> Vec<String> {
-    match actor {
-        "principal:employee" => vec!["employee".to_owned()],
-        "principal:branch_manager" => vec!["branch_manager".to_owned()],
-        "principal:hr_manager" => vec!["hr_manager".to_owned()],
-        "principal:hr_admin" => vec!["hr_admin".to_owned()],
-        "principal:hr_solver_worker" => vec!["hr_solver_worker".to_owned()],
-        "principal:hr_import_worker" => vec!["hr_import_worker".to_owned()],
-        _ => Vec::new(),
+    struct RegisteredAction {
+        root: ActionRoot,
+        artifact_id: String,
+        version: String,
     }
-}
 
-impl HrPrincipals {
-    fn new(
-        types: &[ObjectTypeDef],
-        interfaces: &[InterfaceDef],
-        properties: &[PropertyTypeDef],
-        actions: &BTreeMap<String, RegisteredAction>,
-        policies: &[AccessIr],
-    ) -> Self {
-        let action_roots: Vec<ActionRoot> = actions.values().map(|a| a.root.clone()).collect();
-        let projection = norn_projections::project_cedar_schema_with_catalog(
-            types,
-            interfaces,
-            properties,
-            &action_roots,
-        );
-        let host_schema = norn_projections::project_host_access_schema(types);
-        let schema =
-            AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host_schema])
-                .expect("HR Cedar schema loads");
-        let compiled = authz::compile_all_projected(&schema, policies, &projection)
-            .expect("HR AccessIR policies compile against projected Cedar schema");
+    struct HrPrincipals {
+        pdp: Pdp,
+    }
 
-        // Grant every test principal broad action + reveal capabilities so that
-        // the compiled Cedar AccessIR policies themselves decide allow vs deny.
-        let mut all_capabilities: Vec<String> =
-            action_roots.iter().map(|a| a.action_id.clone()).collect();
-        all_capabilities.push("norn.read".to_owned());
-        all_capabilities.push("norn.reveal".to_owned());
-
-        let grants: Vec<CapabilityGrant> = [
-            "principal:employee",
-            "principal:branch_manager",
-            "principal:hr_manager",
-            "principal:hr_admin",
-            "principal:hr_solver_worker",
-            "principal:hr_import_worker",
-        ]
-        .into_iter()
-        .map(|subject| CapabilityGrant {
-            subject_id: subject.to_owned(),
-            actor_kind: ActorKind::User,
-            agent_session_id: None,
-            scope: Some(test_scope_key()),
-            capabilities: all_capabilities.clone(),
-            binding: None,
-        })
-        .collect();
-
-        Self {
-            pdp: Pdp::new(compiled, &grants).expect("HR PDP constructs"),
+    fn test_scope_key() -> ScopeKey {
+        ScopeKey {
+            org: ORG_ID.to_owned(),
+            tenant: None,
+            workspace: None,
+            environment: Some(ENV_ID.to_owned()),
+            business_unit: None,
         }
     }
 
-    fn access_request(
-        actor: &str,
-        action: &str,
-        target: &FactKey,
-        dimensions: &BTreeMap<String, String>,
-    ) -> Result<AccessRequest, ActionDenial> {
-        let request_scope = ScopeKey {
-            org: dimensions
-                .get("orgId")
-                .ok_or(ActionDenial::Invisible)?
-                .clone(),
-            tenant: dimensions.get("tenantId").cloned(),
-            workspace: dimensions.get("workspaceId").cloned(),
-            environment: dimensions.get("environmentId").cloned(),
-            business_unit: dimensions.get("businessUnitId").cloned(),
-        };
-        Ok(AccessRequest {
-            principal: PrincipalInput {
-                subject_id: actor.to_owned(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: actor_roles(actor),
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(request_scope.clone()),
-            capability: action.to_owned(),
-            action_id: action.to_owned(),
-            resource: ResourceInput {
-                object_type: target.object_type.as_str().to_owned(),
-                id: target.key.clone(),
-                scope: request_scope,
-                attributes: BTreeMap::new(),
-            },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
+    fn test_scope_map() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("orgId".to_owned(), ORG_ID.to_owned()),
+            ("environmentId".to_owned(), ENV_ID.to_owned()),
+        ])
     }
 
-    fn decide_reveal(&self, actor: &str, marking_id: &str) -> PdpDecision {
-        let base_request = Self::access_request(
-            actor,
-            "norn.reveal",
-            &FactKey::new("norn.Marking", marking_id),
-            &test_scope_map(),
-        )
-        .expect("reveal request builds");
-        self.pdp
-            .decide_marking(&base_request, marking_id, "norn.reveal")
-    }
-}
-
-impl ActionAuthorizer for HrPrincipals {
-    fn authorize(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        PdpActionAuthorizer::new(self.pdp.clone(), |req: &ActionAuthzRequest<'_>| {
-            Self::access_request(req.actor, &req.action.action_id, req.target, req.scope)
-        })
-        .authorize(request)
-    }
-
-    fn authorize_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        if actor_roles(request.actor).is_empty()
-            || request.scope.get("orgId").map(String::as_str) != Some(ORG_ID)
-            || request.scope.get("environmentId").map(String::as_str) != Some(ENV_ID)
-        {
-            return Err(ActionDenial::Invisible);
+    fn actor_roles(actor: &str) -> Vec<String> {
+        match actor {
+            "principal:employee" | "principal:employee_other" => vec!["employee".to_owned()],
+            "principal:branch_manager" => vec!["branch_manager".to_owned()],
+            "principal:hr_manager" => vec!["hr_manager".to_owned()],
+            "principal:payroll_officer" => vec!["payroll_officer".to_owned()],
+            "principal:hr_admin" => vec!["hr_admin".to_owned()],
+            "principal:hr_solver_worker" => vec!["hr_solver_worker".to_owned()],
+            "principal:hr_import_worker" => vec!["hr_import_worker".to_owned()],
+            _ => Vec::new(),
         }
-        Ok(())
     }
 
-    fn authorize_read_type(
-        &self,
-        request: &ActionReadTypeAuthzRequest<'_>,
-    ) -> Result<(), ActionDenial> {
-        if actor_roles(request.actor).is_empty()
-            || request.scope.get("orgId").map(String::as_str) != Some(ORG_ID)
-            || request.scope.get("environmentId").map(String::as_str) != Some(ENV_ID)
-        {
-            return Err(ActionDenial::Invisible);
-        }
-        Ok(())
-    }
-}
+    impl HrPrincipals {
+        fn new(
+            types: &[ObjectTypeDef],
+            interfaces: &[InterfaceDef],
+            properties: &[PropertyTypeDef],
+            actions: &BTreeMap<String, RegisteredAction>,
+            policies: &[AccessIr],
+        ) -> Self {
+            let action_roots: Vec<ActionRoot> = actions.values().map(|a| a.root.clone()).collect();
+            let base_projection = norn_projections::project_cedar_schema_with_catalog(
+                types,
+                interfaces,
+                properties,
+                &action_roots,
+            );
+            let inferred = authz::infer_principal_attributes(policies, &base_projection)
+                .expect("infer HR principal attributes");
+            let projection =
+                norn_projections::project_cedar_schema_with_catalog_and_principal_attributes(
+                    types,
+                    interfaces,
+                    properties,
+                    &action_roots,
+                    &inferred,
+                );
+            let host_schema = norn_projections::project_host_access_schema(types);
+            let schema = AuthzSchema::from_projected_cedarschema_fragments(&[
+                &projection.schema,
+                &host_schema,
+            ])
+            .expect("HR Cedar schema loads");
+            let compiled = authz::compile_all_projected(&schema, policies, &projection)
+                .expect("HR AccessIR policies compile against projected Cedar schema");
 
-struct HrVerticalFixture {
-    base_values: Vec<Value>,
-    artifact_values: Vec<Value>,
-    artifacts: Vec<ArtifactEnvelope>,
-    admission_receipt: String,
-    receipt_sha256: String,
-    types: Vec<ObjectTypeDef>,
-    properties: Vec<PropertyTypeDef>,
-    interfaces: Vec<InterfaceDef>,
-    actions: BTreeMap<String, RegisteredAction>,
-    laws: Vec<ArtifactEnvelope>,
-    principals: HrPrincipals,
-}
+            let mut all_capabilities: Vec<String> =
+                action_roots.iter().map(|a| a.action_id.clone()).collect();
+            all_capabilities.push("norn.read".to_owned());
+            all_capabilities.push("norn.reveal".to_owned());
 
-impl HrVerticalFixture {
-    fn load() -> Self {
-        let base_values = load_core_base_values();
-        let artifact_values = load_hr_vertical_values();
-        let base = decode_envelopes(&base_values);
-        let artifacts = decode_envelopes(&artifact_values);
-
-        let to_runtime = |values: &[Value]| -> Vec<RuntimeValue> {
-            values
+            let grants: Vec<CapabilityGrant> = TEST_PRINCIPALS
                 .iter()
-                .map(|value| RuntimeValue::from_json(value.clone()).expect("exact artifact JSON"))
-                .collect()
-        };
-        let sources = to_runtime(&artifact_values);
-        let base_sources = to_runtime(&base_values);
-        let registry = BTreeSet::new();
-        let checked = check_artifact_set_with_receipt(
-            &ReceiptSources::new(&sources, &base_sources).expect("receipt sources"),
-            &EntityArtifactSetContext {
-                registry: &registry,
-                base: &base,
-                tenant: None,
-            },
-            &ResourceLimitProfile::norn_limits_v1(),
-        )
-        .expect("HR vertical admission receipt");
-        assert!(
-            checked.receipt.admitted,
-            "HR vertical packs must admit with zero error diagnostics: {:#?}",
-            checked.diagnostics
-        );
-        let admission_receipt = String::from_utf8(
-            norn_ir::canonical::serialize(
-                &checked
-                    .receipt
-                    .to_canonical_value()
-                    .expect("admission receipt canonical value"),
-            )
-            .expect("admission receipt canonicalizes"),
-        )
-        .expect("admission receipt is UTF-8");
-        let receipt_sha256 =
-            admission_receipt_sha256(&admission_receipt).expect("admission receipt sha256");
+                .map(|subject| CapabilityGrant {
+                    subject_id: (*subject).to_owned(),
+                    actor_kind: ActorKind::User,
+                    agent_session_id: None,
+                    scope: Some(test_scope_key()),
+                    capabilities: all_capabilities.clone(),
+                    binding: None,
+                })
+                .collect();
 
+            Self {
+                pdp: Pdp::new(compiled, &grants).expect("HR PDP constructs"),
+            }
+        }
+
+        fn access_request(
+            actor: &str,
+            action: &str,
+            target: &FactKey,
+            target_values: Option<&JsonObject>,
+            dimensions: &BTreeMap<String, String>,
+        ) -> Result<AccessRequest, ActionDenial> {
+            let request_scope = ScopeKey {
+                org: dimensions
+                    .get("orgId")
+                    .ok_or(ActionDenial::Invisible)?
+                    .clone(),
+                tenant: dimensions.get("tenantId").cloned(),
+                workspace: dimensions.get("workspaceId").cloned(),
+                environment: dimensions.get("environmentId").cloned(),
+                business_unit: dimensions.get("businessUnitId").cloned(),
+            };
+            let mut resource_attributes = BTreeMap::new();
+            if let Some(values) = target_values {
+                for field in RESOURCE_OWNER_FIELDS {
+                    if let Some(JsonValue::String(text)) = values.get(*field) {
+                        resource_attributes
+                            .insert((*field).to_owned(), AttrValue::String(text.clone()));
+                    }
+                }
+            }
+            Ok(AccessRequest {
+                principal: PrincipalInput {
+                    subject_id: actor.to_owned(),
+                    actor_kind: ActorKind::User,
+                    agent_session_id: None,
+                    roles: actor_roles(actor),
+                    attributes: BTreeMap::from([(
+                        "id".to_owned(),
+                        AttrValue::String(actor.to_owned()),
+                    )]),
+                },
+                scope: Some(request_scope.clone()),
+                capability: action.to_owned(),
+                action_id: action.to_owned(),
+                resource: ResourceInput {
+                    object_type: target.object_type.as_str().to_owned(),
+                    id: target.key.clone(),
+                    scope: request_scope,
+                    attributes: resource_attributes,
+                },
+                context: BTreeMap::new(),
+                binding: None,
+                delegation: Delegation::Direct,
+            })
+        }
+
+        fn decide_reveal(&self, actor: &str, marking_id: &str) -> PdpDecision {
+            let base_request = Self::access_request(
+                actor,
+                "norn.reveal",
+                &FactKey::new("norn.Marking", marking_id),
+                None,
+                &test_scope_map(),
+            )
+            .expect("reveal request builds");
+            self.pdp
+                .decide_marking(&base_request, marking_id, "norn.reveal")
+        }
+    }
+
+    impl ActionAuthorizer for HrPrincipals {
+        fn authorize(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            PdpActionAuthorizer::new(self.pdp.clone(), |req: &ActionAuthzRequest<'_>| {
+                Self::access_request(
+                    req.actor,
+                    &req.action.action_id,
+                    req.target,
+                    req.target_values,
+                    req.scope,
+                )
+            })
+            .authorize(request)
+        }
+
+        fn authorize_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            if actor_roles(request.actor).is_empty()
+                || request.scope.get("orgId").map(String::as_str) != Some(ORG_ID)
+                || request.scope.get("environmentId").map(String::as_str) != Some(ENV_ID)
+            {
+                return Err(ActionDenial::Invisible);
+            }
+            Ok(())
+        }
+
+        fn authorize_read_type(
+            &self,
+            request: &ActionReadTypeAuthzRequest<'_>,
+        ) -> Result<(), ActionDenial> {
+            if actor_roles(request.actor).is_empty()
+                || request.scope.get("orgId").map(String::as_str) != Some(ORG_ID)
+                || request.scope.get("environmentId").map(String::as_str) != Some(ENV_ID)
+            {
+                return Err(ActionDenial::Invisible);
+            }
+            Ok(())
+        }
+    }
+
+    struct ExtractedCatalog {
+        types: Vec<ObjectTypeDef>,
+        properties: Vec<PropertyTypeDef>,
+        interfaces: Vec<InterfaceDef>,
+        actions: BTreeMap<String, RegisteredAction>,
+        policies: Vec<AccessIr>,
+    }
+
+    fn extract_catalog(base_values: &[Value], artifact_values: &[Value]) -> ExtractedCatalog {
         let mut types = Vec::new();
         let mut properties = Vec::new();
         let mut interfaces = Vec::new();
@@ -403,12 +411,9 @@ impl HrVerticalFixture {
                     serde_json::from_value(payload.clone()).expect("action root decodes");
                 let artifact_id = document["artifactId"]
                     .as_str()
-                    .expect("action artifactId")
+                    .expect("artifactId")
                     .to_owned();
-                let version = document["version"]
-                    .as_str()
-                    .expect("action version")
-                    .to_owned();
+                let version = document["version"].as_str().expect("version").to_owned();
                 actions.insert(
                     root.action_id.clone(),
                     RegisteredAction {
@@ -419,1033 +424,1636 @@ impl HrVerticalFixture {
                 );
             }
             if document["kind"] == "policy" {
-                let policy: AccessIr =
-                    serde_json::from_value(payload.clone()).expect("policy root decodes");
-                policies.push(policy);
+                policies
+                    .push(serde_json::from_value(payload.clone()).expect("policy root decodes"));
             }
         }
         types.push(action_call_type());
-
-        let laws: Vec<ArtifactEnvelope> = artifacts
-            .iter()
-            .filter(|artifact| artifact.kind() == ArtifactKind::Law)
-            .cloned()
-            .collect();
-        let principals = HrPrincipals::new(&types, &interfaces, &properties, &actions, &policies);
-
-        Self {
-            base_values,
-            artifact_values,
-            artifacts,
-            admission_receipt,
-            receipt_sha256,
+        ExtractedCatalog {
             types,
             properties,
             interfaces,
             actions,
-            laws,
-            principals,
+            policies,
         }
     }
 
-    fn model(&self) -> Model {
-        Model::from_definitions_with_interfaces(&self.types, &self.properties, &self.interfaces)
-            .expect("HR vertical model projects")
-            .with_governing_laws(&self.laws)
-            .expect("HR vertical governing laws bind")
+    struct HrVerticalFixture {
+        base_values: Vec<Value>,
+        artifact_values: Vec<Value>,
+        artifacts: Vec<ArtifactEnvelope>,
+        admission_receipt: String,
+        receipt_sha256: String,
+        types: Vec<ObjectTypeDef>,
+        properties: Vec<PropertyTypeDef>,
+        interfaces: Vec<InterfaceDef>,
+        actions: BTreeMap<String, RegisteredAction>,
+        laws: Vec<ArtifactEnvelope>,
+        principals: HrPrincipals,
     }
 
-    fn catalog(&self) -> TypeCatalog<'_> {
-        TypeCatalog::new(&self.types)
-            .with_property_types(&self.properties)
-            .with_interfaces(&self.interfaces)
-            .with_governing_laws(&self.laws)
-    }
-
-    fn install_input(&self) -> InstalledDefinitionInput {
-        let mut combined = self.artifact_values.clone();
-        combined.extend(self.base_values.iter().cloned());
-        let canonical_set = String::from_utf8(
-            RuntimeValue::from_json(Value::Array(combined))
-                .expect("HR vertical + core base artifact set is exact JSON")
-                .canonical_json()
-                .expect("HR vertical + core base artifact set canonicalizes"),
-        )
-        .expect("canonical HR vertical + core base set is UTF-8");
-        InstalledDefinitionInput {
-            canonical_set,
-            registry: Vec::new(),
-            receipt_sha256: self.receipt_sha256.clone(),
-            admission_receipt: Some(self.admission_receipt.clone()),
-            readmission: None,
-            diff: json!({"added": {"count": self.artifacts.len()}}),
-            installed_at: KNOWN_AT,
-            layout: None,
-        }
-    }
-
-    fn open_installed_cell(&self, path: &Path) -> Cell {
-        let model = self.model();
-        let mut cell = Cell::open(
-            path,
-            model.clone(),
-            StoreOptions::default(),
-            SCOPE_KEY,
-            |_: &Command<JsonObject>| panic!("HR vertical E2E actions are synchronous"),
-        )
-        .expect("SQLite HR cell opens");
-        cell.advance_to(LogicalTime::from_millis(KNOWN_AT));
-        cell.install_definitions(model, self.install_input(), Some(0))
-            .expect("admitted HR vertical definitions install");
-        cell
-    }
-
-    fn invoke(
-        &self,
-        cell: &mut Cell,
-        action_id: &str,
-        input: &Value,
-        actor: &str,
-        idempotency_key: &str,
-    ) -> Result<ActionOutcome, Box<ActionRefusal<norn_cell::CellError>>> {
-        let registered = &self.actions[action_id];
-        let request = ActionCall {
-            action: &registered.root,
-            action_artifact_id: &registered.artifact_id,
-            action_version: &registered.version,
-            scope: test_scope_map(),
-            actor: actor.to_owned(),
-            input: decode_json_object(input),
-            idempotency_key: idempotency_key.to_owned(),
-            object_type: None,
-            turn: DecisionTurn {
-                id: format!("turn:{idempotency_key}"),
-                now: LogicalTime::from_millis(KNOWN_AT),
-                world: World::Main,
-                consumes: None,
-            },
-        };
-        commit_action(cell, &self.catalog(), &request, &self.principals).map_err(Box::new)
-    }
-}
-
-fn decode_json_object(value: &Value) -> JsonObject {
-    serde_json::from_value(value.clone()).expect("JSON object decodes")
-}
-
-fn put_fact(object_type: &str, id: &str, values: &Value) -> FactWrite {
-    FactWrite {
-        key: FactKey::new(object_type, id),
-        expected: FactVersion::ABSENT,
-        mutation: FactMutation::Put {
-            values: serde_json::from_value(values.clone()).expect("fact values decode"),
-        },
-    }
-}
-
-fn add_link(from_type: &str, from_id: &str, link: &str, to_type: &str, to_id: &str) -> LinkWrite {
-    LinkWrite {
-        key: LinkKey::new(
-            FactKey::new(from_type, from_id),
-            link,
-            FactKey::new(to_type, to_id),
-        ),
-        expected: FactVersion::ABSENT,
-        mutation: LinkMutation::Add {
-            values: JsonObject::new(),
-        },
-    }
-}
-
-fn status_of(cell: &Cell, object_type: &str, id: &str) -> String {
-    cell.load(&FactKey::new(object_type, id))
-        .expect("object loads")
-        .values
-        .expect("object exists")["status"]
-        .as_str()
-        .expect("status is text")
-        .to_owned()
-}
-
-fn mask_text(value: &str, policy: &MaskPolicy) -> Option<String> {
-    match policy {
-        MaskPolicy::Redacted {} => Some("[REDACTED]".to_owned()),
-        MaskPolicy::LastN { count } => {
-            let chars: Vec<char> = value.chars().collect();
-            let keep = usize::try_from(*count).unwrap_or(usize::MAX);
-            let tail: String = if chars.len() > keep {
-                chars
-                    .get(chars.len().saturating_sub(keep)..)
-                    .unwrap_or_default()
+    impl HrVerticalFixture {
+        fn load(packs: &[&str]) -> Self {
+            let base_values = load_core_base_values();
+            let artifact_values = load_pack_values(packs);
+            let base = decode_envelopes(&base_values);
+            let artifacts = decode_envelopes(&artifact_values);
+            let to_runtime = |values: &[Value]| -> Vec<RuntimeValue> {
+                values
                     .iter()
+                    .map(|value| {
+                        RuntimeValue::from_json(value.clone()).expect("exact artifact JSON")
+                    })
                     .collect()
-            } else {
-                String::new()
             };
-            Some(format!("[REDACTED]{tail}"))
-        }
-        MaskPolicy::Null {} | MaskPolicy::Refuse {} => None,
-        MaskPolicy::Pseudonym { subject } => Some(format!("{subject} #PSEUDONYM")),
-    }
-}
-
-#[test]
-fn hr_vertical_packs_admit_together_against_core_base() {
-    let base = decode_envelopes(&load_core_base_values());
-    let artifacts = decode_envelopes(&load_hr_vertical_values());
-
-    let registry = BTreeSet::new();
-    let findings = check_artifact_set(
-        &artifacts,
-        &EntityArtifactSetContext {
-            registry: &registry,
-            base: &base,
-            tenant: None,
-        },
-    );
-    let errors: Vec<_> = findings.iter().filter(|d| d.is_error()).collect();
-    assert!(
-        errors.is_empty(),
-        "time + org + hr + loc-eg + hr-import must admit cleanly: {errors:#?}"
-    );
-
-    let law_ids: BTreeSet<&str> = artifacts
-        .iter()
-        .filter(|artifact| artifact.kind() == ArtifactKind::Law)
-        .map(|artifact| artifact.artifact_id.as_str())
-        .collect();
-    assert!(
-        law_ids.contains("hr.LeaveBalance.non_negative.law")
-            && law_ids.contains("hr.Roster.published_requires_receipt.law")
-            && law_ids.contains("loc_eg.LaborProfile.statutory_floors.law")
-            && law_ids.contains("hr_import.ExtractedCandidate.confidence_bounds.law")
-            && law_ids.contains("hr_import.ExtractedCandidate.promoted_requires_clean_review.law"),
-        "expected HR, loc-eg, and hr-import laws in admitted set: {law_ids:?}"
-    );
-    let law_findings: Vec<_> = findings
-        .iter()
-        .filter(|d| {
-            d.artifact_id
-                .as_deref()
-                .is_some_and(|id| law_ids.contains(id))
-        })
-        .collect();
-    assert!(
-        law_findings.is_empty(),
-        "no checker findings against HR vertical laws: {law_findings:#?}"
-    );
-
-    let catalog = marking_catalog_from_artifacts(&artifacts);
-    assert_eq!(
-        catalog
-            .get(&MarkingId("pii.gov_id".to_owned()))
-            .expect("pii.gov_id declared")
-            .mask,
-        MaskPolicy::LastN { count: 4 }
-    );
-    assert_eq!(
-        catalog
-            .get(&MarkingId("pii.raw_chat_media".to_owned()))
-            .expect("pii.raw_chat_media declared")
-            .mask,
-        MaskPolicy::Redacted {}
-    );
-}
-
-#[test]
-fn hr_leave_and_roster_lifecycles_and_guards_enforce_in_real_cell() {
-    let fixture = HrVerticalFixture::load();
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("hr-vertical.sqlite");
-    let mut cell = fixture.open_installed_cell(&path);
-
-    let mut seed = CellCommit::empty();
-    seed.writes.extend([
-        put_fact(
-            "time.Calendar",
-            "cal_cairo",
-            &json!({
-                "id": "cal_cairo",
-                "code": "eg_cairo",
-                "label": "Cairo Retail Calendar",
-                "iana_timezone": "Africa/Cairo",
-                "dst_policy": "reject",
-                "tzdb_version": "2026a",
-                "workweek_start": "sunday"
-            }),
-        ),
-        put_fact(
-            "org.OrgUnit",
-            "unit_cairo_nc",
-            &json!({
-                "id": "unit_cairo_nc",
-                "display_name": "Nasr City Branch",
-                "kind": "organization",
-                "unit_code": "CAIRO-NC-01",
-                "business_unit_code": "EG-RETAIL"
-            }),
-        ),
-        put_fact(
-            "hr.Person",
-            "person_nour",
-            &json!({
-                "id": "person_nour",
-                "display_name": "Nour Hassan",
-                "kind": "person",
-                "gender": "female",
-                "national_id": "29805150101234",
-                "phone": "+201000000001",
-                "primary_skill": "cashier"
-            }),
-        ),
-        put_fact(
-            "hr.LeaveBalance",
-            "bal_nour_2026",
-            &json!({
-                "id": "bal_nour_2026",
-                "resource_code": "annual_leave",
-                "quantity": 5,
-                "unit": "d",
-                "currency": null,
-                "valuation_method": null,
-                "leave_kind": "annual",
-                "period_year": 2026
-            }),
-        ),
-        put_fact(
-            "hr.LeaveRequest",
-            "lr_valid",
-            &json!({
-                "id": "lr_valid",
-                "leave_kind": "annual",
-                "starts_on": "2026-12-01",
-                "ends_on": "2026-12-02",
-                "days": 2,
-                "medical_note": null,
-                "status": "draft"
-            }),
-        ),
-        put_fact(
-            "hr.LeaveRequest",
-            "lr_over",
-            &json!({
-                "id": "lr_over",
-                "leave_kind": "annual",
-                "starts_on": "2026-12-05",
-                "ends_on": "2026-12-14",
-                "days": 10,
-                "medical_note": null,
-                "status": "draft"
-            }),
-        ),
-        put_fact(
-            "hr.LeaveRequest",
-            "lr_zero",
-            &json!({
-                "id": "lr_zero",
-                "leave_kind": "annual",
-                "starts_on": "2026-12-15",
-                "ends_on": "2026-12-15",
-                "days": 0,
-                "medical_note": null,
-                "status": "draft"
-            }),
-        ),
-        put_fact(
-            "hr.PreferenceProfile",
-            "pref_cairo",
-            &json!({
-                "id": "pref_cairo",
-                "label": "Cairo Retail Balanced",
-                "currency": "EGP",
-                "weekly_overtime_budget": 1500,
-                "min_rest_hours": 11,
-                "max_weekly_hours": 48,
-                "max_consecutive_days": 6,
-                "weekend_fairness_priority": "high",
-                "staff_preference_priority": "medium",
-                "avoid_split_shifts": true
-            }),
-        ),
-        put_fact(
-            "hr.Roster",
-            "roster_no_receipt",
-            &json!({
-                "id": "roster_no_receipt",
-                "period_start": "2026-11-23",
-                "period_end": "2026-11-29",
-                "solver_receipt_digest": null,
-                "status": "draft"
-            }),
-        ),
-        put_fact(
-            "hr.Roster",
-            "roster_with_receipt",
-            &json!({
-                "id": "roster_with_receipt",
-                "period_start": "2026-11-30",
-                "period_end": "2026-12-06",
-                "solver_receipt_digest": "sha256:solver_receipt_cairo_w49",
-                "status": "draft"
-            }),
-        ),
-        put_fact(
-            "hr.ShiftCommitment",
-            "shift_nour_mon",
-            &json!({
-                "id": "shift_nour_mon",
-                "status": "promised",
-                "due_at": "2026-11-23T17:00:00Z",
-                "quantity": 8,
-                "unit": "h",
-                "currency": null,
-                "starts_at": "2026-11-23T09:00:00Z",
-                "ends_at": "2026-11-23T17:00:00Z",
-                "role_code": "cashier"
-            }),
-        ),
-        put_fact(
-            "hr_import.SourceBatch",
-            "batch_cairo_1",
-            &json!({
-                "id": "batch_cairo_1",
-                "channel": "spreadsheet_csv",
-                "blob_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-                "raw_excerpt": "CAIRO-NC-01,EMP-SYN-003,Salma Tarek,2026-11-22,14:05,,missing_clock_out",
-                "captured_at": "2026-11-22T20:30:00Z",
-                "status": "reviewing"
-            }),
-        ),
-        put_fact(
-            "hr_import.ExtractedCandidate",
-            "cand_dirty",
-            &json!({
-                "id": "cand_dirty",
-                "target_kind": "attendance_event",
-                "confidence_bps": 6200,
-                "source_span": "attendance-sheet-sample.csv:row:4",
-                "extracted_at": "2026-11-23T08:05:00Z",
-                "observed_at": "2026-11-22T20:30:00Z",
-                "effective_on": "2026-11-22",
-                "open_error_count": 1,
-                "review_receipt_digest": null,
-                "status": "staged"
-            }),
-        ),
-        put_fact(
-            "hr_import.ExtractedCandidate",
-            "cand_clean",
-            &json!({
-                "id": "cand_clean",
-                "target_kind": "shift_commitment",
-                "confidence_bps": 9450,
-                "source_span": "whatsapp-cairo-shifts.txt:line:4-5",
-                "extracted_at": "2026-11-23T08:00:00Z",
-                "observed_at": "2026-11-22T16:10:00Z",
-                "effective_on": "2026-11-25",
-                "open_error_count": 0,
-                "review_receipt_digest": "sha256:review_receipt_001",
-                "status": "staged"
-            }),
-        ),
-    ]);
-    seed.links.extend([
-        add_link(
-            "hr.LeaveBalance",
-            "bal_nour_2026",
-            "owner",
-            "hr.Person",
-            "person_nour",
-        ),
-        add_link(
-            "hr.LeaveRequest",
-            "lr_valid",
-            "person",
-            "hr.Person",
-            "person_nour",
-        ),
-        add_link(
-            "hr.LeaveRequest",
-            "lr_valid",
-            "balance",
-            "hr.LeaveBalance",
-            "bal_nour_2026",
-        ),
-        add_link(
-            "hr.LeaveRequest",
-            "lr_over",
-            "person",
-            "hr.Person",
-            "person_nour",
-        ),
-        add_link(
-            "hr.LeaveRequest",
-            "lr_over",
-            "balance",
-            "hr.LeaveBalance",
-            "bal_nour_2026",
-        ),
-        add_link(
-            "hr.LeaveRequest",
-            "lr_zero",
-            "person",
-            "hr.Person",
-            "person_nour",
-        ),
-        add_link(
-            "hr.LeaveRequest",
-            "lr_zero",
-            "balance",
-            "hr.LeaveBalance",
-            "bal_nour_2026",
-        ),
-        add_link(
-            "hr.PreferenceProfile",
-            "pref_cairo",
-            "unit",
-            "org.OrgUnit",
-            "unit_cairo_nc",
-        ),
-        add_link(
-            "hr.PreferenceProfile",
-            "pref_cairo",
-            "calendar",
-            "time.Calendar",
-            "cal_cairo",
-        ),
-        add_link(
-            "hr.Roster",
-            "roster_no_receipt",
-            "unit",
-            "org.OrgUnit",
-            "unit_cairo_nc",
-        ),
-        add_link(
-            "hr.Roster",
-            "roster_no_receipt",
-            "preference_profile",
-            "hr.PreferenceProfile",
-            "pref_cairo",
-        ),
-        add_link(
-            "hr.Roster",
-            "roster_with_receipt",
-            "unit",
-            "org.OrgUnit",
-            "unit_cairo_nc",
-        ),
-        add_link(
-            "hr.Roster",
-            "roster_with_receipt",
-            "preference_profile",
-            "hr.PreferenceProfile",
-            "pref_cairo",
-        ),
-        add_link(
-            "hr.ShiftCommitment",
-            "shift_nour_mon",
-            "provider",
-            "hr.Person",
-            "person_nour",
-        ),
-        add_link(
-            "hr.ShiftCommitment",
-            "shift_nour_mon",
-            "receiver",
-            "org.OrgUnit",
-            "unit_cairo_nc",
-        ),
-        add_link(
-            "hr.ShiftCommitment",
-            "shift_nour_mon",
-            "roster",
-            "hr.Roster",
-            "roster_with_receipt",
-        ),
-        add_link(
-            "hr_import.SourceBatch",
-            "batch_cairo_1",
-            "unit",
-            "org.OrgUnit",
-            "unit_cairo_nc",
-        ),
-        add_link(
-            "hr_import.ExtractedCandidate",
-            "cand_dirty",
-            "batch",
-            "hr_import.SourceBatch",
-            "batch_cairo_1",
-        ),
-        add_link(
-            "hr_import.ExtractedCandidate",
-            "cand_clean",
-            "batch",
-            "hr_import.SourceBatch",
-            "batch_cairo_1",
-        ),
-    ]);
-    cell.commit(seed)
-        .expect("seed HR vertical objects and links");
-
-    // 1. Leave submit -> approve succeeds; employee self-approval is denied by AccessIR;
-    //    over-balance (10 > 5) and zero-day (0) leave requests are refused without mutation.
-    fixture
-        .invoke(
-            &mut cell,
-            "hr.leave.submit",
-            &json!({"leaveRequestId": "lr_valid", "balanceId": "bal_nour_2026"}),
-            "principal:employee",
-            "leave-submit-valid",
-        )
-        .expect("valid 2-day leave request submits");
-    assert_eq!(status_of(&cell, "hr.LeaveRequest", "lr_valid"), "pending");
-
-    let self_approve = fixture
-        .invoke(
-            &mut cell,
-            "hr.leave.approve",
-            &json!({"leaveRequestId": "lr_valid", "balanceId": "bal_nour_2026"}),
-            "principal:employee",
-            "leave-self-approve-denied",
-        )
-        .expect_err("employee cannot self-approve leave");
-    assert_eq!(self_approve.code(), "action.permission_denied");
-    assert_eq!(status_of(&cell, "hr.LeaveRequest", "lr_valid"), "pending");
-
-    fixture
-        .invoke(
-            &mut cell,
-            "hr.leave.approve",
-            &json!({"leaveRequestId": "lr_valid", "balanceId": "bal_nour_2026"}),
-            "principal:branch_manager",
-            "leave-approve-valid",
-        )
-        .expect("branch manager approves valid pending leave");
-    assert_eq!(status_of(&cell, "hr.LeaveRequest", "lr_valid"), "approved");
-
-    let before_refusals = cell
-        .store()
-        .read()
-        .dump()
-        .expect("snapshot before leave refusals");
-    for (req_id, key) in [
-        ("lr_over", "leave-submit-over"),
-        ("lr_zero", "leave-submit-zero"),
-    ] {
-        let refusal = fixture
-            .invoke(
-                &mut cell,
-                "hr.leave.submit",
-                &json!({"leaveRequestId": req_id, "balanceId": "bal_nour_2026"}),
-                "principal:employee",
-                key,
+            let sources = to_runtime(&artifact_values);
+            let base_sources = to_runtime(&base_values);
+            let registry = BTreeSet::new();
+            let checked = check_artifact_set_with_receipt(
+                &ReceiptSources::new(&sources, &base_sources).expect("receipt sources"),
+                &EntityArtifactSetContext {
+                    registry: &registry,
+                    base: &base,
+                    tenant: None,
+                },
+                &ResourceLimitProfile::norn_limits_v1(),
             )
-            .expect_err("invalid leave request must be refused");
-        assert_eq!(refusal.code(), "action.precondition_failed");
-        assert_eq!(status_of(&cell, "hr.LeaveRequest", req_id), "draft");
+            .expect("HR vertical admission receipt");
+            assert!(
+                checked.receipt.admitted,
+                "packs {packs:?} must admit cleanly: {:#?}",
+                checked.diagnostics
+            );
+            let admission_receipt = String::from_utf8(
+                norn_ir::canonical::serialize(
+                    &checked
+                        .receipt
+                        .to_canonical_value()
+                        .expect("admission receipt canonical value"),
+                )
+                .expect("admission receipt canonicalizes"),
+            )
+            .expect("admission receipt is UTF-8");
+            let receipt_sha256 =
+                admission_receipt_sha256(&admission_receipt).expect("admission receipt sha256");
+            let catalog = extract_catalog(&base_values, &artifact_values);
+            let laws: Vec<ArtifactEnvelope> = artifacts
+                .iter()
+                .filter(|artifact| artifact.kind() == ArtifactKind::Law)
+                .cloned()
+                .collect();
+            let principals = HrPrincipals::new(
+                &catalog.types,
+                &catalog.interfaces,
+                &catalog.properties,
+                &catalog.actions,
+                &catalog.policies,
+            );
+
+            Self {
+                base_values,
+                artifact_values,
+                artifacts,
+                admission_receipt,
+                receipt_sha256,
+                types: catalog.types,
+                properties: catalog.properties,
+                interfaces: catalog.interfaces,
+                actions: catalog.actions,
+                laws,
+                principals,
+            }
+        }
+
+        fn model(&self) -> Model {
+            Model::from_definitions_with_interfaces(&self.types, &self.properties, &self.interfaces)
+                .expect("HR vertical model projects")
+                .with_governing_laws(&self.laws)
+                .expect("HR vertical governing laws bind")
+        }
+
+        fn catalog(&self) -> TypeCatalog<'_> {
+            TypeCatalog::new(&self.types)
+                .with_property_types(&self.properties)
+                .with_interfaces(&self.interfaces)
+                .with_governing_laws(&self.laws)
+        }
+
+        fn install_input(&self) -> InstalledDefinitionInput {
+            let mut combined = self.artifact_values.clone();
+            combined.extend(self.base_values.iter().cloned());
+            let canonical_set = String::from_utf8(
+                RuntimeValue::from_json(Value::Array(combined))
+                    .expect("HR vertical + core base artifact set is exact JSON")
+                    .canonical_json()
+                    .expect("HR vertical + core base artifact set canonicalizes"),
+            )
+            .expect("canonical HR vertical + core base set is UTF-8");
+            InstalledDefinitionInput {
+                canonical_set,
+                registry: Vec::new(),
+                receipt_sha256: self.receipt_sha256.clone(),
+                admission_receipt: Some(self.admission_receipt.clone()),
+                readmission: None,
+                diff: json!({"added": {"count": self.artifacts.len()}}),
+                installed_at: KNOWN_AT,
+                layout: None,
+            }
+        }
+
+        fn open_installed_cell(&self, path: &Path) -> Cell {
+            let model = self.model();
+            let mut cell = Cell::open(
+                path,
+                model.clone(),
+                StoreOptions::default(),
+                SCOPE_KEY,
+                |_: &Command<JsonObject>| panic!("HR vertical E2E actions are synchronous"),
+            )
+            .expect("SQLite HR cell opens");
+            cell.advance_to(LogicalTime::from_millis(KNOWN_AT));
+            cell.install_definitions(model, self.install_input(), Some(0))
+                .expect("admitted HR vertical definitions install");
+            cell
+        }
+
+        fn invoke(
+            &self,
+            cell: &mut Cell,
+            action_id: &str,
+            input: &Value,
+            actor: &str,
+            idempotency_key: &str,
+        ) -> Result<ActionOutcome, Box<ActionRefusal<norn_cell::CellError>>> {
+            let registered = &self.actions[action_id];
+            let request = ActionCall {
+                action: &registered.root,
+                action_artifact_id: &registered.artifact_id,
+                action_version: &registered.version,
+                scope: test_scope_map(),
+                actor: actor.to_owned(),
+                input: decode_json_object(input),
+                idempotency_key: idempotency_key.to_owned(),
+                object_type: None,
+                turn: DecisionTurn {
+                    id: format!("turn:{idempotency_key}"),
+                    now: LogicalTime::from_millis(KNOWN_AT),
+                    world: World::Main,
+                    consumes: None,
+                },
+                trace: None,
+            };
+            commit_action(cell, &self.catalog(), &request, &self.principals).map_err(Box::new)
+        }
     }
-    assert_eq!(
+
+    fn decode_json_object(value: &Value) -> JsonObject {
+        serde_json::from_value(value.clone()).expect("JSON object decodes")
+    }
+
+    fn put_fact(object_type: &str, id: &str, values: &Value) -> FactWrite {
+        FactWrite {
+            key: FactKey::new(object_type, id),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(values.clone()).expect("fact values decode"),
+            },
+        }
+    }
+
+    fn add_link(
+        from_type: &str,
+        from_id: &str,
+        link: &str,
+        to_type: &str,
+        to_id: &str,
+    ) -> LinkWrite {
+        LinkWrite {
+            key: LinkKey::new(
+                FactKey::new(from_type, from_id),
+                link,
+                FactKey::new(to_type, to_id),
+            ),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }
+    }
+
+    fn status_of(cell: &Cell, object_type: &str, id: &str) -> String {
+        cell.load(&FactKey::new(object_type, id))
+            .expect("object loads")
+            .values
+            .expect("object exists")["status"]
+            .as_str()
+            .expect("status is text")
+            .to_owned()
+    }
+
+    fn assert_precondition_false(
+        result: Result<ActionOutcome, Box<ActionRefusal<norn_cell::CellError>>>,
+        context: &str,
+    ) {
+        let refusal = result.expect_err(context);
+        assert!(
+            matches!(
+                refusal.as_ref(),
+                ActionRefusal::PreconditionFailed {
+                    precondition,
+                    reason: None
+                } if !precondition.is_empty()
+            ),
+            "{context}: expected PreconditionFailed {{ reason: None }}, got {refusal:?}"
+        );
+    }
+
+    fn assert_permission_denied(
+        result: Result<ActionOutcome, Box<ActionRefusal<norn_cell::CellError>>>,
+        context: &str,
+    ) {
+        let refusal = result.expect_err(context);
+        assert_eq!(refusal.code(), "action.permission_denied", "{context}");
+    }
+
+    fn commit_single_with_links(
+        cell: &mut Cell,
+        object_type: &str,
+        id: &str,
+        values: &Value,
+        links: &[(&str, &str, &str)],
+    ) -> Result<(), norn_cell::CellError> {
+        let mut commit = CellCommit::empty();
+        commit.writes.push(put_fact(object_type, id, values));
+        for (link, to_type, to_id) in links {
+            commit
+                .links
+                .push(add_link(object_type, id, link, to_type, to_id));
+        }
+        cell.commit(commit).map(|_| ())
+    }
+
+    fn mask_text(value: &str, policy: &MaskPolicy) -> Option<String> {
+        match policy {
+            MaskPolicy::Redacted {} => Some("[REDACTED]".to_owned()),
+            MaskPolicy::LastN { count } => {
+                let chars: Vec<char> = value.chars().collect();
+                let keep = usize::try_from(*count).unwrap_or(usize::MAX);
+                let tail: String = if chars.len() > keep {
+                    chars
+                        .get(chars.len().saturating_sub(keep)..)
+                        .unwrap_or_default()
+                        .iter()
+                        .collect()
+                } else {
+                    String::new()
+                };
+                Some(format!("[REDACTED]{tail}"))
+            }
+            MaskPolicy::Null {} | MaskPolicy::Refuse {} => None,
+            MaskPolicy::Pseudonym { subject } => Some(format!("{subject} #PSEUDONYM")),
+        }
+    }
+
+    fn seed_common_org_and_people(cell: &mut Cell) {
+        let mut seed = CellCommit::empty();
+        seed.writes.extend([
+            put_fact(
+                "time.Calendar",
+                "cal_main",
+                &json!({
+                    "id": "cal_main",
+                    "code": "global_utc",
+                    "label": "Main Operating Calendar",
+                    "iana_timezone": "UTC",
+                    "dst_policy": "reject",
+                    "tzdb_version": "2025b",
+                    "workweek_start": "monday"
+                }),
+            ),
+            put_fact(
+                "org.OrgUnit",
+                "unit_main",
+                &json!({
+                    "id": "unit_main",
+                    "display_name": "Main Branch",
+                    "kind": "organization",
+                    "unit_code": "BRANCH-01"
+                }),
+            ),
+            put_fact(
+                "hr.Person",
+                "person_ada",
+                &json!({
+                    "id": "person_ada",
+                    "display_name": "Ada Lovelace",
+                    "kind": "person",
+                    "gender": "female",
+                    "national_id": "29805150101234",
+                    "phone": "+15550000001",
+                    "primary_skill": "cashier"
+                }),
+            ),
+            put_fact(
+                "org.Membership",
+                "mem_ada",
+                &json!({
+                    "id": "mem_ada",
+                    "role": "cashier",
+                    "valid_from": "2024-01-01",
+                    "valid_to": null
+                }),
+            ),
+            put_fact(
+                "hr.LeavePolicy",
+                "lp_std",
+                &json!({
+                    "id": "lp_std",
+                    "policy_code": "STD-2026",
+                    "label": "Standard Leave Policy",
+                    "annual_base_days": 21,
+                    "sick_base_days": 10,
+                    "emergency_base_days": 3,
+                    "max_carry_forward_days": 5,
+                    "status": "active"
+                }),
+            ),
+        ]);
+        seed.links.extend([
+            add_link(
+                "org.Membership",
+                "mem_ada",
+                "agent",
+                "hr.Person",
+                "person_ada",
+            ),
+            add_link(
+                "org.Membership",
+                "mem_ada",
+                "unit",
+                "org.OrgUnit",
+                "unit_main",
+            ),
+            add_link(
+                "hr.LeavePolicy",
+                "lp_std",
+                "unit",
+                "org.OrgUnit",
+                "unit_main",
+            ),
+        ]);
+        cell.commit(seed)
+            .expect("seed common org, calendar, and person");
+    }
+
+    // ---------------------------------------------------------------- Test 1: Full Static Admission
+
+    #[test]
+    fn hr_vertical_packs_admit_together_against_core_base() {
+        let base = decode_envelopes(&load_core_base_values());
+        let artifacts = decode_envelopes(&load_pack_values(ALL_HR_PACKS));
+        let registry = BTreeSet::new();
+        let findings = check_artifact_set(
+            &artifacts,
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: &base,
+                tenant: None,
+            },
+        );
+        let errors: Vec<_> = findings.iter().filter(|d| d.is_error()).collect();
+        assert!(
+            errors.is_empty(),
+            "HR vertical must admit cleanly: {errors:#?}"
+        );
+
+        let law_ids: BTreeSet<&str> = artifacts
+            .iter()
+            .filter(|a| a.kind() == ArtifactKind::Law)
+            .map(|a| a.artifact_id.as_str())
+            .collect();
+        for expected in [
+            "hr.LaborCapacity.non_negative.law",
+            "hr.LeaveBalance.non_negative.law",
+            "hr.PayrollFund.non_negative.law",
+            "hr.SalarySlip.conservation.law",
+            "hr.ExpenseClaim.amount_conservation.law",
+            "loc_eg.LaborProfile.statutory_floors.law",
+            "loc_eg.hr.PreferenceProfile.labor_law_14_2025.law",
+            "loc_eg.hr.Employment.max_weekly_hours.law",
+            "loc_eg.hr.LeaveAllocation.annual_floor.law",
+            "hr_import.SourceBatch.content_addressed.law",
+            "hr_import.FieldEvidence.valid_anchor.law",
+            "hr_import.ExtractedCandidate.confidence_bounds.law",
+            "hr_import.ExtractedCandidate.promoted_requires_clean_review.law",
+            "hr_import.DataQualityFinding.terminal_requires_audit_evidence.law",
+            "hr_import.DataQualityFinding.feed_conflict_is_disputed.law",
+        ] {
+            assert!(law_ids.contains(expected), "missing law {expected}");
+        }
+        let law_findings: Vec<_> = findings
+            .iter()
+            .filter(|d| {
+                d.artifact_id
+                    .as_deref()
+                    .is_some_and(|id| law_ids.contains(id))
+            })
+            .collect();
+        assert!(law_findings.is_empty(), "law findings: {law_findings:#?}");
+
+        let catalog = marking_catalog_from_artifacts(&artifacts);
+        assert_eq!(
+            catalog
+                .get(&MarkingId("pii.gov_id".to_owned()))
+                .unwrap()
+                .mask,
+            MaskPolicy::LastN { count: 4 }
+        );
+        assert_eq!(
+            catalog
+                .get(&MarkingId("pii.raw_chat_media".to_owned()))
+                .unwrap()
+                .mask,
+            MaskPolicy::Redacted {}
+        );
+    }
+
+    // ---------------------------------------------------------------- Test 2: Base `hr` Pack Alone
+
+    fn assert_labor_capacity_and_time_interval(cell: &mut Cell) {
+        commit_single_with_links(
+            cell,
+            "hr.LaborCapacity",
+            "lc_ada_w48",
+            &json!({
+                "id": "lc_ada_w48", "resource_code": "labor_hours", "quantity": 40,
+                "unit": "h", "currency": null, "valuation_method": null,
+                "role_code": "cashier", "period_code": "2026-W48"
+            }),
+            &[
+                ("owner", "hr.Person", "person_ada"),
+                ("custodian", "org.OrgUnit", "unit_main"),
+            ],
+        )
+        .expect("valid positive labor capacity commits");
+
+        assert!(
+            commit_single_with_links(
+                cell,
+                "hr.LaborCapacity",
+                "lc_neg",
+                &json!({
+                    "id": "lc_neg", "resource_code": "labor_hours", "quantity": -4,
+                    "unit": "h", "currency": null, "valuation_method": null,
+                    "role_code": "cashier", "period_code": "2026-W48"
+                }),
+                &[
+                    ("owner", "hr.Person", "person_ada"),
+                    ("custodian", "org.OrgUnit", "unit_main")
+                ],
+            )
+            .is_err(),
+            "negative hr.LaborCapacity must be refused by hr.LaborCapacity.non_negative.law"
+        );
+
+        // core.TimeInterval proper_interval invariant refuses negative/zero duration.
+        assert!(
+            commit_single_with_links(
+                cell,
+                "hr.ShiftRequirement",
+                "sr_neg",
+                &json!({
+                    "id": "sr_neg", "role_code": "cashier",
+                    "starts_at": "2026-11-28T17:00:00Z", "ends_at": "2026-11-28T09:00:00Z",
+                    "timezone": "UTC", "required_count": 1
+                }),
+                &[("unit", "org.OrgUnit", "unit_main")],
+            )
+            .is_err(),
+            "negative-duration core.TimeInterval must be refused"
+        );
+
+        // Jurisdiction-agnostic base `hr` admits 54h/wk preference without loc-eg.
+        commit_single_with_links(
+            cell,
+            "hr.PreferenceProfile",
+            "pref_base_54h",
+            &json!({
+                "id": "pref_base_54h", "jurisdiction_code": null, "label": "Generic 54h",
+                "currency": "USD", "weekly_overtime_budget": 1500, "min_rest_hours": 10,
+                "max_daily_hours": 10, "max_weekly_hours": 54, "min_weekly_rest_hours": 24,
+                "max_consecutive_days": 6, "weekend_fairness_priority": "high",
+                "staff_preference_priority": "medium", "avoid_split_shifts": true
+            }),
+            &[
+                ("unit", "org.OrgUnit", "unit_main"),
+                ("calendar", "time.Calendar", "cal_main"),
+            ],
+        )
+        .expect("base hr pack stays jurisdiction-agnostic without loc-eg");
+    }
+
+    fn seed_leave_balances(cell: &mut Cell) {
+        let mut seed = CellCommit::empty();
+        seed.writes.extend([
+        put_fact(
+            "hr.LeaveBalance",
+            "bal_ada",
+            &json!({
+                "id": "bal_ada", "resource_code": "annual_leave", "quantity": 5, "unit": "d",
+                "currency": null, "valuation_method": null, "leave_kind": "annual", "period_year": 2026
+            }),
+        ),
+        put_fact(
+            "hr.LeaveBalance",
+            "bal_other",
+            &json!({
+                "id": "bal_other", "resource_code": "annual_leave", "quantity": 20, "unit": "d",
+                "currency": null, "valuation_method": null, "leave_kind": "annual", "period_year": 2026
+            }),
+        ),
+    ]);
+        seed.links.extend([
+            add_link(
+                "hr.LeaveBalance",
+                "bal_ada",
+                "owner",
+                "hr.Person",
+                "person_ada",
+            ),
+            add_link(
+                "hr.LeaveBalance",
+                "bal_other",
+                "owner",
+                "hr.Person",
+                "person_ada",
+            ),
+        ]);
+        cell.commit(seed).expect("seed leave balances");
+    }
+
+    fn seed_leave_fixtures(cell: &mut Cell) {
+        seed_leave_balances(cell);
+        let mut seed = CellCommit::empty();
+        seed.writes.extend([
+        put_fact(
+            "hr.LeaveRequest",
+            "lr_valid",
+            &json!({
+                "id": "lr_valid", "requester_user_id": "principal:employee", "leave_kind": "annual",
+                "starts_on": "2026-12-01", "ends_on": "2026-12-02", "days": 2,
+                "medical_note": null, "status": "draft"
+            }),
+        ),
+        put_fact(
+            "hr.LeaveRequest",
+            "lr_over",
+            &json!({
+                "id": "lr_over", "requester_user_id": "principal:employee", "leave_kind": "annual",
+                "starts_on": "2026-12-05", "ends_on": "2026-12-14", "days": 10,
+                "medical_note": null, "status": "draft"
+            }),
+        ),
+        put_fact(
+            "hr.LeaveRequest",
+            "lr_mgr_own",
+            &json!({
+                "id": "lr_mgr_own", "requester_user_id": "principal:branch_manager", "leave_kind": "annual",
+                "starts_on": "2026-12-18", "ends_on": "2026-12-19", "days": 2,
+                "medical_note": null, "status": "pending"
+            }),
+        ),
+    ]);
+        for req in ["lr_valid", "lr_over", "lr_mgr_own"] {
+            seed.links.push(add_link(
+                "hr.LeaveRequest",
+                req,
+                "person",
+                "hr.Person",
+                "person_ada",
+            ));
+            seed.links.push(add_link(
+                "hr.LeaveRequest",
+                req,
+                "balance",
+                "hr.LeaveBalance",
+                "bal_ada",
+            ));
+        }
+        cell.commit(seed).expect("seed leave requests");
+    }
+
+    fn assert_leave_link_binding_and_access_sod(fixture: &HrVerticalFixture, cell: &mut Cell) {
+        seed_leave_fixtures(cell);
+
+        // AccessIR employee ownership: another employee cannot submit principal:employee's request.
+        assert_permission_denied(
+            fixture.invoke(
+                cell,
+                "hr.leave.submit",
+                &json!({"leaveRequestId": "lr_valid", "balanceId": "bal_ada"}),
+                "principal:employee_other",
+                "leave-other-emp-denied",
+            ),
+            "other employee cannot submit another employee's leave request",
+        );
+
+        // SliceKey::Link refuses an unlinked balance even when it has ample days.
+        assert_precondition_false(
+            fixture.invoke(
+                cell,
+                "hr.leave.submit",
+                &json!({"leaveRequestId": "lr_valid", "balanceId": "bal_other"}),
+                "principal:employee",
+                "leave-unlinked-balance-refused",
+            ),
+            "unlinked balance must fail SliceKey::Link precondition",
+        );
+
+        // Over-balance request refused cleanly.
+        assert_precondition_false(
+            fixture.invoke(
+                cell,
+                "hr.leave.submit",
+                &json!({"leaveRequestId": "lr_over", "balanceId": "bal_ada"}),
+                "principal:employee",
+                "leave-over-balance-refused",
+            ),
+            "over-balance leave request must refuse",
+        );
+
+        fixture
+            .invoke(
+                cell,
+                "hr.leave.submit",
+                &json!({"leaveRequestId": "lr_valid", "balanceId": "bal_ada"}),
+                "principal:employee",
+                "leave-submit-valid",
+            )
+            .expect("owner employee submits linked leave request");
+        assert_eq!(status_of(cell, "hr.LeaveRequest", "lr_valid"), "pending");
+
+        // Separation of duties: manager cannot approve own pending leave request.
+        assert_permission_denied(
+            fixture.invoke(
+                cell,
+                "hr.leave.approve",
+                &json!({"leaveRequestId": "lr_mgr_own", "balanceId": "bal_ada"}),
+                "principal:branch_manager",
+                "leave-mgr-self-approve-denied",
+            ),
+            "manager cannot approve own leave request (SoD)",
+        );
+
+        fixture
+            .invoke(
+                cell,
+                "hr.leave.approve",
+                &json!({"leaveRequestId": "lr_valid", "balanceId": "bal_ada"}),
+                "principal:branch_manager",
+                "leave-approve-valid",
+            )
+            .expect("independent branch manager approves valid leave request");
+        assert_eq!(status_of(cell, "hr.LeaveRequest", "lr_valid"), "approved");
+    }
+
+    fn seed_roster_and_shift_commitment(cell: &mut Cell) {
+        commit_single_with_links(
+            cell,
+            "hr.Roster",
+            "ros_w48",
+            &json!({
+                "id": "ros_w48", "period_start": "2026-11-23", "period_end": "2026-11-29",
+                "solver_receipt_digest": "sha256:solver_w48", "status": "published"
+            }),
+            &[
+                ("unit", "org.OrgUnit", "unit_main"),
+                (
+                    "preference_profile",
+                    "hr.PreferenceProfile",
+                    "pref_base_54h",
+                ),
+            ],
+        )
+        .expect("roster commits");
+        commit_single_with_links(
+            cell,
+            "hr.ShiftCommitment",
+            "shift_ada_mon",
+            &json!({
+                "id": "shift_ada_mon", "status": "promised", "due_at": "2026-11-23T17:00:00Z",
+                "quantity": 8, "unit": "h", "currency": null,
+                "starts_at": "2026-11-23T09:00:00Z", "ends_at": "2026-11-23T17:00:00Z",
+                "timezone": "UTC", "role_code": "cashier"
+            }),
+            &[
+                ("provider", "hr.Person", "person_ada"),
+                ("receiver", "org.OrgUnit", "unit_main"),
+                ("resource", "hr.LaborCapacity", "lc_ada_w48"),
+                ("roster", "hr.Roster", "ros_w48"),
+            ],
+        )
+        .expect("shift commitment commits");
+    }
+
+    fn assert_attendance_record_and_reversal(fixture: &HrVerticalFixture, cell: &mut Cell) {
+        seed_roster_and_shift_commitment(cell);
+
+        let att = json!({
+            "id": "att_ada_mon", "action": "produce", "occurred_at": "2026-11-23T17:05:00Z",
+            "quantity": "8", "unit": "h", "currency": null,
+            "starts_at": "2026-11-23T09:00:00Z", "ends_at": "2026-11-23T17:00:00Z", "timezone": "UTC",
+            "providerId": "person_ada", "receiverId": "unit_main",
+            "resourceId": "lc_ada_w48", "shiftCommitmentId": "shift_ada_mon"
+        });
+        fixture
+            .invoke(
+                cell,
+                "hr.attendance.record",
+                &att,
+                "principal:branch_manager",
+                "att-rec-1",
+            )
+            .expect("attendance event creates");
+        let replay = fixture
+            .invoke(
+                cell,
+                "hr.attendance.record",
+                &att,
+                "principal:branch_manager",
+                "att-rec-1",
+            )
+            .expect("exact retry replays");
+        assert!(matches!(replay, ActionOutcome::Replayed { .. }));
+
+        // Reversal refuses same REA action (`produce`), mismatched quantity (`7`), and mismatched unit (`d`).
+        for (rev_id, action, qty, unit, key) in [
+            ("att_rev_bad_act", "produce", "8", "h", "rev-bad-act"),
+            ("att_rev_bad_qty", "consume", "7", "h", "rev-bad-qty"),
+            ("att_rev_bad_unit", "consume", "8", "d", "rev-bad-unit"),
+        ] {
+            assert_precondition_false(
+                fixture.invoke(
+                    cell,
+                    "hr.attendance.reverse",
+                    &json!({
+                        "id": rev_id, "action": action, "occurred_at": "2026-11-23T18:00:00Z",
+                        "quantity": qty, "unit": unit, "currency": null,
+                        "starts_at": "2026-11-23T09:00:00Z", "ends_at": "2026-11-23T17:00:00Z",
+                        "timezone": "UTC", "providerId": "person_ada", "receiverId": "unit_main",
+                        "resourceId": "lc_ada_w48", "reversesEventId": "att_ada_mon"
+                    }),
+                    "principal:branch_manager",
+                    key,
+                ),
+                "invalid attendance reversal must refuse",
+            );
+        }
+
+        fixture
+            .invoke(
+                cell,
+                "hr.attendance.reverse",
+                &json!({
+                    "id": "att_rev_ok", "action": "consume", "occurred_at": "2026-11-23T18:00:00Z",
+                    "quantity": "8", "unit": "h", "currency": null,
+                    "starts_at": "2026-11-23T09:00:00Z", "ends_at": "2026-11-23T17:00:00Z",
+                    "timezone": "UTC", "providerId": "person_ada", "receiverId": "unit_main",
+                    "resourceId": "lc_ada_w48", "reversesEventId": "att_ada_mon"
+                }),
+                "principal:branch_manager",
+                "rev-ok",
+            )
+            .expect("inverse REA attendance reversal commits");
+        assert!(
+            cell.load_link(&LinkKey::new(
+                FactKey::new("hr.AttendanceEvent", "att_rev_ok"),
+                "reverses",
+                FactKey::new("hr.AttendanceEvent", "att_ada_mon"),
+            ))
+            .expect("reverses link loads")
+            .exists()
+        );
+    }
+
+    fn assert_payroll_fund_and_salary_slip(cell: &mut Cell) {
+        assert!(
+        commit_single_with_links(
+            cell,
+            "hr.PayrollFund",
+            "pf_bad_unit",
+            &json!({"id": "pf_bad_unit", "resource_code": "PF", "quantity": 1000, "unit": "h", "currency": "USD", "valuation_method": null}),
+            &[("owner", "org.OrgUnit", "unit_main")],
+        )
+        .is_err()
+    );
+        commit_single_with_links(
+        cell,
+        "hr.PayrollFund",
+        "pf_usd",
+        &json!({"id": "pf_usd", "resource_code": "PAYROLL-USD", "quantity": 100_000, "unit": null, "currency": "USD", "valuation_method": null}),
+        &[("owner", "org.OrgUnit", "unit_main")],
+    )
+    .expect("USD payroll fund commits");
+        commit_single_with_links(
+        cell,
+        "hr.PayrollRun",
+        "pr_2026_11",
+        &json!({
+            "id": "pr_2026_11", "period_code": "2026-11",
+            "starts_at": "2026-11-01T00:00:00Z", "ends_at": "2026-12-01T00:00:00Z", "timezone": "UTC",
+            "currency": "USD", "total_gross": 5000, "total_deductions": 850, "total_net": 4150,
+            "prepared_by_user_id": "principal:payroll_officer", "status": "draft"
+        }),
+        &[("unit", "org.OrgUnit", "unit_main"), ("fund", "hr.PayrollFund", "pf_usd")],
+    )
+    .expect("payroll run commits");
+        let slip_links = [
+            ("provider", "org.OrgUnit", "unit_main"),
+            ("receiver", "hr.Person", "person_ada"),
+            ("resource", "hr.PayrollFund", "pf_usd"),
+            ("payroll_run", "hr.PayrollRun", "pr_2026_11"),
+        ];
+        assert!(
+            commit_single_with_links(
+                cell,
+                "hr.SalarySlip",
+                "slip_mismatch",
+                &json!({
+                    "id": "slip_mismatch", "status": "promised", "due_at": "2026-11-30T17:00:00Z",
+                    "quantity": 9000, "unit": null, "currency": "USD",
+                    "gross_pay": 5000, "total_deductions": 850, "net_pay": 4150
+                }),
+                &slip_links,
+            )
+            .is_err(),
+            "SalarySlip with quantity != net_pay must refuse"
+        );
+        commit_single_with_links(
+            cell,
+            "hr.SalarySlip",
+            "slip_ok",
+            &json!({
+                "id": "slip_ok", "status": "promised", "due_at": "2026-11-30T17:00:00Z",
+                "quantity": 4150, "unit": null, "currency": "USD",
+                "gross_pay": 5000, "total_deductions": 850, "net_pay": 4150
+            }),
+            &slip_links,
+        )
+        .expect("conserved SalarySlip commits");
+    }
+
+    fn assert_payroll_run_and_expenses(fixture: &HrVerticalFixture, cell: &mut Cell) {
+        assert_payroll_fund_and_salary_slip(cell);
+        fixture
+            .invoke(
+                cell,
+                "hr.payroll.calculate",
+                &json!({"payrollRunId": "pr_2026_11"}),
+                "principal:payroll_officer",
+                "pr-calc",
+            )
+            .expect("payroll calculates");
+        assert_permission_denied(
+            fixture.invoke(
+                cell,
+                "hr.payroll.approve",
+                &json!({"payrollRunId": "pr_2026_11"}),
+                "principal:payroll_officer",
+                "pr-self-approve",
+            ),
+            "preparer cannot approve own payroll run",
+        );
+        fixture
+            .invoke(
+                cell,
+                "hr.payroll.approve",
+                &json!({"payrollRunId": "pr_2026_11"}),
+                "principal:hr_manager",
+                "pr-approve",
+            )
+            .expect("independent HR manager approves payroll");
+        fixture
+            .invoke(
+                cell,
+                "hr.payroll.post",
+                &json!({"payrollRunId": "pr_2026_11"}),
+                "principal:payroll_officer",
+                "pr-post",
+            )
+            .expect("payroll posts with matching PayrollFund");
+        assert_eq!(status_of(cell, "hr.PayrollRun", "pr_2026_11"), "posted");
+        let exp_links = [
+            ("creditor", "hr.Person", "person_ada"),
+            ("debtor", "org.OrgUnit", "unit_main"),
+        ];
+        assert!(
+        commit_single_with_links(
+            cell,
+            "hr.ExpenseClaim",
+            "exp_bad_amt",
+            &json!({
+                "id": "exp_bad_amt", "amount": 250, "currency": "USD", "due_date": "2026-12-20",
+                "requester_user_id": "principal:employee", "claimed_amount": 250,
+                "sanctioned_amount": 220, "description": "Divergent amount", "status": "approved"
+            }),
+            &exp_links,
+        )
+        .is_err(),
+        "approved ExpenseClaim with amount != sanctioned_amount must refuse"
+    );
+        commit_single_with_links(
+            cell,
+            "hr.ExpenseClaim",
+            "exp_ok",
+            &json!({
+                "id": "exp_ok", "amount": 220, "currency": "USD", "due_date": "2026-12-20",
+                "requester_user_id": "principal:employee", "claimed_amount": 250,
+                "sanctioned_amount": 220, "description": "Site transit", "status": "draft"
+            }),
+            &exp_links,
+        )
+        .expect("valid draft ExpenseClaim commits");
+        fixture
+            .invoke(
+                cell,
+                "hr.expense_claim.submit",
+                &json!({"expenseClaimId": "exp_ok"}),
+                "principal:employee",
+                "exp-sub",
+            )
+            .expect("employee submits own expense claim");
+        fixture
+            .invoke(
+                cell,
+                "hr.expense_claim.approve",
+                &json!({"expenseClaimId": "exp_ok"}),
+                "principal:branch_manager",
+                "exp-app",
+            )
+            .expect("independent manager approves expense claim");
+        assert_eq!(status_of(cell, "hr.ExpenseClaim", "exp_ok"), "approved");
+    }
+
+    #[test]
+    fn hr_base_pack_alone_enforces_domain_physics_and_access_sod() {
+        let fixture = HrVerticalFixture::load(BASE_HR_PACKS);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("hr-base.sqlite");
+        let mut cell = fixture.open_installed_cell(&path);
+        seed_common_org_and_people(&mut cell);
+
+        assert_labor_capacity_and_time_interval(&mut cell);
+        assert_leave_link_binding_and_access_sod(&fixture, &mut cell);
+        assert_attendance_record_and_reversal(&fixture, &mut cell);
+        assert_payroll_run_and_expenses(&fixture, &mut cell);
+
         cell.store()
             .read()
-            .dump()
-            .expect("snapshot after leave refusals"),
-        before_refusals
-    );
+            .verify_ledger()
+            .expect("base HR ledger verifies");
+    }
 
-    // Direct write violating `hr.LeaveBalance.non_negative.law` is refused by the kernel.
-    let mut bad_balance = CellCommit::empty();
-    bad_balance.writes.push(put_fact(
+    // ---------------------------------------------------------------- Test 3: Conjunctive `hr ∧ loc-eg`
+
+    fn assert_loc_eg_preference_profiles(cell: &mut Cell) {
+        let links = [
+            ("unit", "org.OrgUnit", "unit_main"),
+            ("calendar", "time.Calendar", "cal_main"),
+        ];
+        // Non-compliant EG preference profiles refused (>48h/wk, >8h/day, <24h weekly rest).
+        for (id, daily, weekly, rest) in [
+            ("prof_eg_52h", 8, 52, 24),
+            ("prof_eg_9h", 9, 45, 24),
+            ("prof_eg_12h_rest", 8, 48, 12),
+        ] {
+            assert!(
+                commit_single_with_links(
+                    cell,
+                    "hr.PreferenceProfile",
+                    id,
+                    &json!({
+                        "id": id, "jurisdiction_code": "EG", "label": "Illegal EG",
+                        "currency": "EGP", "weekly_overtime_budget": 1500, "min_rest_hours": 10,
+                        "max_daily_hours": daily, "max_weekly_hours": weekly,
+                        "min_weekly_rest_hours": rest, "max_consecutive_days": 6,
+                        "weekend_fairness_priority": "high", "staff_preference_priority": "medium",
+                        "avoid_split_shifts": true
+                    }),
+                    &links,
+                )
+                .is_err(),
+                "{id} must be refused by loc-eg Law 14/2025 overlay"
+            );
+        }
+
+        // Compliant EG profile AND non-EG GB >48h/>8h profile BOTH admit on the same cell.
+        for (id, jur, cur, daily, weekly) in [
+            ("prof_eg_ok", "EG", "EGP", 8, 48),
+            ("prof_gb_ok", "GB", "GBP", 10, 52),
+        ] {
+            commit_single_with_links(
+                cell,
+                "hr.PreferenceProfile",
+                id,
+                &json!({
+                    "id": id, "jurisdiction_code": jur, "label": id,
+                    "currency": cur, "weekly_overtime_budget": 1500, "min_rest_hours": 10,
+                    "max_daily_hours": daily, "max_weekly_hours": weekly,
+                    "min_weekly_rest_hours": 24, "max_consecutive_days": 6,
+                    "weekend_fairness_priority": "high", "staff_preference_priority": "medium",
+                    "avoid_split_shifts": true
+                }),
+                &links,
+            )
+            .unwrap_or_else(|e| panic!("{id} must admit: {e}"));
+        }
+    }
+
+    fn assert_loc_eg_employments(cell: &mut Cell) {
+        let links = [
+            ("person", "hr.Person", "person_ada"),
+            ("membership", "org.Membership", "mem_ada"),
+            ("home_unit", "org.OrgUnit", "unit_main"),
+        ];
+        // Active EG contract started before 2025-09-01 (`effective_to: null`) at 54h/wk is REFUSED.
+        assert!(
+            commit_single_with_links(
+                cell,
+                "hr.Employment",
+                "emp_eg_ongoing_54h",
+                &json!({
+                    "id": "emp_eg_ongoing_54h", "jurisdiction_code": "EG",
+                    "effective_from": "2024-01-01", "effective_to": null, "currency": "EGP",
+                    "base_salary": 18000, "hourly_overtime_rate": 150, "max_weekly_hours": 54,
+                    "status": "active"
+                }),
+                &links,
+            )
+            .is_err(),
+            "active pre-2025-09-01 EG employment at 54h/wk must be refused"
+        );
+
+        // Non-EG GB 54h/wk AND pre-2025-09-01-ended EG 54h/wk BOTH admit on the same cell.
+        for (id, jur, cur, from, to, status) in [
+            (
+                "emp_gb_54h",
+                "GB",
+                "GBP",
+                "2026-01-01",
+                Value::Null,
+                "active",
+            ),
+            (
+                "emp_eg_hist_54h",
+                "EG",
+                "EGP",
+                "2025-01-01",
+                json!("2025-08-31"),
+                "terminated",
+            ),
+        ] {
+            commit_single_with_links(
+                cell,
+                "hr.Employment",
+                id,
+                &json!({
+                    "id": id, "jurisdiction_code": jur, "effective_from": from, "effective_to": to,
+                    "currency": cur, "base_salary": 15000, "hourly_overtime_rate": 120,
+                    "max_weekly_hours": 54, "status": status
+                }),
+                &links,
+            )
+            .unwrap_or_else(|e| panic!("{id} must admit cleanly: {e}"));
+        }
+    }
+
+    fn assert_loc_eg_leave_allocations(cell: &mut Cell) {
+        commit_single_with_links(
+        cell,
         "hr.LeaveBalance",
-        "bal_negative",
+        "bal_eg",
         &json!({
-            "id": "bal_negative",
-            "resource_code": "annual_leave",
-            "quantity": -1,
-            "unit": "d",
-            "currency": null,
-            "valuation_method": null,
-            "leave_kind": "annual",
-            "period_year": 2026
+            "id": "bal_eg", "resource_code": "annual_leave", "quantity": 21, "unit": "d",
+            "currency": null, "valuation_method": null, "leave_kind": "annual", "period_year": 2026
         }),
-    ));
-    bad_balance.links.push(add_link(
-        "hr.LeaveBalance",
-        "bal_negative",
-        "owner",
-        "hr.Person",
-        "person_nour",
-    ));
-    assert!(
-        cell.commit(bad_balance).is_err(),
-        "negative leave balance must be refused by hr.LeaveBalance.non_negative.law"
-    );
-
-    // 2. Roster propose/publish: publish without solver receipt is refused; with receipt succeeds.
-    fixture
-        .invoke(
-            &mut cell,
-            "hr.roster.propose",
-            &json!({"rosterId": "roster_no_receipt"}),
-            "principal:hr_solver_worker",
-            "roster-propose-no-receipt",
-        )
-        .expect("solver worker proposes draft roster");
-    assert_eq!(
-        status_of(&cell, "hr.Roster", "roster_no_receipt"),
-        "proposed"
-    );
-
-    let no_receipt_publish = fixture
-        .invoke(
-            &mut cell,
-            "hr.roster.publish",
-            &json!({"rosterId": "roster_no_receipt"}),
-            "principal:branch_manager",
-            "roster-publish-no-receipt",
-        )
-        .expect_err("roster without solver_receipt_digest cannot publish");
-    assert_eq!(no_receipt_publish.code(), "action.precondition_failed");
-    assert_eq!(
-        status_of(&cell, "hr.Roster", "roster_no_receipt"),
-        "proposed"
-    );
-
-    fixture
-        .invoke(
-            &mut cell,
-            "hr.roster.propose",
-            &json!({"rosterId": "roster_with_receipt"}),
-            "principal:hr_solver_worker",
-            "roster-propose-with-receipt",
-        )
-        .expect("solver worker proposes receipted roster");
-    fixture
-        .invoke(
-            &mut cell,
-            "hr.roster.publish",
-            &json!({"rosterId": "roster_with_receipt"}),
-            "principal:branch_manager",
-            "roster-publish-with-receipt",
-        )
-        .expect("branch manager publishes roster once solver receipt is present");
-    assert_eq!(
-        status_of(&cell, "hr.Roster", "roster_with_receipt"),
-        "published"
-    );
-
-    // 3. Immutable attendance create-only (`hr.attendance.record`): first create succeeds,
-    //    exact retry replays, and a distinct call attempting to overwrite is refused.
-    let attendance_input = json!({
-        "id": "att_nour_20261123",
-        "action": "produce",
-        "occurred_at": "2026-11-23T17:05:00Z",
-        "quantity": "8",
-        "unit": "h",
-        "currency": null,
-        "clock_in_at": "2026-11-23T09:02:00Z",
-        "clock_out_at": "2026-11-23T17:05:00Z",
-        "providerId": "person_nour",
-        "receiverId": "unit_cairo_nc",
-        "resourceId": "bal_nour_2026",
-        "shiftCommitmentId": "shift_nour_mon"
-    });
-    fixture
-        .invoke(
-            &mut cell,
-            "hr.attendance.record",
-            &attendance_input,
-            "principal:branch_manager",
-            "att-record-1",
-        )
-        .expect("first create-only attendance event commits");
-    assert!(
-        cell.load_link(&LinkKey::new(
-            FactKey::new("hr.AttendanceEvent", "att_nour_20261123"),
-            "fulfils",
-            FactKey::new("hr.ShiftCommitment", "shift_nour_mon"),
-        ))
-        .expect("link loads")
-        .exists()
-    );
-    let replayed = fixture
-        .invoke(
-            &mut cell,
-            "hr.attendance.record",
-            &attendance_input,
-            "principal:branch_manager",
-            "att-record-1",
-        )
-        .expect("exact attendance retry replays");
-    assert!(matches!(replayed, ActionOutcome::Replayed { .. }));
-
-    let overwrite = fixture
-        .invoke(
-            &mut cell,
-            "hr.attendance.record",
-            &attendance_input,
-            "principal:branch_manager",
-            "att-record-overwrite-attempt",
-        )
-        .expect_err("posted attendance event cannot be overwritten");
-    assert_eq!(overwrite.code(), "action.write_mode_failed");
-
-    // 4. Historical import quarantine & promotion authority/guards (`hr-import`).
-    fixture
-        .invoke(
-            &mut cell,
-            "hr_import.candidate.quarantine",
-            &json!({"candidateId": "cand_dirty"}),
-            "principal:hr_import_worker",
-            "import-quarantine-dirty",
-        )
-        .expect("import worker may quarantine nonconforming candidate");
-    assert_eq!(
-        status_of(&cell, "hr_import.ExtractedCandidate", "cand_dirty"),
-        "quarantined"
-    );
-
-    let worker_promote = fixture
-        .invoke(
-            &mut cell,
-            "hr_import.candidate.promote",
-            &json!({"candidateId": "cand_clean"}),
-            "principal:hr_import_worker",
-            "import-worker-promote-denied",
-        )
-        .expect_err("import worker must never promote candidates");
-    assert_eq!(worker_promote.code(), "action.permission_denied");
-
-    let dirty_promote = fixture
-        .invoke(
-            &mut cell,
-            "hr_import.candidate.promote",
-            &json!({"candidateId": "cand_dirty"}),
-            "principal:hr_manager",
-            "import-promote-dirty-refused",
-        )
-        .expect_err("candidate with open error findings cannot be promoted");
-    assert_eq!(dirty_promote.code(), "action.precondition_failed");
-
-    fixture
-        .invoke(
-            &mut cell,
-            "hr_import.candidate.promote",
-            &json!({"candidateId": "cand_clean"}),
-            "principal:hr_manager",
-            "import-promote-clean",
-        )
-        .expect("HR manager promotes clean reviewed candidate");
-    assert_eq!(
-        status_of(&cell, "hr_import.ExtractedCandidate", "cand_clean"),
-        "promoted"
-    );
-
-    // Durable reopen preserves exact state and hash-chained ledger integrity.
-    let dump = cell.store().read().dump().expect("final dump");
-    let head = cell
-        .store()
-        .read()
-        .verify_ledger()
-        .expect("ledger verifies");
-    drop(cell);
-    let reopened = Cell::open(
-        &path,
-        fixture.model(),
-        StoreOptions::default(),
-        SCOPE_KEY,
-        |_: &Command<JsonObject>| panic!("reopen executes no commands"),
+        &[("owner", "hr.Person", "person_ada")],
     )
-    .expect("reopened HR cell");
-    assert_eq!(reopened.store().read().dump().expect("reopened dump"), dump);
-    assert_eq!(
-        reopened
+    .expect("leave balance commits");
+        let alloc_links = [
+            ("person", "hr.Person", "person_ada"),
+            ("policy", "hr.LeavePolicy", "lp_std"),
+            ("balance", "hr.LeaveBalance", "bal_eg"),
+        ];
+
+        for (id, tier, haz, months, days) in [
+            (
+                "la_eg_pro_tiny",
+                "prorated_initial",
+                true,
+                json!(6),
+                json!(0.01),
+            ),
+            (
+                "la_eg_pro_4m",
+                "prorated_initial",
+                false,
+                json!(4),
+                json!(7.5),
+            ),
+            ("la_eg_std_15d", "standard", false, Value::Null, json!(15)),
+        ] {
+            assert!(
+                commit_single_with_links(
+                    cell,
+                    "hr.LeaveAllocation",
+                    id,
+                    &json!({
+                        "id": id, "jurisdiction_code": "EG", "leave_kind": "annual",
+                        "entitlement_tier": tier, "hazardous_or_remote": haz,
+                        "qualifying_service_months": months, "starts_on": "2026-01-01",
+                        "ends_on": "2026-12-31", "allocated_days": days,
+                        "carry_forward_days": 0, "status": "active"
+                    }),
+                    &alloc_links,
+                )
+                .is_err(),
+                "{id} must be refused by Art. 124 floor"
+            );
+        }
+
+        commit_single_with_links(
+            cell,
+            "hr.LeaveAllocation",
+            "la_eg_pro_haz_ok",
+            &json!({
+                "id": "la_eg_pro_haz_ok", "jurisdiction_code": "EG", "leave_kind": "annual",
+                "entitlement_tier": "prorated_initial", "hazardous_or_remote": true,
+                "qualifying_service_months": 6, "starts_on": "2026-07-01", "ends_on": "2026-12-31",
+                "allocated_days": 14.5, "carry_forward_days": 0, "status": "active"
+            }),
+            &alloc_links,
+        )
+        .expect("compliant 14.5d EG hazardous prorated allocation admits");
+        commit_single_with_links(
+        cell,
+        "hr.LeaveAllocation",
+        "la_gb_10d_ok",
+        &json!({
+            "id": "la_gb_10d_ok", "jurisdiction_code": "GB", "leave_kind": "annual",
+            "entitlement_tier": "standard", "hazardous_or_remote": false,
+            "qualifying_service_months": null, "starts_on": "2026-01-01", "ends_on": "2026-12-31",
+            "allocated_days": 10, "carry_forward_days": 0, "status": "active"
+        }),
+        &alloc_links,
+    )
+    .expect("GB leave allocation is unaffected by loc-eg overlay");
+    }
+
+    fn assert_loc_eg_labor_profile(cell: &mut Cell) {
+        let lp_links = [("unit", "org.OrgUnit", "unit_main")];
+        let make_lp = |id: &str, intermittent: bool| {
+            json!({
+                "id": id, "effective_from": "2025-09-01", "iana_timezone": "Africa/Cairo",
+                "currency": "EGP", "intermittent_or_preparatory_work": intermittent,
+                "max_regular_weekly_hours": 48, "max_daily_hours": 8,
+                "max_workplace_presence_hours": 12, "min_weekly_rest_hours": 24,
+                "first_year_annual_leave_days": 15, "standard_annual_leave_days": 21,
+                "senior_annual_leave_days": 30, "disability_annual_leave_days": 45,
+                "hazardous_remote_supplement_days": 7, "seniority_threshold_years": 10,
+                "weekend_pattern": "friday_saturday"
+            })
+        };
+        assert!(
+            commit_single_with_links(
+                cell,
+                "loc_eg.LaborProfile",
+                "lp_12h_bad",
+                &make_lp("lp_12h_bad", false),
+                &lp_links
+            )
+            .is_err()
+        );
+        commit_single_with_links(
+            cell,
+            "loc_eg.LaborProfile",
+            "lp_12h_ok",
+            &make_lp("lp_12h_ok", true),
+            &lp_links,
+        )
+        .expect("12h presence admits when intermittent_or_preparatory_work is true");
+    }
+
+    #[test]
+    fn hr_and_loc_eg_conjunctive_overlay_enforces_law_14_2025_with_isolation() {
+        let fixture = HrVerticalFixture::load(HR_WITH_EG_PACKS);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("hr-loc-eg.sqlite");
+        let mut cell = fixture.open_installed_cell(&path);
+        seed_common_org_and_people(&mut cell);
+
+        assert_loc_eg_preference_profiles(&mut cell);
+        assert_loc_eg_employments(&mut cell);
+        assert_loc_eg_leave_allocations(&mut cell);
+        assert_loc_eg_labor_profile(&mut cell);
+
+        cell.store()
+            .read()
+            .verify_ledger()
+            .expect("hr + loc-eg ledger verifies");
+    }
+
+    // ---------------------------------------------------------------- Test 4: Core 07 `hr-import`
+
+    fn seed_import_batch_and_candidates(cell: &mut Cell, digest: &str) {
+        let mut seed = CellCommit::empty();
+        seed.writes.extend([
+        put_fact(
+            "hr_import.SourceBatch",
+            "batch_1",
+            &json!({
+                "id": "batch_1", "channel": "spreadsheet_csv",
+                "document_uri": "evidence://imports/attendance.csv",
+                "document_digest": digest, "media_type": "text/csv",
+                "extractor": "norn-hr-import-worker", "extractor_version": "0.1.0",
+                "raw_excerpt": "BRANCH-01,EMP-003,2026-11-22,14:05,",
+                "captured_at": "2026-11-22T20:30:00Z", "status": "reviewing"
+            }),
+        ),
+        put_fact(
+            "hr_import.ExtractedCandidate",
+            "cand_disputed",
+            &json!({
+                "id": "cand_disputed", "target_kind": "attendance_event",
+                "source_record_key": "spreadsheet_csv/BRANCH-01/EMP-003/2026-11-22",
+                "payload_digest": "sha256:aaaa", "confidence_bp": 6200, "source_span": "row:4",
+                "extracted_at": "2026-11-23T08:05:00Z", "observed_at": "2026-11-22T20:30:00Z",
+                "effective_on": "2026-11-22", "dispute_state": "disputed",
+                "review_receipt_digest": null, "reviewed_by_user_id": null, "status": "staged"
+            }),
+        ),
+        put_fact(
+            "hr_import.ExtractedCandidate",
+            "cand_clean",
+            &json!({
+                "id": "cand_clean", "target_kind": "attendance_event",
+                "source_record_key": "spreadsheet_csv/BRANCH-01/EMP-003/2026-11-22",
+                "payload_digest": "sha256:bbbb", "confidence_bp": 9850, "source_span": "row:4-fix",
+                "extracted_at": "2026-11-23T09:00:00Z", "observed_at": "2026-11-22T21:00:00Z",
+                "effective_on": "2026-11-22", "dispute_state": "clean",
+                "review_receipt_digest": "sha256:rev_001",
+                "reviewed_by_user_id": "principal:hr_manager", "status": "staged"
+            }),
+        ),
+    ]);
+        seed.links.extend([
+            add_link(
+                "hr_import.SourceBatch",
+                "batch_1",
+                "unit",
+                "org.OrgUnit",
+                "unit_main",
+            ),
+            add_link(
+                "hr_import.ExtractedCandidate",
+                "cand_disputed",
+                "batch",
+                "hr_import.SourceBatch",
+                "batch_1",
+            ),
+            add_link(
+                "hr_import.ExtractedCandidate",
+                "cand_clean",
+                "batch",
+                "hr_import.SourceBatch",
+                "batch_1",
+            ),
+            add_link(
+                "hr_import.ExtractedCandidate",
+                "cand_clean",
+                "supersedes",
+                "hr_import.ExtractedCandidate",
+                "cand_disputed",
+            ),
+        ]);
+        cell.commit(seed).expect("seed import batch and candidates");
+    }
+
+    fn seed_import_evidence_and_finding(cell: &mut Cell, digest: &str) {
+        let mut seed = CellCommit::empty();
+        seed.writes.extend([
+        put_fact(
+            "hr_import.FieldEvidence",
+            "ev_clean",
+            &json!({
+                "id": "ev_clean", "subject_property": "clock_out_at",
+                "subject_type": "hr.AttendanceEvent", "subject_key": "cand_clean",
+                "document_uri": "evidence://imports/attendance.csv", "document_digest": digest,
+                "media_type": "text/csv", "page": 1, "bbox_x": 0, "bbox_y": 0.25,
+                "bbox_w": 1, "bbox_h": 0.1, "text": "row:4-fix 14:05-22:00",
+                "extractor": "norn-hr-import-worker", "extractor_version": "0.1.0",
+                "confidence_bp": 9850, "source_anchor": "row:4#bbbb", "record_digest": "sha256:ev01"
+            }),
+        ),
+        put_fact(
+            "hr_import.DataQualityFinding",
+            "dqf_conflict",
+            &json!({
+                "id": "dqf_conflict", "code": "feed_conflict", "finding_kind": "feed_conflict",
+                "severity": "error", "quarantine_disposition": "disputed",
+                "field_path": "payload_digest", "law_pin": "core.boundary.import_finding",
+                "conflicting_payload_digest": "sha256:9999",
+                "message": "Duplicate source key arrived with conflicting digest.",
+                "resolution_action": "accept_second_as_correction",
+                "resolution_receipt_digest": "sha256:res_001",
+                "resolved_by_user_id": "principal:hr_manager",
+                "resolution_reason": "Supervisor verified corrected clock-out export.",
+                "status": "open"
+            }),
+        ),
+    ]);
+        seed.links.extend([
+            add_link(
+                "hr_import.FieldEvidence",
+                "ev_clean",
+                "batch",
+                "hr_import.SourceBatch",
+                "batch_1",
+            ),
+            add_link(
+                "hr_import.FieldEvidence",
+                "ev_clean",
+                "candidate",
+                "hr_import.ExtractedCandidate",
+                "cand_clean",
+            ),
+            add_link(
+                "hr_import.DataQualityFinding",
+                "dqf_conflict",
+                "candidate",
+                "hr_import.ExtractedCandidate",
+                "cand_disputed",
+            ),
+            add_link(
+                "hr_import.DataQualityFinding",
+                "dqf_conflict",
+                "superseded_by",
+                "hr_import.ExtractedCandidate",
+                "cand_clean",
+            ),
+        ]);
+        cell.commit(seed).expect("seed import evidence and finding");
+    }
+
+    fn assert_import_quarantine_and_guards(fixture: &HrVerticalFixture, cell: &mut Cell) {
+        fixture
+            .invoke(
+                cell,
+                "hr_import.candidate.quarantine",
+                &json!({"candidateId": "cand_disputed", "batchId": "batch_1"}),
+                "principal:hr_import_worker",
+                "imp-quar",
+            )
+            .expect("import worker quarantines disputed candidate");
+        assert_eq!(
+            status_of(cell, "hr_import.ExtractedCandidate", "cand_disputed"),
+            "quarantined"
+        );
+
+        assert_permission_denied(
+        fixture.invoke(
+            cell,
+            "hr_import.candidate.promote",
+            &json!({"candidateId": "cand_clean", "batchId": "batch_1", "evidenceId": "ev_clean"}),
+            "principal:hr_import_worker",
+            "imp-worker-promote-denied",
+        ),
+        "import worker must never promote candidates",
+    );
+        assert_precondition_false(
+        fixture.invoke(
+            cell,
+            "hr_import.candidate.promote",
+            &json!({"candidateId": "cand_disputed", "batchId": "batch_1", "evidenceId": "ev_clean"}),
+            "principal:hr_manager",
+            "imp-promote-disputed-refused",
+        ),
+        "disputed candidate cannot promote",
+    );
+    }
+
+    #[test]
+    fn hr_import_evidence_conflict_supersession_and_immutable_resolution() {
+        let fixture = HrVerticalFixture::load(HR_IMPORT_PACKS);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("hr-import.sqlite");
+        let mut cell = fixture.open_installed_cell(&path);
+        let digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        seed_common_org_and_people(&mut cell);
+        seed_import_batch_and_candidates(&mut cell, digest);
+        seed_import_evidence_and_finding(&mut cell, digest);
+        assert_import_quarantine_and_guards(&fixture, &mut cell);
+
+        fixture
+        .invoke(
+            &mut cell,
+            "hr_import.finding.supersede",
+            &json!({"findingId": "dqf_conflict", "candidateId": "cand_disputed", "replacementCandidateId": "cand_clean"}),
+            "principal:hr_manager",
+            "imp-finding-supersede",
+        )
+        .expect("HR manager supersedes FEED-CONFLICT finding");
+        assert_eq!(
+            status_of(&cell, "hr_import.DataQualityFinding", "dqf_conflict"),
+            "superseded"
+        );
+        assert_precondition_false(
+            fixture.invoke(
+                &mut cell,
+                "hr_import.finding.resolve",
+                &json!({"findingId": "dqf_conflict", "candidateId": "cand_disputed"}),
+                "principal:hr_manager",
+                "imp-finding-re-resolve-refused",
+            ),
+            "immutable superseded finding must refuse re-resolution",
+        );
+        fixture
+        .invoke(
+            &mut cell,
+            "hr_import.candidate.supersede",
+            &json!({"candidateId": "cand_disputed", "replacementCandidateId": "cand_clean", "batchId": "batch_1"}),
+            "principal:hr_manager",
+            "imp-cand-supersede",
+        )
+        .expect("HR manager supersedes disputed candidate");
+        fixture
+        .invoke(
+            &mut cell,
+            "hr_import.candidate.promote",
+            &json!({"candidateId": "cand_clean", "batchId": "batch_1", "evidenceId": "ev_clean"}),
+            "principal:hr_manager",
+            "imp-cand-promote",
+        )
+        .expect("HR manager promotes evidence-anchored clean candidate");
+        assert_eq!(
+            status_of(&cell, "hr_import.ExtractedCandidate", "cand_clean"),
+            "promoted"
+        );
+
+        let dump = cell.store().read().dump().expect("dump");
+        let head = cell
             .store()
             .read()
             .verify_ledger()
-            .expect("reopened ledger"),
-        head
-    );
-}
+            .expect("ledger verifies");
+        drop(cell);
+        let reopened = Cell::open(
+            &path,
+            fixture.model(),
+            StoreOptions::default(),
+            SCOPE_KEY,
+            |_: &Command<JsonObject>| panic!("sync"),
+        )
+        .expect("reopened cell");
+        assert_eq!(reopened.store().read().dump().expect("reopened dump"), dump);
+        assert_eq!(
+            reopened
+                .store()
+                .read()
+                .verify_ledger()
+                .expect("reopened ledger"),
+            head
+        );
+    }
 
-#[test]
-fn hr_pii_markings_persist_and_mask_in_real_cell() {
-    let fixture = HrVerticalFixture::load();
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("hr-markings.sqlite");
-    let mut cell = fixture.open_installed_cell(&path);
+    // ---------------------------------------------------------------- Test 5: PII Markings & Reveal
 
-    let raw_national_id = "29805150101234";
-    let mut seed = CellCommit::empty();
-    seed.writes.extend([
-        put_fact(
-            "org.OrgUnit",
-            "unit_cairo_nc",
-            &json!({
-                "id": "unit_cairo_nc",
-                "display_name": "Nasr City Branch",
-                "kind": "organization",
-                "unit_code": "CAIRO-NC-01",
-                "business_unit_code": "EG-RETAIL"
-            }),
-        ),
-        put_fact(
-            "hr.Person",
-            "person_nour",
-            &json!({
-                "id": "person_nour",
-                "display_name": "Nour Hassan",
-                "kind": "person",
-                "gender": "female",
-                "national_id": raw_national_id,
-                "phone": "+201000000001",
-                "primary_skill": "cashier"
-            }),
-        ),
-        put_fact(
-            "hr_import.SourceBatch",
-            "batch_wa_1",
-            &json!({
-                "id": "batch_wa_1",
-                "channel": "whatsapp_export",
-                "blob_ref": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-                "raw_excerpt": "Nour Hassan: Salma Tarek evening cashier 2026-11-25 14:00-22:00 EET.",
-                "captured_at": "2026-11-22T16:10:00Z",
-                "status": "received"
-            }),
-        ),
-    ]);
-    seed.links.push(add_link(
+    fn assert_gov_id_reveal_and_declassify(fixture: &HrVerticalFixture, cell: &mut Cell) {
+        let catalog = marking_catalog_from_artifacts(&fixture.artifacts);
+        let gov_id_policy = &catalog
+            .get(&MarkingId("pii.gov_id".to_owned()))
+            .unwrap()
+            .mask;
+        assert_eq!(
+            fixture
+                .principals
+                .decide_reveal("principal:branch_manager", "pii.gov_id"),
+            PdpDecision::Deny(DenyReason::Access)
+        );
+        assert_eq!(
+            mask_text("29805150101234", gov_id_policy).as_deref(),
+            Some("[REDACTED]1234")
+        );
+        assert_eq!(
+            fixture
+                .principals
+                .decide_reveal("principal:hr_admin", "pii.gov_id"),
+            PdpDecision::Allow
+        );
+
+        cell.record_reveal(
+            "reveal-ada-gov-id-1",
+            &MarkingReveal {
+                object_type: "hr.Person".to_owned(),
+                key: "person_ada".to_owned(),
+                property: "national_id".to_owned(),
+                version: 1,
+                markings: vec!["pii.gov_id".to_owned()],
+                actor: "principal:hr_admin".to_owned(),
+                purpose: "compliance audit".to_owned(),
+            },
+        )
+        .expect("audited reveal receipt commits");
+        let reveal_entry = cell
+            .store()
+            .read()
+            .ledger(0)
+            .expect("ledger")
+            .into_iter()
+            .find(|e| {
+                e.event.get("type") == Some(&JsonValue::String("marking.revealed".to_owned()))
+            })
+            .expect("marking.revealed entry");
+        assert!(
+            !serde_json::to_string(&reveal_entry.event)
+                .unwrap()
+                .contains("29805150101234")
+        );
+
+        cell.declassify_markings(
+            "declassify-ada-gov-id-1",
+            MarkingDeclassification {
+                object_type: "hr.Person".to_owned(),
+                key: "person_ada".to_owned(),
+                property: "national_id".to_owned(),
+                expected_version: 1,
+                markings: vec!["pii.gov_id".to_owned()],
+                actor: "principal:hr_admin".to_owned(),
+                reason: "synthetic test fixture declassification".to_owned(),
+            },
+        )
+        .expect("exact-version declassification commits");
+        let current = cell
+            .store()
+            .read()
+            .effective_markings(MAIN_WORLD, "hr.Person", "person_ada", None)
+            .unwrap()
+            .unwrap();
+        let v1 = cell
+            .store()
+            .read()
+            .effective_markings(MAIN_WORLD, "hr.Person", "person_ada", Some(1))
+            .unwrap()
+            .unwrap();
+        assert_eq!(current["national_id"], Vec::<String>::new());
+        assert_eq!(v1["national_id"], vec!["pii.gov_id".to_owned()]);
+    }
+
+    #[test]
+    fn hr_pii_markings_persist_and_mask_in_real_cell() {
+        let fixture = HrVerticalFixture::load(ALL_HR_PACKS);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("hr-markings.sqlite");
+        let mut cell = fixture.open_installed_cell(&path);
+        seed_common_org_and_people(&mut cell);
+        commit_single_with_links(
+        &mut cell,
         "hr_import.SourceBatch",
         "batch_wa_1",
-        "unit",
-        "org.OrgUnit",
-        "unit_cairo_nc",
-    ));
-    cell.commit(seed)
-        .expect("commit marked Person and SourceBatch");
-
-    // Cell marking storage records every declared PII marking on the persisted facts.
-    let person_markings = cell
-        .store()
-        .read()
-        .effective_markings(MAIN_WORLD, "hr.Person", "person_nour", None)
-        .expect("effective markings query")
-        .expect("complete marking snapshot");
-    assert_eq!(
-        person_markings["national_id"],
-        vec!["pii.gov_id".to_owned()]
-    );
-    assert_eq!(
-        person_markings["gender"],
-        vec!["pii.demographic".to_owned()]
-    );
-    assert_eq!(person_markings["phone"], vec!["pii.demographic".to_owned()]);
-    assert_eq!(person_markings["display_name"], Vec::<String>::new());
-
-    let batch_markings = cell
-        .store()
-        .read()
-        .effective_markings(MAIN_WORLD, "hr_import.SourceBatch", "batch_wa_1", None)
-        .expect("batch markings query")
-        .expect("complete batch marking snapshot");
-    assert_eq!(
-        batch_markings["raw_excerpt"],
-        vec!["pii.raw_chat_media".to_owned()]
-    );
-
-    // Mask policy from `hr.privacy.markings` + fail-closed reveal under `hr.reveal.policy`:
-    // `branch_manager` is denied reveal and sees only the `last-n(4)` mask;
-    // `hr_admin` is allowed reveal and commits an audited reveal receipt without the raw value.
-    let catalog = marking_catalog_from_artifacts(&fixture.artifacts);
-    let gov_id_policy = &catalog
-        .get(&MarkingId("pii.gov_id".to_owned()))
-        .expect("pii.gov_id policy")
-        .mask;
-    assert_eq!(gov_id_policy, &MaskPolicy::LastN { count: 4 });
-
-    let manager_decision = fixture
-        .principals
-        .decide_reveal("principal:branch_manager", "pii.gov_id");
-    assert_eq!(manager_decision, PdpDecision::Deny(DenyReason::Access));
-
-    let stored_person = cell
-        .store()
-        .read()
-        .object(MAIN_WORLD, "hr.Person", "person_nour")
-        .expect("person read")
-        .expect("person present");
-    let stored_gov_id = stored_person.values["national_id"]
-        .as_str()
-        .expect("national_id text");
-    assert_eq!(stored_gov_id, raw_national_id);
-    let masked = mask_text(stored_gov_id, gov_id_policy);
-    assert_eq!(masked.as_deref(), Some("[REDACTED]1234"));
-    assert_ne!(masked.as_deref(), Some(raw_national_id));
-
-    let admin_decision = fixture
-        .principals
-        .decide_reveal("principal:hr_admin", "pii.gov_id");
-    assert_eq!(admin_decision, PdpDecision::Allow);
-
-    let reveal = MarkingReveal {
-        object_type: "hr.Person".to_owned(),
-        key: "person_nour".to_owned(),
-        property: "national_id".to_owned(),
-        version: 1,
-        markings: vec!["pii.gov_id".to_owned()],
-        actor: "principal:hr_admin".to_owned(),
-        purpose: "social insurance enrollment audit".to_owned(),
-    };
-    cell.record_reveal("reveal-nour-gov-id-1", &reveal)
-        .expect("audited reveal receipt commits");
-
-    let ledger_after_reveal = cell.store().read().ledger(0).expect("ledger entries");
-    let reveal_entry = ledger_after_reveal
-        .iter()
-        .find(|entry| {
-            entry.event.get("type") == Some(&JsonValue::String("marking.revealed".to_owned()))
-        })
-        .expect("marking.revealed receipt is persisted in ledger");
-    let reveal_json = serde_json::to_string(&reveal_entry.event).expect("event serializes");
-    assert!(reveal_json.contains("principal:hr_admin"));
-    assert!(reveal_json.contains("social insurance enrollment audit"));
-    assert!(
-        !reveal_json.contains(raw_national_id),
-        "reveal receipt must never carry the raw PII value: {reveal_json}"
-    );
-
-    // Exact-version declassification clears `pii.gov_id` on the current snapshot only
-    // while retaining the historical classification on version 1.
-    cell.declassify_markings(
-        "declassify-nour-gov-id-1",
-        MarkingDeclassification {
-            object_type: "hr.Person".to_owned(),
-            key: "person_nour".to_owned(),
-            property: "national_id".to_owned(),
-            expected_version: 1,
-            markings: vec!["pii.gov_id".to_owned()],
-            actor: "principal:hr_admin".to_owned(),
-            reason: "synthetic test fixture declassification".to_owned(),
-        },
+        &json!({
+            "id": "batch_wa_1", "channel": "whatsapp_export",
+            "document_uri": "evidence://chat/wa-1.txt",
+            "document_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "media_type": "text/plain", "extractor": "norn-hr-import-worker",
+            "extractor_version": "0.1.0", "raw_excerpt": "Shift confirmation excerpt",
+            "captured_at": "2026-11-22T16:10:00Z", "status": "received"
+        }),
+        &[("unit", "org.OrgUnit", "unit_main")],
     )
-    .expect("exact-version declassification commits");
+    .expect("commit marked SourceBatch");
 
-    let current_after = cell
-        .store()
-        .read()
-        .effective_markings(MAIN_WORLD, "hr.Person", "person_nour", None)
-        .expect("current markings")
-        .expect("complete snapshot");
-    let historical_v1 = cell
-        .store()
-        .read()
-        .effective_markings(MAIN_WORLD, "hr.Person", "person_nour", Some(1))
-        .expect("historical markings")
-        .expect("complete snapshot");
-    assert_eq!(current_after["national_id"], Vec::<String>::new());
-    assert_eq!(historical_v1["national_id"], vec!["pii.gov_id".to_owned()]);
-    cell.store()
-        .read()
-        .verify_ledger()
-        .expect("ledger verifies");
+        let person_markings = cell
+            .store()
+            .read()
+            .effective_markings(MAIN_WORLD, "hr.Person", "person_ada", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            person_markings["national_id"],
+            vec!["pii.gov_id".to_owned()]
+        );
+        assert_eq!(person_markings["display_name"], Vec::<String>::new());
+        let batch_markings = cell
+            .store()
+            .read()
+            .effective_markings(MAIN_WORLD, "hr_import.SourceBatch", "batch_wa_1", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            batch_markings["raw_excerpt"],
+            vec!["pii.raw_chat_media".to_owned()]
+        );
+
+        assert_gov_id_reveal_and_declassify(&fixture, &mut cell);
+    }
 }

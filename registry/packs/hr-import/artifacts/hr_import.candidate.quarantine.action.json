@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "hr_import.candidate.quarantine",
-    "description": "Move a staged OCR/VLM candidate into quarantine when one or more data quality findings require human resolution.",
+    "description": "Move a staged extracted candidate bound to its source batch into quarantine when data quality or FEED-CONFLICT findings require human resolution.",
     "effectProgram": {
       "entityArtifactId": "hr_import.ExtractedCandidate.entity",
       "entityArtifactVersion": "0.1.0",
@@ -26,12 +26,16 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "batchId": {
+          "type": "string"
+        },
         "candidateId": {
           "type": "string"
         }
       },
       "required": [
-        "candidateId"
+        "candidateId",
+        "batchId"
       ],
       "type": "object"
     },
@@ -52,9 +56,45 @@
       ],
       "type": "object"
     },
+    "preconditions": [
+      "slice.batch.id in map(slice.candidate_batch as b, b.id)",
+      "slice.candidate.status == 'staged'"
+    ],
     "scopeRequired": [
       "orgId",
       "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "candidateId"
+          }
+        },
+        "name": "candidate",
+        "objectType": "hr_import.ExtractedCandidate"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "batchId"
+          }
+        },
+        "name": "batch",
+        "objectType": "hr_import.SourceBatch"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "candidate",
+            "link": "batch"
+          }
+        },
+        "name": "candidate_batch",
+        "objectType": "hr_import.SourceBatch"
+      }
     ],
     "title": "Quarantine extracted candidate",
     "writes": [

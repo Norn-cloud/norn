@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr_import.ExtractedCandidate.bitemporal_order.law",
+  "dependencies": [
+    {
+      "artifactId": "hr_import.ExtractedCandidate.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Extracted candidate observation time never post-dates extraction time",
+  "namespace": "hr_import",
+  "payload": {
+    "id": "hr_import.ExtractedCandidate.bitemporal_order",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr_import",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr-import/hr_import.ts"
+    },
+    "rationale": "A candidate cannot be extracted before the source observation existed (observed_at <= extracted_at).",
+    "response": {
+      "expression": "timestamp(self.observed_at) <= timestamp(self.extracted_at)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr_import.ExtractedCandidate"
+      ],
+      "root": {
+        "id": "hr_import.ExtractedCandidate",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr_import.ExtractedCandidate"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.ExtractedCandidate.bitemporal_order.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
