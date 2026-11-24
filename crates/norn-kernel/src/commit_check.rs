@@ -570,7 +570,13 @@ impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error
             CommitStage::Immutable => check_immutable(commit, model, view),
             CommitStage::Versions => {
                 check_versions(commit, model, view, authorization)?;
-                check_lifecycle_initialization(commit, model, view, authorization)
+                check_lifecycle_initialization(
+                    commit,
+                    model,
+                    view,
+                    authorization,
+                    self.trusted_owned_rows,
+                )
             }
             CommitStage::LinkAuthority => check_link_authority(commit, model, view, authorization),
             CommitStage::Endpoints => {
@@ -662,6 +668,7 @@ fn check_lifecycle_initialization<E: 'static, C, T, V: CommitView + ?Sized>(
     model: CommitModel<'_, '_>,
     view: &V,
     authorization: Option<&ObservationAuthorization>,
+    trusted_owned_rows: bool,
 ) -> Result<(), CommitError<V::Error>> {
     let authorized = authorization.map(ObservationAuthorization::indexed);
     let mut recorded: Option<BTreeMap<FactKey, Vec<&crate::decision_commit::FactEvent>>> = None;
@@ -692,6 +699,7 @@ fn check_lifecycle_initialization<E: 'static, C, T, V: CommitView + ?Sized>(
             &write.key,
             values,
             events,
+            trusted_owned_rows,
         )
         .map_err(|refusal| CommitError::LifecycleInitialization {
             key: write.key.clone(),
@@ -702,28 +710,37 @@ fn check_lifecycle_initialization<E: 'static, C, T, V: CommitView + ?Sized>(
 }
 
 /// The fact events `commit` records for each object, by canonical identity,
-/// in ledger order.
+/// in ledger order: the kernel's own fact events, and those an observation
+/// event wraps, since a wrapped fact names the same identity.
 fn recorded_fact_events<'c, E: 'static, C, T>(
     commit: &'c CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
 ) -> BTreeMap<FactKey, Vec<&'c crate::decision_commit::FactEvent>> {
     use crate::decision_commit::FactEvent;
+    use crate::snapshot_observe::ObservationEvent;
     let mut recorded: BTreeMap<FactKey, Vec<&FactEvent>> = BTreeMap::new();
-    // Only the kernel's own fact event type records this evidence, identified
-    // by type: a host whose ledger events are another type records none, so
-    // it creates a lifecycle-bearing object only in an admitted initial state.
+    // Evidence is identified by type: a host whose ledger events are neither
+    // records none, so it creates a lifecycle-bearing object only in an
+    // admitted initial state.
     let fact_events = commit.events.iter().filter_map(|event| {
         let event: &dyn std::any::Any = event;
-        event.downcast_ref::<FactEvent>()
+        event.downcast_ref::<FactEvent>().or_else(move || {
+            let Some(ObservationEvent::ObservedFact { event, .. }) =
+                event.downcast_ref::<ObservationEvent>()
+            else {
+                return None;
+            };
+            Some(event)
+        })
     });
     for event in fact_events {
         let key = match event {
             FactEvent::Created { key, .. }
             | FactEvent::Set { key, .. }
+            | FactEvent::Modified { key, .. }
             | FactEvent::Deleted { key }
             | FactEvent::Transitioned { key, .. } => key,
-            FactEvent::Modified { .. }
-            | FactEvent::CommandEnqueued { .. }
+            FactEvent::CommandEnqueued { .. }
             | FactEvent::NamingSeriesAllocated { .. }
             | FactEvent::NamingSeriesCounterSeeded { .. }
             | FactEvent::InvariantRefused { .. } => continue,

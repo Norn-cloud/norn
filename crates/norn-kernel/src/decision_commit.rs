@@ -3252,12 +3252,15 @@ fn materialize_lifecycle_defaults<X>(
 /// ends in an initial state, since a final row alone cannot tell a legal
 /// sequence from a forged one: it is replayed from initialization under the
 /// decision path's own rules ([`FirstWriteReplay`]) and must end in
-/// exactly the written values.
+/// exactly the written values. `kernel_origin` is the kernel-prepared
+/// owned-row admission, whose creations may initialize rules-only properties
+/// under the kernel's private origin (FA-PROTECT-1).
 pub(crate) fn check_first_write_lifecycles(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &JsonObject,
     events: &[&FactEvent],
+    kernel_origin: bool,
 ) -> Result<(), LifecycleInitRefusal> {
     let lifecycle_properties = catalog.lifecycle_properties(&key.object_type);
     let lifecycles = catalog.lifecycles(&key.object_type);
@@ -3274,6 +3277,7 @@ pub(crate) fn check_first_write_lifecycles(
         key,
         lifecycle_properties,
         lifecycles,
+        kernel_origin,
     };
     let mut current: Option<JsonObject> = None;
     for event in events {
@@ -3309,19 +3313,85 @@ struct FirstWriteReplay<'r, 'a> {
     key: &'r FactKey,
     lifecycle_properties: BTreeSet<PropertyId>,
     lifecycles: BTreeMap<PropertyId, Lifecycle>,
+    /// Whether the kernel's owned-row admission prepared the commit.
+    kernel_origin: bool,
 }
 
 impl FirstWriteReplay<'_, '_> {
     /// Whether only rules may write `property` (FA-PROTECT-1). A type with no
     /// effective view cannot prove otherwise, so it fails closed.
-    fn rules_only(&self, property: &PropertyId) -> bool {
+    fn rules_only(&self, property: &str) -> bool {
         self.catalog
             .effective_type(&self.key.object_type)
             .is_none_or(|effective| {
                 effective
-                    .property(property.as_str())
+                    .property(property)
                     .is_some_and(norn_checker::EffectiveProperty::protected)
             })
+    }
+
+    /// Initial states, then effective values: the decision `create` rule.
+    fn materialize(&self, values: &JsonObject) -> Result<JsonObject, LifecycleInitRefusal> {
+        let values = with_initial_states::<Infallible>(self.catalog, self.key, values)
+            .map_err(lifecycle_init_refusal)?;
+        self.catalog
+            .effective_object_values(&self.key.object_type, &values)
+            .map_err(|error| unrecorded(&format!("the created values are refused: {error}")))
+    }
+
+    /// A recorded creation, materialized as a decision `create` would be, so
+    /// every guard reads the values the final comparison does. A caller
+    /// cannot supply a rules-only property: outside the kernel's owned-row
+    /// origin, each one must hold exactly the value materialization gives it
+    /// without that input.
+    fn create(
+        &self,
+        current: &mut Option<JsonObject>,
+        created: &JsonObject,
+    ) -> Result<(), LifecycleInitRefusal> {
+        if current.is_some() {
+            return Err(unrecorded("the commit records its creation twice"));
+        }
+        let materialized = self.materialize(created)?;
+        if !self.kernel_origin {
+            let mut caller = created.clone();
+            caller.retain(|property, _| !self.rules_only(property));
+            if caller.len() != created.len() {
+                let defaults = self.materialize(&caller)?;
+                if let Some(property) = created.keys().find(|property| {
+                    self.rules_only(property)
+                        && materialized.get(property.as_str()) != defaults.get(property.as_str())
+                }) {
+                    return Err(unrecorded(&format!("{property} is writable only by rules")));
+                }
+            }
+        }
+        *current = Some(materialized);
+        Ok(())
+    }
+
+    /// A recorded deletion, refused as decision preparation refuses it: a
+    /// type with rules-only properties, or with no effective view to prove
+    /// it has none, cannot be deleted (FA-PROTECT-1).
+    fn delete(&self, current: &mut Option<JsonObject>) -> Result<(), LifecycleInitRefusal> {
+        let protected = self
+            .catalog
+            .effective_type(&self.key.object_type)
+            .is_none_or(|effective| {
+                effective
+                    .properties
+                    .iter()
+                    .any(norn_checker::EffectiveProperty::protected)
+            });
+        if protected {
+            return Err(unrecorded(
+                "an object with rules-only properties cannot be deleted",
+            ));
+        }
+        if current.take().is_none() {
+            return Err(unrecorded("the object is deleted before it exists"));
+        }
+        Ok(())
     }
 
     /// Apply one recorded event to the replayed object `current`.
@@ -3330,21 +3400,20 @@ impl FirstWriteReplay<'_, '_> {
         current: &mut Option<JsonObject>,
         event: &FactEvent,
     ) -> Result<(), LifecycleInitRefusal> {
-        let (catalog, key) = (self.catalog, self.key);
         let subject = match event {
             FactEvent::Created { key, .. }
             | FactEvent::Set { key, .. }
+            | FactEvent::Modified { key, .. }
             | FactEvent::Deleted { key }
             | FactEvent::Transitioned { key, .. } => Some(key),
-            FactEvent::Modified { .. }
-            | FactEvent::CommandEnqueued { .. }
+            FactEvent::CommandEnqueued { .. }
             | FactEvent::NamingSeriesAllocated { .. }
             | FactEvent::NamingSeriesCounterSeeded { .. }
             | FactEvent::InvariantRefused { .. } => None,
         };
         // Evidence binds to the exact concrete type created: a sibling
         // subtype sharing the hierarchy root and key proves nothing here.
-        if subject.is_some_and(|subject| subject != key) {
+        if subject.is_some_and(|subject| subject != self.key) {
             return Err(unrecorded(
                 "the recorded evidence names another type than the written object",
             ));
@@ -3352,23 +3421,7 @@ impl FirstWriteReplay<'_, '_> {
         match event {
             FactEvent::Created {
                 values: created, ..
-            } => {
-                if current.is_some() {
-                    return Err(unrecorded("the commit records its creation twice"));
-                }
-                // The decision `create` rule: initial states, then the
-                // effective values, so every guard below reads the same
-                // values the final comparison does.
-                let created = with_initial_states::<Infallible>(catalog, key, created)
-                    .map_err(lifecycle_init_refusal)?;
-                *current = Some(
-                    catalog
-                        .effective_object_values(&key.object_type, &created)
-                        .map_err(|error| {
-                            unrecorded(&format!("the created values are refused: {error}"))
-                        })?,
-                );
-            }
+            } => self.create(current, created)?,
             FactEvent::Set {
                 property, value, ..
             } => self.set(current, property, value)?,
@@ -3379,15 +3432,16 @@ impl FirstWriteReplay<'_, '_> {
                 to,
                 ..
             } => self.transition(current, lifecycle, transition, from, to)?,
-            FactEvent::Deleted { .. } => {
-                if current.take().is_none() {
-                    return Err(unrecorded("the object is deleted before it exists"));
-                }
+            FactEvent::Deleted { .. } => self.delete(current)?,
+            // An aggregate restates an object that existed before the
+            // commit; it cannot describe one the commit creates.
+            FactEvent::Modified { .. } => {
+                return Err(unrecorded(
+                    "a modification aggregate names an object the commit creates",
+                ));
             }
-            // No object state: aggregates restate existing objects only, and
-            // the rest name another subject or none.
-            FactEvent::Modified { .. }
-            | FactEvent::CommandEnqueued { .. }
+            // No object state of this subject.
+            FactEvent::CommandEnqueued { .. }
             | FactEvent::NamingSeriesAllocated { .. }
             | FactEvent::NamingSeriesCounterSeeded { .. }
             | FactEvent::InvariantRefused { .. } => {}
@@ -3413,7 +3467,7 @@ impl FirstWriteReplay<'_, '_> {
                 property.as_str()
             )));
         }
-        if self.rules_only(property) {
+        if self.rules_only(property.as_str()) {
             return Err(unrecorded(&format!(
                 "{} is writable only by rules",
                 property.as_str()
@@ -3451,7 +3505,7 @@ impl FirstWriteReplay<'_, '_> {
         let Some(replayed) = current.as_mut() else {
             return Err(illegal("the object does not exist".to_owned()));
         };
-        if self.rules_only(lifecycle) {
+        if self.rules_only(lifecycle.as_str()) {
             return Err(illegal(
                 "the lifecycle is writable only by rules".to_owned(),
             ));

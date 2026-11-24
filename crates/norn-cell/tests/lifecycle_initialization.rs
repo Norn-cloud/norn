@@ -830,11 +830,29 @@ fn a_replayed_temporal_set_is_canonical_before_the_next_guard() {
         ],
     );
     let (_, guard) = refusal(cell.commit(commit).expect_err("equal instants"));
-    assert!(matches!(
-        guard,
-        LifecycleInitRefusal::IllegalTransition { ref transition, .. } if transition == "accept"
-    ));
+    assert!(
+        matches!(
+            &guard,
+            LifecycleInitRefusal::IllegalTransition { transition, reason, .. }
+                if transition == "accept" && reason.contains("does not hold")
+        ),
+        "{guard:?}"
+    );
     assert_eq!(snapshot(&cell, &key), before);
+    // Positive control: unequal instants satisfy the guard.
+    let unequal = FactKey::new("test.Window", "W-2");
+    cell.commit(evidence(
+        &unequal,
+        json!({ "status": "accepted", "a": "2024-02-29T09:00:00Z", "b": "2024-02-29T10:00:00Z" }),
+        vec![
+            created(
+                &unequal,
+                json!({ "a": "2024-02-29T09:00:00Z", "b": "2024-02-29T10:00:00Z" }),
+            ),
+            fired(&unequal, "status", "accept", "draft", "accepted"),
+        ],
+    ))
+    .expect("unequal instants accept");
 }
 
 #[test]
@@ -969,6 +987,174 @@ fn a_replayed_transition_of_a_rules_only_lifecycle_is_refused() {
                 if transition == "close" && reason == "the lifecycle is writable only by rules"
         ),
         "{rules:?}"
+    );
+    assert_eq!(snapshot(&cell, &key), before);
+}
+
+#[test]
+fn a_created_event_cannot_supply_a_rules_only_property() {
+    let mut cell = cell();
+    let key = FactKey::new("test.Claim", "C-2");
+    let before = snapshot(&cell, &key);
+    let commit = evidence(
+        &key,
+        json!({ "status": "granted", "verified": true }),
+        vec![
+            created(&key, json!({ "verified": true })),
+            fired(&key, "status", "grant", "draft", "granted"),
+        ],
+    );
+    let (_, supplied) = refusal(
+        cell.commit(commit)
+            .expect_err("caller-supplied rules-only input"),
+    );
+    assert!(
+        unrecorded_because(&supplied, "verified is writable only by rules"),
+        "{supplied:?}"
+    );
+    assert_eq!(snapshot(&cell, &key), before);
+    // A kernel creation already holds the canonical default: admitted.
+    cell.commit(evidence(
+        &key,
+        json!({ "status": "draft", "verified": false }),
+        vec![created(
+            &key,
+            json!({ "status": "draft", "verified": false }),
+        )],
+    ))
+    .expect("a recorded creation with the materialized default");
+}
+
+fn deleted(key: &FactKey) -> FactEvent {
+    FactEvent::Deleted { key: key.clone() }
+}
+
+#[test]
+fn a_replayed_deletion_follows_the_decision_deletion_rule() {
+    let mut cell = cell();
+    let grant = FactKey::new("test.Grant", "G-2");
+    let before = snapshot(&cell, &grant);
+    let commit = evidence(
+        &grant,
+        json!({ "state": "open" }),
+        vec![
+            created(&grant, json!({})),
+            deleted(&grant),
+            created(&grant, json!({})),
+        ],
+    );
+    let (_, protected) = refusal(cell.commit(commit).expect_err("rules-only deletion"));
+    assert!(
+        unrecorded_because(
+            &protected,
+            "an object with rules-only properties cannot be deleted"
+        ),
+        "{protected:?}"
+    );
+    assert_eq!(snapshot(&cell, &grant), before);
+    // An unprotected type may be created, deleted and created again.
+    let key = document();
+    cell.commit(evidence(
+        &key,
+        json!({ "status": "draft", "pages": 1 }),
+        vec![
+            created(&key, json!({ "pages": 2 })),
+            deleted(&key),
+            created(&key, json!({ "pages": 1 })),
+        ],
+    ))
+    .expect("create, delete and create again");
+}
+
+fn modified(key: &FactKey, before: serde_json::Value, after: serde_json::Value) -> FactEvent {
+    FactEvent::Modified {
+        key: key.clone(),
+        before_version: FactVersion(1),
+        after_version: FactVersion(2),
+        before: values(before),
+        after: values(after),
+        changed_properties: vec![PropertyId("pages".into())],
+    }
+}
+
+#[test]
+fn a_modification_aggregate_cannot_describe_a_first_write() {
+    let mut cell = cell();
+    let existing = FactKey::new("test.Document", "D-0");
+    cell.commit(put(&existing, values(json!({ "pages": 1 })), vec![]))
+        .expect("an existing document");
+    let fresh = document();
+    let before = snapshot(&cell, &fresh);
+    let commit = evidence(
+        &fresh,
+        json!({ "status": "draft", "pages": 1 }),
+        vec![modified(
+            &fresh,
+            json!({ "pages": 1 }),
+            json!({ "pages": 2 }),
+        )],
+    );
+    let (_, aggregate) = refusal(cell.commit(commit).expect_err("aggregate of a new object"));
+    assert!(
+        unrecorded_because(
+            &aggregate,
+            "a modification aggregate names an object the commit creates"
+        ),
+        "{aggregate:?}"
+    );
+    assert_eq!(snapshot(&cell, &fresh), before);
+    // An aggregate of an existing object beside a first write is unaffected.
+    let mut commit = put(
+        &FactKey::new("test.Document", "D-2"),
+        values(json!({ "pages": 1 })),
+        vec![modified(
+            &existing,
+            json!({ "pages": 1 }),
+            json!({ "pages": 2 }),
+        )],
+    );
+    commit.writes.push(FactWrite {
+        key: existing,
+        expected: FactVersion(1),
+        mutation: FactMutation::Put {
+            values: values(json!({ "status": "draft", "pages": 2 })),
+        },
+    });
+    cell.commit(commit)
+        .expect("the existing object's aggregate");
+}
+
+#[test]
+fn wrapped_observed_fact_evidence_is_validated_for_an_unsealed_write() {
+    let mut cell: ObservedCell = open();
+    let key = document();
+    let before = snapshot(&cell, &key);
+    let provenance = serde_json::from_value(json!({
+        "source": { "system": "synthetic", "record": "document/D-1" },
+        "mappingVersion": "fixture.document@1",
+        "recordedAt": "2026-11-01T00:00:00Z",
+        "sourceFields": ["pages"]
+    }))
+    .expect("source provenance");
+    let commit = put(
+        &key,
+        values(json!({ "status": "draft", "pages": 1 })),
+        vec![ObservationEvent::ObservedFact {
+            event: created(&key, json!({ "status": "published", "pages": 1 })),
+            provenance,
+        }],
+    );
+    let (_, wrapped) = refusal(
+        cell.commit(commit)
+            .expect_err("contradictory wrapped evidence"),
+    );
+    assert_eq!(
+        wrapped,
+        LifecycleInitRefusal::InvalidInitialState {
+            lifecycle: "status".into(),
+            state: Some("published".into()),
+            initial: vec!["draft".into()],
+        }
     );
     assert_eq!(snapshot(&cell, &key), before);
 }
