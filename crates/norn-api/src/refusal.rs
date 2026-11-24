@@ -237,6 +237,11 @@ pub struct RefusalExtra {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = String, required = false)]
     pub incident_id: Option<String>,
+    /// The host clock instant (RFC 3339 UTC) at which the cell decided this
+    /// refusal, when the boundary supplied a clock.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = String, required = false)]
+    pub decided_at: Option<String>,
     /// INCIDENT-1: the error chain, for the operator's log only: never
     /// serialized, never compared.
     #[serde(skip)]
@@ -258,6 +263,7 @@ impl PartialEq for RefusalExtra {
         self.restatement == other.restatement
             && self.restatement_sha256 == other.restatement_sha256
             && self.incident_id == other.incident_id
+            && self.decided_at == other.decided_at
     }
 }
 
@@ -325,6 +331,20 @@ impl Refusal {
     #[must_use]
     pub fn with_cause(mut self, cause: impl std::fmt::Display) -> Self {
         self.extra.get_or_insert_with(Box::default).cause = Some(cause.to_string());
+        self
+    }
+
+    /// Record the RFC 3339 UTC host clock instant at which this refusal was
+    /// decided at the server boundary.
+    pub fn set_decided_at(&mut self, decided_at: impl Into<String>) {
+        self.extra.get_or_insert_with(Box::default).decided_at = Some(decided_at.into());
+    }
+
+    /// The same refusal carrying the host clock instant at which it was
+    /// decided.
+    #[must_use]
+    pub fn with_decided_at(mut self, decided_at: impl Into<String>) -> Self {
+        self.set_decided_at(decided_at);
         self
     }
 

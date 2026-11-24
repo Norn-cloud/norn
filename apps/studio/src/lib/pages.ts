@@ -34,6 +34,7 @@ export const PAGES = {
   "/views/$id": "/views/studio.view.missing",
   "/views/$id/edit": "/views/studio.view.missing/edit",
   "/workflows": "/workflows",
+  "/map": "/map",
   "/canvas": "/canvas",
   "/rules": "/rules",
   "/markings": "/markings",

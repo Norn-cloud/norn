@@ -10,6 +10,8 @@ pub struct NodeHandlerExtensions {
     pub(crate) compiled_cache: Option<Arc<OpcodeCache>>,
     /// Norn `metering`: shared by every node, isolate and sub-decision of one evaluation.
     pub(crate) meter: Option<zen_expression::meter::Meter>,
+    /// Norn (#1440): explicit versioned offline IANA tzdb lookup shared across nodes.
+    pub(crate) tzdb: Option<Arc<dyn zen_expression::temporal::TzdbLookup>>,
 }
 
 impl Default for NodeHandlerExtensions {
@@ -19,6 +21,7 @@ impl Default for NodeHandlerExtensions {
             contracts: None,
             compiled_cache: None,
             meter: None,
+            tzdb: None,
         }
     }
 }
@@ -56,5 +59,14 @@ pub trait DecisionContracts: std::fmt::Debug + Send + Sync {
         _meter: Option<&zen_expression::meter::Meter>,
     ) -> Option<Result<zen_expression::Variable, Box<dyn std::error::Error>>> {
         None
+    }
+    fn derive_with_tzdb(
+        &self,
+        key: &str,
+        input: &zen_expression::Variable,
+        meter: Option<&zen_expression::meter::Meter>,
+        _tzdb: Option<&Arc<dyn zen_expression::temporal::TzdbLookup>>,
+    ) -> Option<Result<zen_expression::Variable, Box<dyn std::error::Error>>> {
+        self.derive(key, input, meter)
     }
 }

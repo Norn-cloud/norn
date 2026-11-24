@@ -48,7 +48,7 @@ export function refusalOf(status: number, text: string): Refusal | null {
 /** A scoped cell call. A refusal with a Norn code is a refusal at any status, 404 included; a bare 404 or 503 is "not served". */
 export async function cellCall<T>(path: string, init: RequestInit = {}, fetcher: Fetch = defaultFetch): Promise<CellResult<T>> {
   let scope
-  try { scope = await readStudioScope(fetcher) } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
+  try { scope = await readStudioScope(fetcher) } catch (error) { if (error instanceof CellUnavailable && error.status === 404) return { kind: "unavailable" }; throw error }
   if (scope === null) return { kind: "no-cell" }
   const active = scope
   const call = scopedHostFetch(fetcher, "/api/host", async () => active)

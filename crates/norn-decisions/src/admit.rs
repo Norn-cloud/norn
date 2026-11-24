@@ -73,6 +73,7 @@ pub struct AdmittedDecision {
     assignment_fuel: Vec<norn_expr::graph::BoundAssignment>,
     rule_id: String,
     binding: DecisionBinding,
+    pub(crate) tzdb_sha256: String,
     decision: Decision,
     slice_schema: Arc<Schema>,
     event_schema: Arc<Schema>,
@@ -81,43 +82,24 @@ pub struct AdmittedDecision {
 }
 
 impl AdmittedDecision {
-    /// Loads `root` with the sub-decisions it reaches. `sub_decisions` is
-    /// keyed by the `decisionNode` key (the sub-decision rule's artifact id)
-    /// and must be exactly the reachable closure.
+    /// [`Self::admit_with_defaults`] against an explicit versioned
+    /// [`TzdbBundle`](norn_expr::temporal::TzdbBundle) (`#1440`).
     ///
     /// # Errors
     ///
-    /// An [`AdmissionError`] when any check above fails.
-    pub fn admit(
-        root: &RuleRoot,
-        sub_decisions: &BTreeMap<String, RuleRoot>,
-        binding: DecisionBinding,
-    ) -> Result<Self, AdmissionError> {
-        Self::admit_with_defaults(root, sub_decisions, binding, None)
-    }
-
-    /// [`Self::admit`], with the rule's `defaults` member as exact runtime
-    /// values parsed from the artifact's source text (#2770). The decoded
-    /// IR defaults carry numbers as `f64`, which cannot recover an authored
-    /// decimal, so a numeric default is admitted only from `exact_defaults`;
-    /// without it a numeric default is refused, as by [`Self::admit`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::admit`]; [`AdmissionError::InvalidDefault`] when a numeric
-    /// default has no exact source value, or the exact value is not the
-    /// decoded one.
-    pub fn admit_with_defaults(
+    /// As [`Self::admit_with_defaults`].
+    pub fn admit_with_defaults_in(
         root: &RuleRoot,
         sub_decisions: &BTreeMap<String, RuleRoot>,
         binding: DecisionBinding,
         exact_defaults: Option<&RuntimeObject>,
+        tzdb: &norn_expr::temporal::TzdbBundle,
     ) -> Result<Self, AdmissionError> {
         let root_graph = decision_graph(root, RuleContractV2::Decide)?;
         let loader = MemoryLoader::default();
         let mut loaded_keys = BTreeSet::new();
         let mut contracts = crate::step::StepContracts::default();
-        contracts.bind_expressions(root)?;
+        contracts.bind_expressions_in(root, tzdb)?;
         // Deepest depth each key has been expanded at: a key is re-expanded
         // only on a deeper path (which may exceed the bound), so the walk is
         // at most MAX_SUB_DECISION_DEPTH expansions per key.
@@ -162,7 +144,7 @@ impl AdmittedDecision {
                             size: loaded_keys.len(),
                         });
                     }
-                    contracts.bind_expressions(sub)?;
+                    contracts.bind_expressions_in(sub, tzdb)?;
                     loader.add(key, graph_content(&sub.rule_id, sub_graph)?);
                 }
                 stack.push((sub.rule_id.as_str(), sub_graph, child_depth));
@@ -195,6 +177,7 @@ impl AdmittedDecision {
             assignment_fuel,
             rule_id: root.rule_id.clone(),
             binding,
+            tzdb_sha256: tzdb.sha256().to_owned(),
             decision: Decision::from(Arc::new(content))
                 .with_loader(loader)
                 .with_contracts(policies),

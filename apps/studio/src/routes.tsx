@@ -19,6 +19,7 @@ import { MisfitPage } from "./learning/misfit-page.tsx"
 import { ProposalDetailPage, ProposalsPage } from "./learning/proposals-page.tsx"
 import { SourcesItemPage } from "./objects.tsx"
 import { QuestionPage, QuestionsPage } from "./questions.tsx"
+import { SemanticMapPage } from "./semantic-map.tsx"
 import { ObjectTypePage, SourcesPage } from "./sources.tsx"
 import { TransformPage, TransformsPage } from "./transforms.tsx"
 import { ToolBindings } from "./tool-bindings.tsx"
@@ -58,6 +59,7 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/views/$id": ViewDetailPage,
   "/views/$id/edit": ViewEditorPage,
   "/workflows": WorkflowsPage,
+  "/map": SemanticMapPage,
   "/canvas": CanvasPage,
   "/rules": RulesPage,
   "/markings": MarkingsPage,

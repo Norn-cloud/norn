@@ -1,8 +1,9 @@
 import { Link } from "@tanstack/react-router"
 import { Fingerprint, ReceiptText } from "lucide-react"
 import { Chip } from "@/components/chip"
+import { LoadState } from "@/components/load-state"
 import { MarkingChip, useMarkingCatalog } from "@/components/marking-chip"
-import { EmptyState, PageHeader, Panel } from "@/components/panel"
+import { PageHeader, Panel } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { projectionWords, revealRoles } from "./lib/markings.ts"
@@ -27,45 +28,54 @@ export function MarkingsPage() {
   return (
     <section className="space-y-6">
       <PageHeader title="Markings" description="Personal and sensitive data, as this workspace declares it: how each marking is shown to someone who may not see it, which facts carry it, and who may reveal it. Every reveal is recorded as a receipt before the value is shown." />
-      {read.isPending && <p className="text-muted-foreground">Reading the workspace's declarations…</p>}
-      {read.isError && <p role="alert" className="text-destructive">{read.error.message}</p>}
-      {read.data && ids.length === 0 && <EmptyState icon={Fingerprint} title="No markings declared">No fact in this workspace carries a marking, so every value is shown as stored to whoever may read it.</EmptyState>}
-      {ids.length > 0 && (
-        <TableCard><Table>
-          <TableHeader><TableRow><TableHead>Marking</TableHead><TableHead>Shown to others as</TableHead><TableHead>Carried by</TableHead><TableHead>May reveal</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {ids.map((id) => {
-              const decl = markings?.declared.get(id)
-              const roles = revealRoles(markings, id)
-              const fields = carriers.get(id) ?? []
-              return (
-                <TableRow key={id} data-marking-row={id}>
-                  <TableCell className="align-top">
-                    <div className="flex flex-col items-start gap-1">
-                      <MarkingChip marking={id} catalog={markings} />
-                      <span className="font-mono text-xs text-muted-foreground">{id}{decl?.severity ? ` · ${decl.severity}` : ""}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="align-top whitespace-normal">{projectionWords(decl)}</TableCell>
-                  <TableCell className="align-top whitespace-normal">
-                    {fields.length === 0 ? <span className="text-muted-foreground">No fact carries it yet</span> : (
-                      <ul className="space-y-0.5">
-                        {fields.map(({ type, typeTitle, field, label }) => (
-                          <li key={`${type}.${field}`}><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{typeTitle}</Link><span className="text-muted-foreground"> · {label}</span></li>
-                        ))}
-                      </ul>
-                    )}
-                  </TableCell>
-                  <TableCell className="align-top whitespace-normal">
-                    {roles.length === 0 ? <span className="text-muted-foreground">No role: nobody may reveal it</span>
-                      : <span className="inline-flex flex-wrap gap-1">{roles.map((role) => <Chip key={role} tone="blue">{role}</Chip>)}</span>}
-                  </TableCell>
-                </TableRow>
-              )
-            })}
-          </TableBody>
-        </Table></TableCard>
-      )}
+      <LoadState
+        status={read.status}
+        data={ids}
+        error={read.error}
+        isFetching={read.isFetching}
+        onRetry={() => void read.refetch()}
+        skeleton="table"
+        loadingLabel="Reading markings"
+        isEmpty={(list) => list.length === 0}
+        empty={{ icon: Fingerprint, title: "No markings declared", description: "No fact in this workspace carries a marking, so every value is shown as stored to whoever may read it." }}
+      >
+        {(list) => (
+          <TableCard><Table>
+            <TableHeader><TableRow><TableHead>Marking</TableHead><TableHead>Shown to others as</TableHead><TableHead>Carried by</TableHead><TableHead>May reveal</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {list.map((id) => {
+                const decl = markings?.declared.get(id)
+                const roles = revealRoles(markings, id)
+                const fields = carriers.get(id) ?? []
+                return (
+                  <TableRow key={id} data-marking-row={id}>
+                    <TableCell className="align-top">
+                      <div className="flex flex-col items-start gap-1">
+                        <MarkingChip marking={id} catalog={markings} />
+                        <span className="font-mono text-xs text-muted-foreground">{id}{decl?.severity ? ` · ${decl.severity}` : ""}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="align-top whitespace-normal">{projectionWords(decl)}</TableCell>
+                    <TableCell className="align-top whitespace-normal">
+                      {fields.length === 0 ? <span className="text-muted-foreground">No fact carries it yet</span> : (
+                        <ul className="space-y-0.5">
+                          {fields.map(({ type, typeTitle, field, label }) => (
+                            <li key={`${type}.${field}`}><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{typeTitle}</Link><span className="text-muted-foreground"> · {label}</span></li>
+                          ))}
+                        </ul>
+                      )}
+                    </TableCell>
+                    <TableCell className="align-top whitespace-normal">
+                      {roles.length === 0 ? <span className="text-muted-foreground">No role: nobody may reveal it</span>
+                        : <span className="inline-flex flex-wrap gap-1">{roles.map((role) => <Chip key={role} tone="blue">{role}</Chip>)}</span>}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table></TableCard>
+        )}
+      </LoadState>
       <Panel icon={ReceiptText} label="Reveal receipts">
         <p className="px-1 text-sm text-muted-foreground">
           A reveal asks the cell, which writes a ledger receipt (who, which fact, when and why) before it answers; the receipt number shows beside the revealed value.

@@ -73,13 +73,16 @@ mod row_tree;
 /// Exact validation of the admitted closed JSON schema dialect.
 pub mod schema;
 pub mod temporal;
+mod tzdb;
 mod value;
 
 pub use check::{
     CheckedExpression, ConstructionSource, CostEstimate, Diagnostic, InferredType, RootCostBounds,
-    StructuralLimits, check_expression, check_expression_under, check_expression_with,
-    check_expression_with_root_bounds, check_expression_with_sources, check_unary,
-    check_unary_with, condition_null_guards, validate_evaluation_source,
+    StructuralLimits, check_expression, check_expression_in, check_expression_under,
+    check_expression_under_in, check_expression_with, check_expression_with_in,
+    check_expression_with_root_bounds, check_expression_with_root_bounds_in,
+    check_expression_with_sources, check_expression_with_sources_in, check_unary, check_unary_in,
+    check_unary_with, check_unary_with_in, condition_null_guards, validate_evaluation_source,
     validate_profile_constructs, validate_unary_evaluation_source,
 };
 pub use convert::rescale_decimal;

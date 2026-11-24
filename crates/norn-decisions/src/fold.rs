@@ -10,8 +10,9 @@ use norn_ir::{
     jdm::{FoldOrderKind, OrderedFold},
 };
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use zen_engine::{
-    Decision, EvaluationOptions, Isolate, Variable,
+    Decision, EvaluationOptions, Isolate, TzdbLookup, Variable,
     meter::Meter,
     nodes::DecisionContracts,
     scaled::{Rounding, ScaledArithmetic},
@@ -34,6 +35,7 @@ impl FoldPlan {
         &self,
         input: &Variable,
         meter: &Meter,
+        tzdb: Option<&Arc<dyn TzdbLookup>>,
         contracts: &StepContracts,
     ) -> Result<Variable, Failure> {
         let f = &self.declaration;
@@ -50,6 +52,7 @@ impl FoldPlan {
         inspect(input, &meter, profile)?;
         let mut isolate = Isolate::with_environment(input.clone());
         isolate.set_meter(Some(meter.clone()));
+        isolate.set_tzdb(tzdb.map(Arc::clone));
         let selected = isolate.run_standard(&self.selector)?;
         let Variable::Array(items) = selected else {
             return Err("fold input must be a complete array".into());
@@ -80,10 +83,11 @@ impl FoldPlan {
                 .collect(),
             );
             contracts.check(&self.key, &step, true, Some(&meter))?;
-            let response = poll_once(self.helper.evaluate_metered(
+            let response = poll_once(self.helper.evaluate_metered_with_tzdb(
                 step,
                 EvaluationOptions::default(),
                 meter.clone(),
+                tzdb.map(Arc::clone),
             ))??;
             state = response.result;
             contracts.check(&self.key, &state, false, Some(&meter))?;
