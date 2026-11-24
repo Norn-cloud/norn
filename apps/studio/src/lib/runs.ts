@@ -1,4 +1,5 @@
 import { cellCall, defaultFetch, humanize, type CellResult, type Fetch } from "./cell-read.ts"
+import type { StudioScope } from "./definitions.ts"
 
 /**
  * Runs of installed flows (RUN-ROUTES-1, #1047), with the step timeline RUNS adds for Studio:
@@ -66,8 +67,8 @@ export const RUNS_UNAVAILABLE = "This cell doesn't serve runs yet."
 export const getRun = (id: string, etag: string | null = null, fetcher: Fetch = defaultFetch): Promise<CellResult<Run>> =>
   cellCall<Run>(`/v1/runs/${encodeURIComponent(id)}`, etag === null ? {} : { headers: { "if-none-match": etag } }, fetcher)
 
-export const startRun = (flow: string, runId: string, fetcher: Fetch = defaultFetch): Promise<CellResult<Run>> =>
-  cellCall<Run>("/v1/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ flow, runId }) }, fetcher)
+export const startRun = (flow: string, runId: string, fetcher: Fetch = defaultFetch, boundScope?: StudioScope | null): Promise<CellResult<Run>> =>
+  cellCall<Run>("/v1/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ flow, runId }) }, fetcher, boundScope)
 
 /** A fresh run id for the Run button: URL-safe, inside RUNS's `[A-Za-z0-9._:-]{1,128}`. */
 export const newRunId = () => `run_${crypto.randomUUID()}`

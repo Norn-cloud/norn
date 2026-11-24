@@ -1,7 +1,18 @@
-import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useContext, useRef } from "react"
+import { type QueryClient, QueryClientContext, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
 import { forgetDrafts, sessionKey } from "../actions/kept-drafts.ts"
 import { forgetParkedCalls } from "../actions/parked-calls.ts"
-import { sameStudioScope, type StudioScope } from "./definitions.ts"
+import {
+  defaultFetch,
+  getDisplayedScope,
+  getDisplayedWorkspaceScope,
+  sameStudioScope,
+  scopeFromAccount,
+  setDisplayedWorkspaceScope,
+  workspaceScopeFromAccount,
+  type StudioScope,
+  type WorkspaceScope,
+} from "./definitions.ts"
 import { refreshMode } from "./live-transport.ts"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
@@ -80,11 +91,12 @@ function accountScopeOf(account: Account | null): StudioScope | null | undefined
  * parked calls are forgotten before the new answer is shown, the way a sign-out forgets them.
  * Hygiene only: every read is the server's decision for whoever asks.
  */
-export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init) => fetch(input, init)) {
+export function accountQuery(client: QueryClient, fetcher: Fetch = defaultFetch) {
   return queryOptions({
     queryKey: SESSION,
     queryFn: async () => {
       const account = await readAccount(fetcher)
+      if (fetcher === defaultFetch) setDisplayedWorkspaceScope(workspaceScopeFromAccount(account))
       const previous = client.getQueryData<Account | null>(SESSION)
       if (previous !== undefined && sessionKey(previous) !== sessionKey(account)) {
         // A parked call's exact input and key are the previous reader/scope's: never kept for the
@@ -113,6 +125,45 @@ export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init)
 export function useAccount() {
   const client = useQueryClient()
   return useQuery(accountQuery(client))
+}
+
+/**
+ * Freeze the workspace scope that was active when a form/workflow opened (`key` changed), so a
+ * background `/api/me` session refresh while the form stays open never shifts its target workspace.
+ * Reads the cached session / displayed scope without issuing extra `/api/me` requests or requiring
+ * a QueryClientProvider in isolated component tests.
+ */
+export function usePinnedWorkspaceScope(key: unknown = true): WorkspaceScope | null | undefined {
+  const client = useContext(QueryClientContext)
+  const account = client?.getQueryData<Account | null>(SESSION)
+  const current = account !== undefined ? workspaceScopeFromAccount(account) : getDisplayedWorkspaceScope()
+  const pinnedRef = useRef<WorkspaceScope | null | undefined>(undefined)
+  const prevKeyRef = useRef<unknown>(Symbol("uninitialized"))
+  const active = key !== null && key !== false
+  if (!Object.is(key, prevKeyRef.current)) {
+    prevKeyRef.current = key
+    pinnedRef.current = active ? current : undefined
+  } else if (active && pinnedRef.current === undefined && current !== undefined) {
+    pinnedRef.current = current
+  }
+  return pinnedRef.current
+}
+
+/** Like `usePinnedWorkspaceScope`, requiring a provisioned cell environment (`StudioScope`). */
+export function usePinnedScope(key: unknown = true): StudioScope | null | undefined {
+  const client = useContext(QueryClientContext)
+  const account = client?.getQueryData<Account | null>(SESSION)
+  const current = account !== undefined ? scopeFromAccount(account) : getDisplayedScope()
+  const pinnedRef = useRef<StudioScope | null | undefined>(undefined)
+  const prevKeyRef = useRef<unknown>(Symbol("uninitialized"))
+  const active = key !== null && key !== false
+  if (!Object.is(key, prevKeyRef.current)) {
+    prevKeyRef.current = key
+    pinnedRef.current = active ? current : undefined
+  } else if (active && pinnedRef.current === undefined && current !== undefined) {
+    pinnedRef.current = current
+  }
+  return pinnedRef.current
 }
 
 async function call(path: string, body: Record<string, string>): Promise<void> {
@@ -145,6 +196,7 @@ export function useRefreshAccount() {
  */
 export async function endSession(client: QueryClient, signOut: () => Promise<void> = authApi.signOut): Promise<void> {
   await signOut()
+  if (signOut === authApi.signOut) setDisplayedWorkspaceScope(null)
   forgetDrafts()
   forgetParkedCalls()
   forgetReads(client)

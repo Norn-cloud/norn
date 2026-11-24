@@ -102,19 +102,37 @@ export function configFromEnv(env: Record<string, string | undefined>): Config {
 
 // ---------------------------------------------------------------- grants
 
+export const ORG_CLAIM = "norn.cloud/org"
+export const ENV_CLAIM = "norn.cloud/env"
+export const MEMBER_CLAIM = "norn.cloud/member"
+
 export interface Grant {
   readonly token: string
   readonly subject: string
+  readonly org: string
+  readonly env: string
+  readonly member: string
   readonly expiresAt: number
 }
 
-/** Verify a Sidekick grant against Studio's keys: issuer, audience, client and expiry. Null when it fails any. */
+const nonEmptyClaim = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() !== "" ? value : null
+
+/** True only when two grants belong to the exact same person, workspace, environment, and membership generation. */
+export const sameGrantIdentity = (a: Grant, b: Grant): boolean =>
+  a.subject === b.subject && a.org === b.org && a.env === b.env && a.member === b.member
+
+/** Verify a Sidekick grant against Studio's keys: issuer, audience, client, scope identity, and expiry. Null when it fails any. */
 export async function verifyGrant(token: unknown, keys: JWTVerifyGetKey, studioOrigin: string, now = Date.now()): Promise<Grant | null> {
   if (typeof token !== "string" || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return null
   try {
     const { payload } = await jwtVerify(token, keys, { issuer: studioOrigin, audience: `${studioOrigin}/mcp`, requiredClaims: ["sub", "exp", "azp"], currentDate: new Date(now) })
-    if (payload.azp !== SIDEKICK_CLIENT || typeof payload.sub !== "string" || typeof payload.exp !== "number") return null
-    return { token, subject: payload.sub, expiresAt: payload.exp * 1000 }
+    const subject = nonEmptyClaim(payload.sub)
+    const org = nonEmptyClaim(payload[ORG_CLAIM])
+    const env = nonEmptyClaim(payload[ENV_CLAIM])
+    const member = nonEmptyClaim(payload[MEMBER_CLAIM])
+    if (payload.azp !== SIDEKICK_CLIENT || subject === null || org === null || env === null || member === null || typeof payload.exp !== "number") return null
+    return { token, subject, org, env, member, expiresAt: payload.exp * 1000 }
   } catch {
     return null
   }
@@ -351,7 +369,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     if (!BROWSER_METHODS.has(method)) return message.id === undefined ? undefined : send(connection.ws, rpcError(message.id, -32601, `Sidekick does not offer ${method}.`), secrets(connection))
     if (method === "initialize" || method === "_norn/grant") {
       const grant = await verifyGrant((message.params?._meta as Json | undefined)?.["norn.cloud/grant"] ?? message.params?.grant, keys, config.studioOrigin)
-      if (grant === null || (connection.grant !== null && grant.subject !== connection.grant.subject)) {
+      if (grant === null || (connection.grant !== null && !sameGrantIdentity(connection.grant, grant))) {
         send(connection.ws, rpcError(message.id, -32001, "Sign in to Studio again: the Sidekick grant was not accepted."), [])
         log(`conn ${connection.id} grant refused`)
         connection.ws.close(4401, "grant refused")

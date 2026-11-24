@@ -11,7 +11,7 @@ import { deriveFactStatus, type FactStatus } from "../components/fact-status-bad
 import { callAction, newIdempotencyKey, type ActionReceipt, type CallResult } from "./actions.ts"
 import { cellCall, type CellResult, type Fetch } from "./cell-read.ts"
 import { requestedPath, requestedWords, type RequestedDecision } from "./decisions.ts"
-import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions.ts"
+import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readableTime } from "./format.ts"
 
 export const IMPORT_TRIAGE_UNAVAILABLE = "This cell doesn't serve import triage yet."
@@ -1122,8 +1122,9 @@ export function commitAliasBinding(
   },
   idempotencyKey = newIdempotencyKey(),
   fetcher?: Fetch,
+  boundScope?: StudioScope | null,
 ): Promise<CallResult> {
-  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher)
+  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
 export function commitEntityCreateAndBind(
@@ -1137,8 +1138,9 @@ export function commitEntityCreateAndBind(
   },
   idempotencyKey = newIdempotencyKey(),
   fetcher?: Fetch,
+  boundScope?: StudioScope | null,
 ): Promise<CallResult> {
-  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher)
+  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
 export function commitAliasIgnore(
@@ -1151,8 +1153,9 @@ export function commitAliasIgnore(
   },
   idempotencyKey = newIdempotencyKey(),
   fetcher?: Fetch,
+  boundScope?: StudioScope | null,
 ): Promise<CallResult> {
-  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher)
+  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
 export function commitRowPromotion(
@@ -1170,8 +1173,9 @@ export function commitRowPromotion(
   },
   idempotencyKey = newIdempotencyKey(),
   fetcher?: Fetch,
+  boundScope?: StudioScope | null,
 ): Promise<CallResult> {
-  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher)
+  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
 export function commitSupersessionDecision(
@@ -1189,6 +1193,7 @@ export function commitSupersessionDecision(
   },
   idempotencyKey = newIdempotencyKey(),
   fetcher?: Fetch,
+  boundScope?: StudioScope | null,
 ): Promise<CallResult> {
-  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher)
+  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }

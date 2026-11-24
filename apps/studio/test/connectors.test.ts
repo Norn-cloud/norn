@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { api, BINDING_VERBS, ConnectorError, CONNECTION_VERBS, ERROR_VERBS, EXECUTABLE_FIXES, fixAction, fixLabel, MATRIX, matrixTable, offersButton, startFix } from "../src/lib/connectors.ts"
+import { defaultFetch, setDisplayedWorkspaceScope } from "../src/lib/definitions.ts"
 
 const answering = (status: number, body: unknown) => (async () => Response.json(body, { status })) as unknown as typeof fetch
 
@@ -65,4 +66,62 @@ test("every fix the page offers a button for executes: it reaches a gateway page
   // An account linked to no app fails with a typed error, never silently.
   const unlinked = (async (path: string) => path === "/accounts/gone" ? { apps: [] } : { requirements: [] }) as Parameters<typeof startFix>[1]
   expect(await startFix({ kind: "reconnect_account", app: null, account: "gone" }, unlinked).catch((e: unknown) => e)).toMatchObject({ code: "connectors.account_not_linked" })
+})
+
+test("connector mutations carry pinned workspace scope headers even after displayed workspace changes", async () => {
+  const original = globalThis.fetch
+  const seen: { url: string; method: string; headers: Headers }[] = []
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    seen.push({ url: String(input), method: init?.method ?? "GET", headers: new Headers(init?.headers) })
+    return Response.json({ url: "https://gateway.example/connect" })
+  }) as typeof fetch
+  try {
+    const pinned = { orgId: "org_a", environmentId: "env_a" }
+    const wrapped = (input: string, init?: RequestInit) => globalThis.fetch(input, init)
+    setDisplayedWorkspaceScope(pinned)
+    // Error from a GET in org_a captures org_a on ConnectorError.scope even after displayed workspace changes.
+    const failed = await api("/inventory", undefined, async () => Response.json({ code: "connectors.not_linked", error: "Sign in.", action: { kind: "sign_in_gateway" } }, { status: 409 })).catch((e: unknown) => e)
+    expect(failed).toBeInstanceOf(ConnectorError)
+    expect((failed as ConnectorError).scope).toEqual(pinned)
+
+    setDisplayedWorkspaceScope({ orgId: "org_b", environmentId: "env_b" })
+    await api("/link", { method: "POST", scope: pinned }, wrapped)
+    await startFix({ kind: "sign_in_gateway" }, (path, init) => api(path, init, wrapped), (failed as ConnectorError).scope)
+    await api("/inventory", undefined, defaultFetch)
+    expect(seen[0]?.headers.get("x-norn-expected-org")).toBe("org_a")
+    expect(seen[0]?.headers.get("x-norn-expected-env")).toBe("env_a")
+    expect(seen[1]?.headers.get("x-norn-expected-org")).toBe("org_a")
+    expect(seen[1]?.headers.get("x-norn-expected-env")).toBe("env_a")
+    // GET reads also carry the active/pinned expected-scope headers so stale tabs cannot cache another workspace's data.
+    expect(seen[2]?.headers.get("x-norn-expected-org")).toBe("org_b")
+    expect(seen[2]?.headers.get("x-norn-expected-env")).toBe("env_b")
+    // Recovery after an error captured under org_a keeps org_a even when displayed scope is org_b.
+    setDisplayedWorkspaceScope({ orgId: "org_c", environmentId: "env_c" })
+    const recoveryError = await api("/inventory", { scope: pinned }, async () => Response.json({ code: "connectors.not_linked", error: "Sign in.", action: { kind: "sign_in_gateway" } }, { status: 409 })).catch((e: unknown) => e)
+    expect((recoveryError as ConnectorError).scope).toEqual(pinned)
+    await startFix({ kind: "sign_in_gateway" }, (path, init) => api(path, init, wrapped), (recoveryError as ConnectorError).scope)
+    expect(seen[3]?.headers.get("x-norn-expected-org")).toBe("org_a")
+    expect(seen[3]?.headers.get("x-norn-expected-env")).toBe("env_a")
+
+    // When a read-only GET reports connectors.refresh_required, api() calls POST /refresh with pinned scope and retries the GET once.
+    const refreshSeen: { url: string; method: string; org: string | null }[] = []
+    let invAttempts = 0
+    const refreshFetcher = async (input: string, init?: RequestInit) => {
+      refreshSeen.push({ url: input, method: init?.method ?? "GET", org: new Headers(init?.headers).get("x-norn-expected-org") })
+      if (input === "/api/connectors/refresh") return Response.json({ gateway: "https://gw.example", linked: true })
+      invAttempts += 1
+      if (invAttempts === 1) return Response.json({ code: "connectors.refresh_required", error: "Refresh required" }, { status: 401 })
+      return Response.json({ apps: [], accounts: [], links: [] })
+    }
+    const refreshedInv = await api("/inventory", { scope: pinned }, refreshFetcher)
+    expect(refreshedInv).toEqual({ apps: [], accounts: [], links: [] })
+    expect(refreshSeen).toEqual([
+      { url: "/api/connectors/inventory", method: "GET", org: "org_a" },
+      { url: "/api/connectors/refresh", method: "POST", org: "org_a" },
+      { url: "/api/connectors/inventory", method: "GET", org: "org_a" },
+    ])
+  } finally {
+    setDisplayedWorkspaceScope(undefined)
+    globalThis.fetch = original
+  }
 })
