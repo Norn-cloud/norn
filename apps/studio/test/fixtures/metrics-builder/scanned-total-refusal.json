@@ -1,0 +1,19 @@
+{
+  "format": "norn/refusal@2",
+  "retryable": false,
+  "reason": null,
+  "code": "question.refused",
+  "category": "invalid",
+  "message": "the question is not admissible",
+  "explanation": "each diagnostic names the rule and where in the question it applies",
+  "diagnostics": [
+    {
+      "code": "metric.validation.invalid_time",
+      "severity": "error",
+      "message": "The time axis must be a single-valued date or timestamp.",
+      "span": {
+        "pointer": "/question/metrics/0/x-norn/timeDimension"
+      }
+    }
+  ]
+}

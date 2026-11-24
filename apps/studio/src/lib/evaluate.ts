@@ -17,7 +17,7 @@ export type Evaluation =
   | { readonly kind: "answer"; readonly read: Read<Answer> }
   /** The cell's checker refused the question (422 question.refused): each finding's code, message and field. */
   | { readonly kind: "not-a-question"; readonly findings: readonly CheckerFinding[] }
-  /** The read gates refused this reader, or the question names a metric it may not read (the host's opaque 403 document). */
+  /** The read gates refused the read (403), or the cell refused the admitted computation (422). */
   | { readonly kind: "refused"; readonly refusal: Refusal }
   /** Over the cell's bounds (413): never a partial answer. */
   | { readonly kind: "too-large"; readonly code: string; readonly message: string }
@@ -75,10 +75,11 @@ const parse = (text: string): unknown => {
   try { return JSON.parse(text) } catch { return undefined }
 }
 
-const refusalOf = (status: number, text: string): Refusal | undefined => {
-  if (status !== 403) return undefined
-  const body = parse(text) as Partial<Refusal> | undefined
-  return typeof body?.code === "string" && typeof body.message === "string" ? body as Refusal : undefined
+const isRefusal = (body: unknown): body is Refusal => {
+  if (typeof body !== "object" || body === null || !("code" in body) || !("message" in body)) return false
+  return typeof body.code === "string" && typeof body.message === "string"
+    && (!("category" in body) || typeof body.category === "string")
+    && (!("explanation" in body) || typeof body.explanation === "string")
 }
 
 export async function evaluateQuestion(question: unknown, fetcher: Fetch = fetch): Promise<Evaluation> {
@@ -89,9 +90,12 @@ export async function evaluateQuestion(question: unknown, fetcher: Fetch = fetch
   const { status, text } = response
   if (status === 200) return isAnswer(parse(text)) ? { kind: "answer", read: readDocument<Answer>(text, "live") } : { kind: "unavailable", status }
   if (status === 422) {
-    const body = parse(text) as { code?: unknown; diagnostics?: readonly { code?: unknown; severity?: unknown; message?: unknown; span?: { pointer?: unknown } | null }[] } | undefined
-    if (body?.code === "question.refused" && Array.isArray(body.diagnostics)) {
-      return { kind: "not-a-question", findings: body.diagnostics.map((d) => ({ code: String(d.code ?? ""), severity: typeof d.severity === "string" ? d.severity : null, message: String(d.message ?? ""), pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null })) }
+    const body = parse(text)
+    if (typeof body === "object" && body !== null) {
+      if ("code" in body && body.code === "question.refused" && "diagnostics" in body && Array.isArray(body.diagnostics)) {
+        return { kind: "not-a-question", findings: body.diagnostics.map((d) => ({ code: String(d.code ?? ""), severity: typeof d.severity === "string" ? d.severity : null, message: String(d.message ?? ""), pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null })) }
+      }
+      if ("format" in body && body.format === "norn/refusal@2" && isRefusal(body)) return { kind: "refused", refusal: body }
     }
   }
   if (status === 413 || status === 400) {
@@ -100,8 +104,8 @@ export async function evaluateQuestion(question: unknown, fetcher: Fetch = fetch
     if (status === 413) return { kind: "too-large", code: typeof body?.code === "string" ? body.code : "request.too_large", message }
     return { kind: "bad-request", message }
   }
-  const refusal = refusalOf(status, text)
-  return refusal ? { kind: "refused", refusal } : { kind: "unavailable", status }
+  const refusal = status === 403 ? parse(text) : undefined
+  return isRefusal(refusal) ? { kind: "refused", refusal } : { kind: "unavailable", status }
 }
 
 /** One bucket's records for a question built in Studio: POST /v1/questions:trace, passing lineageRef back exactly as received. */
@@ -113,6 +117,6 @@ export async function traceQuestion(question: unknown, lineageRef: string, bucke
   if ("scopeStatus" in response) return { kind: "unavailable", status: response.scopeStatus }
   const { status, text } = response
   if (status === 200) return isTrace(parse(text)) ? { kind: "read", read: readDocument<Trace>(text, "live") } : { kind: "unavailable", status }
-  const refusal = refusalOf(status, text)
-  return refusal ? { kind: "refused", refusal } : { kind: "unavailable", status }
+  const refusal = status === 403 ? parse(text) : undefined
+  return isRefusal(refusal) ? { kind: "refused", refusal } : { kind: "unavailable", status }
 }
