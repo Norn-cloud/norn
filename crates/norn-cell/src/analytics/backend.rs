@@ -195,7 +195,9 @@ pub fn dispatch_evaluate(
     engine.evaluate_question(request)
 }
 
-/// Page `request`'s members on `engine` only if it answers them exactly.
+/// Page `request`'s members on `engine` only if it answers them exactly
+/// (`exact_bitemporal`). Unlike an evaluate or profile answer, a page carries
+/// no provenance or freshness for the cell to check.
 ///
 /// # Errors
 /// As [`dispatch_evaluate`].
@@ -228,7 +230,8 @@ pub trait AnalyticalEngine: Send + Sync {
     /// # Errors
     /// `analytics.frontier_moved`, or an engine refusal.
     fn mirror_sync(&self, request: &SyncRequest) -> EngineOutcome<FrontierResponse>;
-    /// Answer a lowered question, naming the snapshot read.
+    /// Answer a lowered question, naming the snapshot read; the cell accepts
+    /// it only as an exact read (`Freshness::Exact`) of what it prepared.
     ///
     /// # Errors
     /// A Core 03 refusal, a stale source, or an engine refusal.
@@ -273,7 +276,8 @@ pub trait AnalyticalEngine: Send + Sync {
     /// # Errors
     /// An unknown column, a comparison its kind does not take, or a stale source.
     fn query_page(&self, request: &PageRequest) -> EngineOutcome<PageResponse>;
-    /// Exact column profiles of a source, naming the snapshot read.
+    /// Exact column profiles of a source, naming the snapshot read; the cell
+    /// accepts them only as an exact read (`Freshness::Exact`).
     ///
     /// # Errors
     /// An unknown column or a stale source.

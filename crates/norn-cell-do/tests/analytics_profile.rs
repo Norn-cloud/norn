@@ -114,6 +114,15 @@ fn profile_request(path: &str) -> server::Request<'_> {
     }
 }
 
+fn drop_provenance(answer: &mut EngineAnswer) {
+    if let Ok(mut body) = serde_json::from_str::<Value>(&answer.body) {
+        if let Some(object) = body.as_object_mut() {
+            object.remove("provenance");
+        }
+        answer.body = body.to_string();
+    }
+}
+
 fn set(answer: &mut EngineAnswer, pointer: &str, value: Value) {
     if let Ok(mut body) = serde_json::from_str::<Value>(&answer.body) {
         if let Some(slot) = body.pointer_mut(pointer) {
@@ -168,7 +177,7 @@ fn a_profile_is_answered_only_over_the_snapshot_decided() -> Result<(), Box<dyn 
             },
             409,
         ),
-        ("no provenance", |a| set(a, "/provenance", Value::Null), 500),
+        ("no provenance", drop_provenance, 500),
     ];
     for (case, edit, status) in cases {
         let dir = tempfile::tempdir()?;
@@ -176,6 +185,8 @@ fn a_profile_is_answered_only_over_the_snapshot_decided() -> Result<(), Box<dyn 
         let response =
             server::analytics(&host, &principals, &transport, None, &request).ok_or(case)?;
         assert_eq!(response.status, status, "{case}: {}", response.body);
+        let refusal: Value = serde_json::from_str(&response.body)?;
+        assert_eq!(refusal["retryable"], json!(status == 409), "{case}");
         if status == 409 {
             assert!(response.body.contains("object.snapshot_moved"), "{case}");
         }
@@ -185,8 +196,9 @@ fn a_profile_is_answered_only_over_the_snapshot_decided() -> Result<(), Box<dyn 
 
 /// D136: a profile is bound to the cell model it was decided under. Two
 /// cells whose profiled type has the same table schema but whose models
-/// differ: the first's answer is never the second's, whether re-entered (the
-/// call's digest names the model) or replayed (the snapshot names it).
+/// differ: the first's answer is never the second's. Re-entered, its digest
+/// is another version's, so the profile is a moved snapshot (409) and no
+/// call is made again; replayed, its snapshot names the other model (409).
 #[test]
 fn a_profile_of_another_model_is_never_accepted() -> Result<(), Box<dyn std::error::Error>> {
     let item: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
@@ -244,9 +256,11 @@ fn a_profile_of_another_model_is_never_accepted() -> Result<(), Box<dyn std::err
     assert_eq!(answered.status, 200, "{}", answered.body);
 
     exchange.resume(answered.clone());
-    let _ended = server::analytics(&second, &second_principals, &exchange, None, &request);
-    let call = exchange.take_pending(1_000).ok_or("the call asked again")?;
-    assert_ne!(call.digest, answered.digest);
+    let reentered = server::analytics(&second, &second_principals, &exchange, None, &request)
+        .ok_or("a profile")?;
+    assert_eq!(reentered.status, 409, "{}", reentered.body);
+    assert!(reentered.body.contains("object.snapshot_moved"));
+    assert!(exchange.take_pending(1_000).is_none());
 
     let body = answered.body;
     let replayed = Edited(engine, move |a: &mut EngineAnswer| a.body.clone_from(&body));

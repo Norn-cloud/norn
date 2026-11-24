@@ -553,7 +553,8 @@ impl Engine {
     ///
     /// # Errors
     /// `analytics.frontier_moved` when the batch does not continue the
-    /// mirror's frontier, or an unknown table.
+    /// mirror's frontier, a batch encoded under another model or table schema
+    /// than the mirror holds (`core.compute.stale_input`), or an unknown table.
     pub fn sync(&self, request: &SyncRequest) -> Outcome<FrontierResponse> {
         self.with(&request.tenant, |conn| {
             let key = format!("frontier:{}", request.world);
@@ -563,6 +564,17 @@ impl Engine {
                     "analytics.frontier_moved",
                     format!("the mirror is at {current}"),
                 ));
+            }
+            let mut same = meta(conn, "model_pin")?.as_deref() == Some(request.model_pin.as_str())
+                && request
+                    .rows
+                    .iter()
+                    .all(|row| request.schema_pins.contains_key(&row.table));
+            for (table, pin) in &request.schema_pins {
+                same &= meta(conn, &format!("pin:{table}"))?.as_deref() == Some(pin.as_str());
+            }
+            if !same {
+                return Err(refusal(STALE, "the batch is of another mirror generation"));
             }
             db(conn.execute_batch("BEGIN TRANSACTION"))?;
             let applied = apply_sync(conn, request)

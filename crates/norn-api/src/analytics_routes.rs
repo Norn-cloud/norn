@@ -130,7 +130,18 @@ fn exchange<E: SqlEngine>(
     world: Option<(&str, u64)>,
     last: &EngineCall,
 ) -> Result<EngineAnswer, CellError> {
-    let mut answer = transport.resumed();
+    exchange_from(store, transport, tenant, world, last, transport.resumed())
+}
+
+/// [`exchange`], re-entered with `answer`.
+fn exchange_from<E: SqlEngine>(
+    store: &CellStore<E>,
+    transport: &dyn Transport,
+    tenant: &TenantId,
+    world: Option<(&str, u64)>,
+    last: &EngineCall,
+    mut answer: Option<EngineAnswer>,
+) -> Result<EngineAnswer, CellError> {
     let Some((world, head)) = world else {
         return match answer.filter(|a| a.digest == last.digest) {
             Some(answer) => Ok(answer),
@@ -2082,15 +2093,7 @@ fn page_clause(
     })
 }
 
-/// PRIVACY-1: whether `object_type`'s current stored values may leave as
-/// they are stored: the cell holds no marking label, or it declares no
-/// marking and no live row of the type carries one, so its labels (the
-/// kernel's on its own records, or earlier versions') are elsewhere (#1547).
-/// A loaded dataset with any effective column marking (manifest union current
-/// model) never leaves as raw stored values.
-///
-/// # Errors
-/// A store failure.
+/// PRIVACY-1: whether `object_type`'s current stored values may leave as stored.
 fn stored_values_leave<E: SqlEngine>(
     host: &DevHost<E>,
     reader: &norn_cell::StoreReader<'_, E>,
@@ -2114,17 +2117,7 @@ fn stored_values_leave<E: SqlEngine>(
 /// A cell version: its head and foreign-write revision.
 type CellVersion = (u64, Option<(u64, u64)>);
 
-/// S3 (#1547): `decide`, how `object_type`'s stored values may reach the
-/// engine, and the analytics source an engine call reads, at one cell
-/// version. A commit by any
-/// connection between the decision and the frontier would let a row the
-/// decision never saw into the call, so the two are bracketed by the cell's
-/// version (head and foreign-write revision): a moved version is read again,
-/// up to three times, then refused with the retryable `object.snapshot_moved`.
-/// The engine reads the rows live at that frontier.
-///
-/// # Errors
-/// A moved snapshot, an engine without a revision, or a store failure.
+/// S3 (#1547): bracket `decide` and `analytics_source` at one cell version (retries 3x).
 fn decided_source<E: SqlEngine, T>(
     host: &DevHost<E>,
     store: &CellStore<E>,
@@ -2278,8 +2271,17 @@ pub fn profile_objects<E: SqlEngine>(
         },
     )
     .map_err(engine_failure)?;
-    let answer = exchange(store, transport, &tenant, mirror_world(&source), &call)
-        .map_err(engine_failure)?;
+    // S3: an answer re-entered for another cell version is a moved snapshot.
+    let resumed = transport.resumed();
+    if resumed
+        .as_ref()
+        .is_some_and(|a| a.op == call.op && a.digest != call.digest)
+    {
+        return Err(crate::object_routes::snapshot_moved());
+    }
+    let world = mirror_world(&source);
+    let answer =
+        exchange_from(store, transport, &tenant, world, &call, resumed).map_err(engine_failure)?;
     if answer.status != 200 {
         let err = refused(&answer.body);
         if matches!(err, CellError::ComputeRefused("core.compute.stale_input")) {

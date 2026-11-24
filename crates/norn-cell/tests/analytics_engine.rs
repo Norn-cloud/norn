@@ -547,12 +547,47 @@ fn a_sync_that_skips_commits_is_refused() {
         after: 7,
         through: 9,
         rows: Vec::new(),
+        model_pin: String::new(),
+        schema_pins: std::collections::BTreeMap::new(),
         links: Vec::new(),
     };
     assert_eq!(
         engine.sync(&skipping).expect_err("refused").code,
         "analytics.frontier_moved"
     );
+}
+
+/// D136: a batch carries the mirror generation (model and table schemas) it
+/// was encoded under; once the mirror is reset to another, the batch is
+/// refused before any row is applied or the frontier moves.
+#[test]
+fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let (_dir, engine) = engine();
+    let (mut store, _plan, _context) = by_metal(true, 100);
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
+    let mut mirror = store.analytics_frontier(&tenant(), WORLD)?;
+    engine.frontier(&mirror).map_err(|r| r.detail)?;
+    let batch = store.analytics_delta(&tenant(), WORLD, 0, 3)?.request;
+    let mut other_schema = batch.clone();
+    other_schema
+        .schema_pins
+        .values_mut()
+        .for_each(|pin| pin.push('x'));
+    let refuses = |request: &SyncRequest| {
+        matches!(
+            engine.sync(request),
+            Err(refused) if refused.code == "core.compute.stale_input"
+        )
+    };
+    assert!(refuses(&other_schema));
+    mirror.model_pin = "another model".into();
+    let reset = engine.frontier(&mirror).map_err(|r| r.detail)?;
+    assert!(refuses(&batch));
+    assert_eq!(engine.frontier(&mirror).map_err(|r| r.detail)?, reset);
+    Ok(())
 }
 
 /// A CSV in the tenant's scratch directory, the only place its load reads.
@@ -1041,9 +1076,8 @@ fn bulk_path_measurements() {
     );
     // The governed mirror: 100k versions in batches of 10k.
     let (store, _plan, _context) = by_metal(true, 100);
-    engine
-        .frontier(&store.analytics_frontier(&tenant(), WORLD).expect("tables"))
-        .expect("frontier");
+    let mirror = store.analytics_frontier(&tenant(), WORLD).expect("tables");
+    engine.frontier(&mirror).expect("frontier");
     let table = table_schema(TYPE, plan.properties()).expect("schema");
     let started = Instant::now();
     let mut seq = 0u64;
@@ -1085,6 +1119,12 @@ fn bulk_path_measurements() {
                 after: batch,
                 through: batch + 1,
                 rows,
+                model_pin: mirror.model_pin.clone(),
+                schema_pins: mirror
+                    .tables
+                    .iter()
+                    .map(|t| (t.name.clone(), t.pin.clone()))
+                    .collect(),
                 links: Vec::new(),
             })
             .expect("sync");

@@ -215,6 +215,8 @@ impl<E: SqlEngine> CellStore<E> {
                     after,
                     through,
                     rows: out,
+                    model_pin: model.model_hash().to_owned(),
+                    schema_pins: tables.iter().map(|t| (t.name.clone(), t.pin.clone())).collect(),
                     links,
                 },
                 complete,

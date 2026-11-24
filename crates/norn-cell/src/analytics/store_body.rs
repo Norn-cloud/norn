@@ -1,5 +1,5 @@
 //! A `store` body, current or from a cell replaying a pre-law store: the
-//! body of [`super::AnalyticalEngine::store`], so it is decoded on every target.
+//! body of [`super::AnalyticalEngine::store_dataset`], so it is decoded on every target.
 
 use std::collections::BTreeMap;
 

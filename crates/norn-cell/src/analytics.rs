@@ -246,6 +246,10 @@ pub struct SyncRequest {
     pub through: u64,
     /// Every version committed in `(after, through]`, in commit order.
     pub rows: Vec<MirrorRow>,
+    /// The cell model the rows were encoded under.
+    pub model_pin: String,
+    /// The table schema each mirrored root type's rows were encoded with.
+    pub schema_pins: BTreeMap<String, String>,
     /// Every link edge those commits changed, in commit order, as it stands
     /// after its last change.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -542,7 +546,8 @@ pub struct EvaluateResponse {
     /// object, so no time: skipped and counted.
     #[serde(default)]
     pub unlinked: u64,
-    /// D136: the engine and the snapshot it read.
+    /// D136: the engine and the snapshot it read; the cell accepts only an
+    /// exact read (`Freshness::Exact`) of the snapshot it prepared.
     pub provenance: SnapshotProvenance,
 }
 
@@ -564,7 +569,8 @@ pub struct MembersRequest {
     pub limit: u32,
 }
 
-/// One page of members.
+/// One page of members. It names no snapshot or freshness: paging needs only
+/// `exact_bitemporal`, and no cell reader checks a page against a snapshot yet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MembersResponse {
@@ -874,14 +880,10 @@ pub fn rule_fuel(nodes: u64) -> u64 {
     RULE_FUEL.saturating_add(NODE_FUEL.saturating_mul(nodes))
 }
 
-/// D102 / MANIFEST-LAWS-1 (S1): engine calls one request may make, on every
-/// host: the Durable Object's Worker takes this bound from the cell, and
-/// the native host's landing loop is bounded by it too.
+/// D102 / MANIFEST-LAWS-1 (S1): maximum engine calls one request may make.
 pub const MAX_ENGINE_STEPS: u32 = 64;
-/// MANIFEST-LAWS-1 (S1): residue pages one landing may take. A landing is
-/// one land call, a settle per page, and a store, so its calls fit
-/// [`MAX_ENGINE_STEPS`]; the engine refuses a landing whose residue takes
-/// more ([`RESIDUE_EXCEEDED`]) and drops its staging.
+/// MANIFEST-LAWS-1 (S1): maximum residue pages per landing (land, settles,
+/// store fit [`MAX_ENGINE_STEPS`]; more is [`RESIDUE_EXCEEDED`]).
 pub const MAX_RESIDUE_PAGES: u32 = MAX_ENGINE_STEPS - 2;
 /// Residue rows one page carries at most.
 pub const RESIDUE_PAGE_ROWS: u32 = 2_000;
@@ -1218,7 +1220,7 @@ pub struct ProfileResponse {
     pub quarantined: u64,
     /// Per requested column.
     pub columns: Vec<ColumnProfile>,
-    /// D136: the engine and the snapshot it read.
+    /// D136: the engine and the snapshot it read, accepted only if read exactly.
     pub provenance: SnapshotProvenance,
 }
 

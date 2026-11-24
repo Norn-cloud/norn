@@ -203,8 +203,11 @@ fn frontier(of: &TenantId) -> String {
 }
 
 fn sync(of: &TenantId, after: u64, through: u64) -> String {
-    json!({ "tenant": of, "world": WORLD, "after": after, "through": through, "rows": [] })
-        .to_string()
+    json!({
+        "tenant": of, "world": WORLD, "after": after, "through": through, "rows": [],
+        "modelPin": "m", "schemaPins": {}
+    })
+    .to_string()
 }
 
 fn export(of: &TenantId) -> String {
