@@ -2278,8 +2278,10 @@ fn subtype_noop_documents() -> Vec<Value> {
 }
 
 /// S7/S5b (#1551 round 8): `norn-api` fresh and replayed responses agree on the
-/// exact target version when an ancestor-addressed no-op action reads a
-/// concrete subtype through a declared slice entry.
+/// exact subtype target version when an ancestor-addressed upsert with
+/// unchanged property values reads a concrete subtype through a declared slice
+/// entry (which writes the concrete subtype via `slice_identity` to version 3
+/// while `record.object` carries the ancestor type).
 #[test]
 fn ancestor_addressed_noop_and_replay_report_subtype_target_version() {
     let store = admitted_store(
@@ -2309,7 +2311,9 @@ fn ancestor_addressed_noop_and_replay_report_subtype_target_version() {
     .unwrap();
     assert_eq!(v2.version, 2);
 
-    // Ancestor-addressed no-op with subtype slice read: fresh reports v2.
+    // Ancestor-addressed upsert with subtype slice read and unchanged property
+    // values: `FactChange::Set` writes the concrete subtype to v3 via
+    // `slice_identity`, and fresh must report v3 (not stale or v0).
     let noop_body =
         r#"{"input":{"order_id":"ord-1","title":"ready"},"idempotencyKey":"noop-ancestor-1"}"#;
     let fresh = call(
@@ -2321,10 +2325,11 @@ fn ancestor_addressed_noop_and_replay_report_subtype_target_version() {
     )
     .unwrap();
     assert_eq!(fresh.outcome, ActionCallOutcome::Committed);
-    assert_eq!(fresh.version, 2);
+    assert_eq!(fresh.version, 3);
 
-    // Mutate concrete subtype to v3 AFTER the no-op commit so live version != 2.
-    let v3 = call(
+    // Mutate concrete subtype to v4 AFTER the ancestor-addressed commit so live
+    // version != 3.
+    let v4 = call(
         &host,
         &query,
         Some(OPERATOR),
@@ -2332,9 +2337,9 @@ fn ancestor_addressed_noop_and_replay_report_subtype_target_version() {
         r#"{"input":{"order_id":"ord-1","title":"post-noop"},"idempotencyKey":"seed-3"}"#,
     )
     .unwrap();
-    assert_eq!(v3.version, 3);
+    assert_eq!(v4.version, 4);
 
-    // Replay must still report historical version 2 (not live version 3).
+    // Replay must still report historical version 3 (not live version 4 or v0).
     let replayed = call(
         &host,
         &query,
@@ -2344,5 +2349,5 @@ fn ancestor_addressed_noop_and_replay_report_subtype_target_version() {
     )
     .unwrap();
     assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
-    assert_eq!(replayed.version, 2);
+    assert_eq!(replayed.version, 3);
 }

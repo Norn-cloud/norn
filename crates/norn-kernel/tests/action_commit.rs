@@ -4702,7 +4702,8 @@ fn ancestor_addressed_action_with_subtype_slice_read_commits_and_reports_version
     assert_eq!(cell.load(&concrete).unwrap().version, FactVersion(2));
 
     // Action addressed through ancestor `ORDER` with a declared slice read of
-    // concrete `subtype` and unchanged property values (net no-op on target).
+    // concrete `subtype` and unchanged property values; `upsert_input_object`
+    // emits `FactChange::Set` resolved via `slice_identity` to `subtype` (v2 -> v3).
     let mut noop_payload = bump_payload;
     noop_payload["actionId"] = json!("commerce.noop_ancestor");
     noop_payload["slice"] = json!([{
