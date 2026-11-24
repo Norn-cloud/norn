@@ -534,33 +534,40 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
             BTreeMap::new();
 
         for item in &targets.written {
-            direct_keys.insert(item.key.clone());
-            self.record_subject_law_holds(&ctx, &item.key, Some(&item.values), None);
+            let item_key = resolve_concrete_key(&reader, item.key.clone());
+            direct_keys.insert(item_key.clone());
+            self.record_subject_law_holds(&ctx, &item_key, Some(&item.values), None);
             // A write to an object referenced by a link re-evaluates only laws
             // on the connected neighbor that actually read that specific edge
             // and matching endpoint type.
             if let Ok(edges) =
-                reader.links_touching(MAIN_WORLD, item.key.object_type.as_str(), &item.key.key)
+                reader.links_touching(MAIN_WORLD, item_key.object_type.as_str(), &item_key.key)
             {
-                let item_ty = item.key.object_type.as_str();
+                let item_ty = item_key.object_type.as_str();
                 for edge in edges {
-                    if edge.target == item.key.key && model.is_a(item_ty, &edge.target_type) {
-                        let src = FactKey::new(edge.source_type.clone(), edge.source.clone());
-                        if src != item.key {
+                    if edge.target == item_key.key && model.is_a(item_ty, &edge.target_type) {
+                        let src = resolve_concrete_key(
+                            &reader,
+                            FactKey::new(edge.source_type.clone(), edge.source.clone()),
+                        );
+                        if src != item_key {
                             linked_triggers.entry(src).or_default().insert((
                                 true,
                                 edge.link.clone(),
-                                item.key.object_type.clone(),
+                                item_key.object_type.clone(),
                             ));
                         }
                     }
-                    if edge.source == item.key.key && model.is_a(item_ty, &edge.source_type) {
-                        let dst = FactKey::new(edge.target_type, edge.target);
-                        if dst != item.key {
+                    if edge.source == item_key.key && model.is_a(item_ty, &edge.source_type) {
+                        let dst = resolve_concrete_key(
+                            &reader,
+                            FactKey::new(edge.target_type, edge.target),
+                        );
+                        if dst != item_key {
                             linked_triggers.entry(dst).or_default().insert((
                                 false,
                                 edge.link,
-                                item.key.object_type.clone(),
+                                item_key.object_type.clone(),
                             ));
                         }
                     }
@@ -568,17 +575,21 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
             }
         }
         for lw in &targets.touched_links {
-            if !direct_keys.contains(&lw.source) {
-                linked_triggers
-                    .entry(lw.source.clone())
-                    .or_default()
-                    .insert((true, lw.link.clone(), lw.target.object_type.clone()));
+            let src = resolve_concrete_key(&reader, lw.source.clone());
+            let dst = resolve_concrete_key(&reader, lw.target.clone());
+            if !direct_keys.contains(&src) {
+                linked_triggers.entry(src.clone()).or_default().insert((
+                    true,
+                    lw.link.clone(),
+                    dst.object_type.clone(),
+                ));
             }
-            if !direct_keys.contains(&lw.target) {
-                linked_triggers
-                    .entry(lw.target.clone())
-                    .or_default()
-                    .insert((false, lw.link.clone(), lw.source.object_type.clone()));
+            if !direct_keys.contains(&dst) {
+                linked_triggers.entry(dst).or_default().insert((
+                    false,
+                    lw.link.clone(),
+                    src.object_type,
+                ));
             }
         }
         for (key, triggers) in linked_triggers {
@@ -595,7 +606,8 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
         fallback_values: Option<&BTreeMap<String, RuntimeValue>>,
         touched_link_triggers: Option<&BTreeSet<(bool, String, ObjectTypeName)>>,
     ) {
-        let ty_name = key.object_type.as_str();
+        let concrete_key = resolve_concrete_key(ctx.reader, key.clone());
+        let ty_name = concrete_key.object_type.as_str();
         let Ok(artifacts) = ctx.model.governing_laws(ty_name) else {
             return;
         };
@@ -604,7 +616,7 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
         }
         let Some(effective_values) = ctx
             .reader
-            .object(MAIN_WORLD, ty_name, &key.key)
+            .object(MAIN_WORLD, ty_name, &concrete_key.key)
             .ok()
             .flatten()
             .map(|record| record.values)
@@ -612,6 +624,7 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
         else {
             return;
         };
+        let key = &concrete_key;
         for artifact in &artifacts {
             let Some(law) = decode_law_artifact(artifact) else {
                 continue;
@@ -674,6 +687,19 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
             }
         }
     }
+}
+
+fn resolve_concrete_key<S: SqlEngine>(
+    reader: &crate::read::StoreReader<'_, S>,
+    key: FactKey,
+) -> FactKey {
+    reader
+        .object(MAIN_WORLD, key.object_type.as_str(), &key.key)
+        .ok()
+        .flatten()
+        .map_or(key, |record| {
+            FactKey::new(record.object_type.as_str(), record.id)
+        })
 }
 
 struct SubjectHoldCtx<'a, S: SqlEngine> {

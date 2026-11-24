@@ -1395,8 +1395,44 @@ fn observed_sqlite_cell_credits_invariant_law_alongside_linked_predicate_law() -
     Ok(())
 }
 
+fn link_only_subtype_envelopes() -> Vec<serde_json::Value> {
+    vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "lo.PremiumCharge.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "lo", "name": "PremiumCharge", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "lo.PremiumCharge",
+                    "extends": "lo.Charge",
+                    "properties": [{"id": "tier", "type": {"kind": "text"}}]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "lo.PremiumCharge.subtype_active.law", "version": "1.0.0",
+            "kind": "law", "namespace": "lo", "name": "Subtype active account", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "lawVersion": "0.1",
+                "id": "lo.PremiumCharge.subtype_active",
+                "owner": "lo",
+                "severity": "error",
+                "rationale": "Premium charges linked to an account require it to be active.",
+                "provenance": {"source": "authoring_sdk"},
+                "scope": {"root": {"kind": "entity", "id": "lo.PremiumCharge"}, "objectTypes": ["lo.PremiumCharge"]},
+                "subject": "lo.PremiumCharge",
+                "condition": "self.account != null",
+                "modality": {"kind": "always"},
+                "response": {"kind": "predicate", "expression": "self.account.active == true"}
+            }
+        }),
+    ]
+}
+
 fn link_only_recheck_pack() -> Result<AdmittedPack, String> {
-    let raw = vec![
+    let mut raw = vec![
         json!({
             "irVersion": "0.1", "artifactId": "lo.Account.entity", "version": "1.0.0",
             "kind": "entity", "namespace": "lo", "name": "Account", "lifecycle": "active",
@@ -1478,6 +1514,7 @@ fn link_only_recheck_pack() -> Result<AdmittedPack, String> {
             }
         }),
     ];
+    raw.extend(link_only_subtype_envelopes());
     let envelopes: Vec<ArtifactEnvelope> = raw
         .into_iter()
         .map(|val| serde_json::from_value(val).map_err(|e| format!("{e}")))
@@ -1588,6 +1625,86 @@ fn observed_sqlite_cell_records_hold_on_link_only_commit() -> Result<(), String>
             .get("lo.Charge.active_account"),
         Some(&1),
         "unrelated edge must not increment a law reading only `account`"
+    );
+    Ok(())
+}
+
+#[test]
+fn observed_sqlite_cell_records_subtype_hold_on_ancestor_addressed_link() -> Result<(), String> {
+    let pack = link_only_recheck_pack()?;
+    let model = Model::from_definitions_with_interfaces(
+        &pack.object_types,
+        &pack.property_types,
+        &pack.interfaces,
+    )
+    .map_err(|e| format!("model: {e}"))?
+    .with_governing_laws(&pack.law_envelopes)
+    .map_err(|e| format!("laws: {e}"))?;
+    let recorder = Arc::new(DomainCoverageRecorder::new());
+    let mut cell = FactSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
+        .map_err(|e| format!("open: {e}"))?
+        .into_observed(Arc::clone(&recorder));
+
+    let account_key = FactKey::new("lo.Account", "acct-sub");
+    let prem_key = FactKey::new("lo.PremiumCharge", "prem-1");
+    cell.commit(CellCommit {
+        writes: vec![
+            FactWrite {
+                key: account_key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: runtime_obj(&[
+                        ("account_id", RuntimeValue::String("acct-sub".to_owned())),
+                        ("active", RuntimeValue::Bool(true)),
+                    ]),
+                },
+            },
+            FactWrite {
+                key: prem_key,
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: runtime_obj(&[
+                        ("charge_id", RuntimeValue::String("prem-1".to_owned())),
+                        ("total", dec("25.00")?),
+                        ("tier", RuntimeValue::String("gold".to_owned())),
+                    ]),
+                },
+            },
+        ],
+        ..CellCommit::empty()
+    })
+    .map_err(|e| format!("seed subtype commit: {e}"))?;
+    assert_eq!(
+        recorder
+            .snapshot()
+            .law_holds
+            .get("lo.PremiumCharge.subtype_active"),
+        None
+    );
+
+    // Address the subtype via its parent type (`lo.Charge`) on the link write.
+    let ancestor_key = FactKey::new("lo.Charge", "prem-1");
+    cell.commit(CellCommit {
+        links: vec![LinkWrite {
+            key: LinkKey::new(ancestor_key, "account", account_key),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .map_err(|e| format!("ancestor-addressed link commit: {e}"))?;
+    let snap = recorder.snapshot();
+    assert_eq!(
+        snap.law_holds.get("lo.PremiumCharge.subtype_active"),
+        Some(&1),
+        "ancestor-addressed link commit must resolve concrete subtype and credit subtype law hold"
+    );
+    assert_eq!(
+        snap.law_holds.get("lo.Charge.active_account"),
+        Some(&1),
+        "inherited parent linked law must also be credited on the subtype"
     );
     Ok(())
 }
