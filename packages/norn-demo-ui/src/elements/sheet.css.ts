@@ -18,11 +18,12 @@ export const SHEET_CSS = `
 .norn-chip[data-tone="agent"] { --norn-tone: var(--tint-agent, #6b46c1); margin-inline-start: .375rem; }
 .norn-fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: .5rem; }
 .norn-fieldset ui-radio-group { display: grid; gap: .5rem; }
-.norn-option { display: grid; grid-template-columns: auto 1fr; gap: .625rem; align-items: start; cursor: pointer; border-radius: var(--radius-node, .75rem);
+.norn-option { display: grid; gap: .625rem; border-radius: var(--radius-node, .75rem);
   border: 1px solid var(--node-border, var(--border, #e5e5e5)); background: var(--card, #fff); padding: .75rem;
   box-shadow: var(--node-highlight, 0 0 0 0 transparent), var(--elevation-node, 0 1px 2px rgb(0 0 0 / .06)); transition: border-color .15s, box-shadow .15s; }
+.norn-option-row { display: grid; grid-template-columns: auto 1fr; gap: .625rem; align-items: start; cursor: pointer; }
 .norn-option:has([data-checked]) { border-color: var(--primary, #2563eb); box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary, #2563eb) 25%, transparent); }
-.norn-option:hover { background: color-mix(in oklab, var(--muted, #f4f4f5) 40%, var(--card, #fff)); }
+.norn-option:hover:not([data-refused]) { background: color-mix(in oklab, var(--muted, #f4f4f5) 40%, var(--card, #fff)); }
 .norn-option ui-radio { margin-top: .1875rem; display: inline-grid; place-items: center; width: 1rem; height: 1rem; border-radius: 999px;
   border: 1px solid var(--border, #d4d4d8); background: var(--background, #fff); }
 .norn-option ui-radio:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: 2px; }
@@ -36,8 +37,26 @@ export const SHEET_CSS = `
 .norn-status, .norn-confirm, .norn-outcome { border-radius: .5rem; padding: .5rem .75rem; font-size: .875rem; }
 .norn-confirm[data-tone="neutral"] { border: 1px solid var(--node-border, var(--border, #e5e5e5)); background: color-mix(in oklab, var(--muted, #f4f4f5) 60%, transparent); color: inherit; }
 .norn-confirm[data-tone="neutral"] .norn-confirm-title { color: var(--foreground, #111); }
-.norn-option[data-refused] { opacity: .75; cursor: not-allowed; border-style: dashed; }
+.norn-option[data-refused] { border-style: dashed; }
+.norn-option[data-refused] .norn-option-row { opacity: .72; cursor: not-allowed; }
 .norn-option[data-refused] .norn-option-label { text-decoration: line-through; text-decoration-color: color-mix(in oklab, var(--foreground, #111) 40%, transparent); }
+.norn-refusal-slot { display: block; }
+.norn-refusal-card { border-radius: .625rem; border: 1px solid var(--node-border, var(--border, #e5e5e5)); background: var(--background, #fff); color: var(--foreground, #111); overflow: hidden; font-size: .8125rem; }
+.norn-refusal-header { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem .75rem; border-bottom: 1px solid color-mix(in oklab, var(--border, #e5e5e5) 70%, transparent); }
+.norn-refusal-head { font-weight: 500; }
+.norn-refusal-steps { list-style: none; margin: 0; padding: .625rem .75rem; display: grid; gap: .75rem; }
+.norn-refusal-step section { display: grid; gap: .375rem; }
+.norn-refusal-step h4 { margin: 0; font-size: .75rem; font-weight: 500; color: var(--muted-foreground, #666); }
+.norn-refusal-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .25rem .875rem; margin: 0; }
+.norn-refusal-dl dt { color: var(--muted-foreground, #666); }
+.norn-refusal-dl dd { margin: 0; min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
+.norn-refusal-check-lead { margin: 0; display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: .5rem; font-weight: 500; }
+.norn-refusal-check-msg { margin: 0; font-weight: 500; }
+.norn-checked-list { display: flex; flex-wrap: wrap; gap: .375rem; }
+.norn-checked-chip { display: inline-flex; align-items: center; gap: .375rem; padding: .125rem .5rem; border-radius: .375rem; background: var(--muted, #f4f4f5); font-size: .75rem; }
+.norn-checked-key { color: var(--muted-foreground, #666); }
+.norn-checked-val { font-family: var(--font-mono, ui-monospace, monospace); font-weight: 500; }
+.norn-refusal-tech { display: grid; gap: .125rem; padding-top: .375rem; border-top: 1px solid color-mix(in oklab, var(--border, #e5e5e5) 70%, transparent); font-family: var(--font-mono, ui-monospace, monospace); font-size: .75rem; color: var(--muted-foreground, #666); overflow-wrap: anywhere; }
 .norn-hash { display: flex; align-items: center; gap: .5rem; }
 .norn-hash .norn-button { height: 1.75rem; padding: 0 .5rem; font-size: .8125rem; }
 .norn-value { white-space: normal; }

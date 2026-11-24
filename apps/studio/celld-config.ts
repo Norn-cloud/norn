@@ -1,7 +1,7 @@
 import { closeSync, fchmodSync, openSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { clientIpHeader, type ClientIpHeader } from "./worker/client-ip.ts"
-import { otelSettings, type OtelSettings } from "./deploy-target.ts"
+import { otelSettings, STUDIO_WORKER_COMPATIBILITY_FLAGS, type OtelSettings } from "./deploy-target.ts"
 import { polarConfig, type PolarConfig } from "./worker/polar-config.ts"
 
 // The self-hosted Studio: the same Worker, assets and bindings that alchemy.run.ts
@@ -115,7 +115,7 @@ export function celldConfig(studio: CelldStudio): Record<string, unknown> {
     name: `norn-studio-${studio.stage}`,
     main: "worker/index.ts",
     compatibility_date: "2026-11-01",
-    compatibility_flags: ["nodejs_compat"],
+    compatibility_flags: [...STUDIO_WORKER_COMPATIBILITY_FLAGS],
     // The MCP endpoint and OAuth discovery are answered by the Worker, not the single-page app.
     assets: { directory: "dist", binding: "ASSETS", not_found_handling: "single-page-application", run_worker_first: studio.mcp === true ? ["/api/*", "/mcp", "/.well-known/*"] : ["/api/*"] },
     d1_databases: [{ binding: "AUTH_DB", database_name: `norn-studio-auth-${studio.stage}`, migrations_dir: "worker/migrations" }],

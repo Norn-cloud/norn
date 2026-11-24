@@ -1,3 +1,4 @@
+import { CellUnavailable } from "./definitions.ts"
 import { inAnalyticsLane, untilNotPending } from "./evaluate.ts"
 import { cellRead } from "./live-transport.ts"
 import type { Read } from "./exact.ts"
@@ -41,8 +42,8 @@ export class ProfileTimedOut extends Error {
 /** A profile is computed by the analytics engine: it waits its turn, a "pending" refusal is asked again, and each ask has a budget. */
 export const readProfile = (objectType: string, budgetMs: number = PROFILE_BUDGET_MS): Promise<Read<ObjectProfile>> =>
   inAnalyticsLane(async () => {
-    const ask = () => cellRead<ObjectProfile>(`/v1/objects/${encodeURIComponent(objectType)}:profile`, "Profiles are", { signal: AbortSignal.timeout(budgetMs) }).then((read) => ({ read }), (error: unknown) => ({
-      error: error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError") ? new ProfileTimedOut() : error,
+    const ask = () => cellRead<ObjectProfile>(`/v1/objects/${encodeURIComponent(objectType)}:profile`, "Profiles are", { signal: AbortSignal.timeout(budgetMs), timeoutMs: budgetMs }).then((read) => ({ read }), (error: unknown) => ({
+      error: (error instanceof CellUnavailable && error.timedOut === true) || (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) ? new ProfileTimedOut() : error,
     }))
     const result = await untilNotPending(ask, (outcome) => "error" in outcome && outcome.error instanceof Error && /analytics engine call is pending/i.test(outcome.error.message))
     if ("error" in result) throw result.error

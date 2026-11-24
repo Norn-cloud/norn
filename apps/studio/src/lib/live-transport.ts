@@ -5,7 +5,7 @@
  */
 import { queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { CellUnavailable, StudioScopeError, readStudioScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, isReadMethod, parseUnavailableDetail, readStudioScope, recordCellReachable, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
@@ -103,27 +103,42 @@ export async function readMode(
   const scope = knownScope === undefined ? await discoverScope(fetcher, signal) : knownScope
   signal?.throwIfAborted()
   if (scope === null) return { kind: "recorded" }
-  const response = await scopedHostFetch(fetcher, "/api/host", async () => scope)(
-    "/v1/definitions",
-    { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) },
-  )
-  signal?.throwIfAborted()
-  if (response.status === 404) return { kind: "recorded" }
-  if (!response.ok) {
-    const error: unknown = await response.json().catch(() => null)
+  let response: Response
+  let text: string
+  try {
+    response = await scopedHostFetch(fetcher, "/api/host", async () => scope)(
+      "/v1/definitions",
+      { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) },
+    )
     signal?.throwIfAborted()
-    if (error !== null && typeof error === "object") {
-      if (response.status === 503 && "error" in error && error.error === NO_HOST) return { kind: "recorded" }
-      if ("message" in error && typeof error.message === "string") throw new CellUnavailable(response.status, error.message)
-    }
-    throw new CellUnavailable(response.status)
+    text = await response.text()
+    signal?.throwIfAborted()
+  } catch (error) {
+    signal?.throwIfAborted()
+    if (error instanceof Error && error.name === "AbortError") throw error
+    if (error instanceof CellUnavailable || error instanceof StudioScopeError) throw error
+    throw new CellUnavailable(0, undefined, { retryable: true })
   }
-  const text = await response.text()
-  signal?.throwIfAborted()
-  let parsed: unknown
-  try { parsed = JSON.parse(text) } catch { return { kind: "recorded" } }
+  // Only 404 or this deployment's own "no host connected" 503 means there is no cell; any other
+  // non-OK answer (including HTML 502/503/504 gateway errors or cell refusals) is raised so Studio
+  // retries transient outages or shows the refusal rather than swapping a live cell for the recording.
+  if (response.status === 404) return { kind: "recorded" }
+  let parsed: unknown = null
+  let isJson = false
+  try { parsed = JSON.parse(text); isJson = true } catch { /* non-JSON body */ }
+  if (response.status === 503 && isJson && (parsed as { error?: unknown } | null)?.error === NO_HOST) {
+    return { kind: "recorded" }
+  }
+  if (!response.ok) {
+    const raw = isJson ? (parsed as { message?: unknown } | null) : null
+    const message = typeof raw?.message === "string" && raw.message !== "" ? raw.message : undefined
+    throw new CellUnavailable(response.status, message, isJson ? parseUnavailableDetail(parsed) : {})
+  }
+  // A 200 HTML page (static SPA fallback with no Worker) means no live cell is connected.
+  if (!isJson) return { kind: "recorded" }
   const artifacts = (parsed as { artifacts?: unknown } | null)?.artifacts
   if (!Array.isArray(artifacts)) throw new CellUnavailable(response.status, "The cell's definitions read carried no artifacts.")
+  recordCellReachable(scope)
   const read = readDocument<{ readonly artifacts: readonly Artifact[] }>(text, "live")
   return {
     kind: "live",
@@ -143,9 +158,10 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
     const text = await response.text()
     if (response.status === 404) return null
     if (!response.ok) {
-      let message: string | undefined
-      try { message = (JSON.parse(text) as { message?: string }).message } catch { /* not a refusal document */ }
-      throw new CellUnavailable(response.status, message)
+      let parsed: unknown = null
+      try { parsed = JSON.parse(text) } catch { /* not a refusal document */ }
+      const message = typeof (parsed as { message?: unknown } | null)?.message === "string" ? (parsed as { message: string }).message : undefined
+      throw new CellUnavailable(response.status, message, parseUnavailableDetail(parsed))
     }
     return readDocument<T>(text, "live")
   }
@@ -269,29 +285,70 @@ export function currentMode(
   return observeModeProbe(probe, signal)
 }
 
-/** A refusal the cell sent for a read: its code and message, shown as they are. */
+/** A refusal the cell sent for a read: its code, message, and structured detail, shown honestly. */
 export class CellRefusal extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) { super(message) }
+  readonly explanation: string | undefined
+  readonly retryable: boolean | undefined
+  readonly incidentId: string | undefined
+  readonly category: string | undefined
+  readonly decidedAt: string | undefined
+
+  constructor(readonly status: number, readonly code: string, message: string, detail: UnavailableDetail = {}) {
+    super(message)
+    this.explanation = detail.explanation
+    this.retryable = detail.retryable
+    this.incidentId = detail.incidentId
+    this.category = detail.category
+    this.decidedAt = detail.decidedAt
+  }
 }
 
 /**
- * One scoped read of a cell route, with every number's exact text. A route this cell does not
- * serve (a 404 `route.not_found`, or a 503) is {@link NotServed} under `what`; any other refusal
- * is the cell's {@link CellRefusal}.
+ * One scoped call to a cell route, with every number's exact text. A cell-level 503 on a read
+ * preserves its refusal details as {@link CellUnavailable}. Writes retain their existing 503
+ * handling as {@link NotServed}, including the dataset fallback to governed records.
  */
 export async function cellRead<T>(
-  path: string, what: string, init: RequestInit = {}, fetcher: Fetch = browserFetch, scope?: StudioScope,
+  path: string, what: string, init: ScopedRequestInit = {}, fetcher: Fetch = browserFetch, scope?: StudioScope,
 ): Promise<Read<T>> {
   const call = scopedHostFetch(fetcher, "/api/host", async () => scope ?? readStudioScope(fetcher))
   const response = await call(path, { ...init, headers: { accept: "application/json", ...init.body === undefined ? {} : { "content-type": "application/json" }, ...init.headers } })
   const text = await response.text()
   if (response.ok) return readDocument<T>(text, "live")
-  let refusal: { code?: unknown; message?: unknown } | null = null
-  try { refusal = JSON.parse(text) as { code?: unknown; message?: unknown } } catch { /* not a refusal document */ }
-  if (response.status === 503 || (response.status === 404 && (refusal?.code === "route.not_found" || refusal?.code === undefined))) throw new NotServed(what)
-  if (typeof refusal?.code === "string") throw new CellRefusal(response.status, refusal.code, typeof refusal.message === "string" ? refusal.message : refusal.code)
-  throw new CellUnavailable(response.status)
+  let refusal: { code?: unknown; message?: unknown; error?: unknown } | null = null
+  try { refusal = JSON.parse(text) as { code?: unknown; message?: unknown; error?: unknown } } catch { /* not a refusal document */ }
+  const read = isReadMethod(init.method)
+  if (response.status === 404 && (refusal?.code === "route.not_found" || refusal?.code === undefined)) throw new NotServed(what)
+  if (response.status === 503 && (!read || refusal?.error === NO_HOST)) throw new NotServed(what)
+  const detail = read ? parseUnavailableDetail(refusal) : undefined
+  if (response.status === 503) {
+    const message = typeof refusal?.message === "string" && refusal.message !== "" ? refusal.message : undefined
+    throw new CellUnavailable(response.status, message, detail)
+  }
+  if (typeof refusal?.code === "string") {
+    throw new CellRefusal(response.status, refusal.code, typeof refusal.message === "string" ? refusal.message : refusal.code, detail)
+  }
+  throw new CellUnavailable(response.status, read && typeof refusal?.message === "string" ? refusal.message : undefined, detail)
 }
+
+/**
+ * Whether a mode-read error is transient and worth a brief automatic retry. A refusal with
+ * `retryable: false` (such as `503 cell.unopenable`) and non-transient 4xx answers are never
+ * retried automatically, so Studio settles immediately into an honest unavailable state.
+ */
+export function isRetryableModeError(error: unknown): boolean {
+  if (!(error instanceof CellUnavailable)) return false
+  if (error.retryable === false) return false
+  if (error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) return false
+  return true
+}
+
+/**
+ * Brief, bounded automatic retries for transient outages (~5.6 s total) before settling into a
+ * persistent Workspace unavailable state. Non-retryable refusals (`retryable: false`) settle
+ * immediately without ever rendering "Retrying…".
+ */
+export const MODE_AUTO_RETRIES = 3
 
 const lastObservedScope = new WeakMap<QueryClient, string>()
 
@@ -374,22 +431,44 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
       return recovered
     },
     retry: (failureCount, error) =>
-      failureCount < 6
-      && !(error instanceof ScopeSupersededError)
-      && !(error instanceof CellUnavailable && error.status >= 400 && error.status < 500),
-    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+      !(error instanceof ScopeSupersededError)
+      && isRetryableModeError(error)
+      && failureCount < MODE_AUTO_RETRIES,
+    retryDelay: (attempt) => Math.min(800 * 2 ** attempt, 3200),
     staleTime: Infinity,
   })
 }
 
-/** Stop in-flight probes, including reads the transport started directly. */
+/** Stop in-flight scope and mode probes (including reads the transport started directly) and start fresh replacements. */
 export async function retryMode(client: QueryClient): Promise<void> {
-  const filter = { queryKey: ["studio-mode"], type: "active" } as const
-  const cancellation = client.cancelQueries(filter)
+  const scopeFilter = { queryKey: ["studio-scope"], type: "active" } as const
+  const modeFilter = { queryKey: ["studio-mode"], type: "active" } as const
+  const scopeState = client.getQueryState(["studio-scope"])
+  const retryScope =
+    scopeState !== undefined
+    && (scopeState.fetchStatus === "fetching" || scopeState.status === "error" || scopeState.status === "pending")
+  const cancellations = [
+    client.cancelQueries(modeFilter),
+    ...(retryScope ? [client.cancelQueries(scopeFilter)] : []),
+  ]
   for (const controller of pendingModeControllers) controller.abort()
   refreshMode()
-  await cancellation
-  await client.refetchQueries(filter, { cancelRefetch: false })
+  await Promise.all(cancellations)
+  if (retryScope) {
+    await client.refetchQueries(scopeFilter, { cancelRefetch: false })
+    const nextScope = client.getQueryState<StudioScope | null>(["studio-scope"])
+    const nextModeKey =
+      nextScope?.status === "success"
+        ? studioScopeKey(nextScope.data)
+        : nextScope?.status === "error"
+          ? "outage"
+          : null
+    if (nextModeKey !== null) {
+      await client.refetchQueries({ queryKey: ["studio-mode", nextModeKey], exact: true, type: "active" }, { cancelRefetch: false })
+    }
+    return
+  }
+  await client.refetchQueries(modeFilter, { cancelRefetch: false })
 }
 
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type or scope changes). */
