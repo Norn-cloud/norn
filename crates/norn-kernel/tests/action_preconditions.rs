@@ -898,153 +898,204 @@ fn create_link_consumes_only_fields_without_a_declared_scalar_property() {
     }
 }
 
-#[test]
-fn time_window_materialize_interval_refuses_weekday_mismatch_without_writes_or_links() {
-    let decode_object = |raw: &str| -> ObjectTypeDef {
-        let env: serde_json::Value = serde_json::from_str(raw).expect("entity json");
-        serde_json::from_value(env["payload"]["objectType"].clone()).expect("objectType")
-    };
-    let decode_property_types = |raw: &str| -> Vec<norn_ir::PropertyTypeDef> {
-        let env: serde_json::Value = serde_json::from_str(raw).expect("propertyTypes json");
-        serde_json::from_value(env["payload"]["propertyTypes"].clone()).expect("propertyTypes")
-    };
-    let object_types = vec![
-        decode_object(include_str!(
-            "../../../registry/packs/time/artifacts/time.Calendar.entity.json"
-        )),
-        decode_object(include_str!(
-            "../../../registry/packs/time/artifacts/time.WorkingWindow.entity.json"
-        )),
-        decode_object(include_str!(
-            "../../../registry/packs/time/artifacts/time.MaterializedWindow.entity.json"
-        )),
-    ];
-    let time_interval_env: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../registry/core/artifacts/core.TimeInterval.interface.json"
-    ))
-    .expect("TimeInterval json");
-    let interfaces = vec![
-        serde_json::from_value::<norn_ir::InterfaceDef>(
-            time_interval_env["payload"]["interface"].clone(),
-        )
-        .expect("TimeInterval"),
-    ];
-    let mut property_types = decode_property_types(include_str!(
-        "../../../registry/core/artifacts/core.time.json"
-    ));
-    property_types.extend(decode_property_types(include_str!(
-        "../../../registry/core/artifacts/core.value_types.entity.json"
-    )));
-    let laws = vec![
-        serde_json::from_str::<norn_ir::ArtifactEnvelope>(include_str!(
-            "../../../registry/packs/time/artifacts/time.MaterializedWindow.resolved_matches_bounds.law.json"
+struct TimeMaterializeFixture {
+    object_types: Vec<ObjectTypeDef>,
+    interfaces: Vec<norn_ir::InterfaceDef>,
+    property_types: Vec<norn_ir::PropertyTypeDef>,
+    laws: Vec<norn_ir::ArtifactEnvelope>,
+    action: ActionRoot,
+}
+
+impl TimeMaterializeFixture {
+    fn load() -> Self {
+        let decode_object = |raw: &str| -> ObjectTypeDef {
+            let env: serde_json::Value = serde_json::from_str(raw).expect("entity json");
+            serde_json::from_value(env["payload"]["objectType"].clone()).expect("objectType")
+        };
+        let decode_property_types = |raw: &str| -> Vec<norn_ir::PropertyTypeDef> {
+            let env: serde_json::Value = serde_json::from_str(raw).expect("propertyTypes json");
+            serde_json::from_value(env["payload"]["propertyTypes"].clone()).expect("propertyTypes")
+        };
+        let decode_law = |raw: &str| -> norn_ir::ArtifactEnvelope {
+            serde_json::from_str(raw).expect("law envelope")
+        };
+        let object_types = vec![
+            decode_object(include_str!(
+                "../../../registry/packs/time/artifacts/time.Calendar.entity.json"
+            )),
+            decode_object(include_str!(
+                "../../../registry/packs/time/artifacts/time.WorkingWindow.entity.json"
+            )),
+            decode_object(include_str!(
+                "../../../registry/packs/time/artifacts/time.MaterializedWindow.entity.json"
+            )),
+        ];
+        let time_interval_env: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../registry/core/artifacts/core.TimeInterval.interface.json"
         ))
-        .expect("resolved_matches_bounds law"),
-    ];
-    let action_env: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../registry/packs/time/artifacts/time.window.materialize_interval.action.json"
-    ))
-    .expect("materialize_interval json");
-    let materialize_action: ActionRoot =
-        serde_json::from_value(action_env["payload"].clone()).expect("ActionRoot");
+        .expect("TimeInterval json");
+        let interfaces = vec![
+            serde_json::from_value(time_interval_env["payload"]["interface"].clone())
+                .expect("TimeInterval"),
+        ];
+        let mut property_types = decode_property_types(include_str!(
+            "../../../registry/core/artifacts/core.time.json"
+        ));
+        property_types.extend(decode_property_types(include_str!(
+            "../../../registry/core/artifacts/core.value_types.entity.json"
+        )));
+        let laws = vec![
+            decode_law(include_str!(
+                "../../../registry/packs/time/artifacts/time.Calendar.tzdb_version_pinned.law.json"
+            )),
+            decode_law(include_str!(
+                "../../../registry/packs/time/artifacts/time.WorkingWindow.valid_local_window.law.json"
+            )),
+            decode_law(include_str!(
+                "../../../registry/packs/time/artifacts/time.MaterializedWindow.resolved_matches_bounds.law.json"
+            )),
+        ];
+        let action_env: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../registry/packs/time/artifacts/time.window.materialize_interval.action.json"
+        ))
+        .expect("materialize_interval json");
+        let action = serde_json::from_value(action_env["payload"].clone()).expect("ActionRoot");
+        Self {
+            object_types,
+            interfaces,
+            property_types,
+            laws,
+            action,
+        }
+    }
 
-    let catalog = TypeCatalog::new(&object_types)
-        .with_interfaces(&interfaces)
-        .with_property_types(&property_types)
-        .with_governing_laws(&laws);
+    fn catalog(&self) -> TypeCatalog<'_> {
+        TypeCatalog::new(&self.object_types)
+            .with_interfaces(&self.interfaces)
+            .with_property_types(&self.property_types)
+            .with_governing_laws(&self.laws)
+    }
 
-    let mut host = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-        .with_types(object_types.clone());
-    let mut seed = CellCommit::empty();
-    seed.writes.push(FactWrite {
-        key: FactKey::new("time.Calendar", "cal-ny"),
-        expected: FactVersion::ABSENT,
-        mutation: FactMutation::Put {
-            values: object(json!({
-                "id": "cal-ny",
-                "code": "US-NY",
-                "label": "New York",
-                "iana_timezone": "America/New_York",
+    fn seeded_host(&self) -> Cell {
+        let mut host = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+            .with_types(self.object_types.clone())
+            .with_interfaces(self.interfaces.clone())
+            .with_property_types(self.property_types.clone())
+            .with_governing_laws(self.laws.clone());
+        let mut seed = CellCommit::empty();
+        seed.writes.push(FactWrite {
+            key: FactKey::new("time.Calendar", "cal-ny"),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: object(json!({
+                    "id": "cal-ny",
+                    "code": "US-NY",
+                    "label": "New York",
+                    "iana_timezone": "America/New_York",
+                    "dst_policy": "reject",
+                    "tzdb_version": "2025b",
+                    "workweek_start": "monday"
+                })),
+            },
+        });
+        seed.writes.push(FactWrite {
+            key: FactKey::new("time.WorkingWindow", "ww-mon"),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: object(json!({
+                    "id": "ww-mon",
+                    "weekday": "monday",
+                    "start_local": "09:00",
+                    "end_local": "17:00"
+                })),
+            },
+        });
+        seed.links.push(norn_kernel::LinkWrite {
+            key: LinkKey::new(
+                FactKey::new("time.WorkingWindow", "ww-mon"),
+                "calendar",
+                FactKey::new("time.Calendar", "cal-ny"),
+            ),
+            expected: FactVersion::ABSENT,
+            mutation: norn_kernel::LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        });
+        host.commit(seed).expect("seed calendar and monday window");
+        host
+    }
+
+    fn edt_workday_call(&self, id: &str, calendar_date: &str) -> ActionCall<'_> {
+        ActionCall {
+            action: &self.action,
+            action_artifact_id: "time.window.materialize_interval.action",
+            action_version: "0.1.0",
+            scope: BTreeMap::from([
+                ("orgId".to_owned(), "org_demo".to_owned()),
+                ("environmentId".to_owned(), "dev".to_owned()),
+            ]),
+            actor: "time:scheduler".to_owned(),
+            input: object(json!({
+                "id": id,
+                "calendar_id": "cal-ny",
+                "working_window_id": "ww-mon",
+                "calendar_date": calendar_date,
+                "start_local_at": format!("{calendar_date}T09:00:00"),
+                "end_local_at": format!("{calendar_date}T17:00:00"),
+                "starts_at": format!("{calendar_date}T13:00:00Z"),
+                "ends_at": format!("{calendar_date}T21:00:00Z"),
+                "timezone": "America/New_York",
                 "dst_policy": "reject",
-                "tzdb_version": "2025b",
-                "workweek_start": "monday"
+                "tzdb_version": "2025b"
             })),
-        },
-    });
-    seed.writes.push(FactWrite {
-        key: FactKey::new("time.WorkingWindow", "ww-mon"),
-        expected: FactVersion::ABSENT,
-        mutation: FactMutation::Put {
-            values: object(json!({
-                "id": "ww-mon",
-                "weekday": "monday",
-                "start_local": "09:00",
-                "end_local": "17:00"
-            })),
-        },
-    });
-    seed.links.push(norn_kernel::LinkWrite {
-        key: LinkKey::new(
-            FactKey::new("time.WorkingWindow", "ww-mon"),
+            idempotency_key: format!("materialize-{id}"),
+            object_type: None,
+            turn: DecisionTurn {
+                id: format!("turn-{id}"),
+                now: LogicalTime::from_millis(2000),
+                world: World::Main,
+                consumes: None,
+            },
+            trace: None,
+        }
+    }
+}
+
+fn assert_window_links_exist(host: &Cell, window_id: &str, expected: bool) {
+    let key = FactKey::new("time.MaterializedWindow", window_id);
+    assert_eq!(host.load(&key).expect("window target").exists(), expected);
+    assert_eq!(
+        host.load_link(&LinkKey::new(
+            key.clone(),
             "calendar",
             FactKey::new("time.Calendar", "cal-ny"),
-        ),
-        expected: FactVersion::ABSENT,
-        mutation: norn_kernel::LinkMutation::Add {
-            values: JsonObject::new(),
-        },
-    });
-    host.commit(seed).expect("seed calendar and monday window");
+        ))
+        .expect("calendar link")
+        .exists(),
+        expected
+    );
+    assert_eq!(
+        host.load_link(&LinkKey::new(
+            key,
+            "working_window",
+            FactKey::new("time.WorkingWindow", "ww-mon"),
+        ))
+        .expect("working_window link")
+        .exists(),
+        expected
+    );
+}
 
-    let make_call = |id: &str,
-                     calendar_date: &str,
-                     start_local_at: &str,
-                     end_local_at: &str,
-                     starts_at: &str,
-                     ends_at: &str| ActionCall {
-        action: &materialize_action,
-        action_artifact_id: "time.window.materialize_interval.action",
-        action_version: "0.1.0",
-        scope: BTreeMap::from([
-            ("orgId".to_owned(), "org_demo".to_owned()),
-            ("environmentId".to_owned(), "dev".to_owned()),
-        ]),
-        actor: "time:scheduler".to_owned(),
-        input: object(json!({
-            "id": id,
-            "calendar_id": "cal-ny",
-            "working_window_id": "ww-mon",
-            "calendar_date": calendar_date,
-            "start_local_at": start_local_at,
-            "end_local_at": end_local_at,
-            "starts_at": starts_at,
-            "ends_at": ends_at,
-            "timezone": "America/New_York",
-            "dst_policy": "reject",
-            "tzdb_version": "2025b"
-        })),
-        idempotency_key: format!("materialize-{id}"),
-        object_type: None,
-        turn: DecisionTurn {
-            id: format!("turn-{id}"),
-            now: LogicalTime::from_millis(2000),
-            world: World::Main,
-            consumes: None,
-        },
-        trace: None,
-    };
+#[test]
+fn time_window_materialize_interval_refuses_weekday_mismatch_without_writes_or_links() {
+    let fixture = TimeMaterializeFixture::load();
+    let catalog = fixture.catalog();
+    let mut host = fixture.seeded_host();
 
     // Attempting to materialize a Monday WorkingWindow for Tuesday 2026-06-16 must refuse
     // and leave zero MaterializedWindow facts or outgoing links committed.
     let before = host.ledger().len();
-    let tuesday_call = make_call(
-        "mw-tue",
-        "2026-06-16",
-        "2026-06-16T09:00:00",
-        "2026-06-16T17:00:00",
-        "2026-06-16T13:00:00Z",
-        "2026-06-16T21:00:00Z",
-    );
+    let tuesday_call = fixture.edt_workday_call("mw-tue", "2026-06-16");
     let refusal = commit_action(&mut host, &catalog, &tuesday_call, &Allow)
         .expect_err("tuesday date must fail monday working window weekday precondition");
     assert_eq!(refusal.code(), "action.precondition_failed");
@@ -1053,63 +1104,12 @@ fn time_window_materialize_interval_refuses_weekday_mismatch_without_writes_or_l
         "expected weekday precondition refusal, got: {refusal}"
     );
     assert_eq!(host.ledger().len(), before);
-    let refused_key = FactKey::new("time.MaterializedWindow", "mw-tue");
-    assert!(!host.load(&refused_key).expect("refused target").exists());
-    assert!(
-        !host
-            .load_link(&LinkKey::new(
-                refused_key.clone(),
-                "calendar",
-                FactKey::new("time.Calendar", "cal-ny"),
-            ))
-            .expect("refused calendar link")
-            .exists()
-    );
-    assert!(
-        !host
-            .load_link(&LinkKey::new(
-                refused_key,
-                "working_window",
-                FactKey::new("time.WorkingWindow", "ww-mon"),
-            ))
-            .expect("refused working_window link")
-            .exists()
-    );
+    assert_window_links_exist(&host, "mw-tue", false);
 
     // Materializing the same Monday WorkingWindow for Monday 2026-06-15 commits cleanly with both links.
-    let monday_call = make_call(
-        "mw-mon",
-        "2026-06-15",
-        "2026-06-15T09:00:00",
-        "2026-06-15T17:00:00",
-        "2026-06-15T13:00:00Z",
-        "2026-06-15T21:00:00Z",
-    );
+    let monday_call = fixture.edt_workday_call("mw-mon", "2026-06-15");
     let committed = commit_action(&mut host, &catalog, &monday_call, &Allow)
         .expect("monday date must commit cleanly");
     assert!(matches!(committed, ActionOutcome::Committed { .. }));
-    let committed_key = FactKey::new("time.MaterializedWindow", "mw-mon");
-    assert!(
-        host.load(&committed_key)
-            .expect("committed target")
-            .exists()
-    );
-    assert!(
-        host.load_link(&LinkKey::new(
-            committed_key.clone(),
-            "calendar",
-            FactKey::new("time.Calendar", "cal-ny"),
-        ))
-        .expect("committed calendar link")
-        .exists()
-    );
-    assert!(
-        host.load_link(&LinkKey::new(
-            committed_key,
-            "working_window",
-            FactKey::new("time.WorkingWindow", "ww-mon"),
-        ))
-        .expect("committed working_window link")
-        .exists()
-    );
+    assert_window_links_exist(&host, "mw-mon", true);
 }
