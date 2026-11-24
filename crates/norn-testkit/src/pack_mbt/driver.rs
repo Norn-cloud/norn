@@ -36,8 +36,8 @@ use norn_kernel::{
 use super::cedar::run_cedar_and_sod_phase;
 use super::coverage::{DomainCoverage, DomainCoveragePlan, DomainCoverageReport, DomainTransition};
 use super::synth::{
-    pick_non_lifecycle_mutation, synthesize_guard_satisfying, synthesize_guard_violating,
-    synthesize_object,
+    collect_required_link_graph, pick_non_lifecycle_mutation, synthesize_guard_satisfying,
+    synthesize_guard_violating, synthesize_object,
 };
 use super::{AdmittedPack, EvidenceLevel, LawExampleCase, PackHost, action_call_object_type};
 
@@ -294,15 +294,7 @@ where
                 *seq,
             );
             init_vals.insert(prop.to_owned(), JsonValue::String(init_state.clone()));
-            seed_and_walk(
-                &mut host,
-                ctx.catalog,
-                ctx.object_type,
-                prop,
-                &id,
-                init_vals,
-                prefix,
-            )?;
+            seed_and_walk(&mut host, ctx, &id, init_vals, prefix)?;
             fire_transition_expect_ok(
                 &mut host,
                 ctx,
@@ -372,17 +364,7 @@ where
         JsonValue::String(spec.init_state.to_owned()),
     );
     let mut neg_host = make_host(&format!("lc-guard-{ty_name}-{}", spec.seq))?;
-    if seed_and_walk(
-        &mut neg_host,
-        ctx.catalog,
-        ctx.object_type,
-        prop,
-        spec.id,
-        bad_values,
-        spec.prefix,
-    )
-    .is_err()
-    {
+    if seed_and_walk(&mut neg_host, ctx, spec.id, bad_values, spec.prefix).is_err() {
         return Ok(());
     }
     let before = neg_host.ledger_len();
@@ -439,15 +421,7 @@ where
             *seq,
         );
         init_values.insert(prop.to_owned(), JsonValue::String(init_state.clone()));
-        seed_and_walk(
-            &mut host,
-            ctx.catalog,
-            ctx.object_type,
-            prop,
-            &id,
-            init_values.clone(),
-            prefix,
-        )?;
+        seed_and_walk(&mut host, ctx, &id, init_values.clone(), prefix)?;
 
         check_disallowed_transitions(&mut host, ctx, state, &id, *seq, totals)?;
         check_direct_lifecycle_write(&mut host, ctx, state, &id, *seq, totals)?;
@@ -582,37 +556,60 @@ fn check_immutable_state_write<H: PackHost>(
 
 fn seed_and_walk<H: PackHost>(
     host: &mut H,
-    catalog: &TypeCatalog<'_>,
-    object_type: &ObjectTypeDef,
-    prop: &str,
+    ctx: &LifecycleCtx<'_>,
     id: &str,
     values: JsonObject,
     path: &[String],
 ) -> Result<(), String> {
-    let ty_name = object_type.name.as_str();
+    let ty_name = ctx.object_type.name.as_str();
+    let prop = ctx.lifecycle.property.as_str();
     let key = FactKey::new(ty_name, id);
-    let slice = load_slice(host, [key]).map_err(|err| format!("load_slice: {err}"))?;
-    let create = DecisionOutput {
-        facts: vec![FactChange::Create {
-            object_type: object_type.name.clone(),
-            key: id.to_owned(),
-            values,
-        }],
-        commands: Vec::new(),
-        timers: Vec::new(),
-    };
-    let turn = DecisionTurn {
-        id: format!("seed-{id}"),
-        now: host.logical_now(),
-        world: World::Main,
-        consumes: None,
-    };
-    commit_decision(host, catalog, &slice, &turn, &create)
-        .map_err(|err| format!("seed {ty_name}/{id}: {err}"))?;
+    let mut graph = collect_required_link_graph(ctx.pack, ctx.object_type, &key, 1)?;
+    if graph.direct_links.is_empty() {
+        let slice = load_slice(host, [key]).map_err(|err| format!("load_slice: {err}"))?;
+        let create = DecisionOutput {
+            facts: vec![FactChange::Create {
+                object_type: ctx.object_type.name.clone(),
+                key: id.to_owned(),
+                values,
+            }],
+            commands: Vec::new(),
+            timers: Vec::new(),
+        };
+        let turn = DecisionTurn {
+            id: format!("seed-{id}"),
+            now: host.logical_now(),
+            world: World::Main,
+            consumes: None,
+        };
+        commit_decision(host, ctx.catalog, &slice, &turn, &create)
+            .map_err(|err| format!("seed {ty_name}/{id}: {err}"))?;
+    } else {
+        graph.setup_writes.push(FactWrite {
+            key,
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put { values },
+        });
+        graph.setup_links.extend(graph.direct_links);
+        host.commit(CellCommit {
+            writes: graph.setup_writes,
+            links: graph.setup_links,
+            ..CellCommit::empty()
+        })
+        .map_err(|err| format!("seed {ty_name}/{id} with required links: {err}"))?;
+    }
     for (step_idx, transition_id) in path.iter().enumerate() {
         let turn_nonce = u64::try_from(step_idx).unwrap_or(0).saturating_add(1);
-        fire_transition_decision(host, catalog, ty_name, prop, id, transition_id, turn_nonce)
-            .map_err(|err| format!("walk {ty_name}/{id} via {transition_id}: {err}"))?;
+        fire_transition_decision(
+            host,
+            ctx.catalog,
+            ty_name,
+            prop,
+            id,
+            transition_id,
+            turn_nonce,
+        )
+        .map_err(|err| format!("walk {ty_name}/{id} via {transition_id}: {err}"))?;
     }
     Ok(())
 }
@@ -736,6 +733,33 @@ where
     Ok(checked)
 }
 
+fn setup_required_link_targets<H: PackHost>(
+    host: &mut H,
+    pack: &AdmittedPack,
+    subject_type: &str,
+    key: &FactKey,
+    seed: u64,
+    context: &str,
+) -> Result<Vec<norn_kernel::cell_host::LinkWrite>, String> {
+    let Some(subject_ty) = pack
+        .object_types
+        .iter()
+        .find(|ty| ty.name.as_str() == subject_type)
+    else {
+        return Ok(Vec::new());
+    };
+    let graph = collect_required_link_graph(pack, subject_ty, key, seed)?;
+    if !graph.setup_writes.is_empty() {
+        host.commit(CellCommit {
+            writes: graph.setup_writes,
+            links: graph.setup_links,
+            ..CellCommit::empty()
+        })
+        .map_err(|err| format!("{context}: required link target setup failed: {err}"))?;
+    }
+    Ok(graph.direct_links)
+}
+
 fn verify_single_law_example<H, F>(
     pack: &AdmittedPack,
     example: &LawExampleCase,
@@ -767,8 +791,16 @@ where
     }
 
     let mut host = make_host(&format!("law-example-{idx}"))?;
-    let ledger_before = host.ledger_len();
     let key = FactKey::new(law.subject.as_str(), format!("law-ex-{idx}"));
+    let direct_links = setup_required_link_targets(
+        &mut host,
+        pack,
+        law.subject.as_str(),
+        &key,
+        u64::try_from(idx).unwrap_or(0).saturating_add(1),
+        &format!("LAW-EXAMPLE-1 '{}'", example.name),
+    )?;
+    let ledger_before = host.ledger_len();
     let commit = CellCommit {
         writes: vec![FactWrite {
             key,
@@ -777,6 +809,7 @@ where
                 values: example.subject.clone(),
             },
         }],
+        links: direct_links,
         ..CellCommit::empty()
     };
     let runtime_result = host.commit(commit);

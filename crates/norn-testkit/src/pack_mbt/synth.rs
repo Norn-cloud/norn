@@ -7,13 +7,146 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_kernel::cell_host::{JsonObject, JsonValue};
+use norn_kernel::cell_host::{
+    FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey, LinkMutation,
+    LinkWrite,
+};
 use norn_kernel::norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
 use norn_kernel::norn_ir::{
     Decimal, Lifecycle, ObjectTypeDef, Property, PropertyType, PropertyTypeDef,
 };
 
 use super::AdmittedPack;
+
+/// Synthesized target objects and links required to satisfy all
+/// `cardinality.required` links of a root object before/during its creation.
+#[derive(Debug, Default)]
+pub struct RequiredLinkGraph {
+    /// Target objects (and transitive targets) that must exist.
+    pub setup_writes: Vec<FactWrite>,
+    /// Transitive links between target objects.
+    pub setup_links: Vec<LinkWrite>,
+    /// Direct required links from the root object to its synthesized targets.
+    pub direct_links: Vec<LinkWrite>,
+}
+
+/// Collects synthesized target objects and link writes for every
+/// `cardinality.required` link declared on `object_type` (recursively).
+///
+/// # Errors
+///
+/// Returns an error if a required link targets an object type or interface that
+/// has no concrete [`ObjectTypeDef`] in `pack`.
+pub fn collect_required_link_graph(
+    pack: &AdmittedPack,
+    object_type: &ObjectTypeDef,
+    source_key: &FactKey,
+    seed: u64,
+) -> Result<RequiredLinkGraph, String> {
+    let mut state = LinkWalkState {
+        pack,
+        seed,
+        counter: 0,
+        visiting: BTreeSet::from([object_type.name.as_str().to_owned()]),
+        graph: RequiredLinkGraph::default(),
+    };
+    collect_required_links_recursive(&mut state, object_type, source_key, true)?;
+    Ok(state.graph)
+}
+
+struct LinkWalkState<'a> {
+    pack: &'a AdmittedPack,
+    seed: u64,
+    counter: u64,
+    visiting: BTreeSet<String>,
+    graph: RequiredLinkGraph,
+}
+
+fn collect_required_links_recursive(
+    state: &mut LinkWalkState<'_>,
+    object_type: &ObjectTypeDef,
+    source_key: &FactKey,
+    is_root: bool,
+) -> Result<(), String> {
+    let shared: BTreeMap<&str, &PropertyTypeDef> = state
+        .pack
+        .property_types
+        .iter()
+        .map(|def| (def.name.as_str(), def))
+        .collect();
+    for link in &object_type.links {
+        if !link.cardinality.required {
+            continue;
+        }
+        let target_ty = resolve_concrete_link_target(state.pack, link.target.as_str()).ok_or_else(
+            || {
+                format!(
+                    "required link '{}.{}' targets '{}', which has no concrete ObjectTypeDef in pack '{}'",
+                    object_type.name.as_str(),
+                    link.id.as_str(),
+                    link.target.as_str(),
+                    state.pack.name
+                )
+            },
+        )?;
+        state.counter = state.counter.saturating_add(1);
+        let target_id = format!("req-{}-{}-{}", link.id.as_str(), state.seed, state.counter);
+        let target_key = FactKey::new(target_ty.name.as_str(), &target_id);
+        let target_values = synthesize_object(
+            state.pack,
+            target_ty,
+            &target_id,
+            state.seed.wrapping_add(state.counter),
+        );
+        state.graph.setup_writes.push(FactWrite {
+            key: target_key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: target_values,
+            },
+        });
+        let mut link_values = JsonObject::new();
+        for prop in &link.properties {
+            if !prop.is_read_only() {
+                let val = synthesize_property_value(prop, &shared, &target_id, state.seed);
+                link_values.insert(prop.id.as_str().to_owned(), val);
+            }
+        }
+        let link_write = LinkWrite {
+            key: LinkKey::new(source_key.clone(), link.id.as_str(), target_key.clone()),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: link_values,
+            },
+        };
+        if is_root {
+            state.graph.direct_links.push(link_write);
+        } else {
+            state.graph.setup_links.push(link_write);
+        }
+        if state.visiting.insert(target_ty.name.as_str().to_owned()) {
+            collect_required_links_recursive(state, target_ty, &target_key, false)?;
+            state.visiting.remove(target_ty.name.as_str());
+        }
+    }
+    Ok(())
+}
+
+fn resolve_concrete_link_target<'a>(
+    pack: &'a AdmittedPack,
+    target_name: &str,
+) -> Option<&'a ObjectTypeDef> {
+    pack.object_types
+        .iter()
+        .find(|ty| ty.name.as_str() == target_name)
+        .or_else(|| {
+            pack.object_types.iter().find(|ty| {
+                ty.implements
+                    .iter()
+                    .any(|iface| iface.as_str() == target_name)
+            })
+        })
+}
 
 /// Synthesizes a valid object instance for `object_type` with identity `key`
 /// and optional `seed` variation, choosing the first declared initial state for

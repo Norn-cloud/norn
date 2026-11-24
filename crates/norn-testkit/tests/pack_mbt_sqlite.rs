@@ -296,7 +296,7 @@ fn load_registry_pack(
         for env in load_envelopes_from_dir(&root.join("registry/core/artifacts"))? {
             if matches!(
                 env.artifact_id.as_str(),
-                "location.Region.entity" | "location.Space.entity"
+                "location.Region.entity" | "location.Space.entity" | "commerce.SalesOrder.entity"
             ) {
                 continue;
             }
