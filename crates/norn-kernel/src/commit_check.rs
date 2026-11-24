@@ -381,6 +381,9 @@ pub trait CommitView {
 ///    the current version ([`CommitError::Conflict`]); an object is put only
 ///    as its live concrete type ([`CommitError::TypeMismatch`]); every link
 ///    write matches the current link version ([`CommitError::LinkConflict`]);
+///    an object absent from the pre-state begins every lifecycle in an
+///    admitted initial state or reaches its written state through the
+///    commit's recorded transitions ([`CommitError::LifecycleInitialization`]);
 /// 4. **endpoints** — no link dangles once the commit applies
 ///    ([`CommitError::DanglingLink`]): both endpoints of every added link
 ///    exist as their named types, and every live link of a deleted object
@@ -400,7 +403,7 @@ pub trait CommitView {
 /// # Errors
 ///
 /// The first failed check, or [`CommitError::Host`] if a lookup failed.
-pub fn check_commit<E, C, T, V: CommitView + ?Sized>(
+pub fn check_commit<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: &CommitModel<'_, '_>,
     view: &V,
@@ -419,7 +422,7 @@ pub fn check_commit<E, C, T, V: CommitView + ?Sized>(
     clippy::needless_pass_by_value,
     reason = "the authorization is deliberately consumed once at the admission boundary"
 )]
-pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
+pub fn check_commit_owned_rows<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: &CommitModel<'_, '_>,
     view: &V,
@@ -497,7 +500,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
 ///
 /// Returns the first failed admission check, or [`CommitError::Host`] if a
 /// host lookup failed.
-pub fn check_commit_observed<E, C, T: serde::Serialize, V: CommitView + ?Sized>(
+pub fn check_commit_observed<E: 'static, C, T: serde::Serialize, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: &CommitModel<'_, '_>,
     view: &V,
@@ -509,7 +512,7 @@ pub fn check_commit_observed<E, C, T: serde::Serialize, V: CommitView + ?Sized>(
     check_commit_inner(commit, *model, view, Some(authorization), false)
 }
 
-fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
+fn check_commit_inner<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
@@ -523,7 +526,7 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
     result
 }
 
-fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
+fn check_commit_local<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
@@ -553,7 +556,7 @@ struct LocalStages<'c, 'm, 'a, 'v, E, C, T, V: ?Sized> {
     links: BTreeMap<FactKey, BTreeSet<LinkKey>>,
 }
 
-impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
+impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
     for LocalStages<'_, '_, '_, '_, E, C, T, V>
 {
     fn run(&mut self, stage: CommitStage) -> Result<(), CommitError<V::Error>> {
@@ -565,7 +568,10 @@ impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
             CommitStage::Accounting => check_accounting_postings(commit, model, view),
             CommitStage::Delivery => check_delivery(commit, view),
             CommitStage::Immutable => check_immutable(commit, model, view),
-            CommitStage::Versions => check_versions(commit, model, view, authorization),
+            CommitStage::Versions => {
+                check_versions(commit, model, view, authorization)?;
+                check_lifecycle_initialization(commit, model, view, authorization)
+            }
             CommitStage::LinkAuthority => check_link_authority(commit, model, view, authorization),
             CommitStage::Endpoints => {
                 self.links = live_links_after(commit, model, view)?;
@@ -637,6 +643,90 @@ fn check_immutable<E, C, T, V: CommitView + ?Sized>(
         }
     }
     Ok(())
+}
+
+/// GRAPH-STATE-1: every object a non-observed commit writes for the first
+/// time — absent from the transaction's pre-state — begins each effective
+/// lifecycle in an admitted initial state, or reaches its written state only
+/// through the transitions the commit records for it, replayed in order from
+/// initialization ([`crate::decision_commit::check_first_write_lifecycles`],
+/// the decision `create` and `transition` rules). This holds for every
+/// admission of every host, so a direct `Put` cannot place a new object in a
+/// state its lifecycle never reached. There is no caller-selectable bypass:
+/// only a sealed observation, whose opaque authorization the kernel prepared,
+/// reconciles lifecycles under its own evidence contract instead
+/// ([`crate::snapshot_observe`]).
+fn check_lifecycle_initialization<E: 'static, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    authorization: Option<&ObservationAuthorization>,
+) -> Result<(), CommitError<V::Error>> {
+    if authorization.is_some() {
+        return Ok(());
+    }
+    let mut recorded: Option<BTreeMap<FactKey, Vec<&crate::decision_commit::FactEvent>>> = None;
+    for write in &commit.writes {
+        let FactMutation::Put { values } = &write.mutation else {
+            continue;
+        };
+        let canonical = model.canonical(&write.key);
+        if view
+            .concrete(&canonical)
+            .map_err(CommitError::Host)?
+            .is_some()
+        {
+            continue;
+        }
+        let recorded = recorded.get_or_insert_with(|| recorded_fact_events(commit, model));
+        let events = recorded.get(&canonical).map_or(&[][..], Vec::as_slice);
+        crate::decision_commit::check_first_write_lifecycles(
+            model.catalog,
+            &write.key,
+            values,
+            events,
+        )
+        .map_err(|refusal| CommitError::LifecycleInitialization {
+            key: write.key.clone(),
+            refusal,
+        })?;
+    }
+    Ok(())
+}
+
+/// The fact events `commit` records for each object, by canonical identity,
+/// in ledger order.
+fn recorded_fact_events<'c, E: 'static, C, T>(
+    commit: &'c CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+) -> BTreeMap<FactKey, Vec<&'c crate::decision_commit::FactEvent>> {
+    use crate::decision_commit::FactEvent;
+    let mut recorded: BTreeMap<FactKey, Vec<&FactEvent>> = BTreeMap::new();
+    // Only the kernel's own fact event type records this evidence, identified
+    // by type: a host whose ledger events are another type records none, so
+    // it creates a lifecycle-bearing object only in an admitted initial state.
+    let fact_events = commit
+        .events
+        .iter()
+        .filter_map(|event| (event as &dyn std::any::Any).downcast_ref::<FactEvent>());
+    for event in fact_events {
+        let key = match event {
+            FactEvent::Created { key, .. }
+            | FactEvent::Set { key, .. }
+            | FactEvent::Deleted { key }
+            | FactEvent::Transitioned { key, .. } => key,
+            FactEvent::Modified { .. }
+            | FactEvent::CommandEnqueued { .. }
+            | FactEvent::NamingSeriesAllocated { .. }
+            | FactEvent::NamingSeriesCounterSeeded { .. }
+            | FactEvent::InvariantRefused { .. } => continue,
+        };
+        recorded
+            .entry(model.canonical(key))
+            .or_default()
+            .push(event);
+    }
+    recorded
 }
 
 fn check_link_values<E, C, T, V: CommitView + ?Sized>(

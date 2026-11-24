@@ -900,6 +900,16 @@ pub enum CommitError<X> {
         /// The unresolved interface name.
         interface: String,
     },
+    /// GRAPH-STATE-1: the first write of a lifecycle-bearing object does not
+    /// begin every effective lifecycle in an admitted initial state, or the
+    /// transitions the commit records for it do not fire in order from one.
+    #[error("{key}: lifecycle initialization was refused: {refusal}")]
+    LifecycleInitialization {
+        /// The object written for the first time.
+        key: FactKey,
+        /// Why its initialization was refused.
+        refusal: LifecycleInitRefusal,
+    },
     /// An observed write did not match its opaque prepared authorization, or
     /// its findings differed from the shared final-state evaluation.
     #[error("observation authorization did not match its prepared commit")]
@@ -959,10 +969,68 @@ impl<X> CommitError<X> {
             Self::InvariantViolation { .. } => "commit.invariant_violation",
             Self::InvariantBudgetExceeded { .. } => "commit.invariant_budget_exceeded",
             Self::InvariantModel { .. } => "commit.invariant_model",
+            Self::LifecycleInitialization { refusal, .. } => refusal.code(),
             Self::ObservationAuthorization => "commit.observation_authorization",
             Self::EventLimitExceeded { .. } => "commit.event_limit",
             Self::Overflow => "commit.overflow",
             Self::Host(_) => "commit.host",
+        }
+    }
+}
+
+/// Why the shared commit admission refused a first write's lifecycle
+/// initialization (GRAPH-STATE-1). The same rule as a decision `create`
+/// followed by its `transition`s, so both paths refuse the same states.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LifecycleInitRefusal {
+    /// A lifecycle is declared over the property, but it does not resolve to
+    /// an effective state machine; refused fail-closed.
+    #[error("{lifecycle} has no effective lifecycle")]
+    Unresolved {
+        /// The lifecycle property.
+        lifecycle: String,
+    },
+    /// The lifecycle does not begin in an admitted initial state.
+    #[error("{lifecycle} must start in {allowed}, not {actual}", allowed = initial.join(" or "), actual = state.as_deref().unwrap_or("unset"))]
+    InvalidInitialState {
+        /// The lifecycle property.
+        lifecycle: String,
+        /// The state written (`None` when there is none and no default).
+        state: Option<String>,
+        /// The declared initial states.
+        initial: Vec<String>,
+    },
+    /// A recorded transition is undeclared, leaves another state than the
+    /// one the replay holds, or its guards do not hold there.
+    #[error("transition {transition} of {lifecycle}: {reason}")]
+    IllegalTransition {
+        /// The lifecycle property.
+        lifecycle: String,
+        /// The recorded transition.
+        transition: String,
+        /// Why it cannot fire.
+        reason: String,
+    },
+    /// The recorded events do not reconstruct the written object: no
+    /// creation, a direct lifecycle or immutable-state write, or a final
+    /// value the recorded changes never produced.
+    #[error("{reason}")]
+    UnrecordedChange {
+        /// What the replay could not reconstruct.
+        reason: String,
+    },
+}
+
+impl LifecycleInitRefusal {
+    /// Stable machine-readable code, shared with the decision path's
+    /// lifecycle refusals.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::Unresolved { .. } => "commit.unresolved_lifecycle",
+            Self::InvalidInitialState { .. }
+            | Self::IllegalTransition { .. }
+            | Self::UnrecordedChange { .. } => norn_ir::lifecycle_codes::UNDECLARED_WRITE,
         }
     }
 }
@@ -1042,7 +1110,7 @@ impl<'c, E, C, T> Proposed<'c, E, C, T> {
     }
 }
 
-impl<'c, E, C, T: Serialize> Authorized<'c, E, C, T> {
+impl<'c, E: 'static, C, T: Serialize> Authorized<'c, E, C, T> {
     /// Run the shared admission check for this commit's admission.
     ///
     /// # Errors

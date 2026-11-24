@@ -42,6 +42,7 @@
 //! [`code`]: DecisionRefusal::code
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::convert::Infallible;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use norn_checker::entity_instance::InstanceError;
@@ -62,7 +63,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, CommitReceipt, Consumed, FactExpectation, FactKey,
-    FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue,
+    FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue, LifecycleInitRefusal,
 };
 use crate::effect::{
     Command, CommandId, Effect, FreshnessPolicy, Generation, IdempotencyKey, Timer, TimerId,
@@ -2295,6 +2296,25 @@ impl<X> DecisionRefusal<X> {
             CommitError::TraversalLimitExceeded { key, reason } => {
                 Self::TraversalLimitExceeded { key, reason }
             }
+            CommitError::LifecycleInitialization { key, refusal } => match refusal {
+                LifecycleInitRefusal::InvalidInitialState {
+                    lifecycle,
+                    state,
+                    initial,
+                } => Self::InvalidInitialState {
+                    key,
+                    lifecycle,
+                    state,
+                    initial,
+                },
+                LifecycleInitRefusal::Unresolved { lifecycle } => {
+                    Self::UnresolvedLifecycle { key, lifecycle }
+                }
+                refusal @ (LifecycleInitRefusal::IllegalTransition { .. }
+                | LifecycleInitRefusal::UnrecordedChange { .. }) => Self::InvalidOutput {
+                    reason: format!("{key}: {refusal}"),
+                },
+            },
             CommitError::ObservationAuthorization => Self::InvalidOutput {
                 reason: "observation authorization did not match its prepared commit".to_owned(),
             },
@@ -2369,6 +2389,7 @@ impl<X> DecisionRefusal<X> {
             | CommitError::OwnedRowsProtected { .. }
             | CommitError::IdentifierTooLong { .. }
             | CommitError::ImmutableObject { .. }
+            | CommitError::LifecycleInitialization { .. }
             | CommitError::NotPending { .. }
             | CommitError::Conflict { .. }
             | CommitError::TypeMismatch { .. }
@@ -3216,6 +3237,164 @@ fn materialize_lifecycle_defaults<X>(
         }
     }
     Ok(values)
+}
+
+/// GRAPH-STATE-1 at the shared commit boundary: the first write of `key`
+/// (absent in the transaction's pre-state) with final `values`, given the
+/// fact events the same commit records for it, in ledger order.
+///
+/// With no recorded transition, the final row is the creation: each
+/// effective lifecycle, inherited ones included, must hold an admitted
+/// initial state after defaults ([`with_initial_states`], the decision
+/// `create` rule). Otherwise the final row alone cannot tell a legal
+/// sequence from a forged state, so the recorded events are replayed from
+/// initialization under the decision path's own rules: a creation in initial
+/// states, ordinary property sets, and each transition fired from the state
+/// the replay holds with its guards evaluated there. The replay must end in
+/// exactly the written values.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one ordered replay over the closed set of fact events"
+)]
+pub(crate) fn check_first_write_lifecycles(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &JsonObject,
+    events: &[&FactEvent],
+) -> Result<(), LifecycleInitRefusal> {
+    let lifecycle_properties = catalog.lifecycle_properties(&key.object_type);
+    let lifecycles = catalog.lifecycles(&key.object_type);
+    if lifecycle_properties.is_empty() && lifecycles.is_empty() {
+        return Ok(());
+    }
+    if !events
+        .iter()
+        .any(|event| matches!(event, FactEvent::Transitioned { .. }))
+    {
+        return with_initial_states::<Infallible>(catalog, key, values)
+            .map(drop)
+            .map_err(lifecycle_init_refusal);
+    }
+    let unrecorded = |reason: &str| LifecycleInitRefusal::UnrecordedChange {
+        reason: reason.to_owned(),
+    };
+    let mut current: Option<JsonObject> = None;
+    for event in events {
+        match event {
+            FactEvent::Created {
+                values: created, ..
+            } => {
+                if current.is_some() {
+                    return Err(unrecorded("the commit records its creation twice"));
+                }
+                current = Some(
+                    with_initial_states::<Infallible>(catalog, key, created)
+                        .map_err(lifecycle_init_refusal)?,
+                );
+            }
+            FactEvent::Set {
+                property, value, ..
+            } => {
+                let Some(replayed) = current.as_mut() else {
+                    return Err(unrecorded("a property is set before the object exists"));
+                };
+                if lifecycle_properties.contains(property) || lifecycles.contains_key(property) {
+                    return Err(unrecorded(&format!(
+                        "{} is a lifecycle property and changes only through a declared transition",
+                        property.as_str()
+                    )));
+                }
+                if let Some((lifecycle, state)) =
+                    catalog.immutable_state(&key.object_type, replayed)
+                {
+                    return Err(unrecorded(&format!(
+                        "a property is set in immutable {lifecycle} state {state}"
+                    )));
+                }
+                replayed.insert(property.as_str().to_owned(), value.clone());
+            }
+            FactEvent::Transitioned {
+                lifecycle,
+                transition,
+                from,
+                to,
+                ..
+            } => {
+                let illegal = |reason: String| LifecycleInitRefusal::IllegalTransition {
+                    lifecycle: lifecycle.as_str().to_owned(),
+                    transition: transition.as_str().to_owned(),
+                    reason,
+                };
+                let Some(replayed) = current.as_mut() else {
+                    return Err(illegal("the object does not exist".to_owned()));
+                };
+                let (declared, left) =
+                    resolve_transition::<Infallible>(catalog, key, replayed, lifecycle, transition)
+                        .map_err(|refusal| illegal(refusal.to_string()))?;
+                if left != *from || declared.to != *to {
+                    return Err(illegal(format!(
+                        "it fires {left} -> {}, but the commit records {from} -> {to}",
+                        declared.to
+                    )));
+                }
+                check_guards::<Infallible>(key, replayed, &declared)
+                    .map_err(|refusal| illegal(refusal.to_string()))?;
+                replayed.insert(
+                    lifecycle.as_str().to_owned(),
+                    JsonValue::String(declared.to),
+                );
+            }
+            FactEvent::Deleted { .. } => {
+                if current.take().is_none() {
+                    return Err(unrecorded("the object is deleted before it exists"));
+                }
+            }
+            // No object state: aggregates restate existing objects only, and
+            // the rest name another subject or none.
+            FactEvent::Modified { .. }
+            | FactEvent::CommandEnqueued { .. }
+            | FactEvent::NamingSeriesAllocated { .. }
+            | FactEvent::NamingSeriesCounterSeeded { .. }
+            | FactEvent::InvariantRefused { .. } => {}
+        }
+    }
+    let Some(replayed) = current else {
+        return Err(unrecorded("the recorded changes leave the object absent"));
+    };
+    let effective = |values: &JsonObject| {
+        catalog
+            .effective_object_values(&key.object_type, values)
+            .map_err(|error| unrecorded(&format!("the effective values are refused: {error}")))
+    };
+    if effective(&replayed)? != effective(values)? {
+        return Err(unrecorded(
+            "the written values differ from the values its recorded changes produce",
+        ));
+    }
+    Ok(())
+}
+
+/// The commit-boundary form of a decision lifecycle refusal.
+fn lifecycle_init_refusal(refusal: DecisionRefusal<Infallible>) -> LifecycleInitRefusal {
+    if let DecisionRefusal::InvalidInitialState {
+        lifecycle,
+        state,
+        initial,
+        ..
+    } = refusal
+    {
+        return LifecycleInitRefusal::InvalidInitialState {
+            lifecycle,
+            state,
+            initial,
+        };
+    }
+    if let DecisionRefusal::UnresolvedLifecycle { lifecycle, .. } = refusal {
+        return LifecycleInitRefusal::Unresolved { lifecycle };
+    }
+    LifecycleInitRefusal::UnrecordedChange {
+        reason: refusal.to_string(),
+    }
 }
 
 /// The effective lifecycle of `lifecycle`, then the firing of `transition`

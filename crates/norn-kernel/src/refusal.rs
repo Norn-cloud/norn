@@ -178,6 +178,7 @@ impl<X> CommitError<X> {
             | Self::LinkTarget { .. }
             | Self::InvariantModel { .. }
             | Self::EffectiveValues { .. }
+            | Self::LifecycleInitialization { .. }
             | Self::OwnedRowsProtected { .. }
             | Self::ObservationAuthorization
             | Self::UnsupportedLinkRead { .. }
