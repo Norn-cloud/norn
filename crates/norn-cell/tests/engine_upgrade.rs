@@ -10,7 +10,6 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
-    clippy::too_many_lines,
     missing_docs,
     reason = "integration-test crate"
 )]
@@ -44,6 +43,11 @@ const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
 /// projection, and the server-bound retained authority table, all initially
 /// empty on older cells (purely additive DDL).
 fn add_automation_tables(image: &mut Value) {
+    add_automation_schema_objects(image);
+    add_empty_automation_rows(image);
+}
+
+fn add_automation_schema_objects(image: &mut Value) {
     let objects = [
         (
             "table",
@@ -112,6 +116,9 @@ fn add_automation_tables(image: &mut Value) {
             .expect("schema")
             .push(serde_json::json!({ "type": kind, "name": name, "table": table, "sql": sql }));
     }
+}
+
+fn add_empty_automation_rows(image: &mut Value) {
     let tables = image["tables"].as_object_mut().expect("tables");
     tables.insert(
         "_norn_automation_outbox".to_owned(),
@@ -747,12 +754,27 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     );
 }
 
-/// Predecessor upgrade (storage v5 -> v6): a real storage version 5 cell
-/// (with #1547's marking history index already in place) opens on this engine,
-/// upgrades in place via purely additive DDL, preserves every ledger entry and
-/// receipt across reopen, and continues committing on the inherited chain.
-#[test]
-fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
+fn assert_v6_automation_catalog(mut expected: Value, mut actual: Value) -> Value {
+    let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
+    let stamp_row = expected["tables"]["_norn_meta"]["rows"]
+        .as_array_mut()
+        .expect("meta rows")
+        .iter_mut()
+        .find(|row| row[1] == STAMP_KEY)
+        .expect("the v5 cell is stamped");
+    stamp_row[2] = stamp.into();
+    expected["storage"] = STORAGE_VERSION.into();
+    add_automation_tables(&mut expected);
+    by_name(&mut actual);
+    by_name(&mut expected);
+    assert_eq!(
+        actual, expected,
+        "the v5 -> v6 upgrade writes the stamp and purely additive automation tables alone"
+    );
+    actual
+}
+
+fn storage_v5_image() -> Value {
     let mut v5_image: Value = serde_json::from_str(STORAGE_V4).expect("fixture");
     add_marking_history_index(&mut v5_image);
     let v5_stamp = serde_json::to_string(&EngineStamp {
@@ -769,7 +791,16 @@ fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
         .expect("the v4 fixture is stamped");
     stamp_row[2] = v5_stamp.into();
     v5_image["storage"] = 5.into();
+    v5_image
+}
 
+/// Predecessor upgrade (storage v5 -> v6): a real storage version 5 cell
+/// (with #1547's marking history index already in place) opens on this engine,
+/// upgrades in place via purely additive DDL, preserves every ledger entry and
+/// receipt across reopen, and continues committing on the inherited chain.
+#[test]
+fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
+    let v5_image = storage_v5_image();
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
     engine_fixture::load(&v5_image, &path);
@@ -811,24 +842,7 @@ fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
         );
     }
 
-    let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
-    let mut expected = before;
-    let expected_stamp_row = expected["tables"]["_norn_meta"]["rows"]
-        .as_array_mut()
-        .expect("meta rows")
-        .iter_mut()
-        .find(|row| row[1] == STAMP_KEY)
-        .expect("the v5 cell is stamped");
-    expected_stamp_row[2] = stamp.into();
-    expected["storage"] = STORAGE_VERSION.into();
-    add_automation_tables(&mut expected);
-    let mut catalog = after;
-    by_name(&mut catalog);
-    by_name(&mut expected);
-    assert_eq!(
-        catalog, expected,
-        "the v5 -> v6 upgrade writes the stamp and purely additive automation tables alone"
-    );
+    let catalog = assert_v6_automation_catalog(before, after);
     assert_eq!(
         engine_release::admission(&raw(&path)).expect("admission"),
         Admission::Current

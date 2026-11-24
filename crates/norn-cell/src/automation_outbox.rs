@@ -875,14 +875,6 @@ fn insert_candidate<E: SqlEngine>(
 }
 
 #[cfg(all(test, feature = "native"))]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    clippy::too_many_lines,
-    reason = "transactional trigger outbox unit tests"
-)]
 mod tests {
     use super::trigger_index::{KIND_ACTION, KIND_CREATED, KIND_LIFECYCLE_ENTERED, KIND_UPDATED};
     use super::*;
@@ -899,9 +891,11 @@ mod tests {
     use norn_ir::{ObjectTypeDef, ObjectTypeName};
     use serde_json::json;
 
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
     const SCOPE: &str = "org_demo/dev";
 
-    fn sample_model() -> (Model, String) {
+    fn sample_model() -> TestResult<(Model, String)> {
         let ticket = json!({
             "name": "demo.Ticket",
             "properties": [
@@ -959,10 +953,21 @@ mod tests {
         });
         let defs: Vec<ObjectTypeDef> = [&ticket, &ticket_a, &ticket_b, &note, &action_call]
             .into_iter()
-            .map(|raw| serde_json::from_value(raw.clone()).expect("type"))
-            .collect();
-        let model = Model::from_definitions(&defs, &[]).expect("model");
-        let artifacts = json!([
+            .map(|raw| serde_json::from_value(raw.clone()))
+            .collect::<Result<_, _>>()?;
+        let model = Model::from_definitions(&defs, &[])?;
+        let artifacts = sample_artifacts(&ticket, &ticket_a, &ticket_b, &note);
+        let canonical = String::from_utf8(Value::from_json(artifacts)?.canonical_json()?)?;
+        Ok((model, canonical))
+    }
+
+    fn sample_artifacts(
+        ticket: &serde_json::Value,
+        ticket_a: &serde_json::Value,
+        ticket_b: &serde_json::Value,
+        note: &serde_json::Value,
+    ) -> serde_json::Value {
+        json!([
             {
                 "irVersion": "0.1",
                 "artifactId": "demo.Ticket.entity",
@@ -1015,15 +1020,7 @@ mod tests {
                 "provenance": { "source": "authoring_sdk", "sourcePath": "test" },
                 "payload": { "entityVersion": "2.0", "objectType": note }
             }
-        ]);
-        let canonical = String::from_utf8(
-            Value::from_json(artifacts)
-                .expect("exact")
-                .canonical_json()
-                .expect("canonical"),
-        )
-        .expect("utf8");
-        (model, canonical)
+        ])
     }
 
     fn install_input(canonical_set: &str, installed_at: u64) -> InstalledDefinitionInput {
@@ -1047,7 +1044,7 @@ mod tests {
         id: &str,
         object_type: &str,
         when: &serde_json::Value,
-    ) {
+    ) -> TestResult {
         let payload = serde_json::to_string(&json!({
             "title": id,
             "enabled": true,
@@ -1057,8 +1054,7 @@ mod tests {
                 "actionId": "demo.ticket.escalate",
                 "mode": "auto"
             }
-        }))
-        .expect("payload");
+        }))?;
         let change = RetainedDefinitionChange {
             definition: RetainedDefinition {
                 kind: "automation".to_owned(),
@@ -1089,15 +1085,14 @@ mod tests {
             },
             expected_revision: None,
         };
-        store
-            .install_retained_definition(
-                model.clone(),
-                &install_input(canonical_set, 20),
-                Some(expected_defs_version),
-                SCOPE,
-                &change,
-            )
-            .expect("install automation");
+        store.install_retained_definition(
+            model.clone(),
+            &install_input(canonical_set, 20),
+            Some(expected_defs_version),
+            SCOPE,
+            &change,
+        )?;
+        Ok(())
     }
 
     fn retire_automation(
@@ -1108,12 +1103,11 @@ mod tests {
         id: &str,
         current_revision: u64,
         retired_at: u64,
-    ) {
+    ) -> TestResult {
         let current = store
             .read()
-            .retained_definition(id, Some(current_revision))
-            .expect("read")
-            .expect("exists");
+            .retained_definition(id, Some(current_revision))?
+            .ok_or("missing exists")?;
         let mut definition = current.definition;
         definition.revision = current_revision.saturating_add(1);
         definition.lifecycle = RetainedLifecycle::Retired;
@@ -1123,25 +1117,23 @@ mod tests {
             definition,
             expected_revision: Some(current_revision),
         };
-        store
-            .install_retained_definition(
-                model.clone(),
-                &install_input(canonical_set, retired_at),
-                Some(expected_defs_version),
-                SCOPE,
-                &change,
-            )
-            .expect("retire automation");
+        store.install_retained_definition(
+            model.clone(),
+            &install_input(canonical_set, retired_at),
+            Some(expected_defs_version),
+            SCOPE,
+            &change,
+        )?;
+        Ok(())
     }
 
-    fn open_with_ticket_automations(path: &std::path::Path) -> (CellStore, Model, String) {
-        let (model, canonical) = sample_model();
-        let mut store =
-            CellStore::open(path, model.clone(), StoreOptions::default()).expect("open");
-        store.bind("scope", SCOPE).expect("bind");
-        store
-            .install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)
-            .expect("kernel defs");
+    fn open_with_ticket_automations(
+        path: &std::path::Path,
+    ) -> TestResult<(CellStore, Model, String)> {
+        let (model, canonical) = sample_model()?;
+        let mut store = CellStore::open(path, model.clone(), StoreOptions::default())?;
+        store.bind("scope", SCOPE)?;
+        store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
         install_automation_for(
             &mut store,
             &model,
@@ -1150,7 +1142,7 @@ mod tests {
             "ops.on_create",
             "demo.Ticket",
             &json!({ "kind": "event", "event": "created" }),
-        );
+        )?;
         install_automation_for(
             &mut store,
             &model,
@@ -1159,8 +1151,8 @@ mod tests {
             "ops.on_stalled",
             "demo.Ticket",
             &json!({ "kind": "lifecycle_entered", "property": "status", "state": "stalled" }),
-        );
-        (store, model, canonical)
+        )?;
+        Ok((store, model, canonical))
     }
 
     fn ticket_batch(idempotency_key: &str, logical_time: u64, status: &str) -> CommitBatch {
@@ -1204,10 +1196,10 @@ mod tests {
     }
 
     #[test]
-    fn rolls_back_before_commit_and_survives_crash_after_commit() {
-        let dir = tempfile::tempdir().expect("tempdir");
+    fn rolls_back_before_commit_and_survives_crash_after_commit() -> TestResult {
+        let dir = tempfile::tempdir()?;
         let path = dir.path().join("cell.sqlite");
-        let (mut store, model, _canonical) = open_with_ticket_automations(&path);
+        let (mut store, model, _canonical) = open_with_ticket_automations(&path)?;
 
         let create_batch = ticket_batch("create-t1", 100, "open");
         let aborted = store.commit_probed(&create_batch, &mut |point| {
@@ -1220,10 +1212,7 @@ mod tests {
         });
         assert!(aborted.is_err());
         assert_eq!(
-            store
-                .read()
-                .pending_automation_trigger_count(MAIN_WORLD)
-                .expect("count"),
+            store.read().pending_automation_trigger_count(MAIN_WORLD)?,
             0,
             "aborted commit must record no trigger candidates"
         );
@@ -1237,11 +1226,10 @@ mod tests {
         assert!(post_crash.is_err());
         drop(store);
 
-        let reopened = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+        let reopened = CellStore::open(&path, model, StoreOptions::default())?;
         let pending = reopened
             .read()
-            .pending_automation_triggers(MAIN_WORLD, 10)
-            .expect("pending");
+            .pending_automation_triggers(MAIN_WORLD, 10)?;
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].key.automation_id, "ops.on_create");
         assert_eq!(pending[0].key.revision, 1);
@@ -1257,36 +1245,30 @@ mod tests {
                 .and_then(|values| values.get("status")),
             Some(&Value::String("open".into()))
         );
+        Ok(())
     }
 
     #[test]
-    fn replay_dedupes_retire_voids_pending_and_lifecycle_captures_before_and_after() {
-        let dir = tempfile::tempdir().expect("tempdir");
+    fn replay_dedupes_retire_voids_pending_and_lifecycle_captures_before_and_after() -> TestResult {
+        let dir = tempfile::tempdir()?;
         let path = dir.path().join("cell.sqlite");
-        let (mut store, model, canonical) = open_with_ticket_automations(&path);
+        let (mut store, model, canonical) = open_with_ticket_automations(&path)?;
 
         let create_batch = ticket_batch("create-t1", 100, "open");
-        let CommitOutcome::Committed(create_receipt) = store.commit(&create_batch).expect("create")
-        else {
-            panic!("expected committed receipt");
+        let CommitOutcome::Committed(create_receipt) = store.commit(&create_batch)? else {
+            return Err("expected committed receipt".into());
         };
         let create_seq = create_receipt.body.commit_seq;
 
-        let replayed = store.commit(&create_batch).expect("replay");
+        let replayed = store.commit(&create_batch)?;
         assert!(matches!(replayed, CommitOutcome::Replayed(_)));
         assert_eq!(
-            store
-                .read()
-                .pending_automation_trigger_count(MAIN_WORLD)
-                .expect("count"),
+            store.read().pending_automation_trigger_count(MAIN_WORLD)?,
             1
         );
 
-        let pending = store
-            .read()
-            .pending_automation_triggers(MAIN_WORLD, 10)
-            .expect("pending");
-        let dup_key = &pending[0].key;
+        let pending = store.read().pending_automation_triggers(MAIN_WORLD, 10)?;
+        let dup_key = &pending.first().ok_or("missing pending trigger")?.key;
         insert_candidate(
             store.read().conn,
             &CandidateEmit {
@@ -1303,75 +1285,68 @@ mod tests {
             KIND_CREATED,
             None,
             None,
-        )
-        .expect("duplicate insert ignored");
+        )?;
         assert_eq!(
-            store
-                .read()
-                .pending_automation_trigger_count(MAIN_WORLD)
-                .expect("count"),
+            store.read().pending_automation_trigger_count(MAIN_WORLD)?,
             1
         );
 
         // Retiring `ops.on_create` atomically voids its pending candidates and removes its index row.
-        retire_automation(&mut store, &model, &canonical, 3, "ops.on_create", 1, 150);
+        retire_automation(&mut store, &model, &canonical, 3, "ops.on_create", 1, 150)?;
         assert_eq!(
-            store
-                .read()
-                .pending_automation_trigger_count(MAIN_WORLD)
-                .expect("count"),
+            store.read().pending_automation_trigger_count(MAIN_WORLD)?,
             0,
             "retire must void pending candidates in the same transaction"
         );
         let audited = store
             .read()
-            .automation_triggers_for_commit(MAIN_WORLD, create_seq)
-            .expect("audit");
-        assert_eq!(audited.len(), 1);
-        assert!(audited[0].voided_commit_seq.is_some());
+            .automation_triggers_for_commit(MAIN_WORLD, create_seq)?;
+        let [audited] = audited.as_slice() else {
+            return Err("expected one automation trigger".into());
+        };
+        assert!(audited.voided_commit_seq.is_some());
 
         let stall_batch = ticket_batch("stall-t1", 200, "stalled");
-        let CommitOutcome::Committed(receipt) = store.commit(&stall_batch).expect("stall") else {
-            panic!("expected committed receipt");
+        let CommitOutcome::Committed(receipt) = store.commit(&stall_batch)? else {
+            return Err("expected committed receipt".into());
         };
         let for_commit = store
             .read()
-            .automation_triggers_for_commit(MAIN_WORLD, receipt.body.commit_seq)
-            .expect("commit triggers");
-        assert_eq!(for_commit.len(), 1);
-        assert_eq!(for_commit[0].key.automation_id, "ops.on_stalled");
-        assert_eq!(for_commit[0].key.object_version, 2);
-        assert_eq!(for_commit[0].trigger_kind, KIND_LIFECYCLE_ENTERED);
+            .automation_triggers_for_commit(MAIN_WORLD, receipt.body.commit_seq)?;
+        let [for_commit] = for_commit.as_slice() else {
+            return Err("expected one automation trigger".into());
+        };
+        assert_eq!(for_commit.key.automation_id, "ops.on_stalled");
+        assert_eq!(for_commit.key.object_version, 2);
+        assert_eq!(for_commit.trigger_kind, KIND_LIFECYCLE_ENTERED);
         assert_eq!(
-            for_commit[0]
+            for_commit
                 .before_values
                 .as_ref()
                 .and_then(|values| values.get("status")),
             Some(&Value::String("open".into()))
         );
         assert_eq!(
-            for_commit[0]
+            for_commit
                 .after_values
                 .as_ref()
                 .and_then(|values| values.get("status")),
             Some(&Value::String("stalled".into()))
         );
+        Ok(())
     }
 
     /// S3: `event:action` is driven from the committed `norn.ActionCall` record:
     /// covers receipt-only calls with no row write, unchanged targets (`before == after`),
     /// and actions that delete their target (`after_values == None`, `before_values == Some(...)`).
     #[test]
-    fn action_triggers_cover_receipt_only_unchanged_and_deleted_targets() {
-        let dir = tempfile::tempdir().expect("tempdir");
+    fn action_triggers_cover_receipt_only_unchanged_and_deleted_targets() -> TestResult {
+        let dir = tempfile::tempdir()?;
         let path = dir.path().join("action-triggers.sqlite");
-        let (model, canonical) = sample_model();
-        let mut store =
-            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("open");
-        store.bind("scope", SCOPE).expect("bind");
-        store
-            .install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)
-            .expect("defs");
+        let (model, canonical) = sample_model()?;
+        let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+        store.bind("scope", SCOPE)?;
+        store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
         install_automation_for(
             &mut store,
             &model,
@@ -1380,7 +1355,7 @@ mod tests {
             "ops.on_receipt_only",
             "demo.Ticket",
             &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
-        );
+        )?;
         install_automation_for(
             &mut store,
             &model,
@@ -1389,7 +1364,7 @@ mod tests {
             "ops.on_delete",
             "demo.Ticket",
             &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.remove" }),
-        );
+        )?;
 
         // 1. Receipt-only call targeting an absent object (no business row write).
         let absent_call = CommitBatch {
@@ -1405,25 +1380,23 @@ mod tests {
             )],
             ..CommitBatch::default()
         };
-        let CommitOutcome::Committed(absent_rcpt) = store.commit(&absent_call).expect("absent")
-        else {
-            panic!("expected commit");
+        let CommitOutcome::Committed(absent_rcpt) = store.commit(&absent_call)? else {
+            return Err("expected commit".into());
         };
         let absent_triggers = store
             .read()
-            .automation_triggers_for_commit(MAIN_WORLD, absent_rcpt.body.commit_seq)
-            .expect("triggers");
-        assert_eq!(absent_triggers.len(), 1);
-        assert_eq!(absent_triggers[0].trigger_kind, KIND_ACTION);
-        assert_eq!(absent_triggers[0].key.object_id, "t-ghost");
-        assert_eq!(absent_triggers[0].key.object_version, 0);
-        assert_eq!(absent_triggers[0].before_values, None);
-        assert_eq!(absent_triggers[0].after_values, None);
+            .automation_triggers_for_commit(MAIN_WORLD, absent_rcpt.body.commit_seq)?;
+        let [absent_triggers] = absent_triggers.as_slice() else {
+            return Err("expected one automation trigger".into());
+        };
+        assert_eq!(absent_triggers.trigger_kind, KIND_ACTION);
+        assert_eq!(absent_triggers.key.object_id, "t-ghost");
+        assert_eq!(absent_triggers.key.object_version, 0);
+        assert_eq!(absent_triggers.before_values, None);
+        assert_eq!(absent_triggers.after_values, None);
 
         // Seed a live ticket `t-live`.
-        store
-            .commit(&ticket_batch("seed-live", 110, "open"))
-            .expect("seed");
+        store.commit(&ticket_batch("seed-live", 110, "open"))?;
 
         // 2. Receipt-only call on existing unchanged target `t-1`: before == after.
         let unchanged_call = CommitBatch {
@@ -1439,24 +1412,28 @@ mod tests {
             )],
             ..CommitBatch::default()
         };
-        let CommitOutcome::Committed(unchanged_rcpt) =
-            store.commit(&unchanged_call).expect("unchanged")
-        else {
-            panic!("expected commit");
+        let CommitOutcome::Committed(unchanged_rcpt) = store.commit(&unchanged_call)? else {
+            return Err("expected commit".into());
         };
         let unchanged_triggers = store
             .read()
-            .automation_triggers_for_commit(MAIN_WORLD, unchanged_rcpt.body.commit_seq)
-            .expect("triggers");
-        assert_eq!(unchanged_triggers.len(), 1);
-        assert_eq!(unchanged_triggers[0].key.object_id, "t-1");
-        assert_eq!(unchanged_triggers[0].key.object_version, 1);
-        assert!(unchanged_triggers[0].before_values.is_some());
+            .automation_triggers_for_commit(MAIN_WORLD, unchanged_rcpt.body.commit_seq)?;
+        let [unchanged_triggers] = unchanged_triggers.as_slice() else {
+            return Err("expected one automation trigger".into());
+        };
+        assert_eq!(unchanged_triggers.key.object_id, "t-1");
+        assert_eq!(unchanged_triggers.key.object_version, 1);
+        assert!(unchanged_triggers.before_values.is_some());
         assert_eq!(
-            unchanged_triggers[0].before_values, unchanged_triggers[0].after_values,
+            unchanged_triggers.before_values, unchanged_triggers.after_values,
             "unchanged target must have before equal to after"
         );
 
+        assert_delete_and_fact_create_triggers(&mut store)?;
+        Ok(())
+    }
+
+    fn assert_delete_and_fact_create_triggers(store: &mut CellStore) -> TestResult {
         // 3. Action that deletes its target (for example owned-row parent delete):
         //    `before_values = Some(prior)`, `after_values = None`.
         let delete_call = CommitBatch {
@@ -1473,27 +1450,27 @@ mod tests {
             ],
             ..CommitBatch::default()
         };
-        let CommitOutcome::Committed(delete_rcpt) = store.commit(&delete_call).expect("delete")
-        else {
-            panic!("expected commit");
+        let CommitOutcome::Committed(delete_rcpt) = store.commit(&delete_call)? else {
+            return Err("expected commit".into());
         };
         let delete_triggers = store
             .read()
-            .automation_triggers_for_commit(MAIN_WORLD, delete_rcpt.body.commit_seq)
-            .expect("triggers");
-        assert_eq!(delete_triggers.len(), 1);
-        assert_eq!(delete_triggers[0].key.automation_id, "ops.on_delete");
-        assert_eq!(delete_triggers[0].key.object_id, "t-1");
-        assert_eq!(delete_triggers[0].key.object_version, 2);
+            .automation_triggers_for_commit(MAIN_WORLD, delete_rcpt.body.commit_seq)?;
+        let [delete_triggers] = delete_triggers.as_slice() else {
+            return Err("expected one automation trigger".into());
+        };
+        assert_eq!(delete_triggers.key.automation_id, "ops.on_delete");
+        assert_eq!(delete_triggers.key.object_id, "t-1");
+        assert_eq!(delete_triggers.key.object_version, 2);
         assert_eq!(
-            delete_triggers[0]
+            delete_triggers
                 .before_values
                 .as_ref()
                 .and_then(|values| values.get("status")),
             Some(&Value::String("open".into()))
         );
         assert_eq!(
-            delete_triggers[0].after_values, None,
+            delete_triggers.after_values, None,
             "deleted target must have after_values = None"
         );
 
@@ -1523,49 +1500,23 @@ mod tests {
             }],
             ..CommitBatch::default()
         };
-        let CommitOutcome::Committed(fact_rcpt) =
-            store.commit(&fact_create_call).expect("fact create")
-        else {
-            panic!("expected commit");
+        let CommitOutcome::Committed(fact_rcpt) = store.commit(&fact_create_call)? else {
+            return Err("expected commit".into());
         };
         let fact_triggers = store
             .read()
-            .automation_triggers_for_commit(MAIN_WORLD, fact_rcpt.body.commit_seq)
-            .expect("triggers");
-        assert_eq!(fact_triggers.len(), 1);
-        assert_eq!(fact_triggers[0].key.automation_id, "ops.on_receipt_only");
-        assert_eq!(fact_triggers[0].key.object_id, "t-ghost-fact");
-        assert_eq!(fact_triggers[0].before_values, None);
-        assert_eq!(fact_triggers[0].after_values, None);
+            .automation_triggers_for_commit(MAIN_WORLD, fact_rcpt.body.commit_seq)?;
+        let [fact_triggers] = fact_triggers.as_slice() else {
+            return Err("expected one automation trigger".into());
+        };
+        assert_eq!(fact_triggers.key.automation_id, "ops.on_receipt_only");
+        assert_eq!(fact_triggers.key.object_id, "t-ghost-fact");
+        assert_eq!(fact_triggers.before_values, None);
+        assert_eq!(fact_triggers.after_values, None);
+        Ok(())
     }
 
-    /// S4: unrelated writes skip all object reads and automation work; a
-    /// single-rule, large-batch write over `MAX_CANDIDATES_PER_COMMIT` commits
-    /// cleanly with exactly `MAX` inline candidates and one idempotent
-    /// continuation row in the same transaction; a rolled-back transaction
-    /// leaves neither candidates nor a continuation row.
-    #[tokio::test]
-    async fn unrelated_write_skips_work_and_large_batch_records_transactional_continuation() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("hotpath.sqlite");
-        let (model, canonical) = sample_model();
-        let mut store =
-            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("open");
-        store.bind("scope", SCOPE).expect("bind");
-        store
-            .install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)
-            .expect("defs");
-        // Single active rule watching `demo.Ticket` creates.
-        install_automation_for(
-            &mut store,
-            &model,
-            &canonical,
-            1,
-            "ops.on_create",
-            "demo.Ticket",
-            &json!({ "kind": "event", "event": "created" }),
-        );
-
+    fn assert_unrelated_write_skips_outbox(store: &mut CellStore) -> TestResult {
         let unrelated = CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: SCOPE.to_owned(),
@@ -1578,7 +1529,7 @@ mod tests {
             }],
             ..CommitBatch::default()
         };
-        let watch = capture_before(&store.read(), &unrelated).expect("probe");
+        let watch = capture_before(&store.read(), &unrelated)?;
         assert!(
             watch.is_empty(),
             "unrelated write must match zero indexed triggers"
@@ -1587,35 +1538,29 @@ mod tests {
             watch.before.is_empty(),
             "unrelated write must perform zero pre-commit object reads"
         );
-        let CommitOutcome::Committed(note_rcpt) =
-            store.commit(&unrelated).expect("commit unrelated")
-        else {
-            panic!("expected commit");
+        let CommitOutcome::Committed(note_rcpt) = store.commit(&unrelated)? else {
+            return Err("expected commit".into());
         };
         assert_eq!(
-            store
-                .read()
-                .pending_automation_trigger_count(MAIN_WORLD)
-                .expect("count"),
+            store.read().pending_automation_trigger_count(MAIN_WORLD)?,
             0
         );
         assert_eq!(
             store
                 .read()
-                .pending_automation_continuation_count(MAIN_WORLD)
-                .expect("cont count"),
+                .pending_automation_continuation_count(MAIN_WORLD)?,
             0
         );
         assert_eq!(
             store
                 .read()
-                .automation_outbox_continuation(note_rcpt.body.commit_seq)
-                .expect("cont"),
+                .automation_outbox_continuation(note_rcpt.body.commit_seq)?,
             None
         );
+        Ok(())
+    }
 
-        // Single-rule large-batch write exceeding MAX_CANDIDATES_PER_COMMIT.
-        let overflow_count = MAX_CANDIDATES_PER_COMMIT.saturating_add(5);
+    fn overflow_batch(overflow_count: usize) -> CommitBatch {
         let overflow_writes: Vec<FactWriteRow> = (0..overflow_count)
             .map(|idx| FactWriteRow::Put {
                 object_type: "demo.Ticket".to_owned(),
@@ -1626,17 +1571,22 @@ mod tests {
                 ]),
             })
             .collect();
-        let overflow_batch = CommitBatch {
+        CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: SCOPE.to_owned(),
             logical_time: 200,
             idempotency_key: Some("bulk-overflow".to_owned()),
             writes: overflow_writes,
             ..CommitBatch::default()
-        };
+        }
+    }
 
+    fn assert_overflow_rolls_back(
+        store: &mut CellStore,
+        overflow_batch: &CommitBatch,
+    ) -> TestResult {
         // 1. A rolled-back transaction leaves neither candidates nor a continuation row.
-        let aborted = store.commit_probed(&overflow_batch, &mut |point| {
+        let aborted = store.commit_probed(overflow_batch, &mut |point| {
             if point == CommitPoint::FactsApplied {
                 return Err(CellError::Engine(
                     "simulated crash after outbox and continuation write".to_owned(),
@@ -1646,44 +1596,69 @@ mod tests {
         });
         assert!(aborted.is_err());
         assert_eq!(
-            store
-                .read()
-                .pending_automation_trigger_count(MAIN_WORLD)
-                .expect("count"),
+            store.read().pending_automation_trigger_count(MAIN_WORLD)?,
             0,
             "rolled-back transaction must leave zero candidates"
         );
         assert_eq!(
             store
                 .read()
-                .pending_automation_continuation_count(MAIN_WORLD)
-                .expect("cont count"),
+                .pending_automation_continuation_count(MAIN_WORLD)?,
             0,
             "rolled-back transaction must leave zero continuation rows"
         );
         assert_eq!(
             store
                 .read()
-                .object(MAIN_WORLD, "demo.Ticket", "t-bulk-0000")
-                .expect("read"),
+                .object(MAIN_WORLD, "demo.Ticket", "t-bulk-0000")?,
             None
         );
+        Ok(())
+    }
+
+    /// S4: unrelated writes skip all object reads and automation work; a
+    /// single-rule, large-batch write over `MAX_CANDIDATES_PER_COMMIT` commits
+    /// cleanly with exactly `MAX` inline candidates and one idempotent
+    /// continuation row in the same transaction; a rolled-back transaction
+    /// leaves neither candidates nor a continuation row.
+    #[tokio::test]
+    async fn unrelated_write_skips_work_and_large_batch_records_transactional_continuation()
+    -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("hotpath.sqlite");
+        let (model, canonical) = sample_model()?;
+        let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+        store.bind("scope", SCOPE)?;
+        store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
+        // Single active rule watching `demo.Ticket` creates.
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            1,
+            "ops.on_create",
+            "demo.Ticket",
+            &json!({ "kind": "event", "event": "created" }),
+        )?;
+
+        assert_unrelated_write_skips_outbox(&mut store)?;
+
+        // Single-rule large-batch write exceeding MAX_CANDIDATES_PER_COMMIT.
+        let overflow_count = MAX_CANDIDATES_PER_COMMIT.saturating_add(5);
+        let overflow_batch = overflow_batch(overflow_count);
+        assert_overflow_rolls_back(&mut store, &overflow_batch)?;
 
         // 2. The real commit succeeds without refusal: every business row lands,
         //    exactly MAX_CANDIDATES_PER_COMMIT inline candidates are persisted,
         //    and one continuation row captures the exact resume cursor and versions.
-        let CommitOutcome::Committed(receipt) = store
-            .commit(&overflow_batch)
-            .expect("large batch must commit")
-        else {
-            panic!("expected committed receipt");
+        let CommitOutcome::Committed(receipt) = store.commit(&overflow_batch)? else {
+            return Err("expected committed receipt".into());
         };
         let commit_seq = receipt.body.commit_seq;
         assert!(
             store
                 .read()
-                .object(MAIN_WORLD, "demo.Ticket", "t-bulk-0000")
-                .expect("read first")
+                .object(MAIN_WORLD, "demo.Ticket", "t-bulk-0000")?
                 .is_some()
         );
         assert!(
@@ -1693,21 +1668,18 @@ mod tests {
                     MAIN_WORLD,
                     "demo.Ticket",
                     &format!("t-bulk-{:04}", overflow_count.saturating_sub(1)),
-                )
-                .expect("read last")
+                )?
                 .is_some(),
             "rows past the inline outbox bound must still commit"
         );
         let inline = store
             .read()
-            .automation_triggers_for_commit(MAIN_WORLD, commit_seq)
-            .expect("inline triggers");
+            .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?;
         assert_eq!(inline.len(), MAX_CANDIDATES_PER_COMMIT);
         assert_eq!(
             store
                 .read()
-                .pending_automation_continuation_count(MAIN_WORLD)
-                .expect("cont count"),
+                .pending_automation_continuation_count(MAIN_WORLD)?,
             1
         );
         let expected_cursor = AutomationContinuationCursor::Row {
@@ -1718,9 +1690,8 @@ mod tests {
         };
         let cont = store
             .read()
-            .automation_outbox_continuation(commit_seq)
-            .expect("cont")
-            .expect("continuation row exists");
+            .automation_outbox_continuation(commit_seq)?
+            .ok_or("missing continuation row exists")?;
         assert_eq!(cont.trigger_commit_seq, commit_seq);
         assert_eq!(cont.world, MAIN_WORLD);
         assert_eq!(cont.cursor, expected_cursor);
@@ -1731,9 +1702,20 @@ mod tests {
         assert_eq!(cont.recorded_at_ms, 200);
         assert_eq!(cont.completed_commit_seq, None);
 
+        assert_overflow_replays(&mut store, &overflow_batch, &cont)?;
+        drop(store);
+        assert_overflow_survives_reopen_and_restore(&path, &model, commit_seq, cont).await?;
+        Ok(())
+    }
+
+    fn assert_overflow_replays(
+        store: &mut CellStore,
+        overflow_batch: &CommitBatch,
+        cont: &AutomationOutboxContinuation,
+    ) -> TestResult {
         // 3. Idempotent on trigger_commit_seq: replay and duplicate insert keep the original row.
         assert!(matches!(
-            store.commit(&overflow_batch).expect("replay"),
+            store.commit(overflow_batch)?,
             CommitOutcome::Replayed(_)
         ));
         continuation::insert_continuation(
@@ -1742,37 +1724,36 @@ mod tests {
                 recorded_at_ms: 999,
                 ..cont.clone()
             },
-        )
-        .expect("duplicate continuation insert ignored");
+        )?;
         let pending_conts = store
             .read()
-            .pending_automation_continuations(MAIN_WORLD, 10)
-            .expect("pending conts");
-        assert_eq!(pending_conts, vec![cont.clone()]);
+            .pending_automation_continuations(MAIN_WORLD, 10)?;
+        assert_eq!(pending_conts.as_slice(), std::slice::from_ref(cont));
+        Ok(())
+    }
 
+    async fn assert_overflow_survives_reopen_and_restore(
+        path: &std::path::Path,
+        model: &Model,
+        commit_seq: u64,
+        cont: AutomationOutboxContinuation,
+    ) -> TestResult {
         // 4. Reopen durability: both inline candidates and continuation row survive restart.
-        drop(store);
-        let reopened =
-            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("reopen");
+        let reopened = CellStore::open(path, model.clone(), StoreOptions::default())?;
         assert_eq!(
             reopened
                 .read()
-                .pending_automation_trigger_count(MAIN_WORLD)
-                .expect("reopened count"),
-            u64::try_from(MAX_CANDIDATES_PER_COMMIT).expect("u64")
+                .pending_automation_trigger_count(MAIN_WORLD)?,
+            u64::try_from(MAX_CANDIDATES_PER_COMMIT)?
         );
         assert_eq!(
-            reopened
-                .read()
-                .automation_outbox_continuation(commit_seq)
-                .expect("reopened cont"),
+            reopened.read().automation_outbox_continuation(commit_seq)?,
             Some(cont.clone())
         );
 
         let mut record = reopened
-            .export_record(commit_seq)
-            .expect("overflow journal")
-            .expect("overflow record");
+            .export_record(commit_seq)?
+            .ok_or("missing overflow record")?;
         assert_eq!(record.automation_continuation.as_ref(), Some(&cont));
 
         // Represent an export written by a different build without needing a
@@ -1786,16 +1767,11 @@ mod tests {
                 object_store::memory::InMemory::new(),
             ));
             for seq in 1..commit_seq {
-                let prior = reopened
-                    .export_record(seq)
-                    .expect("prior journal")
-                    .expect("prior record");
-                exporter.append(&prior).await.expect("publish prefix");
+                let prior = reopened.export_record(seq)?.ok_or("missing prior record")?;
+                exporter.append(&prior).await?;
             }
-            exporter.append(&record).await.expect("publish overflow");
-            let target = dir
-                .path()
-                .join(format!("restored-{matcher_version}.sqlite"));
+            exporter.append(&record).await?;
+            let target = path.with_file_name(format!("restored-{matcher_version}.sqlite"));
             let result = CellStore::restore_from(
                 &mut exporter,
                 &target,
@@ -1806,14 +1782,12 @@ mod tests {
             )
             .await;
             if matcher_version == AUTOMATION_MATCHER_VERSION {
-                result.expect("restore overflow");
-                let restored = CellStore::open(&target, model.clone(), StoreOptions::default())
-                    .expect("open restored cell");
+                result?;
+                let restored = CellStore::open(&target, model.clone(), StoreOptions::default())?;
                 assert_eq!(
                     restored
                         .read()
-                        .automation_outbox_continuation(commit_seq)
-                        .expect("restored continuation")
+                        .automation_outbox_continuation(commit_seq)?
                         .as_ref(),
                     Some(&original)
                 );
@@ -1826,33 +1800,60 @@ mod tests {
                 assert!(!target.exists());
             }
         }
+        Ok(())
+    }
+
+    fn assert_rule_pages(conn: &impl SqlEngine) -> TestResult {
+        // Keyset paging with LIMIT 2 walks all 3 row rules cleanly without duplicates.
+        let p1 = query_row_rules_page(conn, "demo.Ticket", None, 2)?;
+        assert!(p1.has_more);
+        let p1_ids: Vec<&str> = p1.rules.iter().map(|r| r.automation_id.as_str()).collect();
+        assert_eq!(p1_ids, ["ops.r1", "ops.r2"]);
+        let p2 = query_row_rules_page(conn, "demo.Ticket", Some("ops.r2"), 2)?;
+        assert!(!p2.has_more);
+        let p2_ids: Vec<&str> = p2.rules.iter().map(|r| r.automation_id.as_str()).collect();
+        assert_eq!(p2_ids, ["ops.r3"]);
+
+        // Keyset paging with LIMIT 1 walks both action rules cleanly.
+        let a1 = query_action_rules_page(conn, "demo.ticket.ping", None, 1)?;
+        assert!(a1.has_more);
+        assert_eq!(a1.rules.len(), 1);
+        assert_eq!(
+            a1.rules.first().ok_or("missing action rule")?.automation_id,
+            "ops.a1"
+        );
+        let a2 = query_action_rules_page(conn, "demo.ticket.ping", Some("ops.a1"), 1)?;
+        assert!(!a2.has_more);
+        assert_eq!(a2.rules.len(), 1);
+        assert_eq!(
+            a2.rules.first().ok_or("missing action rule")?.automation_id,
+            "ops.a2"
+        );
+        Ok(())
     }
 
     /// S4: indexed rule lookups use `LIMIT` with keyset cursors, and a pause in
     /// the middle of a type's rule list records the exact `after_automation_id`
     /// keyset cursor for deterministic U2 resumption.
     #[test]
-    fn keyset_rule_paging_and_mid_rule_list_continuation_cursor() {
+    fn keyset_rule_paging_and_mid_rule_list_continuation_cursor() -> TestResult {
         const { assert!(MAX_CANDIDATES_PER_COMMIT == 256) };
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = tempfile::tempdir()?;
         let path = dir.path().join("keyset.sqlite");
-        let (model, canonical) = sample_model();
-        let mut store =
-            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("open");
-        store.bind("scope", SCOPE).expect("bind");
-        store
-            .install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)
-            .expect("defs");
+        let (model, canonical) = sample_model()?;
+        let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+        store.bind("scope", SCOPE)?;
+        store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
         for (idx, id) in ["ops.r1", "ops.r2", "ops.r3"].into_iter().enumerate() {
             install_automation_for(
                 &mut store,
                 &model,
                 &canonical,
-                1_u64.saturating_add(u64::try_from(idx).expect("u64")),
+                1_u64.saturating_add(u64::try_from(idx)?),
                 id,
                 "demo.Ticket",
                 &json!({ "kind": "event", "event": "created" }),
-            );
+            )?;
         }
         install_automation_for(
             &mut store,
@@ -1862,7 +1863,7 @@ mod tests {
             "ops.a1",
             "demo.Ticket",
             &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
-        );
+        )?;
         install_automation_for(
             &mut store,
             &model,
@@ -1871,30 +1872,9 @@ mod tests {
             "ops.a2",
             "demo.Ticket",
             &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
-        );
+        )?;
 
-        // Keyset paging with LIMIT 2 walks all 3 row rules cleanly without duplicates.
-        let p1 = query_row_rules_page(store.read().conn, "demo.Ticket", None, 2).expect("p1");
-        assert!(p1.has_more);
-        let p1_ids: Vec<&str> = p1.rules.iter().map(|r| r.automation_id.as_str()).collect();
-        assert_eq!(p1_ids, ["ops.r1", "ops.r2"]);
-        let p2 =
-            query_row_rules_page(store.read().conn, "demo.Ticket", Some("ops.r2"), 2).expect("p2");
-        assert!(!p2.has_more);
-        let p2_ids: Vec<&str> = p2.rules.iter().map(|r| r.automation_id.as_str()).collect();
-        assert_eq!(p2_ids, ["ops.r3"]);
-
-        // Keyset paging with LIMIT 1 walks both action rules cleanly.
-        let a1 =
-            query_action_rules_page(store.read().conn, "demo.ticket.ping", None, 1).expect("a1");
-        assert!(a1.has_more);
-        assert_eq!(a1.rules.len(), 1);
-        assert_eq!(a1.rules[0].automation_id, "ops.a1");
-        let a2 = query_action_rules_page(store.read().conn, "demo.ticket.ping", Some("ops.a1"), 1)
-            .expect("a2");
-        assert!(!a2.has_more);
-        assert_eq!(a2.rules.len(), 1);
-        assert_eq!(a2.rules[0].automation_id, "ops.a2");
+        assert_rule_pages(store.read().conn)?;
 
         // 86 rows × 3 rules = 258 matches: 85*3 = 255 on t-0000..t-0084 plus
         // ops.r1 on t-0085 hits 256 inline; ops.r2 on t-0085 pauses mid-rule-list.
@@ -1916,22 +1896,20 @@ mod tests {
             writes,
             ..CommitBatch::default()
         };
-        let CommitOutcome::Committed(receipt) = store.commit(&batch).expect("commit") else {
-            panic!("expected commit");
+        let CommitOutcome::Committed(receipt) = store.commit(&batch)? else {
+            return Err("expected commit".into());
         };
         assert_eq!(
             store
                 .read()
-                .automation_triggers_for_commit(MAIN_WORLD, receipt.body.commit_seq)
-                .expect("triggers")
+                .automation_triggers_for_commit(MAIN_WORLD, receipt.body.commit_seq)?
                 .len(),
             MAX_CANDIDATES_PER_COMMIT
         );
         let cont = store
             .read()
-            .automation_outbox_continuation(receipt.body.commit_seq)
-            .expect("cont")
-            .expect("continuation exists");
+            .automation_outbox_continuation(receipt.body.commit_seq)?
+            .ok_or("missing continuation exists")?;
         assert_eq!(
             cont.cursor,
             AutomationContinuationCursor::Row {
@@ -1941,50 +1919,10 @@ mod tests {
                 after_automation_id: Some("ops.r1".to_owned()),
             }
         );
+        Ok(())
     }
 
-    /// S5: replacing a live object with a sibling subtype in one commit fires
-    /// as `event:created` (with `before_values = None`) for a rule watching the
-    /// new subtype, and as `event:updated` for a rule watching their common ancestor.
-    #[test]
-    fn sibling_replacement_fires_create_with_no_before_state_for_new_subtype() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("sibling.sqlite");
-        let (model, canonical) = sample_model();
-        let mut store =
-            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("open");
-        store.bind("scope", SCOPE).expect("bind");
-        store
-            .install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)
-            .expect("defs");
-        install_automation_for(
-            &mut store,
-            &model,
-            &canonical,
-            1,
-            "ops.b_created",
-            "demo.TicketB",
-            &json!({ "kind": "event", "event": "created" }),
-        );
-        install_automation_for(
-            &mut store,
-            &model,
-            &canonical,
-            2,
-            "ops.b_updated",
-            "demo.TicketB",
-            &json!({ "kind": "event", "event": "updated" }),
-        );
-        install_automation_for(
-            &mut store,
-            &model,
-            &canonical,
-            3,
-            "ops.base_updated",
-            "demo.Ticket",
-            &json!({ "kind": "event", "event": "updated" }),
-        );
-
+    fn seed_ticket_a(store: &mut CellStore) -> TestResult {
         // Seed live `demo.TicketA` under key `s-1`.
         let create_a = CommitBatch {
             world: MAIN_WORLD.to_owned(),
@@ -2002,14 +1940,54 @@ mod tests {
             }],
             ..CommitBatch::default()
         };
-        store.commit(&create_a).expect("create TicketA");
+        store.commit(&create_a)?;
         assert_eq!(
-            store
-                .read()
-                .pending_automation_trigger_count(MAIN_WORLD)
-                .expect("count"),
+            store.read().pending_automation_trigger_count(MAIN_WORLD)?,
             0
         );
+        Ok(())
+    }
+
+    /// S5: replacing a live object with a sibling subtype in one commit fires
+    /// as `event:created` (with `before_values = None`) for a rule watching the
+    /// new subtype, and as `event:updated` for a rule watching their common ancestor.
+    #[test]
+    fn sibling_replacement_fires_create_with_no_before_state_for_new_subtype() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("sibling.sqlite");
+        let (model, canonical) = sample_model()?;
+        let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+        store.bind("scope", SCOPE)?;
+        store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            1,
+            "ops.b_created",
+            "demo.TicketB",
+            &json!({ "kind": "event", "event": "created" }),
+        )?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            2,
+            "ops.b_updated",
+            "demo.TicketB",
+            &json!({ "kind": "event", "event": "updated" }),
+        )?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            3,
+            "ops.base_updated",
+            "demo.Ticket",
+            &json!({ "kind": "event", "event": "updated" }),
+        )?;
+
+        seed_ticket_a(&mut store)?;
 
         // Replace `demo.TicketA` with sibling `demo.TicketB` in one commit.
         let replace_with_b = CommitBatch {
@@ -2034,21 +2012,19 @@ mod tests {
             ],
             ..CommitBatch::default()
         };
-        let CommitOutcome::Committed(receipt) = store.commit(&replace_with_b).expect("replace")
-        else {
-            panic!("expected commit");
+        let CommitOutcome::Committed(receipt) = store.commit(&replace_with_b)? else {
+            return Err("expected commit".into());
         };
         let triggers = store
             .read()
-            .automation_triggers_for_commit(MAIN_WORLD, receipt.body.commit_seq)
-            .expect("triggers");
+            .automation_triggers_for_commit(MAIN_WORLD, receipt.body.commit_seq)?;
         assert_eq!(triggers.len(), 2, "{triggers:?}");
 
         // Common ancestor `demo.Ticket` sees an update with TicketA before and TicketB after.
         let base_update = triggers
             .iter()
             .find(|trigger| trigger.key.automation_id == "ops.base_updated")
-            .expect("ancestor update");
+            .ok_or("missing ancestor update")?;
         assert_eq!(base_update.trigger_kind, KIND_UPDATED);
         assert_eq!(
             base_update
@@ -2069,7 +2045,7 @@ mod tests {
         let sibling_create = triggers
             .iter()
             .find(|trigger| trigger.key.automation_id == "ops.b_created")
-            .expect("sibling creation");
+            .ok_or("missing sibling creation")?;
         assert_eq!(sibling_create.trigger_kind, KIND_CREATED);
         assert_eq!(sibling_create.before_values, None);
         assert_eq!(
@@ -2079,5 +2055,6 @@ mod tests {
                 .and_then(|values| values.get("b_tag")),
             Some(&Value::String("from-b".into()))
         );
+        Ok(())
     }
 }
