@@ -748,7 +748,9 @@ test("a11y: the transitions the arrows draw are readable as a list", async ({ pa
 test("records page: a lost live connection shows the counts as the last read and Refresh reads again", async ({ page }) => {
   test.skip(Boolean(process.env.E2E_BASE), "uses the lifecycle stand-in cell")
   test.setTimeout(90_000)
+  const cell = await lifecycleCell(page, { status: okFacets("status", { draft: 3 }) }, { includeWidget: false })
   // Every socket fails before it opens, so the client exhausts its reconnects (about 15 s of backoff).
+  // Installed after the stand-in cell's routeWebSocket, so it replaces Playwright's routed WebSocket.
   await page.addInitScript(() => {
     class DeadSocket extends EventTarget {
       readyState = 0
@@ -761,7 +763,6 @@ test("records page: a lost live connection shows the counts as the last read and
     }
     Object.defineProperty(window, "WebSocket", { configurable: true, value: DeadSocket })
   })
-  const cell = await lifecycleCell(page, { status: okFacets("status", { draft: 3 }) }, { includeWidget: false })
   await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
   const view = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
   const count = card(view, "draft").locator("[data-count]")
