@@ -15,10 +15,10 @@ use crate::decision_commit::{
     DecisionRefusal, FactEvent, TypeCatalog, expr_value, fill_lifecycle_defaults,
     prepare_owned_rows, widen_effect,
 };
-use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::type_series;
 
+use super::approval::{PreparedIntentParts, enforce_or_capture_intent};
 use super::input::{build_action_commands, check_action_record_size, expression_value_to_runtime};
 use super::receipt::{committed_target_version, ensure_target_read};
 use super::slice::{
@@ -28,7 +28,7 @@ use super::slice::{
 use super::types::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
     ActionCall, ActionCallRecord, ActionDenial, ActionInputPreparation, ActionOutcome,
-    ActionRefusal, owned_rows_manifest_key,
+    ActionRefusal, EnvelopePolicy, owned_rows_manifest_key,
 };
 use super::{
     authorize_current_target, authorize_identity_collision, check_action_envelope, check_kind,
@@ -87,10 +87,6 @@ fn parse_version(text: &str) -> Option<FactVersion> {
     (version.to_string() == text).then_some(FactVersion(version))
 }
 
-fn event_limit_as_usize(limits: &EnvelopeLimits) -> usize {
-    usize::try_from(limits.max_events).unwrap_or(usize::MAX)
-}
-
 fn invalid_row_ops<X>() -> ActionRefusal<X> {
     ActionRefusal::InvalidInput {
         field: "rowOps".to_owned(),
@@ -116,12 +112,8 @@ fn parse_owned_row_op<X>(
         "add" | "update" => parse_owned_row_value_op(collection, kind, object),
         "remove" => parse_owned_row_remove(collection, object),
         "reorder" => {
-            let slice_limit = usize::try_from(
-                crate::limits::ResourceLimitProfile::norn_limits_v1()
-                    .slice
-                    .max_records,
-            )
-            .unwrap_or(usize::MAX);
+            let max_records = ResourceLimitProfile::norn_limits_v1().slice.max_records;
+            let slice_limit = usize::try_from(max_records).unwrap_or(usize::MAX);
             let collection_limit =
                 usize::try_from(collection_definition.max_rows.0).unwrap_or(usize::MAX);
             parse_owned_row_reorder(collection, object, collection_limit.min(slice_limit))
@@ -230,7 +222,7 @@ fn parse_owned_row_ops<X>(
     limits: &EnvelopeLimits,
     declared: &BTreeMap<String, OwnedChildCollection>,
 ) -> Result<Vec<ParsedOwnedRowOp>, ActionRefusal<X>> {
-    if raw.len() > event_limit_as_usize(limits) {
+    if raw.len() > usize::try_from(limits.max_events).unwrap_or(usize::MAX) {
         return Err(ActionRefusal::Decision(DecisionRefusal::EnvelopeExceeded {
             kind: crate::decider::EnvelopeKind::Events,
             limit: limits.max_events,
@@ -742,8 +734,7 @@ pub(super) fn commit_parent_rows<H>(
     parent_version_field: &str,
     parent_delete_field: Option<&str>,
     collection_actions: &[OwnedCollectionAction],
-    limits: &EnvelopeLimits,
-    meter: Option<&mut TurnEnvelopeMeter>,
+    envelope: EnvelopePolicy<'_>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
 where
     H: CellHost + ?Sized,
@@ -751,6 +742,11 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    let EnvelopePolicy {
+        limits,
+        meter,
+        capture,
+    } = envelope;
     let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
     else {
         return Err(ActionRefusal::InvalidInput {
@@ -1075,6 +1071,8 @@ where
         precondition_outcomes: Vec::new(),
         parameter_pins: Vec::new(),
         actor: call.actor.clone(),
+        accountable_person: call.accountable_person.clone(),
+        approval_evidence: None,
         turn: call.turn.id.clone(),
         transition: String::new(),
         from: String::new(),
@@ -1722,19 +1720,28 @@ where
     }
     let mut events = std::mem::take(&mut prepared.events);
     let action_call = format!("{}/{}", call.action.action_id, call.idempotency_key);
-    for effect in &prepared.effects {
-        if let crate::effect::Effect::Perform(command) = effect {
-            events.push(FactEvent::CommandEnqueued {
-                command_id: command.id.0.clone(),
-                generation: command.generation.0,
-                idempotency_key: command.idempotency_key.0.clone(),
-                action_call: action_call.clone(),
-                payload: command.payload.clone(),
-            });
-        }
-    }
+    super::append_command_events(&mut events, &prepared.effects, &action_call);
     let mut writes = prepared.writes;
     writes.extend(manifest_writes);
+    let quantity =
+        crate::action_quantity::prepare_quantity_action(call, &preparation.effective_input)?;
+    let capturing = capture.is_some();
+    record.approval_evidence = enforce_or_capture_intent::<H::Error>(
+        call,
+        &PreparedIntentParts {
+            target: &target,
+            effective_input: &preparation.effective_input,
+            writes: &writes,
+            links: &link_writes,
+            commands: &output.commands,
+            quantity: quantity.as_ref().map(|(request, _)| request),
+        },
+        capture,
+    )?;
+    if capturing {
+        return Err(ActionRefusal::TargetNotFound);
+    }
+    check_action_record_size::<H::Error>(call.action, &record, limits)?;
     let before = parent_state.version;
     ensure_target_read(catalog, &target, before, &writes, &mut prepared.reads);
     writes.push(FactWrite {
@@ -1754,17 +1761,7 @@ where
         link_reads: action_slice.link_reads,
         predicate_reads: action_slice.predicate_reads,
     };
-    if let Some(meter) = meter.as_deref() {
-        meter.check(counts).map_err(|exceeded| {
-            ActionRefusal::Decision(DecisionRefusal::TurnEnvelopeExceeded {
-                kind: exceeded.kind,
-                limit: exceeded.limit,
-                actual: exceeded.actual,
-            })
-        })?;
-    }
-    let quantity =
-        crate::action_quantity::prepare_quantity_action(call, &preparation.effective_input)?;
+    super::check_action_turn_meter::<H::Error>(meter.as_deref(), counts)?;
     let proof = OwnedRowsCommitProof::new(&commit, limits.max_events, quantity);
     match host.commit_owned_rows(commit, proof) {
         Ok(receipt) => {

@@ -230,6 +230,7 @@ impl Authorizer for StepPolicy {
             actor_kind: caller.actor_kind.to_owned(),
             roles: caller.roles,
             role_table: caller.role_table.to_owned(),
+            accountable_person: caller.accountable_person,
         })
     }
     fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {

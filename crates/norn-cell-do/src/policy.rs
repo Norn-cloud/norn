@@ -469,14 +469,12 @@ pub struct Caller {
     pub actor_kind: &'static str,
     /// The declared role table the roles came from.
     pub role_table: &'static str,
+    /// Authenticated accountable person behind this principal, if any.
+    pub accountable_person: Option<String>,
 }
 
-/// Where the resolver records the current request's verified principal for
-/// the policy. Every request records first (possibly nobody), so a caller
-/// never outlives its request. A request runs on one thread from resolution
-/// to answer, and the slot keeps each thread's caller apart, so requests a
-/// host serves concurrently (the dev host's workers, DEV-CONCURRENT-1) never
-/// see each other's caller.
+/// Thread-scoped verified principal slot for the current request (DEV-CONCURRENT-1).
+/// Every request records first (possibly nobody) so callers never leak across threads or requests.
 #[derive(Debug, Default)]
 pub struct CallerSlot(Mutex<Vec<(Option<std::thread::ThreadId>, Caller)>>);
 
@@ -1201,6 +1199,7 @@ mod caller_slot_tests {
             roles: Vec::new(),
             actor_kind: "user",
             role_table: "test",
+            accountable_person: Some(subject.to_owned()),
         }
     }
 

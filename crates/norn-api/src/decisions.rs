@@ -630,11 +630,10 @@ fn expiry_recorded<E: SqlEngine>(
 /// the request's declared roles and law.
 fn may_decide<E: SqlEngine>(host: &DevHost<E>, actor: &str, decision: &OpenDecision) -> bool {
     let request = &decision.request;
-    // The approver of a parked call is never its requester (#618).
     if decision
         .call
         .as_ref()
-        .is_some_and(|call| call.call.requester.subject == actor)
+        .is_some_and(|call| !crate::approval_identity::allows_decider(host, actor, call))
     {
         return false;
     }

@@ -114,6 +114,8 @@ mod action_contract_tests {
         for name in [
             "actionId",
             "actor",
+            "accountablePerson",
+            "approvalEvidence",
             "turn",
             "object",
             "input",

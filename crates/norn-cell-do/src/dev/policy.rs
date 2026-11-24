@@ -166,6 +166,7 @@ fn local_caller(actor: &str) -> Caller {
             .collect(),
         actor_kind: "user",
         role_table: DEMO_GRANTS.version,
+        accountable_person: Some(actor.to_owned()),
     }
 }
 
@@ -225,6 +226,7 @@ impl Authorizer for LocalDeveloper {
                 .map(|(role, _)| (*role).to_owned())
                 .collect(),
             role_table: DEMO_GRANTS.version.to_owned(),
+            accountable_person: Some(actor.to_owned()),
         })
     }
     fn disclose_refusal_detail(&self, request: &RefusalDetailRequest<'_>) -> bool {

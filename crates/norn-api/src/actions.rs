@@ -485,6 +485,9 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
             ("environmentId".into(), host.scope().environment_id.clone()),
         ]),
         actor: actor.to_owned(),
+        accountable_person: principal
+            .and_then(|starter| starter.verified_accountable_person().map(str::to_owned)),
+        approval: None,
         input: input.clone(),
         idempotency_key: request.idempotency_key.clone(),
         object_type: None,

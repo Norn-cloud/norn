@@ -4,14 +4,15 @@ use norn_checker::parameter::{
     ParameterCandidate, ParameterContext, ParameterError, resolve_parameter,
 };
 use norn_ir::{
-    DecimalLiteral, IrVersion01, RuntimeValue, ScopeRef, SettingReview, SettingReviewState,
-    SettingRoot, SettingValue, SliceDeclaration, SliceKey,
+    Decimal, DecimalLiteral, IrVersion01, RuntimeValue, ScopeRef, SettingReview,
+    SettingReviewState, SettingRoot, SettingValue, SliceDeclaration, SliceKey,
 };
+use serde::{Deserialize, Serialize};
 
-use crate::cell_host::{FactKey, FactVersion, JsonObject};
+use crate::cell_host::{FactKey, FactVersion, JsonObject, JsonValue};
 use crate::decision_commit::FactSlice;
 
-use super::types::{ActionCall, ActionParameterPin, ActionRefusal};
+use super::types::{ActionCall, ActionRefusal};
 
 struct ProjectedSetting<'a> {
     key: FactKey,
@@ -367,6 +368,53 @@ fn parse_review_state(value: &str) -> Result<SettingReviewState, &'static str> {
         "rejected" => Ok(SettingReviewState::Rejected),
         "superseded" => Ok(SettingReviewState::Superseded),
         _ => Err("unknown setting review_state"),
+    }
+}
+
+/// One effective-dated parameter resolved and pinned during an action commit
+/// (D07, PARAM-EXACT-1, PARAM-BOUND-1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionParameterPin {
+    /// The declared parameter slice entry name.
+    pub entry: String,
+    /// The stable parameter key.
+    pub setting_key: String,
+    /// The declared effective timestamp evaluated for this selection.
+    pub effective_at: String,
+    /// The selected setting fact's concrete object type and key.
+    pub setting: FactKey,
+    /// The committed fact version of the selected setting at commit time.
+    pub version: u64,
+    /// Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's
+    /// exact values at commit time.
+    pub digest: String,
+}
+
+impl ActionParameterPin {
+    pub(super) fn to_runtime_value(&self) -> JsonValue {
+        let string = |value: &str| JsonValue::String(value.to_owned());
+        JsonValue::Object(JsonObject::from([
+            ("entry".to_owned(), string(&self.entry)),
+            ("settingKey".to_owned(), string(&self.setting_key)),
+            ("effectiveAt".to_owned(), string(&self.effective_at)),
+            (
+                "setting".to_owned(),
+                JsonValue::Object(JsonObject::from([
+                    (
+                        "objectType".to_owned(),
+                        string(self.setting.object_type.as_str()),
+                    ),
+                    ("key".to_owned(), string(&self.setting.key)),
+                ])),
+            ),
+            (
+                "version".to_owned(),
+                JsonValue::Number(Decimal::from(self.version)),
+            ),
+            ("digest".to_owned(), string(&self.digest)),
+        ]))
     }
 }
 

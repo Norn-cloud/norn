@@ -519,6 +519,7 @@ pub(crate) fn is_requester(principal: Option<&RunStarter>, requester: &RunStarte
         principal.subject == requester.subject
             && principal.actor_kind == requester.actor_kind
             && principal.role_table == requester.role_table
+            && principal.accountable_person == requester.accountable_person
     })
 }
 

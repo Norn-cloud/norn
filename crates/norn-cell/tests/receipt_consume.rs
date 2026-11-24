@@ -373,6 +373,8 @@ fn decide<'a>(action: &'a ActionRoot, receipt: &str, key: &str) -> ActionCall<'a
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "user:ada".to_owned(),
+        accountable_person: None,
+        approval: None,
         input: JsonObject::from([
             ("run_id".to_owned(), JsonValue::String("run-1".to_owned())),
             ("receipt".to_owned(), JsonValue::String(receipt.to_owned())),

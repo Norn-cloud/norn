@@ -2,8 +2,7 @@ use norn_ir::{FactChange, ObjectTypeName, ResourceLimitProfile};
 
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
 use crate::decision_commit::{FactEvent, TypeCatalog};
-use crate::envelope::TurnEnvelopeMeter;
-use crate::limits::{EnvelopeLimits, SliceMeter};
+use crate::limits::SliceMeter;
 
 use super::input::check_action_record_size;
 use super::receipt::resolve_receipt_effect;
@@ -33,8 +32,7 @@ pub(super) fn commit_transition<H>(
     lifecycle: &norn_ir::PropertyId,
     transition: &norn_ir::TransitionId,
     accept_receipt: Option<&norn_ir::ReceiptAcceptance>,
-    limits: &EnvelopeLimits,
-    meter: Option<&mut TurnEnvelopeMeter>,
+    envelope: EnvelopePolicy<'_>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
 where
     H: CellHost + ?Sized,
@@ -42,6 +40,7 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    let limits = envelope.limits;
     let action = call.action;
     if accept_receipt.is_some()
         && (action.synchronous_rule.is_some() || call.turn.consumes.is_some())
@@ -208,6 +207,6 @@ where
             series_candidate: None,
             receipt,
         },
-        EnvelopePolicy { limits, meter },
+        envelope,
     )
 }

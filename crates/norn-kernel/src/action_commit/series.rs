@@ -1,11 +1,9 @@
 use norn_ir::{
     FactChange, KeyName, NamingSeriesIR, ObjectTypeName, PropertyId, ResourceLimitProfile,
-    TraceContext,
 };
 
 use crate::cell_host::{CellHost, FactKey, FactState, JsonObject, JsonValue};
 use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
-use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::{prepare_candidate, scope_from_values};
 
@@ -37,8 +35,7 @@ pub(super) fn commit_upsert_series<H>(
     key_name: &KeyName,
     key_properties: &[PropertyId],
     declaration: &NamingSeriesIR,
-    limits: &EnvelopeLimits,
-    meter: Option<&mut TurnEnvelopeMeter>,
+    mut envelope: EnvelopePolicy<'_>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
 where
     H: CellHost + ?Sized,
@@ -46,25 +43,17 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    let limits = envelope.limits;
     let record_key = FactKey::new(
         ACTION_CALL_TYPE,
         format!("{}/{}", call.action.action_id, call.idempotency_key),
     );
-    let mut meter = meter;
     for _attempt in 0..MAX_NAMING_SERIES_RETRIES {
         // A replay is resolved before reading the counter or ledger clock. It
         // therefore retains the original generated key after time or counter
         // state advances.
         let recorded = host.load(&record_key).map_err(host_failure)?;
-        if let Some(record) = recorded_generated_call(
-            &recorded,
-            &call.action.action_id,
-            object_type,
-            &call.input,
-            &call.actor,
-            call.trace.as_ref(),
-            &call.idempotency_key,
-        )? {
+        if let Some(record) = recorded_generated_call(&recorded, call, object_type)? {
             validate_generated_replay_input(
                 host,
                 catalog,
@@ -152,6 +141,8 @@ where
             precondition_outcomes,
             parameter_pins: slice.parameter_pins.clone(),
             actor: call.actor.clone(),
+            accountable_person: call.accountable_person.clone(),
+            approval_evidence: None,
             turn: call.turn.id.clone(),
             transition: String::new(),
             from: String::new(),
@@ -188,7 +179,8 @@ where
             pending,
             EnvelopePolicy {
                 limits,
-                meter: meter.as_deref_mut(),
+                meter: envelope.meter.as_deref_mut(),
+                capture: envelope.capture.as_deref_mut(),
             },
         );
         match outcome {
@@ -197,15 +189,7 @@ where
                 // A consumed delivery is not retried, but an exact concurrent
                 // winner may have committed this call under the same key.
                 let raced = host.load(&record_key).map_err(host_failure)?;
-                if let Some(record) = recorded_generated_call(
-                    &raced,
-                    &call.action.action_id,
-                    object_type,
-                    &call.input,
-                    &call.actor,
-                    call.trace.as_ref(),
-                    &call.idempotency_key,
-                )? {
+                if let Some(record) = recorded_generated_call(&raced, call, object_type)? {
                     validate_generated_replay_input(
                         host,
                         catalog,
@@ -278,16 +262,13 @@ fn validate_generated_replay_input<H: CellHost + ?Sized>(
 
 fn recorded_generated_call<X>(
     recorded: &FactState,
-    action_id: &str,
+    call: &ActionCall<'_>,
     object_type: &ObjectTypeName,
-    input: &JsonObject,
-    actor: &str,
-    trace: Option<&TraceContext>,
-    key: &str,
 ) -> Result<Option<ActionCallRecord>, ActionRefusal<X>> {
     if recorded.version == crate::cell_host::FactVersion::ABSENT {
         return Ok(None);
     }
+    let key = &call.idempotency_key;
     let Some(values) = &recorded.values else {
         return Err(ActionRefusal::IdempotencyConflict {
             key: key.to_owned(),
@@ -298,7 +279,14 @@ fn recorded_generated_call<X>(
             key: key.to_owned(),
         });
     };
-    if record.binds_same_generated_call(action_id, object_type, input, actor, trace) {
+    if record.binds_same_generated_call(
+        &call.action.action_id,
+        object_type,
+        &call.input,
+        &call.actor,
+        call.accountable_person.as_deref(),
+        call.trace.as_ref(),
+    ) {
         Ok(Some(record))
     } else {
         Err(ActionRefusal::IdempotencyConflict {

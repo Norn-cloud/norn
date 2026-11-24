@@ -139,6 +139,8 @@ pub(crate) fn run(
                 ("environmentId".into(), "dev".into()),
             ]),
             actor: "synthetic:operator".into(),
+            accountable_person: None,
+            approval: None,
             input,
             idempotency_key: key.into(),
             object_type: None,

@@ -495,7 +495,12 @@ fn check_action_identity_input<X>(
     let mut objects = vec![raw_input];
     let mut values = Vec::new();
     while let Some(object) = objects.pop() {
-        for field in ["actor", "approved"] {
+        for field in [
+            "actor",
+            "approved",
+            "accountablePerson",
+            "accountable_person",
+        ] {
             if object.contains_key(field) {
                 return Err(ActionRefusal::InvalidInput {
                     field: field.into(),
@@ -741,6 +746,7 @@ pub(super) fn check_action_record_size<X>(
     // Existing actions without the new preparation phases retain their
     // admitted input/receipt behavior, including command-only actions.
     if !has_action_preparation_features(action)
+        && record.approval_evidence.is_none()
         && !record.effective_input.as_ref().is_some_and(|effective| {
             record
                 .input

@@ -825,6 +825,7 @@ fn a_revision_racing_the_approved_dispatch_is_fenced() {
         roles: roles.to_vec(),
         actor_kind: "user",
         role_table: Box::leak(table.to_owned().into_boxed_str()),
+        accountable_person: Some(subject.to_owned()),
     };
     cell.caller.record(Some(as_caller(
         "approver@steps",
@@ -915,6 +916,7 @@ fn a_refusal_racing_an_exact_commit_never_masks_it() {
         roles: roles.to_vec(),
         actor_kind: "user",
         role_table: Box::leak(table.to_owned().into_boxed_str()),
+        accountable_person: Some(subject.to_owned()),
     };
     cell.caller.record(Some(as_caller(
         "approver@steps",
@@ -1028,6 +1030,7 @@ fn the_requesters_subject_under_another_kind_or_role_table_reads_nothing() {
         roles: vec!["admin".to_owned()],
         actor_kind: kind,
         role_table: table,
+        accountable_person: Some("operator@steps".to_owned()),
     };
     // The requester itself, as the dispatch admits it, is offered the run.
     let own = requested_as(
@@ -1325,4 +1328,168 @@ fn an_approved_call_preserves_and_binds_trace_context() {
         history["versions"][0]["writer"]["trace"], trace,
         "{history}"
     );
+}
+
+fn decide_as<E: SqlEngine>(
+    cell: &Cell<E>,
+    caller: norn_cell_do::policy::Caller,
+    decision_id: &str,
+    idem: &str,
+    now_ms: u64,
+) -> Result<(), Box<norn_api::decisions::DecideRefusal>> {
+    use norn_api::decisions::{DecideCall, DecideRequest};
+    use norn_api::scope::ScopeQuery;
+
+    let scope = ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let actor = caller.subject_id.clone();
+    let reads = |capability: norn_api::authz::ReadCapability, object_type: &str| {
+        norn_cell_do::policy::collection_access(cell.host.scope(), &actor, capability, object_type)
+    };
+    let no_requester = |_requester: &norn_cell::flow_run::RunStarter,
+                        _dispatch: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| None;
+    cell.caller.record(Some(caller));
+    let out = norn_api::decisions::decide(
+        &cell.host,
+        &DecideCall {
+            scope: &scope,
+            actor: Some(&actor),
+            id: decision_id,
+            body: &DecideRequest {
+                choice: "approve".into(),
+                note: None,
+                idempotency_key: idem.into(),
+            },
+            now: norn_kernel::LogicalTime::from_millis(now_ms),
+        },
+        &reads,
+        &cell.handles,
+        &no_requester,
+    );
+    cell.caller.record(None);
+    out.map(|_| ())
+}
+
+fn list_pending_total<E: SqlEngine>(
+    cell: &Cell<E>,
+    caller: norn_cell_do::policy::Caller,
+    now_ms: u64,
+) -> Option<u64> {
+    let list_query = norn_api::decisions::DecisionsQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+        state: Some("pending".into()),
+        flow: None,
+        cursor: None,
+        limit: None,
+    };
+    let actor = caller.subject_id.clone();
+    cell.caller.record(Some(caller));
+    let listed = norn_api::decisions::list_decisions(
+        &cell.host,
+        &list_query,
+        Some(&actor),
+        norn_kernel::LogicalTime::from_millis(now_ms),
+    );
+    cell.caller.record(None);
+    listed.ok().map(|page| page.total)
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618): two sessions of the same accountable person cannot self-approve a
+/// parked call, a principal without an accountable person fails closed, and a distinct
+/// accountable person approves it cleanly.
+#[test]
+fn two_sessions_of_same_accountable_person_cannot_self_approve_a_parked_call() {
+    use norn_cell_do::policy::Caller;
+
+    let cell = cell();
+    gate(&cell, None);
+    let make_caller = |subject: &str, kind: &'static str, person: Option<&str>| Caller {
+        subject_id: subject.to_owned(),
+        roles: vec!["admin".to_owned()],
+        actor_kind: kind,
+        role_table: norn_cell_do::principal::FIXTURE_ROLES,
+        accountable_person: person.map(str::to_owned),
+    };
+    let query = norn_api::actions::ActionQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+        version: None,
+    };
+    let req = norn_api::actions::decode_action_request(&melt7("alice-s1"));
+    assert!(req.is_ok(), "decode_action_request should succeed: {req:?}");
+    let Ok(req) = req else {
+        return;
+    };
+    let alice_s1 = make_caller("operator@steps", "user", Some("person:alice"));
+    cell.caller.record(Some(alice_s1.clone()));
+    let parked = norn_api::actions::call_action(
+        &cell.host,
+        &query,
+        Some("operator@steps"),
+        MELT_ACTION,
+        &req,
+        &cell.handles,
+        norn_kernel::LogicalTime::from_millis(NOW * 1000),
+    );
+    cell.caller.record(None);
+    let Ok(norn_api::actions::ActionAnswer::Pending(pending_action)) = parked else {
+        assert!(matches!(
+            parked,
+            Ok(norn_api::actions::ActionAnswer::Pending(_))
+        ));
+        return;
+    };
+    let decision_id = pending_action.decision.id;
+
+    let alice_s2 = make_caller("approver@steps", "user", Some("person:alice"));
+    assert_eq!(
+        list_pending_total(&cell, alice_s2.clone(), NOW * 1000 + 1),
+        Some(0)
+    );
+    let self_decide = decide_as(&cell, alice_s2, &decision_id, "alice-s2", NOW * 1000 + 1);
+    assert!(
+        matches!(&self_decide, Err(err) if err.refusal.status == 404),
+        "second session of same accountable person must be refused: {self_decide:?}"
+    );
+
+    let agent = make_caller("approver@steps", "service", None);
+    let agent_decide = decide_as(&cell, agent, &decision_id, "agent", NOW * 1000 + 2);
+    assert!(
+        matches!(&agent_decide, Err(err) if err.refusal.status == 404),
+        "principal without accountable person must fail closed: {agent_decide:?}"
+    );
+
+    let bob = make_caller("approver@steps", "user", Some("person:bob"));
+    assert_eq!(
+        list_pending_total(&cell, bob.clone(), NOW * 1000 + 3),
+        Some(1)
+    );
+    let bob_decide = decide_as(&cell, bob, &decision_id, "bob", NOW * 1000 + 3);
+    assert!(
+        bob_decide.is_ok(),
+        "distinct accountable person must approve: {bob_decide:?}"
+    );
+
+    cell.caller.record(Some(alice_s1));
+    let committed = norn_api::actions::call_action(
+        &cell.host,
+        &query,
+        Some("operator@steps"),
+        MELT_ACTION,
+        &req,
+        &cell.handles,
+        norn_kernel::LogicalTime::from_millis(NOW * 1000 + 4),
+    );
+    cell.caller.record(None);
+    assert!(matches!(
+        committed,
+        Ok(norn_api::actions::ActionAnswer::Receipt(ref r))
+            if r.outcome == norn_api::actions::ActionCallOutcome::Committed
+    ));
 }

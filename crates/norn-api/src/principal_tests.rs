@@ -68,6 +68,7 @@ fn a_signed_session_token_maps_through_the_declared_role_table() {
             roles: vec!["member".into()],
             auth_method: "password".into(),
             role_table: "studio-roles/1",
+            accountable_person: Some("user:u1".into()),
         }
     );
     let link = resolve(&token(&claims("user", "admin", "magic_link"))).unwrap();
@@ -185,4 +186,39 @@ fn a_jwks_without_ed25519_keys_is_refused() {
         json!({ "keys": [{ "kty": "RSA", "kid": "r1", "n": "AQAB", "e": "AQAB" }] }).to_string();
     assert!(TokenVerifier::from_jwks(ISSUER, "norn-host", &rsa, &STUDIO_ROLES).is_err());
     assert!(TokenVerifier::from_jwks(ISSUER, "norn-host", "{}", &STUDIO_ROLES).is_err());
+}
+
+#[test]
+fn distinct_sessions_carry_same_accountable_person_and_malformed_claim_refuses() {
+    let mut session_a = claims("user", "admin", "password");
+    session_a["sub"] = json!("sess-a");
+    session_a["norn"]["accountablePerson"] = json!("user:alice");
+    let mut session_b = claims("user", "admin", "oauth");
+    session_b["sub"] = json!("sess-b");
+    session_b["norn"]["accountablePerson"] = json!("user:alice");
+    let a = resolve(&token(&session_a));
+    let b = resolve(&token(&session_b));
+    assert!(a.is_ok() && b.is_ok());
+    if let (Ok(pa), Ok(pb)) = (a, b) {
+        assert_ne!(pa.subject_id, pb.subject_id);
+        assert_eq!(pa.accountable_person.as_deref(), Some("user:alice"));
+        assert_eq!(pb.accountable_person.as_deref(), Some("user:alice"));
+        assert!(!norn_kernel::independent_accountable_people(
+            pa.accountable_person.as_deref(),
+            pb.accountable_person.as_deref()
+        ));
+    }
+    let service = resolve(&token(&claims("service", "viewer", "api_key")));
+    assert!(matches!(
+        service,
+        Ok(Principal {
+            accountable_person: None,
+            ..
+        })
+    ));
+    for bad in ["", "   ", " user:alice", "user:e\u{301}"] {
+        let mut malformed = claims("user", "admin", "password");
+        malformed["norn"]["accountablePerson"] = json!(bad);
+        assert!(resolve(&token(&malformed)).is_err(), "{bad:?}");
+    }
 }

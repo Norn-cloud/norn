@@ -82,6 +82,24 @@
       "description": "The actor.",
       "type": "string"
     },
+    "accountablePerson": {
+      "description": "AUTH-INDEPENDENT-PERSON (#618): authenticated accountable person behind\n`actor`, when supplied by the trusted host seam.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "approvalEvidence": {
+      "description": "AUTH-INDEPENDENT-PERSON (#618): verified independent-person approval\nreceipt bound to this call's exact prepared intent.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActionApprovalReceipt"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "turn": {
       "description": "The turn the call committed in.",
       "type": "string"
@@ -229,6 +247,87 @@
         "setting",
         "version",
         "digest"
+      ]
+    },
+    "ActionApprovalReceipt": {
+      "description": "Verified independent-person approval receipt retained on [`super::ActionCallRecord`].",
+      "type": "object",
+      "properties": {
+        "intentDigest": {
+          "description": "Canonical SHA-256 digest (`sha256:<64 lower-case hex>`) of the exact prepared intent.",
+          "type": "string"
+        },
+        "requiredDistinctPeople": {
+          "description": "Minimum distinct accountable people required by policy.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "accountablePeople": {
+          "description": "Distinct authenticated accountable people who satisfied the policy, sorted canonically.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "description": "Verified approval/assay evidence entries bound to this commit.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionApprovalEvidenceRecord"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "intentDigest",
+        "requiredDistinctPeople",
+        "accountablePeople",
+        "evidence"
+      ]
+    },
+    "ActionApprovalEvidenceRecord": {
+      "description": "One verified approval or assay entry retained on [`super::ActionCallRecord`].",
+      "type": "object",
+      "properties": {
+        "evidenceId": {
+          "description": "Unique evidence identifier.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Evidence kind (`approval` or `assay`).",
+          "$ref": "#/$defs/ApprovalEvidenceKind"
+        },
+        "actor": {
+          "description": "Authenticated acting principal/session/agent id.",
+          "type": "string"
+        },
+        "accountablePerson": {
+          "description": "Authenticated accountable human person id.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "evidenceId",
+        "kind",
+        "actor",
+        "accountablePerson"
+      ]
+    },
+    "ApprovalEvidenceKind": {
+      "description": "Kind of evidence presented for independent-person approval.",
+      "oneOf": [
+        {
+          "description": "Human approval of the prepared action intent.",
+          "type": "string",
+          "const": "approval"
+        },
+        {
+          "description": "Independent assay or measurement evidence bound to the prepared intent.",
+          "type": "string",
+          "const": "assay"
+        }
       ]
     },
     "TraceContext": {

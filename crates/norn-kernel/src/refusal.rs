@@ -665,7 +665,9 @@ impl<X> ActionRefusal<X> {
         match self {
             Self::Decision(refusal) => refusal.category(),
             Self::TargetNotFound | Self::SliceObjectMissing { .. } => RefusalCategory::Visibility,
-            Self::PermissionDenied { .. } => RefusalCategory::Permission,
+            Self::PermissionDenied { .. }
+            | Self::AuthorityDenied { .. }
+            | Self::AuthorityRevoked { .. } => RefusalCategory::Permission,
             Self::PreconditionFailed { .. } | Self::WriteModeFailed { .. } => {
                 RefusalCategory::Precondition
             }

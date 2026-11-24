@@ -2,8 +2,7 @@ use norn_ir::{ActionRoot, FactChange, ObjectTypeName, ResourceLimitProfile, Upse
 
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
 use crate::decision_commit::{FactEvent, TypeCatalog};
-use crate::envelope::TurnEnvelopeMeter;
-use crate::limits::{EnvelopeLimits, SliceMeter};
+use crate::limits::SliceMeter;
 use crate::naming_series::type_series;
 
 use super::input::check_action_record_size;
@@ -50,8 +49,7 @@ pub(super) fn commit_upsert<H>(
     object_id_field: &str,
     object_kind: &str,
     write_mode: &UpsertWriteMode,
-    limits: &EnvelopeLimits,
-    meter: Option<&mut TurnEnvelopeMeter>,
+    envelope: EnvelopePolicy<'_>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
 where
     H: CellHost + ?Sized,
@@ -59,6 +57,7 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    let limits = envelope.limits;
     let action = call.action;
     let object_type = call
         .object_type
@@ -96,8 +95,7 @@ where
             series.key_name,
             series.key_properties,
             series.declaration,
-            limits,
-            meter,
+            envelope,
         );
         // No honest target exists for some allocator failures. Conceal all
         // refusals alike unless diagnostic access was separately granted, so
@@ -156,6 +154,8 @@ where
         precondition_outcomes: Vec::new(),
         parameter_pins: Vec::new(),
         actor: call.actor.clone(),
+        accountable_person: call.accountable_person.clone(),
+        approval_evidence: None,
         turn: call.turn.id.clone(),
         transition: String::new(),
         from: String::new(),
@@ -295,6 +295,6 @@ where
             series_candidate: None,
             receipt: None,
         },
-        EnvelopePolicy { limits, meter },
+        envelope,
     )
 }
