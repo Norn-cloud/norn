@@ -31,6 +31,8 @@ use norn_api::scope::CellScope;
 
 /// The demo cell: where a request naming no well-formed scope lands.
 const DEMO: (&str, &str) = ("org_demo", "dev");
+/// The runner's liveness answer for the edge's health check.
+pub const HEALTH_PATH: &str = "/healthz";
 /// The parameter a conformance request names its own cell object with.
 const OBJECT_PARAM: &str = "conformanceObject";
 
@@ -284,6 +286,11 @@ impl Router {
             return StatusCode::NO_CONTENT.into_response();
         }
         let path = request.uri().path().to_owned();
+        // The edge's health check (Traefik takes a runner out of rotation when it fails): this
+        // process answers, with no token, no actor and no engine call.
+        if path == HEALTH_PATH && request.method() == Method::GET {
+            return (StatusCode::OK, "ok").into_response();
+        }
         let query = request.uri().query().unwrap_or_default().to_owned();
         let target = match self.target(&path, &query) {
             Ok(target) => target,

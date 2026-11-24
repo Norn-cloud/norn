@@ -195,6 +195,19 @@ async fn a_socket_without_a_valid_token_is_refused_before_the_upgrade() {
 }
 
 #[tokio::test]
+async fn the_health_check_answers_without_a_token_or_the_engine() {
+    let host = host().await;
+    let response = host
+        .http
+        .get(format!("{}/healthz", host.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    assert_eq!(host.engine_connections.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn a_valid_token_reaches_the_engine() {
     let host = host().await;
     let response = host
