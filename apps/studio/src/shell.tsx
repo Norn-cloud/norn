@@ -490,7 +490,7 @@ function Crumbs({ section, entries, pathname }: { readonly section: Section; rea
  */
 function PerspectiveSwitch({ perspective, onChange }: { readonly perspective: Perspective; readonly onChange: (next: Perspective) => void }) {
   return (
-    <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-lg border border-border/80 bg-surface-subtle p-0.5 dark:bg-shell/90">
+    <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-lg border border-border/80 bg-surface-subtle p-0.5 dark:bg-shell">
       {PERSPECTIVES.map(({ id, label }) => (
         <button key={id} type="button" aria-pressed={perspective === id} onClick={() => onChange(id)}
           className="flex h-[1.625rem] items-center gap-1.5 rounded-md px-1.5 text-sm text-muted-foreground transition-[color,background-color,box-shadow] duration-150 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-control aria-pressed:ring-1 aria-pressed:ring-border/70 aria-pressed:[&_svg]:text-action dark:aria-pressed:bg-accent dark:aria-pressed:ring-border @sm:px-2 @lg:px-2.5 [&_svg]:size-3.5">

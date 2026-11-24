@@ -44,23 +44,38 @@ for (const scheme of ["light", "dark"] as const) {
       const perspTrack = document.querySelector<HTMLElement>('[role="group"][aria-label="Perspective"]')!
       const perspActive = perspTrack.querySelector<HTMLElement>('button[aria-pressed="true"]')!
 
+      const canvas = document.createElement("canvas")
+      canvas.width = 1
+      canvas.height = 1
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })!
+      const toRgb = (cssColor: string, fallbackBg: string) => {
+        ctx.clearRect(0, 0, 1, 1)
+        ctx.fillStyle = fallbackBg
+        ctx.fillRect(0, 0, 1, 1)
+        ctx.fillStyle = cssColor
+        ctx.fillRect(0, 0, 1, 1)
+        const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+        return `rgb(${r}, ${g}, ${b})`
+      }
+
       const cs = (el: HTMLElement) => getComputedStyle(el)
+      const pageBg = toRgb(cs(inset).backgroundColor, "#000000")
       return {
-        shellBg: cs(shell).backgroundColor,
-        pageBg: cs(inset).backgroundColor,
+        shellBg: toRgb(cs(shell).backgroundColor, "#000000"),
+        pageBg,
         pageRadius: Number.parseFloat(cs(inset).borderTopLeftRadius),
         pageBorder: Number.parseFloat(cs(inset).borderTopWidth),
         pageShadow: cs(inset).boxShadow,
-        panelBg: cs(panel).backgroundColor,
+        panelBg: toRgb(cs(panel).backgroundColor, pageBg),
         panelRadius: Number.parseFloat(cs(panel).borderTopLeftRadius),
-        stripBg: cs(strip).backgroundColor,
+        stripBg: toRgb(cs(strip).backgroundColor, pageBg),
         stripRadius: Number.parseFloat(cs(strip).borderTopLeftRadius),
-        primaryBg: cs(primary).backgroundColor,
+        primaryBg: toRgb(cs(primary).backgroundColor, pageBg),
         primaryRadius: Number.parseFloat(cs(primary).borderTopLeftRadius),
-        thBg: cs(thRow).backgroundColor,
+        thBg: toRgb(cs(thRow).backgroundColor, pageBg),
         kpiVariantNumeric: cs(kpiValue).fontVariantNumeric,
-        perspTrackBg: cs(perspTrack).backgroundColor,
-        perspActiveBg: cs(perspActive).backgroundColor,
+        perspTrackBg: toRgb(cs(perspTrack).backgroundColor, pageBg),
+        perspActiveBg: toRgb(cs(perspActive).backgroundColor, pageBg),
       }
     })
 

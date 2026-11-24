@@ -26,7 +26,7 @@ const tabsListVariants = cva(
   {
     variants: {
       variant: {
-        default: "border border-border/80 bg-surface-subtle dark:bg-shell/90",
+        default: "border border-border/80 bg-surface-subtle dark:bg-shell",
         line: "gap-1 border-b border-border/80 bg-transparent",
       },
     },
