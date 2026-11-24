@@ -2,7 +2,7 @@
 //! `/{id}:run`, and `/{id}/runs`).
 //!
 //! Execution, proposal parking, and ledger run history live in
-//! [`crate::automation_exec`]; every route enforces scope, role, and row-level
+//! `automation_exec`; every route enforces scope, role, and row-level
 //! authorization before scanning or firing.
 
 use std::collections::BTreeMap;
@@ -11,7 +11,7 @@ use http::StatusCode;
 use norn_cell::engine::SqlEngine;
 use norn_cell::retained::RetainedLifecycle;
 use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader};
-use norn_ir::RuntimeValue;
+use norn_ir::{ActionEffectProgram, RuntimeObject, RuntimeValue};
 use norn_kernel::LogicalTime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -19,19 +19,209 @@ use utoipa::openapi::Type;
 use utoipa::openapi::schema::{AdditionalProperties, Object, ObjectBuilder, SchemaType};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::authz::Operation;
-use crate::automation_definitions::{AutomationPayload, AutomationWhen};
+use crate::authz::{Operation, ReadCapability, ReadRequest};
+use crate::automation_definitions::{AutomationPayload, AutomationThen, AutomationWhen};
 pub(crate) use crate::automation_exec::{
-    FireTarget, HeldProposal, action_meta, build_action_input, fire_for_record, held_proposal,
-    on_action_committed, proposal_document, read_runs_from_ledger, run_approved_proposal,
-    run_due_stale,
+    FireTarget, approved_proposal_call, fire_for_record, next_stale_wake, on_action_committed,
+    read_runs_from_ledger, run_approved_proposal, run_due_stale,
+};
+use crate::decisions::{
+    DecisionCall, DecisionContext, DecisionDocument, DecisionFlow, DecisionOptionDocument,
+    DecisionOptionEffect, DecisionRisk, DecisionRun, DecisionStep, DecisionSubject, OpenDecision,
 };
 use crate::definition_routes::authorize;
 use crate::host::DevHost;
-use crate::object_routes::{ObjectAccess, collection, scan_listed};
+use crate::object_routes::{ObjectAccess, collection, mapped, row_readable, scan_listed};
 use crate::question_routes::QuestionRuntime;
 use crate::refusal::{Refusal, RefusalDiagnostic};
 use crate::scope::ScopeQuery;
+
+/// An automation proposal carried inside a parked `norn.decision@1` command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HeldProposal {
+    pub(crate) definition: String,
+    pub(crate) revision: u64,
+    pub(crate) title: String,
+    pub(crate) object_type: String,
+    pub(crate) object_id: String,
+    pub(crate) object_version: u64,
+    pub(crate) action: String,
+    pub(crate) input: RuntimeObject,
+    pub(crate) idempotency_key: String,
+}
+
+/// Decode the `automation` member of a parked `norn.decision@1` command.
+#[must_use]
+pub(crate) fn held_proposal(value: &RuntimeValue) -> Option<HeldProposal> {
+    let text = |name: &str| {
+        value
+            .get(name)
+            .and_then(RuntimeValue::as_str)
+            .map(str::to_owned)
+    };
+    let Some(RuntimeValue::Object(input)) = value.get("input") else {
+        return None;
+    };
+    Some(HeldProposal {
+        definition: text("definition")?,
+        revision: norn_ir::runtime::decode(value.get("revision")?).ok()?,
+        title: text("title")?,
+        object_type: text("objectType")?,
+        object_id: text("objectId")?,
+        object_version: norn_ir::runtime::decode(value.get("objectVersion")?).ok()?,
+        action: text("action")?,
+        input: input.clone(),
+        idempotency_key: text("idempotencyKey")?,
+    })
+}
+
+/// Project an open automation proposal decision to the wire [`DecisionDocument`].
+pub(crate) fn proposal_document(
+    decision: &OpenDecision,
+    proposal: &HeldProposal,
+) -> DecisionDocument {
+    let risk = match decision.request.risk {
+        norn_cell::decision_ledger::Risk::Low => DecisionRisk::Low,
+        norn_cell::decision_ledger::Risk::Medium => DecisionRisk::Medium,
+        norn_cell::decision_ledger::Risk::High => DecisionRisk::High,
+    };
+    let options = decision
+        .request
+        .options
+        .iter()
+        .map(|option| DecisionOptionDocument {
+            id: option.id.clone(),
+            label: option.label.clone(),
+            scope: option.scope.clone(),
+            effect: DecisionOptionEffect {
+                action: option.effect.action.clone(),
+                binding: option.effect.binding.clone(),
+            },
+        })
+        .collect();
+    DecisionDocument {
+        id: decision.id.clone(),
+        run: DecisionRun {
+            id: decision.run_id.clone(),
+            generation: decision.generation.0,
+            state: None,
+        },
+        flow: DecisionFlow {
+            rule_id: proposal.definition.clone(),
+            version: proposal.revision.to_string(),
+            title: Some(proposal.title.clone()),
+        },
+        step: DecisionStep {
+            id: decision.step.clone(),
+            label: Some("Proposed action".to_owned()),
+        },
+        question: decision.request.question.clone(),
+        risk,
+        options,
+        agent_pick: decision.request.agent_pick.clone(),
+        requested_at_ms: decision.requested_at_ms,
+        expires_at_ms: decision.expires_at_ms,
+        context: DecisionContext {
+            subjects: vec![DecisionSubject {
+                object_type: proposal.object_type.clone(),
+                id: proposal.object_id.clone(),
+            }],
+        },
+        input_schema: None,
+        call: Some(DecisionCall {
+            action: proposal.action.clone(),
+            definition: proposal.definition.clone(),
+            input: RuntimeValue::Object(proposal.input.clone()),
+            trace: None,
+        }),
+    }
+}
+
+pub(crate) fn action_meta<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &StoreReader<'_, E>,
+    object_type: &str,
+    action_id: &str,
+) -> Result<(String, String), Refusal> {
+    let actions = crate::automation_definitions::actions_map(host, reader, object_type)?;
+    let action = actions.get(action_id).ok_or_else(|| {
+        Refusal::invalid(format!(
+            "action {action_id:?} is not admitted for {object_type}"
+        ))
+    })?;
+    let field = match &action.effect_program {
+        Some(
+            ActionEffectProgram::UpsertInputObject {
+                object_id_field, ..
+            }
+            | ActionEffectProgram::FireTransition {
+                object_id_field, ..
+            }
+            | ActionEffectProgram::MutateParentWithRows {
+                object_id_field, ..
+            },
+        ) => object_id_field.clone(),
+        None => {
+            return Err(Refusal::invalid(format!(
+                "action {action_id:?} has no runnable effect program"
+            )));
+        }
+    };
+    let title = action
+        .title
+        .clone()
+        .unwrap_or_else(|| action.action_id.clone());
+    Ok((field, title))
+}
+
+pub(crate) fn build_action_input(
+    then: &AutomationThen,
+    object_id_field: &str,
+    object_id: &str,
+) -> Result<RuntimeObject, Refusal> {
+    let mut map = RuntimeObject::new();
+    for (key, value) in then.input() {
+        map.insert(key.clone(), json_to_runtime(value)?);
+    }
+    map.insert(
+        object_id_field.to_owned(),
+        RuntimeValue::String(object_id.to_owned()),
+    );
+    Ok(map)
+}
+
+pub(crate) fn json_to_runtime(value: &Value) -> Result<RuntimeValue, Refusal> {
+    let text = serde_json::to_string(value).map_err(Refusal::host)?;
+    RuntimeValue::from_json_text(&text).map_err(Refusal::host)
+}
+
+pub(crate) fn dedupe_hash(
+    automation_id: &str,
+    revision: u64,
+    object_type: &str,
+    object_id: &str,
+    object_version: u64,
+) -> Result<String, Refusal> {
+    let digest = norn_ir::canonical::domain_hash_hex(
+        b"norn.automation.dedupe/1\0",
+        &(
+            automation_id,
+            revision,
+            object_type,
+            object_id,
+            object_version,
+        ),
+    )
+    .map_err(Refusal::host)?;
+    Ok(digest.get(..32).unwrap_or(&digest).to_owned())
+}
+
+pub(crate) fn run_entry_id(dedupe_key: &str, suffix: &str) -> Result<String, Refusal> {
+    let digest =
+        norn_ir::canonical::domain_hash_hex(b"norn.automation.run_id/1\0", &(dedupe_key, suffix))
+            .map_err(Refusal::host)?;
+    Ok(format!("arun_{}", digest.get(..24).unwrap_or(&digest)))
+}
 
 /// Command id prefix of every automation-proposed Inbox decision.
 pub const COMMAND_PREFIX: &str = "norn.automation/";
@@ -350,7 +540,7 @@ pub fn run_automation<E: SqlEngine>(
             runs: Vec::new(),
         });
     }
-    let (_epoch, verified_actor) = collection(host, scope, actor, &payload.object_type, access)?;
+    let (epoch, verified_actor) = collection(host, scope, actor, &payload.object_type, access)?;
     let scan = scan_listed(
         host,
         access,
@@ -381,6 +571,10 @@ pub fn run_automation<E: SqlEngine>(
         };
         (field, title, now_ms, times)
     };
+    // Release the definitions read guard before firing actions: `call_action_bound`
+    // acquires its own `definition_read()` epoch and recursive read locking on the
+    // same thread can deadlock if a definition write queues in between.
+    drop(epoch);
     let mut scanned = 0_u64;
     let mut matched = 0_u64;
     let mut runs = Vec::new();
@@ -481,11 +675,72 @@ pub fn list_automation_runs<E: SqlEngine>(
             serde_json::from_str(&record.definition.payload).map_err(Refusal::host)?;
         payload.object_type
     };
-    let (_epoch, _actor) = collection(host, &scope, actor, &object_type, access)?;
-    let cell = host.cell()?;
-    let mut items = read_runs_from_ledger(&cell.store().read(), id)?;
-    items.reverse();
-    items.truncate(limit);
+    let (_epoch, verified_actor) = collection(host, &scope, actor, &object_type, access)?;
+    let raw_items = {
+        let cell = host.cell()?;
+        let head_seq = cell.store().verified_head().map_err(Refusal::host)?.seq;
+        let mut found = read_runs_from_ledger(&cell.store().read(), id, head_seq)?;
+        found.reverse();
+        found
+    };
+    // Enforce collection and row-level authorization for every recorded run
+    // subject (including prior revisions that targeted another object type).
+    let mut items = Vec::with_capacity(limit.min(raw_items.len()));
+    let mut subjects: BTreeMap<(String, String), Option<ObjectRecord>> = BTreeMap::new();
+    {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        for run in &raw_items {
+            let key = (run.object_type.clone(), run.object_id.clone());
+            if let std::collections::btree_map::Entry::Vacant(slot) = subjects.entry(key) {
+                let row = reader
+                    .object(MAIN_WORLD, &run.object_type, &run.object_id)
+                    .map_err(Refusal::host)?;
+                slot.insert(row);
+            }
+        }
+    }
+    let scope_key = host.scope().key();
+    for run in raw_items {
+        if items.len() >= limit {
+            break;
+        }
+        let col_ok = mapped(
+            host.scope(),
+            access,
+            &verified_actor,
+            ReadCapability::Population,
+            &run.object_type,
+            None,
+        )
+        .is_ok_and(|req| {
+            host.read_permitted(&ReadRequest {
+                capability: ReadCapability::Population,
+                access: &req,
+            })
+        });
+        if !col_ok {
+            continue;
+        }
+        let subject_row = subjects
+            .get(&(run.object_type.clone(), run.object_id.clone()))
+            .and_then(Option::as_ref);
+        let allowed = if let Some(row) = subject_row {
+            row_readable(host, access, &verified_actor, row)
+        } else {
+            let fallback = ObjectRecord {
+                object_type: run.object_type.clone(),
+                id: run.object_id.clone(),
+                scope: scope_key.clone(),
+                version: run.object_version,
+                values: BTreeMap::new(),
+            };
+            row_readable(host, access, &verified_actor, &fallback)
+        };
+        if allowed {
+            items.push(run);
+        }
+    }
     Ok(AutomationRunsPage {
         id: id.to_owned(),
         items,

@@ -292,7 +292,31 @@ pub(crate) fn check<E: SqlEngine>(
         check_if(guard, &model_snapshot, object_type, findings);
     }
     check_then(object.get("then"), object_type, &actions, roles, findings);
+    check_when_then_compat(object, findings);
     Ok(())
+}
+
+fn check_when_then_compat(
+    object: &serde_json::Map<String, Value>,
+    findings: &mut Vec<RefusalDiagnostic>,
+) {
+    let is_stale = object
+        .get("when")
+        .and_then(|w| w.get("kind"))
+        .and_then(Value::as_str)
+        == Some("stale");
+    let is_run = object
+        .get("then")
+        .and_then(|t| t.get("kind"))
+        .and_then(Value::as_str)
+        == Some("run");
+    if is_stale && is_run {
+        findings.push(err(
+            automation_codes::INVALID,
+            "stale automations must propose to the Inbox because timer wakes run without a verified caller principal",
+            "/then/kind",
+        ));
+    }
 }
 
 /// Deterministic plain-words restatement of an automation payload (D59).
@@ -693,17 +717,102 @@ fn check_then_action(
             return;
         };
         if let Some(action) = action {
-            let derived = norn_kernel::actor_derived_fields(action);
-            for key in map.keys() {
-                if derived.contains(key) {
-                    findings.push(err(
-                        automation_codes::INVALID,
-                        format!("input field {key:?} is derived from the actor by the server"),
-                        format!("/then/input/{key}"),
-                    ));
-                }
-            }
+            check_static_input(action, map, findings);
         }
+    }
+}
+
+fn check_static_input(
+    action: &ActionRoot,
+    map: &serde_json::Map<String, Value>,
+    findings: &mut Vec<RefusalDiagnostic>,
+) {
+    let derived = norn_kernel::actor_derived_fields(action);
+    let schema = serde_json::to_value(&action.input_schema).unwrap_or(Value::Null);
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let closed = schema.get("additionalProperties").and_then(Value::as_bool) == Some(false);
+    for (key, value) in map {
+        let pointer = format!("/then/input/{key}");
+        if derived.contains(key) {
+            findings.push(err(
+                automation_codes::INVALID,
+                format!("input field {key:?} is derived from the actor by the server"),
+                pointer,
+            ));
+            continue;
+        }
+        let Some(prop_schema) = properties.and_then(|props| props.get(key)) else {
+            if closed {
+                findings.push(err(
+                    automation_codes::INVALID,
+                    format!(
+                        "input field {key:?} is not declared by {}",
+                        action.action_id
+                    ),
+                    pointer,
+                ));
+            }
+            continue;
+        };
+        if let Some(reason) = check_input_value_against_schema(value, prop_schema) {
+            findings.push(err(
+                automation_codes::INVALID,
+                format!("input field {key:?} {reason}"),
+                pointer,
+            ));
+        }
+    }
+}
+
+fn check_input_value_against_schema(value: &Value, schema: &Value) -> Option<String> {
+    let nullable = schema
+        .get("type")
+        .and_then(Value::as_array)
+        .is_some_and(|arr| arr.iter().any(|t| t.as_str() == Some("null")));
+    if value.is_null() {
+        return (!nullable).then(|| "cannot be null".to_owned());
+    }
+    if let Some(choices) = schema.get("enum").and_then(Value::as_array)
+        && !choices.iter().any(|choice| choice == value)
+    {
+        return Some("must be one of the declared enum values".to_owned());
+    }
+    let is_decimal = schema
+        .get("nornType")
+        .and_then(|n| n.get("kind"))
+        .and_then(Value::as_str)
+        == Some("decimal");
+    let primary = schema.get("type").and_then(|t| {
+        t.as_str().or_else(|| {
+            t.as_array()
+                .and_then(|arr| arr.iter().filter_map(Value::as_str).find(|s| *s != "null"))
+        })
+    });
+    match primary {
+        Some("string") => (!value.is_string()).then(|| "must be a string".to_owned()),
+        Some("boolean") => (!value.is_boolean()).then(|| "must be a boolean".to_owned()),
+        Some("integer") => (!(value.as_i64().is_some() || value.as_u64().is_some()))
+            .then(|| "must be an integer".to_owned()),
+        Some("number") if is_decimal => {
+            let ok = value.is_number()
+                || value.as_str().is_some_and(|s| {
+                    let unsigned = s.trim().strip_prefix('-').unwrap_or_else(|| s.trim());
+                    unsigned.split_once('.').map_or_else(
+                        || !unsigned.is_empty() && unsigned.bytes().all(|b| b.is_ascii_digit()),
+                        |(a, b)| {
+                            !a.is_empty()
+                                && !b.is_empty()
+                                && a.bytes().all(|c| c.is_ascii_digit())
+                                && b.bytes().all(|c| c.is_ascii_digit())
+                        },
+                    )
+                });
+            (!ok).then(|| "must be a decimal string or number".to_owned())
+        }
+        Some("number") => (!value.is_number()).then(|| "must be a number".to_owned()),
+        Some("array") => (!value.is_array()).then(|| "must be an array".to_owned()),
+        Some("object") => (!value.is_object()).then(|| "must be an object".to_owned()),
+        _ => None,
     }
 }
 

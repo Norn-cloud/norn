@@ -595,17 +595,39 @@ fn saved_view_admits_space_and_actions_and_objects_return_per_row_offers() -> Te
         "assist-app-1",
     );
     assert_eq!(status, 200, "{assisted}");
-    let (status, single) = cell.get("/v1/objects/funnel.Application/app-1", "", "admin");
+    assert_assisted_row_drops_offer(&mut cell, "app-1")?;
+    assert_retire_and_undo(&mut cell, "view", view_id, &view_payload, v1)
+}
+
+fn assert_assisted_row_drops_offer(cell: &mut Cell, id: &str) -> TestResult {
+    let (status, single) = cell.get(&format!("/v1/objects/funnel.Application/{id}"), "", "admin");
     assert_eq!(status, 200, "{single}");
     assert_eq!(ptr_str(&single, "/values/stage")?, "assisted");
+    let (status, actions_after) = cell.get(
+        "/v1/actions",
+        &format!("objectKind=funnel.Application&objectId={id}"),
+        "admin",
+    );
+    assert_eq!(status, 200, "{actions_after}");
     assert!(
-        !ptr_array(&single, "/offers")?
+        !ptr_array(&actions_after, "/items")?.iter().any(|a| {
+            a.get("actionId").and_then(Value::as_str) == Some("funnel.application.offer_assistance")
+        }),
+        "assisted row should no longer be offered offer_assistance: {actions_after}"
+    );
+    let (status, page_after) = cell.get("/v1/objects/funnel.Application", "", "admin");
+    assert_eq!(status, 200, "{page_after}");
+    let row = ptr_array(&page_after, "/records")?
+        .iter()
+        .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
+        .ok_or("missing record in list after assist")?;
+    assert!(
+        !ptr_array(row, "/offers")?
             .iter()
             .any(|a| a == "funnel.application.offer_assistance"),
-        "assisted row should no longer be offered offer_assistance: {single}"
+        "assisted row should no longer have offer_assistance in list offers: {row}"
     );
-
-    assert_retire_and_undo(&mut cell, "view", view_id, &view_payload, v1)
+    Ok(())
 }
 
 fn verify_refusal_and_stale(cell: &mut Cell) -> TestResult {
@@ -657,25 +679,55 @@ fn verify_refusal_and_stale(cell: &mut Cell) -> TestResult {
     );
     assert_eq!(status, 200, "{inst}");
 
+    let (status, bad_stale_run) = cell.post("/v1/definitions:admit", "admin", &json!({
+        "kind": "automation", "id": "studio.automation.bad_stale_run",
+        "payload": {
+            "title": "Bad stale run", "enabled": true, "objectType": "funnel.Application",
+            "when": { "kind": "stale", "afterMs": 60_000 },
+            "then": { "kind": "run", "actionId": "funnel.application.create", "input": { "score": "not-int" } }
+        }
+    }));
+    assert_eq!(status, 200, "{bad_stale_run}");
+    assert_eq!(ptr(&bad_stale_run, "/admitted")?, &json!(false));
+    let diags = ptr_array(&bad_stale_run, "/diagnostics")?;
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.pointer("/span/pointer") == Some(&json!("/then/kind"))),
+        "{bad_stale_run}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.pointer("/span/pointer") == Some(&json!("/then/input/score"))),
+        "{bad_stale_run}"
+    );
+
     let base_ms = NOW.saturating_mul(1000);
     assert_eq!(
-        cell.tenant
-            .run_due(base_ms.saturating_add(30_000))
-            .map_err(|refusal| format!("{refusal:?}"))?
-            .automations,
-        0
+        cell.tenant.next_due().map_err(|r| format!("{r:?}"))?,
+        Some(base_ms.saturating_add(60_000))
     );
     assert_eq!(
         cell.tenant
-            .run_due(base_ms.saturating_add(120_000))
-            .map_err(|refusal| format!("{refusal:?}"))?
+            .run_due(base_ms.saturating_add(30_000))
+            .map_err(|r| format!("{r:?}"))?
             .automations,
-        1
+        0
+    );
+    let due_fired = cell
+        .tenant
+        .run_due(base_ms.saturating_add(120_000))
+        .map_err(|r| format!("{r:?}"))?;
+    assert_eq!(due_fired.automations, 1);
+    assert!(
+        due_fired.next.is_some(),
+        "newly parked proposal expiry must be scheduled in work.next"
     );
     assert_eq!(
         cell.tenant
             .run_due(base_ms.saturating_add(180_000))
-            .map_err(|refusal| format!("{refusal:?}"))?
+            .map_err(|r| format!("{r:?}"))?
             .automations,
         0
     );
@@ -740,6 +792,14 @@ fn verify_inbox_approval(cell: &mut Cell, auto_id: &str) -> TestResult {
     );
     assert_eq!(status, 200, "{decided}");
     assert_eq!(ptr(&decided, "/call/committed")?, &json!(true));
+    let (status, replayed) = cell.post(
+        &format!("/v1/decisions/{decision_id}:decide"),
+        "admin",
+        &json!({ "choice": "approve", "note": "Reaching out now", "idempotencyKey": "decide-1" }),
+    );
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(ptr_str(&replayed, "/outcome")?, "replayed");
+    assert_eq!(ptr(&replayed, "/call/committed")?, &json!(true));
 
     let (status, obj) = cell.get("/v1/objects/funnel.Application/app-low", "", "admin");
     assert_eq!(status, 200, "{obj}");

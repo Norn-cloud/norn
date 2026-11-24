@@ -51,6 +51,18 @@ pub fn callable_actions<E: SqlEngine>(
     query: &ActionQuery,
     actor: Option<&str>,
 ) -> Result<CallableActions, Refusal> {
+    let epoch = host.definition_read()?;
+    callable_actions_in_epoch(host, &epoch, query, actor)
+}
+
+/// [`callable_actions`] when the caller already holds a definitions read epoch,
+/// avoiding recursive `RwLock::read()` acquisition on the same thread.
+pub(crate) fn callable_actions_in_epoch<E: SqlEngine>(
+    host: &DevHost<E>,
+    _epoch: &std::sync::RwLockReadGuard<'_, ()>,
+    query: &ActionQuery,
+    actor: Option<&str>,
+) -> Result<CallableActions, Refusal> {
     let actor = actor
         .filter(|actor| !actor.trim().is_empty())
         .ok_or_else(action_denied)?;
@@ -58,7 +70,6 @@ pub fn callable_actions<E: SqlEngine>(
         .admit(query.org_id.as_deref(), query.environment_id.as_deref())
         .map_err(|_refused| action_denied())?;
     let (version, retained) = {
-        let _epoch = host.definition_read()?;
         let cell = host.cell()?;
         // ADMIT-CACHE-1 (#1533): verified once per definitions version.
         host.retained(&cell.store().read())?
@@ -406,13 +417,15 @@ pub fn list_actions_on<E: SqlEngine>(
 /// so lifecycle state is never disclosed (D67).
 pub(crate) fn offers_for_records<E: SqlEngine>(
     host: &DevHost<E>,
+    epoch: &std::sync::RwLockReadGuard<'_, ()>,
     scope: &crate::scope::ScopeQuery,
     actor: &str,
     object_type: &str,
     rows: &[(bool, &norn_cell::ObjectRecord)],
 ) -> Result<Option<Vec<Option<Vec<String>>>>, Refusal> {
-    let Ok(callable) = callable_actions(
+    let Ok(callable) = callable_actions_in_epoch(
         host,
+        epoch,
         &ActionQuery {
             org_id: scope.org_id.clone(),
             environment_id: scope.environment_id.clone(),

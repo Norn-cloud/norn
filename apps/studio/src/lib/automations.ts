@@ -1,6 +1,7 @@
+import type { FormField } from "./actions.ts"
 import type { Field, Scalar } from "./catalog.ts"
 import type { Fetch } from "./cell-read.ts"
-import { CellUnavailable, scopedHostFetch, type Finding } from "./definitions.ts"
+import { CellUnavailable, readStudioScope, scopedHostFetch, type Finding, type StudioScope } from "./definitions.ts"
 import type { Risk } from "./decisions.ts"
 
 /** Trigger condition for a server-driven automation (`AUTOMATION-1`). */
@@ -261,24 +262,144 @@ export function blankGuardClause(field: Field): GuardClause {
   return { property: field.id, op: ops[0] ?? "eq", value }
 }
 
-function formatLiteral(value: string, scalar: Scalar | undefined): string {
-  const trimmed = value.trim()
-  if (scalar?.kind === "boolean") return trimmed === "false" ? "false" : "true"
-  if (scalar?.kind === "integer" || scalar?.kind === "decimal") {
-    return /^-?\d+(\.\d+)?$/.test(trimmed) ? trimmed : "0"
-  }
-  return `'${trimmed.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`
+const INT_LITERAL = /^-?\d+$/
+const NUM_LITERAL = /^-?\d+(\.\d+)?$/
+
+/** Validate every visual guard clause; empty clause list is valid (no guard). */
+export function validateGuardClauses(clauses: readonly GuardClause[], fields: readonly Field[]): readonly string[] {
+  const errors: string[] = []
+  clauses.forEach((clause, index) => {
+    const label = `Condition ${index + 1}`
+    const field = fields.find(({ id }) => id === clause.property)
+    if (!field) {
+      errors.push(`${label}: choose a record field.`)
+      return
+    }
+    const name = field.id.replaceAll("_", " ")
+    if (!guardOpsFor(field.scalar).includes(clause.op)) {
+      errors.push(`${label} (${name}): operator is not supported for this field type.`)
+      return
+    }
+    switch (field.scalar.kind) {
+      case "integer": {
+        const trimmed = clause.value.trim()
+        if (trimmed === "") errors.push(`${label} (${name}): enter a whole number.`)
+        else if (!INT_LITERAL.test(trimmed)) errors.push(`${label} (${name}): “${trimmed}” is not a whole number.`)
+        break
+      }
+      case "decimal": {
+        const trimmed = clause.value.trim()
+        if (trimmed === "") errors.push(`${label} (${name}): enter a number.`)
+        else if (!NUM_LITERAL.test(trimmed)) errors.push(`${label} (${name}): “${trimmed}” is not a valid number.`)
+        break
+      }
+      case "boolean":
+        if (clause.value !== "true" && clause.value !== "false") {
+          errors.push(`${label} (${name}): choose Yes or No.`)
+        }
+        break
+      case "enum":
+        if (clause.value === "" || !field.scalar.values.includes(clause.value)) {
+          errors.push(`${label} (${name}): choose one of the declared values.`)
+        }
+        break
+      case "text":
+        if (clause.value === "") errors.push(`${label} (${name}): enter a value.`)
+        break
+      default:
+        errors.push(`${label} (${name}): field type cannot be compared in visual mode.`)
+    }
+  })
+  return errors
 }
 
-/** Compile visual guard clauses into a ZEN boolean expression joined with `and`. */
+/** Whether parsed clauses can be losslessly represented by the visual guard controls for `fields`. */
+export function canRenderGuardVisually(clauses: readonly GuardClause[] | null, fields: readonly Field[]): boolean {
+  if (clauses === null) return false
+  if (clauses.length === 0) return true
+  return validateGuardClauses(clauses, fields).length === 0
+}
+
+function formatLiteral(value: string, scalar: Scalar | undefined): string | null {
+  if (scalar?.kind === "boolean") return value === "false" ? "false" : value === "true" ? "true" : null
+  if (scalar?.kind === "integer") {
+    const trimmed = value.trim()
+    return INT_LITERAL.test(trimmed) ? trimmed : null
+  }
+  if (scalar?.kind === "decimal") {
+    const trimmed = value.trim()
+    return NUM_LITERAL.test(trimmed) ? trimmed : null
+  }
+  // Preserve text and enum operands verbatim (including leading/trailing whitespace).
+  if (value === "") return null
+  return `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`
+}
+
+/**
+ * Compile visual guard clauses into a ZEN boolean expression joined with `and`.
+ * Returns `undefined` when `clauses` is empty or when any clause is incomplete/invalid
+ * (callers must check `validateGuardClauses` before preview or save).
+ */
 export function compileGuard(clauses: readonly GuardClause[], fields: readonly Field[]): string | undefined {
-  const parts = clauses
-    .filter((c) => c.property !== "" && c.value.trim() !== "")
-    .map((c) => {
-      const field = fields.find(({ id }) => id === c.property)
-      return `self.${c.property} ${GUARD_SYMBOL[c.op]} ${formatLiteral(c.value, field?.scalar)}`
-    })
+  if (clauses.length === 0) return undefined
+  if (validateGuardClauses(clauses, fields).length > 0) return undefined
+  const parts: string[] = []
+  for (const clause of clauses) {
+    const field = fields.find(({ id }) => id === clause.property)
+    const literal = formatLiteral(clause.value, field?.scalar)
+    if (literal === null) return undefined
+    parts.push(`self.${clause.property} ${GUARD_SYMBOL[clause.op]} ${literal}`)
+  }
   return parts.length === 0 ? undefined : parts.join(" and ")
+}
+
+/** Encode typed static `then.input` drafts against an action's declared input schema. */
+export function encodeStaticActionInputs(
+  fields: readonly FormField[],
+  drafts: Readonly<Record<string, string>>,
+): {
+  readonly input: Readonly<Record<string, unknown>> | undefined
+  readonly errors: readonly string[]
+} {
+  const out: Record<string, unknown> = {}
+  const errors: string[] = []
+  for (const field of fields) {
+    const raw = drafts[field.name] ?? ""
+    const trimmed = raw.trim()
+    if (trimmed === "") continue
+    switch (field.spec.kind) {
+      case "integer":
+        if (!INT_LITERAL.test(trimmed)) {
+          errors.push(`${field.label}: “${trimmed}” must be a whole number.`)
+        } else {
+          const n = Number(trimmed)
+          if (!Number.isSafeInteger(n)) errors.push(`${field.label}: whole number is out of range.`)
+          else out[field.name] = n
+        }
+        break
+      case "number":
+        if (!NUM_LITERAL.test(trimmed)) {
+          errors.push(`${field.label}: “${trimmed}” must be a valid number.`)
+        } else {
+          const n = Number(trimmed)
+          if (!Number.isFinite(n)) errors.push(`${field.label}: number is out of range.`)
+          else out[field.name] = n
+        }
+        break
+      case "boolean":
+        if (raw === "true" || raw === "false") out[field.name] = raw === "true"
+        else errors.push(`${field.label}: choose Yes or No.`)
+        break
+      case "choice":
+        if (field.spec.values.includes(raw)) out[field.name] = raw
+        else errors.push(`${field.label}: choose one of the declared values.`)
+        break
+      default:
+        out[field.name] = raw
+        break
+    }
+  }
+  return { input: Object.keys(out).length > 0 ? out : undefined, errors }
 }
 
 const SIMPLE_CLAUSE = /^self\.([A-Za-z_][A-Za-z0-9_]*)\s*(==|!=|<=|>=|<|>)\s*(.+)$/
@@ -382,14 +503,14 @@ const isAutomation = (value: unknown): value is AutomationDefinition =>
 
 /** Server-driven automations client through the Studio Worker's scoped host proxy. */
 export function cellAutomations(fetcher: Fetch = (input, init) => fetch(input, init)) {
-  const scoped = scopedHostFetch(fetcher)
-  const call = async (path: string, init?: RequestInit) => {
-    const response = await scoped(path, {
+  const callWith = (scopedFetch: Fetch) => async (path: string, init?: RequestInit) => {
+    const response = await scopedFetch(path, {
       ...init,
       headers: { accept: "application/json", ...init?.body === undefined ? {} : { "content-type": "application/json" } },
     })
     return { status: response.status, body: await response.json().catch(() => null) as Record<string, unknown> | null }
   }
+  const call = callWith(scopedHostFetch(fetcher))
   const saved = ({ status, body }: { status: number; body: Record<string, unknown> | null }): AutomationSaved => {
     if (status === 200 && body?.installed === true && typeof body.id === "string" && typeof body.version === "number") {
       return { saved: true, id: body.id, version: body.version }
@@ -399,8 +520,8 @@ export function cellAutomations(fetcher: Fetch = (input, init) => fetch(input, i
     throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
   }
 
-  const get = async (id: string): Promise<StoredAutomation | undefined> => {
-    const { status, body } = await call(`/v1/definitions/${encodeURIComponent(id)}`)
+  const getWith = (read: typeof call) => async (id: string): Promise<StoredAutomation | undefined> => {
+    const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`)
     if (status === 404 && body?.code === "definition.not_found") return undefined
     if (status !== 200 || typeof body?.version !== "number" || !isAutomation(body.payload)) {
       throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
@@ -412,14 +533,20 @@ export function cellAutomations(fetcher: Fetch = (input, init) => fetch(input, i
       automation: body.payload,
     }
   }
+  const get = getWith(call)
 
   return {
-    list: async (): Promise<readonly StoredAutomation[]> => {
+    list: async (pinnedScope?: StudioScope | null): Promise<readonly StoredAutomation[]> => {
+      // Pin one workspace scope across list + per-id GETs so workspace switches cannot mix scopes.
+      const active = pinnedScope !== undefined ? pinnedScope : await readStudioScope(fetcher)
+      if (active === null) return []
+      const pinnedCall = callWith(scopedHostFetch(fetcher, "/api/host", async () => active))
+      const pinnedGet = getWith(pinnedCall)
       const ids: { readonly id: string; readonly updatedAtMs?: number }[] = []
       let cursor: string | null = null
       for (let page = 0; page < 10; page += 1) {
         const params = new URLSearchParams({ kind: KIND, limit: "50", ...(cursor ? { cursor } : {}) })
-        const { status, body } = await call(`/v1/definitions:list?${params}`)
+        const { status, body } = await pinnedCall(`/v1/definitions:list?${params}`)
         const items = Array.isArray(body?.items) ? body.items as { id?: unknown; updatedAtMs?: unknown }[] : undefined
         if (status !== 200 || items === undefined) {
           throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
@@ -433,7 +560,8 @@ export function cellAutomations(fetcher: Fetch = (input, init) => fetch(input, i
         if (cursor === null) break
       }
       const read = await Promise.all(ids.map(async ({ id, updatedAtMs }) => {
-        const stored = await get(id).catch(() => undefined)
+        // Explicit 404 definition.not_found returns undefined; 5xx/transport errors propagate.
+        const stored = await pinnedGet(id)
         return stored === undefined ? [] : [{ ...stored, ...(updatedAtMs !== undefined && stored.updatedAtMs === undefined ? { updatedAtMs } : {}) }]
       }))
       return read.flat()

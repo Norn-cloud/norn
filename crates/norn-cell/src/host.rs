@@ -225,14 +225,8 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         self.store.stage_restatement(prepared)
     }
 
-    /// Atomically append host-owned events under a durable idempotency key.
-    ///
-    /// This boundary intentionally accepts events only: it cannot write
-    /// business facts, consume deliveries, or enqueue effects. It is for
-    /// projections that publish deterministic host findings to the ledger.
-    ///
+    /// Atomically append host-owned events under a durable idempotency key (no facts or effects).
     /// # Errors
-    ///
     /// Serialization or store errors.
     pub fn commit_host_events_idempotently(
         &mut self,
@@ -265,26 +259,15 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Ok(())
     }
 
-    /// Atomically remove selected current markings from one exact fact
-    /// version and append its authorization receipt to the ledger.
-    ///
-    /// The caller must authorize the trusted actor while holding exclusive
-    /// access to this cell. The store rechecks the object version, current
-    /// markings, event payload, and idempotency hash inside the same SQL
-    /// transaction before applying the visibility change.
-    ///
+    /// Atomically remove selected current markings from one fact version and append its receipt.
     /// # Errors
-    ///
-    /// A version conflict, invalid declassification, serialization, or
-    /// storage failure.
+    /// A version conflict, invalid declassification, serialization, or storage failure.
     pub fn declassify_markings(
         &mut self,
         idempotency_key: &str,
         change: MarkingDeclassification,
     ) -> Result<CommitOutcome, CellError> {
-        // Keep retries identical after the host clock advances. The store
-        // still compares the complete request hash, so reusing a key with a
-        // different change remains a conflict.
+        // Keep retries identical after the host clock advances.
         let logical_time = self
             .store
             .read()
@@ -301,50 +284,52 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         })
     }
 
-    /// Append the receipt of one reveal to the ledger, at this host's clock.
-    /// An exact retry under the same key replays the first receipt; a key
-    /// reused for another reveal is a conflict.
-    ///
+    /// Append one reveal receipt to the ledger under a durable idempotency key.
     /// # Errors
     /// An idempotency conflict, serialization or storage failure.
     pub fn record_reveal(
         &mut self,
-        idempotency_key: &str,
+        key: &str,
         reveal: &MarkingReveal,
     ) -> Result<CommitOutcome, CellError> {
-        self.record_privacy_event(idempotency_key, reveal.ledger_event()?)
+        self.record_idempotent_event(key, reveal.ledger_event()?)
     }
 
-    /// Append one privacy receipt event (a reveal, a guarded model call) to
-    /// the ledger at this host's clock, under a durable idempotency key. The
-    /// boundary takes one event only: it writes no fact and enqueues nothing.
-    ///
+    /// Append one privacy receipt event under a durable idempotency key.
     /// # Errors
     /// An idempotency conflict, serialization or storage failure.
     pub fn record_privacy_event(
         &mut self,
-        idempotency_key: &str,
+        key: &str,
+        event: Value,
+    ) -> Result<CommitOutcome, CellError> {
+        self.record_idempotent_event(key, event)
+    }
+
+    /// Append one host ledger event under a durable idempotency key (no facts or effects).
+    /// # Errors
+    /// An idempotency conflict, serialization or storage failure.
+    pub fn record_idempotent_event(
+        &mut self,
+        key: &str,
         event: Value,
     ) -> Result<CommitOutcome, CellError> {
         let logical_time = self
             .store
             .read()
-            .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
-            .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
+            .receipt_by_idempotency_key(MAIN_WORLD, key)?
+            .map_or(self.now.as_millis(), |r| r.body.logical_time);
         self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time,
-            idempotency_key: Some(idempotency_key.to_owned()),
+            idempotency_key: Some(key.to_owned()),
             events: vec![event],
             ..CommitBatch::default()
         })
     }
 
-    /// MANIFEST-COMMIT-1: commit `manifest` as the current dataset of its
-    /// type in the main world, at this host's clock and bound scope, and
-    /// return its identity and receipt (MANIFEST-04 binds `request`).
-    ///
+    /// MANIFEST-COMMIT-1: commit `manifest` in the main world and return its id and receipt.
     /// # Errors
     /// As [`CellStore::commit_dataset_manifest`].
     pub fn commit_dataset_manifest(
@@ -357,9 +342,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .commit_dataset_manifest(MAIN_WORLD, &self.scope, logical_time, manifest, request)
     }
 
-    /// Commit one complete quantity operation using this host's injected clock
-    /// and bound scope. Exact retries retain the original trusted timestamp.
-    ///
+    /// Commit one quantity operation under this host's clock and scope.
     /// # Errors
     /// Typed quantity refusals, changed-input reuse, or storage errors.
     pub fn commit_quantity(

@@ -1140,26 +1140,20 @@ pub fn decide<E: SqlEngine>(
     if let Some(decision_id) = approved {
         decided.call = run_approved(host, &decision_id, disclosure, request.now, as_requester)
             .map_err(Box::from)?;
-    } else if let Some((proposal, decider)) = approved_proposal {
-        decided.call = Some(
-            crate::automations::run_approved_proposal(
-                host,
-                &proposal,
-                &decider,
-                disclosure,
-                request.now,
-            )
-            .map_err(Box::from)?,
-        );
+    } else if let Some((decision_id, decider)) = approved_proposal {
+        decided.call = crate::automations::run_approved_proposal(
+            host,
+            &decision_id,
+            &decider,
+            disclosure,
+            request.now,
+        )
+        .map_err(Box::from)?;
     }
     Ok(decided)
 }
 
-type HeldOutcome = (
-    Decided,
-    Option<String>,
-    Option<(crate::automations::HeldProposal, String)>,
-);
+type HeldOutcome = (Decided, Option<String>, Option<(String, String)>);
 
 /// [`decide`] under the cell: the decision, and the decision whose approved
 /// call or automation proposal to run once the cell is released.
@@ -1195,8 +1189,7 @@ fn decide_held<E: SqlEngine>(
         .into_iter()
         .find(|decision| decision.id == id);
     let Some(decision) = open else {
-        let (decided, approved) = resolved_answer(&reader, &cell, id, body)?;
-        return Ok((decided, approved, None));
+        return resolved_answer(&reader, &cell, id, body);
     };
     if !may_decide(host, actor, &decision) {
         return Err(Box::from(not_found()));
@@ -1218,15 +1211,14 @@ fn decide_held<E: SqlEngine>(
         (None, Some(_)) => record_proposal(&mut cell, &decision, body, actor)?,
     };
     if !recorded {
-        let (decided, approved) = resolved_answer(&reader, &cell, id, body)?;
-        return Ok((decided, approved, None));
+        return resolved_answer(&reader, &cell, id, body);
     }
     let decided = answer(&reader, &cell, id, body, DecideOutcome::Decided)?;
     let approved = (decision.call.is_some() && body.choice == crate::approvals::APPROVE)
         .then(|| decision.id.clone());
-    let approved_proposal = (body.choice == crate::approvals::APPROVE)
-        .then(|| decision.proposal.clone().map(|p| (p, actor.to_owned())))
-        .flatten();
+    let approved_proposal = (decision.proposal.is_some()
+        && body.choice == crate::approvals::APPROVE)
+        .then(|| (decision.id.clone(), actor.to_owned()));
     Ok((decided, approved, approved_proposal))
 }
 
@@ -1711,7 +1703,7 @@ fn resolved_answer<E: SqlEngine>(
     cell: &ActionCell<E>,
     id: &str,
     body: &DecideRequest,
-) -> Result<(Decided, Option<String>), Box<DecideRefusal>> {
+) -> Result<HeldOutcome, Box<DecideRefusal>> {
     let Some(row) = cell
         .store()
         .read()
@@ -1725,15 +1717,23 @@ fn resolved_answer<E: SqlEngine>(
         return if row.resolved.request_hash.as_deref() == Some(request_hash(body)?.as_str()) {
             // APPROVAL-REVISION-1: a replayed approval of a parked call is
             // fenced again before anything it approved runs.
-            let approved = (row.resolved.choice.as_deref() == Some(crate::approvals::APPROVE)
+            let is_approve = row.resolved.choice.as_deref() == Some(crate::approvals::APPROVE);
+            let approved = (is_approve
                 && row
                     .resolved
                     .command_id
                     .starts_with(crate::approvals::COMMAND_PREFIX))
             .then(|| row.resolved.decision_id.clone());
+            let approved_proposal = (is_approve
+                && row
+                    .resolved
+                    .command_id
+                    .starts_with(crate::automations::COMMAND_PREFIX))
+            .then(|| (row.resolved.decision_id.clone(), reader.actor.to_owned()));
             Ok((
                 answer(reader, cell, id, body, DecideOutcome::Replayed)?,
                 approved,
+                approved_proposal,
             ))
         } else {
             Err(Box::from(Refusal::new(
@@ -1754,6 +1754,17 @@ fn resolved_answer<E: SqlEngine>(
         "the decision was already resolved",
         "someone resolved it first",
     );
+    let decided_call = match crate::approvals::approved_call(cell, id)? {
+        Some((_held, state)) => Some(DecidedCall::of(&state, None)),
+        None if row
+            .resolved
+            .command_id
+            .starts_with(crate::automations::COMMAND_PREFIX) =>
+        {
+            crate::automations::approved_proposal_call(cell, id)?
+        }
+        None => None,
+    };
     let resolution = DecisionResolution {
         resolution: row.resolved.resolution.as_str().to_owned(),
         by: by(&row, reader.actor),
@@ -1763,8 +1774,7 @@ fn resolved_answer<E: SqlEngine>(
         } else {
             None
         },
-        call: crate::approvals::approved_call(cell, id)?
-            .map(|(_held, state)| DecidedCall::of(&state, None)),
+        call: decided_call,
     };
     Err(Box::new(DecideRefusal {
         refusal,

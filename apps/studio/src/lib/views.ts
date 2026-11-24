@@ -1,5 +1,5 @@
 import type { Fetch } from "./cell-read.ts"
-import { CellUnavailable, scopedHostFetch, type Finding } from "./definitions.ts"
+import { CellUnavailable, readStudioScope, scopedHostFetch, type Finding, type StudioScope } from "./definitions.ts"
 import type { Predicate, SortKey } from "./records-query.ts"
 
 /** A saved records view as the cell keeps it (definition kind `view`, VIEW-DEF-1). */
@@ -112,14 +112,14 @@ const isSavedView = (value: unknown): value is SavedView =>
 
 /** The cell's saved views, through the Studio Worker's host route as the signed-in account. */
 export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) {
-  const scoped = scopedHostFetch(fetcher)
-  const call = async (path: string, init?: RequestInit) => {
-    const response = await scoped(path, {
+  const callWith = (scopedFetch: Fetch) => async (path: string, init?: RequestInit) => {
+    const response = await scopedFetch(path, {
       ...init,
       headers: { accept: "application/json", ...init?.body === undefined ? {} : { "content-type": "application/json" } },
     })
     return { status: response.status, body: await response.json().catch(() => null) as Record<string, unknown> | null }
   }
+  const call = callWith(scopedHostFetch(fetcher))
   const saved = ({ status, body }: { status: number; body: Record<string, unknown> | null }): ViewSaved => {
     if (status === 200 && body?.installed === true && typeof body.id === "string" && typeof body.version === "number") {
       return { saved: true, id: body.id, version: body.version }
@@ -129,8 +129,8 @@ export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) 
     throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
   }
 
-  const get = async (id: string): Promise<StoredView | undefined> => {
-    const { status, body } = await call(`/v1/definitions/${encodeURIComponent(id)}`)
+  const getWith = (read: typeof call) => async (id: string): Promise<StoredView | undefined> => {
+    const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`)
     if (status === 404 && body?.code === "definition.not_found") return undefined
     if (status !== 200 || typeof body?.version !== "number" || !isSavedView(body.payload)) {
       throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
@@ -142,13 +142,20 @@ export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) 
       view: body.payload,
     }
   }
+  const get = getWith(call)
 
-  const listAll = async (): Promise<readonly StoredView[]> => {
+  const listAll = async (pinnedScope?: StudioScope | null): Promise<readonly StoredView[]> => {
+    // Pin one workspace scope for the entire list + per-id fetch sequence so workspace switches
+    // cannot mix IDs from one scope with payloads from another.
+    const active = pinnedScope !== undefined ? pinnedScope : await readStudioScope(fetcher)
+    if (active === null) return []
+    const pinnedCall = callWith(scopedHostFetch(fetcher, "/api/host", async () => active))
+    const pinnedGet = getWith(pinnedCall)
     const ids: { readonly id: string; readonly updatedAtMs?: number }[] = []
     let cursor: string | null = null
     for (let page = 0; page < 10; page += 1) {
       const params = new URLSearchParams({ kind: KIND, limit: "50", ...(cursor ? { cursor } : {}) })
-      const { status, body } = await call(`/v1/definitions:list?${params}`)
+      const { status, body } = await pinnedCall(`/v1/definitions:list?${params}`)
       const items = Array.isArray(body?.items) ? body.items as { id?: unknown; updatedAtMs?: unknown }[] : undefined
       if (status !== 200 || items === undefined) {
         throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
@@ -162,7 +169,8 @@ export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) 
       if (cursor === null) break
     }
     const read = await Promise.all(ids.map(async ({ id, updatedAtMs }) => {
-      const stored = await get(id).catch(() => undefined)
+      // Only explicit 404 definition.not_found returns undefined; transport/5xx errors propagate.
+      const stored = await pinnedGet(id)
       return stored === undefined ? [] : [{ ...stored, ...(updatedAtMs !== undefined && stored.updatedAtMs === undefined ? { updatedAtMs } : {}) }]
     }))
     return read.flat()
@@ -172,8 +180,8 @@ export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) 
     /** All active views across every object type, in the cell's id order; retired ones are left out. */
     listAll,
     /** One object type's active views, in the cell's id order; retired ones are left out. */
-    list: async (objectType: string): Promise<readonly StoredView[]> =>
-      (await listAll()).filter(({ view }) => view.objectType === objectType),
+    list: async (objectType: string, pinnedScope?: StudioScope | null): Promise<readonly StoredView[]> =>
+      (await listAll(pinnedScope)).filter(({ view }) => view.objectType === objectType),
     /** Read one view by id; `undefined` when not found or retired. */
     get,
     /** Side-effect free server check + plain-words restatement. */

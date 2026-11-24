@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
+import { useStudioScope } from "../lib/definitions.ts"
 import { cellViews, newViewId, sortKeys, sortText, type SavedView, type StoredView, type ViewSaved } from "../lib/views.ts"
 import type { GridQuery } from "./records-grid.tsx"
 
@@ -65,7 +66,14 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
   readonly onOpen: (view: StoredView | null) => void
 }) {
   const client = useQueryClient()
-  const list = useQuery({ queryKey: ["views", objectType], queryFn: () => views.list(objectType), retry: false })
+  const scope = useStudioScope()
+  const activeScope = scope.data ?? null
+  const list = useQuery({
+    queryKey: ["views", objectType, activeScope?.orgId, activeScope?.environmentId],
+    queryFn: () => views.list(objectType, activeScope),
+    enabled: scope.isSuccess && activeScope !== null,
+    retry: false,
+  })
   const [notice, setNotice] = useState<{ readonly text: string; readonly undo?: () => Promise<void> } | null>(null)
   const [creating, setCreating] = useState(false)
   const [renaming, setRenaming] = useState(false)

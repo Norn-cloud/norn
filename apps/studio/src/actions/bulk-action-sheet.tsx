@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { CheckCircle2, CircleAlert, Clock, Play } from "lucide-react"
+import { CheckCircle2, CircleAlert, Clock, HelpCircle, Play, RotateCcw } from "lucide-react"
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -20,9 +20,58 @@ export interface OpenBulkAction {
 
 interface BulkOutcome {
   readonly target: BulkTarget
-  readonly status: "committed" | "pending" | "refused"
+  readonly status: "committed" | "pending" | "refused" | "unknown"
   readonly detail: string
   readonly decisionId?: string
+  readonly idempotencyKey: string
+  readonly payloadJson: string
+}
+
+/** Validate and encode all shared non-target inputs before submitting any bulk call. */
+export function encodeBulkSharedInputs(
+  fields: readonly FormField[],
+  values: Readonly<Record<string, string>>,
+): { readonly ok: true; readonly shared: Record<string, unknown> } | { readonly ok: false; readonly error: string } {
+  const shared: Record<string, unknown> = {}
+  for (const field of fields) {
+    const raw = values[field.name] ?? ""
+    const trimmed = raw.trim()
+    if (field.spec.kind === "boolean") {
+      if (raw === "" && !field.required) continue
+      if (raw !== "true" && raw !== "false") return { ok: false, error: `${field.label} must be Yes or No.` }
+      shared[field.name] = raw === "true"
+      continue
+    }
+    if (trimmed === "") {
+      if (field.required) return { ok: false, error: `${field.label} is required.` }
+      continue
+    }
+    switch (field.spec.kind) {
+      case "integer": {
+        if (!/^-?\d+$/.test(trimmed)) return { ok: false, error: `${field.label} must be a whole number.` }
+        const parsed = Number(trimmed)
+        if (!Number.isSafeInteger(parsed)) return { ok: false, error: `${field.label} is out of range.` }
+        shared[field.name] = parsed
+        break
+      }
+      case "number": {
+        if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return { ok: false, error: `${field.label} must be a valid number.` }
+        const parsed = Number(trimmed)
+        if (!Number.isFinite(parsed)) return { ok: false, error: `${field.label} must be a finite number.` }
+        shared[field.name] = parsed
+        break
+      }
+      case "choice": {
+        if (!field.spec.values.includes(raw)) return { ok: false, error: `${field.label} must be one of the offered choices.` }
+        shared[field.name] = raw
+        break
+      }
+      default:
+        shared[field.name] = raw
+        break
+    }
+  }
+  return { ok: true, shared }
 }
 
 /**
@@ -41,6 +90,7 @@ export function BulkActionSheet({ open, onClose, onDone }: {
     return fieldsOf(open.action.inputSchema).filter((field) => field.name !== open.action.objectIdField)
   }, [open])
   const [values, setValues] = useState<Record<string, string>>({})
+  const [validationError, setValidationError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [running, setRunning] = useState(false)
   const [outcomes, setOutcomes] = useState<readonly BulkOutcome[]>([])
@@ -48,6 +98,7 @@ export function BulkActionSheet({ open, onClose, onDone }: {
   useEffect(() => {
     if (open === null) {
       setValues({})
+      setValidationError(null)
       setConfirming(false)
       setRunning(false)
       setOutcomes([])
@@ -60,28 +111,74 @@ export function BulkActionSheet({ open, onClose, onDone }: {
       else init[field.name] = ""
     }
     setValues(init)
+    setValidationError(null)
     setConfirming(false)
     setOutcomes([])
   }, [open, extraFields])
 
-  const encodeValue = (field: FormField, raw: string): unknown => {
-    if (raw === "" && !field.required) return undefined
-    switch (field.spec.kind) {
-      case "integer":
-      case "number": {
-        const parsed = Number(raw)
-        return Number.isNaN(parsed) ? raw : parsed
+  const sendOne = async (
+    actionId: string,
+    target: BulkTarget,
+    payloadJson: string,
+    idempotencyKey: string,
+  ): Promise<BulkOutcome> => {
+    try {
+      const res = await callAction(actionId, payloadJson, idempotencyKey)
+      if (res.kind === "receipt") {
+        return {
+          target,
+          status: "committed",
+          detail: `Committed (commit #${res.receipt.receipt.commitSeq})`,
+          idempotencyKey,
+          payloadJson,
+        }
       }
-      case "boolean":
-        return raw === "true"
-      default:
-        return raw
+      if (res.kind === "pending") {
+        return {
+          target,
+          status: "pending",
+          detail: "Sent to Inbox for approval",
+          decisionId: res.decision.id,
+          idempotencyKey,
+          payloadJson,
+        }
+      }
+      if (res.kind === "refused") {
+        return { target, status: "refused", detail: res.message, idempotencyKey, payloadJson }
+      }
+      return {
+        target,
+        status: "unknown",
+        detail: "The cell did not return a confirmed answer. Retry safely with the same idempotency key.",
+        idempotencyKey,
+        payloadJson,
+      }
+    } catch {
+      return {
+        target,
+        status: "unknown",
+        detail: "Connection lost before the cell answered — outcome unknown. Retry uses the same idempotency key so this record will not run twice.",
+        idempotencyKey,
+        payloadJson,
+      }
     }
+  }
+
+  const refreshQueries = (objectKind: string) => {
+    void client.invalidateQueries({ queryKey: ["records", objectKind] })
+    void client.invalidateQueries({ queryKey: ["actions", objectKind] })
+    void client.invalidateQueries({ queryKey: ["decisions"] })
   }
 
   const runAll = async (event: FormEvent) => {
     event.preventDefault()
     if (open === null || running) return
+    const encoded = encodeBulkSharedInputs(extraFields, values)
+    if (!encoded.ok) {
+      setValidationError(encoded.error)
+      return
+    }
+    setValidationError(null)
     if (risky(open.action) && !confirming) {
       setConfirming(true)
       return
@@ -89,44 +186,47 @@ export function BulkActionSheet({ open, onClose, onDone }: {
     setRunning(true)
     setConfirming(false)
     const results: BulkOutcome[] = []
-    for (const target of open.targets) {
-      const payload: Record<string, unknown> = { [open.action.objectIdField]: target.id }
-      for (const field of extraFields) {
-        const encoded = encodeValue(field, values[field.name] ?? "")
-        if (encoded !== undefined) payload[field.name] = encoded
+    let attempted = 0
+    try {
+      for (const target of open.targets) {
+        const payload: Record<string, unknown> = { ...encoded.shared, [open.action.objectIdField]: target.id }
+        const payloadJson = JSON.stringify(payload)
+        const idempotencyKey = newIdempotencyKey()
+        attempted += 1
+        const outcome = await sendOne(open.action.actionId, target, payloadJson, idempotencyKey)
+        results.push(outcome)
+        setOutcomes([...results])
       }
-      const res = await callAction(open.action.actionId, JSON.stringify(payload), newIdempotencyKey())
-      if (res.kind === "receipt") {
-        results.push({
-          target,
-          status: "committed",
-          detail: `Committed (commit #${res.receipt.receipt.commitSeq})`,
-        })
-      } else if (res.kind === "pending") {
-        results.push({
-          target,
-          status: "pending",
-          detail: "Sent to Inbox for approval",
-          decisionId: res.decision.id,
-        })
-      } else if (res.kind === "refused") {
-        results.push({ target, status: "refused", detail: res.message })
-      } else {
-        results.push({ target, status: "refused", detail: "The cell did not accept this call." })
+    } finally {
+      setRunning(false)
+      if (attempted > 0) {
+        refreshQueries(open.action.objectKind)
+        onDone?.()
       }
-      setOutcomes([...results])
     }
-    setRunning(false)
-    void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })
-    void client.invalidateQueries({ queryKey: ["actions", open.action.objectKind] })
-    void client.invalidateQueries({ queryKey: ["decisions"] })
-    onDone?.()
+  }
+
+  const retryUnknown = async (targetId: string) => {
+    if (open === null || running) return
+    const current = outcomes.find((item) => item.target.id === targetId && item.status === "unknown")
+    if (!current) return
+    setRunning(true)
+    try {
+      // Reuse the original idempotency key so an earlier unseen commit replays instead of running twice.
+      const next = await sendOne(open.action.actionId, current.target, current.payloadJson, current.idempotencyKey)
+      setOutcomes((list) => list.map((item) => item.target.id === targetId ? next : item))
+    } finally {
+      setRunning(false)
+      refreshQueries(open.action.objectKind)
+      onDone?.()
+    }
   }
 
   const finished = !running && outcomes.length > 0
   const committed = outcomes.filter((o) => o.status === "committed").length
   const pending = outcomes.filter((o) => o.status === "pending").length
   const refused = outcomes.filter((o) => o.status === "refused").length
+  const unknown = outcomes.filter((o) => o.status === "unknown").length
 
   return (
     <Sheet open={open !== null} onOpenChange={(next) => { if (!next && !running) onClose() }}>
@@ -164,7 +264,7 @@ export function BulkActionSheet({ open, onClose, onDone }: {
                           aria-label={field.label}
                           className="h-9 rounded-md border bg-background px-2.5 text-sm"
                           value={values[field.name] ?? ""}
-                          onChange={(e) => setValues((cur) => ({ ...cur, [field.name]: e.target.value }))}
+                          onChange={(e) => { setValidationError(null); setValues((cur) => ({ ...cur, [field.name]: e.target.value })) }}
                         >
                           <option value="">Choose…</option>
                           {field.spec.values.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
@@ -174,7 +274,7 @@ export function BulkActionSheet({ open, onClose, onDone }: {
                           aria-label={field.label}
                           className="h-9 rounded-md border bg-background px-2.5 text-sm"
                           value={values[field.name] ?? "false"}
-                          onChange={(e) => setValues((cur) => ({ ...cur, [field.name]: e.target.value }))}
+                          onChange={(e) => { setValidationError(null); setValues((cur) => ({ ...cur, [field.name]: e.target.value })) }}
                         >
                           <option value="true">Yes</option>
                           <option value="false">No</option>
@@ -183,13 +283,20 @@ export function BulkActionSheet({ open, onClose, onDone }: {
                         <Input
                           aria-label={field.label}
                           readOnly={field.spec.kind === "fixed"}
+                          inputMode={field.spec.kind === "integer" || field.spec.kind === "number" ? "decimal" : undefined}
                           value={values[field.name] ?? ""}
-                          onChange={(e) => setValues((cur) => ({ ...cur, [field.name]: e.target.value }))}
+                          onChange={(e) => { setValidationError(null); setValues((cur) => ({ ...cur, [field.name]: e.target.value })) }}
                         />
                       )}
                       {field.description && <span className="text-meta text-muted-foreground">{field.description}</span>}
                     </label>
                   ))}
+
+                  {validationError && (
+                    <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                      {validationError}
+                    </p>
+                  )}
 
                   {confirming && (
                     <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
@@ -210,6 +317,7 @@ export function BulkActionSheet({ open, onClose, onDone }: {
                     <Badge variant="outline">{committed} committed</Badge>
                     {pending > 0 && <Badge variant="secondary">{pending} sent to Inbox</Badge>}
                     {refused > 0 && <Badge variant="destructive">{refused} refused</Badge>}
+                    {unknown > 0 && <Badge variant="outline">{unknown} outcome unknown</Badge>}
                   </div>
                   <ol className="divide-y rounded-lg border bg-card text-sm" aria-label="Bulk action results">
                     {outcomes.map((item) => (
@@ -217,6 +325,7 @@ export function BulkActionSheet({ open, onClose, onDone }: {
                         {item.status === "committed" && <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-[var(--tint-outcome)]" aria-hidden />}
                         {item.status === "pending" && <Clock className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />}
                         {item.status === "refused" && <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />}
+                        {item.status === "unknown" && <HelpCircle className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-baseline gap-2">
                             <span className="truncate font-medium">{item.target.name}</span>
@@ -228,6 +337,18 @@ export function BulkActionSheet({ open, onClose, onDone }: {
                               <> · <Link to="/decisions" search={{ open: item.decisionId } as never} className="underline underline-offset-4" onClick={onClose}>Open in Inbox</Link></>
                             )}
                           </p>
+                          {item.status === "unknown" && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="mt-1.5 h-7"
+                              disabled={running}
+                              onClick={() => void retryUnknown(item.target.id)}
+                            >
+                              <RotateCcw />Retry {item.target.name}
+                            </Button>
+                          )}
                         </div>
                       </li>
                     ))}

@@ -15,17 +15,20 @@ import {
   GUARD_OP_LABEL,
   automationField,
   blankGuardClause,
+  canRenderGuardVisually,
   cellAutomations,
   compileGuard,
   describeThen,
   describeWhen,
   duplicateAutomation,
   durationParts,
+  encodeStaticActionInputs,
   guardOpsFor,
   guardableFields,
   msFromDuration,
   newAutomationId,
   parseGuard,
+  validateGuardClauses,
   type AutomationDefinition,
   type AutomationPreviewResponse,
   type AutomationRunOutcome,
@@ -101,9 +104,10 @@ export function useAutomationsMenu(): readonly MenuEntry[] {
   const live = useMode().data?.kind === "live"
   const scope = useStudioScope()
   const enabled = live && scope.isSuccess && scope.data !== null
+  const activeScope = scope.data ?? null
   const list = useQuery({
-    queryKey: ["automations", "all", scope.data?.orgId, scope.data?.environmentId],
-    queryFn: () => automations.list(),
+    queryKey: ["automations", "all", activeScope?.orgId, activeScope?.environmentId],
+    queryFn: () => automations.list(activeScope),
     enabled,
     retry: false,
     staleTime: 30_000,
@@ -123,9 +127,10 @@ export function AutomationsPage() {
   const { catalog } = useCatalog()
   const navigate = useNavigate()
   const client = useQueryClient()
+  const activeScope = scope.data ?? null
   const list = useQuery({
-    queryKey: ["automations", "all", scope.data?.orgId, scope.data?.environmentId],
-    queryFn: () => automations.list(),
+    queryKey: ["automations", "all", activeScope?.orgId, activeScope?.environmentId],
+    queryFn: () => automations.list(activeScope),
     enabled: cellAvailable,
     retry: false,
   })
@@ -556,12 +561,9 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
       }
     },
   })
-  const requestSave = (next: AutomationDefinition, overwrite = false) => {
-    if (!cellAvailable || saving.current || (!overwrite && !editor.dirty)) return
-    saving.current = true
-    save.mutate({ def: next, overwrite }, { onSettled: () => { saving.current = false } })
-  }
-  const editor = useEditor<AutomationDefinition>({ initial, onSave: (d) => requestSave(d) })
+  const [localBlock, setLocalBlock] = useState<readonly string[]>([])
+  const saveRef = useRef<(next: AutomationDefinition, overwrite?: boolean) => void>(() => {})
+  const editor = useEditor<AutomationDefinition>({ initial, onSave: (d) => saveRef.current(d) })
   const { value: def, set } = editor
   // Navigate only after React commits `editor.dirty === false` so DirtyGuard never blocks a completed save.
   useEffect(() => {
@@ -579,6 +581,10 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
   const actionsQuery = useActions(def.objectType, undefined, cellAvailable && def.objectType !== "")
   const offeredActions = actionsQuery.data?.kind === "catalog" ? actionsQuery.data.items : []
   const selectedAction = offeredActions.find((a) => a.actionId === def.then.actionId)
+  const extraInputs = useMemo(() => {
+    if (!selectedAction) return []
+    return fieldsOf(selectedAction.inputSchema).filter((f) => f.name !== selectedAction.objectIdField)
+  }, [selectedAction])
 
   // Default first offered action when creating a new automation and the catalog arrives.
   useEffect(() => {
@@ -592,20 +598,87 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
     }))
   }, [stored, def.then.actionId, offeredActions, set])
 
-  // Visual guard clauses synced with `def.if?.expression`.
+  // Visual guard clauses synced with `def.if?.expression`; stay in raw mode unless visual controls represent every clause.
   const parsedInitial = useMemo(() => parseGuard(def.if?.expression), [])
-  const [rawMode, setRawMode] = useState(() => parsedInitial === null)
-  const [clauses, setClauses] = useState<readonly GuardClause[]>(() => parsedInitial ?? [])
+  const [rawMode, setRawMode] = useState(() => !canRenderGuardVisually(parsedInitial, fields))
+  const [clauses, setClauses] = useState<readonly GuardClause[]>(() => canRenderGuardVisually(parsedInitial, fields) ? (parsedInitial ?? []) : [])
+  useEffect(() => {
+    if (!rawMode && fields.length > 0 && def.if?.expression && clauses.length > 0 && !canRenderGuardVisually(clauses, fields)) {
+      // Only switch to raw mode if an operator or property is unsupported by the controls (not while typing an incomplete value).
+      const unsupported = clauses.some((c) => {
+        const f = fields.find((x) => x.id === c.property)
+        return !f || !guardOpsFor(f.scalar).includes(c.op)
+      })
+      if (unsupported) setRawMode(true)
+    }
+  }, [rawMode, fields, def.if?.expression, clauses])
+
+  const guardErrors = useMemo(
+    () => (rawMode ? [] : validateGuardClauses(clauses, fields)),
+    [rawMode, clauses, fields],
+  )
+  const rawCanSwitchToVisual = useMemo(
+    () => canRenderGuardVisually(parseGuard(def.if?.expression), fields),
+    [def.if?.expression, fields],
+  )
 
   const updateClauses = (next: readonly GuardClause[]) => {
     setClauses(next)
+    setLocalBlock([])
     const compiled = compileGuard(next, fields)
     set((cur) => ({ ...cur, if: compiled ? { expression: compiled } : undefined }))
   }
 
+  // Raw string drafts for static action inputs so non-string scalar types are parsed and validated cleanly.
+  const [staticDrafts, setStaticDrafts] = useState<Record<string, string>>(() => {
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(def.then.input ?? {})) {
+      out[k] = v === undefined || v === null ? "" : String(v)
+    }
+    return out
+  })
+  const prevActionKey = useRef(`${def.objectType}:${def.then.actionId}`)
+  useEffect(() => {
+    const key = `${def.objectType}:${def.then.actionId}`
+    if (prevActionKey.current !== key) {
+      prevActionKey.current = key
+      const out: Record<string, string> = {}
+      for (const [k, v] of Object.entries(def.then.input ?? {})) {
+        out[k] = v === undefined || v === null ? "" : String(v)
+      }
+      setStaticDrafts(out)
+    }
+  }, [def.objectType, def.then.actionId, def.then.input])
+
+  const staticCheck = useMemo(() => encodeStaticActionInputs(extraInputs, staticDrafts), [extraInputs, staticDrafts])
+  const staticInputErrors = staticCheck.errors
+  const updateStaticDraft = (name: string, nextValue: string) => {
+    const nextDrafts = { ...staticDrafts, [name]: nextValue }
+    setStaticDrafts(nextDrafts)
+    setLocalBlock([])
+    const encoded = encodeStaticActionInputs(extraInputs, nextDrafts)
+    if (encoded.errors.length === 0) {
+      set((cur) => ({ ...cur, then: { ...cur.then, input: encoded.input } }))
+    }
+  }
+
+  const hasLocalErrors = guardErrors.length > 0 || staticInputErrors.length > 0
+  const requestSave = (next: AutomationDefinition, overwrite = false) => {
+    if (!cellAvailable || saving.current || (!overwrite && !editor.dirty)) return
+    const blockers = [...guardErrors, ...staticInputErrors]
+    if (blockers.length > 0) {
+      setLocalBlock(blockers)
+      return
+    }
+    setLocalBlock([])
+    saving.current = true
+    save.mutate({ def: next, overwrite }, { onSettled: () => { saving.current = false } })
+  }
+  saveRef.current = requestSave
+
   // Live server admission check (side-effect free).
   useEffect(() => {
-    if (!cellAvailable || def.title.trim() === "" || def.objectType === "" || def.then.actionId === "") {
+    if (!cellAvailable || def.title.trim() === "" || def.objectType === "" || def.then.actionId === "" || hasLocalErrors) {
       setFindings([])
       setRestatement(null)
       return
@@ -628,7 +701,7 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
       )
     }, 350)
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [cellAvailable, at?.id, def])
+  }, [cellAvailable, at?.id, def, hasLocalErrors])
 
   const preview = useMutation({
     mutationFn: () => automations.preview({ payload: def }),
@@ -645,6 +718,8 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
     const states = nextLifecycle ? lifecycleStates(nextLifecycle) : []
     setClauses([])
     setRawMode(false)
+    setStaticDrafts({})
+    setLocalBlock([])
     setPreviewData(null)
     set((cur) => ({
       ...cur,
@@ -674,16 +749,23 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
           afterMs: 3_600_000,
           ...(lc && states[0] ? { property: lc.property, state: states[0] } : {}),
         },
+        // Stale timer wakes run without a verified caller principal, so stale rules propose to the Inbox.
+        then: cur.then.kind === "run"
+          ? {
+            kind: "propose",
+            actionId: cur.then.actionId,
+            input: cur.then.input,
+            question: `Run ${selectedAction?.title ?? "action"} on {id}?`,
+            risk: "medium",
+            decider: { roles: ["admin"] },
+            expiresInMs: 86_400_000,
+          }
+          : cur.then,
       }))
     } else {
       set((cur) => ({ ...cur, when: { kind: "event", event: "updated" } }))
     }
   }
-
-  const extraInputs = useMemo(() => {
-    if (!selectedAction) return []
-    return fieldsOf(selectedAction.inputSchema).filter((f) => f.name !== selectedAction.objectIdField)
-  }, [selectedAction])
 
   const staleParts = def.when.kind === "stale" ? durationParts(def.when.afterMs) : { amount: 1, unit: "hours" as DurationUnit }
   const expiresParts = def.then.kind === "propose" ? durationParts(def.then.expiresInMs ?? 86_400_000) : { amount: 1, unit: "days" as DurationUnit }
@@ -691,15 +773,20 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
   return (
     <div className="space-y-6">
       <DirtyGuard dirty={editor.dirty} />
-      <EditorToolbar editor={editor} onSave={() => requestSave(def)} saving={save.isPending || !cellAvailable}>
+      <EditorToolbar editor={editor} onSave={() => requestSave(def)} saving={save.isPending || !cellAvailable || hasLocalErrors}>
         {at && <Badge variant="outline">Version {at.version}</Badge>}
-        <Button type="button" variant="outline" size="sm" className="ms-auto" disabled={!cellAvailable || def.then.actionId === "" || preview.isPending} onClick={() => preview.mutate()}>
+        <Button type="button" variant="outline" size="sm" className="ms-auto" disabled={!cellAvailable || def.then.actionId === "" || hasLocalErrors || preview.isPending} onClick={() => preview.mutate()}>
           <FlaskConical />{preview.isPending ? "Testing…" : "Test against current records"}
         </Button>
       </EditorToolbar>
 
       {save.isError && <p role="alert" className="text-destructive">Not saved. {failure(save.error)}</p>}
       {preview.isError && <p role="alert" className="text-destructive">Preview failed. {failure(preview.error)}</p>}
+      {localBlock.length > 0 && (
+        <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          {localBlock.map((msg) => <p key={msg}>{msg}</p>)}
+        </div>
+      )}
       {conflict && (
         <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
           <span>Someone saved a newer version of this automation since you opened it.</span>
@@ -935,10 +1022,12 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
               type="button"
               variant="ghost"
               size="sm"
+              disabled={rawMode && !rawCanSwitchToVisual}
+              title={rawMode && !rawCanSwitchToVisual ? "This expression uses syntax or operators outside the visual controls" : undefined}
               onClick={() => {
                 if (rawMode) {
                   const parsed = parseGuard(def.if?.expression)
-                  if (parsed !== null) {
+                  if (parsed !== null && canRenderGuardVisually(parsed, fields)) {
                     setClauses(parsed)
                     setRawMode(false)
                   }
@@ -1036,12 +1125,17 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
                 >
                   <Plus />Add guard condition
                 </Button>
-                {def.if?.expression && (
+                {def.if?.expression && guardErrors.length === 0 && (
                   <span className="text-meta text-muted-foreground">
                     Expression: <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{def.if.expression}</code>
                   </span>
                 )}
               </div>
+              {guardErrors.length > 0 && (
+                <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-meta text-destructive">
+                  {guardErrors.map((msg) => <p key={msg}>{msg}</p>)}
+                </div>
+              )}
             </div>
           )}
         </Panel>
@@ -1078,14 +1172,19 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
                 type="button"
                 size="sm"
                 variant={def.then.kind === "run" ? "default" : "outline"}
+                disabled={def.when.kind === "stale"}
+                title={def.when.kind === "stale" ? "Stale triggers propose to the Inbox because alarms run without a signed-in principal" : undefined}
                 onClick={() => {
-                  if (def.then.kind === "run") return
+                  if (def.then.kind === "run" || def.when.kind === "stale") return
                   set((cur) => ({ ...cur, then: { kind: "run", actionId: cur.then.actionId, input: cur.then.input } }))
                 }}
               >
                 Run action automatically
               </Button>
             </div>
+            {def.when.kind === "stale" && (
+              <p className="text-meta text-muted-foreground">Stale triggers propose actions into the Inbox so a verified human approves execution.</p>
+            )}
 
             <label className="grid max-w-md gap-1.5 text-sm">
               <span className="font-medium">Action</span>
@@ -1095,6 +1194,7 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
                 value={def.then.actionId}
                 onChange={(e) => {
                   const nextAction = offeredActions.find((a) => a.actionId === e.target.value)
+                  setStaticDrafts({})
                   set((cur) => ({
                     ...cur,
                     then: cur.then.kind === "propose"
@@ -1103,8 +1203,14 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
                   }))
                 }}
               >
-                {offeredActions.length === 0 && <option value="">No offered actions on this type</option>}
-                {offeredActions.map((a) => <option key={a.actionId} value={a.actionId}>{a.title} ({a.actionId})</option>)}
+                {offeredActions.length === 0 ? (
+                  <option value="">No offered actions on this type</option>
+                ) : (
+                  <>
+                    {def.then.actionId === "" && <option value="">Select an action…</option>}
+                    {offeredActions.map((a) => <option key={a.actionId} value={a.actionId}>{a.title} ({a.actionId})</option>)}
+                  </>
+                )}
               </select>
             </label>
 
@@ -1114,13 +1220,43 @@ function AutomationEditor({ concepts, initialType, stored, cellAvailable, onSave
                 {extraInputs.map((field) => (
                   <label key={field.name} className="grid gap-1 text-sm">
                     <span className="text-muted-foreground">{field.label}</span>
-                    <Input
-                      aria-label={`Action input ${field.label}`}
-                      value={String(def.then.input?.[field.name] ?? "")}
-                      onChange={(e) => set((cur) => ({ ...cur, then: { ...cur.then, input: { ...(cur.then.input ?? {}), [field.name]: e.target.value } } }))}
-                    />
+                    {field.spec.kind === "choice" ? (
+                      <select
+                        aria-label={`Action input ${field.label}`}
+                        className={selectCls}
+                        value={staticDrafts[field.name] ?? ""}
+                        onChange={(e) => updateStaticDraft(field.name, e.target.value)}
+                      >
+                        <option value="">Default / unset</option>
+                        {field.spec.values.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
+                      </select>
+                    ) : field.spec.kind === "boolean" ? (
+                      <select
+                        aria-label={`Action input ${field.label}`}
+                        className={selectCls}
+                        value={staticDrafts[field.name] ?? ""}
+                        onChange={(e) => updateStaticDraft(field.name, e.target.value)}
+                      >
+                        <option value="">Default / unset</option>
+                        <option value="true">Yes</option>
+                        <option value="false">No</option>
+                      </select>
+                    ) : (
+                      <Input
+                        aria-label={`Action input ${field.label}`}
+                        readOnly={field.spec.kind === "fixed"}
+                        inputMode={field.spec.kind === "integer" || field.spec.kind === "number" ? "decimal" : undefined}
+                        value={staticDrafts[field.name] ?? ""}
+                        onChange={(e) => updateStaticDraft(field.name, e.target.value)}
+                      />
+                    )}
                   </label>
                 ))}
+                {staticInputErrors.length > 0 && (
+                  <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-meta text-destructive">
+                    {staticInputErrors.map((msg) => <p key={msg}>{msg}</p>)}
+                  </div>
+                )}
               </div>
             )}
 

@@ -106,9 +106,10 @@ export function useViewsMenu(): readonly MenuEntry[] {
   const live = useMode().data?.kind === "live"
   const scope = useStudioScope()
   const enabled = live && scope.isSuccess && scope.data !== null
+  const activeScope = scope.data ?? null
   const list = useQuery({
-    queryKey: ["views", "all", scope.data?.orgId, scope.data?.environmentId],
-    queryFn: () => views.listAll(),
+    queryKey: ["views", "all", activeScope?.orgId, activeScope?.environmentId],
+    queryFn: () => views.listAll(activeScope),
     enabled,
     retry: false,
     staleTime: 30_000,
@@ -129,9 +130,10 @@ export function ViewsPage() {
   const { catalog } = useCatalog()
   const navigate = useNavigate()
   const client = useQueryClient()
+  const activeScope = scope.data ?? null
   const list = useQuery({
-    queryKey: ["views", "all", scope.data?.orgId, scope.data?.environmentId],
-    queryFn: () => views.listAll(),
+    queryKey: ["views", "all", activeScope?.orgId, activeScope?.environmentId],
+    queryFn: () => views.listAll(activeScope),
     enabled: cellAvailable,
     retry: false,
   })
@@ -427,7 +429,25 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
   const offeredActions = actionsQuery.data?.kind === "catalog" ? actionsQuery.data.items : []
 
   const [draftFilter, setDraftFilter] = useState<readonly DraftClause[]>(() => fromPredicate(view.filter ?? null))
-  useEffect(() => { setDraftFilter(fromPredicate(view.filter ?? null)) }, [view.objectType, view.filter])
+  const lastEmittedFilter = useRef<SavedView["filter"]>(view.filter)
+  const prevObjectType = useRef(view.objectType)
+  useEffect(() => {
+    if (prevObjectType.current !== view.objectType) {
+      prevObjectType.current = view.objectType
+      lastEmittedFilter.current = view.filter
+      setDraftFilter(fromPredicate(view.filter ?? null))
+      return
+    }
+    if (view.filter === lastEmittedFilter.current) return
+    lastEmittedFilter.current = view.filter
+    setDraftFilter(fromPredicate(view.filter ?? null))
+  }, [view.objectType, view.filter])
+
+  const emitFilter = (next: readonly DraftClause[]) => {
+    const predicate = toPredicate(next, fields) ?? undefined
+    lastEmittedFilter.current = predicate
+    set((cur) => ({ ...cur, filter: predicate }))
+  }
 
   const [spaceMode, setSpaceMode] = useState<"preset" | "custom">(() =>
     !view.space || (DEFAULT_SPACES as readonly string[]).includes(view.space) ? "preset" : "custom",
@@ -606,11 +626,12 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
           draft={draftFilter}
           onDraft={(next) => {
             setDraftFilter(next)
-            set((cur) => ({ ...cur, filter: toPredicate(next, fields) ?? undefined }))
+            emitFilter(next)
           }}
-          onApply={() => set((cur) => ({ ...cur, filter: toPredicate(draftFilter, fields) ?? undefined }))}
+          onApply={() => emitFilter(draftFilter)}
           onClear={() => {
             setDraftFilter([])
+            lastEmittedFilter.current = undefined
             set((cur) => ({ ...cur, filter: undefined }))
           }}
           applied={draftFilter}

@@ -704,7 +704,7 @@ pub fn get_object_query_within<E: SqlEngine>(
     access: &dyn ObjectAccess,
     max_scan: usize,
 ) -> Result<NornObjectQueryPage, Refusal> {
-    let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
+    let (epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let properties = {
         let cell = host.cell()?;
         let reader = cell.store().read();
@@ -790,7 +790,7 @@ pub fn get_object_query_within<E: SqlEngine>(
         count: u64::try_from(matched.len()).unwrap_or(u64::MAX),
         approximate: !scan.exhausted,
     });
-    let records = queried_page(host, scope, &actor, object_type, page)?;
+    let records = queried_page(host, &epoch, scope, &actor, object_type, page)?;
     Ok(NornObjectQueryPage {
         object_type: object_type.to_owned(),
         records,
@@ -806,6 +806,7 @@ pub fn get_object_query_within<E: SqlEngine>(
 
 fn queried_page<E: SqlEngine>(
     host: &DevHost<E>,
+    epoch: &std::sync::RwLockReadGuard<'_, ()>,
     scope: &ScopeQuery,
     actor: &str,
     object_type: &str,
@@ -815,8 +816,14 @@ fn queried_page<E: SqlEngine>(
         .iter()
         .map(|listed| (listed.readable, &listed.row))
         .collect();
-    let per_row_offers =
-        crate::action_catalog::offers_for_records(host, scope, actor, object_type, &row_refs)?;
+    let per_row_offers = crate::action_catalog::offers_for_records(
+        host,
+        epoch,
+        scope,
+        actor,
+        object_type,
+        &row_refs,
+    )?;
     Ok(match per_row_offers {
         Some(offers) => page
             .into_iter()
@@ -888,21 +895,12 @@ pub fn get_queried_object<E: SqlEngine>(
         Some(catalog) => privacy::project(host, &actor, catalog, markings.as_ref(), &mut row),
         None => privacy::Projected::default(),
     };
-    let offers = crate::action_catalog::offers_for_records(
-        host,
-        scope,
-        &actor,
-        &row.object_type,
-        &[(readable, &row)],
-    )?
-    .and_then(|mut list| list.pop())
-    .flatten();
     Ok(queried(
         &Listed {
             row,
             readable,
             projected,
         },
-        offers,
+        None,
     ))
 }

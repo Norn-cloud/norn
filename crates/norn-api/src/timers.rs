@@ -209,11 +209,12 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
             }
         }
     }
-    work.next = if more { Some(at) } else { next_wake(&cell)? };
     drop(cell);
     if let Ok(fired) = crate::automations::run_due_stale(host, now) {
         work.automations = fired;
     }
+    let cell = host.cell()?;
+    work.next = if more { Some(at) } else { next_wake(&cell)? };
     Ok(work)
 }
 
@@ -330,7 +331,8 @@ fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal>
             step.approved_at_ms.max(eligible)
         })
         .min();
-    Ok(min(min(timer, decision), step))
+    let stale = crate::automations::next_stale_wake(cell)?;
+    Ok(min(min(min(timer, decision), step), stale))
 }
 
 /// What an item's refusal says for the operator: its host cause, else its code.

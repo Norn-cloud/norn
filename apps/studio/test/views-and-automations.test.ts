@@ -1,20 +1,27 @@
 import { expect, test } from "bun:test"
+import { encodeBulkSharedInputs } from "../src/actions/bulk-action-sheet.tsx"
+import type { FormField } from "../src/lib/actions.ts"
 import type { Field } from "../src/lib/catalog.ts"
+import type { Fetch } from "../src/lib/cell-read.ts"
 import {
   automationField,
   blankGuardClause,
+  canRenderGuardVisually,
+  cellAutomations,
   cleanAutomation,
   compileGuard,
   describeThen,
   describeWhen,
   duplicateAutomation,
   durationParts,
+  encodeStaticActionInputs,
   msFromDuration,
   newAutomationId,
   parseGuard,
+  validateGuardClauses,
   type AutomationDefinition,
 } from "../src/lib/automations.ts"
-import { cleanView, duplicateView, newViewId, sortKeys, sortText, viewField, type SavedView } from "../src/lib/views.ts"
+import { cellViews, cleanView, duplicateView, newViewId, sortKeys, sortText, viewField, type SavedView } from "../src/lib/views.ts"
 
 const FIELDS: readonly Field[] = [
   { id: "stage", type: "enum", optional: false, decimal: undefined, scalar: { kind: "enum", values: ["started", "stalled", "assisted"] } },
@@ -105,4 +112,67 @@ test("automation helpers clean, duplicate, describe triggers/actions and convert
   expect(describeThen(cleaned.then, "Offer help")).toBe("propose Offer help to Inbox (admin)")
   expect(durationParts(msFromDuration(3, "days"))).toEqual({ amount: 3, unit: "days" })
   expect(durationParts(msFromDuration(45, "minutes"))).toEqual({ amount: 45, unit: "minutes" })
+})
+
+test("guard validation preserves operands, blocks incomplete/invalid clauses, and keeps unsupported ops in raw mode", () => {
+  // Invalid numeric literal is rejected, never silently turned into 0.
+  expect(validateGuardClauses([{ property: "score", op: "lt", value: "60x" }], FIELDS).length).toBeGreaterThan(0)
+  expect(compileGuard([{ property: "score", op: "lt", value: "60x" }], FIELDS)).toBeUndefined()
+  // Blank clause is flagged as incomplete rather than silently dropped.
+  expect(validateGuardClauses([{ property: "score", op: "lt", value: "" }], FIELDS).length).toBeGreaterThan(0)
+  // Explicitly empty clause list is valid (no guard).
+  expect(validateGuardClauses([], FIELDS)).toEqual([])
+  expect(compileGuard([], FIELDS)).toBeUndefined()
+  // Leading/trailing whitespace in text operands is preserved verbatim.
+  expect(compileGuard([{ property: "label_code", op: "eq", value: " north " }], FIELDS)).toBe("self.label_code == ' north '")
+  // Boolean only supports `eq` in visual controls, so `!=` stays in raw mode.
+  expect(canRenderGuardVisually(parseGuard("self.flag != false"), FIELDS)).toBe(false)
+  expect(canRenderGuardVisually(parseGuard("self.flag == false"), FIELDS)).toBe(true)
+})
+
+test("bulk and static action inputs reject blank required numbers, allow explicit 0, and encode declared scalar types", () => {
+  const formFields: readonly FormField[] = [
+    { name: "count", label: "Count", description: null, pointer: "/count", required: true, nullable: false, spec: { kind: "integer" } },
+    { name: "note", label: "Note", description: null, pointer: "/note", required: false, nullable: false, spec: { kind: "text" } },
+    { name: "urgent", label: "Urgent", description: null, pointer: "/urgent", required: false, nullable: false, spec: { kind: "boolean" } },
+  ]
+  expect(encodeBulkSharedInputs(formFields, { count: "", note: "", urgent: "false" }).ok).toBe(false)
+  expect(encodeBulkSharedInputs(formFields, { count: "0", note: "", urgent: "true" })).toEqual({ ok: true, shared: { count: 0, urgent: true } })
+  expect(encodeBulkSharedInputs(formFields, { count: "2.5", note: "", urgent: "false" }).ok).toBe(false)
+
+  expect(encodeStaticActionInputs(formFields, { count: "2", urgent: "true" })).toEqual({ input: { count: 2, urgent: true }, errors: [] })
+  expect(encodeStaticActionInputs(formFields, { count: "2.5" }).errors.length).toBeGreaterThan(0)
+})
+
+test("views and automations list operations pin one scope and surface non-404 read failures", async () => {
+  let scopeOrg = "org_a"
+  const seenScopes: string[] = []
+  const fetcher: Fetch = async (input) => {
+    const url = String(input)
+    if (url === "/api/me") {
+      return new Response(JSON.stringify({ organization: { id: scopeOrg }, environmentId: "dev" }), { status: 200 })
+    }
+    const parsed = new URL(url, "https://studio.test")
+    seenScopes.push(parsed.searchParams.get("orgId") ?? "")
+    if (parsed.pathname.endsWith("/v1/definitions:list")) {
+      scopeOrg = "org_b"
+      return new Response(JSON.stringify({ items: [{ id: "studio.view.a", updatedAtMs: 1 }], cursor: null }), { status: 200 })
+    }
+    if (parsed.pathname.endsWith("/v1/definitions/studio.view.a")) {
+      return new Response(JSON.stringify({ id: "studio.view.a", version: 1, payload: { title: "A", objectType: "demo.Record" } }), { status: 200 })
+    }
+    return new Response(JSON.stringify({ code: "host.unavailable", message: "down" }), { status: 503 })
+  }
+  const views = await cellViews(fetcher).listAll()
+  expect(views.length).toBe(1)
+  expect(seenScopes).toEqual(["org_a", "org_a"])
+
+  // A 503 on per-id definition GET throws instead of returning an empty list.
+  const failingFetch: Fetch = async (input) => {
+    const url = String(input)
+    if (url === "/api/me") return new Response(JSON.stringify({ organization: { id: "org_a" }, environmentId: "dev" }), { status: 200 })
+    if (url.includes("/v1/definitions:list")) return new Response(JSON.stringify({ items: [{ id: "studio.automation.a" }], cursor: null }), { status: 200 })
+    return new Response(JSON.stringify({ code: "host.error", message: "service unavailable" }), { status: 503 })
+  }
+  await expect(cellAutomations(failingFetch).list()).rejects.toThrow()
 })

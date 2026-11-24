@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use norn_cell::engine::SqlEngine;
 use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader};
-use norn_ir::{ActionEffectProgram, RuntimeObject, RuntimeValue};
+use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::cell_host::{CellCommit, CellHost};
 use norn_kernel::{
     Command, CommandId, Effect, FactEvent, FreshnessPolicy, Generation, IdempotencyKey, LogicalTime,
@@ -18,119 +18,25 @@ use crate::automation_definitions::{
 };
 use crate::automations::{
     AUTOMATION_RUN_EVENT, AUTOMATION_STEP, AutomationRunOutcome, AutomationRunRecord,
-    COMMAND_PREFIX, MAX_AUTOMATION_SCAN, eval_record_match, guard_passes, record_last_commit_ms,
+    COMMAND_PREFIX, HeldProposal, MAX_AUTOMATION_SCAN, action_meta, build_action_input,
+    dedupe_hash, eval_record_match, guard_passes, held_proposal, json_to_runtime,
+    record_last_commit_ms, run_entry_id,
 };
-use crate::decisions::{
-    DecidedCall, DecidedCallState, DecisionCall, DecisionContext, DecisionDocument, DecisionFlow,
-    DecisionOptionDocument, DecisionOptionEffect, DecisionRisk, DecisionRun, DecisionStep,
-    DecisionSubject, OpenDecision,
-};
+use crate::decisions::{DecidedCall, DecidedCallState};
 use crate::definition_routes::MAX_LIST_LIMIT;
 use crate::host::{ActionCell, DevHost};
 use crate::question_routes::QuestionRuntime;
-use crate::refusal::Refusal;
+use crate::refusal::{Refusal, RefusalCategory};
 
 const LEDGER_PAGE: usize = 500;
+const MAX_HISTORY_SCAN_EVENTS: u64 = 10_000;
 
-/// An automation proposal carried inside a parked `norn.decision@1` command.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HeldProposal {
-    pub(crate) definition: String,
-    pub(crate) revision: u64,
-    pub(crate) title: String,
-    pub(crate) object_type: String,
-    pub(crate) object_id: String,
-    pub(crate) object_version: u64,
-    pub(crate) action: String,
-    pub(crate) input: RuntimeObject,
-    pub(crate) idempotency_key: String,
+fn run_idempotency_key(dedupe_key: &str) -> String {
+    format!("norn.automation.run/{dedupe_key}")
 }
 
-/// Decode the `automation` member of a parked `norn.decision@1` command.
-#[must_use]
-pub(crate) fn held_proposal(value: &RuntimeValue) -> Option<HeldProposal> {
-    let text = |name: &str| {
-        value
-            .get(name)
-            .and_then(RuntimeValue::as_str)
-            .map(str::to_owned)
-    };
-    let Some(RuntimeValue::Object(input)) = value.get("input") else {
-        return None;
-    };
-    Some(HeldProposal {
-        definition: text("definition")?,
-        revision: norn_ir::runtime::decode(value.get("revision")?).ok()?,
-        title: text("title")?,
-        object_type: text("objectType")?,
-        object_id: text("objectId")?,
-        object_version: norn_ir::runtime::decode(value.get("objectVersion")?).ok()?,
-        action: text("action")?,
-        input: input.clone(),
-        idempotency_key: text("idempotencyKey")?,
-    })
-}
-
-/// Project an open automation proposal decision to the wire [`DecisionDocument`].
-pub(crate) fn proposal_document(
-    decision: &OpenDecision,
-    proposal: &HeldProposal,
-) -> DecisionDocument {
-    let risk = match decision.request.risk {
-        norn_cell::decision_ledger::Risk::Low => DecisionRisk::Low,
-        norn_cell::decision_ledger::Risk::Medium => DecisionRisk::Medium,
-        norn_cell::decision_ledger::Risk::High => DecisionRisk::High,
-    };
-    let options = decision
-        .request
-        .options
-        .iter()
-        .map(|option| DecisionOptionDocument {
-            id: option.id.clone(),
-            label: option.label.clone(),
-            scope: option.scope.clone(),
-            effect: DecisionOptionEffect {
-                action: option.effect.action.clone(),
-                binding: option.effect.binding.clone(),
-            },
-        })
-        .collect();
-    DecisionDocument {
-        id: decision.id.clone(),
-        run: DecisionRun {
-            id: decision.run_id.clone(),
-            generation: decision.generation.0,
-            state: None,
-        },
-        flow: DecisionFlow {
-            rule_id: proposal.definition.clone(),
-            version: proposal.revision.to_string(),
-            title: Some(proposal.title.clone()),
-        },
-        step: DecisionStep {
-            id: decision.step.clone(),
-            label: Some("Proposed action".to_owned()),
-        },
-        question: decision.request.question.clone(),
-        risk,
-        options,
-        agent_pick: decision.request.agent_pick.clone(),
-        requested_at_ms: decision.requested_at_ms,
-        expires_at_ms: decision.expires_at_ms,
-        context: DecisionContext {
-            subjects: vec![DecisionSubject {
-                object_type: proposal.object_type.clone(),
-                id: proposal.object_id.clone(),
-            }],
-        },
-        input_schema: None,
-        call: Some(DecisionCall {
-            action: proposal.action.clone(),
-            definition: proposal.definition.clone(),
-            input: RuntimeValue::Object(proposal.input.clone()),
-            trace: None,
-        }),
-    }
+fn approved_run_idempotency_key(decision_id: &str) -> String {
+    format!("norn.automation.approved/{decision_id}")
 }
 
 /// Evaluate enabled `event` and `lifecycle_entered` automations after an action
@@ -274,15 +180,159 @@ pub(crate) fn run_due_stale<E: SqlEngine>(
     Ok(fired)
 }
 
-/// Execute an automation-proposed action after a human decider approves it in
-/// the Inbox, under the deciding human's own verified authority.
+/// Earliest logical timestamp (ms) when any enabled `stale` + `propose`
+/// automation will become eligible for an un-fired record (AUTOMATION-1).
+pub(crate) fn next_stale_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal> {
+    let reader = cell.store().read();
+    let automations = active_automations_from(&reader)?;
+    let mut earliest: Option<u64> = None;
+    for (automation_id, revision, payload) in automations {
+        let AutomationWhen::Stale {
+            after_ms,
+            property,
+            state,
+        } = &payload.when
+        else {
+            continue;
+        };
+        if !payload.enabled
+            || !matches!(payload.then, AutomationThen::Propose { .. })
+            || !reader.model().has_type(&payload.object_type)
+        {
+            continue;
+        }
+        let rows = reader
+            .list_after(MAIN_WORLD, &payload.object_type, None, MAX_AUTOMATION_SCAN)
+            .map_err(Refusal::host)?;
+        for row in rows {
+            if let (Some(prop), Some(wanted)) = (property, state)
+                && row.values.get(prop).and_then(RuntimeValue::as_str) != Some(wanted.as_str())
+            {
+                continue;
+            }
+            if !guard_passes(&payload, &row) {
+                continue;
+            }
+            let dedupe_key = dedupe_hash(
+                &automation_id,
+                revision,
+                &row.object_type,
+                &row.id,
+                row.version,
+            )?;
+            if already_recorded(&reader, &dedupe_key)? {
+                continue;
+            }
+            if let Some(last_commit) = record_last_commit_ms(&reader, &row) {
+                let due_at = last_commit.saturating_add(*after_ms);
+                earliest = Some(earliest.map_or(due_at, |cur| cur.min(due_at)));
+            }
+        }
+    }
+    Ok(earliest)
+}
+
+/// Read the already-recorded execution outcome of an approved automation
+/// proposal in O(1) via its idempotency receipt, or `None` if not yet run.
+pub(crate) fn approved_proposal_call<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    decision_id: &str,
+) -> Result<Option<DecidedCall>, Refusal> {
+    let reader = cell.store().read();
+    let key = approved_run_idempotency_key(decision_id);
+    let Some(receipt) = reader
+        .receipt_by_idempotency_key(MAIN_WORLD, &key)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(None);
+    };
+    let after = receipt.body.first_event_seq.saturating_sub(1);
+    let count = usize::try_from(receipt.body.event_count)
+        .unwrap_or(1)
+        .max(1);
+    let entries = reader.ledger_page(after, count).map_err(Refusal::host)?;
+    for entry in entries {
+        if entry.event.get("type").and_then(RuntimeValue::as_str) != Some(AUTOMATION_RUN_EVENT) {
+            continue;
+        }
+        let Some(run_val) = entry.event.get("run") else {
+            continue;
+        };
+        let Ok(record) = norn_ir::runtime::decode::<AutomationRunRecord>(run_val) else {
+            continue;
+        };
+        return Ok(Some(match record.outcome {
+            AutomationRunOutcome::Committed => DecidedCall {
+                committed: true,
+                code: None,
+                state: DecidedCallState::Committed,
+            },
+            AutomationRunOutcome::Refused => DecidedCall {
+                committed: false,
+                code: record.refusal_code,
+                state: DecidedCallState::Refused,
+            },
+            AutomationRunOutcome::Proposed | AutomationRunOutcome::Skipped => DecidedCall {
+                committed: false,
+                code: None,
+                state: DecidedCallState::NotExecuted,
+            },
+        }));
+    }
+    Ok(None)
+}
+
+fn load_approved_proposal<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    decision_id: &str,
+) -> Result<Option<HeldProposal>, Refusal> {
+    let reader = cell.store().read();
+    let Some(row) = reader
+        .decision_resolution(MAIN_WORLD, decision_id)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(None);
+    };
+    if row.resolved.choice.as_deref() != Some(crate::approvals::APPROVE)
+        || !row.resolved.command_id.starts_with(COMMAND_PREFIX)
+    {
+        return Ok(None);
+    }
+    let Some(cmd) = reader
+        .outbox_command(&row.resolved.command_id)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(None);
+    };
+    Ok(cmd
+        .command
+        .get("payload")
+        .and_then(|payload| payload.get("automation"))
+        .and_then(held_proposal))
+}
+
+/// Execute or recover an automation-proposed action after a human decider
+/// approves it in the Inbox, under the deciding human's verified authority.
+/// Replays and recoveries after interruption never execute the action twice:
+/// recorded outcomes return immediately, and the action call itself uses a
+/// deterministic idempotency key bound to the proposal.
 pub(crate) fn run_approved_proposal<E: SqlEngine>(
     host: &DevHost<E>,
-    proposal: &HeldProposal,
+    decision_id: &str,
     decider: &str,
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
-) -> Result<DecidedCall, Refusal> {
+) -> Result<Option<DecidedCall>, Refusal> {
+    let proposal = {
+        let cell = host.cell()?;
+        if let Some(done) = approved_proposal_call(&cell, decision_id)? {
+            return Ok(Some(done));
+        }
+        let Some(proposal) = load_approved_proposal(&cell, decision_id)? else {
+            return Ok(None);
+        };
+        proposal
+    };
     let query = ActionQuery {
         org_id: Some(host.scope().org_id.clone()),
         environment_id: Some(host.scope().environment_id.clone()),
@@ -308,76 +358,104 @@ pub(crate) fn run_approved_proposal<E: SqlEngine>(
         disclosure,
         None,
     );
-    let now_ms = now.as_millis();
+    let (decided_call, run_record) =
+        classify_approved_outcome(&proposal, outcome, now.as_millis())?;
+    if let Some(run_record) = run_record {
+        let mut cell = host.cell()?;
+        record_run_event(
+            &mut cell,
+            &approved_run_idempotency_key(decision_id),
+            &run_record,
+            now,
+        )?;
+    }
+    Ok(Some(decided_call))
+}
+
+fn classify_approved_outcome(
+    proposal: &HeldProposal,
+    outcome: Result<ActionAnswer, Refusal>,
+    now_ms: u64,
+) -> Result<(DecidedCall, Option<AutomationRunRecord>), Refusal> {
     let dedupe_key = format!(
         "approved:{}:{}",
         proposal.definition, proposal.idempotency_key
     );
-    let (decided_call, run_record) = match outcome {
-        Ok(ActionAnswer::Receipt(receipt)) => (
+    let meta = (
+        proposal.definition.as_str(),
+        proposal.revision,
+        "decision_approved",
+    );
+    let subject = (
+        proposal.object_type.as_str(),
+        proposal.object_id.as_str(),
+        proposal.object_version,
+        proposal.action.as_str(),
+    );
+    match outcome {
+        Ok(ActionAnswer::Receipt(receipt)) => Ok((
             DecidedCall {
                 committed: true,
                 code: None,
                 state: DecidedCallState::Committed,
             },
-            make_run(
+            Some(make_run(
                 &dedupe_key,
-                (&proposal.definition, proposal.revision, "decision_approved"),
-                (
-                    &proposal.object_type,
-                    &proposal.object_id,
-                    proposal.object_version,
-                    &proposal.action,
-                ),
+                meta,
+                subject,
                 AutomationRunOutcome::Committed,
                 (None, Some(receipt.receipt.commit_seq), None, None),
                 receipt.receipt.recorded_at_ms,
-            )?,
-        ),
-        Ok(ActionAnswer::Pending(pending)) => (
+            )?),
+        )),
+        Ok(ActionAnswer::Pending(pending)) => Ok((
             DecidedCall {
                 committed: false,
                 code: None,
                 state: DecidedCallState::NotExecuted,
             },
-            make_run(
+            Some(make_run(
                 &dedupe_key,
-                (&proposal.definition, proposal.revision, "decision_approved"),
-                (
-                    &proposal.object_type,
-                    &proposal.object_id,
-                    proposal.object_version,
-                    &proposal.action,
-                ),
+                meta,
+                subject,
                 AutomationRunOutcome::Proposed,
                 (Some(pending.decision.id), None, None, None),
                 now_ms,
-            )?,
-        ),
-        Err(refusal) => (
+            )?),
+        )),
+        Err(refusal)
+            if matches!(
+                refusal.category,
+                RefusalCategory::Internal
+                    | RefusalCategory::Permission
+                    | RefusalCategory::Visibility
+            ) =>
+        {
+            Ok((
+                DecidedCall {
+                    committed: false,
+                    code: Some(refusal.code),
+                    state: DecidedCallState::NotExecuted,
+                },
+                None,
+            ))
+        }
+        Err(refusal) => Ok((
             DecidedCall {
                 committed: false,
                 code: Some(refusal.code.clone()),
                 state: DecidedCallState::Refused,
             },
-            make_run(
+            Some(make_run(
                 &dedupe_key,
-                (&proposal.definition, proposal.revision, "decision_approved"),
-                (
-                    &proposal.object_type,
-                    &proposal.object_id,
-                    proposal.object_version,
-                    &proposal.action,
-                ),
+                meta,
+                subject,
                 AutomationRunOutcome::Refused,
                 (None, None, Some(refusal.code), Some(refusal.message)),
                 now_ms,
-            )?,
-        ),
-    };
-    let mut cell = host.cell()?;
-    record_run_event(&mut cell, &run_record, now)?;
-    Ok(decided_call)
+            )?),
+        )),
+    }
 }
 
 pub(crate) struct FireTarget<'a> {
@@ -414,7 +492,7 @@ pub(crate) fn fire_for_record<E: SqlEngine>(
     );
     {
         let cell = host.cell()?;
-        if already_recorded(&cell.store().read(), target.automation_id, &dedupe_key)? {
+        if already_recorded(&cell.store().read(), &dedupe_key)? {
             return make_run(
                 &dedupe_key,
                 meta,
@@ -558,7 +636,12 @@ fn run_automatic_action<E: SqlEngine>(
         )?
     };
     let mut cell = host.cell()?;
-    record_run_event(&mut cell, &run_record, now)?;
+    record_run_event(
+        &mut cell,
+        &run_idempotency_key(dedupe_key),
+        &run_record,
+        now,
+    )?;
     Ok(run_record)
 }
 
@@ -709,14 +792,14 @@ fn park_proposal<E: SqlEngine>(
 
 fn record_run_event<E: SqlEngine>(
     cell: &mut ActionCell<E>,
+    idempotency_key: &str,
     run_record: &AutomationRunRecord,
     now: LogicalTime,
 ) -> Result<(), Refusal> {
     let _ = crate::actions::turn_clock(cell, now)?;
     let event = run_event_value(run_record)?;
-    let commit = CellCommit::<FactEvent, RuntimeObject, RuntimeObject>::empty();
-    cell.attributed(vec![event], |cell| CellHost::commit(cell, commit))
-        .map_err(|error| Refusal::host(format!("{error:?}")))?;
+    cell.record_idempotent_event(idempotency_key, event)
+        .map_err(Refusal::host)?;
     Ok(())
 }
 
@@ -736,10 +819,15 @@ fn run_event_value(run: &AutomationRunRecord) -> Result<RuntimeValue, Refusal> {
 pub(crate) fn read_runs_from_ledger<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     automation_id: &str,
+    head_events: u64,
 ) -> Result<Vec<AutomationRunRecord>, Refusal> {
-    let mut after = 0_u64;
+    let mut after = head_events.saturating_sub(MAX_HISTORY_SCAN_EVENTS);
     let mut found = Vec::new();
-    loop {
+    let max_pages = usize::try_from(MAX_HISTORY_SCAN_EVENTS)
+        .unwrap_or(10_000)
+        .div_ceil(LEDGER_PAGE)
+        .saturating_add(1);
+    for _ in 0..max_pages {
         let page = reader
             .ledger_page(after, LEDGER_PAGE)
             .map_err(Refusal::host)?;
@@ -767,22 +855,37 @@ pub(crate) fn read_runs_from_ledger<E: SqlEngine>(
     Ok(found)
 }
 
+/// O(1) deduplication check via the cell's indexed receipt idempotency key and
+/// outbox command primary key (zero ledger scan).
 fn already_recorded<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
-    automation_id: &str,
     dedupe_key: &str,
 ) -> Result<bool, Refusal> {
-    let runs = read_runs_from_ledger(reader, automation_id)?;
-    Ok(runs
-        .iter()
-        .any(|run| run.dedupe_key == dedupe_key && run.outcome != AutomationRunOutcome::Skipped))
+    let key = run_idempotency_key(dedupe_key);
+    if reader
+        .receipt_by_idempotency_key(MAIN_WORLD, &key)
+        .map_err(Refusal::host)?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    let cmd_id = format!("{COMMAND_PREFIX}{dedupe_key}");
+    Ok(reader
+        .outbox_command(&cmd_id)
+        .map_err(Refusal::host)?
+        .is_some())
 }
 
 fn active_automations<E: SqlEngine>(
     host: &DevHost<E>,
 ) -> Result<Vec<(String, u64, AutomationPayload)>, Refusal> {
     let cell = host.cell()?;
-    let reader = cell.store().read();
+    active_automations_from(&cell.store().read())
+}
+
+fn active_automations_from<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+) -> Result<Vec<(String, u64, AutomationPayload)>, Refusal> {
     let mut out = Vec::new();
     let mut after: Option<String> = None;
     loop {
@@ -867,90 +970,4 @@ fn load_commit_candidates<E: SqlEngine>(
         }
     }
     Ok((record, previous, candidates))
-}
-
-pub(crate) fn action_meta<E: SqlEngine>(
-    host: &DevHost<E>,
-    reader: &StoreReader<'_, E>,
-    object_type: &str,
-    action_id: &str,
-) -> Result<(String, String), Refusal> {
-    let actions = crate::automation_definitions::actions_map(host, reader, object_type)?;
-    let action = actions.get(action_id).ok_or_else(|| {
-        Refusal::invalid(format!(
-            "action {action_id:?} is not admitted for {object_type}"
-        ))
-    })?;
-    let field = match &action.effect_program {
-        Some(
-            ActionEffectProgram::UpsertInputObject {
-                object_id_field, ..
-            }
-            | ActionEffectProgram::FireTransition {
-                object_id_field, ..
-            }
-            | ActionEffectProgram::MutateParentWithRows {
-                object_id_field, ..
-            },
-        ) => object_id_field.clone(),
-        None => {
-            return Err(Refusal::invalid(format!(
-                "action {action_id:?} has no runnable effect program"
-            )));
-        }
-    };
-    let title = action
-        .title
-        .clone()
-        .unwrap_or_else(|| action.action_id.clone());
-    Ok((field, title))
-}
-
-pub(crate) fn build_action_input(
-    then: &AutomationThen,
-    object_id_field: &str,
-    object_id: &str,
-) -> Result<RuntimeObject, Refusal> {
-    let mut map = RuntimeObject::new();
-    for (key, value) in then.input() {
-        map.insert(key.clone(), json_to_runtime(value)?);
-    }
-    map.insert(
-        object_id_field.to_owned(),
-        RuntimeValue::String(object_id.to_owned()),
-    );
-    Ok(map)
-}
-
-fn json_to_runtime(value: &Value) -> Result<RuntimeValue, Refusal> {
-    let text = serde_json::to_string(value).map_err(Refusal::host)?;
-    RuntimeValue::from_json_text(&text).map_err(Refusal::host)
-}
-
-fn dedupe_hash(
-    automation_id: &str,
-    revision: u64,
-    object_type: &str,
-    object_id: &str,
-    object_version: u64,
-) -> Result<String, Refusal> {
-    let digest = norn_ir::canonical::domain_hash_hex(
-        b"norn.automation.dedupe/1\0",
-        &(
-            automation_id,
-            revision,
-            object_type,
-            object_id,
-            object_version,
-        ),
-    )
-    .map_err(Refusal::host)?;
-    Ok(digest.get(..32).unwrap_or(&digest).to_owned())
-}
-
-fn run_entry_id(dedupe_key: &str, suffix: &str) -> Result<String, Refusal> {
-    let digest =
-        norn_ir::canonical::domain_hash_hex(b"norn.automation.run_id/1\0", &(dedupe_key, suffix))
-            .map_err(Refusal::host)?;
-    Ok(format!("arun_{}", digest.get(..24).unwrap_or(&digest)))
 }
