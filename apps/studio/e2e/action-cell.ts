@@ -115,7 +115,7 @@ export async function actionCell(page: Page, objects: ObjectCell, options: Actio
     const request = route.request()
     const url = new URL(request.url())
     // A foreign scope: the call route's opaque denial; the catalog has no served route to follow.
-    if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return request.method() === "GET" ? route.fulfill({ status: 403, json: { code: "scope.denied", message: "Not your workspace." } }) : refuse(route, "denied")
+    if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return request.method() === "GET" ? route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "scope.denied", category: "permission", retryable: false, message: "Not your workspace." } }) : refuse(route, "denied")
     if (request.method() === "GET") {
       const kind = url.searchParams.get("objectKind")
       return route.fulfill({ json: { definitionsVersion: 1, items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })

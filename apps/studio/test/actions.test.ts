@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { instantText, isDiagnosticPlaced, offsetSuffix, offsetText, pickerDateTime, resolveDateTime, runtimeWallOffsets, selectedAlternative, type LocalWallOffsets } from "../src/lib/actions.ts"
 import { BOOK_EQUIPMENT } from "../e2e/interval-fixtures.ts"
-import { callAction, decimalExample, itemNoun, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
+import { CALL_OUTCOME_UNKNOWN, callAction, decimalExample, itemNoun, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { createIntentKey } from "../../../packages/norn-sdk/src/index.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
 
@@ -144,7 +144,7 @@ test("a call sends the encoded input and its key; a refusal keeps every diagnost
   expect(await callAction("constitution.melt.convert", '{"input_fine_g":12.000}', "k1", ok.fetcher)).toEqual({ kind: "receipt", receipt: receipt as never })
   expect(ok.calls[0]?.url.pathname).toBe("/api/host/v1/actions/constitution.melt.convert")
   expect(ok.calls[0]?.body).toBe('{"input":{"input_fine_g":12.000},"idempotencyKey":"k1"}')
-  const refused = cell(() => Response.json({ code: "action.input_invalid", message: "The input does not fit.", diagnostics: [{ code: "x", message: "m", pointer: "/input/a" }, { code: "y", message: "n", pointer: "/input/b" }] }, { status: 422 }))
+  const refused = cell(() => Response.json({ format: "norn/refusal@2", code: "action.input_invalid", message: "The input does not fit.", diagnostics: [{ code: "x", message: "m", pointer: "/input/a" }, { code: "y", message: "n", pointer: "/input/b" }] }, { status: 422 }))
   const result = await callAction("a", "{}", "k", refused.fetcher)
   expect(result).toMatchObject({ kind: "refused", status: 422, code: "action.input_invalid" })
   expect(result.kind === "refused" && result.diagnostics.map((d) => d.pointer)).toEqual(["/input/a", "/input/b"])
@@ -228,7 +228,11 @@ test("a 404, whatever its body, or a 503 that is not a Refusal@2, is not served;
   expect(await callAction("a", "{}", "k", cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
   // A write a gateway answered 503 may have been applied: an error saying so, never "not served".
   const gateway = await callAction("a", "{}", "k", cell(() => new Response("", { status: 503 })).fetcher).then(() => null, (error: unknown) => error as Error)
-  expect(gateway?.message).toContain("original idempotency key")
+  expect(gateway?.message).toBe(CALL_OUTCOME_UNKNOWN)
+  // A read gets Studio's own words, never the SDK's developer copy.
+  const read = await listActions(undefined, cell(() => new Response("<html>bad gateway</html>", { status: 502 })).fetcher).then(() => null, (error: unknown) => error as Error)
+  expect(read?.message).toBe("The cell did not answer (502); nothing was read or saved.")
+  expect(read?.message).not.toContain("idempotency")
   expect(await listActions(undefined, cell(() => Response.json({ code: "host.down", message: "down" }, { status: 503 })).fetcher)).toEqual({ kind: "unavailable" })
   const unconfigured = { format: "norn/refusal@2", code: "action.receipts_unconfigured", category: "internal", retryable: true, message: "this cell cannot commit governed actions now", explanation: "no lineage key", reason: null }
   expect(await callAction("a", "{}", "k", cell(() => Response.json(unconfigured, { status: 503 })).fetcher)).toMatchObject({ kind: "refused", status: 503, code: "action.receipts_unconfigured", retryable: true })

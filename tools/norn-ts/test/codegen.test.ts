@@ -115,10 +115,22 @@ test("CODEGEN-TS-3: a shape outside the closed dialect, or two definitions of on
   const jsonOutput = ml()
   jsonOutput.find((a) => a.artifactId === "ml.run.record.action")!.payload.outputSchema.properties.run_id = { type: ["array", "boolean", "null", "number", "object", "string"] }
   refused(jsonOutput, "ml.run.record.action#/outputSchema/properties/run_id: the JSON value domain leaf is admitted in an action input only")
-  // An entity decimal is bounded the same way.
-  const wideEntity = ml()
-  wideEntity.find((a) => a.artifactId === "ml.TrainingRun.entity")!.payload.objectType.properties.find((p: { id: string }) => p.id === "learning_rate").type.scale = 19
-  refused(wideEntity, "a decimal's scale is not an integer in 0..=18")
+  // An entity decimal is bounded as norn_checker::property_types bounds it: 0..=28, or 0..=18 for
+  // a per-unit rate or a declared rounding other than `refuse`.
+  const entityDecimal = (type: object) => {
+    const set = ml()
+    const property = set.find((a) => a.artifactId === "ml.TrainingRun.entity")!.payload.objectType.properties.find((p: { id: string }) => p.id === "learning_rate")
+    property.type = { kind: "decimal", ...type }
+    return set
+  }
+  expect(generateTypes(entityDecimal({ scale: 28 }), { base: catalogs() })).toContain('readonly "learning_rate": string')
+  expect(generateTypes(entityDecimal({ scale: 28, rounding: "refuse" }), { base: catalogs() })).toContain('readonly "learning_rate": string')
+  refused(entityDecimal({ scale: 29 }), "a decimal's scale is not an integer in 0..=28")
+  refused(entityDecimal({ scale: 19, rounding: "half_even" }), "a decimal's scale is not an integer in 0..=18 (a rate or a rounding decimal)")
+  refused(entityDecimal({ scale: 19, perUnit: { system: "ucum", code: "kg" }, currencySource: { property: "model", links: [] } }), "a decimal's scale is not an integer in 0..=18 (a rate or a rounding decimal)")
+  // The repository's own precision fixture declares an entity decimal of scale 28.
+  const precision = readArtifactSet(join(ROOT, "fixtures/schema/precision.ir.json"))
+  expect(generateTypes(precision, { base: readArtifactSet(CORE) })).toContain("export type ObjectMap")
   refused(withInput("model", { type: "string", format: "date" }), "`format` is not admitted in a closed `string` schema")
   refused(withInput("model", { type: ["object", "null"], properties: {}, additionalProperties: false }), "a nullable `object` is not admitted in an action input")
   refused(withInput("model", { type: "object", properties: {} }), "an object schema is not closed")

@@ -67,7 +67,7 @@ export async function refusalCell(page: Page, reader: Reader): Promise<RefusalCe
       // total the lines sum to is admitted, the inconsistent one refused. Any other input was never recorded.
       if (refusedAs === "admin" && same(body?.input, REQUESTS.receipt)) return route.fulfill(serve("receipt.admin.json"))
       if (same(body?.input, REQUESTS.refusal)) return route.fulfill(serve(`refusal.${refusedAs}.json`))
-      return route.fulfill({ status: 400, json: { code: "replay.unrecorded", message: "The cell's answer to this input was not recorded." } })
+      return route.fulfill({ status: 400, json: { format: "norn/refusal@2", code: "replay.unrecorded", category: "invalid", retryable: false, message: "The cell's answer to this input was not recorded." } })
     }
     if (route.request().method() === "GET" && url.pathname.endsWith("/v1/actions")) return route.fulfill(serve(`actions.${reader}.json`))
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not found" } })

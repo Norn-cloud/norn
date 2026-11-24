@@ -60,15 +60,19 @@ async function scoped(fetcher: Fetch, options: ActionScopeOptions = {}) {
   return { kind: "ok", client: createNornClient({ scope, fetch: scopedHostFetch(fetcher, "/api/host", async () => scope) }) } as const
 }
 
+/** A write whose answer was lost or unreadable: it may have been saved, and Retry resends the same call under its key. */
+export const CALL_OUTCOME_UNKNOWN = "Couldn't confirm this was saved: the cell's answer was lost, so it may or may not have happened. Retry sends the same request, so it can't apply twice."
+
 /**
- * The SDK's "no readable answer" as Studio's. A route the cell does not serve is a state: for a
- * read, any `notServed` answer; for a write, only one that applied nothing (a 404). Anything else
- * is an error carrying the SDK's own words, which say when a write's outcome is unknown and that a
- * retry must reuse its key (the form's retry does).
+ * The SDK's "no readable answer" in Studio's words (the SDK's own message is developer copy). A route
+ * the cell does not serve is a state: for a read, any `notServed` answer; for a write, only one that
+ * applied nothing (a 404). A read that got no readable answer is Studio's usual "did not answer". A
+ * write whose outcome is unknown says so, and its Retry resends the same call under its key
+ * (`lib/screen/call.ts`), so it cannot apply twice.
  */
 function unanswered(error: unknown, write: boolean): { readonly kind: "unavailable" } {
   if (error instanceof NornUnavailable && (write ? error.outcome === "not-applied" : error.notServed)) return { kind: "unavailable" }
-  if (error instanceof NornUnavailable) throw new CellUnavailable(error.status, error.message)
+  if (error instanceof NornUnavailable) throw new CellUnavailable(error.status, write ? CALL_OUTCOME_UNKNOWN : undefined)
   throw error
 }
 

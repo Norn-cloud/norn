@@ -63,6 +63,12 @@ test("SDK-CALL-2: what is none of the three arms throws NornUnavailable, saying 
     [new Response("", { status: 503 }), 503, true, unknown, false],
     [Response.json({ code: "host.down", message: "down" }, { status: 503 }), 503, true, unknown, false],
     [new Response("<html>bad gateway</html>", { status: 502 }), 502, false, unknown, false],
+    // A gateway's `{ code, message }` is not the cell's refusal, whatever its status: the call behind
+    // it may have reached the cell, so it is never read as "refused" (a fresh key would write twice).
+    [Response.json({ code: "upstream.timeout", message: "timed out" }, { status: 502 }), 502, false, unknown, false],
+    [Response.json({ code: "upstream.timeout", message: "timed out" }, { status: 504 }), 504, false, unknown, false],
+    [Response.json({ code: "internal", message: "boom" }, { status: 500 }), 500, false, unknown, false],
+    [Response.json({ code: "action.idempotency_conflict", message: "no format" }, { status: 409 }), 409, false, unknown, false],
     // A success status is a success document only when it is one; the cell said it succeeded.
     [Response.json({ outcome: "pending" }, { status: 202 }), 202, false, unknown, true],
     [Response.json({ outcome: "pending", decision: { id: "d", expiresAtMs: 1.5 } }, { status: 202 }), 202, false, unknown, true],

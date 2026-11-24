@@ -119,6 +119,12 @@ const CLOSURES = new Set(["all", "none", "some", "one", "filter", "map", "flatMa
  * path (an `actor` name that is not a member after `.`), or a node it cannot resolve to a path (the
  * root `$`/`$root`, the pointer `#`, a closure builtin call, an assignment or a `;` sequence). An
  * expression that does not lex counts too, as the kernel counts one that does not parse.
+ *
+ * Counting every `$` and every `#` is deliberately conservative. The parser
+ * (`vendor/zen/core/expression/src/parser/parser.rs`) makes only `$root` the root node; a bare `$`
+ * is an identifier there, and a `#` outside a closure is not the closure's pointer. A token stream
+ * cannot tell those apart, so some expressions the kernel would let a caller fill are dropped here. That direction is safe: a
+ * dropped field is never offered, while an offered actor field is one the kernel refuses.
  */
 export function mayReadActor(source: string): boolean {
   let tokens: ZenToken[]

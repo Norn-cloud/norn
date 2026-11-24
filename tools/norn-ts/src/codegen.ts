@@ -228,8 +228,15 @@ function propertyType(type: unknown, at: string, catalog: Catalog, depth: number
     case "text": case "timestamp": case "date": case "duration": return "string"
     case "integer": return "number"
     case "decimal": {
+      // EntityIR decimals, as `norn_checker::property_types` bounds them: scale up to
+      // MAX_DECIMAL_SCALE (28, ZEN's exact decimal range), and up to 18 for a per-unit rate or a
+      // declared rounding other than `refuse`. Action `nornType` sites keep their own 0..=18.
       const scale = type["scale"]
-      if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > 18) throw new CodegenError(at, "a decimal's scale is not an integer in 0..=18")
+      const exactProfile = type["perUnit"] !== undefined || (type["rounding"] !== undefined && type["rounding"] !== "refuse")
+      const max = exactProfile ? 18 : 28
+      if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > max) {
+        throw new CodegenError(at, `a decimal's scale is not an integer in 0..=${max}${exactProfile ? " (a rate or a rounding decimal)" : ""}`)
+      }
       return "string"
     }
     case "decimal-binding": return "string"

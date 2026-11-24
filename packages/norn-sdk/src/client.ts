@@ -120,8 +120,9 @@ export type ActionCatalog =
  * `notServed`: the route is not served (404, or a 503 that is not a Refusal@2). `status` 0: no
  * answer arrived, or it broke off while it was read (see `cause`).
  *
- * `outcome` says what is known of the request. `not-applied` only for a 404: the route does not
- * exist, so nothing was done. Otherwise it is `unknown`: the request may have reached the cell and
+ * `outcome` says what is known of this HTTP request, and of no earlier one. `not-applied` only for
+ * a 404: the route does not exist, so this request did nothing. It says nothing of an earlier
+ * attempt of the same intent whose answer was lost: that one may still have been applied. Otherwise it is `unknown`: the request may have reached the cell and
  * been applied before its answer was lost or garbled. Retry a write with its original idempotency
  * key, never a fresh one, so the cell replays it instead of applying it twice; a read can simply
  * be repeated.
@@ -164,10 +165,12 @@ function parsed(text: string): unknown {
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 const CATEGORIES: readonly RefusalCategory[] = ["visibility", "permission", "precondition", "conflict", "invalid", "limit", "internal"]
 
-/** Read a Refusal@2 body; null when the text is not one. A finding's pointer is read at `span.pointer` or `pointer`. */
+/** Read a Refusal@2 body (`format: "norn/refusal@2"`); null when the text is not one. A finding's pointer is read at `span.pointer` or `pointer`. */
 export function readRefusal(status: number, text: string): Refusal | null {
   const body = parsed(text)
-  if (!isRecord(body) || typeof body["code"] !== "string") return null
+  // Only the cell's own document is a refusal: a gateway's or proxy's `{ code, message }` is not,
+  // since the request behind it may have reached the cell and been applied.
+  if (!isRecord(body) || body["format"] !== "norn/refusal@2" || typeof body["code"] !== "string") return null
   const { code, message, diagnostics, category, retryable, explanation, reason, decidedAt, incidentId } = body
   const list = Array.isArray(diagnostics)
     ? diagnostics.filter(isRecord).map((d: { code?: unknown; message?: unknown; pointer?: unknown; span?: unknown }) => ({
@@ -275,10 +278,9 @@ export function createNornClient<M extends ActionMapShape<M> = UntypedActions>(o
 
   /** A non-2xx answer: its refusal, else the route is not served (404/503) or the cell did not answer. */
   function refusalOrThrow(status: number, text: string): Refusal {
-    // A 404 is the route's absence whatever its body (`route.not_found`). A 503 is a refusal only
-    // when it is a Refusal@2 document; a proxy's or gateway's 503 means the route is not served.
-    const document = parsed(text)
-    const refusal = status === 404 || (status === 503 && !(isRecord(document) && document["format"] === "norn/refusal@2")) ? null : readRefusal(status, text)
+    // A 404 is the route's absence whatever its body (`route.not_found`). Any other status is a
+    // refusal only when it is a Refusal@2 document (`readRefusal`).
+    const refusal = status === 404 ? null : readRefusal(status, text)
     if (refusal === null) throw new NornUnavailable(status)
     return refusal
   }
