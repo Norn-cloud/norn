@@ -2208,20 +2208,18 @@ fn profile_exchange<E: SqlEngine>(
     resumed: Option<EngineAnswer>,
 ) -> Result<norn_cell::analytics::ProfileResponse, Refusal> {
     use crate::object_routes::snapshot_moved;
-    if resumed
-        .as_ref()
-        .is_some_and(|a| a.op == call.op && a.digest != call.digest)
-    {
+    if matches!(&resumed, Some(a) if a.op == call.op && a.digest != call.digest) {
         return Err(snapshot_moved());
     }
     let world = mirror_world(source);
     let answer =
         exchange_from(store, transport, tenant, world, call, resumed).map_err(engine_failure)?;
     if answer.status != 200 {
-        return Err(match refused(&answer.body) {
-            CellError::ComputeRefused("core.compute.stale_input") => snapshot_moved(),
-            err => engine_failure(err),
-        });
+        let err = refused(&answer.body);
+        if matches!(err, CellError::ComputeRefused("core.compute.stale_input")) {
+            return Err(snapshot_moved());
+        }
+        return Err(engine_failure(err));
     }
     decode(&answer.body).map_err(engine_failure)
 }
@@ -2248,7 +2246,7 @@ pub fn profile_objects<E: SqlEngine>(
         }
         crate::object_profile::get_object_profile(host, scope, actor, object_type, access)
     };
-    if {
+    let native_only = {
         let guard = host.cell()?;
         let r = guard.store().read();
         r.dataset_manifest(norn_cell::MAIN_WORLD, object_type)
@@ -2256,7 +2254,8 @@ pub fn profile_objects<E: SqlEngine>(
             .is_none()
             && !host.marking_catalog(&r)?.is_empty()
             && !mirror_unlabeled(&r, object_type)
-    } {
+    };
+    if native_only {
         return native();
     }
     let values = uniform_gate(host, scope, actor, object_type, access)?;

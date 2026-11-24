@@ -579,7 +579,7 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
     let mut mirror = store.analytics_frontier(&tenant(), WORLD)?;
     let initial = engine.frontier(&mirror).map_err(|r| r.detail)?;
     let batch = store.analytics_delta(&tenant(), WORLD, 0, 3)?.request;
-    assert!(!batch.rows.is_empty());
+    assert_ne!(batch.rows.len(), 0);
     let assert_refused_and_empty = |eng: Engine,
                                     request: &SyncRequest,
                                     frontier_req: &norn_cell::analytics::FrontierRequest,
