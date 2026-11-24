@@ -33,7 +33,7 @@ test("the new-dashboard page opens the empty editor, not a query error (a query 
   const { RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter } = await import("@tanstack/react-router")
   const { DashboardEditorPage } = await import("../src/dashboards.tsx")
   const client = new QueryClient()
-  client.setQueryData(["question-catalog"], catalog)
+  client.setQueryData(["question-catalog", "org_demo", "analytics"], catalog)
   // The editor opens once the workspace scope is known.
   client.setQueryData(["studio-scope"], { orgId: "org_demo", environmentId: "analytics" })
   const root = createRootRoute()

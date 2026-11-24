@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { sidekickServed } from "../src/sidekick/client.ts"
+import { defaultFetch, setDisplayedScope } from "../src/lib/definitions.ts"
+import { fetchGrant, sidekickServed } from "../src/sidekick/client.ts"
 import { applyUpdate, promptItem, toolWords, viewItem, type Transcript } from "../src/sidekick/transcript.ts"
 
 const update = (value: unknown) => ({ sessionId: "s", update: value }) as Parameters<typeof applyUpdate>[1]
@@ -27,4 +28,23 @@ test("a turn folds into the person's prompt, the agent's words, each Norn tool c
   expect(transcript[2]).toMatchObject({ tool: "norn_answer", status: "completed" })
   expect(toolWords("norn_trace_answer")).toBe("Traced where the number comes from")
   expect(toolWords("norn_new_thing")).toBe("new thing")
+})
+
+test("fetchGrant sends pinned scope headers via defaultFetch even after displayed scope changes", async () => {
+  const original = globalThis.fetch
+  const seen: Headers[] = []
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    seen.push(new Headers(init?.headers))
+    return Response.json({ token: "tok", expiresAt: Date.now() + 60_000 })
+  }) as typeof fetch
+  try {
+    const pinned = { orgId: "org_a", environmentId: "env_a" }
+    setDisplayedScope({ orgId: "org_b", environmentId: "env_b" })
+    await fetchGrant(defaultFetch, pinned)
+    expect(seen[0]?.get("x-norn-expected-org")).toBe("org_a")
+    expect(seen[0]?.get("x-norn-expected-env")).toBe("env_a")
+  } finally {
+    setDisplayedScope(undefined)
+    globalThis.fetch = original
+  }
 })

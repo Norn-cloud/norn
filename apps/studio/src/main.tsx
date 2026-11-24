@@ -3,7 +3,7 @@ import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-r
 import { BarChart3, Blend, Bookmark, BookMarked, ChartLine, Columns2, Database, FileDiff, Fingerprint, GitCompareArrows, House, Inbox, LayoutDashboard, Map as MapIcon, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode, useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import { CellUnavailable } from "@/lib/definitions"
+import { CellUnavailable, scopeFromAccount } from "@/lib/definitions"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { endSession, useAccount, type Account } from "@/lib/session"
 import { applyAppearance, storedShellChrome, storedSkin } from "@/lib/appearance"
@@ -61,7 +61,16 @@ const SECTIONS: readonly Section[] = [
 function SignedInShell({ account, sidekick }: { readonly account: Account; readonly sidekick: boolean }) {
   const learning = useLearningCapabilities()
   const sections = useMemo(() => SECTIONS.filter((section) => isSectionVisible(section.path, learning)), [learning])
-  return <Shell sections={sections} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account} onSignOut={() => void signOut()} />
+  const sidekickScopeKey = `${account.user.id}:${account.organization?.id ?? ""}:${account.environmentId ?? ""}`
+  const sidekickScope = scopeFromAccount(account)
+  return (
+    <Shell
+      sections={sections}
+      assistant={sidekick ? { title: "Sidekick", content: <Sidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
+      account={account}
+      onSignOut={() => void signOut()}
+    />
+  )
 }
 
 /**

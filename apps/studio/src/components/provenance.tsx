@@ -6,6 +6,7 @@ import { HiddenWriter } from "@/components/hidden-writer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { systemName } from "@/lib/catalog"
+import { useStudioScope } from "@/lib/definitions"
 import { KINDS, type Kind } from "@/lib/kinds"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { factProvenance, versionShown, type ValueProvenance } from "@/lib/provenance"
@@ -13,7 +14,7 @@ import type { SourceLineage } from "@/lib/transport"
 import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
 import { readableTime, words } from "@/lib/format"
-import { readHistory } from "../evidence/review.ts"
+import { historyQueryKey, readHistory } from "../evidence/review.ts"
 
 /** One link in the chain, in its kind's icon; receipt and time steps have no kind and use their own. */
 function Step({ kind, icon, title, children }: { readonly kind?: Kind; readonly icon?: LucideIcon; readonly title: ReactNode; readonly children?: ReactNode }) {
@@ -185,7 +186,9 @@ export function ProvenanceChain({ lineage, fact }: { readonly lineage: SourceLin
 
 /** The history read behind a live fact's card, read once per record and shared with its History tab. */
 function LiveFact({ objectType, id, version, fact, lineage }: { readonly objectType: string; readonly id: string; readonly version: number; readonly fact: string; readonly lineage: SourceLineage | null }) {
-  const history = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id), retry: false })
+  const scope = useStudioScope()
+  const boundScope = scope.data ?? null
+  const history = useQuery({ queryKey: historyQueryKey(objectType, id, boundScope), queryFn: () => readHistory(objectType, id, boundScope), enabled: scope.isSuccess, retry: false })
   if (history.isPending) return <p className="text-sm text-muted-foreground">Reading where it came from…</p>
   if (history.isError) {
     const reason = history.error instanceof NotServed ? "This cell does not serve record history yet."

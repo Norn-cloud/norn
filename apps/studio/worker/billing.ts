@@ -194,8 +194,10 @@ export interface PlanLimitRefusal {
   readonly plan: string
   readonly allowed: number
   readonly used: number
-  /** Where the person can raise the limit: a checkout for the next plan that allows more, else null. */
+  /** Where the person can raise the limit: a same-origin POST checkout/portal action, else null. */
   readonly upgradeUrl: string | null
+  /** HTTP method required to invoke `upgradeUrl` (`"POST"` when `upgradeUrl` is non-null). */
+  readonly upgradeMethod?: "POST"
   /** Who can raise it: the caller, or (a member limit refused to someone else) the workspace's payer, whose plan it is; then upgradeUrl is null. */
   readonly upgradeBy: "you" | "workspace-owner"
 }
@@ -224,7 +226,17 @@ async function admit(db: BillingDb, billing: BillingSettings, baseURL: string, p
   if (allowed === null || used < allowed) return { kind: "admitted" }
   // Only the payer can raise their own plan; a link would otherwise bill the caller for someone else's workspace.
   const payer = payerId === callerId
-  return { kind: "plan-limit", limit: name, plan: entitlement.plan, allowed, used, upgradeUrl: payer ? upgradeUrl(billing, baseURL, entitlement) : null, upgradeBy: payer ? "you" : "workspace-owner" }
+  const target = payer ? upgradeUrl(billing, baseURL, entitlement) : null
+  return {
+    kind: "plan-limit",
+    limit: name,
+    plan: entitlement.plan,
+    allowed,
+    used,
+    upgradeUrl: target,
+    ...target === null ? {} : { upgradeMethod: "POST" as const },
+    upgradeBy: payer ? "you" : "workspace-owner",
+  }
 }
 
 /** May this person create another workspace? Unbilled, always. */
@@ -266,6 +278,8 @@ export interface BillingAction {
   readonly kind: "checkout" | "portal"
   readonly label: string
   readonly href: string
+  /** Billing session creation endpoints accept same-origin POST only and return 303 to Polar. */
+  readonly method: "POST"
 }
 export interface BillingDocument {
   readonly entitlement: Entitlement
@@ -280,8 +294,8 @@ export async function billingDocument(db: BillingDb, billing: BillingSettings | 
   if (billing === undefined) return { entitlement, usage, actions: [] }
   // A paying person changes plan in the portal; a second checkout would bill them twice.
   const actions: BillingAction[] = subscribed(entitlement) ? [] : billing.plans
-    .map((plan) => ({ kind: "checkout", label: `Upgrade to ${plan.name}`, href: new URL(`/api/billing/checkout?plan=${encodeURIComponent(plan.id)}`, baseURL).href }))
+    .map((plan) => ({ kind: "checkout", label: `Upgrade to ${plan.name}`, href: new URL(`/api/billing/checkout?plan=${encodeURIComponent(plan.id)}`, baseURL).href, method: "POST" }))
   // Anyone billed once is the provider's customer and can manage it; a person never billed has nothing to manage.
-  if (entitlement.status !== "none") actions.push({ kind: "portal", label: "Manage billing", href: new URL("/api/billing/portal", baseURL).href })
+  if (entitlement.status !== "none") actions.push({ kind: "portal", label: "Manage billing", href: new URL("/api/billing/portal", baseURL).href, method: "POST" })
   return { entitlement, usage, actions }
 }

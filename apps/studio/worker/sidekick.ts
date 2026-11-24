@@ -1,4 +1,4 @@
-import { ORG_CLAIM, mcpResource, type Auth } from "./auth.ts"
+import { ENV_CLAIM, MEMBER_CLAIM, ORG_CLAIM, mcpResource, type Auth } from "./auth.ts"
 import type { NornActor } from "./actor.ts"
 
 /**
@@ -50,12 +50,31 @@ export interface SidekickGrant {
   readonly expiresAt: number
 }
 
-/** Mint a grant for a signed-in person in their active workspace. */
-export async function sidekickGrant(auth: Auth, baseURL: string, actor: NornActor, now = Math.floor(Date.now() / 1000)): Promise<SidekickGrant> {
+/** Mint a grant for a signed-in person bound to their active workspace, membership generation, and cell environment. */
+export async function sidekickGrant(
+  auth: Auth,
+  baseURL: string,
+  actor: NornActor,
+  environmentId: string,
+  now = Math.floor(Date.now() / 1000),
+): Promise<SidekickGrant> {
+  if (typeof actor.memberId !== "string" || actor.memberId === "") {
+    throw new Error("Sidekick grant requires a resolved membership.")
+  }
   const exp = now + GRANT_SECONDS
   const { token } = await auth.api.signJWT({
     body: {
-      payload: { iss: baseURL, aud: mcpResource(baseURL), sub: actor.subjectId, azp: SIDEKICK_CLIENT, [ORG_CLAIM]: actor.orgId, iat: now, exp },
+      payload: {
+        iss: baseURL,
+        aud: mcpResource(baseURL),
+        sub: actor.subjectId,
+        azp: SIDEKICK_CLIENT,
+        [ORG_CLAIM]: actor.orgId,
+        [MEMBER_CLAIM]: actor.memberId,
+        [ENV_CLAIM]: environmentId,
+        iat: now,
+        exp,
+      },
     },
   })
   return { token, expiresAt: exp * 1000 }
