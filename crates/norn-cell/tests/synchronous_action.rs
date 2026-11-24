@@ -766,7 +766,7 @@ fn quantity_inputs(mut schema: Value) -> Value {
 }
 
 // Typed Rust composition reuses the generated writer and the existing quantity contract.
-fn quantity_action() -> Result<(ActionRoot, SynchronousRule), Box<dyn std::error::Error>> {
+fn quantity_action() -> (ActionRoot, SynchronousRule) {
     let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
         "../../norn-kernel/tests/fixtures/action-writer.json"
     ))
@@ -833,11 +833,19 @@ fn quantity_action() -> Result<(ActionRoot, SynchronousRule), Box<dyn std::error
             .all(|d| d.severity != DiagnosticSeverity::Error),
         "{findings:?}"
     );
-    let environment_hash = ScopedView::uniform(&artifacts, &BTreeSet::new())
+    let environment = ScopedView::uniform(&artifacts, &BTreeSet::new())
         .receipt_env(&norn_ir::ResourceLimitProfile::norn_limits_v1())
-        .map_err(|errors| format!("type environment: {errors:?}"))?
-        .reference()?
-        .sha256;
+        .map_err(|errors| format!("{errors:?}"))
+        .and_then(|env| env.reference().map_err(|error| error.to_string()));
+    assert!(
+        environment.is_ok(),
+        "type environment: {:?}",
+        environment.as_ref().err()
+    );
+    let environment_hash: String = environment
+        .into_iter()
+        .map(|reference| reference.sha256)
+        .collect();
     let rule = SynchronousRule::admit(
         action.synchronous_rule.clone().unwrap(),
         &writer,
@@ -848,7 +856,7 @@ fn quantity_action() -> Result<(ActionRoot, SynchronousRule), Box<dyn std::error
         },
     )
     .unwrap();
-    Ok((action, rule))
+    (action, rule)
 }
 
 /// TXN-ALL: facts, links, postings, outbox and timer cancellation share one receipt.
@@ -857,12 +865,11 @@ fn quantity_action() -> Result<(ActionRoot, SynchronousRule), Box<dyn std::error
     clippy::too_many_lines,
     reason = "one witness compares all effects before refusal and after successful reopen/retry"
 )]
-fn txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen()
--> Result<(), Box<dyn std::error::Error>> {
+fn txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen() {
     use norn_ir::quantity_ledger::{EvaluatedLedgerLeg, QuantityOperation, QuantityResolution};
     let directory = tempfile::tempdir().unwrap();
     let definitions = types();
-    let (action, rule) = quantity_action()?;
+    let (action, rule) = quantity_action();
     let rules = [rule];
     let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
     for occupied in [true, false] {
@@ -993,5 +1000,4 @@ fn txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen()
         );
         assert_eq!(cell.store().read().dump().unwrap(), committed);
     }
-    Ok(())
 }
