@@ -25,7 +25,7 @@ export const KINDS: Readonly<Record<Kind, KindStyle>> = {
   transform: { label: "Transform", icon: Blend, text: "text-kind-transform", fill: "bg-kind-transform/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
   question: { label: "Question", icon: ChartLine, text: "text-kind-question", fill: "bg-kind-question/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
   workflow: { label: "Workflow", icon: Workflow, text: "text-kind-workflow", fill: "bg-kind-workflow/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
-  guarantee: { label: "Guarantee", icon: ShieldCheck, text: "text-kind-guarantee", fill: "bg-kind-guarantee/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
+  guarantee: { label: "Rule", icon: ShieldCheck, text: "text-kind-guarantee", fill: "bg-kind-guarantee/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
   policy: { label: "Policy", icon: Scale, text: "text-kind-policy", fill: "bg-kind-policy/10", svg: "[&>svg]:text-muted-foreground hover:[&>svg]:text-foreground data-[active=true]:[&>svg]:text-action data-current:[&>svg]:text-action" },
 }
 

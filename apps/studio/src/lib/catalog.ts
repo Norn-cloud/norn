@@ -107,6 +107,12 @@ export interface Concept {
 /** One admitted law, as its LawIR declares it. */
 export interface Law {
   readonly id: string
+  /** The law's name in plain words: its `law:` label in the reader's language, else the artifact's `name`. */
+  readonly title?: string
+  /** The language `title` is written in: the label's tag when localized, else `en`. */
+  readonly titleLang?: string
+  /** The artifact that carries the law: what a held-back finding's `ruleRef` names. */
+  readonly artifactId?: string
   readonly subject: string
   readonly rationale: string
   readonly severity: "error" | "warning"
@@ -123,6 +129,10 @@ export interface Law {
   /** The concept that declares the law, when a concept inherits it (an interface it implements, a supertype). */
   readonly inheritedFrom?: string
 }
+
+/** A law's authored plain-words title when it says more than its engine id, else its rationale. */
+export const lawHeadline = (law: Pick<Law, "id" | "title" | "rationale">): string =>
+  law.title && law.title !== law.id ? law.title : law.rationale
 
 const IDENT = "[A-Za-z_][A-Za-z0-9_]*"
 const PAIR = new RegExp(`^\\s*self\\.(${IDENT})\\s*==\\s*\\(?\\s*self\\.(${IDENT})\\b`)
@@ -274,7 +284,20 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
     if (artifact.kind === "law") {
       const law = artifact.payload
       for (const target of law.scope.objectTypes) rules.set(target, [...rules.get(target) ?? [], law.rationale])
-      const declared: Law = { id: law.id, subject: law.subject, rationale: law.rationale, severity: law.severity, modality: String((law.modality as { kind?: unknown }).kind ?? ""), response: String((law.response as { kind?: unknown }).kind ?? ""), owner: law.owner, ...(comparedFacts((law.response as { expression?: unknown }).expression) ? { compares: comparedFacts((law.response as { expression?: unknown }).expression)! } : {}) }
+      const own = pick(labels, `law:${law.id}`, locale)
+      const declared: Law = {
+        id: law.id,
+        title: own?.text ?? artifact.name,
+        titleLang: own?.tag ?? "en",
+        artifactId: artifact.artifactId,
+        subject: law.subject,
+        rationale: law.rationale,
+        severity: law.severity,
+        modality: String((law.modality as { kind?: unknown }).kind ?? ""),
+        response: String((law.response as { kind?: unknown }).kind ?? ""),
+        owner: law.owner,
+        ...(comparedFacts((law.response as { expression?: unknown }).expression) ? { compares: comparedFacts((law.response as { expression?: unknown }).expression)! } : {}),
+      }
       for (const target of new Set([law.subject, ...law.scope.objectTypes])) laws.set(target, [...laws.get(target) ?? [], declared])
     }
   }

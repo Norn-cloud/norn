@@ -4,8 +4,16 @@ Norn definitions are written in Effect's vocabulary (Effect Schema for shapes, `
 This frontend is that compiler; the checker runs through its WASM ABI.
 
 Install the exact dependencies with `bun install --frozen-lockfile`.
-Set `NORN_CHECKER_WASM_PKG` to the package built by
-`crates/norn-checker-wasm/scripts/build-pkg.sh` for admission.
+
+## Fast local setup (no Rust build)
+
+Download the verified prebuilt runtime (`norn-checker-wasm`, `norn-dev-host`, and `norn`) once into `~/.cache/norn/runtime/`:
+
+```bash
+bun src/cli.ts setup                  # or from repo root: scripts/dev/fetch-local-runtime.sh
+```
+
+Once cached, `norn check`, `norn explain`, and `norn dev` auto-discover `~/.cache/norn/runtime/` with zero extra environment variables (respecting `XDG_CACHE_HOME` and `NORN_CACHE_DIR`). Override with `NORN_CHECKER_WASM_PKG` or `NORN_DEV_HOST_BIN` whenever testing a local Rust build (for example from `crates/norn-checker-wasm/scripts/build-pkg.sh`).
 
 ## Which `norn`
 
@@ -17,9 +25,11 @@ this one as `bun src/cli.ts`; in a project made by `norn init`, as `bunx norn`.
 
 ## Commands
 
+- `setup [--version TAG] [--base-url URL]` fetches and SHA-256 verifies the prebuilt `norn-checker-wasm`, `norn-dev-host`, and `norn` runtime into `~/.cache/norn/runtime/`.
 - `init <dir>` creates a project (`norn.json`, `src/`, `AGENTS.md`) and installs it.
 - `dev [--port N] [--json]` runs the native dev host (`norn-dev-host`, from
-  `norn-cell-do`; set `NORN_DEV_HOST_BIN` when running from a checkout) over the
+  `norn-cell-do`; auto-discovered from `~/.cache/norn/runtime/bin/norn-dev-host`
+  after `norn setup`, or overridden via `NORN_DEV_HOST_BIN`) over the
   project and reinstalls every save that is admitted.
 - `fmt [path...] [--check]` formats typed sources.
 - `check <pack-dir|file.ts> --org ID --env ID` compiles and admits a set.
