@@ -2,7 +2,7 @@
 //!
 //! The impure perimeter of a tenant cell is exactly four verbs, exposed to the
 //! kernel as this one trait and implemented once per host (the native
-//! `norn-cell` test driver, the TypeScript Durable Objects shim, celld). It
+//! `norn-cell` test driver, the TypeScript Durable Objects shim). It
 //! replaces the 2026-09-09 `DurableContext`: there is no `run_step`,
 //! `await_signal`, or child spawn, and no workflow API of any kind.
 //!

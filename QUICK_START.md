@@ -50,7 +50,7 @@ export NORN_DEV_HOST_BIN="$TARGET/release/norn-dev-host"
 ```
 
 The hosted-cell smoke in [`crates/norn-cell`](crates/norn-cell/README.md) also needs
-`esbuild` on `PATH` and celld v0.6.3 (see that README for its pin and checksum). To install only the Rust `norn` from a tag:
+`esbuild` and Wrangler 4.157.0 on `PATH` (see that README). To install only the Rust `norn` from a tag:
 `cargo install --locked --git https://github.com/Norn-cloud/norn --tag TAG norn-cli`.
 
 A one-command `norn dev` setup for a project with packs is in progress; this page
@@ -113,7 +113,7 @@ exports. Prerequisites, from this checkout: Rust 1.100.0, Bun 1.3.14 and
 checker WASM (`wasm-bindgen-cli` 0.2.129, as above; `build-pkg.sh` runs
 binaryen 132.0.0's `wasm-opt` through `npx`, so it needs the network once, or
 `NORN_WASM_OPT=0` to skip it). The hosted cell's own smoke
-(`apps/norn-cell-do/smoke.py`) also needs `esbuild` and celld.
+(`apps/norn-cell-do/smoke.py`) also needs `esbuild` and Wrangler.
 
 ```sh
 cargo build --release -p norn-cell-do --bin norn-dev-host
