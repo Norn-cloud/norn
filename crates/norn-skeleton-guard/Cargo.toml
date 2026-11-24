@@ -44,7 +44,7 @@ path = "src/bin/xtask.rs"
 [workspace]
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus_keep_ghost)'] }
 unsafe_code = "forbid"
 unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "warn"

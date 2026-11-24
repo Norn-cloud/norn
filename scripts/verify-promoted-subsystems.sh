@@ -382,6 +382,8 @@ run_gate fast tool-versions "scripts/check-verification-tools.sh" command \
   scripts/check-verification-tools.sh
 run_gate full extraction-tool-versions "scripts/check-rust-extraction-tools.sh" command \
   scripts/check-rust-extraction-tools.sh
+run_gate fast kernel-inline-verus "bash scripts/verify-kernel-inline-verus.sh all" command \
+  bash scripts/verify-kernel-inline-verus.sh all
 run_gate fast source-enrollment-regressions "python3 scripts/test_proof_enrollment.py" command \
   python3 scripts/test_proof_enrollment.py
 run_gate fast coverage-manifest "python3 verification/coverage-v1/validate.py" command \

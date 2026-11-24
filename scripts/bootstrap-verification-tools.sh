@@ -23,6 +23,54 @@ download_verified() {
   printf '%s  %s\n' "$sha256" "$destination" | sha256sum --check --status
 }
 
+# guards needs only Verus. Keep its bundled solver, macros and vstd together.
+verus_version=0.2026.11.22.1ce6a59
+verus_sha=c955d5958877f4f907cce80aa996d4239a481984829d82e325938c7bf242b0db
+verus_rust=1.100.0-x86_64-unknown-linux-gnu
+verus_rustup_home="$tool_root/rustup"
+verus_root="$tool_root/verus-x86-linux"
+verus_receipt="$tool_root/verus-install.sha256"
+
+verus_digest() {
+  {
+    printf '%s\n' "$verus_sha" "$verus_rust"
+    find -L "$verus_root" "$verus_rustup_home/toolchains/$verus_rust" -type f \
+      -exec stat -Lc 'mode %a %n' {} + -exec sha256sum {} + | LC_ALL=C sort
+  } | sha256sum
+}
+
+case "${1:-full}" in
+  full|--verus-only|--check-verus) ;;
+  *) echo "usage: $0 [--verus-only|--check-verus]" >&2; exit 2 ;;
+esac
+
+# Parallel jobs sharing this tool root must never inspect a partial installation.
+exec {verus_lock}>"$tool_root/verus-install.lock"
+flock "$verus_lock"
+if [[ -f "$verus_receipt" ]]; then
+  actual="$(verus_digest)"
+  [[ "$actual" == "$(cat "$verus_receipt")" ]] || {
+    echo "Pinned Verus installation changed; rebuild the snapshot" >&2; exit 1;
+  }
+elif [[ "${1:-full}" == --check-verus ]]; then
+  echo "Missing pinned Verus installation; run $0 --verus-only" >&2
+  exit 1
+else
+  verus_asset="verus-$verus_version-x86-linux.zip"
+  download_verified "https://github.com/verus-lang/verus/releases/download/release/$verus_version/$verus_asset" \
+    "$verus_sha" "$download_root/$verus_asset"
+  RUSTUP_HOME="$verus_rustup_home" rustup toolchain install "$verus_rust" --profile minimal --no-self-update
+  # Extract from the authenticated archive, including after interrupted setup.
+  rm -rf "$verus_root"
+  unzip -q "$download_root/$verus_asset" -d "$tool_root"
+  RUSTUP_HOME="$verus_rustup_home" "$verus_root/verus" --version | grep -F "$verus_version"
+  "$verus_root/z3" --version
+  verus_digest > "$verus_receipt.tmp"
+  mv "$verus_receipt.tmp" "$verus_receipt"
+fi
+exec {verus_lock}>&-
+if [[ "${1:-full}" != full ]]; then exit 0; fi
+
 ELAN_VERSION="4.2.3"
 LEAN_VERSION="4.33.1"
 LEAN_COMPAT_VERSION="4.31.0"

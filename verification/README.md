@@ -8,7 +8,7 @@ Formal models and proofs for parts of Norn, and the scripts that check them. Thi
 |---|---|
 | `coverage-v1/` | The coverage manifest (`manifest/`), the promoted gate list (`promoted-gates.json`), trusted assumptions, the result schema, and the validators (`validate.py`, `validate_result.py`, `negative_canaries.py`) |
 | `stripmine-2026-08-22/` | Quint models (`models/`), Lean, Kani and F* proofs (`proofs/`), and the obligation registry (`obligations.json`) for authority, artifact governance, authorization and quantity ledger rules |
-| `kernel-l1/` | Lean reference for the kernel, Kani harnesses, and the Verus version spike (`version_verus.rs`) |
+| `kernel-l1/` | Lean reference for the kernel, Aeneas version proof and direct-source Kani harnesses |
 | `kernel-proof-v1/` | Lean proofs over Aeneas extractions of kernel commit, binding and decider code |
 | `kernel-v2/` | Quint models of commit admission, quantity ledger and projection trust, their ITF traces (`traces/`) and `results.json` |
 | `semantics-v1/` | Shared Lean semantics (`NornSem`) and checker proofs, with pinned statements and axioms |
@@ -25,10 +25,10 @@ Formal models and proofs for parts of Norn, and the scripts that check them. Thi
 
 `scripts/verify-promoted-subsystems.sh [fast|full]` runs every promoted gate in order. Each gate is one `run_gate` line with a profile, an id and a command.
 
-1. Install the pinned tools: `scripts/bootstrap-verification-tools.sh` (Lean, Quint 0.32.0, Apalache 0.56.1, Kani 0.67.0, Z3, Java), `scripts/bootstrap-ontology-tools.sh` and `scripts/bootstrap-rust-extraction-tools.sh`.
+1. Install the pinned tools: `scripts/bootstrap-verification-tools.sh` (Verus, Lean, Quint 0.32.0, Apalache 0.56.1, Kani 0.67.0, Z3, Java), `scripts/bootstrap-ontology-tools.sh` and `scripts/bootstrap-rust-extraction-tools.sh`.
 2. Run `scripts/verify-promoted-subsystems.sh full`. This is what `scripts/ci/core.sh formal` does.
 
-- **`fast`** runs only the gates marked `fast`: Quint, Lean, tool-version, registry and ontology checks. It writes no result record.
+- **`fast`** runs only the gates marked `fast`: Verus, Quint, Lean, tool-version, registry and ontology checks. It writes no result record.
 - **`full`** runs every gate, including Kani, the Aeneas correspondence gates and the F* extraction. It requires the tools under `target/verification-tools`, writes `target/verification-results/formal-results.json`, and checks that file with `coverage-v1/validate_result.py`.
 
 Each gate's log is `target/verification-results/logs/<gate-id>.log`.
@@ -42,7 +42,7 @@ What the gates use:
 | Charon + Aeneas | nine `*-correspondence` gates. Each extracts production Rust and proves the Lean translation against a spec (`scripts/verify-*-aeneas.sh`). |
 | Kani | `quantity-kani` (`stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs`) |
 | F* (via hax) | `artifact-governance-rust-extraction` (`scripts/verify-artifact-governance-extraction.sh`) |
-| Verus | none; see [The Verus spike](#the-verus-spike) |
+| Verus | `kernel-inline-verus` checks the successor and committed-deletion predicates in the shipped version module and runs their two mutants |
 
 ## Quint/Apalache execution policy
 
@@ -60,9 +60,11 @@ Every `quint verify --backend apalache` gate runs through `scripts/quint_apalach
 
 ## Where the formal checks run
 
-**The formal checks do not run in GitHub CI.** CI runs `scripts/ci/core.sh` phase by phase and leaves out the `formal` phase: `core.sh plan` drops it ("formal remains a Boat gate"), and `.github/workflows/ci-policy.yml` says CI runs every phase "but formal". No workflow calls `verify-promoted-subsystems.sh`. So Lean, Quint/Apalache, Kani, Aeneas and F* are run by hand on Boat sandboxes, and the results are recorded in the pull request.
+**The full formal profile runs on Boat.** CI runs `scripts/ci/core.sh` phase by phase and leaves out the `formal` phase: `core.sh plan` drops it ("formal remains a Boat gate"), and `.github/workflows/ci-policy.yml` says CI runs every phase "but formal". No workflow calls `verify-promoted-subsystems.sh`. So Lean, Quint/Apalache, Kani, Aeneas and F* are run by hand on Boat sandboxes, and the results are recorded in the pull request.
 
-What CI does run, on every plan:
+Every CI plan also runs the following checks.
+
+- In `guards`: install the pinned Verus bundle with `scripts/bootstrap-verification-tools.sh --verus-only`, then run `bash scripts/verify-kernel-inline-verus.sh all`. Each mutant must fail its own named postcondition. The separate Aeneas successor theorem and Kani harnesses target the ordinary Rust source.
 
 - In `cheap`: `scripts/proof_enrollment.py` and its tests (registry checks over the proof sources), and `coverage-v1/negative_canaries.py --workflow-contract`. These check the registries, not the proofs.
 - In the test shards: `crates/norn-cell/tests/kernel_quint.rs` replays the Quint ITF traces committed in `kernel-v2/traces/` against the Rust kernel. It reads the traces; it does not run Quint.
@@ -80,11 +82,3 @@ No complete `verify-promoted-subsystems.sh full` pass is recorded. The records a
 | `verify-exact-arith-aeneas.sh` with the pinned Mathlib cache | pass; a one-byte change to a cached archive fails it | head `7797aa60e6` | #1354, merged as `ada69efe16` |
 | `verify-promoted-subsystems.sh full` | **failed** at `artifact-governance-rust-extraction` (the sccache compiler probe sent C input to the hax Rust driver, exit 101), identically on base `2f9bd4507` and the head; the Quint and Lean gates before it passed | head `24487efd4b` | #372, merged as `7388b7a09b` |
 | `cell-protocol-v1` Quint models (Apalache bounded checks, 200k simulated traces each) and TLC liveness | no counterexample at the stated depths; TLC finished for one harness of three | 2026-11-11 | #1240, merged as `c746a98b4c`; `cell-protocol-v1/results.json` |
-
-## The Verus spike
-
-`kernel-l1/version_verus.rs` is a copy of the body of `checked_next_version` from `crates/norn-kernel/src/version_check.rs`, with a Verus `ensures` clause added. It is a model beside the code, not a proof of the shipped module: Verus checks the copy, not the compiled kernel.
-
-`scripts/verify-kernel-l1-version-body.py` ties the copy to production by text: it matches both files against fixed patterns and fails unless the two function bodies are equal after removing whitespace. Its own docstring says this is "textual source correspondence, not Rust/Verus compiler equivalence". No gate in `verify-promoted-subsystems.sh` calls it, and no script in the repository runs Verus.
-
-The same function's proof about the production source is the `kernel-l1-version-correspondence` gate: `scripts/verify-kernel-l1-aeneas.sh` extracts `crates/norn-kernel/src/version_check.rs` itself with Charon and Aeneas and checks the Lean proof against that extraction.

@@ -1,0 +1,4 @@
+{
+  "order": 11,
+  "value": "The inline Verus gate covers the two scalar version predicates. Store-level compare-and-swap and the liveness value supplied by the host require separate evidence."
+}

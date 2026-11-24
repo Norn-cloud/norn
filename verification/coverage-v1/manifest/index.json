@@ -116,5 +116,19 @@
     ".github/workflows/trusted-policy.yml",
     "scripts/ci/core.sh",
     "verification/coverage-v1/assurance-certificate-obligations.json"
-  ]
+  ],
+  "inlineVerus": {
+    "version_check": {
+      "checked_next_version": {
+        "postcondition": "successor",
+        "mutant": "saturating_add",
+        "secondLens": "aeneas:VersionProof.lean"
+      },
+      "has_committed_deletion": {
+        "postcondition": "deleted",
+        "mutant": "zero",
+        "secondLens": "kani:id_stable_genesis_and_live_rows_are_never_deleted,id_stable_retained_absence_is_a_deletion"
+      }
+    }
+  }
 }

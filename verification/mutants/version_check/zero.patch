@@ -1,0 +1,7 @@
+--- a/version_check.rs
++++ b/version_check.rs
+@@ -41,3 +41,3 @@
+ pub(crate) const fn has_committed_deletion(version: u64, live: bool) -> bool {
+-    version != 0 && !live
++    version == 0 && !live
+ }
