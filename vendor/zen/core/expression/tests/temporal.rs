@@ -1,70 +1,153 @@
 //! Norn temporal qualification fixtures. CI runs this same suite natively and
 //! under wasm-bindgen-test on wasm32-unknown-unknown.
 
+use jiff::civil::DateTime;
+use jiff::tz::{AmbiguousOffset, TimeZone};
 use serde_json::json;
-use std::sync::Arc;
-use zen_expression::temporal::TzdbLookup;
-use zen_expression::{Isolate, Variable};
+use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock};
+use zen_expression::temporal::{LocalWallTime, ResolvedLocalOffset, TzdbLookup};
+use zen_expression::{compile_expression, Isolate, Variable};
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
 #[derive(Debug)]
 struct TestBundle {
-    zones: Vec<(String, usize, usize)>,
-    payload: Vec<u8>,
+    zones: Vec<(String, usize)>,
+    parsed: Vec<TimeZone>,
+}
+
+fn read_u16_le(slice: &[u8], off: usize) -> Result<u16, &'static str> {
+    let end = off.checked_add(2).ok_or("u16 offset overflow")?;
+    let bytes: [u8; 2] = slice
+        .get(off..end)
+        .and_then(|raw| raw.try_into().ok())
+        .ok_or("truncated u16")?;
+    Ok(u16::from_le_bytes(bytes))
+}
+
+fn read_u32_le(slice: &[u8], off: usize) -> Result<u32, &'static str> {
+    let end = off.checked_add(4).ok_or("u32 offset overflow")?;
+    let bytes: [u8; 4] = slice
+        .get(off..end)
+        .and_then(|raw| raw.try_into().ok())
+        .ok_or("truncated u32")?;
+    Ok(u32::from_le_bytes(bytes))
 }
 
 impl TestBundle {
-    fn from_bytes(bytes: &[u8]) -> Arc<Self> {
-        assert_eq!(&bytes[..8], b"NTZDB01\0");
-        let release_len = usize::from(u16::from_le_bytes(bytes[8..10].try_into().unwrap()));
-        let zone_count = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
-        let names_len = u32::from_le_bytes(bytes[16..20].try_into().unwrap()) as usize;
-        let index_start = 24 + release_len;
-        let names_start = index_start + zone_count * 16;
-        let payload_start = names_start + names_len;
-        let names = &bytes[names_start..payload_start];
-        let mut zones = Vec::with_capacity(zone_count);
-        for i in 0..zone_count {
-            let e = &bytes[index_start + i * 16..index_start + (i + 1) * 16];
-            let name_off = u32::from_le_bytes(e[0..4].try_into().unwrap()) as usize;
-            let name_len = u32::from_le_bytes(e[4..8].try_into().unwrap()) as usize;
-            let tzif_off = u32::from_le_bytes(e[8..12].try_into().unwrap()) as usize;
-            let tzif_len = u32::from_le_bytes(e[12..16].try_into().unwrap()) as usize;
-            let name = std::str::from_utf8(&names[name_off..name_off + name_len])
-                .unwrap()
-                .to_owned();
-            zones.push((name, tzif_off, tzif_len));
+    fn try_from_bytes(bytes: &[u8]) -> Result<Arc<Self>, &'static str> {
+        if bytes.get(..8) != Some(b"NTZDB01\0".as_slice()) {
+            return Err("invalid bundle magic");
         }
-        Arc::new(Self {
-            zones,
-            payload: bytes[payload_start..].to_vec(),
-        })
+        let release_len = usize::from(read_u16_le(bytes, 8)?);
+        let zone_count = usize::try_from(read_u32_le(bytes, 12)?).map_err(|_| "zone_count")?;
+        let names_len = usize::try_from(read_u32_le(bytes, 16)?).map_err(|_| "names_len")?;
+        let index_start = 24_usize.checked_add(release_len).ok_or("index_start")?;
+        let index_bytes = zone_count.checked_mul(16).ok_or("index_bytes")?;
+        let names_start = index_start.checked_add(index_bytes).ok_or("names_start")?;
+        let payload_start = names_start.checked_add(names_len).ok_or("payload_start")?;
+        let names = bytes
+            .get(names_start..payload_start)
+            .ok_or("names slice out of bounds")?;
+        let payload = bytes
+            .get(payload_start..)
+            .ok_or("payload slice out of bounds")?;
+        let mut zones = Vec::with_capacity(zone_count);
+        let mut parsed = Vec::new();
+        let mut blob_map: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+        for i in 0..zone_count {
+            let entry_off = index_start
+                .checked_add(i.checked_mul(16).ok_or("entry mul")?)
+                .ok_or("entry off")?;
+            let entry_end = entry_off.checked_add(16).ok_or("entry end")?;
+            let e = bytes.get(entry_off..entry_end).ok_or("entry slice")?;
+            let name_off = usize::try_from(read_u32_le(e, 0)?).map_err(|_| "name_off")?;
+            let name_len = usize::try_from(read_u32_le(e, 4)?).map_err(|_| "name_len")?;
+            let tzif_off = usize::try_from(read_u32_le(e, 8)?).map_err(|_| "tzif_off")?;
+            let tzif_len = usize::try_from(read_u32_le(e, 12)?).map_err(|_| "tzif_len")?;
+            let name_end = name_off.checked_add(name_len).ok_or("name_end")?;
+            let name = std::str::from_utf8(names.get(name_off..name_end).ok_or("name slice")?)
+                .map_err(|_| "name utf8")?
+                .to_owned();
+            let blob_idx = match blob_map.get(&(tzif_off, tzif_len)) {
+                Some(&idx) => idx,
+                None => {
+                    let tzif_end = tzif_off.checked_add(tzif_len).ok_or("tzif_end")?;
+                    let tzif = payload.get(tzif_off..tzif_end).ok_or("tzif slice")?;
+                    let tz = TimeZone::tzif(&name, tzif).map_err(|_| "invalid tzif")?;
+                    let idx = parsed.len();
+                    parsed.push(tz);
+                    blob_map.insert((tzif_off, tzif_len), idx);
+                    idx
+                }
+            };
+            zones.push((name, blob_idx));
+        }
+        Ok(Arc::new(Self { zones, parsed }))
     }
 }
 
 impl TzdbLookup for TestBundle {
-    fn tzif(&self, name: &str) -> Option<&[u8]> {
+    fn resolve_local_offset(&self, name: &str, wall: LocalWallTime) -> Option<ResolvedLocalOffset> {
         let idx = self
             .zones
-            .binary_search_by(|(z, _, _)| z.as_str().cmp(name))
+            .binary_search_by(|(z, _)| z.as_str().cmp(name))
             .ok()?;
-        let (_, off, len) = &self.zones[idx];
-        self.payload.get(*off..*off + *len)
+        let (_, blob_idx) = self.zones.get(idx)?;
+        let tz = self.parsed.get(*blob_idx)?;
+        let dt = DateTime::new(
+            wall.year,
+            wall.month,
+            wall.day,
+            wall.hour,
+            wall.minute,
+            wall.second,
+            wall.nanosecond,
+        )
+        .ok()?;
+        Some(match tz.to_ambiguous_timestamp(dt).offset() {
+            AmbiguousOffset::Unambiguous { offset } => {
+                ResolvedLocalOffset::Unambiguous(offset.seconds())
+            }
+            AmbiguousOffset::Gap { .. } => ResolvedLocalOffset::Gap,
+            AmbiguousOffset::Fold { before, after } => ResolvedLocalOffset::Fold {
+                before: before.seconds(),
+                after: after.seconds(),
+            },
+        })
     }
 }
 
 fn tzdb_2025b() -> Arc<dyn TzdbLookup> {
-    TestBundle::from_bytes(include_bytes!(
-        "../../../../../crates/norn-expr/data/tzdb/2025b.tzdb"
-    ))
+    static BUNDLE: OnceLock<Arc<TestBundle>> = OnceLock::new();
+    Arc::clone(BUNDLE.get_or_init(|| {
+        TestBundle::try_from_bytes(include_bytes!(
+            "../../../../../crates/norn-expr/data/tzdb/2025b.tzdb"
+        ))
+        .unwrap_or_else(|_| {
+            Arc::new(TestBundle {
+                zones: Vec::new(),
+                parsed: Vec::new(),
+            })
+        })
+    }))
 }
 
 fn tzdb_2026c() -> Arc<dyn TzdbLookup> {
-    TestBundle::from_bytes(include_bytes!(
-        "../../../../../crates/norn-expr/data/tzdb/2026c.tzdb"
-    ))
+    static BUNDLE: OnceLock<Arc<TestBundle>> = OnceLock::new();
+    Arc::clone(BUNDLE.get_or_init(|| {
+        TestBundle::try_from_bytes(include_bytes!(
+            "../../../../../crates/norn-expr/data/tzdb/2026c.tzdb"
+        ))
+        .unwrap_or_else(|_| {
+            Arc::new(TestBundle {
+                zones: Vec::new(),
+                parsed: Vec::new(),
+            })
+        })
+    }))
 }
 
 fn evaluate(expression: &str) -> Variable {
@@ -763,7 +846,8 @@ fn zen7_resolve_local_timestamp_handles_dst_and_refuses_invalid_inputs() {
 }
 
 #[test]
-fn resolve_local_timestamp_uses_explicit_isolate_tzdb_and_fails_closed_when_absent() {
+fn resolve_local_timestamp_uses_explicit_isolate_tzdb_and_fails_closed_when_absent(
+) -> Result<(), Box<dyn std::error::Error>> {
     let expr =
         "string(resolve_local_timestamp('2026-12-31T23:30:00', 'America/Edmonton', 'reject'))";
     // Without an injected tzdb, resolution fails closed.
@@ -773,13 +857,22 @@ fn resolve_local_timestamp_uses_explicit_isolate_tzdb_and_fails_closed_when_abse
     let mut iso_25 = Isolate::new().with_tzdb(Some(tzdb_2025b()));
     let mut iso_26 = Isolate::new().with_tzdb(Some(tzdb_2026c()));
     for _ in 0..3 {
-        assert_eq!(
-            iso_25.run_standard(expr).unwrap().as_str(),
-            Some("2027-01-01T06:30:00Z")
-        );
-        assert_eq!(
-            iso_26.run_standard(expr).unwrap().as_str(),
-            Some("2027-01-01T05:30:00Z")
-        );
+        let out_25 = iso_25.run_standard(expr).map_err(|e| format!("{e:?}"))?;
+        let out_26 = iso_26.run_standard(expr).map_err(|e| format!("{e:?}"))?;
+        assert_eq!(out_25.as_str(), Some("2027-01-01T06:30:00Z"));
+        assert_eq!(out_26.as_str(), Some("2027-01-01T05:30:00Z"));
     }
+
+    // Standalone Expression::evaluate_with_tzdb propagates explicit lookup cleanly.
+    let compiled = compile_expression(expr).map_err(|e| format!("{e:?}"))?;
+    assert!(compiled.evaluate(Variable::Null).is_err());
+    let standalone_25 = compiled
+        .evaluate_with_tzdb(Variable::Null, tzdb_2025b())
+        .map_err(|e| format!("{e:?}"))?;
+    let standalone_26 = compiled
+        .evaluate_with_tzdb(Variable::Null, tzdb_2026c())
+        .map_err(|e| format!("{e:?}"))?;
+    assert_eq!(standalone_25.as_str(), Some("2027-01-01T06:30:00Z"));
+    assert_eq!(standalone_26.as_str(), Some("2027-01-01T05:30:00Z"));
+    Ok(())
 }

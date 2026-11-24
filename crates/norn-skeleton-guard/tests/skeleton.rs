@@ -518,14 +518,15 @@ fn pinned_offline_tzdb_bundles_match_headers_digests_and_sources() {
 }
 
 #[test]
-fn guard_detects_corrupted_or_unpinned_tzdb_bundles() {
+fn guard_detects_corrupted_or_unpinned_tzdb_bundles() -> Result<(), Box<dyn std::error::Error>> {
     use norn_skeleton_guard::tzdb_pin::{
         PINNED_TZDB_BUNDLES, check_tzdb_bundles_against, validate_bundle_structure,
     };
 
     let root = workspace_root();
-    let pin = PINNED_TZDB_BUNDLES[0];
-    let good_bytes = std::fs::read(root.join(pin.path)).expect("2025b bundle");
+    let pin = *PINNED_TZDB_BUNDLES.first().ok_or("missing 2025b pin")?;
+    let pin_26 = *PINNED_TZDB_BUNDLES.get(1).ok_or("missing 2026c pin")?;
+    let good_bytes = std::fs::read(root.join(pin.path))?;
     assert_eq!(
         validate_bundle_structure(&good_bytes, pin.release, pin.zone_count),
         Ok(())
@@ -533,7 +534,7 @@ fn guard_detects_corrupted_or_unpinned_tzdb_bundles() {
 
     // 1. Bad magic header rejected.
     let mut bad_magic = good_bytes.clone();
-    bad_magic[0] = b'X';
+    *bad_magic.first_mut().ok_or("missing byte 0")? = b'X';
     assert!(
         validate_bundle_structure(&bad_magic, pin.release, pin.zone_count)
             .is_err_and(|e| e.contains("magic"))
@@ -555,7 +556,10 @@ fn guard_detects_corrupted_or_unpinned_tzdb_bundles() {
     let mut factory_bundle = Vec::new();
     let tzif_stub = [b'T', b'Z', b'i', b'f', b'2', 0];
     let mut tzif_44 = vec![0_u8; 44];
-    tzif_44[..tzif_stub.len()].copy_from_slice(&tzif_stub);
+    tzif_44
+        .get_mut(..tzif_stub.len())
+        .ok_or("tzif stub slot")?
+        .copy_from_slice(&tzif_stub);
     factory_bundle.extend_from_slice(b"NTZDB01\0");
     factory_bundle.extend_from_slice(&5_u16.to_le_bytes());
     factory_bundle.extend_from_slice(&0_u16.to_le_bytes());
@@ -574,26 +578,27 @@ fn guard_detects_corrupted_or_unpinned_tzdb_bundles() {
             .is_err_and(|e| e.contains("Factory"))
     );
 
-    // 5. Digest drift & source-pin drift detected on a synthetic tempdir workspace.
-    let dir = tempfile::tempdir().expect("tempdir");
+    // 5. Digest drift, source-pin drift, and commented-out Rust hash detected.
+    let dir = tempfile::tempdir()?;
     let bundle_dest = dir.path().join(pin.path);
-    std::fs::create_dir_all(bundle_dest.parent().expect("parent")).expect("mkdir");
+    std::fs::create_dir_all(bundle_dest.parent().ok_or("bundle parent")?)?;
     let mut tampered = good_bytes;
-    let last = tampered.len().checked_sub(1).expect("non-empty");
-    tampered[last] ^= 0xff;
-    std::fs::write(&bundle_dest, &tampered).expect("write tampered");
+    if let Some(last) = tampered.last_mut() {
+        *last ^= 0xff;
+    }
+    std::fs::write(&bundle_dest, &tampered)?;
 
     let source_dest = dir.path().join(pin.source_json);
-    std::fs::create_dir_all(source_dest.parent().expect("parent")).expect("mkdir");
+    std::fs::create_dir_all(source_dest.parent().ok_or("source parent")?)?;
     std::fs::write(
         &source_dest,
         r#"{"releaseId":"2025b","crateVersion":"0.1.9","crateSha256":"bad","files":[]}"#,
-    )
-    .expect("write bad source");
+    )?;
 
     let rust_dest = dir.path().join("crates/norn-expr/src/tzdb.rs");
-    std::fs::create_dir_all(rust_dest.parent().expect("parent")).expect("mkdir");
-    std::fs::write(&rust_dest, "// missing pinned hash\n").expect("write rust");
+    std::fs::create_dir_all(rust_dest.parent().ok_or("rust parent")?)?;
+    // Commented-out hash must NOT satisfy AST pin verification.
+    std::fs::write(&rust_dest, format!("// {}\n", pin.sha256))?;
 
     let single = [pin];
     let violations = check_tzdb_bundles_against(dir.path(), &single);
@@ -609,6 +614,53 @@ fn guard_detects_corrupted_or_unpinned_tzdb_bundles() {
         render(&violations)
     );
     assert!(rules.contains(&"tzdb-rust-pin"), "{}", render(&violations));
+
+    // 6. Swapped 2025b / 2026c SHA-256 constants in Rust source are rejected even when both hashes appear.
+    let swapped_rust = format!(
+        "pub const TZDB_RELEASE_2025B: &str = \"2025b\";\n\
+         pub const TZDB_RELEASE_2026C: &str = \"2026c\";\n\
+         pub const TZDB_SHA256_2025B: &str = \"{}\";\n\
+         pub const TZDB_SHA256_2026C: &str = \"{}\";\n\
+         const BUILTIN_2025B_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2025b.tzdb\");\n\
+         const BUILTIN_2026C_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2026c.tzdb\");\n\
+         struct TzdbBundle;\n\
+         impl TzdbBundle {{\n\
+             fn v2025b() {{ Self::from_bytes_verified(BUILTIN_2025B_BYTES, TZDB_SHA256_2025B); }}\n\
+             fn v2026c() {{ Self::from_bytes_verified(BUILTIN_2026C_BYTES, TZDB_SHA256_2026C); }}\n\
+         }}\n",
+        pin_26.sha256, pin.sha256
+    );
+    std::fs::write(&rust_dest, swapped_rust)?;
+    let swapped_violations = check_tzdb_bundles_against(dir.path(), PINNED_TZDB_BUNDLES);
+    assert!(
+        rules_of(&swapped_violations).contains(&"tzdb-rust-pin"),
+        "swapped SHA-256 constants must fail tzdb-rust-pin: {}",
+        render(&swapped_violations)
+    );
+
+    // 7. Swapped include_bytes! paths are rejected.
+    let swapped_paths = format!(
+        "pub const TZDB_RELEASE_2025B: &str = \"2025b\";\n\
+         pub const TZDB_RELEASE_2026C: &str = \"2026c\";\n\
+         pub const TZDB_SHA256_2025B: &str = \"{}\";\n\
+         pub const TZDB_SHA256_2026C: &str = \"{}\";\n\
+         const BUILTIN_2025B_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2026c.tzdb\");\n\
+         const BUILTIN_2026C_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2025b.tzdb\");\n\
+         struct TzdbBundle;\n\
+         impl TzdbBundle {{\n\
+             fn v2025b() {{ Self::from_bytes_verified(BUILTIN_2025B_BYTES, TZDB_SHA256_2025B); }}\n\
+             fn v2026c() {{ Self::from_bytes_verified(BUILTIN_2026C_BYTES, TZDB_SHA256_2026C); }}\n\
+         }}\n",
+        pin.sha256, pin_26.sha256
+    );
+    std::fs::write(&rust_dest, swapped_paths)?;
+    let path_violations = check_tzdb_bundles_against(dir.path(), PINNED_TZDB_BUNDLES);
+    assert!(
+        rules_of(&path_violations).contains(&"tzdb-rust-pin"),
+        "swapped include_bytes! paths must fail tzdb-rust-pin: {}",
+        render(&path_violations)
+    );
+    Ok(())
 }
 
 #[test]

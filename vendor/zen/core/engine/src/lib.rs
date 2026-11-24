@@ -68,5 +68,5 @@ pub use zen_expression::meter;
 pub use zen_expression::Variable;
 
 /// Norn (#1440): explicit offline IANA tzdb lookup passed to decision graphs.
-pub use zen_expression::temporal::TzdbLookup;
+pub use zen_expression::temporal::{LocalWallTime, ResolvedLocalOffset, TzdbLookup};
 pub use zen_expression::{scaled, Isolate};

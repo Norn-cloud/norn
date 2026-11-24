@@ -16,9 +16,10 @@ use jiff::tz::{AmbiguousOffset, TimeZone};
 use jiff::{Span, Timestamp};
 
 pub use crate::tzdb::{
-    MAX_TZDB_BUNDLE_BYTES, MAX_TZDB_RELEASE_LEN, MAX_TZDB_ZONE_NAME_LEN, MAX_TZDB_ZONES,
-    TZDB_BUNDLE_MAGIC, TZDB_RELEASE_2025B, TZDB_RELEASE_2026C, TZDB_SHA256_2025B,
-    TZDB_SHA256_2026C, TzdbBundle, TzdbBundleError, TzdbCatalog,
+    LocalCivilWallTime, LocalOffsetResolution, MAX_TZDB_BUNDLE_BYTES, MAX_TZDB_RELEASE_LEN,
+    MAX_TZDB_ZONE_BLOB_BYTES, MAX_TZDB_ZONE_NAME_LEN, MAX_TZDB_ZONES, TZDB_BUNDLE_MAGIC,
+    TZDB_RELEASE_2025B, TZDB_RELEASE_2026C, TZDB_SHA256_2025B, TZDB_SHA256_2026C, TzdbBundle,
+    TzdbBundleError, TzdbCatalog,
 };
 
 /// Operational default IANA timezone database release (`2025b`), for
@@ -308,7 +309,7 @@ pub fn naming_series_date_at_in(
     bundle: &TzdbBundle,
 ) -> Result<NamingSeriesDate, TemporalError> {
     let timezone = bundle.timezone(timezone)?;
-    let date = local_date(epoch_millis, &timezone)?;
+    let date = local_date(epoch_millis, timezone)?;
     let year = date.year();
     if !(0..=9_999).contains(&year) {
         return Err(TemporalError::InstantOutOfRange);

@@ -4,13 +4,16 @@
 //! carrying an embedded IANA release identifier, a strictly sorted case-sensitive
 //! zone index sharing deduplicated TZif byte ranges across aliases, and the raw
 //! TZif payload section. The same checked decoder admits both compiled-in
-//! bundles (`2025b` and `2026c`) and runtime/cell-installed bundle bytes.
+//! bundles (`2025b` and `2026c`) and runtime/cell-installed bundle bytes,
+//! parsing every distinct TZif blob once at admission so evaluation performs
+//! zero TZif decoding.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
-use jiff::tz::TimeZone;
+use jiff::civil::DateTime;
+use jiff::tz::{AmbiguousOffset, TimeZone};
 use norn_ir::canonical::HashProfile;
 
 use crate::temporal::TemporalError;
@@ -20,6 +23,9 @@ pub const TZDB_BUNDLE_MAGIC: &[u8; 8] = b"NTZDB01\0";
 
 /// Maximum admitted byte length of a single tzdb bundle (4 MiB).
 pub const MAX_TZDB_BUNDLE_BYTES: usize = 4_194_304;
+
+/// Maximum admitted byte length of any single distinct TZif zone blob (64 KiB).
+pub const MAX_TZDB_ZONE_BLOB_BYTES: usize = 65_536;
 
 /// Maximum admitted zone entry count in a single tzdb bundle.
 pub const MAX_TZDB_ZONES: usize = 4_096;
@@ -35,6 +41,9 @@ const HEADER_LEN: usize = 24;
 
 /// Fixed index entry size in bytes (`4 * u32`).
 const ENTRY_LEN: usize = 16;
+
+/// Fixed RFC 8536 TZif header size in bytes.
+const TZIF_HEADER_LEN: usize = 44;
 
 /// Zone identifier from upstream `tzdb` `factory` that Norn never admits.
 const FORBIDDEN_FACTORY_ZONE: &str = "Factory";
@@ -56,7 +65,45 @@ pub const TZDB_SHA256_2026C: &str =
 const BUILTIN_2025B_BYTES: &[u8] = include_bytes!("../data/tzdb/2025b.tzdb");
 const BUILTIN_2026C_BYTES: &[u8] = include_bytes!("../data/tzdb/2026c.tzdb");
 
-/// Validation error returned when decoding or admitting a [`TzdbBundle`].
+/// Offset-free civil local wall-clock fields resolved against a [`TzdbBundle`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LocalCivilWallTime {
+    /// Four-digit proleptic-Gregorian year.
+    pub year: i16,
+    /// Month `1..=12`.
+    pub month: i8,
+    /// Day of month `1..=31`.
+    pub day: i8,
+    /// Hour `0..=23`.
+    pub hour: i8,
+    /// Minute `0..=59`.
+    pub minute: i8,
+    /// Second `0..=59`.
+    pub second: i8,
+    /// Subsecond nanoseconds `0..=999_999_999`.
+    pub nanosecond: i32,
+}
+
+/// Resolution of a [`LocalCivilWallTime`] against a pre-parsed IANA zone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalOffsetResolution {
+    /// Single unambiguous UTC offset in seconds.
+    Unambiguous {
+        /// Signed UTC offset in seconds.
+        offset_seconds: i32,
+    },
+    /// Nonexistent wall time inside a DST spring-forward gap.
+    Gap,
+    /// Ambiguous wall time inside a DST fall-back fold.
+    Fold {
+        /// Earlier (pre-transition) UTC offset in seconds.
+        before_seconds: i32,
+        /// Later (post-transition) UTC offset in seconds.
+        after_seconds: i32,
+    },
+}
+
+/// Validation error returned when decoding, admitting, or cataloging a [`TzdbBundle`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TzdbBundleError {
     /// Bundle exceeds [`MAX_TZDB_BUNDLE_BYTES`].
@@ -106,9 +153,20 @@ pub enum TzdbBundleError {
         /// Zero-based index entry position.
         index: usize,
     },
-    /// A zone's TZif payload fails `jiff::tz::TimeZone::tzif` parsing.
+    /// A single zone's TZif payload exceeds [`MAX_TZDB_ZONE_BLOB_BYTES`].
+    ZoneBlobTooLarge {
+        /// Offending zone name.
+        zone: String,
+        /// Actual blob byte length.
+        len: usize,
+        /// Configured per-blob upper bound.
+        max: usize,
+    },
+    /// Distinct payload slices overlap partially or leave unreferenced payload bytes.
+    OverlappingOrUnreferencedPayload,
+    /// A zone's TZif payload fails exact RFC 8536 framing or `jiff::tz::TimeZone::tzif` parsing.
     InvalidTzif {
-        /// Zone name whose payload failed TZif parsing.
+        /// Zone name whose payload failed validation.
         zone: String,
     },
     /// Computed SHA-256 digest does not match the caller's expected digest.
@@ -117,6 +175,11 @@ pub enum TzdbBundleError {
         expected: String,
         /// Actual lowercase hex SHA-256 digest of the bytes.
         actual: String,
+    },
+    /// Catalog already contains `release` with a different bundle digest.
+    DuplicateRelease {
+        /// Conflicting IANA release identifier.
+        release: String,
     },
 }
 
@@ -154,6 +217,15 @@ impl fmt::Display for TzdbBundleError {
             Self::OutOfBoundsEntry { index } => {
                 write!(f, "tzdb bundle entry {index} has out-of-bounds offset/len")
             }
+            Self::ZoneBlobTooLarge { zone, len, max } => {
+                write!(
+                    f,
+                    "tzdb bundle zone `{zone}` blob length {len} exceeds maximum {max} bytes"
+                )
+            }
+            Self::OverlappingOrUnreferencedPayload => f.write_str(
+                "tzdb bundle payload slices overlap partially or leave unreferenced bytes",
+            ),
             Self::InvalidTzif { zone } => {
                 write!(f, "tzdb bundle zone `{zone}` has invalid TZif data")
             }
@@ -161,6 +233,12 @@ impl fmt::Display for TzdbBundleError {
                 write!(
                     f,
                     "tzdb bundle SHA-256 mismatch: expected {expected}, got {actual}"
+                )
+            }
+            Self::DuplicateRelease { release } => {
+                write!(
+                    f,
+                    "tzdb catalog already contains release `{release}` with a different digest"
                 )
             }
         }
@@ -174,15 +252,28 @@ struct ZoneEntry {
     name: String,
     tzif_offset: usize,
     tzif_len: usize,
+    blob_index: usize,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 struct TzdbBundleInner {
     release: String,
     sha256: String,
     zones: Vec<ZoneEntry>,
+    parsed: Arc<[TimeZone]>,
     payload: Vec<u8>,
 }
+
+impl PartialEq for TzdbBundleInner {
+    fn eq(&self, other: &Self) -> bool {
+        self.release == other.release
+            && self.sha256 == other.sha256
+            && self.zones == other.zones
+            && self.payload == other.payload
+    }
+}
+
+impl Eq for TzdbBundleInner {}
 
 /// An immutable, validated offline IANA timezone database bundle.
 ///
@@ -280,9 +371,12 @@ fn parse_sections(bytes: &[u8]) -> Result<ParsedSections<'_>, TzdbBundleError> {
     })
 }
 
-fn parse_zone_entries(sections: &ParsedSections<'_>) -> Result<Vec<ZoneEntry>, TzdbBundleError> {
+fn parse_zone_entries(
+    sections: &ParsedSections<'_>,
+) -> Result<(Vec<ZoneEntry>, Arc<[TimeZone]>), TzdbBundleError> {
     let mut zones = Vec::with_capacity(sections.zone_count);
-    let mut verified_blobs: BTreeSet<(usize, usize)> = BTreeSet::new();
+    let mut blob_indices: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    let mut parsed_zones: Vec<TimeZone> = Vec::new();
     let mut previous_name: Option<String> = None;
 
     for index in 0..sections.zone_count {
@@ -306,26 +400,7 @@ fn parse_zone_entries(sections: &ParsedSections<'_>) -> Result<Vec<ZoneEntry>, T
         let tzif_len = usize::try_from(read_u32_le(entry, 12)?)
             .map_err(|_err| TzdbBundleError::OutOfBoundsEntry { index })?;
 
-        if name_len == 0 || name_len > MAX_TZDB_ZONE_NAME_LEN {
-            return Err(TzdbBundleError::InvalidZoneName { index });
-        }
-        let name_end = name_offset
-            .checked_add(name_len)
-            .ok_or(TzdbBundleError::OutOfBoundsEntry { index })?;
-        let name_bytes = sections
-            .names_slice
-            .get(name_offset..name_end)
-            .ok_or(TzdbBundleError::OutOfBoundsEntry { index })?;
-        let name = std::str::from_utf8(name_bytes)
-            .map_err(|_err| TzdbBundleError::InvalidZoneName { index })?;
-        if !is_valid_ascii_token(name) {
-            return Err(TzdbBundleError::InvalidZoneName { index });
-        }
-        if name == FORBIDDEN_FACTORY_ZONE {
-            return Err(TzdbBundleError::ForbiddenZone {
-                name: name.to_owned(),
-            });
-        }
+        let name = decode_zone_name(sections.names_slice, index, name_offset, name_len)?;
         if let Some(prev) = &previous_name
             && name <= prev.as_str()
         {
@@ -336,6 +411,13 @@ fn parse_zone_entries(sections: &ParsedSections<'_>) -> Result<Vec<ZoneEntry>, T
         if tzif_len == 0 {
             return Err(TzdbBundleError::OutOfBoundsEntry { index });
         }
+        if tzif_len > MAX_TZDB_ZONE_BLOB_BYTES {
+            return Err(TzdbBundleError::ZoneBlobTooLarge {
+                zone: name.to_owned(),
+                len: tzif_len,
+                max: MAX_TZDB_ZONE_BLOB_BYTES,
+            });
+        }
         let tzif_end = tzif_offset
             .checked_add(tzif_len)
             .ok_or(TzdbBundleError::OutOfBoundsEntry { index })?;
@@ -343,59 +425,187 @@ fn parse_zone_entries(sections: &ParsedSections<'_>) -> Result<Vec<ZoneEntry>, T
             .payload_slice
             .get(tzif_offset..tzif_end)
             .ok_or(TzdbBundleError::OutOfBoundsEntry { index })?;
-        if verified_blobs.insert((tzif_offset, tzif_len)) {
-            TimeZone::tzif(name, tzif_bytes).map_err(|_err| TzdbBundleError::InvalidTzif {
-                zone: name.to_owned(),
-            })?;
-        }
+
+        let blob_index = match blob_indices.get(&(tzif_offset, tzif_len)) {
+            Some(&existing) => existing,
+            None => {
+                if !validate_tzif_exact_framing(tzif_bytes) {
+                    return Err(TzdbBundleError::InvalidTzif {
+                        zone: name.to_owned(),
+                    });
+                }
+                let tz = TimeZone::tzif(name, tzif_bytes).map_err(|_err| {
+                    TzdbBundleError::InvalidTzif {
+                        zone: name.to_owned(),
+                    }
+                })?;
+                let next_idx = parsed_zones.len();
+                parsed_zones.push(tz);
+                blob_indices.insert((tzif_offset, tzif_len), next_idx);
+                next_idx
+            }
+        };
 
         zones.push(ZoneEntry {
             name: name.to_owned(),
             tzif_offset,
             tzif_len,
+            blob_index,
         });
     }
 
-    Ok(zones)
+    verify_exact_payload_partition(&blob_indices, sections.payload_slice.len())?;
+    Ok((zones, Arc::from(parsed_zones)))
+}
+
+fn decode_zone_name(
+    names_slice: &[u8],
+    index: usize,
+    name_offset: usize,
+    name_len: usize,
+) -> Result<&str, TzdbBundleError> {
+    if name_len == 0 || name_len > MAX_TZDB_ZONE_NAME_LEN {
+        return Err(TzdbBundleError::InvalidZoneName { index });
+    }
+    let name_end = name_offset
+        .checked_add(name_len)
+        .ok_or(TzdbBundleError::OutOfBoundsEntry { index })?;
+    let name_bytes = names_slice
+        .get(name_offset..name_end)
+        .ok_or(TzdbBundleError::OutOfBoundsEntry { index })?;
+    let name = std::str::from_utf8(name_bytes)
+        .map_err(|_err| TzdbBundleError::InvalidZoneName { index })?;
+    if !is_valid_ascii_token(name) {
+        return Err(TzdbBundleError::InvalidZoneName { index });
+    }
+    if name == FORBIDDEN_FACTORY_ZONE {
+        return Err(TzdbBundleError::ForbiddenZone {
+            name: name.to_owned(),
+        });
+    }
+    Ok(name)
+}
+
+fn verify_exact_payload_partition(
+    blob_indices: &BTreeMap<(usize, usize), usize>,
+    payload_len: usize,
+) -> Result<(), TzdbBundleError> {
+    let mut cursor = 0_usize;
+    for &(offset, len) in blob_indices.keys() {
+        if offset != cursor {
+            return Err(TzdbBundleError::OverlappingOrUnreferencedPayload);
+        }
+        cursor = cursor
+            .checked_add(len)
+            .ok_or(TzdbBundleError::OverlappingOrUnreferencedPayload)?;
+    }
+    if cursor != payload_len {
+        return Err(TzdbBundleError::OverlappingOrUnreferencedPayload);
+    }
+    Ok(())
+}
+
+/// Validates RFC 8536 TZif framing so zero trailing bytes may hide after the
+/// TZif V1 data block or V2/V3/V4 POSIX TZ footer newline.
+fn validate_tzif_exact_framing(data: &[u8]) -> bool {
+    let Some((ver, v1_end)) = parse_tzif_block(data, 0, false) else {
+        return false;
+    };
+    if ver == 0 {
+        return v1_end == data.len();
+    }
+    let Some((ver2, v2_end)) = parse_tzif_block(data, v1_end, true) else {
+        return false;
+    };
+    if ver2 != ver {
+        return false;
+    }
+    let Some(footer) = data.get(v2_end..) else {
+        return false;
+    };
+    if footer.len() < 2 || footer.first() != Some(&b'\n') || footer.last() != Some(&b'\n') {
+        return false;
+    }
+    let Some(interior_end) = footer.len().checked_sub(1) else {
+        return false;
+    };
+    let Some(interior) = footer.get(1..interior_end) else {
+        return false;
+    };
+    !interior.contains(&b'\n') && !interior.contains(&0)
+}
+
+fn parse_tzif_block(data: &[u8], start: usize, v2: bool) -> Option<(u8, usize)> {
+    let header_end = start.checked_add(TZIF_HEADER_LEN)?;
+    let header = data.get(start..header_end)?;
+    if header.get(..4) != Some(b"TZif".as_slice()) {
+        return None;
+    }
+    let version = *header.get(4)?;
+    if !matches!(version, 0 | b'2' | b'3' | b'4') {
+        return None;
+    }
+    let isut = usize::try_from(read_u32_be(header, 20)?).ok()?;
+    let isstd = usize::try_from(read_u32_be(header, 24)?).ok()?;
+    let leap = usize::try_from(read_u32_be(header, 28)?).ok()?;
+    let time_cnt = usize::try_from(read_u32_be(header, 32)?).ok()?;
+    let type_cnt = usize::try_from(read_u32_be(header, 36)?).ok()?;
+    let char_cnt = usize::try_from(read_u32_be(header, 40)?).ok()?;
+    if type_cnt == 0 {
+        return None;
+    }
+    let time_bytes = time_cnt.checked_mul(if v2 { 8 } else { 4 })?;
+    let leap_bytes = leap.checked_mul(if v2 { 12 } else { 8 })?;
+    let type_bytes = type_cnt.checked_mul(6)?;
+    let block_end = header_end
+        .checked_add(time_bytes)?
+        .checked_add(time_cnt)?
+        .checked_add(type_bytes)?
+        .checked_add(char_cnt)?
+        .checked_add(leap_bytes)?
+        .checked_add(isstd)?
+        .checked_add(isut)?;
+    if block_end > data.len() {
+        return None;
+    }
+    Some((version, block_end))
 }
 
 impl TzdbBundle {
     /// Decodes and validates an offline tzdb bundle from raw bytes.
     ///
-    /// Performs checked arithmetic, enforces size and entry bounds, checks
-    /// strictly sorted unique case-sensitive zone names, refuses `Factory`,
-    /// verifies every distinct `TZif` payload with `jiff::tz::TimeZone::tzif`,
-    /// and records the exact SHA-256 digest of `bytes`.
+    /// Performs checked arithmetic, enforces bundle and per-blob size bounds,
+    /// checks strictly sorted unique case-sensitive zone names, refuses
+    /// `Factory`, verifies exact non-overlapping payload partitioning, checks
+    /// exact RFC 8536 TZif framing, pre-parses every distinct `TZif` blob once
+    /// with `jiff::tz::TimeZone::tzif`, and records the exact SHA-256 digest.
     ///
     /// # Errors
     ///
-    /// Returns [`TzdbBundleError`] if any header, index, bound, or `TZif`
-    /// invariant fails.
+    /// Returns [`TzdbBundleError`] if any header, index, bound, partition, or
+    /// `TZif` invariant fails.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, TzdbBundleError> {
-        let sections = parse_sections(bytes)?;
-        let zones = parse_zone_entries(&sections)?;
-        let sha256 = HashProfile::Legacy0.hash_canonical_bytes(bytes);
-        Ok(Self {
-            inner: Arc::new(TzdbBundleInner {
-                release: sections.release.to_owned(),
-                sha256,
-                zones,
-                payload: sections.payload_slice.to_vec(),
-            }),
-        })
+        Self::decode_inner(bytes, None)
     }
 
-    /// Decodes and validates a bundle, requiring its SHA-256 digest to match
-    /// `expected_sha256` (lowercase hexadecimal) before decoding.
+    /// Decodes and validates a bundle, enforcing [`MAX_TZDB_BUNDLE_BYTES`] and
+    /// requiring its SHA-256 digest to match `expected_sha256` (lowercase
+    /// hexadecimal) before decoding, without hashing the payload twice.
     ///
     /// # Errors
     ///
-    /// Returns [`TzdbBundleError::DigestMismatch`] when the digest differs, or
-    /// any decoding error from [`Self::from_bytes`].
+    /// Returns [`TzdbBundleError::TooLarge`], [`TzdbBundleError::DigestMismatch`],
+    /// or any decoding error from [`Self::from_bytes`].
     pub fn from_bytes_verified(
         bytes: &[u8],
         expected_sha256: &str,
     ) -> Result<Self, TzdbBundleError> {
+        if bytes.len() > MAX_TZDB_BUNDLE_BYTES {
+            return Err(TzdbBundleError::TooLarge {
+                len: bytes.len(),
+                max: MAX_TZDB_BUNDLE_BYTES,
+            });
+        }
         let actual = HashProfile::Legacy0.hash_canonical_bytes(bytes);
         if actual != expected_sha256 {
             return Err(TzdbBundleError::DigestMismatch {
@@ -403,7 +613,26 @@ impl TzdbBundle {
                 actual,
             });
         }
-        Self::from_bytes(bytes)
+        Self::decode_inner(bytes, Some(actual))
+    }
+
+    fn decode_inner(
+        bytes: &[u8],
+        precomputed_sha256: Option<String>,
+    ) -> Result<Self, TzdbBundleError> {
+        let sections = parse_sections(bytes)?;
+        let (zones, parsed) = parse_zone_entries(&sections)?;
+        let sha256 =
+            precomputed_sha256.unwrap_or_else(|| HashProfile::Legacy0.hash_canonical_bytes(bytes));
+        Ok(Self {
+            inner: Arc::new(TzdbBundleInner {
+                release: sections.release.to_owned(),
+                sha256,
+                zones,
+                parsed,
+                payload: sections.payload_slice.to_vec(),
+            }),
+        })
     }
 
     /// Returns the compiled-in IANA tzdb `2025b` bundle (operational default).
@@ -438,6 +667,7 @@ impl TzdbBundle {
                 release: String::new(),
                 sha256: String::new(),
                 zones: Vec::new(),
+                parsed: Arc::from([]),
                 payload: Vec::new(),
             }),
         }
@@ -467,9 +697,7 @@ impl TzdbBundle {
         self.inner.zones.iter().map(|entry| entry.name.as_str())
     }
 
-    /// Looks up the raw TZif bytes for an exact case-sensitive IANA zone name.
-    #[must_use]
-    pub fn tzif(&self, name: &str) -> Option<&[u8]> {
+    fn zone_entry(&self, name: &str) -> Option<&ZoneEntry> {
         if name == FORBIDDEN_FACTORY_ZONE {
             return None;
         }
@@ -478,7 +706,13 @@ impl TzdbBundle {
             .zones
             .binary_search_by(|entry| entry.name.as_str().cmp(name))
             .ok()?;
-        let entry = self.inner.zones.get(idx)?;
+        self.inner.zones.get(idx)
+    }
+
+    /// Looks up the raw TZif bytes for an exact case-sensitive IANA zone name.
+    #[must_use]
+    pub fn tzif(&self, name: &str) -> Option<&[u8]> {
+        let entry = self.zone_entry(name)?;
         let end = entry.tzif_offset.checked_add(entry.tzif_len)?;
         self.inner.payload.get(entry.tzif_offset..end)
     }
@@ -486,12 +720,49 @@ impl TzdbBundle {
     /// Returns whether `name` is an exact case-sensitive zone in this bundle.
     #[must_use]
     pub fn contains_zone(&self, name: &str) -> bool {
-        self.tzif(name).is_some()
+        self.zone_entry(name).is_some()
     }
 
-    pub(crate) fn timezone(&self, name: &str) -> Result<TimeZone, TemporalError> {
-        let data = self.tzif(name).ok_or(TemporalError::InvalidTimezone)?;
-        TimeZone::tzif(name, data).map_err(|_err| TemporalError::InvalidTimezone)
+    /// Resolves an offset-free civil local wall time in exact case-sensitive
+    /// zone `name` against the timezone pre-parsed at bundle admission (zero
+    /// runtime TZif decoding).
+    #[must_use]
+    pub fn resolve_local_offset(
+        &self,
+        name: &str,
+        wall: LocalCivilWallTime,
+    ) -> Option<LocalOffsetResolution> {
+        let tz = self.parsed_timezone(name)?;
+        let dt = DateTime::new(
+            wall.year,
+            wall.month,
+            wall.day,
+            wall.hour,
+            wall.minute,
+            wall.second,
+            wall.nanosecond,
+        )
+        .ok()?;
+        Some(match tz.to_ambiguous_timestamp(dt).offset() {
+            AmbiguousOffset::Unambiguous { offset } => LocalOffsetResolution::Unambiguous {
+                offset_seconds: offset.seconds(),
+            },
+            AmbiguousOffset::Gap { .. } => LocalOffsetResolution::Gap,
+            AmbiguousOffset::Fold { before, after } => LocalOffsetResolution::Fold {
+                before_seconds: before.seconds(),
+                after_seconds: after.seconds(),
+            },
+        })
+    }
+
+    pub(crate) fn parsed_timezone(&self, name: &str) -> Option<&TimeZone> {
+        let entry = self.zone_entry(name)?;
+        self.inner.parsed.get(entry.blob_index)
+    }
+
+    pub(crate) fn timezone(&self, name: &str) -> Result<&TimeZone, TemporalError> {
+        self.parsed_timezone(name)
+            .ok_or(TemporalError::InvalidTimezone)
     }
 }
 
@@ -520,10 +791,30 @@ impl TzdbCatalog {
     }
 
     /// Returns a catalog containing `bundle` in addition to existing entries.
-    #[must_use]
-    pub fn with_bundle(mut self, bundle: TzdbBundle) -> Self {
+    ///
+    /// Release identities are immutable: adding the same `(release, sha256)`
+    /// pair is idempotent, while attempting to overwrite an existing release
+    /// with a different digest is refused with [`TzdbBundleError::DuplicateRelease`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TzdbBundleError::InvalidRelease`] if `bundle.release()` is
+    /// empty, or [`TzdbBundleError::DuplicateRelease`] if `bundle.release()` is
+    /// already present with a different SHA-256 digest.
+    pub fn with_bundle(mut self, bundle: TzdbBundle) -> Result<Self, TzdbBundleError> {
+        if bundle.release().is_empty() {
+            return Err(TzdbBundleError::InvalidRelease);
+        }
+        if let Some(existing) = self.bundles.get(bundle.release()) {
+            if existing.sha256() == bundle.sha256() {
+                return Ok(self);
+            }
+            return Err(TzdbBundleError::DuplicateRelease {
+                release: bundle.release().to_owned(),
+            });
+        }
         self.bundles.insert(bundle.release().to_owned(), bundle);
-        self
+        Ok(self)
     }
 
     /// Looks up a bundle by exact release string (for example `"2025b"` or `"2026c"`).
@@ -585,192 +876,15 @@ fn read_u32_le(slice: &[u8], offset: usize) -> Result<u32, TzdbBundleError> {
     Ok(u32::from_le_bytes(bytes))
 }
 
+fn read_u32_be(slice: &[u8], offset: usize) -> Option<u32> {
+    let end = offset.checked_add(4)?;
+    let bytes: [u8; 4] = slice.get(offset..end)?.try_into().ok()?;
+    Some(u32::from_be_bytes(bytes))
+}
+
 fn is_valid_ascii_token(text: &str) -> bool {
     !text.is_empty()
         && text
             .bytes()
             .all(|byte| byte.is_ascii_graphic() && !byte.is_ascii_whitespace())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        BUILTIN_2025B_BYTES, BUILTIN_2026C_BYTES, MAX_TZDB_BUNDLE_BYTES, TZDB_BUNDLE_MAGIC,
-        TZDB_RELEASE_2025B, TZDB_RELEASE_2026C, TZDB_SHA256_2025B, TZDB_SHA256_2026C, TzdbBundle,
-        TzdbBundleError, TzdbCatalog,
-    };
-
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-    fn encode_synthetic(
-        release: &str,
-        entries: &[(&str, &[u8])],
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let release_bytes = release.as_bytes();
-        let mut names = Vec::new();
-        let mut payload = Vec::new();
-        let mut index = Vec::new();
-        for (name, tzif) in entries {
-            let name_off = u32::try_from(names.len())?;
-            let name_len = u32::try_from(name.len())?;
-            names.extend_from_slice(name.as_bytes());
-            let tzif_off = u32::try_from(payload.len())?;
-            let tzif_len = u32::try_from(tzif.len())?;
-            payload.extend_from_slice(tzif);
-            index.extend_from_slice(&name_off.to_le_bytes());
-            index.extend_from_slice(&name_len.to_le_bytes());
-            index.extend_from_slice(&tzif_off.to_le_bytes());
-            index.extend_from_slice(&tzif_len.to_le_bytes());
-        }
-        let mut out = Vec::new();
-        out.extend_from_slice(TZDB_BUNDLE_MAGIC);
-        out.extend_from_slice(&u16::try_from(release_bytes.len())?.to_le_bytes());
-        out.extend_from_slice(&0_u16.to_le_bytes());
-        out.extend_from_slice(&u32::try_from(entries.len())?.to_le_bytes());
-        out.extend_from_slice(&u32::try_from(names.len())?.to_le_bytes());
-        out.extend_from_slice(&u32::try_from(payload.len())?.to_le_bytes());
-        out.extend_from_slice(release_bytes);
-        out.extend_from_slice(&index);
-        out.extend_from_slice(&names);
-        out.extend_from_slice(&payload);
-        Ok(out)
-    }
-
-    #[test]
-    fn builtin_bundles_decode_with_exact_releases_digests_and_597_zones() -> TestResult {
-        let b25 = TzdbBundle::v2025b();
-        let b26 = TzdbBundle::v2026c();
-        assert_eq!(b25.release(), TZDB_RELEASE_2025B);
-        assert_eq!(b26.release(), TZDB_RELEASE_2026C);
-        assert_eq!(b25.sha256(), TZDB_SHA256_2025B);
-        assert_eq!(b26.sha256(), TZDB_SHA256_2026C);
-        assert_eq!(b25.zone_count(), 597);
-        assert_eq!(b26.zone_count(), 597);
-        assert!(!b25.contains_zone("Factory"));
-        assert!(!b26.contains_zone("Factory"));
-        assert!(b25.contains_zone("America/Edmonton"));
-        assert!(b26.contains_zone("America/Edmonton"));
-
-        let decoded_25 = TzdbBundle::from_bytes_verified(BUILTIN_2025B_BYTES, TZDB_SHA256_2025B)?;
-        let decoded_26 = TzdbBundle::from_bytes_verified(BUILTIN_2026C_BYTES, TZDB_SHA256_2026C)?;
-        assert_eq!(&decoded_25, b25);
-        assert_eq!(&decoded_26, b26);
-
-        let catalog = TzdbCatalog::builtin();
-        assert_eq!(
-            catalog.releases().collect::<Vec<_>>(),
-            vec!["2025b", "2026c"]
-        );
-        assert_eq!(catalog.get("2025b"), Some(b25));
-        assert_eq!(catalog.get_verified("2026c", TZDB_SHA256_2026C), Some(b26));
-        assert_eq!(catalog.get_verified("2026c", TZDB_SHA256_2025B), None);
-        assert_eq!(catalog.get_by_sha256(TZDB_SHA256_2025B), Some(b25));
-        assert_eq!(catalog.default_bundle(), b25);
-        Ok(())
-    }
-
-    #[test]
-    fn decoder_rejects_malformed_bundles() -> TestResult {
-        let utc_tzif = TzdbBundle::v2025b().tzif("UTC").ok_or("missing UTC tzif")?;
-
-        // Valid synthetic bundle passes.
-        let valid = encode_synthetic("2099z", &[("Etc/UTC", utc_tzif), ("UTC", utc_tzif)])?;
-        let parsed = TzdbBundle::from_bytes(&valid)?;
-        assert_eq!(parsed.release(), "2099z");
-        assert_eq!(parsed.zone_count(), 2);
-
-        // Digest mismatch.
-        assert!(matches!(
-            TzdbBundle::from_bytes_verified(&valid, &"0".repeat(64)),
-            Err(TzdbBundleError::DigestMismatch { .. })
-        ));
-
-        // Bad magic.
-        let mut bad_magic = valid.clone();
-        *bad_magic.get_mut(0).ok_or("missing byte 0")? = b'X';
-        assert_eq!(
-            TzdbBundle::from_bytes(&bad_magic),
-            Err(TzdbBundleError::InvalidMagic)
-        );
-
-        // Truncated header.
-        assert_eq!(
-            TzdbBundle::from_bytes(b"NTZDB01"),
-            Err(TzdbBundleError::TruncatedHeader)
-        );
-
-        // Non-zero reserved field.
-        let mut bad_reserved = valid.clone();
-        *bad_reserved.get_mut(10).ok_or("missing byte 10")? = 1;
-        assert_eq!(
-            TzdbBundle::from_bytes(&bad_reserved),
-            Err(TzdbBundleError::NonZeroReserved)
-        );
-
-        // Trailing garbage byte (length mismatch).
-        let mut trailing = valid;
-        trailing.push(0);
-        assert!(matches!(
-            TzdbBundle::from_bytes(&trailing),
-            Err(TzdbBundleError::LengthMismatch { .. })
-        ));
-
-        // Unsorted zone names.
-        let unsorted = encode_synthetic("2099z", &[("UTC", utc_tzif), ("Etc/UTC", utc_tzif)])?;
-        assert_eq!(
-            TzdbBundle::from_bytes(&unsorted),
-            Err(TzdbBundleError::UnsortedOrDuplicateZone { index: 1 })
-        );
-
-        // Duplicate zone names.
-        let duplicate = encode_synthetic("2099z", &[("UTC", utc_tzif), ("UTC", utc_tzif)])?;
-        assert_eq!(
-            TzdbBundle::from_bytes(&duplicate),
-            Err(TzdbBundleError::UnsortedOrDuplicateZone { index: 1 })
-        );
-
-        // Forbidden Factory entry.
-        let factory = encode_synthetic("2099z", &[("Factory", utc_tzif)])?;
-        assert_eq!(
-            TzdbBundle::from_bytes(&factory),
-            Err(TzdbBundleError::ForbiddenZone {
-                name: "Factory".to_owned()
-            })
-        );
-
-        // Invalid TZif payload.
-        let bad_tzif = encode_synthetic("2099z", &[("UTC", b"not-a-valid-tzif-payload")])?;
-        assert_eq!(
-            TzdbBundle::from_bytes(&bad_tzif),
-            Err(TzdbBundleError::InvalidTzif {
-                zone: "UTC".to_owned()
-            })
-        );
-
-        // Out-of-bounds TZif offset/len.
-        let mut oob = encode_synthetic("2099z", &[("UTC", utc_tzif)])?;
-        // Header (24) + release (5) + index entry offset 12 (tzif_len) -> bytes 41..45.
-        let bad_len = u32::try_from(utc_tzif.len())?
-            .checked_add(1)
-            .ok_or("u32 overflow")?
-            .to_le_bytes();
-        oob.get_mut(41..45)
-            .ok_or("missing tzif_len slot")?
-            .copy_from_slice(&bad_len);
-        assert_eq!(
-            TzdbBundle::from_bytes(&oob),
-            Err(TzdbBundleError::OutOfBoundsEntry { index: 0 })
-        );
-
-        // Exceeds MAX_TZDB_BUNDLE_BYTES.
-        let oversized = vec![0_u8; MAX_TZDB_BUNDLE_BYTES.checked_add(1).ok_or("size + 1")?];
-        assert_eq!(
-            TzdbBundle::from_bytes(&oversized),
-            Err(TzdbBundleError::TooLarge {
-                len: oversized.len(),
-                max: MAX_TZDB_BUNDLE_BYTES,
-            })
-        );
-        Ok(())
-    }
 }

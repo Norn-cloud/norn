@@ -26,11 +26,12 @@ pub(crate) struct StepContracts {
 }
 
 impl StepContracts {
-    pub(crate) fn bind_expressions(
+    pub(crate) fn bind_expressions_in(
         &mut self,
         root: &norn_ir::RuleRoot,
+        tzdb: &norn_expr::temporal::TzdbBundle,
     ) -> Result<(), crate::AdmissionError> {
-        let assignments = norn_expr::graph::bind(root).map_err(|reason| {
+        let assignments = norn_expr::graph::bind_in(root, tzdb).map_err(|reason| {
             crate::AdmissionError::InvalidSchema {
                 rule_id: root.rule_id.clone(),
                 path: "nornType".into(),

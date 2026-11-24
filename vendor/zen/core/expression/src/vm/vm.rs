@@ -1309,6 +1309,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                 }
                 Opcode::CallFunction { kind, arg_count } => {
                     let params_start = self.stack.len().saturating_sub(*arg_count as usize);
+                    let args_slice = self.stack.get(params_start..).unwrap_or(&[]);
                     let result = if matches!(
                         kind,
                         crate::functions::FunctionKind::Internal(
@@ -1316,7 +1317,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                         )
                     ) {
                         crate::temporal::call_resolve_local_timestamp(
-                            Arguments(&self.stack[params_start..]),
+                            Arguments(args_slice),
                             self.tzdb,
                         )
                         .map_err(|err| OpcodeErr {
@@ -1331,7 +1332,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                             })?;
 
                         function
-                            .call(Arguments(&self.stack[params_start..]))
+                            .call(Arguments(args_slice))
                             .map_err(|err| OpcodeErr {
                                 opcode: "CallFunction".into(),
                                 message: format!("Function `{kind}` failed: {err}"),

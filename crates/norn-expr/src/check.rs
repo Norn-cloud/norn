@@ -349,8 +349,29 @@ pub fn certify_expression(
     expected: &Type,
     limits: &ResourceLimitProfile,
 ) -> Result<(CheckedExpression, FuelCertificate), String> {
+    certify_expression_in(
+        expression,
+        env,
+        expected,
+        limits,
+        crate::temporal::TzdbBundle::default_bundle(),
+    )
+}
+
+/// [`certify_expression`] against an explicit versioned
+/// [`TzdbBundle`](crate::temporal::TzdbBundle).
+///
+/// # Errors
+/// Refuses unsupported expressions, over-budget or overflowing bounds.
+pub fn certify_expression_in(
+    expression: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+    limits: &ResourceLimitProfile,
+    tzdb: &crate::temporal::TzdbBundle,
+) -> Result<(CheckedExpression, FuelCertificate), String> {
     let checked = check_expression_with_sources_and_root_bounds(
-        expression, env, expected, limits, None, true,
+        expression, env, expected, limits, None, true, tzdb,
     )
     .map(|(checked, _)| checked)
     .map_err(|errors| format!("expression cost admission refused: {errors:?}"))?;

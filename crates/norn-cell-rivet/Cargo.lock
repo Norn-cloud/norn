@@ -2169,7 +2169,6 @@ name = "norn-expr"
 version = "0.1.0"
 dependencies = [
  "jiff",
- "jiff-tzdb",
  "norn-ir",
  "zen-expression",
 ]
@@ -5117,7 +5116,6 @@ dependencies = [
  "bumpalo",
  "fastrand",
  "jiff",
- "jiff-tzdb",
  "nohash-hasher",
  "once_cell",
  "recursive",

@@ -7,20 +7,41 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
-use norn_expr::temporal::TzdbBundle;
+use norn_expr::temporal::{LocalCivilWallTime, LocalOffsetResolution, TzdbBundle};
 use norn_expr::{EvaluationBudget, Value};
 use zen_engine::meter::Meter;
 use zen_engine::{
-    DecisionGraphTrace, EvaluationError, EvaluationOptions, EvaluationTrace, StrictErrorSite,
-    StrictEvaluationError, TzdbLookup, Variable,
+    DecisionGraphTrace, EvaluationError, EvaluationOptions, EvaluationTrace, LocalWallTime,
+    ResolvedLocalOffset, StrictErrorSite, StrictEvaluationError, TzdbLookup, Variable,
 };
 
 #[derive(Debug)]
 struct DecisionTzdb(TzdbBundle);
 
 impl TzdbLookup for DecisionTzdb {
-    fn tzif(&self, name: &str) -> Option<&[u8]> {
-        self.0.tzif(name)
+    fn resolve_local_offset(&self, name: &str, wall: LocalWallTime) -> Option<ResolvedLocalOffset> {
+        let wall = LocalCivilWallTime {
+            year: wall.year,
+            month: wall.month,
+            day: wall.day,
+            hour: wall.hour,
+            minute: wall.minute,
+            second: wall.second,
+            nanosecond: wall.nanosecond,
+        };
+        Some(match self.0.resolve_local_offset(name, wall)? {
+            LocalOffsetResolution::Unambiguous { offset_seconds } => {
+                ResolvedLocalOffset::Unambiguous(offset_seconds)
+            }
+            LocalOffsetResolution::Gap => ResolvedLocalOffset::Gap,
+            LocalOffsetResolution::Fold {
+                before_seconds,
+                after_seconds,
+            } => ResolvedLocalOffset::Fold {
+                before: before_seconds,
+                after: after_seconds,
+            },
+        })
     }
 }
 
@@ -121,7 +142,25 @@ pub fn evaluate(
     event: &TypedEvent,
     budget: EvaluationBudget,
 ) -> Result<Evaluated, DecisionError> {
-    evaluate_with(decision, slice, event, budget, false, &mut |_| Ok(()))
+    evaluate_in(decision, slice, event, budget, TzdbBundle::default_bundle())
+}
+
+/// [`evaluate`] against an explicit versioned [`TzdbBundle`] (`#1440`).
+///
+/// The bundle digest must match the bundle the decision was admitted under.
+///
+/// # Errors
+///
+/// As [`evaluate`], or [`DecisionError::TzdbMismatch`] when `tzdb` differs from
+/// `decision.tzdb_sha256()`.
+pub fn evaluate_in(
+    decision: &AdmittedDecision,
+    slice: &ValidatedSlice,
+    event: &TypedEvent,
+    budget: EvaluationBudget,
+    tzdb: &TzdbBundle,
+) -> Result<Evaluated, DecisionError> {
+    evaluate_with(decision, slice, event, budget, false, tzdb, &mut |_| Ok(()))
 }
 
 /// [`evaluate`] that also reports the decision-table rows that matched
@@ -139,7 +178,22 @@ pub fn evaluate_explained(
     event: &TypedEvent,
     budget: EvaluationBudget,
 ) -> Result<Evaluated, DecisionError> {
-    evaluate_with(decision, slice, event, budget, true, &mut |_| Ok(()))
+    evaluate_explained_in(decision, slice, event, budget, TzdbBundle::default_bundle())
+}
+
+/// [`evaluate_explained`] against an explicit versioned [`TzdbBundle`] (`#1440`).
+///
+/// # Errors
+///
+/// As [`evaluate_in`].
+pub fn evaluate_explained_in(
+    decision: &AdmittedDecision,
+    slice: &ValidatedSlice,
+    event: &TypedEvent,
+    budget: EvaluationBudget,
+    tzdb: &TzdbBundle,
+) -> Result<Evaluated, DecisionError> {
+    evaluate_with(decision, slice, event, budget, true, tzdb, &mut |_| Ok(()))
 }
 
 /// Evaluate with explanations and a host's effective fact-contract check.
@@ -155,9 +209,33 @@ pub fn evaluate_explained_with_fact_check(
     slice: &ValidatedSlice,
     event: &TypedEvent,
     budget: EvaluationBudget,
+    check_fact: impl FnMut(&RuntimeValue) -> Result<(), String>,
+) -> Result<Evaluated, DecisionError> {
+    evaluate_explained_with_fact_check_in(
+        decision,
+        slice,
+        event,
+        budget,
+        TzdbBundle::default_bundle(),
+        check_fact,
+    )
+}
+
+/// [`evaluate_explained_with_fact_check`] against an explicit versioned
+/// [`TzdbBundle`] (`#1440`).
+///
+/// # Errors
+///
+/// As [`evaluate_explained_with_fact_check`], or [`DecisionError::TzdbMismatch`].
+pub fn evaluate_explained_with_fact_check_in(
+    decision: &AdmittedDecision,
+    slice: &ValidatedSlice,
+    event: &TypedEvent,
+    budget: EvaluationBudget,
+    tzdb: &TzdbBundle,
     mut check_fact: impl FnMut(&RuntimeValue) -> Result<(), String>,
 ) -> Result<Evaluated, DecisionError> {
-    evaluate_with(decision, slice, event, budget, true, &mut check_fact)
+    evaluate_with(decision, slice, event, budget, true, tzdb, &mut check_fact)
 }
 
 fn evaluate_with(
@@ -166,6 +244,7 @@ fn evaluate_with(
     event: &TypedEvent,
     budget: EvaluationBudget,
     trace: bool,
+    tzdb: &TzdbBundle,
     check_fact: &mut dyn FnMut(&RuntimeValue) -> Result<(), String>,
 ) -> Result<Evaluated, DecisionError> {
     if !decision.accepts(slice, event) {
@@ -177,6 +256,13 @@ fn evaluate_with(
         return Err(DecisionError::InputBinding {
             decision: decision.rule_id().to_owned(),
             validated_for,
+        });
+    }
+    if decision.tzdb_sha256() != tzdb.sha256() {
+        return Err(DecisionError::TzdbMismatch {
+            decision: decision.rule_id().to_owned(),
+            admitted: decision.tzdb_sha256().to_owned(),
+            evaluated: tzdb.sha256().to_owned(),
         });
     }
     let input = to_variable(&Value::object([
@@ -192,7 +278,7 @@ fn evaluate_with(
         input,
         options,
         meter.clone(),
-        Some(engine_tzdb(TzdbBundle::default_bundle())),
+        Some(engine_tzdb(tzdb)),
     ))?;
     // Exhaustion wins over whatever the engine made of it.
     if let Some(exhausted) = meter.exhausted() {

@@ -2,14 +2,16 @@
 //!
 //! Verifies that the committed binary tzdb bundles under
 //! `crates/norn-expr/data/tzdb/`, their matching `registry/standards/*.source.json`
-//! provenance files, and the SHA-256 constants in `crates/norn-expr/src/tzdb.rs`
-//! agree on exact bytes, release headers, sorted unique zone tables, `Factory`
-//! exclusion, and TZif headers.
+//! provenance files, and the AST-verified `const` / `include_bytes!` / loader
+//! bindings in `crates/norn-expr/src/tzdb.rs` agree on exact bytes, release
+//! headers, sorted unique zone tables, `Factory` exclusion, and TZif headers.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
+use syn::visit::{self, Visit};
+use syn::{Expr, ExprCall, ExprLit, ExprMacro, ImplItem, Item, Lit, LitStr};
 
 use crate::{Violation, violation};
 
@@ -38,6 +40,16 @@ pub struct TzdbBundlePin {
     pub crate_version: &'static str,
     /// Expected SHA-256 of the upstream `.crate` tarball.
     pub crate_sha256: &'static str,
+    /// Name of the release `const` in `crates/norn-expr/src/tzdb.rs`.
+    pub release_const: &'static str,
+    /// Name of the SHA-256 `const` in `crates/norn-expr/src/tzdb.rs`.
+    pub sha256_const: &'static str,
+    /// Name of the `include_bytes!` `const` in `crates/norn-expr/src/tzdb.rs`.
+    pub bytes_const: &'static str,
+    /// Expected relative path passed to `include_bytes!` in `crates/norn-expr/src/tzdb.rs`.
+    pub include_rel_path: &'static str,
+    /// Name of the `TzdbBundle` loader method binding `bytes_const` and `sha256_const`.
+    pub loader_fn: &'static str,
 }
 
 /// The exact compiled-in tzdb bundles shipped by `norn-expr`.
@@ -50,6 +62,11 @@ pub const PINNED_TZDB_BUNDLES: &[TzdbBundlePin] = &[
         source_json: "registry/standards/iana-tzdb-2025b.source.json",
         crate_version: "0.1.4",
         crate_sha256: "c1283705eb0a21404d2bfd6eef2a7593d240bc42a0bdb39db0ad6fa2ec026524",
+        release_const: "TZDB_RELEASE_2025B",
+        sha256_const: "TZDB_SHA256_2025B",
+        bytes_const: "BUILTIN_2025B_BYTES",
+        include_rel_path: "../data/tzdb/2025b.tzdb",
+        loader_fn: "v2025b",
     },
     TzdbBundlePin {
         release: "2026c",
@@ -59,6 +76,11 @@ pub const PINNED_TZDB_BUNDLES: &[TzdbBundlePin] = &[
         source_json: "registry/standards/iana-tzdb-2026c.source.json",
         crate_version: "0.1.8",
         crate_sha256: "142bd39932ad231f10513df9ab62661fead8719872150b7ad02a2df79f4e141e",
+        release_const: "TZDB_RELEASE_2026C",
+        sha256_const: "TZDB_SHA256_2026C",
+        bytes_const: "BUILTIN_2026C_BYTES",
+        include_rel_path: "../data/tzdb/2026c.tzdb",
+        loader_fn: "v2026c",
     },
 ];
 
@@ -182,6 +204,73 @@ fn check_source_json(workspace_root: &Path, pin: &TzdbBundlePin, out: &mut Vec<V
     }
 }
 
+struct VerifiedCallCollector {
+    calls: Vec<(String, String)>,
+}
+
+impl<'ast> Visit<'ast> for VerifiedCallCollector {
+    fn visit_expr_call(&mut self, node: &'ast ExprCall) {
+        if let Expr::Path(callee) = node.func.as_ref()
+            && callee
+                .path
+                .segments
+                .last()
+                .is_some_and(|seg| seg.ident == "from_bytes_verified")
+            && node.args.len() == 2
+            && let (Some(Expr::Path(arg0)), Some(Expr::Path(arg1))) =
+                (node.args.first(), node.args.iter().nth(1))
+            && let (Some(id0), Some(id1)) = (arg0.path.get_ident(), arg1.path.get_ident())
+        {
+            self.calls.push((id0.to_string(), id1.to_string()));
+        }
+        visit::visit_expr_call(self, node);
+    }
+}
+
+struct RustTzdbPins {
+    const_strs: BTreeMap<String, String>,
+    const_includes: BTreeMap<String, String>,
+    loader_calls: BTreeMap<String, Vec<(String, String)>>,
+}
+
+fn collect_rust_tzdb_pins(parsed: &syn::File) -> RustTzdbPins {
+    let mut pins = RustTzdbPins {
+        const_strs: BTreeMap::new(),
+        const_includes: BTreeMap::new(),
+        loader_calls: BTreeMap::new(),
+    };
+    for item in &parsed.items {
+        if let Item::Const(item_const) = item {
+            let name = item_const.ident.to_string();
+            if let Expr::Lit(ExprLit {
+                lit: Lit::Str(lit), ..
+            }) = item_const.expr.as_ref()
+            {
+                pins.const_strs.insert(name, lit.value());
+            } else if let Expr::Macro(ExprMacro { mac, .. }) = item_const.expr.as_ref()
+                && mac.path.is_ident("include_bytes")
+                && let Ok(lit) = mac.parse_body::<LitStr>()
+            {
+                pins.const_includes.insert(name, lit.value());
+            }
+        } else if let Item::Impl(item_impl) = item {
+            for impl_item in &item_impl.items {
+                if let ImplItem::Fn(method) = impl_item {
+                    let mut collector = VerifiedCallCollector { calls: Vec::new() };
+                    collector.visit_block(&method.block);
+                    if !collector.calls.is_empty() {
+                        pins.loader_calls
+                            .entry(method.sig.ident.to_string())
+                            .or_default()
+                            .extend(collector.calls);
+                    }
+                }
+            }
+        }
+    }
+    pins
+}
+
 fn check_rust_digest_pins(workspace_root: &Path, pins: &[TzdbBundlePin], out: &mut Vec<Violation>) {
     let rust_path = workspace_root.join("crates/norn-expr/src/tzdb.rs");
     let source = match std::fs::read_to_string(&rust_path) {
@@ -194,13 +283,75 @@ fn check_rust_digest_pins(workspace_root: &Path, pins: &[TzdbBundlePin], out: &m
             return;
         }
     };
+    let parsed = match syn::parse_file(&source) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            out.push(violation(
+                "tzdb-rust-pin",
+                format!("crates/norn-expr/src/tzdb.rs: failed to parse Rust AST: {err}"),
+            ));
+            return;
+        }
+    };
+    let ast_pins = collect_rust_tzdb_pins(&parsed);
+
     for pin in pins {
-        if !source.contains(pin.sha256) {
+        if ast_pins
+            .const_strs
+            .get(pin.release_const)
+            .map(String::as_str)
+            != Some(pin.release)
+        {
             out.push(violation(
                 "tzdb-rust-pin",
                 format!(
-                    "crates/norn-expr/src/tzdb.rs must pin SHA-256 {} for release `{}`",
-                    pin.sha256, pin.release
+                    "crates/norn-expr/src/tzdb.rs: const `{}` must equal \"{}\"",
+                    pin.release_const, pin.release
+                ),
+            ));
+        }
+        if ast_pins
+            .const_strs
+            .get(pin.sha256_const)
+            .map(String::as_str)
+            != Some(pin.sha256)
+        {
+            out.push(violation(
+                "tzdb-rust-pin",
+                format!(
+                    "crates/norn-expr/src/tzdb.rs: const `{}` must equal \"{}\" for release `{}`",
+                    pin.sha256_const, pin.sha256, pin.release
+                ),
+            ));
+        }
+        if ast_pins
+            .const_includes
+            .get(pin.bytes_const)
+            .map(String::as_str)
+            != Some(pin.include_rel_path)
+        {
+            out.push(violation(
+                "tzdb-rust-pin",
+                format!(
+                    "crates/norn-expr/src/tzdb.rs: const `{}` must call include_bytes!(\"{}\")",
+                    pin.bytes_const, pin.include_rel_path
+                ),
+            ));
+        }
+        let binds_loader = ast_pins
+            .loader_calls
+            .get(pin.loader_fn)
+            .is_some_and(|calls| {
+                calls.iter().any(|(bytes_id, sha_id)| {
+                    bytes_id == pin.bytes_const && sha_id == pin.sha256_const
+                })
+            });
+        if !binds_loader {
+            out.push(violation(
+                "tzdb-rust-pin",
+                format!(
+                    "crates/norn-expr/src/tzdb.rs: `{}` must call from_bytes_verified({}, {})",
+                    pin.loader_fn, pin.bytes_const, pin.sha256_const
                 ),
             ));
         }

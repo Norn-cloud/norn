@@ -68,6 +68,16 @@ impl Expression<Standard> {
         self.evaluate_with(context, &mut vm)
     }
 
+    /// Norn (#1440): evaluate with an explicit offline IANA tzdb lookup.
+    pub fn evaluate_with_tzdb(
+        &self,
+        context: Variable,
+        tzdb: Arc<dyn crate::temporal::TzdbLookup>,
+    ) -> Result<Variable, IsolateError> {
+        let mut vm = VM::new().with_tzdb(Some(tzdb));
+        self.evaluate_with(context, &mut vm)
+    }
+
     pub fn evaluate_with(&self, context: Variable, vm: &mut VM) -> Result<Variable, IsolateError> {
         self.evaluate_with_scope(&Scope::new(context), vm)
     }
@@ -96,6 +106,16 @@ impl Expression<Unary> {
 
     pub fn evaluate(&self, context: Variable) -> Result<bool, IsolateError> {
         let mut vm = VM::new();
+        self.evaluate_with(context, &mut vm)
+    }
+
+    /// Norn (#1440): evaluate unary test with an explicit offline IANA tzdb lookup.
+    pub fn evaluate_with_tzdb(
+        &self,
+        context: Variable,
+        tzdb: Arc<dyn crate::temporal::TzdbLookup>,
+    ) -> Result<bool, IsolateError> {
+        let mut vm = VM::new().with_tzdb(Some(tzdb));
         self.evaluate_with(context, &mut vm)
     }
 

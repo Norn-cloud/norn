@@ -7,22 +7,44 @@ use norn_ir::ResourceLimitProfile;
 
 use zen_expression::expression::{Standard, Unary};
 use zen_expression::meter::Meter;
-use zen_expression::temporal::{Temporal, TzdbLookup};
+use zen_expression::temporal::{LocalWallTime, ResolvedLocalOffset, Temporal, TzdbLookup};
 use zen_expression::vm::{VM, VMError};
 use zen_expression::{IsolateError, Scope, Variable, compile_expression, compile_unary_expression};
 
 use crate::convert::{from_variable, to_variable};
-use crate::temporal::TzdbBundle;
+use crate::temporal::{LocalCivilWallTime, LocalOffsetResolution, TzdbBundle};
 use crate::{ExprError, Value};
 
 /// Private bridge from Norn's [`TzdbBundle`] to `zen-expression`'s [`TzdbLookup`],
-/// keeping all `zen-*` traits out of `norn-expr`'s public API boundary.
+/// keeping all `zen-*` traits out of `norn-expr`'s public API boundary while
+/// resolving against timezones pre-parsed at bundle admission.
 #[derive(Debug)]
 struct ZenTzdbAdapter(TzdbBundle);
 
 impl TzdbLookup for ZenTzdbAdapter {
-    fn tzif(&self, name: &str) -> Option<&[u8]> {
-        self.0.tzif(name)
+    fn resolve_local_offset(&self, name: &str, wall: LocalWallTime) -> Option<ResolvedLocalOffset> {
+        let wall = LocalCivilWallTime {
+            year: wall.year,
+            month: wall.month,
+            day: wall.day,
+            hour: wall.hour,
+            minute: wall.minute,
+            second: wall.second,
+            nanosecond: wall.nanosecond,
+        };
+        Some(match self.0.resolve_local_offset(name, wall)? {
+            LocalOffsetResolution::Unambiguous { offset_seconds } => {
+                ResolvedLocalOffset::Unambiguous(offset_seconds)
+            }
+            LocalOffsetResolution::Gap => ResolvedLocalOffset::Gap,
+            LocalOffsetResolution::Fold {
+                before_seconds,
+                after_seconds,
+            } => ResolvedLocalOffset::Fold {
+                before: before_seconds,
+                after: after_seconds,
+            },
+        })
     }
 }
 
@@ -243,6 +265,7 @@ impl Expression {
     ) -> PreparedAdmission {
         PreparedAdmission {
             source: self.source.clone(),
+            tzdb_sha256: tzdb.sha256().to_owned(),
             kind: self.admission_kind(env, expected, tzdb),
         }
     }
@@ -300,6 +323,15 @@ impl Expression {
                         "the prepared admission is for `{}`, not `{}`",
                         prepared.source, self.source
                     ),
+                }),
+                units_used: 0,
+            };
+        }
+        if prepared.tzdb_sha256 != tzdb.sha256() {
+            return EvaluationAttempt {
+                result: Err(ExprError::TzdbMismatch {
+                    admitted: prepared.tzdb_sha256.clone(),
+                    evaluated: tzdb.sha256().to_owned(),
                 }),
                 units_used: 0,
             };
@@ -655,7 +687,16 @@ impl fmt::Debug for UnaryTest {
 #[derive(Clone, Debug)]
 pub struct PreparedAdmission {
     source: String,
+    tzdb_sha256: String,
     kind: Prepared,
+}
+
+impl PreparedAdmission {
+    /// Returns the SHA-256 digest of the [`TzdbBundle`] this admission was bound to.
+    #[must_use]
+    pub fn tzdb_sha256(&self) -> &str {
+        &self.tzdb_sha256
+    }
 }
 
 #[derive(Clone, Debug)]
