@@ -2124,7 +2124,12 @@ impl norn_cell::engine::SqlEngine for TxHookEngine {
         &self,
         f: impl FnOnce() -> Result<T, X>,
     ) -> Result<T, X> {
-        if let Some(fire) = self.before_tx.lock().expect("lock").take() {
+        let fire = self
+            .before_tx
+            .lock()
+            .map_err(|_| norn_cell::CellError::Engine("hook mutex poisoned".into()))?
+            .take();
+        if let Some(fire) = fire {
             fire();
         }
         self.inner.transaction(f)
@@ -2190,7 +2195,12 @@ impl<E: norn_cell::engine::SqlEngine> QuestionRuntime<E> for RacingRuntime {
         context: QueryContext,
         visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, norn_cell::CellError>,
     ) -> Result<norn_cell::compute::QueryResult, norn_cell::CellError> {
-        if let Some(fire) = self.before_evaluate.lock().expect("lock").take() {
+        let before = self
+            .before_evaluate
+            .lock()
+            .map_err(|_| norn_cell::CellError::Engine("hook mutex poisoned".into()))?
+            .take();
+        if let Some(fire) = before {
             fire();
         }
         let outcome = if self.inject_eval_error {
@@ -2200,7 +2210,12 @@ impl<E: norn_cell::engine::SqlEngine> QuestionRuntime<E> for RacingRuntime {
         } else {
             store.evaluate_question(plan, context, visible)
         };
-        if let Some(fire) = self.after_evaluate.lock().expect("lock").take() {
+        let after = self
+            .after_evaluate
+            .lock()
+            .map_err(|_| norn_cell::CellError::Engine("hook mutex poisoned".into()))?
+            .take();
+        if let Some(fire) = after {
             fire();
         }
         outcome

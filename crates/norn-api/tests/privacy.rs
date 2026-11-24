@@ -1546,32 +1546,28 @@ fn history_collapses_hidden_writes_across_the_version_cutoff() {
             &format!("hidden-{step}@example.com"),
         )]);
     }
-    let (host_a, _dir_a) = host_with(
+    let (host, _dir) = host_with(
         "org_a",
         &json!({"kind": "refuse"}),
         Some(&SECRET),
         &with_hidden,
     );
-    let hist_a = get_object_history(
-        &host_a,
-        &scope("org_a"),
-        Some("viewer"),
-        TYPE,
-        "c1",
-        &Mapping,
-    )
-    .unwrap();
+    let history =
+        get_object_history(&host, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping).unwrap();
     assert_eq!(
-        hist_a
+        history
             .versions
             .iter()
             .map(|entry| entry.version)
             .collect::<Vec<_>>(),
         vec![72, 1]
     );
-    assert!(!hist_a.truncated);
-    let doc_a = serde_json::to_string(&hist_a).unwrap();
-    assert!(!doc_a.contains("hidden-"), "hidden email leaked: {doc_a}");
+    assert!(!history.truncated);
+    let document = serde_json::to_string(&history).unwrap();
+    assert!(
+        !document.contains("hidden-"),
+        "hidden email leaked: {document}"
+    );
 }
 
 /// #1534 S6: consecutive readable versions with identical projected values are
@@ -1682,7 +1678,8 @@ fn history_keeps_equal_value_versions_when_visible_writer_changes() {
         "name": norn_kernel::ACTION_CALL_TYPE,
         "properties": [
             {"id": "actionId", "type": {"kind": "text"}},
-            {"id": "actor", "type": {"kind": "text"}}
+            {"id": "actor", "type": {"kind": "text"}},
+            {"id": "object", "type": {"kind": "json-ext"}}
         ]
     }))
     .unwrap();
@@ -1718,6 +1715,10 @@ fn history_keeps_equal_value_versions_when_visible_writer_changes() {
                         values: BTreeMap::from([
                             ("actionId".to_owned(), V::from("shop.item.confirm")),
                             ("actor".to_owned(), V::from("steward")),
+                            (
+                                "object".to_owned(),
+                                V::from_json(json!({"objectType": ITEM, "key": "i1"})).unwrap(),
+                            ),
                         ]),
                     },
                 ],

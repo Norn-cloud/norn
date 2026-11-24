@@ -1120,7 +1120,7 @@ fn approved_candidate_refuses_an_alternate_kernel_writer_before_activation() {
     ));
 }
 
-fn restatement_catalog_artifacts(model: &Model) -> Value {
+fn restatement_catalog_artifacts() -> Value {
     let restatement: Value = serde_json::from_str(include_str!(
         "../../../registry/core/artifacts/core.analytics.Restatement.entity.json"
     ))
@@ -1129,21 +1129,16 @@ fn restatement_catalog_artifacts(model: &Model) -> Value {
         "../../../registry/core/artifacts/core.analytics.RestatementEvidence.interface.json"
     ))
     .expect("generated interface");
-    let action_call = model
-        .object_types()
-        .find(|ty| ty.name.as_str() == ACTION_CALL_TYPE)
-        .expect("action call type in model");
     json!([
         {"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object_type()}},
         restatement,
         interface,
-        {"irVersion":"0.1","artifactId":"norn.ActionCall.entity","kind":"entity","namespace":"norn","name":"ActionCall","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":action_call}},
         {"irVersion":"0.1","artifactId":"demo.markings.entity","kind":"entity","namespace":"demo","name":"Markings","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":[{"id":"pii.contact","label":"Contact","severity":"high","category":"pii.contact","mask":{"kind":"redacted"}}]}}
     ])
 }
 
 fn install_restatement_marking_catalog(store: &mut CellStore, model: Model) {
-    let artifacts = restatement_catalog_artifacts(&model);
+    let artifacts = restatement_catalog_artifacts();
     store
         .install_definitions(
             model,
@@ -1411,7 +1406,7 @@ fn prepare_restatement_fails_closed_on_malformed_entity_after_valid_catalog() {
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("cell.sqlite");
     let (mut store, plan, context, model) = setup(&path);
-    let mut corrupted = restatement_catalog_artifacts(&model);
+    let mut corrupted = restatement_catalog_artifacts();
     install_restatement_marking_catalog(&mut store, model);
     corrupted.as_array_mut().expect("array").push(json!({
         "irVersion":"0.1",
