@@ -1,5 +1,6 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test"
 import { QueryClient, QueryObserver, queryOptions } from "@tanstack/react-query"
+import { studioScopeQuery } from "../src/lib/definitions.ts"
 import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode } from "../src/lib/live-transport.ts"
 
 const realFetch = globalThis.fetch
@@ -33,6 +34,50 @@ test("a cell that answers its definitions is live, with its scope, artifacts and
   expect(mode.catalog.document.map((artifact) => artifact.artifactId)).toEqual(["shop.Product.entity"])
   expect(mode.catalog.numbers.get("/0/payload/scale")).toBe("2.50")
   expect(calls).toEqual(["/api/host/v1/definitions?orgId=local&environmentId=dev"])
+})
+
+test("Retry during a stalled /api/me scope discovery cancels the stalled request and starts a replacement", async () => {
+  const client = new QueryClient()
+  const query = studioScopeQuery()
+  const observer = new QueryObserver(client, query)
+  const events: string[] = []
+  let markFirstStarted = () => {}
+  const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve })
+  const fetchProbe = async (...[input, init]: Parameters<typeof globalThis.fetch>) => {
+    if (input !== "/api/me") return new Response(DEFINITIONS)
+    if (events.length > 0) {
+      events.push("replacement")
+      return Response.json(ME)
+    }
+    events.push("first")
+    return new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        events.push("aborted")
+        reject(init.signal?.reason)
+      }, { once: true })
+      markFirstStarted()
+    })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }),
+  )
+  refreshMode()
+  let unsubscribe: (() => void) | undefined
+  try {
+    unsubscribe = observer.subscribe(() => {})
+    await firstStarted
+    expect(events).toEqual(["first"])
+
+    await retryMode(client)
+
+    expect(events).toEqual(["first", "aborted", "replacement"])
+    expect<unknown>(client.getQueryData(query.queryKey)).toEqual({ orgId: ME.organization.id, environmentId: ME.environmentId })
+  } finally {
+    unsubscribe?.()
+    client.clear()
+    refreshMode()
+    fetch.mockRestore()
+  }
 })
 
 test("Retry cancels the transport's shared probe before starting its replacement", async () => {

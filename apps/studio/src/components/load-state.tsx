@@ -4,7 +4,7 @@ import { CopyId } from "@/components/copy-id"
 import { EmptyState } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { CellUnavailable, lastReachableAt } from "@/lib/definitions"
+import { CellUnavailable, lastReachableAt, useCachedStudioScope } from "@/lib/definitions"
 import { NotServed } from "@/lib/live-transport"
 import { useLocale } from "@/lib/locale"
 import { explainError } from "@/lib/plain-words"
@@ -103,10 +103,11 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
   readonly isFetching?: boolean
   readonly compact?: boolean
 }) {
+  const scope = useCachedStudioScope()
   const { locale } = useLocale()
   const { view } = useView()
   const info = explainError(error, locale, view)
-  const reachable = lastReachableAt()
+  const reachable = lastReachableAt(scope)
   const reachableLabel = formatLastReachable(reachable)
   const nonRetryable = info.retryable === false
   return (
@@ -245,13 +246,14 @@ export function LoadState<T>({
   notServed,
   children,
 }: LoadStateProps<T>) {
+  const scope = useCachedStudioScope()
   const [retryAttempt, setRetryAttempt] = useState(0)
   const wait = useBoundedWait(status === "pending", slowAfterMs, timeoutMs, retryAttempt)
   const handleRetry = onRetry ? () => { setRetryAttempt((n) => n + 1); onRetry() } : undefined
 
   if (status === "pending") {
     if (wait === "timed-out") {
-      const reachable = lastReachableAt()
+      const reachable = lastReachableAt(scope)
       const reachableLabel = formatLastReachable(reachable)
       return (
         <div role="status" data-load-state="timed-out" className="rounded-xl border border-node-border bg-card p-5 text-sm shadow-elevation">

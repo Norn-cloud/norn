@@ -22,7 +22,7 @@ import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, directionOf, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES } from "@/lib/workspaces"
 import { isRetryableModeError, retryMode, useMode } from "@/lib/live-transport"
-import { lastReachableAt } from "@/lib/definitions"
+import { lastReachableAt, useStudioScope } from "@/lib/definitions"
 import { CopyId } from "@/components/copy-id"
 import { formatLastReachable } from "@/components/load-state"
 import { explainError } from "@/lib/plain-words"
@@ -669,6 +669,7 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
  */
 function ConnectionBanner() {
   const queryClient = useQueryClient()
+  const scope = useStudioScope()
   const mode = useMode()
   const slow = useSlowConnecting(mode)
   const { locale } = useLocale()
@@ -702,7 +703,7 @@ function ConnectionBanner() {
   }
   const error = mode.error ?? mode.failureReason
   const info = explainError(error, locale, view)
-  const reachable = lastReachableAt()
+  const reachable = lastReachableAt(scope.data)
   const reachableLabel = formatLastReachable(reachable)
   return (
     <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"}

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { CellUnavailable, fetchWithTimeout, isReadMethod, lastReachableAt, resetCellReachable, scopedHostFetch } from "../src/lib/definitions.ts"
+import { CellUnavailable, fetchWithTimeout, isReadMethod, lastReachableAt, recordCellReachable, resetCellReachable, scopedHostFetch } from "../src/lib/definitions.ts"
 import { CellRefusal, NotServed, cellRead, isRetryableModeError, readMode } from "../src/lib/live-transport.ts"
 import { explainError, plainMetricLabel, plainWords } from "../src/lib/plain-words.ts"
 import { formatLastReachable, isWorkspaceUnavailableError } from "../src/components/load-state.tsx"
@@ -227,11 +227,19 @@ test("scopedHostFetch applies the default deadline to GET, HEAD, and OPTIONS and
   expect(seenSignals[2]?.signal).toBe(own.signal)
 })
 
-test("formatLastReachable reports null when unseen and human words once reachable", () => {
+test("formatLastReachable reports null when unseen and keys reachability by workspace scope", () => {
   resetCellReachable()
-  expect(lastReachableAt()).toBeNull()
+  const scopeA = { orgId: "org_a", environmentId: "prod" }
+  const scopeB = { orgId: "org_b", environmentId: "prod" }
+  expect(lastReachableAt(null)).toBeNull()
+  expect(lastReachableAt(scopeA)).toBeNull()
+  expect(lastReachableAt(scopeB)).toBeNull()
   expect(formatLastReachable(null)).toBeNull()
   const now = Date.UTC(2026, 10, 20, 12, 0, 0)
+  recordCellReachable(scopeA, now - 10_000)
+  expect(lastReachableAt(scopeA)).toBe(now - 10_000)
+  expect(lastReachableAt(scopeB)).toBeNull()
+  expect(lastReachableAt(undefined)).toBeNull()
   expect(formatLastReachable(now - 10_000, now)).toBe("just now")
   expect(formatLastReachable(now - 5 * 60_000, now)).toBe("5 min ago")
 })

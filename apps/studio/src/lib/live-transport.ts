@@ -138,7 +138,7 @@ export async function readMode(
   if (!isJson) return { kind: "recorded" }
   const artifacts = (parsed as { artifacts?: unknown } | null)?.artifacts
   if (!Array.isArray(artifacts)) throw new CellUnavailable(response.status, "The cell's definitions read carried no artifacts.")
-  recordCellReachable()
+  recordCellReachable(scope)
   const read = readDocument<{ readonly artifacts: readonly Artifact[] }>(text, "live")
   return {
     kind: "live",
@@ -439,14 +439,25 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
   })
 }
 
-/** Stop in-flight probes, including reads the transport started directly. */
+/** Stop in-flight scope and mode probes (including reads the transport started directly) and start fresh replacements. */
 export async function retryMode(client: QueryClient): Promise<void> {
-  const filter = { queryKey: ["studio-mode"], type: "active" } as const
-  const cancellation = client.cancelQueries(filter)
+  const scopeFilter = { queryKey: ["studio-scope"], type: "active" } as const
+  const modeFilter = { queryKey: ["studio-mode"], type: "active" } as const
+  const scopeState = client.getQueryState(["studio-scope"])
+  const retryScope =
+    scopeState !== undefined
+    && (scopeState.fetchStatus === "fetching" || scopeState.status === "error" || scopeState.status === "pending")
+  const cancellations = [
+    client.cancelQueries(modeFilter),
+    ...(retryScope ? [client.cancelQueries(scopeFilter)] : []),
+  ]
   for (const controller of pendingModeControllers) controller.abort()
   refreshMode()
-  await cancellation
-  await client.refetchQueries(filter, { cancelRefetch: false })
+  await Promise.all(cancellations)
+  if (retryScope) {
+    await client.refetchQueries(scopeFilter, { cancelRefetch: false })
+  }
+  await client.refetchQueries(modeFilter, { cancelRefetch: false })
 }
 
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type or scope changes). */

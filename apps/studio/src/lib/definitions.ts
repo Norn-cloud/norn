@@ -1,5 +1,5 @@
 import { createContext, use } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { QueryClientContext, queryOptions, useQuery } from "@tanstack/react-query"
 import { z } from "zod"
 
 /**
@@ -124,31 +124,49 @@ export function parseUnavailableDetail(body: unknown): UnavailableDetail {
 }
 
 const REACHABLE_KEY = "norn.cell.lastReachableAt"
-let reachableAt: number | null = null
+const reachableByScope = new Map<string, number>()
 
-/** Record that the workspace cell answered cleanly at `at` (Unix ms). */
-export function recordCellReachable(at = Date.now()): void {
-  reachableAt = at
-  try { globalThis.sessionStorage?.setItem(REACHABLE_KEY, String(at)) } catch { /* storage blocked or SSR */ }
+const reachableStorageKey = (scope: StudioScope): string => `${REACHABLE_KEY}:${studioScopeKey(scope)}`
+
+/** Record that `scope`'s workspace cell answered cleanly at `at` (Unix ms). */
+export function recordCellReachable(scope: StudioScope | null | undefined, at = Date.now()): void {
+  if (scope == null) return
+  const key = studioScopeKey(scope)
+  reachableByScope.set(key, at)
+  try { globalThis.sessionStorage?.setItem(reachableStorageKey(scope), String(at)) } catch { /* storage blocked or SSR */ }
 }
 
-/** The last instant (Unix ms) the workspace cell answered cleanly in this session, if any. */
-export function lastReachableAt(): number | null {
-  if (reachableAt !== null) return reachableAt
+/** The last instant (Unix ms) `scope`'s workspace cell answered cleanly in this session, if any. */
+export function lastReachableAt(scope: StudioScope | null | undefined): number | null {
+  if (scope == null) return null
+  const key = studioScopeKey(scope)
+  const cached = reachableByScope.get(key)
+  if (cached !== undefined) return cached
   try {
-    const stored = globalThis.sessionStorage?.getItem(REACHABLE_KEY)
+    const stored = globalThis.sessionStorage?.getItem(reachableStorageKey(scope))
     if (stored) {
       const parsed = Number(stored)
-      if (Number.isFinite(parsed) && parsed > 0) { reachableAt = parsed; return parsed }
+      if (Number.isFinite(parsed) && parsed > 0) { reachableByScope.set(key, parsed); return parsed }
     }
   } catch { /* storage blocked or SSR */ }
   return null
 }
 
-/** Reset remembered reachability (for tests). */
+/** Reset remembered reachability across all scopes (for tests). */
 export function resetCellReachable(): void {
-  reachableAt = null
-  try { globalThis.sessionStorage?.removeItem(REACHABLE_KEY) } catch { /* ignore */ }
+  reachableByScope.clear()
+  try {
+    const storage = globalThis.sessionStorage
+    if (!storage) return
+    const toRemove: string[] = []
+    for (let i = 0; i < storage.length; i += 1) {
+      const key = storage.key(i)
+      if (key !== null && (key === REACHABLE_KEY || key.startsWith(`${REACHABLE_KEY}:`))) {
+        toRemove.push(key)
+      }
+    }
+    for (const key of toRemove) storage.removeItem(key)
+  } catch { /* ignore */ }
 }
 
 /** Default per-request deadline (ms) for idempotent reads so a hung host never spins a surface forever. */
@@ -354,8 +372,22 @@ export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(in
   return organization === null || environmentId === null ? null : { orgId: organization.id, environmentId }
 }
 
+export function studioScopeQuery() {
+  return queryOptions({
+    queryKey: ["studio-scope"],
+    queryFn: ({ signal }) => readStudioScope(undefined, signal),
+    retry: false,
+  })
+}
+
 export function useStudioScope() {
-  return useQuery({ queryKey: ["studio-scope"], queryFn: () => readStudioScope(), retry: false })
+  return useQuery(studioScopeQuery())
+}
+
+/** The currently cached server-reported workspace scope, without triggering a fetch if absent. */
+export function useCachedStudioScope(): StudioScope | null {
+  const client = use(QueryClientContext)
+  return client?.getQueryData<StudioScope | null>(["studio-scope"]) ?? null
 }
 
 /**
@@ -375,10 +407,10 @@ export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: Scope
     const url = `${base}${pathname}?${query}`
     const { timeoutMs, ...requestInit } = init ?? {}
     if (isReadMethod(requestInit.method)) {
-      return fetchWithTimeout(fetcher, url, init === undefined ? undefined : requestInit, timeoutMs ?? CELL_FETCH_TIMEOUT_MS, recordCellReachable)
+      return fetchWithTimeout(fetcher, url, init === undefined ? undefined : requestInit, timeoutMs ?? CELL_FETCH_TIMEOUT_MS, () => recordCellReachable(active))
     }
     const response = await fetcher(url, init === undefined ? undefined : requestInit)
-    if (response.ok) recordCellReachable()
+    if (response.ok) recordCellReachable(active)
     return response
   }
 }
