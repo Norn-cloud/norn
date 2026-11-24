@@ -374,7 +374,7 @@ impl<E: SqlEngine> CellStore<E> {
         }
         let before = {
             let reader = self.read();
-            let version = (reader.head_commit_seq()?, reader.database_revision()?);
+            let version = reader.snapshot_version()?;
             check_restatement_markings(&reader, &slices)?;
             version
         };
@@ -416,7 +416,7 @@ impl<E: SqlEngine> CellStore<E> {
         // check and slice evaluation; discard the staged generation if it did.
         {
             let reader = self.read();
-            if (reader.head_commit_seq()?, reader.database_revision()?) != before {
+            if reader.snapshot_version()? != before {
                 check_restatement_markings(&reader, &slices)?;
                 return Err(refused("core.projection.answer_moved"));
             }

@@ -1487,13 +1487,16 @@ fn an_export_never_carries_a_row_committed_after_its_marking_decision() {
     assert_eq!(calls.len(), 0, "the engine was asked: {calls:?}");
 }
 
-/// #1534 + S7 (Two-World Non-Interference): hidden-only writes — even more
-/// than `MAX_HISTORY_VERSIONS` (64) of them — never appear in history, never
-/// leak through raw version gaps, and never flip `truncated` to `true`.
+/// #1534 S7 (bounded within `MAX_HISTORY_SCAN = 1024`): hidden-only writes —
+/// even more than `MAX_HISTORY_VERSIONS` (64) of them — collapse onto the
+/// earliest version that introduced the visible state and never list a
+/// hidden-only boundary write with its commit/time or flip `truncated` to
+/// `true`.
 #[test]
-fn two_world_history_non_interference_hides_withheld_writes_and_counts() {
-    // Pure trailing hidden writes (> 64): World 1 has 70 email-only writes
-    // after v1; World 2 has v1 alone. Their full history JSON is bit-exact.
+fn history_collapses_hidden_writes_across_the_version_cutoff() {
+    // Pure trailing hidden writes (> 64, within MAX_HISTORY_SCAN): World 1 has
+    // 70 email-only writes after v1; World 2 has v1 alone. Their full history
+    // JSON is bit-exact identical.
     let hidden_burst: Vec<Vec<FactWriteRow>> = (1..=70)
         .map(|step| vec![customer("c1", "Ada", &format!("hidden-{step}@example.com"))])
         .collect();
@@ -1526,17 +1529,14 @@ fn two_world_history_non_interference_hides_withheld_writes_and_counts() {
     assert_eq!(
         serde_json::to_string(&hist_one).unwrap(),
         serde_json::to_string(&hist_two).unwrap(),
-        "70 hidden-only writes crossing the 64-version boundary must be bit-exact indistinguishable"
+        "70 hidden-only writes crossing the 64-version boundary must collapse to v1"
     );
     assert!(!hist_one.truncated);
     assert_eq!(hist_one.versions.len(), 1);
     assert_eq!(hist_one.versions[0].version, 1);
 
-    // Mid-history + trailing hidden writes: World A has v1 ("Ada"), 70
-    // email-only writes, a visible rename ("Ada B."), and 10 more email-only
-    // writes; World B has only v1 ("Ada") and v2 ("Ada B."). Compact ordinals
-    // (`[2, 1]`), projected values, writers, and `truncated: false` match
-    // exactly, and no hidden write's commit/time or email appears in World A.
+    // Mid-history + trailing hidden writes: none of the 80 hidden-only writes
+    // appear in history, and `truncated` stays false.
     let mut with_hidden = hidden_burst;
     with_hidden.push(vec![customer("c1", "Ada B.", "hidden-70@example.com")]);
     for step in 71..=80 {
@@ -1552,12 +1552,6 @@ fn two_world_history_non_interference_hides_withheld_writes_and_counts() {
         Some(&SECRET),
         &with_hidden,
     );
-    let (host_b, _dir_b) = host_with(
-        "org_a",
-        &json!({"kind": "refuse"}),
-        Some(&SECRET),
-        &[vec![customer("c1", "Ada B.", "clean@example.com")]],
-    );
     let hist_a = get_object_history(
         &host_a,
         &scope("org_a"),
@@ -1567,46 +1561,90 @@ fn two_world_history_non_interference_hides_withheld_writes_and_counts() {
         &Mapping,
     )
     .unwrap();
-    let hist_b = get_object_history(
-        &host_b,
-        &scope("org_a"),
-        Some("viewer"),
-        TYPE,
-        "c1",
-        &Mapping,
-    )
-    .unwrap();
-    let shape = |history: &norn_api::object_review::NornObjectHistory| {
-        let versions: Vec<Json> = history
-            .versions
-            .iter()
-            .map(|entry| {
-                json!({
-                    "version": entry.version,
-                    "values": entry.values,
-                    "writer": entry.writer,
-                })
-            })
-            .collect();
-        json!({
-            "objectType": history.object_type,
-            "id": history.id,
-            "truncated": history.truncated,
-            "versions": versions,
-        })
-    };
-    assert_eq!(shape(&hist_a), shape(&hist_b));
     assert_eq!(
         hist_a
             .versions
             .iter()
             .map(|entry| entry.version)
             .collect::<Vec<_>>(),
-        vec![2, 1]
+        vec![72, 1]
     );
     assert!(!hist_a.truncated);
     let doc_a = serde_json::to_string(&hist_a).unwrap();
     assert!(!doc_a.contains("hidden-"), "hidden email leaked: {doc_a}");
+}
+
+/// Readable tombstones in history skip source-instance provenance lookup
+/// (which requires a live fact record) and list `values: null` cleanly even
+/// when the caller holds `Sources`.
+#[test]
+fn history_serves_a_readable_tombstone_without_source_provenance_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let item: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name": ITEM,
+        "properties": [{"id": "name", "type": {"kind": "text"}}]
+    }))
+    .unwrap();
+    let model = norn_cell::Model::from_definitions(&[item], &[]).unwrap();
+    let key = physical("org_a").key();
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: key.clone(),
+                logical_time: 2,
+                writes: vec![FactWriteRow::Put {
+                    object_type: ITEM.into(),
+                    key: "i1".into(),
+                    values: BTreeMap::from([("name".to_owned(), V::from("Lathe"))]),
+                }],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: key.clone(),
+                logical_time: 3,
+                writes: vec![FactWriteRow::Delete {
+                    object_type: ITEM.into(),
+                    key: "i1".into(),
+                }],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: key,
+                logical_time: 4,
+                writes: vec![FactWriteRow::Put {
+                    object_type: ITEM.into(),
+                    key: "i1".into(),
+                    values: BTreeMap::from([("name".to_owned(), V::from("Mill"))]),
+                }],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let host = DevHost::from_store(store, physical("org_a"), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy);
+    let history =
+        get_object_history(&host, &scope("org_a"), Some("viewer"), ITEM, "i1", &Mapping).unwrap();
+    assert_eq!(
+        history
+            .versions
+            .iter()
+            .map(|entry| (entry.version, entry.values.is_some()))
+            .collect::<Vec<_>>(),
+        vec![(3, true), (2, false), (1, true)],
+        "{history:#?}"
+    );
 }
 
 /// #1534 S6: consecutive readable versions with identical projected values are

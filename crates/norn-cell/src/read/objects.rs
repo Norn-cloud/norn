@@ -695,6 +695,23 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         Ok(false)
     }
 
+    /// Read the cell's snapshot version `(head_commit_seq, database_revision)`.
+    /// Fails closed if a [`crate::engine::ReadIsolation::Revisioned`] engine
+    /// cannot supply a database revision.
+    ///
+    /// # Errors
+    /// Backend revision-read failures or an unavailable snapshot revision.
+    pub fn snapshot_version(&self) -> Result<(u64, Option<(u64, u64)>), CellError> {
+        let revision = match self.read_isolation() {
+            crate::engine::ReadIsolation::Revisioned => Some(
+                self.database_revision()?
+                    .ok_or_else(|| CellError::ComputeRefused("object.snapshot_unavailable"))?,
+            ),
+            crate::engine::ReadIsolation::ExclusiveSynchronous => None,
+        };
+        Ok((self.head_commit_seq()?, revision))
+    }
+
     /// Whether any object type in the active model declares a property marking.
     fn model_declares_markings(&self) -> bool {
         self.model.object_types().any(|definition| {
@@ -704,18 +721,99 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         })
     }
 
+    /// Whether the active retained definition set declares any marking in its
+    /// catalog (independently of `Model` property declarations). Fails closed
+    /// on malformed retained definitions.
+    fn has_retained_marking_catalog(&self) -> Result<bool, CellError> {
+        let version = self.active_definitions_version()?;
+        let Some(set) = self.installed_definitions(version)? else {
+            return Ok(false);
+        };
+        let norn_ir::RuntimeValue::Array(sources) =
+            norn_ir::RuntimeValue::from_json_text(&set.canonical_set)
+                .map_err(|error| CellError::Engine(format!("retained definitions: {error}")))?
+        else {
+            return Err(CellError::Engine(
+                "retained definitions must be an artifact array".to_owned(),
+            ));
+        };
+        let artifacts = sources
+            .iter()
+            .map(norn_ir::runtime::decode::<norn_ir::ArtifactEnvelope>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| CellError::Engine(format!("retained definitions: {error}")))?;
+        Ok(!norn_checker::marking_catalog_from_artifacts(&artifacts).is_empty())
+    }
+
+    /// Whether any non-tombstone historical version of `object_type` (or a
+    /// subtype) in `world` lacks an immutable marking snapshot or a property
+    /// marking row for `property` (fail closed when historical classification
+    /// evidence is missing, #1559 S2c).
+    fn property_history_unclassified(
+        &self,
+        world: &str,
+        object_type: &str,
+        property: &str,
+    ) -> Result<bool, CellError> {
+        if self.model.tables(object_type)?.is_empty() {
+            return Err(CellError::UnknownObjectType(object_type.to_owned()));
+        }
+        let sql = format!(
+            "SELECT 1 FROM \"{fv}\" AS fv \
+             WHERE fv.\"world\" = ?1 AND fv.\"root_type\" = ?2 AND fv.\"object_type\" = ?3 \
+               AND json_type(fv.\"snapshot\", '$.values') = 'object' \
+               AND ( \
+                 NOT EXISTS ( \
+                   SELECT 1 FROM \"{snap}\" AS s \
+                   WHERE s.\"world\" = fv.\"world\" AND s.\"object_type\" = fv.\"object_type\" \
+                     AND s.\"id\" = fv.\"id\" AND s.\"version\" = fv.\"version\" AND s.\"is_current\" = 0 \
+                 ) \
+                 OR NOT EXISTS ( \
+                   SELECT 1 FROM \"{subj}\" AS ms \
+                   JOIN \"{ver}\" AS mv \
+                     ON mv.\"world\" = ms.\"world\" AND mv.\"object_type\" = ms.\"object_type\" \
+                     AND mv.\"subject\" = ms.\"subject\" AND mv.\"property\" = ?4 AND mv.\"version\" = fv.\"version\" \
+                   WHERE ms.\"world\" = fv.\"world\" AND ms.\"object_type\" = fv.\"object_type\" AND ms.\"id\" = fv.\"id\" \
+                 ) \
+               ) \
+             LIMIT 1",
+            fv = crate::system::FACT_VALUES,
+            snap = MARKING_SNAPSHOT,
+            subj = MARKING_SUBJECT,
+            ver = MARKING_VERSION,
+        );
+        for definition in self.model.object_types() {
+            let concrete_type = definition.name.as_str();
+            if !self.model.is_a(concrete_type, object_type) {
+                continue;
+            }
+            let root = self.root_type(concrete_type)?;
+            let missing: Option<i64> = self.conn.query_optional(
+                &sql,
+                params![world, root, concrete_type, property],
+                |row| row.get(0),
+            )?;
+            if missing.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// PRIVACY-4 / S2 (#1547, #1559): verify that no grouped or filtered path
     /// of `plan` (including every lowered sum's metric default filters) reads
-    /// marked values in `world`. When `historical` is true, any current, past
-    /// or deleted marked version of a referenced property is refused.
+    /// marked or unclassified values in `world`. When `historical` is true,
+    /// any current, past or deleted version of a referenced property that holds
+    /// a label or lacks immutable classification evidence is refused.
     ///
-    /// Pass `has_marking_catalog = true` when the caller's definition catalog
-    /// declares markings beyond the store's model; when `false`, the check
-    /// still runs whenever the model declares markings or the store holds any
-    /// marking label (`Self::stores_markings`).
+    /// Pass `has_marking_catalog = true` when the caller already knows the
+    /// active definition catalog declares markings; when `false`, the guard
+    /// still resolves the retained definition catalog, model property markings,
+    /// and stored markings (`Self::stores_markings`) before taking the fast
+    /// path.
     ///
     /// # Errors
-    /// Unknown type or a SQL-engine error.
+    /// Unknown type, malformed retained definitions, or a SQL-engine error.
     pub fn check_question_markings(
         &self,
         plan: &norn_checker::metric::compute::QuestionPlan,
@@ -730,7 +828,11 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         {
             return Ok(None);
         }
-        if !has_marking_catalog && !self.model_declares_markings() && !self.stores_markings()? {
+        if !has_marking_catalog
+            && !self.model_declares_markings()
+            && !self.stores_markings()?
+            && !self.has_retained_marking_catalog()?
+        {
             return Ok(None);
         }
         let paths = question
@@ -769,7 +871,10 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                     .collect()
             };
             for object_type in types {
-                if historical && self.property_history_marked(world, &object_type, property)? {
+                if historical
+                    && (self.property_history_marked(world, &object_type, property)?
+                        || self.property_history_unclassified(world, &object_type, property)?)
+                {
                     return Ok(Some(MarkedQuestionPath::History { pointer }));
                 }
                 let labels = self.property_marking_summary(world, &object_type, property)?;

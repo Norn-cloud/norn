@@ -475,8 +475,15 @@ fn version_read<E: SqlEngine>(
 }
 
 /// Disclosure-relevant state of one readable version (#1534 S6): two
-/// consecutive readable versions collapse only when their projected values,
-/// visible writer, and marking projection are all identical.
+/// consecutive readable versions collapse only when all three match:
+/// - `values`: projected property map (`BTreeMap`, property order immaterial),
+///   or `None` for a tombstone.
+/// - `writer_json`: canonical serialization of the disclosed [`NornVersionWriter`]
+///   (including disclosed action id/actor/trace and disclosed mapping lineage).
+/// - `projected`: [`crate::privacy::Projected`] marking metadata (mask mode,
+///   effective markings, revealability, and withheld properties), preserved
+///   even though history entries do not serialize marking metadata separately,
+///   so marking changes with equal projected values are not over-merged.
 #[derive(PartialEq)]
 struct VisibleSignature {
     values: Option<BTreeMap<String, RuntimeValue>>,
@@ -486,7 +493,8 @@ struct VisibleSignature {
 
 /// One version with its receipt, writer, and disclosure-relevant signature, or
 /// `None` when the caller may not read it ([`version_read`]); its source
-/// lineage only under that version's Sources.
+/// lineage only under that version's Sources (skipped for tombstones, which
+/// carry no live instance provenance).
 fn version_entry<E: SqlEngine>(
     (host, access, actor): (&DevHost<E>, &dyn ObjectAccess, &str),
     reader: &StoreReader<'_, E>,
@@ -504,6 +512,7 @@ fn version_entry<E: SqlEngine>(
     // own markings; a marked version names no writer input or source row.
     let mut marked = false;
     let mut projected = crate::privacy::Projected::default();
+    let is_tombstone = stored.is_none();
     let values = match stored {
         Some(mut record) => {
             let markings = crate::privacy::version_markings(reader, &catalog, &record)?;
@@ -517,7 +526,7 @@ fn version_entry<E: SqlEngine>(
         None => None,
     };
     let fact = FactRef::new(row.object_type.as_str(), &row.id, version);
-    let lineage = if marked || !sources {
+    let lineage = if is_tombstone || marked || !sources {
         None
     } else {
         reader
@@ -571,10 +580,13 @@ pub fn get_object_history<E: SqlEngine>(
     let row = readable(host, access, &actor, row)?;
     let max_versions = usize::try_from(MAX_HISTORY_VERSIONS).unwrap_or(usize::MAX);
     locked(host, access, &mut start, |reader| {
-        // Walk backward from the head so hidden-only writes collapse onto the
-        // earliest version that introduced their visible signature, and a
-        // boundary entry whose predecessor could not be checked is suppressed
-        // rather than emitted as a false visible change (#1534 S6, S7).
+        // Walk backward from the head (bounded by `MAX_HISTORY_SCAN`) so
+        // hidden-only writes collapse onto the earliest version that
+        // introduced their visible signature, unreadable versions do not split
+        // an equal-signature run, and any boundary run whose predecessor could
+        // not be checked is suppressed rather than emitted as a false visible
+        // change (#1534 S6, S7). Raw version numbers stay consistent with point
+        // reads and `/lineage?version=` until #1534 settles the handle contract.
         let mut versions: Vec<NornObjectVersion> = Vec::new();
         let mut current_run: Option<(NornObjectVersion, VisibleSignature)> = None;
         let mut truncated = false;
@@ -623,13 +635,6 @@ pub fn get_object_history<E: SqlEngine>(
             } else {
                 truncated = true;
             }
-        }
-        // #1534: renumber listed versions with compact 1-based visible
-        // ordinals (oldest = 1, newest = len) so gaps between raw version
-        // numbers never disclose how many hidden or unreadable writes occurred.
-        let total = versions.len();
-        for (index, entry) in versions.iter_mut().enumerate() {
-            entry.version = u64::try_from(total.saturating_sub(index)).unwrap_or(1);
         }
         Ok(NornObjectHistory {
             object_type: row.object_type.clone(),

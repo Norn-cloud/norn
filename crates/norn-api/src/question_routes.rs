@@ -240,19 +240,18 @@ fn answer_plan<E: SqlEngine>(
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
-    let mut answer = match snapshot.cutoff {
+    let outcome = match snapshot.cutoff {
         Some(cutoff) => runtime
             .evaluate_known_at(cell.store(), plan, snapshot.context, cutoff, &mut visible)
             .map(QuestionAnswer::Historical),
         None => runtime
             .evaluate(cell.store(), plan, snapshot.context, &mut visible)
             .map(QuestionAnswer::Live),
-    }
-    .map_err(Refusal::from_compute)?;
-    let evaluated_frontier = match &answer {
+    };
+    let evaluated_frontier = outcome.as_ref().ok().map(|answer| match answer {
         QuestionAnswer::Live(result) => result.known_as_of,
         QuestionAnswer::Historical(historical) => historical.result.known_as_of,
-    };
+    });
     verify_checked_snapshot(
         host,
         cell.store(),
@@ -265,6 +264,7 @@ fn answer_plan<E: SqlEngine>(
             live_read: snapshot.cutoff.is_none(),
         },
     )?;
+    let mut answer = outcome.map_err(Refusal::from_compute)?;
     let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     let result = match &mut answer {
         QuestionAnswer::Live(result) => result,
@@ -507,16 +507,15 @@ fn check_snapshot<E: SqlEngine>(
 struct CheckedSnapshot<'a> {
     world: &'a str,
     checked_version: (u64, Option<(u64, u64)>),
-    evaluated_frontier: u64,
+    evaluated_frontier: Option<u64>,
     historical: bool,
     live_read: bool,
 }
 
 /// S2b (#1559): confirm the store did not move between the pre-evaluation
-/// marking check and evaluation, and that the evaluated frontier never ran
-/// ahead of (or, for a live read, diverged from) the checked snapshot.
-/// Discards the answer/trace if it moved, surfacing any newly introduced
-/// marking refusal first.
+/// marking check and evaluation (for both success and error outcomes), and
+/// that an evaluated frontier never ran ahead of or diverged from the checked
+/// snapshot. Surfaces any newly introduced marking refusal first.
 fn verify_checked_snapshot<E: SqlEngine>(
     host: &DevHost<E>,
     store: &CellStore<E>,
@@ -525,16 +524,22 @@ fn verify_checked_snapshot<E: SqlEngine>(
 ) -> Result<(), Refusal> {
     let reader = store.read();
     let after_version = crate::object_routes::version_of(&reader)?;
-    let frontier_mismatch =
-        snapshot.live_read && snapshot.evaluated_frontier != snapshot.checked_version.0;
-    let beyond_checked = snapshot.evaluated_frontier > snapshot.checked_version.0;
+    let frontier_mismatch = snapshot
+        .evaluated_frontier
+        .is_some_and(|f| snapshot.live_read && f != snapshot.checked_version.0);
+    let beyond_checked = snapshot
+        .evaluated_frontier
+        .is_some_and(|f| f > snapshot.checked_version.0);
     if after_version != snapshot.checked_version || frontier_mismatch || beyond_checked {
+        let earlier = snapshot
+            .evaluated_frontier
+            .is_some_and(|f| f < snapshot.checked_version.0);
         refuse_labeled_paths_on(
             host,
             &reader,
             plan,
             snapshot.world,
-            snapshot.historical || snapshot.evaluated_frontier < snapshot.checked_version.0,
+            snapshot.historical || earlier,
         )?;
         return Err(Refusal::from_compute(CellError::ComputeRefused(
             "core.projection.answer_moved",
@@ -577,7 +582,7 @@ fn trace_plan<E: SqlEngine>(
         values: &mut |row| permits(row, Values),
         source: &mut |row| permits(row, Sources),
     };
-    let mut trace = match answered {
+    let outcome = match answered {
         // The answer as it was given: recomputed from its commit, at its clock.
         Some((frontier, now)) => {
             snapshot.context.now_ms = now;
@@ -599,8 +604,7 @@ fn trace_plan<E: SqlEngine>(
             |row| visible_recording(row, &permits, &mut withheld),
             disclosure,
         ),
-    }
-    .map_err(Refusal::from_compute)?;
+    };
     verify_checked_snapshot(
         host,
         cell.store(),
@@ -608,11 +612,12 @@ fn trace_plan<E: SqlEngine>(
         CheckedSnapshot {
             world: &world_name,
             checked_version,
-            evaluated_frontier: trace.result.known_as_of,
+            evaluated_frontier: outcome.as_ref().ok().map(|t| t.result.known_as_of),
             historical,
             live_read: answered.is_none(),
         },
     )?;
+    let mut trace = outcome.map_err(Refusal::from_compute)?;
     let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
