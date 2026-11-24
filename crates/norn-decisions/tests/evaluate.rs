@@ -428,6 +428,90 @@ fn sub_decision(rule_id: &str, calls: Option<&str>) -> Json {
     })
 }
 
+type Outcome = Result<norn_decisions::Evaluated, DecisionError>;
+type Built<T> = Result<T, Box<dyn std::error::Error>>;
+
+/// Evaluates a decide graph calling the ordinary helper `demo.approve` on
+/// `input_field` with `slice = {n: 2}`. The helper declares
+/// `{n: number} -> {approved: boolean}` and computes `approved` as
+/// `approved` (passing its input through when `pass_through`).
+fn approval_outcome(input_field: &str, approved: &str, pass_through: bool) -> Built<Outcome> {
+    let mut root = commands_rule(
+        "demo.rule.approval_caller",
+        &closed(&json!({ "n": { "type": "number" } })),
+        "[]",
+    );
+    root["graph"]["nodes"]
+        .as_array_mut()
+        .ok_or("root nodes")?
+        .insert(
+            1,
+            json!({ "id": "call", "name": "call", "type": "decisionNode", "content": {
+                "key": "demo.approve", "inputField": input_field, "outputPath": "approval", "passThrough": true
+            } }),
+        );
+    root["graph"]["edges"][0]["targetId"] = json!("call");
+    root["graph"]["edges"]
+        .as_array_mut()
+        .ok_or("root edges")?
+        .push(json!({ "id": "e_call", "sourceId": "call", "targetId": "x" }));
+    let mut helper = sub_decision("demo.rule.approve", None);
+    helper["outputSchema"] = closed(&json!({ "approved": { "type": "boolean" } }));
+    helper["graph"]["nodes"]
+        .as_array_mut()
+        .ok_or("helper nodes")?
+        .insert(
+            1,
+            json!({ "id": "decide", "name": "decide", "type": "expressionNode", "content": {
+                "expressions": [{ "id": "a", "key": "approved", "value": approved }],
+                "passThrough": pass_through
+            } }),
+        );
+    helper["graph"]["edges"] = json!([
+        { "id": "e_in", "sourceId": "in", "targetId": "decide" },
+        { "id": "e_out", "sourceId": "decide", "targetId": "out" }
+    ]);
+    let subs = BTreeMap::from([("demo.approve".to_owned(), rule(&helper))]);
+    let decision = AdmittedDecision::admit(&rule(&root), &subs, binding())?;
+    Ok(run(
+        &decision,
+        Value::object([("n", num("2"))]),
+        event(),
+        EvaluationBudget::default(),
+    ))
+}
+
+/// Whether the evaluation was refused at the root's `call` node.
+fn refused_at_call(outcome: &Outcome) -> bool {
+    let Err(DecisionError::Engine { node_id, .. }) = outcome else {
+        return false;
+    };
+    node_id == "call"
+}
+
+/// #1708: an ordinary (non-fold) sub-decision is held to its declared
+/// input and output records at every invocation, not only fold steps.
+#[test]
+fn ordinary_sub_decisions_are_held_to_their_declared_schemas() -> Built<()> {
+    // Valid: the declared input and a boolean output pass cleanly.
+    assert!(approval_outcome("slice", "n > 0", false)?.is_ok());
+    // The caller's whole context carries undeclared members (slice, event);
+    // the declared `n` is absent, so the input is refused.
+    assert!(refused_at_call(&approval_outcome("", "true", false)?));
+    // A declared member of the wrong type is refused before the helper runs.
+    assert!(refused_at_call(&approval_outcome(
+        "{n: 'two'}",
+        "true",
+        false
+    )?));
+    // `{approved: "yes"}` violates the declared boolean output.
+    assert!(refused_at_call(&approval_outcome("slice", "'yes'", false)?));
+    // An undeclared output member (the passed-through `n`) is refused:
+    // outputs are exact.
+    assert!(refused_at_call(&approval_outcome("slice", "n > 0", true)?));
+    Ok(())
+}
+
 #[test]
 fn malformed_fold_is_refused_instead_of_an_ordinary_sub_decision() {
     let fixture = corpus("reorder_decision.json");

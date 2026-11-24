@@ -379,6 +379,76 @@ fn duplicate_object_types_fail_closed() {
     );
 }
 
+/// #1708: SQLite resolves table and index names ASCII-case-insensitively,
+/// so `CREATE … IF NOT EXISTS` of two names equal up to case would share one
+/// object. Every such pair is refused in both renderings.
+#[test]
+fn ascii_case_equivalent_physical_names_fail_closed() {
+    let refused = |object_types: &[ObjectTypeDef], first: &str, second: &str| {
+        let input = SqliteDdlInput {
+            object_types,
+            property_types: &[],
+        };
+        let expected = Err(SqliteDdlError::NameCollision {
+            first: first.to_owned(),
+            second: second.to_owned(),
+        });
+        assert_eq!(project_sqlite_ddl(&input), expected);
+        assert_eq!(project_logical_sqlite_ddl(&input), expected);
+    };
+    // Two legal object type names, one SQLite table.
+    let sku = decode_object_type(serde_json::json!({ "name": "inventory.Sku" }));
+    let upper = decode_object_type(serde_json::json!({ "name": "inventory.SKU" }));
+    refused(&[sku.clone(), upper], "o:inventory.SKU", "o:inventory.Sku");
+    // Two key indexes of one table.
+    let keys = decode_object_type(serde_json::json!({
+        "name": "acme.Thing",
+        "properties": [{ "id": "code", "type": { "kind": "text" } }],
+        "identity": [
+            { "name": "by_code", "properties": ["code"] },
+            { "name": "BY_CODE", "properties": ["code"] }
+        ]
+    }));
+    refused(
+        &[keys],
+        "o:acme.Thing/key:by_code",
+        "o:acme.Thing/key:BY_CODE",
+    );
+    // Two link tables of one source.
+    let links = decode_object_type(serde_json::json!({
+        "name": "acme.Owner",
+        "links": [
+            { "id": "item", "target": "inventory.Sku", "cardinality": { "to": "many", "from": "many" } },
+            { "id": "ITEM", "target": "inventory.Sku", "cardinality": { "to": "many", "from": "many" } }
+        ]
+    }));
+    refused(&[links, sku], "l:acme.Owner.ITEM", "l:acme.Owner.item");
+}
+
+/// Names distinct up to ASCII case project exactly the DDL each type
+/// projects alone.
+#[test]
+fn case_distinct_physical_names_project_unchanged() {
+    let sku = decode_object_type(serde_json::json!({
+        "name": "inventory.Sku",
+        "properties": [{ "id": "code", "type": { "kind": "text" } }],
+        "identity": [{ "name": "by_code", "properties": ["code"] }]
+    }));
+    let bin = decode_object_type(serde_json::json!({ "name": "inventory.Bin" }));
+    let sql = |object_types: &[ObjectTypeDef]| {
+        project_sqlite_ddl(&SqliteDdlInput {
+            object_types,
+            property_types: &[],
+        })
+        .map(|schema| schema.to_sql())
+    };
+    let alone = [sql(&[bin.clone()]), sql(&[sku.clone()])];
+    let [Ok(bin_sql), Ok(sku_sql)] = &alone else {
+        panic!("each type projects alone: {alone:?}");
+    };
+    assert_eq!(sql(&[sku, bin]), Ok(format!("{bin_sql}{sku_sql}")));
+}
+
 #[test]
 fn a_wide_type_overflows_into_one_json_column() {
     let properties: Vec<serde_json::Value> = (0..120)

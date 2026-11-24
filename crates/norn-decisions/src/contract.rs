@@ -31,9 +31,10 @@ pub(crate) fn parse_schema(rule: &RuleRoot, member: &str) -> Result<Schema, Admi
 }
 
 /// A sub-decision's schema: the closed dialect, rooted at a record.
-pub(crate) fn closed_record(rule: &RuleRoot, member: &str) -> Result<(), AdmissionError> {
-    match parse_schema(rule, member)?.properties() {
-        Some(_) => Ok(()),
+pub(crate) fn closed_record(rule: &RuleRoot, member: &str) -> Result<Schema, AdmissionError> {
+    let schema = parse_schema(rule, member)?;
+    match schema.properties() {
+        Some(_) => Ok(schema),
         None => Err(invalid_schema(
             &rule.rule_id,
             member,
