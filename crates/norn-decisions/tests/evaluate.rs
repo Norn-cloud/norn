@@ -2141,7 +2141,8 @@ fn ordered_fold_two_arg_round_preserves_fold_policy_in_conditions_and_call_args(
     isolate.set_meter(Some(Meter::new(1_000).with_arithmetic(profile)));
 
     // 2-argument `round(..., 2)` inherits the OrderedFold meter policy, so
-    // ternary conditions and call arguments retain the fold's arithmetic site.
+    // ternary conditions, call arguments, and repeating quotients retain the
+    // fold's declared rounding mode without forcing `Rounding::Refuse`.
     assert_eq!(
         isolate
             .run_standard("round((1 / 2 > 0) ? 1 : 2, 2)")
@@ -2150,9 +2151,33 @@ fn ordered_fold_two_arg_round_preserves_fold_policy_in_conditions_and_call_args(
     );
     assert_eq!(
         isolate
+            .run_standard("round((1 / 3 > 0) ? 1 : 2, 2)")
+            .map_err(|err| format!("fold 2-arg round repeating ternary condition: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
             .run_standard("round(len([1 / 2]), 2)")
             .map_err(|err| format!("fold 2-arg round call arg: {err:?}"))?,
         Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(len([1 / 3]), 2)")
+            .map_err(|err| format!("fold 2-arg round repeating call arg: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(1 / 3, 2)")
+            .map_err(|err| format!("fold 2-arg round repeating quotient: {err:?}"))?,
+        Variable::Number("0.33".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(1.005, 2)")
+            .map_err(|err| format!("fold 2-arg round over-scale literal: {err:?}"))?,
+        Variable::Number("1.01".parse()?)
     );
     assert_eq!(
         isolate
@@ -2166,8 +2191,10 @@ fn ordered_fold_two_arg_round_preserves_fold_policy_in_conditions_and_call_args(
     // or non-`round` call arguments still fail closed.
     for isolated_refusal in [
         "round((1 / 2 > 0) ? 1 : 2, 2, 'half_even')",
+        "round((1 / 3 > 0) ? 1 : 2, 2, 'half_even')",
         "round((round(1.25, 1) > 1) ? 1 : 2, 2, 'half_even')",
         "round(len([1 / 2]), 2, 'half_even')",
+        "round(len([1 / 3]), 2, 'half_even')",
     ] {
         assert!(
             isolate.run_standard(isolated_refusal).is_err(),

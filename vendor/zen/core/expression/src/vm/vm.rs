@@ -238,22 +238,19 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
     }
 
     fn in_exact_site_scope(&self) -> bool {
-        self.exact_sites
-            .iter()
-            .any(|frame| matches!(frame, ExactFrame::Site { .. }))
+        self.exact_sites.iter().any(|frame| {
+            matches!(
+                frame,
+                ExactFrame::Site {
+                    isolated_exact: true,
+                    ..
+                }
+            )
+        })
     }
 
-    fn should_suspend_exact_site(&self) -> bool {
-        self.meter.is_some_and(|meter| meter.exact_arithmetic())
-            || self.exact_sites.iter().any(|frame| {
-                matches!(
-                    frame,
-                    ExactFrame::Site {
-                        isolated_exact: true,
-                        ..
-                    }
-                )
-            })
+    fn is_exact_mode(&self) -> bool {
+        self.meter.is_some_and(|meter| meter.exact_arithmetic()) || self.in_exact_site_scope()
     }
 
     /// Follow unconditional forward jumps (for example from a ternary true arm)
@@ -390,7 +387,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                                 0,
                             )
                             .map_err(failure)?;
-                        } else if !exact {
+                        } else if !exact && !matches!(next, Some(Opcode::Rescale { .. })) {
                             meter
                                 .arithmetic()
                                 .ok_or_else(|| failure("missing arithmetic site"))?
@@ -431,7 +428,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             match op {
                 Opcode::ExactSite { scale, rounding } => {
                     let inherited = self.active_exact_site();
-                    let exact = self.should_suspend_exact_site();
+                    let exact = self.is_exact_mode();
                     let site = crate::scaled::ScaledArithmetic::rounding_site(
                         *scale, *rounding, inherited, exact,
                     )
@@ -490,7 +487,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                     self.exact_sites.pop();
                 }
                 Opcode::ExactSiteSuspend => {
-                    self.exact_sites.push(if self.should_suspend_exact_site() {
+                    self.exact_sites.push(if self.is_exact_mode() {
                         ExactFrame::Suspended
                     } else {
                         ExactFrame::Legacy
