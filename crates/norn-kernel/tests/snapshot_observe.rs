@@ -38,8 +38,6 @@ const CORE_VALUE_TYPES: &str =
     include_str!("../../../registry/core/artifacts/core.value_types.entity.json");
 const STANDARD_VALUE_TYPES: &str =
     include_str!("../../../registry/core/artifacts/std.value_types.entity.json");
-// An authored two-value catalogue exercises membership without shipping a standards corpus.
-const ISO4217_VALUE_TYPES: &str = r#"{"payload":{"propertyTypes":[{"name":"iso4217.currency_code","type":{"kind":"enum","values":[{"value":"EGP"},{"value":"USD"}]}}]}}"#;
 
 fn cell() -> Cell {
     MemoryCell::new(|_| JsonObject::default())
@@ -131,18 +129,17 @@ fn core_order_property_types() -> Vec<PropertyTypeDef> {
         "iso4217.currency_code",
         "iso8601.date",
     ];
-    let property_types: Vec<PropertyTypeDef> =
-        [CORE_VALUE_TYPES, STANDARD_VALUE_TYPES, ISO4217_VALUE_TYPES]
-            .into_iter()
-            .flat_map(|source| {
-                let artifact: Value = serde_json::from_str(source).unwrap();
-                serde_json::from_value::<Vec<PropertyTypeDef>>(
-                    artifact["payload"]["propertyTypes"].clone(),
-                )
-                .unwrap()
-            })
-            .filter(|property_type| referenced_names.contains(&property_type.name.as_str()))
-            .collect();
+    let property_types: Vec<PropertyTypeDef> = [CORE_VALUE_TYPES, STANDARD_VALUE_TYPES]
+        .into_iter()
+        .flat_map(|source| {
+            let artifact: Value = serde_json::from_str(source).unwrap();
+            serde_json::from_value::<Vec<PropertyTypeDef>>(
+                artifact["payload"]["propertyTypes"].clone(),
+            )
+            .unwrap()
+        })
+        .filter(|property_type| referenced_names.contains(&property_type.name.as_str()))
+        .collect();
     assert_eq!(property_types.len(), referenced_names.len());
     property_types
 }

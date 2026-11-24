@@ -65,7 +65,7 @@ test("a value the server recorded a source for opens its provenance", async () =
 test("the technical view shows only Norn artefacts: the definition, the mapping pin and ids, and what the read lacks", async () => {
   const html = await page("canon.Item", "demo/item/gold", "technical")
   expect(html).toContain("Record document")
-  expect(html).toContain("Copy erpnext.three.mapping@0.1.0")
+  expect(html).toContain("Copy erpnext.three.mapping@0.2.0")
   // The pin as the recorded source document carries it, so a regenerated fixture moves the test with it (#1347).
   const pin = (JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/objects/canon.Item/demo~item~gold.source.json"), "utf8")) as { mappingPin: { sha256: string } }).mappingPin.sha256
   expect(html).toContain(`Copy ${pin}`)

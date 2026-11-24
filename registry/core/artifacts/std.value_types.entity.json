@@ -1,126 +1,663 @@
 {
-  "irVersion": "0.1",
   "artifactId": "std.value_types.entity",
-  "kind": "entity",
-  "namespace": "std",
-  "name": "Standard identifier value types",
-  "version": "0.1.0",
-  "lifecycle": "active",
-  "scope": {},
   "dependencies": [],
-  "provenance": {
-    "source": "system",
-    "sourcePath": "registry/core/artifacts/std.value_types.entity.json"
-  },
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Standard identifier value types",
+  "namespace": "std",
   "payload": {
     "entityVersion": "2.0",
     "propertyTypes": [
       {
-        "name": "iso8601.date",
         "description": "An ISO 8601 calendar date (YYYY-MM-DD), no time and no zone.",
+        "name": "iso8601.date",
         "type": {
           "kind": "date"
         }
       },
       {
-        "name": "iso8601.timestamp",
         "description": "An ISO 8601 / RFC 3339 instant normalized to UTC.",
+        "name": "iso8601.timestamp",
         "type": {
           "kind": "timestamp",
           "timezone": "utc"
         }
       },
       {
-        "name": "iso8601.duration",
         "description": "An exact elapsed duration (ISO 8601 duration with fixed-length units).",
+        "name": "iso8601.duration",
         "type": {
           "kind": "duration"
         }
       },
       {
-        "name": "ucum.unit_code",
-        "description": "A unit of measure in the Unified Code for Units of Measure, case-sensitive form (kg, m/s, {each}).",
+        "description": "An ISO 4217 active currency code (SIX list one, published 2026-09-17, excluding XTS and XXX).",
+        "name": "iso4217.currency_code",
         "type": {
-          "kind": "text"
-        },
-        "constraints": {
-          "minLength": 1,
-          "maxLength": 64,
-          "pattern": "^[!-~]+$"
+          "kind": "enum",
+          "values": [
+            {
+              "value": "AED"
+            },
+            {
+              "value": "AFN"
+            },
+            {
+              "value": "ALL"
+            },
+            {
+              "value": "AMD"
+            },
+            {
+              "value": "AOA"
+            },
+            {
+              "value": "ARS"
+            },
+            {
+              "value": "AUD"
+            },
+            {
+              "value": "AWG"
+            },
+            {
+              "value": "AZN"
+            },
+            {
+              "value": "BAM"
+            },
+            {
+              "value": "BBD"
+            },
+            {
+              "value": "BDT"
+            },
+            {
+              "value": "BHD"
+            },
+            {
+              "value": "BIF"
+            },
+            {
+              "value": "BMD"
+            },
+            {
+              "value": "BND"
+            },
+            {
+              "value": "BOB"
+            },
+            {
+              "value": "BOV"
+            },
+            {
+              "value": "BRL"
+            },
+            {
+              "value": "BSD"
+            },
+            {
+              "value": "BTN"
+            },
+            {
+              "value": "BWP"
+            },
+            {
+              "value": "BYN"
+            },
+            {
+              "value": "BZD"
+            },
+            {
+              "value": "CAD"
+            },
+            {
+              "value": "CDF"
+            },
+            {
+              "value": "CHE"
+            },
+            {
+              "value": "CHF"
+            },
+            {
+              "value": "CHW"
+            },
+            {
+              "value": "CLF"
+            },
+            {
+              "value": "CLP"
+            },
+            {
+              "value": "CNY"
+            },
+            {
+              "value": "COP"
+            },
+            {
+              "value": "COU"
+            },
+            {
+              "value": "CRC"
+            },
+            {
+              "value": "CUP"
+            },
+            {
+              "value": "CVE"
+            },
+            {
+              "value": "CZK"
+            },
+            {
+              "value": "DJF"
+            },
+            {
+              "value": "DKK"
+            },
+            {
+              "value": "DOP"
+            },
+            {
+              "value": "DZD"
+            },
+            {
+              "value": "EGP"
+            },
+            {
+              "value": "ERN"
+            },
+            {
+              "value": "ETB"
+            },
+            {
+              "value": "EUR"
+            },
+            {
+              "value": "FJD"
+            },
+            {
+              "value": "FKP"
+            },
+            {
+              "value": "GBP"
+            },
+            {
+              "value": "GEL"
+            },
+            {
+              "value": "GHS"
+            },
+            {
+              "value": "GIP"
+            },
+            {
+              "value": "GMD"
+            },
+            {
+              "value": "GNF"
+            },
+            {
+              "value": "GTQ"
+            },
+            {
+              "value": "GYD"
+            },
+            {
+              "value": "HKD"
+            },
+            {
+              "value": "HNL"
+            },
+            {
+              "value": "HTG"
+            },
+            {
+              "value": "HUF"
+            },
+            {
+              "value": "IDR"
+            },
+            {
+              "value": "ILS"
+            },
+            {
+              "value": "INR"
+            },
+            {
+              "value": "IQD"
+            },
+            {
+              "value": "IRR"
+            },
+            {
+              "value": "ISK"
+            },
+            {
+              "value": "JMD"
+            },
+            {
+              "value": "JOD"
+            },
+            {
+              "value": "JPY"
+            },
+            {
+              "value": "KES"
+            },
+            {
+              "value": "KGS"
+            },
+            {
+              "value": "KHR"
+            },
+            {
+              "value": "KMF"
+            },
+            {
+              "value": "KPW"
+            },
+            {
+              "value": "KRW"
+            },
+            {
+              "value": "KWD"
+            },
+            {
+              "value": "KYD"
+            },
+            {
+              "value": "KZT"
+            },
+            {
+              "value": "LAK"
+            },
+            {
+              "value": "LBP"
+            },
+            {
+              "value": "LKR"
+            },
+            {
+              "value": "LRD"
+            },
+            {
+              "value": "LSL"
+            },
+            {
+              "value": "LYD"
+            },
+            {
+              "value": "MAD"
+            },
+            {
+              "value": "MDL"
+            },
+            {
+              "value": "MGA"
+            },
+            {
+              "value": "MKD"
+            },
+            {
+              "value": "MMK"
+            },
+            {
+              "value": "MNT"
+            },
+            {
+              "value": "MOP"
+            },
+            {
+              "value": "MRU"
+            },
+            {
+              "value": "MUR"
+            },
+            {
+              "value": "MVR"
+            },
+            {
+              "value": "MWK"
+            },
+            {
+              "value": "MXN"
+            },
+            {
+              "value": "MXV"
+            },
+            {
+              "value": "MYR"
+            },
+            {
+              "value": "MZN"
+            },
+            {
+              "value": "NAD"
+            },
+            {
+              "value": "NGN"
+            },
+            {
+              "value": "NIO"
+            },
+            {
+              "value": "NOK"
+            },
+            {
+              "value": "NPR"
+            },
+            {
+              "value": "NZD"
+            },
+            {
+              "value": "OMR"
+            },
+            {
+              "value": "PAB"
+            },
+            {
+              "value": "PEN"
+            },
+            {
+              "value": "PGK"
+            },
+            {
+              "value": "PHP"
+            },
+            {
+              "value": "PKR"
+            },
+            {
+              "value": "PLN"
+            },
+            {
+              "value": "PYG"
+            },
+            {
+              "value": "QAR"
+            },
+            {
+              "value": "RON"
+            },
+            {
+              "value": "RSD"
+            },
+            {
+              "value": "RUB"
+            },
+            {
+              "value": "RWF"
+            },
+            {
+              "value": "SAR"
+            },
+            {
+              "value": "SBD"
+            },
+            {
+              "value": "SCR"
+            },
+            {
+              "value": "SDG"
+            },
+            {
+              "value": "SEK"
+            },
+            {
+              "value": "SGD"
+            },
+            {
+              "value": "SHP"
+            },
+            {
+              "value": "SLE"
+            },
+            {
+              "value": "SOS"
+            },
+            {
+              "value": "SRD"
+            },
+            {
+              "value": "SSP"
+            },
+            {
+              "value": "STN"
+            },
+            {
+              "value": "SVC"
+            },
+            {
+              "value": "SYP"
+            },
+            {
+              "value": "SZL"
+            },
+            {
+              "value": "THB"
+            },
+            {
+              "value": "TJS"
+            },
+            {
+              "value": "TMT"
+            },
+            {
+              "value": "TND"
+            },
+            {
+              "value": "TOP"
+            },
+            {
+              "value": "TRY"
+            },
+            {
+              "value": "TTD"
+            },
+            {
+              "value": "TWD"
+            },
+            {
+              "value": "TZS"
+            },
+            {
+              "value": "UAH"
+            },
+            {
+              "value": "UGX"
+            },
+            {
+              "value": "USD"
+            },
+            {
+              "value": "USN"
+            },
+            {
+              "value": "UYI"
+            },
+            {
+              "value": "UYU"
+            },
+            {
+              "value": "UYW"
+            },
+            {
+              "value": "UZS"
+            },
+            {
+              "value": "VED"
+            },
+            {
+              "value": "VES"
+            },
+            {
+              "value": "VND"
+            },
+            {
+              "value": "VUV"
+            },
+            {
+              "value": "WST"
+            },
+            {
+              "value": "XAD"
+            },
+            {
+              "value": "XAF"
+            },
+            {
+              "value": "XAG"
+            },
+            {
+              "value": "XAU"
+            },
+            {
+              "value": "XBA"
+            },
+            {
+              "value": "XBB"
+            },
+            {
+              "value": "XBC"
+            },
+            {
+              "value": "XBD"
+            },
+            {
+              "value": "XCD"
+            },
+            {
+              "value": "XCG"
+            },
+            {
+              "value": "XDR"
+            },
+            {
+              "value": "XOF"
+            },
+            {
+              "value": "XPD"
+            },
+            {
+              "value": "XPF"
+            },
+            {
+              "value": "XPT"
+            },
+            {
+              "value": "XSU"
+            },
+            {
+              "value": "XUA"
+            },
+            {
+              "value": "YER"
+            },
+            {
+              "value": "ZAR"
+            },
+            {
+              "value": "ZMW"
+            },
+            {
+              "value": "ZWG"
+            }
+          ]
         }
       },
       {
-        "name": "qudt.unit_id",
-        "description": "A QUDT unit, as its `unit:` local name (unit:KiloGM).",
+        "constraints": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[!-~]+$"
+        },
+        "description": "A unit of measure in the Unified Code for Units of Measure, case-sensitive form (kg, m/s, {each}).",
+        "name": "ucum.unit_code",
         "type": {
           "kind": "text"
-        },
+        }
+      },
+      {
         "constraints": {
           "maxLength": 128,
           "pattern": "^unit:[A-Za-z0-9_-]+$"
+        },
+        "description": "A QUDT unit, as its `unit:` local name (unit:KiloGM).",
+        "name": "qudt.unit_id",
+        "type": {
+          "kind": "text"
         }
       },
       {
-        "name": "gs1.gtin",
-        "description": "A GS1 Global Trade Item Number: GTIN-8, -12, -13, or -14, digits only (check digit not verified here).",
-        "type": {
-          "kind": "text"
-        },
         "constraints": {
           "pattern": "^([0-9]{8}|[0-9]{12,14})$"
+        },
+        "description": "A GS1 Global Trade Item Number: GTIN-8, -12, -13, or -14, digits only (check digit not verified here).",
+        "name": "gs1.gtin",
+        "type": {
+          "kind": "text"
         }
       },
       {
-        "name": "gs1.gln",
-        "description": "A GS1 Global Location Number: 13 digits (check digit not verified here).",
-        "type": {
-          "kind": "text"
-        },
         "constraints": {
           "pattern": "^[0-9]{13}$"
+        },
+        "description": "A GS1 Global Location Number: 13 digits (check digit not verified here).",
+        "name": "gs1.gln",
+        "type": {
+          "kind": "text"
         }
       },
       {
-        "name": "lei.lei",
-        "description": "An ISO 17442 Legal Entity Identifier: 18 alphanumerics and 2 check digits (checksum not verified here).",
-        "type": {
-          "kind": "text"
-        },
         "constraints": {
           "pattern": "^[A-Z0-9]{18}[0-9]{2}$"
+        },
+        "description": "An ISO 17442 Legal Entity Identifier: 18 alphanumerics and 2 check digits (checksum not verified here).",
+        "name": "lei.lei",
+        "type": {
+          "kind": "text"
         }
       },
       {
-        "name": "unlocode.location_code",
-        "description": "A UN/LOCODE: ISO 3166-1 alpha-2 country code and a 3-character location code.",
-        "type": {
-          "kind": "text"
-        },
         "constraints": {
           "pattern": "^[A-Z]{2}[A-Z2-9]{3}$"
-        }
-      },
-      {
-        "name": "isco08.occupation_code",
-        "description": "An ISCO-08 occupation group code (major to unit group, 1 to 4 digits).",
+        },
+        "description": "A UN/LOCODE: ISO 3166-1 alpha-2 country code and a 3-character location code.",
+        "name": "unlocode.location_code",
         "type": {
           "kind": "text"
-        },
-        "constraints": {
-          "pattern": "^[0-9]{1,4}$"
         }
       },
       {
-        "name": "esco.occupation_uri",
-        "description": "An ESCO occupation concept URI.",
-        "type": {
-          "kind": "text",
-          "format": "uri"
+        "constraints": {
+          "pattern": "^[0-9]{1,4}$"
         },
+        "description": "An ISCO-08 occupation group code (major to unit group, 1 to 4 digits).",
+        "name": "isco08.occupation_code",
+        "type": {
+          "kind": "text"
+        }
+      },
+      {
         "constraints": {
           "pattern": "^http://data\\.europa\\.eu/esco/occupation/[0-9a-f-]+$"
+        },
+        "description": "An ESCO occupation concept URI.",
+        "name": "esco.occupation_uri",
+        "type": {
+          "format": "uri",
+          "kind": "text"
         }
       }
     ]
-  }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/src/value_types.rs"
+  },
+  "scope": {},
+  "version": "0.2.0"
 }
