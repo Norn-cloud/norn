@@ -4052,8 +4052,8 @@ fn hierarchy_sql_host_bounds_outgoing_reads_before_materializing_high_fan_in() {
     .expect("bounded outgoing traversal ignores incoming fan-in");
     assert_eq!(
         counter.outgoing_reads.get(),
-        2,
-        "only middle and ancestor adjacency was read"
+        3,
+        "only leaf to:one check and middle/ancestor acyclicity adjacency were read"
     );
 }
 

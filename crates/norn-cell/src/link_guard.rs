@@ -289,7 +289,7 @@ pub(crate) fn point_link<E: SqlEngine>(
     {
         return Ok(None);
     }
-    let mut columns = vec![(TARGET_COLUMN, false)];
+    let mut columns = vec![(SOURCE_COLUMN, false), (TARGET_COLUMN, false)];
     columns.extend(table.columns.iter().filter_map(|column| {
         column
             .column
@@ -336,7 +336,7 @@ pub(crate) fn point_link<E: SqlEngine>(
         link,
     };
     let row = SqlRow(values);
-    let stored_target: String = row.get(0)?;
+    let stored_target: String = row.get(1)?;
     let decoded = decode_row(
         DecodeContext {
             model: reader.model(),
@@ -346,7 +346,7 @@ pub(crate) fn point_link<E: SqlEngine>(
         &table.columns,
         table.has_overflow,
         &row,
-        1,
+        2,
     )?;
     Ok(Some(LinkRecord {
         source: source.to_owned(),
