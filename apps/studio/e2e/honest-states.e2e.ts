@@ -113,7 +113,10 @@ test("headers-first stalled body: the browser cancels the hung stream and Retry 
 
   await page.clock.install()
   await page.goto("/metrics")
-  await expect(page.locator('[data-load-state="loading"]')).toBeVisible()
+  const stalledBodyState = () => page.evaluate(() => (window as unknown as { __stalledBody: { attempts: number; cancelled: boolean } }).__stalledBody)
+  await expect(page.locator('[data-load-state="loading"]').getByRole("status", { name: "Reading metrics" })).toBeVisible()
+  // The skeleton can appear before the scoped fetch starts and arms its deadline.
+  await expect.poll(stalledBodyState).toEqual({ attempts: 1, cancelled: false })
 
   // Past 12 s while headers have already arrived and only the body is stalled: must abort and cancel the hung stream.
   await page.clock.runFor(4_500)
@@ -123,15 +126,14 @@ test("headers-first stalled body: the browser cancels the hung stream and Retry 
   const timedOut = page.locator("[data-workspace-unavailable]")
   await expect(timedOut).toBeVisible()
   await expect(timedOut).toContainText("The workspace took too long to respond")
-  const afterTimeout = await page.evaluate(() => (window as unknown as { __stalledBody: { attempts: number; cancelled: boolean } }).__stalledBody)
-  expect(afterTimeout).toEqual({ attempts: 1, cancelled: true })
+  expect(await stalledBodyState()).toEqual({ attempts: 1, cancelled: true })
+  await shoot(page, "stalled-body-timeout")
 
   // Clicking Retry starts request #2 (never stuck on the hung attempt #1) and recovers.
   await page.clock.resume()
   await timedOut.getByRole("button", { name: "Retry" }).click()
   await expect(page.locator('[data-load-state="empty"]')).toBeVisible()
-  const afterRetry = await page.evaluate(() => (window as unknown as { __stalledBody: { attempts: number; cancelled: boolean } }).__stalledBody)
-  expect(afterRetry.attempts).toBe(2)
+  expect((await stalledBodyState()).attempts).toBe(2)
 })
 
 test("server error: shows plain reason and server explanation (never hidden), tucks raw worker noise under Technical, and Retry recovers", async ({ page }) => {
