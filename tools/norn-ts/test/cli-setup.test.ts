@@ -11,7 +11,7 @@ test("check explains missing or incomplete WASM setup without an uncaught stack"
     for (const pkg of ["", join(empty, "missing"), empty]) {
       const run = spawnSync(process.execPath, [join(TOOL_ROOT, "src/cli.ts"), "check", join(TOOL_ROOT, "fixtures/quickstart"), "--org", "example", "--env", "local"], {
         cwd: join(TOOL_ROOT, "../.."), encoding: "utf8", timeout: 30_000,
-        env: {...process.env, NORN_CHECKER_WASM_PKG: pkg},
+        env: {...process.env, NORN_CHECKER_WASM_PKG: pkg, NORN_CACHE_DIR: join(empty, "no-cache")},
       })
       expect(run.error).toBeUndefined()
       expect(run.status).toBe(2)
