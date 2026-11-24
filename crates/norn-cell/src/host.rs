@@ -953,7 +953,11 @@ where
         clippy::too_many_lines,
         reason = "one conversion retains kernel CAS separately from trusted historical Function lineage"
     )]
-    fn batch(&self, commit: &CellCommit<E, C, I>) -> Result<CommitBatch, CellError> {
+    fn batch(
+        &self,
+        commit: &CellCommit<E, C, I>,
+        verified_mapping_links: bool,
+    ) -> Result<CommitBatch, CellError> {
         let mut writes = Vec::with_capacity(commit.writes.len());
         for write in &commit.writes {
             let object_type = write.key.object_type.as_str().to_owned();
@@ -1034,8 +1038,12 @@ where
         // writer's immutable snapshots. Only the kernel's declared reads are
         // decision inputs on ordinary turns; attributed rule/action turns also
         // retain reads folded into their write expectations by the kernel.
-        let mut marking_reads =
-            Self::occurrence_reads(commit, &marking_reads, !marking_events.is_empty());
+        let mut marking_reads = Self::occurrence_reads(
+            commit,
+            &marking_reads,
+            !marking_events.is_empty(),
+            verified_mapping_links,
+        );
         crate::link_guard::extend_predicate_marking_reads(
             &commit.predicate_reads,
             &mut marking_reads,
@@ -1219,19 +1227,15 @@ where
         commit: &CellCommit<E, C, I>,
         marking_reads: &[norn_kernel::FactExpectation],
         attributed_rule: bool,
+        verified_mapping_links: bool,
     ) -> Vec<norn_kernel::FactExpectation> {
         // Ordinary destination expectations retain property-value lineage;
         // they are not evidence of a classified decision predicate. Kernel
         // decisions may fold reads of written targets into their expectations,
-        // so retain that full set for attributed rule/action turns.
-        let is_mapping = matches!(
-            &commit.consumes,
-            Some(Consumed::Observation { id })
-                if id.0.starts_with("mapping-bundle:")
-                    || id.0.starts_with(crate::mapping_page::PAGE_PREFIX)
-        );
+        // so retain that full set for attributed rule/action turns and any
+        // non-mapping commit mutating links.
         if attributed_rule
-            || (!commit.links.is_empty() && !is_mapping)
+            || (!commit.links.is_empty() && !verified_mapping_links)
             || commit
                 .writes
                 .iter()
@@ -1836,7 +1840,10 @@ where
                 }
             }
         }
-        let mut batch = self.batch(&commit).map_err(CommitError::Host)?;
+        let verified_mapping_links = !mapped.is_empty();
+        let mut batch = self
+            .batch(&commit, verified_mapping_links)
+            .map_err(CommitError::Host)?;
         // RUN-LEDGER-1 / DECISION-LEDGER-1: the store records the run start
         // or the decision's resolution in this commit's transaction; S6c,
         // S5a: else the events attached for it.
@@ -1970,6 +1977,7 @@ where
         match self.store.commit_guarded_submitted(
             &batch,
             submitted.as_ref(),
+            verified_mapping_links,
             guard,
             &mut |_point| Ok(()),
         ) {

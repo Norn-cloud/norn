@@ -2969,22 +2969,16 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         Ok(version)
     }
 
-    /// Apply the batch's link changes in order (`enforce_live_guards` is false during restore).
+    /// Apply the batch's link changes in order under `mode`.
     #[allow(
         clippy::too_many_lines,
         reason = "link state, version and creation are atomic"
     )]
     pub(crate) fn apply_links(
         &mut self,
-        enforce_live_guards: bool,
+        mode: crate::link_guard::LinkGuardMode,
     ) -> Result<Vec<LinkedRow>, CellError> {
-        let is_mapping = matches!(
-            &self.batch.consumes,
-            Some(Consumption::Observation { observation_id })
-                if observation_id.starts_with("mapping-bundle:")
-                    || observation_id.starts_with(crate::mapping_page::PAGE_PREFIX)
-        ) && self.batch.marking_events.is_empty();
-        if enforce_live_guards && !is_mapping {
+        if mode == crate::link_guard::LinkGuardMode::Live {
             crate::link_guard::check_link_read_markings(
                 &self.batch.links,
                 &self.link_read_markings,
@@ -3079,8 +3073,8 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     Some(to_i64(version, "link version")?),
                 ))
             };
-            if enforce_live_guards && values.is_none() {
-                crate::link_guard::check_remove_slot_match(
+            if mode != crate::link_guard::LinkGuardMode::RetainedReplay {
+                crate::link_guard::check_slot_target_match(
                     &self.reader(),
                     self.world,
                     &table_name,

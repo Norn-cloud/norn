@@ -21,6 +21,19 @@ use crate::read::{LinkRecord, StoreReader, decode_row, query_projected};
 use crate::store::LinkChange;
 use crate::system::{LINK_CREATION, LINK_VERSIONS};
 
+/// Admission mode for link write guards inside `Writer::apply_links`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkGuardMode {
+    /// Ordinary live commit: enforce both IFC read-marking and slot-identity guards.
+    Live,
+    /// In-transaction guard verified non-empty mapping bundles and exact
+    /// `mapping_link_plan` equality: exempt static mapping links from
+    /// `check_link_read_markings`, still enforce slot-identity guards.
+    VerifiedMapping,
+    /// Verified history replay (`restore`): skip live-admission guards.
+    RetainedReplay,
+}
+
 /// The committed state of link `key` as the kernel sees it (O(1) point lookup).
 pub(crate) fn link_state<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
@@ -233,9 +246,11 @@ pub(crate) fn point_link<E: SqlEngine>(
     }))
 }
 
-/// Enforce physical-slot exclusivity within each physical link table for live
-/// rows (never across sibling source tables or tombstones) and probe referenced
-/// link tables for added endpoints in O(#tables) bounded queries (#1527 S2).
+/// Enforce physical-slot exclusivity within each physical link table across
+/// both live rows and tombstones (never across sibling source tables, and
+/// never allowing a different target root to overwrite a tombstoned version
+/// slot and replay version 1), plus O(1) table-existence probes for added
+/// endpoints (#1527 S2).
 pub(crate) fn check_commit_link_slots<E, C, I, S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
@@ -268,18 +283,6 @@ pub(crate) fn check_commit_link_slots<E, C, I, S: SqlEngine>(
                 key: Box::new(write.key.clone()),
             });
         }
-        if !live_link_row_exists(
-            reader,
-            MAIN_WORLD,
-            &table.table,
-            &write.key.source.key,
-            &write.key.target.key,
-        )
-        .map_err(CommitError::Host)?
-        {
-            // Absent or tombstoned slot: nothing live to collide with or clobber.
-            continue;
-        }
         match reader
             .link_version_row(
                 MAIN_WORLD,
@@ -303,14 +306,22 @@ pub(crate) fn check_commit_link_slots<E, C, I, S: SqlEngine>(
                 }
             }
             None => {
-                if !legacy_row_matches_target_type(
+                if live_link_row_exists(
                     reader,
                     MAIN_WORLD,
-                    declaration.target.as_str(),
+                    &table.table,
+                    &write.key.source.key,
                     &write.key.target.key,
-                    write.key.target.object_type.as_str(),
                 )
                 .map_err(CommitError::Host)?
+                    && !legacy_row_matches_target_type(
+                        reader,
+                        MAIN_WORLD,
+                        declaration.target.as_str(),
+                        &write.key.target.key,
+                        write.key.target.object_type.as_str(),
+                    )
+                    .map_err(CommitError::Host)?
                 {
                     return Err(CommitError::EffectiveValues {
                         key: write.key.source.clone(),
@@ -328,6 +339,8 @@ pub(crate) fn check_commit_link_slots<E, C, I, S: SqlEngine>(
 
 /// Bounded O(#tables) table-existence probe for link tables referenced by
 /// `_norn_link_version` rows touching added link endpoints (#1527 S2).
+/// Uses two separate covering-index seeks (`source`, `target`) instead of `OR`
+/// and probes each discovered table via O(1) `SELECT 1 FROM <table> LIMIT 1`.
 fn verify_link_endpoint_tables<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     endpoints: &BTreeSet<&str>,
@@ -337,34 +350,32 @@ fn verify_link_endpoint_tables<S: SqlEngine>(
     }
     let mut probed: BTreeSet<String> = BTreeSet::new();
     for id in endpoints {
-        let rows = reader.conn.query(
-            &format!(
-                "SELECT DISTINCT \"link_table\" FROM \"{LINK_VERSIONS}\" WHERE \"world\" = ?1 AND (\"source\" = ?2 OR \"target\" = ?2)"
-            ),
-            params![MAIN_WORLD, *id],
-        )?;
-        for values in rows {
-            let table: String = SqlRow(values).get(0)?;
-            if probed.insert(table.clone()) {
-                let _ = reader.conn.query_optional(
-                    &format!(
-                        "SELECT 1 FROM {} WHERE {} = ?1 LIMIT 1",
-                        quote_identifier(&table),
-                        quote_identifier(WORLD_COLUMN),
-                    ),
-                    params![MAIN_WORLD],
-                    |_| Ok(()),
-                )?;
+        for column in ["source", "target"] {
+            let rows = reader.conn.query(
+                &format!(
+                    "SELECT DISTINCT \"link_table\" FROM \"{LINK_VERSIONS}\" WHERE \"world\" = ?1 AND \"{column}\" = ?2"
+                ),
+                params![MAIN_WORLD, *id],
+            )?;
+            for values in rows {
+                let table: String = SqlRow(values).get(0)?;
+                if probed.insert(table.clone()) {
+                    let _ = reader.conn.query_optional(
+                        &format!("SELECT 1 FROM {} LIMIT 1", quote_identifier(&table)),
+                        params![],
+                        |_| Ok(()),
+                    )?;
+                }
             }
         }
     }
     Ok(())
 }
 
-/// Defense-in-depth inside `Writer::apply_links` (live commits only): a
-/// `Remove` must never delete a live physical link row belonging to a
-/// different or ambiguous canonical target hierarchy.
-pub(crate) fn check_remove_slot_match<E: SqlEngine>(
+/// Defense-in-depth inside `Writer::apply_links` (live/mapping commits): a
+/// link mutation must never overwrite a version slot (live or tombstoned) or
+/// live legacy row belonging to a different or ambiguous canonical target root.
+pub(crate) fn check_slot_target_match<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     world: &str,
     table_name: &str,
@@ -373,20 +384,21 @@ pub(crate) fn check_remove_slot_match<E: SqlEngine>(
     target: &str,
     target_type: &str,
 ) -> Result<(), CellError> {
-    if !live_link_row_exists(reader, world, table_name, source, target)? {
-        return Ok(());
-    }
     let matches = match reader.link_version_row(world, table_name, source, target)? {
         Some((_, written_target_type)) => {
             reader.canonical_type(&written_target_type) == reader.canonical_type(target_type)
         }
         None => {
-            legacy_row_matches_target_type(reader, world, declared_target, target, target_type)?
+            if live_link_row_exists(reader, world, table_name, source, target)? {
+                legacy_row_matches_target_type(reader, world, declared_target, target, target_type)?
+            } else {
+                true
+            }
         }
     };
     if !matches {
         return Err(CellError::ComputeRefused(
-            "link removal target type does not match stored edge",
+            "link mutation target type does not match stored edge slot",
         ));
     }
     Ok(())
@@ -463,58 +475,61 @@ pub(crate) fn has_link_source<S: SqlEngine>(
         {
             continue;
         }
+        // Omit `ORDER BY _source` so SQLite seeks the `(_world, _target)` index
+        // directly instead of scanning the primary key by `_world`; sort the
+        // `<= fetch` returned keys in Rust for deterministic witness order.
         let rows = reader.conn.query(
             &format!(
-                "SELECT {} FROM {} WHERE {} = ?1 AND {} = ?2 ORDER BY {} LIMIT ?3",
+                "SELECT {} FROM {} WHERE {} = ?1 AND {} = ?2 LIMIT ?3",
                 quote_identifier(SOURCE_COLUMN),
                 quote_identifier(&table.table),
                 quote_identifier(WORLD_COLUMN),
                 quote_identifier(TARGET_COLUMN),
-                quote_identifier(SOURCE_COLUMN),
             ),
             params![MAIN_WORLD, target.key, fetch_sql],
         )?;
         let source_root = reader.canonical_type(table.source.as_str());
-        for values in &rows {
-            let source_key: String = SqlRow(values.clone()).get(0)?;
+        let mut source_keys = Vec::with_capacity(rows.len());
+        for values in rows {
+            let source_key: String = SqlRow(values).get(0)?;
             key_bytes =
                 key_bytes.saturating_add(u64::try_from(source_key.len()).unwrap_or(u64::MAX));
             if key_bytes > limits.max_canonical_bytes {
                 return Ok(None);
             }
-            let target_matches = match reader.link_version_row(
-                MAIN_WORLD,
-                &table.table,
-                &source_key,
-                &target.key,
-            )? {
-                Some((_, written_target_type)) => {
-                    reader.canonical_type(&written_target_type) == target_root
-                }
-                None => {
-                    if reader.model().chain(declaration.target.as_str()).is_ok() {
-                        reader.canonical_type(declaration.target.as_str()) == target_root
-                    } else if legacy_row_matches_target_type(
-                        reader,
-                        MAIN_WORLD,
-                        declaration.target.as_str(),
-                        &target.key,
-                        target.object_type.as_str(),
-                    )? {
-                        true
-                    } else {
-                        return Ok(None);
+            source_keys.push(source_key);
+        }
+        source_keys.sort_unstable();
+        for source_key in &source_keys {
+            let target_matches =
+                match reader.link_version_row(MAIN_WORLD, &table.table, source_key, &target.key)? {
+                    Some((_, written_target_type)) => {
+                        reader.canonical_type(&written_target_type) == target_root
                     }
-                }
-            };
+                    None => {
+                        if reader.model().chain(declaration.target.as_str()).is_ok() {
+                            reader.canonical_type(declaration.target.as_str()) == target_root
+                        } else if legacy_row_matches_target_type(
+                            reader,
+                            MAIN_WORLD,
+                            declaration.target.as_str(),
+                            &target.key,
+                            target.object_type.as_str(),
+                        )? {
+                            true
+                        } else {
+                            return Ok(None);
+                        }
+                    }
+                };
             if !target_matches {
                 continue;
             }
-            if !excluded.contains(&FactKey::new(source_root.clone(), source_key)) {
+            if !excluded.contains(&FactKey::new(source_root.clone(), source_key.as_str())) {
                 return Ok(Some(true));
             }
         }
-        if rows.len() >= fetch {
+        if source_keys.len() >= fetch {
             return Ok(None);
         }
     }

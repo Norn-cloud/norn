@@ -5309,11 +5309,12 @@ fn r3_blocker5_from_one_cardinality_uses_bounded_sql_proof() {
 
     let recorded = queries.borrow();
     assert!(
-        recorded
-            .iter()
-            .any(|sql| sql.contains("\"_target\" = ?2")
-                && sql.contains("ORDER BY \"_source\" LIMIT ?3")),
-        "expected bounded incoming LIMIT query; got {recorded:?}"
+        recorded.iter().any(|sql| {
+            sql.contains("\"_target\" = ?2")
+                && sql.contains("LIMIT ?3")
+                && !sql.contains("ORDER BY")
+        }),
+        "expected bounded incoming LIMIT query without ORDER BY; got {recorded:?}"
     );
     assert!(
         !recorded.iter().any(|sql| {
@@ -5322,5 +5323,254 @@ fn r3_blocker5_from_one_cardinality_uses_bounded_sql_proof() {
                 && !sql.contains("_norn_link_version")
         }),
         "must not execute unbounded incoming link scan; got {recorded:?}"
+    );
+}
+
+/// R4 Blocker 1: an ordinary embedded decision passing a pending `mapping-bundle:`
+/// observation ID in `DecisionTurn.consumes` with classified point or predicate
+/// reads MUST still fail closed in `check_link_read_markings`.
+#[test]
+fn r4_blocker1_decision_spoofing_mapping_bundle_observation_still_refuses_classified_link() {
+    let (model, mut cell) = r2_ifc_fixture();
+    let catalog = model.type_catalog();
+    let spoof_id = norn_kernel::ObservationId("mapping-bundle:spoof-digest".to_owned());
+    cell.inject(&Observed {
+        id: spoof_id.clone(),
+        provenance: norn_kernel::Provenance {
+            source: "external".to_owned(),
+            source_id: "spoof-1".to_owned(),
+            observed_at: LogicalTime::from_millis(500),
+            mapping_version: "1.0.0".to_owned(),
+        },
+        input: JsonObject::new(),
+    })
+    .expect("inject pending mapping-bundle observation");
+
+    let spoof_turn = norn_kernel::DecisionTurn {
+        id: "t-spoof".to_owned(),
+        now: LogicalTime::from_millis(1_000),
+        world: norn_kernel::World::Main,
+        consumes: Some(Consumed::Observation {
+            id: spoof_id.clone(),
+        }),
+    };
+    let classified_slice = norn_kernel::load_slice(
+        &cell,
+        [
+            FactKey::new("ifc.Secret", "SEC1"),
+            FactKey::new("ifc.Public", "P1"),
+            FactKey::new("ifc.Public", "P2"),
+        ],
+    )
+    .expect("slice");
+    let refusal = norn_kernel::commit_decision(
+        &mut cell,
+        &catalog,
+        &classified_slice,
+        &spoof_turn,
+        &r2_ifc_link_output("add", "P1", "P2"),
+    )
+    .expect_err("decision spoofing mapping-bundle observation must refuse");
+    assert!(
+        matches!(
+            refusal,
+            norn_kernel::DecisionRefusal::Host(CellError::MarkingDeclassificationInvalid(_))
+        ),
+        "expected MarkingDeclassificationInvalid, got {refusal:?}"
+    );
+
+    // Also verify a commit carrying classified predicate_reads + spoofed consumes.
+    let predicate: PredicateQuery =
+        serde_json::from_value(json!({"objectType": "ifc.Secret", "filter": {"id": "SEC1"}}))
+            .expect("predicate");
+    let pred_commit = CellCommit {
+        consumes: Some(Consumed::Observation { id: spoof_id }),
+        predicate_reads: vec![norn_kernel::PredicateReadExpectation {
+            predicate,
+            members: vec![norn_kernel::PredicateReadMember {
+                key: FactKey::new("ifc.Secret", "SEC1"),
+                version: FactVersion(1),
+            }],
+        }],
+        links: vec![LinkWrite {
+            key: LinkKey::new(
+                FactKey::new("ifc.Public", "P1"),
+                "linked",
+                FactKey::new("ifc.Public", "P2"),
+            ),
+            expected: FactVersion(0),
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    };
+    assert!(matches!(
+        cell.commit(pred_commit),
+        Err(CommitError::Host(
+            CellError::MarkingDeclassificationInvalid(_)
+        ))
+    ));
+    let edge = LinkKey::new(
+        FactKey::new("ifc.Public", "P1"),
+        "linked",
+        FactKey::new("ifc.Public", "P2"),
+    );
+    assert!(!cell.load_link(&edge).expect("no link written").exists());
+}
+
+/// R4 Blocker 2: reusing a tombstoned physical link slot in the same physical
+/// table for a different target root is refused so the prior target root can
+/// never re-issue version 1 and let a stale CAS pass.
+#[test]
+fn r4_blocker2_tombstoned_physical_slot_rejects_cross_root_reuse_and_prevents_version_replay() {
+    let (_model, mut cell, _slice) = r2_iface_fixture();
+    let key_a = LinkKey::new(
+        FactKey::new("iface.Node", "S1"),
+        "rel",
+        FactKey::new("iface.TargetAChild", "K1"),
+    );
+    let key_b = LinkKey::new(
+        FactKey::new("iface.Node", "S1"),
+        "rel",
+        FactKey::new("iface.TargetB", "K1"),
+    );
+
+    let link_commit = |key: &LinkKey, expected: u64, mutation: LinkMutation| CellCommit {
+        links: vec![LinkWrite {
+            key: key.clone(),
+            expected: FactVersion(expected),
+            mutation,
+        }],
+        ..CellCommit::empty()
+    };
+    let add = || LinkMutation::Add {
+        values: serde_json::from_value(json!({"note": "v"})).expect("note"),
+    };
+
+    // 1. Add RootA/K1 -> v1, then Remove RootA/K1 -> v2 (tombstone).
+    let receipt_add = cell
+        .commit(link_commit(&key_a, 0, add()))
+        .expect("add RootA/K1");
+    assert_eq!(receipt_add.linked[0].version, FactVersion(1));
+    let receipt_rm = cell
+        .commit(link_commit(&key_a, 1, LinkMutation::Remove))
+        .expect("remove RootA/K1");
+    assert_eq!(receipt_rm.linked[0].version, FactVersion(2));
+
+    // 2. Attempting Add or Remove of RootB/K1 in the same physical table refuses.
+    for mutation in [add(), LinkMutation::Remove] {
+        assert!(matches!(
+            cell.commit(link_commit(&key_b, 0, mutation)),
+            Err(CommitError::EffectiveValues { .. })
+        ));
+    }
+
+    // 3. Stale CAS expecting original v1 on RootA/K1 still fails with LinkConflict(2).
+    assert!(matches!(
+        cell.commit(link_commit(&key_a, 1, add())),
+        Err(CommitError::LinkConflict {
+            expected: FactVersion(1),
+            current: FactVersion(2),
+            ..
+        })
+    ));
+
+    // 4. Re-adding RootA/K1 at v2 advances monotonically to v3 (never replays v1).
+    let receipt_readd = cell
+        .commit(link_commit(&key_a, 2, add()))
+        .expect("re-add RootA/K1");
+    assert_eq!(receipt_readd.linked[0].version, FactVersion(3));
+}
+
+/// R4 Blocker 3: SQLite `EXPLAIN QUERY PLAN` proves both `verify_link_endpoint_tables`
+/// and incoming `has_link_source` seek directly without full-world prefix scans.
+#[test]
+fn r4_blocker3_explain_query_plan_seeks_directly_without_world_scan() {
+    let defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+        {"name": "cap.Slot", "properties": [{"id": "id", "type": {"kind": "text"}}]},
+        {"name": "cap.Owner", "properties": [{"id": "id", "type": {"kind": "text"}}], "links": [{"id": "owns", "target": "cap.Slot", "cardinality": {"to": "many", "from": "one"}}]}
+    ]))
+    .expect("defs");
+    let model = common::model_of(&defs);
+    let table_name = model
+        .schema()
+        .link_tables
+        .iter()
+        .find(|t| t.source.as_str() == "cap.Owner" && t.link.as_str() == "owns")
+        .expect("link table")
+        .table
+        .clone();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("eqp.sqlite");
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("store");
+    let mut cell: SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject> = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+    )
+    .expect("cell");
+    r2_put_fact(&mut cell, "cap.Owner", "O1", json!({"id": "O1"}));
+    r2_put_fact(&mut cell, "cap.Slot", "T1", json!({"id": "T1"}));
+    let raw = NativeEngine::open(&path, StoreOptions::default()).expect("raw");
+    let explain = |sql: &str, args: &[SqlValue]| -> String {
+        raw.query(&format!("EXPLAIN QUERY PLAN {sql}"), args)
+            .expect("explain")
+            .into_iter()
+            .filter_map(|row| match row.get(3) {
+                Some(SqlValue::Text(detail)) => Some(detail.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+
+    let src_plan = explain(
+        "SELECT DISTINCT \"link_table\" FROM \"_norn_link_version\" WHERE \"world\" = ?1 AND \"source\" = ?2",
+        &[
+            SqlValue::Text("main".to_owned()),
+            SqlValue::Text("O1".to_owned()),
+        ],
+    );
+    assert!(
+        src_plan.contains("SEARCH _norn_link_version USING")
+            && src_plan.contains("world=? AND source=?")
+            && !src_plan.contains("SCAN"),
+        "expected index seek on (world, source); got: {src_plan}"
+    );
+    let tgt_plan = explain(
+        "SELECT DISTINCT \"link_table\" FROM \"_norn_link_version\" WHERE \"world\" = ?1 AND \"target\" = ?2",
+        &[
+            SqlValue::Text("main".to_owned()),
+            SqlValue::Text("T1".to_owned()),
+        ],
+    );
+    assert!(
+        tgt_plan.contains("SEARCH _norn_link_version USING")
+            && tgt_plan.contains("world=? AND target=?")
+            && !tgt_plan.contains("SCAN"),
+        "expected index seek on (world, target); got: {tgt_plan}"
+    );
+    let probe_plan = explain(&format!("SELECT 1 FROM \"{table_name}\" LIMIT 1"), &[]);
+    assert!(
+        !probe_plan.contains("WHERE") && !probe_plan.contains("TEMP B-TREE"),
+        "expected direct LIMIT 1 table-existence probe; got: {probe_plan}"
+    );
+    let incoming_plan = explain(
+        &format!(
+            "SELECT \"_source\" FROM \"{table_name}\" WHERE \"_world\" = ?1 AND \"_target\" = ?2 LIMIT ?3"
+        ),
+        &[
+            SqlValue::Text("main".to_owned()),
+            SqlValue::Text("T1".to_owned()),
+            SqlValue::Integer(2),
+        ],
+    );
+    assert!(
+        incoming_plan.contains("SEARCH")
+            && incoming_plan.contains("_world=? AND _target=?")
+            && !incoming_plan.contains("SCAN")
+            && !incoming_plan.contains("TEMP B-TREE"),
+        "expected direct (_world, _target) index seek without temp sort; got: {incoming_plan}"
     );
 }

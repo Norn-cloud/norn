@@ -1885,6 +1885,7 @@ type ProvisionIdentity<'a> =
 #[derive(Clone, Copy)]
 enum CommitOrigin<'a> {
     Current,
+    VerifiedMapping,
     Provisioning(&'a str, &'a ProvisionIdentity<'a>),
     Retained(&'a crate::export::ExportRecord),
 }
@@ -1897,11 +1898,7 @@ fn preflight_retained(
     install: &DefinitionInstallContext<'_>,
     change: &crate::retained::RetainedDefinitionChange,
 ) -> Result<(), CellError> {
-    // A retained revision rides the governed install but, unless it is a
-    // flow (an automation that installs into the kernel set), never
-    // changes the kernel: its set and receipt are the active ones, so the
-    // new definitions version has the kernel identity of the one before it
-    // (question pins and historical cutoffs compare that identity).
+    // Non-flow retained revisions keep the prior kernel identity.
     let unchanged = previous.is_some_and(|previous| {
         previous.canonical_set == install.input.canonical_set
             && previous.receipt_sha256 == install.input.receipt_sha256
@@ -2891,14 +2888,9 @@ impl<E: SqlEngine> CellStore<E> {
         self.commit_probed_unchecked(batch, &mut |_point| Ok(()))
     }
 
-    /// [`Self::commit_unchecked`] with a fault probe called at every [`CommitPoint`]
-    /// (deterministic crash simulation). A probe error before
-    /// [`CommitPoint::Committed`] rolls the transaction back; at
-    /// [`CommitPoint::Committed`] the commit is already durable and the error
-    /// models a crash before the caller is acknowledged.
+    /// [`Self::commit_unchecked`] with a fault probe called at every [`CommitPoint`].
     ///
     /// # Errors
-    ///
     /// Any [`CellError`], including the probe's.
     pub(crate) fn commit_probed_unchecked(
         &mut self,
@@ -2911,16 +2903,10 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 
-    /// Commit `batch` after `guard` admits it, inside the same transaction:
-    /// the guard reads exactly the state the commit applies to (the native
-    /// `CellHost` driver runs the kernel's `check_commit` here), and nothing
-    /// can commit in between. An idempotent replay writes nothing and is not
-    /// guarded.
+    /// Commit `batch` after `guard` admits it in the same transaction.
     ///
     /// # Errors
-    ///
-    /// [`GuardedError::Guard`] when the guard refuses; otherwise as
-    /// [`Self::commit_probed_unchecked`].
+    /// [`GuardedError::Guard`] on refusal; otherwise as [`Self::commit_probed_unchecked`].
     pub(crate) fn commit_guarded_unchecked<T: Default, X>(
         &mut self,
         batch: &CommitBatch,
@@ -2930,16 +2916,21 @@ impl<E: SqlEngine> CellStore<E> {
         self.commit_guarded_inner(batch, None, None, CommitOrigin::Current, guard, probe)
     }
 
-    // Only the driver supplies this input; verified replay uses record-bound input.
-    // Public/deserialized batches always derive identity from their own contents.
+    // Driver-only input; verified replay uses record-bound input.
     pub(crate) fn commit_guarded_submitted<T: Default, X>(
         &mut self,
         batch: &CommitBatch,
         submitted: Option<&Value>,
+        verified_mapping_links: bool,
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, submitted, CommitOrigin::Current, guard, probe)
+        let origin = if verified_mapping_links {
+            CommitOrigin::VerifiedMapping
+        } else {
+            CommitOrigin::Current
+        };
+        self.commit_guarded_inner(batch, None, submitted, origin, guard, probe)
     }
 
     /// The verified-prefix callers compare the full resulting receipt and journal.
@@ -3268,7 +3259,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &self.model,
                     install,
                     actual_version,
-                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
+                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::VerifiedMapping | CommitOrigin::Provisioning(..) => None },
                 )?;
                 self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
@@ -3487,7 +3478,13 @@ impl<E: SqlEngine> CellStore<E> {
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
-            let linked = writer.apply_links(!matches!(origin, CommitOrigin::Retained(_)))?;
+            let linked = writer.apply_links(match origin {
+                CommitOrigin::Retained(_) => crate::link_guard::LinkGuardMode::RetainedReplay,
+                CommitOrigin::VerifiedMapping => crate::link_guard::LinkGuardMode::VerifiedMapping,
+                CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
+                    crate::link_guard::LinkGuardMode::Live
+                }
+            })?;
             probe(CommitPoint::LinksApplied)?;
             if let Some(validate) = self.candidate_validator.get() {
                 let validator_disputes = RefCell::default();
@@ -3571,7 +3568,9 @@ impl<E: SqlEngine> CellStore<E> {
                 // A replayed record keeps the version that first wrote it.
                 match origin {
                     CommitOrigin::Retained(record) => record.storage_version,
-                    CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
+                    CommitOrigin::Current
+                    | CommitOrigin::VerifiedMapping
+                    | CommitOrigin::Provisioning(..) => {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
