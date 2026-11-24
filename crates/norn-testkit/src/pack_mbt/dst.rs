@@ -110,6 +110,10 @@ pub struct PackDstReport {
     pub steps_run: usize,
     /// Total clean-reopen + ledger-verification cycles executed.
     pub reopens_verified: usize,
+    /// Object-level immutable refusals hit on transitions (including wrong-source / guarded).
+    pub immutable_object_transition_refusals: usize,
+    /// Object-level immutable refusals hit on property mutations.
+    pub immutable_object_mutation_refusals: usize,
     /// Aggregate domain coverage hit during random walks.
     pub coverage: DomainCoverage,
 }
@@ -139,6 +143,8 @@ struct DstCaseState<'a, H: PackHost> {
     extra_links: BTreeSet<LinkKey>,
     coverage: DomainCoverage,
     reopens: usize,
+    imm_obj_tr_refusals: usize,
+    imm_obj_mut_refusals: usize,
 }
 
 struct CreateStepOutcome<'a> {
@@ -167,6 +173,8 @@ struct DstRunAccum {
     cases_run: u32,
     steps_run: usize,
     reopens_verified: usize,
+    imm_obj_tr_refusals: usize,
+    imm_obj_mut_refusals: usize,
     coverage: DomainCoverage,
 }
 
@@ -209,6 +217,8 @@ where
             cases_run: 0,
             steps_run: 0,
             reopens_verified: 0,
+            immutable_object_transition_refusals: 0,
+            immutable_object_mutation_refusals: 0,
             coverage: DomainCoverage::default(),
         });
     }
@@ -243,11 +253,19 @@ where
             extra_links: BTreeSet::new(),
             coverage: DomainCoverage::default(),
             reopens: 0,
+            imm_obj_tr_refusals: 0,
+            imm_obj_mut_refusals: 0,
         };
         state.execute_all(&steps).map_err(TestCaseError::fail)?;
         let mut acc = accum.borrow_mut();
         acc.steps_run = acc.steps_run.saturating_add(steps.len());
         acc.reopens_verified = acc.reopens_verified.saturating_add(state.reopens);
+        acc.imm_obj_tr_refusals = acc
+            .imm_obj_tr_refusals
+            .saturating_add(state.imm_obj_tr_refusals);
+        acc.imm_obj_mut_refusals = acc
+            .imm_obj_mut_refusals
+            .saturating_add(state.imm_obj_mut_refusals);
         acc.coverage.merge(&state.coverage);
         Ok(())
     });
@@ -259,6 +277,8 @@ where
             cases_run: acc.cases_run,
             steps_run: acc.steps_run,
             reopens_verified: acc.reopens_verified,
+            immutable_object_transition_refusals: acc.imm_obj_tr_refusals,
+            immutable_object_mutation_refusals: acc.imm_obj_mut_refusals,
             coverage: acc.coverage,
         }),
         Err(TestError::Fail(reason, minimal_steps)) => Err(format!(
@@ -311,41 +331,47 @@ fn dst_sequence_strategy(
 }
 
 impl<H: PackHost> DstCaseState<'_, H> {
+    fn verify_clock_advance(&mut self, delta_millis: u64) -> Result<(), String> {
+        let before = self.host.logical_now().as_millis();
+        self.host.advance_clock(delta_millis);
+        let after = self.host.logical_now().as_millis();
+        let expected = before.saturating_add(delta_millis);
+        if after != expected {
+            return Err(format!(
+                "virtual clock did not advance by exact delta {delta_millis}: before={before}, after={after}, expected={expected}"
+            ));
+        }
+        Ok(())
+    }
+
     fn execute_all(&mut self, steps: &[PackDstStep]) -> Result<(), String> {
         for (idx, step) in steps.iter().enumerate() {
-            let step_nonce = u64::try_from(idx).unwrap_or(0).saturating_add(1);
-            match step {
+            let n = u64::try_from(idx).unwrap_or(0).saturating_add(1);
+            match *step {
                 PackDstStep::Create {
                     type_idx,
                     slot,
                     nonce,
-                } => self.step_create(*type_idx, *slot, nonce.wrapping_add(step_nonce))?,
+                } => {
+                    self.step_create(type_idx, slot, nonce.wrapping_add(n))?;
+                }
                 PackDstStep::FireTransition {
                     type_idx,
                     slot,
                     transition_idx,
                     nonce,
-                } => self.step_transition(
-                    *type_idx,
-                    *slot,
-                    *transition_idx,
-                    nonce.wrapping_add(step_nonce),
-                )?,
+                } => {
+                    self.step_transition(type_idx, slot, transition_idx, nonce.wrapping_add(n))?;
+                }
                 PackDstStep::MutateNonLifecycle {
                     type_idx,
                     slot,
                     nonce,
-                } => self.step_mutate(*type_idx, *slot, nonce.wrapping_add(step_nonce))?,
+                } => {
+                    self.step_mutate(type_idx, slot, nonce.wrapping_add(n))?;
+                }
                 PackDstStep::AdvanceClock { delta_millis } => {
-                    let before = self.host.logical_now().as_millis();
-                    self.host.advance_clock(*delta_millis);
-                    let after = self.host.logical_now().as_millis();
-                    let expected = before.saturating_add(*delta_millis);
-                    if after != expected {
-                        return Err(format!(
-                            "virtual clock did not advance by exact delta {delta_millis}: before={before}, after={after}, expected={expected}"
-                        ));
-                    }
+                    self.verify_clock_advance(delta_millis)?;
                 }
                 PackDstStep::CleanReopen => {
                     self.host.reopen()?;
@@ -488,7 +514,8 @@ impl<H: PackHost> DstCaseState<'_, H> {
             .catalog
             .effective_object_values(&key.object_type, &values)
             .map_err(|err| format!("predict effective values for {key}: {err}"))?;
-        let predicted_setup = self.predict_setup_writes(&graph.setup_writes)?;
+        let predicted_setup =
+            super::law_parity::predict_setup_writes(self.catalog, &graph.setup_writes)?;
         let direct_link_keys: Vec<LinkKey> =
             graph.direct_links.iter().map(|lw| lw.key.clone()).collect();
         let all_link_keys: Vec<LinkKey> = graph
@@ -547,23 +574,6 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 "linked create mismatch for {ty_name} (law_violated={law_viol}): {other:?}"
             )),
         }
-    }
-
-    fn predict_setup_writes(
-        &self,
-        writes: &[FactWrite],
-    ) -> Result<Vec<(FactKey, JsonObject)>, String> {
-        let mut out = Vec::with_capacity(writes.len());
-        for write in writes {
-            if let FactMutation::Put { values } = &write.mutation {
-                let effective = self
-                    .catalog
-                    .effective_object_values(&write.key.object_type, values)
-                    .map_err(|err| format!("predict effective values for {}: {err}", write.key))?;
-                out.push((write.key.clone(), effective));
-            }
-        }
-        Ok(out)
     }
 
     fn finish_create_step(
@@ -662,6 +672,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
                     if reason.ends_with(" is immutable") =>
                 {
                     ensure_unchanged(self.host, before, "immutable object transition refusal")?;
+                    self.imm_obj_tr_refusals = self.imm_obj_tr_refusals.saturating_add(1);
                     self.coverage
                         .hit_immutable_refusal(ty_name, "<object>", "<immutable_object>");
                     Ok(())
@@ -816,6 +827,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 if reason.ends_with(" is immutable") =>
             {
                 ensure_unchanged(self.host, before, "immutable object mutation refusal")?;
+                self.imm_obj_mut_refusals = self.imm_obj_mut_refusals.saturating_add(1);
                 self.coverage
                     .hit_immutable_refusal(ty_name, "<object>", "<immutable_object>");
                 Ok(())
@@ -948,18 +960,14 @@ impl<H: PackHost> DstCaseState<'_, H> {
             .host
             .load(key)
             .map_err(|e| format!("load {key}: {e}"))?;
-        if !loaded.exists() {
-            return Err(format!("oracle divergence: {key} missing from host"));
-        }
-        if loaded.version != expected_version {
+        if !loaded.exists()
+            || loaded.version != expected_version
+            || loaded.values.as_ref() != Some(expected_values)
+        {
             return Err(format!(
-                "oracle divergence on {key} version: expected {expected_version:?}, got {:?}",
-                loaded.version
-            ));
-        }
-        if loaded.values.as_ref() != Some(expected_values) {
-            return Err(format!(
-                "oracle divergence on {key} values: expected {expected_values:?}, got {:?}",
+                "oracle divergence on {key}: expected (ver={expected_version:?}, values={expected_values:?}), got (exists={}, ver={:?}, values={:?})",
+                loaded.exists(),
+                loaded.version,
                 loaded.values
             ));
         }
@@ -985,11 +993,5 @@ fn entity_id(type_idx: usize, slot: u8) -> String {
 }
 
 fn ensure_unchanged<H: PackHost>(host: &H, before: usize, context: &str) -> Result<(), String> {
-    let after = host.ledger_len();
-    if after != before {
-        return Err(format!(
-            "{context}: expected zero ledger writes, ledger grew from {before} to {after}"
-        ));
-    }
-    Ok(())
+    super::driver::assert_zero_ledger_writes(host, before, "dst", context)
 }

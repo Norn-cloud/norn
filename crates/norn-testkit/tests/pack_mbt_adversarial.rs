@@ -400,6 +400,20 @@ impl BareHost {
         laws: &[ArtifactEnvelope],
         drop_set_mutations: bool,
     ) -> Result<Self, String> {
+        Self::open_with_laws_and_recorder(
+            pack,
+            laws,
+            drop_set_mutations,
+            Arc::new(DomainCoverageRecorder::new()),
+        )
+    }
+
+    fn open_with_laws_and_recorder(
+        pack: &AdmittedPack,
+        laws: &[ArtifactEnvelope],
+        drop_set_mutations: bool,
+        recorder: Arc<DomainCoverageRecorder>,
+    ) -> Result<Self, String> {
         let dir = tempfile::tempdir().map_err(|e| format!("{e}"))?;
         let db_path = dir.path().join("adv.sqlite");
         let mut all_types = pack.object_types.clone();
@@ -415,7 +429,6 @@ impl BareHost {
         } else {
             base.with_governing_laws(laws).map_err(|e| format!("{e}"))?
         };
-        let recorder = Arc::new(DomainCoverageRecorder::new());
         let inner = FactSqliteCell::open(
             &db_path,
             model.clone(),
@@ -1532,31 +1545,10 @@ fn observed_sqlite_cell_records_hold_on_link_only_commit() -> Result<(), String>
         Some(&1)
     );
 
-    // Unrelated link-only commit (`memo_ref`) must NOT credit `lo.Charge.active_account`.
-    cell.commit(CellCommit {
-        links: vec![LinkWrite {
-            key: LinkKey::new(charge_key.clone(), "memo_ref", account_key.clone()),
-            expected: FactVersion::ABSENT,
-            mutation: LinkMutation::Add {
-                values: JsonObject::new(),
-            },
-        }],
-        ..CellCommit::empty()
-    })
-    .map_err(|e| format!("unrelated link commit: {e}"))?;
-    assert_eq!(
-        recorder
-            .snapshot()
-            .law_holds
-            .get("lo.Charge.active_account"),
-        None,
-        "unrelated edge must not credit a law reading only `account`"
-    );
-
     // Link-only commit (`account`, zero fact writes): activates & satisfies lo.Charge.active_account.
     cell.commit(CellCommit {
         links: vec![LinkWrite {
-            key: LinkKey::new(charge_key, "account", account_key),
+            key: LinkKey::new(charge_key.clone(), "account", account_key.clone()),
             expected: FactVersion::ABSENT,
             mutation: LinkMutation::Add {
                 values: JsonObject::new(),
@@ -1575,6 +1567,27 @@ fn observed_sqlite_cell_records_hold_on_link_only_commit() -> Result<(), String>
         snap.law_holds.get("lo.Charge.positive_total_law"),
         Some(&1),
         "link-only commit must not double-credit unrelated non-linked laws"
+    );
+
+    // Unrelated link-only commit (`memo_ref`) while `active_account` IS active must leave hold count at 1.
+    cell.commit(CellCommit {
+        links: vec![LinkWrite {
+            key: LinkKey::new(charge_key, "memo_ref", account_key),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .map_err(|e| format!("unrelated link commit: {e}"))?;
+    assert_eq!(
+        recorder
+            .snapshot()
+            .law_holds
+            .get("lo.Charge.active_account"),
+        Some(&1),
+        "unrelated edge must not increment a law reading only `account`"
     );
     Ok(())
 }
@@ -1799,7 +1812,6 @@ fn shadow_link_dst_entities() -> Vec<serde_json::Value> {
                         "terminal": ["closed"],
                         "immutable": ["open", "closed"],
                         "transitions": [
-                            {"id": "close", "from": ["open"], "to": "closed", "guards": ["self.ready"]},
                             {"id": "reopen", "from": ["closed"], "to": "open"}
                         ]
                     }]
@@ -1859,17 +1871,57 @@ fn shadow_link_dst_pack() -> Result<AdmittedPack, String> {
 #[test]
 fn dst_exercises_shadow_link_resolution_and_object_immutability_precedence() -> Result<(), String> {
     let pack = shadow_link_dst_pack()?;
+    let recorder = Arc::new(DomainCoverageRecorder::new());
     let dst = run_pack_dst(
         &pack,
         PackDstConfig {
             seed: [0x44; 32],
-            cases: 20,
-            max_steps: 14,
+            cases: 24,
+            max_steps: 18,
             entities_per_type: 1,
         },
-        |_| BareHost::open(&pack, true, false),
+        |_| {
+            BareHost::open_with_laws_and_recorder(
+                &pack,
+                &pack.law_envelopes,
+                false,
+                Arc::clone(&recorder),
+            )
+        },
     )?;
-    assert_eq!(dst.cases_run, 20);
-    assert!(dst.steps_run >= 20);
+    assert_eq!(dst.cases_run, 24);
+    assert!(dst.steps_run >= 24);
+    let snap = recorder.snapshot();
+    assert!(
+        snap.law_holds
+            .get("shd.Order.has_account_id")
+            .copied()
+            .unwrap_or(0)
+            >= 1,
+        "DST must exercise holding linked create via shadow links: {snap:?}"
+    );
+    assert!(
+        snap.law_violations
+            .get("shd.Order.enterprise_done")
+            .copied()
+            .unwrap_or(0)
+            >= 1,
+        "DST must exercise refused `complete` transition via shadow links: {snap:?}"
+    );
+    assert!(
+        dst.immutable_object_transition_refusals >= 1,
+        "DST must exercise wrong-source `reopen` refusal on object-immutable `shd.Locked`"
+    );
+    assert!(
+        dst.immutable_object_mutation_refusals >= 1,
+        "DST must exercise mutation refusal when both object and lifecycle immutability apply"
+    );
+    assert!(
+        dst.coverage
+            .disallowed_transitions
+            .keys()
+            .all(|k| k.object_type != "shd.Locked"),
+        "wrong-source `reopen` on object-immutable `shd.Locked` must not classify as NotFromState"
+    );
     Ok(())
 }

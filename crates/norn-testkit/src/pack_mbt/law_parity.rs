@@ -12,7 +12,7 @@ use norn_kernel::cell_host::{
     FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey,
 };
 use norn_kernel::governing_laws::{
-    LawEvaluationError, LinkTargets, LinkedTarget, evaluate_linked, reads_links,
+    LawEvaluationError, LinkTargets, LinkedTarget, evaluate_linked, link_law_index, reaches,
 };
 use norn_kernel::pack_mbt_support::{
     DataQualityOutcome, DataQualityRuleRef, LawExampleVerdict as Verdict, LawIR, ObjectTypeDef,
@@ -454,6 +454,9 @@ pub(crate) fn predict_oracle_law_violation(
     graph: &OracleGraph<'_>,
     touched_keys: &[FactKey],
 ) -> bool {
+    let Ok(index) = link_law_index(graph.catalog) else {
+        return true;
+    };
     let mut linked_neighbors = BTreeSet::new();
     let mut remaining = KERNEL_LAW_FUEL;
     for key in touched_keys {
@@ -474,19 +477,34 @@ pub(crate) fn predict_oracle_law_violation(
             Err(_) => return true,
             Ok(_) => {}
         }
+        if index.is_empty() {
+            continue;
+        }
         for edge in graph.links {
+            if edge.target == *key && edge.source != *key {
+                let has_forward_dep = index.forward.iter().any(|(subj, link, declared_target)| {
+                    *subj == edge.source.object_type
+                        && *link == edge.link
+                        && reaches(graph.catalog, &key.object_type, declared_target)
+                });
+                if has_forward_dep {
+                    linked_neighbors.insert(edge.source.clone());
+                }
+            }
             if edge.source == *key && edge.target != *key {
-                linked_neighbors.insert(edge.target.clone());
-            } else if edge.target == *key && edge.source != *key {
-                linked_neighbors.insert(edge.source.clone());
+                let has_inverse_dep = index.inverse.iter().any(|(subj, declared_src, link)| {
+                    *subj == edge.target.object_type
+                        && *link == edge.link
+                        && reaches(graph.catalog, &key.object_type, declared_src)
+                });
+                if has_inverse_dep {
+                    linked_neighbors.insert(edge.target.clone());
+                }
             }
         }
     }
     for neighbor in linked_neighbors {
         if touched_keys.contains(&neighbor) {
-            continue;
-        }
-        if !reads_links(graph.catalog, &neighbor.object_type).unwrap_or(false) {
             continue;
         }
         let Some((values, _)) = graph.facts.get(&neighbor) else {
@@ -505,6 +523,23 @@ pub(crate) fn predict_oracle_law_violation(
         }
     }
     false
+}
+
+/// Predicts effective persisted values for each `FactMutation::Put` setup write.
+pub(crate) fn predict_setup_writes(
+    catalog: &TypeCatalog<'_>,
+    writes: &[FactWrite],
+) -> Result<Vec<(FactKey, JsonObject)>, String> {
+    let mut out = Vec::with_capacity(writes.len());
+    for write in writes {
+        if let FactMutation::Put { values } = &write.mutation {
+            let effective = catalog
+                .effective_object_values(&write.key.object_type, values)
+                .map_err(|err| format!("predict effective values for {}: {err}", write.key))?;
+            out.push((write.key.clone(), effective));
+        }
+    }
+    Ok(out)
 }
 
 /// Predicts whether an atomic linked-create commit will violate any entity

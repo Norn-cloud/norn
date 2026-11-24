@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use norn_ir::{
     ArtifactKind, ArtifactPayload, DataQualityFinding, DataQualityOutcome, DataQualityRuleRef,
-    JsonValue, LawIR, LawModality, LawResponse, RuntimeValue,
+    JsonValue, LawIR, LawModality, LawResponse, ObjectTypeName, RuntimeValue,
 };
 use norn_kernel::cell_host::{FactKey, FactMutation, FactState};
 use norn_kernel::{
@@ -530,13 +530,15 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
             finding_violated,
         };
         let mut direct_keys = BTreeSet::new();
-        let mut linked_triggers: BTreeMap<FactKey, BTreeSet<(bool, String)>> = BTreeMap::new();
+        let mut linked_triggers: BTreeMap<FactKey, BTreeSet<(bool, String, ObjectTypeName)>> =
+            BTreeMap::new();
 
         for item in &targets.written {
             direct_keys.insert(item.key.clone());
             self.record_subject_law_holds(&ctx, &item.key, Some(&item.values), None);
             // A write to an object referenced by a link re-evaluates only laws
-            // on the connected neighbor that actually read that specific edge.
+            // on the connected neighbor that actually read that specific edge
+            // and matching endpoint type.
             if let Ok(edges) =
                 reader.links_touching(MAIN_WORLD, item.key.object_type.as_str(), &item.key.key)
             {
@@ -545,19 +547,21 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                     if edge.target == item.key.key && model.is_a(item_ty, &edge.target_type) {
                         let src = FactKey::new(edge.source_type.clone(), edge.source.clone());
                         if src != item.key {
-                            linked_triggers
-                                .entry(src)
-                                .or_default()
-                                .insert((true, edge.link.clone()));
+                            linked_triggers.entry(src).or_default().insert((
+                                true,
+                                edge.link.clone(),
+                                item.key.object_type.clone(),
+                            ));
                         }
                     }
                     if edge.source == item.key.key && model.is_a(item_ty, &edge.source_type) {
                         let dst = FactKey::new(edge.target_type, edge.target);
                         if dst != item.key {
-                            linked_triggers
-                                .entry(dst)
-                                .or_default()
-                                .insert((false, edge.link));
+                            linked_triggers.entry(dst).or_default().insert((
+                                false,
+                                edge.link,
+                                item.key.object_type.clone(),
+                            ));
                         }
                     }
                 }
@@ -568,13 +572,13 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 linked_triggers
                     .entry(lw.source.clone())
                     .or_default()
-                    .insert((true, lw.link.clone()));
+                    .insert((true, lw.link.clone(), lw.target.object_type.clone()));
             }
             if !direct_keys.contains(&lw.target) {
                 linked_triggers
                     .entry(lw.target.clone())
                     .or_default()
-                    .insert((false, lw.link.clone()));
+                    .insert((false, lw.link.clone(), lw.source.object_type.clone()));
             }
         }
         for (key, triggers) in linked_triggers {
@@ -589,7 +593,7 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
         ctx: &SubjectHoldCtx<'_, S>,
         key: &FactKey,
         fallback_values: Option<&BTreeMap<String, RuntimeValue>>,
-        touched_link_triggers: Option<&BTreeSet<(bool, String)>>,
+        touched_link_triggers: Option<&BTreeSet<(bool, String, ObjectTypeName)>>,
     ) {
         let ty_name = key.object_type.as_str();
         let Ok(artifacts) = ctx.model.governing_laws(ty_name) else {
@@ -621,11 +625,30 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 let Ok(index) = norn_kernel::governing_laws::link_law_index(&single_catalog) else {
                     continue;
                 };
-                let reads_touched_edge = index.forward.iter().any(|(subj, link, _)| {
-                    *subj == key.object_type && triggers.contains(&(true, link.clone()))
-                }) || index.inverse.iter().any(|(subj, _, link)| {
-                    *subj == key.object_type && triggers.contains(&(false, link.clone()))
-                });
+                let reads_touched_edge =
+                    index.forward.iter().any(|(subj, link, declared_target)| {
+                        *subj == key.object_type
+                            && triggers.iter().any(|(is_fwd, t_link, t_ty)| {
+                                *is_fwd
+                                    && t_link == link
+                                    && norn_kernel::governing_laws::reaches(
+                                        &single_catalog,
+                                        t_ty,
+                                        declared_target,
+                                    )
+                            })
+                    }) || index.inverse.iter().any(|(subj, declared_src, link)| {
+                        *subj == key.object_type
+                            && triggers.iter().any(|(is_fwd, t_link, t_ty)| {
+                                !*is_fwd
+                                    && t_link == link
+                                    && norn_kernel::governing_laws::reaches(
+                                        &single_catalog,
+                                        t_ty,
+                                        declared_src,
+                                    )
+                            })
+                    });
                 if !reads_touched_edge {
                     continue;
                 }
