@@ -216,3 +216,189 @@ def test_cli_outputs_canonical_json_file(tmp_path: Path) -> None:
     parsed = json.loads(out.read_text(encoding="utf-8"))
     assert parsed["extraction_digest"].startswith("sha256:")
     assert parsed["candidates"][0]["proposal"]["days"] == "2.00"
+
+
+def test_ocr_rejects_unknown_duplicate_missing_effective_on_and_rebinds_conflict_evidence() -> None:
+    fixture = {
+        "records": [
+            {
+                "record_key": "photo/row/strict",
+                "target_kind": "shift_commitment",
+                "effective_on": None,
+                "fields": [
+                    {
+                        "field_name": "injected_unknown",
+                        "value": "SECRET_RAW_VALUE",
+                        "text_span": "SECRET_RAW_VALUE",
+                        "page": 1,
+                        "bbox_x": "0.10",
+                        "bbox_y": "0.10",
+                        "bbox_w": "0.20",
+                        "bbox_h": "0.05",
+                        "confidence_bp": 9500,
+                    },
+                    {
+                        "field_name": "role_code",
+                        "value": "cashier",
+                        "text_span": "cashier",
+                        "page": 1,
+                        "bbox_x": "0.10",
+                        "bbox_y": "0.20",
+                        "bbox_w": "0.20",
+                        "bbox_h": "0.05",
+                        "confidence_bp": 9600,
+                    },
+                    {
+                        "field_name": "role_code",
+                        "value": "supervisor",
+                        "text_span": "supervisor",
+                        "page": 1,
+                        "bbox_x": "0.40",
+                        "bbox_y": "0.20",
+                        "bbox_w": "0.20",
+                        "bbox_h": "0.05",
+                        "confidence_bp": 9600,
+                    },
+                ],
+            },
+            {
+                "record_key": "photo/row/dup-key",
+                "target_kind": "shift_commitment",
+                "effective_on": "2026-11-28",
+                "fields": [
+                    {
+                        "field_name": "role_code",
+                        "value": "cashier",
+                        "text_span": "cashier",
+                        "page": 1,
+                        "bbox_x": "0.10",
+                        "bbox_y": "0.30",
+                        "bbox_w": "0.20",
+                        "bbox_h": "0.05",
+                        "confidence_bp": 9600,
+                    }
+                ],
+            },
+            {
+                "record_key": "photo/row/dup-key",
+                "target_kind": "shift_commitment",
+                "effective_on": "2026-11-28",
+                "fields": [
+                    {
+                        "field_name": "role_code",
+                        "value": "barista",
+                        "text_span": "barista",
+                        "page": 1,
+                        "bbox_x": "0.10",
+                        "bbox_y": "0.40",
+                        "bbox_w": "0.20",
+                        "bbox_h": "0.05",
+                        "confidence_bp": 9600,
+                    }
+                ],
+            },
+        ]
+    }
+    bundle = extract_from_ocr(
+        raw_bytes=json.dumps(fixture).encode("utf-8"),
+        document_uri="evidence://photos/strict.json",
+        media_type="application/json",
+        batch_id="batch_ocr_strict",
+        captured_at="2026-11-22T12:00:00Z",
+        extracted_at="2026-11-22T12:05:00Z",
+        adapter=DeterministicFixtureOcrAdapter(),
+    )
+
+    cand0 = bundle.candidates[0]
+    assert cand0.dispute_state == "disputed"
+    assert cand0.status == "quarantined"
+    assert cand0.effective_on == ""
+    assert "injected_unknown" not in cand0.proposal
+    # First value retained; duplicate field did NOT silently overwrite it.
+    assert cand0.proposal["role_code"] == "cashier"
+    cand0_findings = [f for f in bundle.findings if f.candidate_id == cand0.id]
+    assert {"missing_required_field", "needs_review", "feed_conflict"} <= {
+        f.code for f in cand0_findings
+    }
+    assert all("SECRET_RAW_VALUE" not in f.message for f in bundle.findings)
+
+    # Duplicate-key conflict marks BOTH candidates disputed and every evidence links validly.
+    cand1, cand2 = bundle.candidates[1], bundle.candidates[2]
+    assert cand1.dispute_state == "disputed" and cand1.status == "quarantined"
+    assert cand2.dispute_state == "disputed" and cand2.status == "quarantined"
+    emitted_ids = {c.id for c in bundle.candidates}
+    assert all(ev.candidate_id in emitted_ids for ev in bundle.evidence)
+    assert any(ev.candidate_id == cand2.id for ev in bundle.evidence)
+    conflict_findings = [
+        f
+        for f in bundle.findings
+        if f.finding_kind == "feed_conflict" and f.candidate_id in {cand1.id, cand2.id}
+    ]
+    assert {f.candidate_id for f in conflict_findings} == {cand1.id, cand2.id}
+
+
+def test_cli_refuses_oversized_symlink_and_directory_without_traceback(
+    tmp_path: Path, capsys: object
+) -> None:
+    del capsys
+    big = tmp_path / "big.csv"
+    big.write_bytes(b"a" * 2048)
+    rc_big = cli_main(
+        [
+            "--channel",
+            "sheet",
+            "--input",
+            str(big),
+            "--batch-id",
+            "b1",
+            "--document-uri",
+            "evidence://big",
+            "--captured-at",
+            "2026-11-22T12:00:00Z",
+            "--extracted-at",
+            "2026-11-22T12:05:00Z",
+            "--max-input-bytes",
+            "1024",
+        ]
+    )
+    assert rc_big == 2
+
+    target = tmp_path / "real.txt"
+    target.write_text("hi", encoding="utf-8")
+    link = tmp_path / "link.txt"
+    link.symlink_to(target)
+    rc_link = cli_main(
+        [
+            "--channel",
+            "whatsapp",
+            "--input",
+            str(link),
+            "--batch-id",
+            "b2",
+            "--document-uri",
+            "evidence://link",
+            "--captured-at",
+            "2026-11-22T12:00:00Z",
+            "--extracted-at",
+            "2026-11-22T12:05:00Z",
+        ]
+    )
+    assert rc_link == 2
+
+    rc_dir = cli_main(
+        [
+            "--channel",
+            "ocr",
+            "--input",
+            str(tmp_path),
+            "--batch-id",
+            "b3",
+            "--document-uri",
+            "evidence://dir",
+            "--captured-at",
+            "2026-11-22T12:00:00Z",
+            "--extracted-at",
+            "2026-11-22T12:05:00Z",
+        ]
+    )
+    assert rc_dir == 2

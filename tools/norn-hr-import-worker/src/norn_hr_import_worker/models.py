@@ -13,6 +13,8 @@ from typing import Literal
 
 EXTRACTOR_NAME = "norn-hr-import-worker"
 EXTRACTOR_VERSION = "0.1.0"
+# Core 07 OBS-PAGE-1 bounded read cap (4 MiB) enforced before loading input into memory.
+MAX_INPUT_BYTES = 4 * 1024 * 1024
 
 # MAP-DECIMAL-TEXT-1 / VAL-EXACT-1 strict decimal grammar: no commas, no exponent, no '+'.
 _EXACT_DECIMAL_RE = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
@@ -98,13 +100,13 @@ def parse_exact_decimal(raw: str | int | Decimal) -> Decimal:
     if not isinstance(raw, str):
         raise ExactValueError(f"Unsupported decimal input type: {type(raw).__name__}")
     if not _EXACT_DECIMAL_RE.fullmatch(raw):
-        raise ExactValueError(f"Invalid exact decimal text: {raw!r}")
+        raise ExactValueError("Invalid exact decimal format")
     try:
         dec = Decimal(raw)
     except InvalidOperation as exc:
-        raise ExactValueError(f"Decimal parse failure: {raw!r}") from exc
+        raise ExactValueError("Decimal parse failure") from exc
     if not dec.is_finite():
-        raise ExactValueError(f"Non-finite decimal text: {raw!r}")
+        raise ExactValueError("Non-finite decimal value")
     return dec
 
 
@@ -117,7 +119,7 @@ def parse_exact_int(raw: str | int) -> int:
     if isinstance(raw, int):
         return raw
     if not isinstance(raw, str) or not _EXACT_INT_RE.fullmatch(raw):
-        raise ExactValueError(f"Invalid exact integer text: {raw!r}")
+        raise ExactValueError("Invalid exact integer format")
     return int(raw)
 
 
@@ -141,15 +143,15 @@ def decimal_to_canonical_str(value: Decimal, scale: int | None = None) -> str:
 def validate_iso_date(raw: str) -> str:
     """Validate strict YYYY-MM-DD calendar date format and bounds."""
     if not _ISO_DATE_RE.fullmatch(raw):
-        raise ExactValueError(f"Invalid ISO date: {raw!r}")
+        raise ExactValueError("Invalid ISO date format")
     year, month, day = int(raw[0:4]), int(raw[5:7]), int(raw[8:10])
     if month < 1 or month > 12 or day < 1 or day > 31:
-        raise ExactValueError(f"Out-of-range ISO date: {raw!r}")
+        raise ExactValueError("Out-of-range ISO date")
     # Exact month length check including leap years.
     is_leap = (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
     days_in_month = [31, 29 if is_leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     if day > days_in_month[month - 1]:
-        raise ExactValueError(f"Invalid calendar date: {raw!r}")
+        raise ExactValueError("Invalid calendar date")
     return raw
 
 
@@ -157,7 +159,7 @@ def parse_hhmm_minutes(raw: str) -> int:
     """Parse HH:MM or HH:MM:SS into exact total minutes (refusing seconds != 00 when fractional)."""
     match = _HHMM_RE.fullmatch(raw)
     if match is None:
-        raise ExactValueError(f"Invalid HH:MM time: {raw!r}")
+        raise ExactValueError("Invalid HH:MM time format")
     hours = int(match.group(1))
     minutes = int(match.group(2))
     return hours * 60 + minutes
@@ -168,7 +170,7 @@ def duration_hours_exact(start_hhmm: str, end_hhmm: str) -> Decimal:
     start_min = parse_hhmm_minutes(start_hhmm)
     end_min = parse_hhmm_minutes(end_hhmm)
     if end_min <= start_min:
-        raise ExactValueError(f"Non-positive shift duration: {start_hhmm} -> {end_hhmm}")
+        raise ExactValueError("Non-positive time interval (end must be strictly after start)")
     delta = Decimal(end_min - start_min)
     return (delta / Decimal(60)).quantize(Decimal("0.01"))
 

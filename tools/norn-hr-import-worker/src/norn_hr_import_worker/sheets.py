@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 from collections.abc import Mapping
+from dataclasses import replace
 from decimal import Decimal
 from typing import Literal
 
@@ -23,6 +24,7 @@ from norn_hr_import_worker.models import (
     decimal_to_canonical_str,
     duration_hours_exact,
     parse_exact_decimal,
+    parse_hhmm_minutes,
     sha256_bytes,
     sha256_prefixed,
     validate_iso_date,
@@ -168,6 +170,13 @@ def _parse_row(
             errors.append(("missing_employee", "employee_code", "employee_code is blank", None))
         if not clock_in:
             errors.append(("missing_clock_in", in_col, "Missing clock-in time", None))
+        else:
+            try:
+                parse_hhmm_minutes(clock_in)
+            except ExactValueError as exc:
+                errors.append(
+                    ("invalid_time_interval", in_col, str(exc), "core.TimeInterval.proper_interval")
+                )
         if not clock_out:
             errors.append(
                 (
@@ -177,6 +186,31 @@ def _parse_row(
                     "core.TimeInterval.proper_interval",
                 )
             )
+        else:
+            try:
+                parse_hhmm_minutes(clock_out)
+            except ExactValueError as exc:
+                errors.append(
+                    (
+                        "invalid_time_interval",
+                        out_col,
+                        str(exc),
+                        "core.TimeInterval.proper_interval",
+                    )
+                )
+        interval_hours: Decimal | None = None
+        if clock_in and clock_out:
+            try:
+                interval_hours = duration_hours_exact(clock_in, clock_out)
+            except ExactValueError as exc:
+                errors.append(
+                    (
+                        "invalid_time_interval",
+                        out_col,
+                        str(exc),
+                        "core.TimeInterval.proper_interval",
+                    )
+                )
         hours_str: str | None = None
         if "hours" in row and row["hours"].strip():
             try:
@@ -190,21 +224,22 @@ def _parse_row(
                             None,
                         )
                     )
+                elif interval_hours is not None and abs(hours_dec - interval_hours) > Decimal(
+                    "0.01"
+                ):
+                    errors.append(
+                        (
+                            "hours_interval_mismatch",
+                            "hours",
+                            "Explicit hours does not match clock-in/clock-out interval",
+                            "core.TimeInterval.proper_interval",
+                        )
+                    )
                 hours_str = decimal_to_canonical_str(hours_dec, 2)
             except ExactValueError as exc:
                 errors.append(("invalid_decimal", "hours", str(exc), None))
-        elif clock_in and clock_out:
-            try:
-                hours_str = decimal_to_canonical_str(duration_hours_exact(clock_in, clock_out), 2)
-            except ExactValueError as exc:
-                errors.append(
-                    (
-                        "invalid_time_interval",
-                        out_col,
-                        str(exc),
-                        "core.TimeInterval.proper_interval",
-                    )
-                )
+        elif interval_hours is not None:
+            hours_str = decimal_to_canonical_str(interval_hours, 2)
         proposal: dict[str, JsonValue] = {
             "branch_code": branch,
             "clock_in": clock_in or None,
@@ -233,27 +268,46 @@ def _parse_row(
             effective_on = validate_iso_date(raw_date)
         except ExactValueError as exc:
             errors.append(("invalid_date", "shift_date", str(exc), None))
+        if not branch:
+            errors.append(("missing_branch", "branch_code", "branch_code is blank", None))
+        if not emp:
+            errors.append(("missing_employee", "employee_code", "employee_code is blank", None))
+        if not role_code:
+            errors.append(("missing_role", "role_code", "role_code is blank", None))
+        interval_hours = None
+        try:
+            interval_hours = duration_hours_exact(start_time, end_time)
+        except ExactValueError as exc:
+            errors.append(
+                (
+                    "invalid_time_interval",
+                    "end_time",
+                    str(exc),
+                    "core.TimeInterval.proper_interval",
+                )
+            )
         hours_str = None
         if "hours" in row and row["hours"].strip():
             try:
                 hours_dec = parse_exact_decimal(row["hours"].strip())
                 if hours_dec <= 0:
                     errors.append(("non_positive_hours", "hours", "Shift hours must be > 0", None))
+                elif interval_hours is not None and abs(hours_dec - interval_hours) > Decimal(
+                    "0.01"
+                ):
+                    errors.append(
+                        (
+                            "hours_interval_mismatch",
+                            "hours",
+                            "Explicit hours does not match start_time/end_time interval",
+                            "core.TimeInterval.proper_interval",
+                        )
+                    )
                 hours_str = decimal_to_canonical_str(hours_dec, 2)
             except ExactValueError as exc:
                 errors.append(("invalid_decimal", "hours", str(exc), None))
-        else:
-            try:
-                hours_str = decimal_to_canonical_str(duration_hours_exact(start_time, end_time), 2)
-            except ExactValueError as exc:
-                errors.append(
-                    (
-                        "invalid_time_interval",
-                        "end_time",
-                        str(exc),
-                        "core.TimeInterval.proper_interval",
-                    )
-                )
+        elif interval_hours is not None:
+            hours_str = decimal_to_canonical_str(interval_hours, 2)
         proposal = {
             "branch_code": branch,
             "employee_code": emp,
@@ -278,23 +332,29 @@ def _parse_row(
         ends_on = row["ends_on"].strip()
         raw_days = row["days"].strip()
         effective_on = starts_on
+        starts_valid: str | None = None
+        ends_valid: str | None = None
         try:
-            effective_on = validate_iso_date(starts_on)
-            ends_valid = validate_iso_date(ends_on)
-            if effective_on > ends_valid:
-                errors.append(
-                    (
-                        "reversed_date_range",
-                        "ends_on",
-                        "starts_on must be on or before ends_on",
-                        "hr.LeaveRequest.valid_date_range",
-                    )
-                )
+            starts_valid = validate_iso_date(starts_on)
+            effective_on = starts_valid
         except ExactValueError as exc:
             errors.append(("invalid_date", "starts_on", str(exc), None))
+        try:
+            ends_valid = validate_iso_date(ends_on)
+        except ExactValueError as exc:
+            errors.append(("invalid_date", "ends_on", str(exc), None))
+        if starts_valid is not None and ends_valid is not None and starts_valid > ends_valid:
+            errors.append(
+                (
+                    "reversed_date_range",
+                    "ends_on",
+                    "starts_on must be on or before ends_on",
+                    "hr.LeaveRequest.valid_date_range",
+                )
+            )
         if leave_kind not in _ALLOWED_LEAVE_KINDS:
             errors.append(
-                ("invalid_leave_kind", "leave_kind", f"Unknown leave_kind: {leave_kind!r}", None)
+                ("invalid_leave_kind", "leave_kind", "Unsupported leave_kind value", None)
             )
         days_str: str | None = None
         try:
@@ -418,7 +478,7 @@ def extract_sheet(
     candidates: list[ExtractedCandidateProposal] = []
     evidence_records: list[FieldEvidenceRecord] = []
     findings: list[DataQualityFindingRecord] = []
-    seen_keys: dict[str, tuple[str, str]] = {}
+    seen_keys: dict[str, tuple[int, str, str, str]] = {}
     deduplicated_count = 0
 
     for row_number, raw_cells in enumerate(rows[1:], start=2):
@@ -433,6 +493,7 @@ def extract_sheet(
         row_digest = sha256_prefixed({"row": row_number, "values": raw_cells})
         record_key, effective_on, proposal, row_errors = _parse_row(profile, row_map)
         payload_digest = sha256_prefixed(proposal)
+        key_digest = sha256_prefixed(record_key)[7:19]
         source_span = f"row:{row_number}"
         y_frac = decimal_to_canonical_str(
             parse_exact_decimal(row_number - 1) / parse_exact_decimal(total_rows), 4
@@ -440,10 +501,17 @@ def extract_sheet(
         h_frac = decimal_to_canonical_str(Decimal(1) / parse_exact_decimal(total_rows), 4)
 
         if record_key in seen_keys:
-            prev_cand_id, prev_digest = seen_keys[record_key]
+            prev_idx, prev_cand_id, prev_ev_id, prev_digest = seen_keys[record_key]
             if prev_digest == payload_digest:
                 deduplicated_count += 1
                 continue
+            # Core 07 FEED-CONFLICT: mark BOTH existing and incoming candidates disputed.
+            if candidates[prev_idx].dispute_state != "disputed":
+                candidates[prev_idx] = replace(
+                    candidates[prev_idx],
+                    dispute_state="disputed",
+                    status="quarantined",
+                )
             cand_id = f"{batch_id}_row_{row_number}_conflict"
             ev_id = f"{cand_id}_ev"
             evidence_records.append(
@@ -489,6 +557,24 @@ def extract_sheet(
             )
             findings.append(
                 DataQualityFindingRecord(
+                    id=f"dqf_{prev_cand_id}_feed_conflict_row_{row_number}",
+                    candidate_id=prev_cand_id,
+                    evidence_id=prev_ev_id,
+                    code="feed_conflict",
+                    finding_kind="feed_conflict",
+                    severity="error",
+                    quarantine_disposition="disputed",
+                    field_path="payload_digest",
+                    law_pin="core.boundary.import_finding",
+                    conflicting_payload_digest=payload_digest,
+                    message=(
+                        f"Candidate {prev_cand_id} conflicts with row {row_number} "
+                        f"({cand_id}) on record key digest {key_digest}."
+                    ),
+                )
+            )
+            findings.append(
+                DataQualityFindingRecord(
                     id=f"dqf_{cand_id}_feed_conflict",
                     candidate_id=cand_id,
                     evidence_id=ev_id,
@@ -500,18 +586,18 @@ def extract_sheet(
                     law_pin="core.boundary.import_finding",
                     conflicting_payload_digest=prev_digest,
                     message=(
-                        f"Row {row_number} duplicates key {record_key} with conflicting payload "
-                        f"(prior candidate {prev_cand_id})."
+                        f"Row {row_number} conflicts with prior candidate {prev_cand_id} "
+                        f"on record key digest {key_digest}."
                     ),
                 )
             )
             continue
 
         cand_id = f"{batch_id}_row_{row_number}"
-        seen_keys[record_key] = (cand_id, payload_digest)
+        ev_id = f"{cand_id}_ev"
+        seen_keys[record_key] = (len(candidates), cand_id, ev_id, payload_digest)
         is_quarantined = bool(row_errors)
         confidence_bp = 6200 if is_quarantined else 9850
-        ev_id = f"{cand_id}_ev"
         evidence_records.append(
             FieldEvidenceRecord(
                 id=ev_id,

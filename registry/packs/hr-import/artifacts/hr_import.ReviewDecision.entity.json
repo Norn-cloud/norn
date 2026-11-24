@@ -1,0 +1,123 @@
+{
+  "artifactId": "hr_import.ReviewDecision.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Authenticated import review decision",
+  "namespace": "hr_import",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Immutable human review record linked to an ExtractedCandidate so promotion authenticates a real linked approval record rather than arbitrary non-null receipt strings.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "recorded"
+          ],
+          "initial": [
+            "recorded"
+          ],
+          "property": "status",
+          "terminal": [
+            "recorded"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Extracted candidate decided by this human review record.",
+          "id": "candidate",
+          "inverse": "reviews",
+          "target": "hr_import.ExtractedCandidate"
+        }
+      ],
+      "name": "hr_import.ReviewDecision",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "decision",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "approve_promotion"
+              },
+              {
+                "value": "reject_candidate"
+              },
+              {
+                "value": "supersede_candidate"
+              },
+              {
+                "value": "resolve_finding"
+              }
+            ]
+          }
+        },
+        {
+          "id": "reviewer_user_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "receipt_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "reason",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "decided_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "default": "recorded",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "recorded"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.ReviewDecision.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -67,6 +67,22 @@ def test_iso_date_and_duration_hours_exact() -> None:
         duration_hours_exact("17:00", "09:00")
 
 
+def test_exact_value_errors_never_leak_raw_source_values() -> None:
+    canary = "PII-SALARY-991234"
+    for fn, args in [
+        (parse_exact_decimal, (canary,)),
+        (parse_exact_int, (canary,)),
+        (validate_iso_date, (canary,)),
+        (duration_hours_exact, ("19:45", "08:15")),
+    ]:
+        with pytest.raises(ExactValueError) as exc_info:
+            fn(*args)  # type: ignore[operator]
+        msg = str(exc_info.value)
+        assert canary not in msg
+        assert "19:45" not in msg
+        assert "08:15" not in msg
+
+
 def test_safe_worker_logger_emits_only_metadata_and_no_pii(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

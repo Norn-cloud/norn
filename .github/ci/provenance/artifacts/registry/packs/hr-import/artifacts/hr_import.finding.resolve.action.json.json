@@ -1,10 +1,10 @@
 {
-  "sha256": "af67584c4efd1a7451cb2abe5ab4890a71d1af28fa360938742decbbb046c8d0",
-  "origin": "derived",
-  "category": "generated",
-  "license": "Apache-2.0",
-  "sources": [],
   "analyzed_sources": [],
+  "category": "generated",
+  "connector": null,
+  "license": "Apache-2.0",
+  "notices": [],
+  "origin": "derived",
   "parents": [
     "registry/packs/hr-import/access.ts",
     "registry/packs/hr-import/hr_import.ts"
@@ -15,6 +15,6 @@
       "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
     }
   ],
-  "notices": [],
-  "connector": null
+  "sha256": "d29b447493a760c6e9f23cb532f9582b5d5b8c78931229af902e19f0b774ce6f",
+  "sources": []
 }

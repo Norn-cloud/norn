@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from norn_hr_import_worker.models import (
@@ -90,6 +90,21 @@ _LEAVE_KIND_KEYWORDS: tuple[tuple[str, str], ...] = (
 _LEAVE_TRIGGER_WORDS = ("leave", "إجازة", "اجازة", "اجازه", "إجازه")
 _ATTENDANCE_TRIGGER_WORDS = ("clocked in", "clock in", "check-in", "attendance", "حضور", "انصراف")
 _SHIFT_TRIGGER_WORDS = ("shift", "شيفت", "وردية", "morning", "evening", "مساء", "صباح")
+_SELF_ASSIGNMENT_MARKERS = (
+    "i will",
+    "i'll",
+    "i am",
+    "i'm",
+    "my shift",
+    "i can take",
+    "i'll take",
+    "أنا",
+    "انا",
+    "هاخد",
+    "سأغطي",
+    "شيفتي",
+    "مناوبتي",
+)
 _DAYS_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(?:days?|day|d|أيام|ايام|يوم)\b", re.IGNORECASE)
 _NAMED_SHIFT_RE = re.compile(
     r"(?:^|[—\-:,]\s*)(?P<person>[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*(?::\s*|\s+)"
@@ -136,7 +151,7 @@ def _parse_chat_timestamp(date_str: str, time_str: str, ampm: str | None) -> tup
         elif marker in {"am", "ص"} and hour == 12:
             hour = 0
     if hour > 23 or minute > 59 or second > 59:
-        raise ExactValueError(f"Out-of-range chat time: {time_str!r}")
+        raise ExactValueError("Out-of-range chat timestamp")
     dt = datetime(
         int(iso_date[0:4]),
         int(iso_date[5:7]),
@@ -320,8 +335,11 @@ def _classify_message(
             effective_on,
         )
 
-    # 3. Shift assignment / swap detection
-    if time_match is not None or any(trigger in lower for trigger in _SHIFT_TRIGGER_WORDS):
+    # 3. Shift assignment / swap detection (requires explicit shift or role keyword).
+    has_shift_marker = any(trigger in lower for trigger in _SHIFT_TRIGGER_WORDS) or any(
+        role_token in lower for role_token in _SHIFT_ROLES
+    )
+    if has_shift_marker:
         if time_match is None:
             return None  # Conversational coordination message without a concrete shift window.
         start_hhmm = _pad_hhmm(time_match.group(1))
@@ -332,8 +350,9 @@ def _classify_message(
             return (
                 "shift_commitment",
                 {
-                    "employee_label": msg.sender,
+                    "employee_label": None,
                     "end_time": end_hhmm,
+                    "role_code": None,
                     "shift_date": effective_on,
                     "start_time": start_hhmm,
                 },
@@ -342,8 +361,8 @@ def _classify_message(
                 effective_on,
             )
 
-        employee_label = msg.sender
-        role_code = "general"
+        employee_label: str | None = None
+        role_code: str | None = None
         named_match = _NAMED_SHIFT_RE.search(norm_body)
         if named_match is not None:
             employee_label = named_match.group("person").strip()
@@ -353,11 +372,22 @@ def _classify_message(
                 if role_token in lower:
                     role_code = _ROLE_CANONICAL[role_token]
                     break
+            if any(marker in lower for marker in _SELF_ASSIGNMENT_MARKERS):
+                employee_label = msg.sender
 
-        is_confirmation = any(
-            kw in lower for kw in ("تم تأكيد", "confirmed", "approved", "موافقة", "cashier")
-        )
-        confidence_bp = 9450 if is_confirmation else 8700
+        issue_code: str | None = None
+        if employee_label is None:
+            issue_code = "missing_employee"
+            confidence_bp = 5400
+        elif role_code is None:
+            issue_code = "missing_role"
+            confidence_bp = 6000
+        else:
+            is_confirmation = any(
+                kw in lower for kw in ("تم تأكيد", "confirmed", "approved", "موافقة", "cashier")
+            )
+            confidence_bp = 9450 if is_confirmation else 8700
+
         return (
             "shift_commitment",
             {
@@ -370,7 +400,7 @@ def _classify_message(
                 "unit": "h",
             },
             confidence_bp,
-            None,
+            issue_code,
             effective_on,
         )
 
@@ -407,7 +437,7 @@ def extract_whatsapp_export(
     candidates: list[ExtractedCandidateProposal] = []
     evidence_records: list[FieldEvidenceRecord] = []
     findings: list[DataQualityFindingRecord] = []
-    seen_records: dict[str, tuple[str, str]] = {}  # record_key -> (candidate_id, payload_digest)
+    seen_records: dict[str, tuple[int, str, str, str]] = {}
     deduplicated_count = 0
 
     for msg in messages:
@@ -415,18 +445,29 @@ def extract_whatsapp_export(
         if classified is None:
             continue
         target_kind, proposal, confidence_bp, issue_code, effective_on = classified
-        employee_key = str(proposal.get("employee_label", msg.sender)).lower().replace(" ", "_")
+        raw_emp = proposal.get("employee_label")
+        if isinstance(raw_emp, str) and raw_emp.strip():
+            employee_key = raw_emp.strip().lower().replace(" ", "_")
+        else:
+            employee_key = f"unresolved_msg_{msg.index}"
         source_record_key = f"whatsapp_export/{target_kind}/{employee_key}/{effective_on}"
         payload_digest = sha256_prefixed(proposal)
+        key_digest = sha256_prefixed(source_record_key)[7:19]
         anchor = f"line:{msg.start_line}-{msg.end_line}#{msg.message_digest[7:19]}"
         source_span = f"line:{msg.start_line}-{msg.end_line}"
 
         if source_record_key in seen_records:
-            prev_cand_id, prev_digest = seen_records[source_record_key]
+            prev_idx, prev_cand_id, prev_ev_id, prev_digest = seen_records[source_record_key]
             if prev_digest == payload_digest:
                 deduplicated_count += 1
                 continue
-            # Core 07 FEED-CONFLICT: same identity key with conflicting payload digest!
+            # Core 07 FEED-CONFLICT: mark BOTH prior and incoming candidates disputed.
+            if candidates[prev_idx].dispute_state != "disputed":
+                candidates[prev_idx] = replace(
+                    candidates[prev_idx],
+                    dispute_state="disputed",
+                    status="quarantined",
+                )
             cand_id = f"{batch_id}_cand_{msg.index}_conflict"
             ev_id = f"{cand_id}_ev"
             y_frac = decimal_to_canonical_str(
@@ -480,6 +521,24 @@ def extract_whatsapp_export(
             )
             findings.append(
                 DataQualityFindingRecord(
+                    id=f"dqf_{prev_cand_id}_feed_conflict_msg_{msg.index}",
+                    candidate_id=prev_cand_id,
+                    evidence_id=prev_ev_id,
+                    code="feed_conflict",
+                    finding_kind="feed_conflict",
+                    severity="error",
+                    quarantine_disposition="disputed",
+                    field_path="payload_digest",
+                    law_pin="core.boundary.import_finding",
+                    conflicting_payload_digest=payload_digest,
+                    message=(
+                        f"Candidate {prev_cand_id} conflicts with message at {source_span} "
+                        f"({cand_id}) on record key digest {key_digest}."
+                    ),
+                )
+            )
+            findings.append(
+                DataQualityFindingRecord(
                     id=f"dqf_{cand_id}_feed_conflict",
                     candidate_id=cand_id,
                     evidence_id=ev_id,
@@ -491,15 +550,16 @@ def extract_whatsapp_export(
                     law_pin="core.boundary.import_finding",
                     conflicting_payload_digest=prev_digest,
                     message=(
-                        f"Conflicting message at {source_span} for {source_record_key}; "
-                        f"prior candidate {prev_cand_id} retained as disputed."
+                        f"Conflicting message at {source_span} against prior candidate "
+                        f"{prev_cand_id} on record key digest {key_digest}."
                     ),
                 )
             )
             continue
 
         cand_id = f"{batch_id}_cand_{msg.index}"
-        seen_records[source_record_key] = (cand_id, payload_digest)
+        ev_id = f"{cand_id}_ev"
+        seen_records[source_record_key] = (len(candidates), cand_id, ev_id, payload_digest)
         needs_quarantine = issue_code is not None or confidence_bp < min_confidence_bp
         dispute_state: DisputeState = "quarantined" if needs_quarantine else "clean"
         cand_status: CandidateStatus = "quarantined" if needs_quarantine else "staged"
@@ -512,7 +572,6 @@ def extract_whatsapp_export(
             / parse_exact_decimal(total_lines),
             4,
         )
-        ev_id = f"{cand_id}_ev"
         evidence_records.append(
             FieldEvidenceRecord(
                 id=ev_id,

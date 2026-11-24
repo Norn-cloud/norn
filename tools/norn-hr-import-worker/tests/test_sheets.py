@@ -111,8 +111,52 @@ def test_sheet_duplicate_key_dedup_vs_feed_conflict() -> None:
 
     assert bundle.deduplicated_count == 1
     assert len(bundle.candidates) == 2
-    assert bundle.candidates[0].dispute_state == "clean"
+    assert bundle.candidates[0].dispute_state == "disputed"
+    assert bundle.candidates[0].status == "quarantined"
     assert bundle.candidates[1].dispute_state == "disputed"
-    assert len(bundle.findings) == 1
-    assert bundle.findings[0].finding_kind == "feed_conflict"
-    assert bundle.findings[0].conflicting_payload_digest == bundle.candidates[0].payload_digest
+    assert bundle.candidates[1].status == "quarantined"
+    assert len(bundle.findings) == 2
+    by_cand = {f.candidate_id: f for f in bundle.findings}
+    assert set(by_cand) == {bundle.candidates[0].id, bundle.candidates[1].id}
+    assert all(f.finding_kind == "feed_conflict" for f in bundle.findings)
+    c0, c1 = bundle.candidates[0], bundle.candidates[1]
+    assert by_cand[c0.id].conflicting_payload_digest == c1.payload_digest
+    assert by_cand[c1.id].conflicting_payload_digest == c0.payload_digest
+
+
+def test_sheet_validates_intervals_even_when_hours_present_and_sanitizes_findings() -> None:
+    csv_att = (
+        b"branch_code,employee_code,work_date,clock_in,clock_out,hours\n"
+        b"BR-01,EMP-1,2026-11-25,17:00,09:00,8.00\n"
+        b"BR-01,EMP-2,2026-11-25,09:00,17:00,10.00\n"
+    )
+    bundle_att = extract_sheet(
+        raw_bytes=csv_att,
+        document_uri="evidence://sheets/att-bad-interval.csv",
+        batch_id="batch_att_int",
+        profile="attendance",
+        captured_at="2026-11-25T20:00:00Z",
+        extracted_at="2026-11-25T21:00:00Z",
+    )
+    assert all(c.dispute_state == "quarantined" for c in bundle_att.candidates)
+    codes_by_idx = [
+        {f.code for f in bundle_att.findings if f.candidate_id == c.id}
+        for c in bundle_att.candidates
+    ]
+    assert "invalid_time_interval" in codes_by_idx[0]
+    assert "hours_interval_mismatch" in codes_by_idx[1]
+
+    csv_emp = (
+        b"employee_code,display_name,effective_from,currency,base_salary,max_weekly_hours,primary_skill\n"
+        b"EMP-9,Canary Person,2026-01-01,USD,SECRET_SALARY_99999,40,cashier\n"
+    )
+    bundle_emp = extract_sheet(
+        raw_bytes=csv_emp,
+        document_uri="evidence://sheets/emp-pii.csv",
+        batch_id="batch_emp_pii",
+        profile="employee",
+        captured_at="2026-11-25T20:00:00Z",
+        extracted_at="2026-11-25T21:00:00Z",
+    )
+    assert bundle_emp.candidates[0].dispute_state == "quarantined"
+    assert all("SECRET_SALARY_99999" not in f.message for f in bundle_emp.findings)

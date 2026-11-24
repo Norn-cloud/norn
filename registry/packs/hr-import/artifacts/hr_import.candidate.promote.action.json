@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "hr_import.candidate.promote",
-    "description": "Promote a clean reviewed candidate anchored to verified norn.SourceEvidence matching its SourceBatch document digest.",
+    "description": "Promote a staged clean candidate anchored to verified norn.SourceEvidence matching its SourceBatch digest and an authenticated linked approve_promotion ReviewDecision (with zero open findings enforced by LAW-LINK-MANY-1).",
     "effectProgram": {
       "entityArtifactId": "hr_import.ExtractedCandidate.entity",
       "entityArtifactVersion": "0.1.0",
@@ -34,12 +34,16 @@
         },
         "evidenceId": {
           "type": "string"
+        },
+        "reviewDecisionId": {
+          "type": "string"
         }
       },
       "required": [
         "candidateId",
         "batchId",
-        "evidenceId"
+        "evidenceId",
+        "reviewDecisionId"
       ],
       "type": "object"
     },
@@ -61,8 +65,8 @@
       "type": "object"
     },
     "preconditions": [
-      "((slice.batch.id in map(slice.candidate_batch as b, b.id)) and (slice.candidate.id in map(slice.evidence_candidate as c, c.id))) and (slice.batch.id in map(slice.evidence_batch as b, b.id))",
-      "(((slice.candidate.dispute_state == 'clean') and (slice.candidate.review_receipt_digest != null)) and (slice.candidate.reviewed_by_user_id != null)) and (slice.evidence.document_digest == slice.batch.document_digest)"
+      "(((slice.batch.id in map(slice.candidate_batch as b, b.id)) and (slice.candidate.id in map(slice.evidence_candidate as c, c.id))) and (slice.batch.id in map(slice.evidence_batch as b, b.id))) and (slice.candidate.id in map(slice.review_candidate as c, c.id))",
+      "(((((slice.candidate.status == 'staged') and (slice.candidate.dispute_state == 'clean')) and (slice.review.decision == 'approve_promotion')) and ((slice.candidate.review_receipt_digest ?? '') == slice.review.receipt_digest)) and ((slice.candidate.reviewed_by_user_id ?? '') == slice.review.reviewer_user_id)) and (slice.evidence.document_digest == slice.batch.document_digest)"
     ],
     "scopeRequired": [
       "orgId",
@@ -101,6 +105,16 @@
       },
       {
         "key": {
+          "property": {
+            "from": "input",
+            "property": "reviewDecisionId"
+          }
+        },
+        "name": "review",
+        "objectType": "hr_import.ReviewDecision"
+      },
+      {
+        "key": {
           "link": {
             "from": "candidate",
             "link": "batch"
@@ -128,6 +142,16 @@
         },
         "name": "evidence_batch",
         "objectType": "hr_import.SourceBatch"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "review",
+            "link": "candidate"
+          }
+        },
+        "name": "review_candidate",
+        "objectType": "hr_import.ExtractedCandidate"
       }
     ],
     "title": "Promote extracted candidate",

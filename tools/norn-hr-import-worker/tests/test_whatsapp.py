@@ -50,12 +50,21 @@ def test_whatsapp_parses_repo_fixture_with_source_evidence_and_no_pii_logs(
     assert ev.source_anchor.startswith("line:5-5#")
     assert ev.page == 1
 
-    # Zero PII in logs: employee names and message text must never appear.
+    # Zero PII in logs or findings: employee names and message text must never appear.
     log_text = "\n".join(r.getMessage() for r in caplog.records)
-    assert "Salma Tarek" not in log_text
-    assert "Karim Adel" not in log_text
-    assert "Nour Hassan" not in log_text
+    finding_text = "\n".join(f.message for f in bundle.findings)
+    for leaked in ("Salma Tarek", "Karim Adel", "Nour Hassan"):
+        assert leaked not in log_text
+        assert leaked not in finding_text
     assert bundle.batch.document_digest in log_text
+    # Line 4 lacks an explicit role and must never fabricate "general".
+    assert all(c.proposal.get("role_code") != "general" for c in bundle.candidates)
+    # Line 4 and line 5 share Salma's shift key with differing payloads -> BOTH disputed.
+    salma_cands = [
+        c for c in bundle.candidates if c.proposal.get("employee_label") == "Salma Tarek"
+    ]
+    assert len(salma_cands) == 2
+    assert all(c.dispute_state == "disputed" and c.status == "quarantined" for c in salma_cands)
 
 
 def test_whatsapp_handles_arabic_indic_digits_leave_and_attendance() -> None:
@@ -119,13 +128,55 @@ def test_whatsapp_dedups_identical_and_flags_feed_conflict_on_divergence() -> No
 
     assert bundle1.deduplicated_count == 1
     assert len(bundle1.candidates) == 2
+    assert bundle1.candidates[0].dispute_state == "disputed"
+    assert bundle1.candidates[0].status == "quarantined"
     conflict_cand = bundle1.candidates[1]
     assert conflict_cand.dispute_state == "disputed"
     assert conflict_cand.status == "quarantined"
-    assert len(bundle1.findings) == 1
-    finding = bundle1.findings[0]
-    assert finding.finding_kind == "feed_conflict"
-    assert finding.quarantine_disposition == "disputed"
-    assert finding.conflicting_payload_digest == bundle1.candidates[0].payload_digest
+    assert len(bundle1.findings) == 2
+    by_cand = {f.candidate_id: f for f in bundle1.findings}
+    assert set(by_cand) == {bundle1.candidates[0].id, conflict_cand.id}
+    assert all(
+        f.finding_kind == "feed_conflict" and f.quarantine_disposition == "disputed"
+        for f in bundle1.findings
+    )
+    first_cand = bundle1.candidates[0]
+    assert by_cand[conflict_cand.id].conflicting_payload_digest == first_cand.payload_digest
+    assert by_cand[first_cand.id].conflicting_payload_digest == conflict_cand.payload_digest
+    assert all("Karim Adel" not in f.message for f in bundle1.findings)
     assert bundle1.to_canonical_json() == bundle2.to_canonical_json()
     assert bundle1.extraction_digest == bundle2.extraction_digest
+
+
+def test_whatsapp_refuses_non_shift_ranges_and_quarantines_missing_employee_or_role() -> None:
+    chat = (
+        b"[22/11/2026, 12:00] Manager: Lunch break 13:00-14:00 today\n"
+        b"[22/11/2026, 12:05] Manager: Evening shift 2026-11-26 14:00-22:00 cashier\n"
+        b"[22/11/2026, 12:10] Sara Ali: I will take the morning shift 2026-11-27 09:00-17:00\n"
+    )
+    bundle = extract_whatsapp_export(
+        raw_bytes=chat,
+        document_uri="evidence://chat/strict.txt",
+        batch_id="batch_strict",
+        captured_at="2026-11-22T12:15:00Z",
+        extracted_at="2026-11-22T12:20:00Z",
+    )
+    # First line has no shift/role keyword -> ignored (not misclassified as a shift).
+    assert len(bundle.candidates) == 2
+    # Second line has no named employee and is not self-assignment -> quarantined missing_employee.
+    missing_emp = bundle.candidates[0]
+    assert missing_emp.dispute_state == "quarantined"
+    assert missing_emp.proposal["employee_label"] is None
+    assert any(
+        f.candidate_id == missing_emp.id and f.code == "missing_employee"
+        for f in bundle.findings
+    )
+    # Third line is self-assignment without role -> quarantined missing_role (never "general").
+    missing_role = bundle.candidates[1]
+    assert missing_role.dispute_state == "quarantined"
+    assert missing_role.proposal["employee_label"] == "Sara Ali"
+    assert missing_role.proposal["role_code"] is None
+    assert any(
+        f.candidate_id == missing_role.id and f.code == "missing_role"
+        for f in bundle.findings
+    )

@@ -36,19 +36,22 @@ mod suite {
         check_artifact_set_with_receipt, marking_catalog_from_artifacts,
     };
     use norn_ir::{
-        AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, InterfaceDef, MarkingId, MaskPolicy,
-        ObjectTypeDef, PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
+        AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, DataQualityRuleRef, DecisionOutput,
+        FactChange, InterfaceDef, MarkingId, MaskPolicy, ObjectTypeDef, ObjectTypeName, PropertyId,
+        PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
     };
     use norn_kernel::authz::{
         self, AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation,
         DenyReason, Pdp, PdpActionAuthorizer, PdpDecision, PrincipalInput, ResourceInput, ScopeKey,
     };
     use norn_kernel::cell_host::{JsonObject, JsonValue};
+    use norn_kernel::governing_laws::LawEvaluationError;
     use norn_kernel::{
         ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
         ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionRefusal, CellCommit, CellHost,
-        Command, DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, LinkKey,
-        LinkMutation, LinkWrite, LogicalTime, TypeCatalog, World, commit_action,
+        Command, CommitError, DecisionRefusal, DecisionTurn, FactEvent, FactKey, FactMutation,
+        FactVersion, FactWrite, LinkKey, LinkMutation, LinkWrite, LogicalTime, TypeCatalog, World,
+        commit_action, load_slice, prepare_decision,
     };
     use serde_json::{Value, json};
 
@@ -682,7 +685,7 @@ mod suite {
         id: &str,
         values: &Value,
         links: &[(&str, &str, &str)],
-    ) -> Result<(), norn_cell::CellError> {
+    ) -> Result<(), CommitError<norn_cell::CellError>> {
         let mut commit = CellCommit::empty();
         commit.writes.push(put_fact(object_type, id, values));
         for (link, to_type, to_id) in links {
@@ -691,6 +694,127 @@ mod suite {
                 .push(add_link(object_type, id, link, to_type, to_id));
         }
         cell.commit(commit).map(|_| ())
+    }
+
+    fn assert_law_refusal(
+        result: Result<(), CommitError<norn_cell::CellError>>,
+        expected_law_id: &str,
+        context: &str,
+    ) {
+        let error = result.expect_err(context);
+        match error {
+            CommitError::Law {
+                reason: LawEvaluationError::Violated(failure),
+                ..
+            } => match &failure.rule_ref {
+                DataQualityRuleRef::Law { law_id, .. } => {
+                    assert_eq!(law_id, expected_law_id, "{context}");
+                }
+                other => panic!("{context}: expected Law rule_ref, got {other:?}"),
+            },
+            other => {
+                panic!("{context}: expected CommitError::Law({expected_law_id}), got {other:?}")
+            }
+        }
+    }
+
+    fn assert_invariant_refusal(
+        result: Result<(), CommitError<norn_cell::CellError>>,
+        expected_id: &str,
+        context: &str,
+    ) {
+        let error = result.expect_err(context);
+        assert!(
+            matches!(
+                &error,
+                CommitError::InvariantViolation { id, .. } if id.as_str() == expected_id
+            ),
+            "{context}: expected CommitError::InvariantViolation({expected_id}), got {error:?}"
+        );
+    }
+
+    fn assert_action_law_refusal(
+        result: Result<ActionOutcome, Box<ActionRefusal<norn_cell::CellError>>>,
+        expected_law_id: &str,
+        context: &str,
+    ) {
+        let refusal = result.expect_err(context);
+        match refusal.as_ref() {
+            ActionRefusal::Decision(DecisionRefusal::Law {
+                reason: LawEvaluationError::Violated(failure),
+                ..
+            }) => match &failure.rule_ref {
+                DataQualityRuleRef::Law { law_id, .. } => {
+                    assert_eq!(law_id, expected_law_id, "{context}");
+                }
+                other => panic!("{context}: expected Law rule_ref, got {other:?}"),
+            },
+            other => panic!(
+                "{context}: expected ActionRefusal::Decision(Law({expected_law_id})), got {other:?}"
+            ),
+        }
+    }
+
+    fn assert_immutable_state_write(
+        fixture: &HrVerticalFixture,
+        cell: &Cell,
+        object_type: &str,
+        id: &str,
+        property: &str,
+        new_value: &str,
+        expected_state: &str,
+    ) {
+        let key = FactKey::new(object_type, id);
+        let slice = load_slice(cell, [key.clone()]).expect("load slice for immutability check");
+        let turn = DecisionTurn {
+            id: format!("turn:immut:{id}"),
+            now: LogicalTime::from_millis(KNOWN_AT),
+            world: World::Main,
+            consumes: None,
+        };
+        let output = DecisionOutput {
+            facts: vec![FactChange::Set {
+                object_type: ObjectTypeName(object_type.to_owned()),
+                key: id.to_owned(),
+                property: PropertyId(property.to_owned()),
+                value: RuntimeValue::String(new_value.to_owned()),
+            }],
+            commands: Vec::new(),
+            timers: Vec::new(),
+        };
+        let refusal =
+            prepare_decision::<norn_cell::CellError>(&fixture.catalog(), &slice, &turn, &output)
+                .expect_err("write to immutable terminal lifecycle state must refuse");
+        assert!(
+            matches!(
+                &refusal,
+                DecisionRefusal::ImmutableStateWrite {
+                    key: refused_key,
+                    lifecycle,
+                    state,
+                } if *refused_key == key && lifecycle == "status" && state == expected_state
+            ),
+            "expected ImmutableStateWrite(status={expected_state}) on {key}, got {refusal:?}"
+        );
+    }
+
+    fn eg_54h_employment_json() -> Value {
+        json!({
+            "id": "emp_eg_ongoing_54h", "jurisdiction_code": "EG",
+            "effective_from": "2024-01-01", "effective_to": null, "currency": "EGP",
+            "base_salary": 18000, "hourly_overtime_rate": 150, "max_weekly_hours": 54,
+            "status": "active"
+        })
+    }
+
+    fn eg_15d_leave_allocation_json() -> Value {
+        json!({
+            "id": "la_eg_std_15d", "jurisdiction_code": "EG", "leave_kind": "annual",
+            "entitlement_tier": "standard", "hazardous_or_remote": false,
+            "qualifying_service_months": null, "starts_on": "2026-01-01",
+            "ends_on": "2026-12-31", "allocated_days": 15,
+            "carry_forward_days": 0, "status": "active"
+        })
     }
 
     fn mask_text(value: &str, policy: &MaskPolicy) -> Option<String> {
@@ -846,6 +970,7 @@ mod suite {
             "hr_import.FieldEvidence.valid_anchor.law",
             "hr_import.ExtractedCandidate.confidence_bounds.law",
             "hr_import.ExtractedCandidate.promoted_requires_clean_review.law",
+            "hr_import.ReviewDecision.authenticated.law",
             "hr_import.DataQualityFinding.terminal_requires_audit_evidence.law",
             "hr_import.DataQualityFinding.feed_conflict_is_disputed.law",
         ] {
@@ -897,7 +1022,7 @@ mod suite {
         )
         .expect("valid positive labor capacity commits");
 
-        assert!(
+        assert_law_refusal(
             commit_single_with_links(
                 cell,
                 "hr.LaborCapacity",
@@ -909,15 +1034,15 @@ mod suite {
                 }),
                 &[
                     ("owner", "hr.Person", "person_ada"),
-                    ("custodian", "org.OrgUnit", "unit_main")
+                    ("custodian", "org.OrgUnit", "unit_main"),
                 ],
-            )
-            .is_err(),
-            "negative hr.LaborCapacity must be refused by hr.LaborCapacity.non_negative.law"
+            ),
+            "hr.LaborCapacity.non_negative",
+            "negative hr.LaborCapacity must be refused by hr.LaborCapacity.non_negative",
         );
 
         // core.TimeInterval proper_interval invariant refuses negative/zero duration.
-        assert!(
+        assert_invariant_refusal(
             commit_single_with_links(
                 cell,
                 "hr.ShiftRequirement",
@@ -928,18 +1053,19 @@ mod suite {
                     "timezone": "UTC", "required_count": 1
                 }),
                 &[("unit", "org.OrgUnit", "unit_main")],
-            )
-            .is_err(),
-            "negative-duration core.TimeInterval must be refused"
+            ),
+            "proper_interval",
+            "negative-duration core.TimeInterval must be refused",
         );
 
-        // Jurisdiction-agnostic base `hr` admits 54h/wk preference without loc-eg.
+        // Jurisdiction-agnostic base `hr` admits EG 54h/wk preference, EG 54h/wk employment,
+        // and EG 15d annual leave allocation when `loc-eg` is NOT installed.
         commit_single_with_links(
             cell,
             "hr.PreferenceProfile",
             "pref_base_54h",
             &json!({
-                "id": "pref_base_54h", "jurisdiction_code": null, "label": "Generic 54h",
+                "id": "pref_base_54h", "jurisdiction_code": "EG", "label": "Generic 54h",
                 "currency": "USD", "weekly_overtime_budget": 1500, "min_rest_hours": 10,
                 "max_daily_hours": 10, "max_weekly_hours": 54, "min_weekly_rest_hours": 24,
                 "max_consecutive_days": 6, "weekend_fairness_priority": "high",
@@ -950,7 +1076,19 @@ mod suite {
                 ("calendar", "time.Calendar", "cal_main"),
             ],
         )
-        .expect("base hr pack stays jurisdiction-agnostic without loc-eg");
+        .expect("base hr pack admits EG 54h preference without loc-eg");
+        commit_single_with_links(
+            cell,
+            "hr.Employment",
+            "emp_eg_ongoing_54h",
+            &eg_54h_employment_json(),
+            &[
+                ("person", "hr.Person", "person_ada"),
+                ("membership", "org.Membership", "mem_ada"),
+                ("home_unit", "org.OrgUnit", "unit_main"),
+            ],
+        )
+        .expect("base hr pack admits exact EG 54h employment without loc-eg");
     }
 
     fn seed_leave_balances(cell: &mut Cell) {
@@ -1041,6 +1179,20 @@ mod suite {
             ));
         }
         cell.commit(seed).expect("seed leave requests");
+        // Base `hr` without `loc-eg` admits the exact 15-day EG standard annual leave allocation
+        // that `loc_eg.hr.LeaveAllocation.annual_floor` refuses once `loc-eg` is composed.
+        commit_single_with_links(
+            cell,
+            "hr.LeaveAllocation",
+            "la_eg_std_15d",
+            &eg_15d_leave_allocation_json(),
+            &[
+                ("person", "hr.Person", "person_ada"),
+                ("policy", "hr.LeavePolicy", "lp_std"),
+                ("balance", "hr.LeaveBalance", "bal_ada"),
+            ],
+        )
+        .expect("base hr pack admits exact EG 15d leave allocation without loc-eg");
     }
 
     fn assert_leave_link_binding_and_access_sod(fixture: &HrVerticalFixture, cell: &mut Cell) {
@@ -1237,44 +1389,48 @@ mod suite {
     }
 
     fn assert_payroll_fund_and_salary_slip(cell: &mut Cell) {
-        assert!(
+        assert_law_refusal(
+            commit_single_with_links(
+                cell,
+                "hr.PayrollFund",
+                "pf_bad_unit",
+                &json!({"id": "pf_bad_unit", "resource_code": "PF", "quantity": 1000, "unit": "h", "currency": "USD", "valuation_method": null}),
+                &[("owner", "org.OrgUnit", "unit_main")],
+            ),
+            "hr.PayrollFund.non_negative",
+            "PayrollFund with non-null UCUM unit must be refused",
+        );
         commit_single_with_links(
             cell,
             "hr.PayrollFund",
-            "pf_bad_unit",
-            &json!({"id": "pf_bad_unit", "resource_code": "PF", "quantity": 1000, "unit": "h", "currency": "USD", "valuation_method": null}),
+            "pf_usd",
+            &json!({"id": "pf_usd", "resource_code": "PAYROLL-USD", "quantity": 100_000, "unit": null, "currency": "USD", "valuation_method": null}),
             &[("owner", "org.OrgUnit", "unit_main")],
         )
-        .is_err()
-    );
+        .expect("USD payroll fund commits");
         commit_single_with_links(
-        cell,
-        "hr.PayrollFund",
-        "pf_usd",
-        &json!({"id": "pf_usd", "resource_code": "PAYROLL-USD", "quantity": 100_000, "unit": null, "currency": "USD", "valuation_method": null}),
-        &[("owner", "org.OrgUnit", "unit_main")],
-    )
-    .expect("USD payroll fund commits");
-        commit_single_with_links(
-        cell,
-        "hr.PayrollRun",
-        "pr_2026_11",
-        &json!({
-            "id": "pr_2026_11", "period_code": "2026-11",
-            "starts_at": "2026-11-01T00:00:00Z", "ends_at": "2026-12-01T00:00:00Z", "timezone": "UTC",
-            "currency": "USD", "total_gross": 5000, "total_deductions": 850, "total_net": 4150,
-            "prepared_by_user_id": "principal:payroll_officer", "status": "draft"
-        }),
-        &[("unit", "org.OrgUnit", "unit_main"), ("fund", "hr.PayrollFund", "pf_usd")],
-    )
-    .expect("payroll run commits");
+            cell,
+            "hr.PayrollRun",
+            "pr_2026_11",
+            &json!({
+                "id": "pr_2026_11", "period_code": "2026-11",
+                "starts_at": "2026-11-01T00:00:00Z", "ends_at": "2026-12-01T00:00:00Z", "timezone": "UTC",
+                "currency": "USD", "total_gross": 5000, "total_deductions": 850, "total_net": 4150,
+                "prepared_by_user_id": "principal:payroll_officer", "status": "draft"
+            }),
+            &[
+                ("unit", "org.OrgUnit", "unit_main"),
+                ("fund", "hr.PayrollFund", "pf_usd"),
+            ],
+        )
+        .expect("payroll run commits");
         let slip_links = [
             ("provider", "org.OrgUnit", "unit_main"),
             ("receiver", "hr.Person", "person_ada"),
             ("resource", "hr.PayrollFund", "pf_usd"),
             ("payroll_run", "hr.PayrollRun", "pr_2026_11"),
         ];
-        assert!(
+        assert_law_refusal(
             commit_single_with_links(
                 cell,
                 "hr.SalarySlip",
@@ -1285,9 +1441,9 @@ mod suite {
                     "gross_pay": 5000, "total_deductions": 850, "net_pay": 4150
                 }),
                 &slip_links,
-            )
-            .is_err(),
-            "SalarySlip with quantity != net_pay must refuse"
+            ),
+            "hr.SalarySlip.conservation",
+            "SalarySlip with quantity != net_pay must refuse",
         );
         commit_single_with_links(
             cell,
@@ -1347,21 +1503,21 @@ mod suite {
             ("creditor", "hr.Person", "person_ada"),
             ("debtor", "org.OrgUnit", "unit_main"),
         ];
-        assert!(
-        commit_single_with_links(
-            cell,
-            "hr.ExpenseClaim",
-            "exp_bad_amt",
-            &json!({
-                "id": "exp_bad_amt", "amount": 250, "currency": "USD", "due_date": "2026-12-20",
-                "requester_user_id": "principal:employee", "claimed_amount": 250,
-                "sanctioned_amount": 220, "description": "Divergent amount", "status": "approved"
-            }),
-            &exp_links,
-        )
-        .is_err(),
-        "approved ExpenseClaim with amount != sanctioned_amount must refuse"
-    );
+        assert_law_refusal(
+            commit_single_with_links(
+                cell,
+                "hr.ExpenseClaim",
+                "exp_bad_amt",
+                &json!({
+                    "id": "exp_bad_amt", "amount": 250, "currency": "USD", "due_date": "2026-12-20",
+                    "requester_user_id": "principal:employee", "claimed_amount": 250,
+                    "sanctioned_amount": 220, "description": "Divergent amount", "status": "approved"
+                }),
+                &exp_links,
+            ),
+            "hr.ExpenseClaim.amount_conservation",
+            "approved ExpenseClaim with amount != sanctioned_amount must refuse",
+        );
         commit_single_with_links(
             cell,
             "hr.ExpenseClaim",
@@ -1427,7 +1583,7 @@ mod suite {
             ("prof_eg_9h", 9, 45, 24),
             ("prof_eg_12h_rest", 8, 48, 12),
         ] {
-            assert!(
+            assert_law_refusal(
                 commit_single_with_links(
                     cell,
                     "hr.PreferenceProfile",
@@ -1441,9 +1597,9 @@ mod suite {
                         "avoid_split_shifts": true
                     }),
                     &links,
-                )
-                .is_err(),
-                "{id} must be refused by loc-eg Law 14/2025 overlay"
+                ),
+                "loc_eg.hr.PreferenceProfile.labor_law_14_2025",
+                "illegal EG preference profile must be refused by loc-eg Law 14/2025 overlay",
             );
         }
 
@@ -1476,22 +1632,17 @@ mod suite {
             ("membership", "org.Membership", "mem_ada"),
             ("home_unit", "org.OrgUnit", "unit_main"),
         ];
-        // Active EG contract started before 2025-09-01 (`effective_to: null`) at 54h/wk is REFUSED.
-        assert!(
+        // Replay exact same EG 54h/wk employment admitted in base `hr`-only cell: REFUSED here!
+        assert_law_refusal(
             commit_single_with_links(
                 cell,
                 "hr.Employment",
                 "emp_eg_ongoing_54h",
-                &json!({
-                    "id": "emp_eg_ongoing_54h", "jurisdiction_code": "EG",
-                    "effective_from": "2024-01-01", "effective_to": null, "currency": "EGP",
-                    "base_salary": 18000, "hourly_overtime_rate": 150, "max_weekly_hours": 54,
-                    "status": "active"
-                }),
+                &eg_54h_employment_json(),
                 &links,
-            )
-            .is_err(),
-            "active pre-2025-09-01 EG employment at 54h/wk must be refused"
+            ),
+            "loc_eg.hr.Employment.max_weekly_hours",
+            "active pre-2025-09-01 EG employment at 54h/wk must be refused by loc-eg",
         );
 
         // Non-EG GB 54h/wk AND pre-2025-09-01-ended EG 54h/wk BOTH admit on the same cell.
@@ -1530,21 +1681,34 @@ mod suite {
 
     fn assert_loc_eg_leave_allocations(cell: &mut Cell) {
         commit_single_with_links(
-        cell,
-        "hr.LeaveBalance",
-        "bal_eg",
-        &json!({
-            "id": "bal_eg", "resource_code": "annual_leave", "quantity": 21, "unit": "d",
-            "currency": null, "valuation_method": null, "leave_kind": "annual", "period_year": 2026
-        }),
-        &[("owner", "hr.Person", "person_ada")],
-    )
-    .expect("leave balance commits");
+            cell,
+            "hr.LeaveBalance",
+            "bal_eg",
+            &json!({
+                "id": "bal_eg", "resource_code": "annual_leave", "quantity": 21, "unit": "d",
+                "currency": null, "valuation_method": null, "leave_kind": "annual", "period_year": 2026
+            }),
+            &[("owner", "hr.Person", "person_ada")],
+        )
+        .expect("leave balance commits");
         let alloc_links = [
             ("person", "hr.Person", "person_ada"),
             ("policy", "hr.LeavePolicy", "lp_std"),
             ("balance", "hr.LeaveBalance", "bal_eg"),
         ];
+
+        // Replay exact same EG 15d standard allocation admitted in base `hr`-only cell: REFUSED!
+        assert_law_refusal(
+            commit_single_with_links(
+                cell,
+                "hr.LeaveAllocation",
+                "la_eg_std_15d",
+                &eg_15d_leave_allocation_json(),
+                &alloc_links,
+            ),
+            "loc_eg.hr.LeaveAllocation.annual_floor",
+            "exact EG 15d standard allocation must be refused by Art. 124 floor",
+        );
 
         for (id, tier, haz, months, days) in [
             (
@@ -1561,9 +1725,8 @@ mod suite {
                 json!(4),
                 json!(7.5),
             ),
-            ("la_eg_std_15d", "standard", false, Value::Null, json!(15)),
         ] {
-            assert!(
+            assert_law_refusal(
                 commit_single_with_links(
                     cell,
                     "hr.LeaveAllocation",
@@ -1576,9 +1739,9 @@ mod suite {
                         "carry_forward_days": 0, "status": "active"
                     }),
                     &alloc_links,
-                )
-                .is_err(),
-                "{id} must be refused by Art. 124 floor"
+                ),
+                "loc_eg.hr.LeaveAllocation.annual_floor",
+                "sub-floor EG prorated allocation must be refused by Art. 124 floor",
             );
         }
 
@@ -1596,18 +1759,18 @@ mod suite {
         )
         .expect("compliant 14.5d EG hazardous prorated allocation admits");
         commit_single_with_links(
-        cell,
-        "hr.LeaveAllocation",
-        "la_gb_10d_ok",
-        &json!({
-            "id": "la_gb_10d_ok", "jurisdiction_code": "GB", "leave_kind": "annual",
-            "entitlement_tier": "standard", "hazardous_or_remote": false,
-            "qualifying_service_months": null, "starts_on": "2026-01-01", "ends_on": "2026-12-31",
-            "allocated_days": 10, "carry_forward_days": 0, "status": "active"
-        }),
-        &alloc_links,
-    )
-    .expect("GB leave allocation is unaffected by loc-eg overlay");
+            cell,
+            "hr.LeaveAllocation",
+            "la_gb_10d_ok",
+            &json!({
+                "id": "la_gb_10d_ok", "jurisdiction_code": "GB", "leave_kind": "annual",
+                "entitlement_tier": "standard", "hazardous_or_remote": false,
+                "qualifying_service_months": null, "starts_on": "2026-01-01", "ends_on": "2026-12-31",
+                "allocated_days": 10, "carry_forward_days": 0, "status": "active"
+            }),
+            &alloc_links,
+        )
+        .expect("GB leave allocation is unaffected by loc-eg overlay");
     }
 
     fn assert_loc_eg_labor_profile(cell: &mut Cell) {
@@ -1624,15 +1787,16 @@ mod suite {
                 "weekend_pattern": "friday_saturday"
             })
         };
-        assert!(
+        assert_law_refusal(
             commit_single_with_links(
                 cell,
                 "loc_eg.LaborProfile",
                 "lp_12h_bad",
                 &make_lp("lp_12h_bad", false),
-                &lp_links
-            )
-            .is_err()
+                &lp_links,
+            ),
+            "loc_eg.LaborProfile.statutory_floors",
+            "12h presence must refuse when intermittent_or_preparatory_work is false",
         );
         commit_single_with_links(
             cell,
@@ -1668,44 +1832,58 @@ mod suite {
     fn seed_import_batch_and_candidates(cell: &mut Cell, digest: &str) {
         let mut seed = CellCommit::empty();
         seed.writes.extend([
-        put_fact(
-            "hr_import.SourceBatch",
-            "batch_1",
-            &json!({
-                "id": "batch_1", "channel": "spreadsheet_csv",
-                "document_uri": "evidence://imports/attendance.csv",
-                "document_digest": digest, "media_type": "text/csv",
-                "extractor": "norn-hr-import-worker", "extractor_version": "0.1.0",
-                "raw_excerpt": "BRANCH-01,EMP-003,2026-11-22,14:05,",
-                "captured_at": "2026-11-22T20:30:00Z", "status": "reviewing"
-            }),
-        ),
-        put_fact(
-            "hr_import.ExtractedCandidate",
-            "cand_disputed",
-            &json!({
-                "id": "cand_disputed", "target_kind": "attendance_event",
-                "source_record_key": "spreadsheet_csv/BRANCH-01/EMP-003/2026-11-22",
-                "payload_digest": "sha256:aaaa", "confidence_bp": 6200, "source_span": "row:4",
-                "extracted_at": "2026-11-23T08:05:00Z", "observed_at": "2026-11-22T20:30:00Z",
-                "effective_on": "2026-11-22", "dispute_state": "disputed",
-                "review_receipt_digest": null, "reviewed_by_user_id": null, "status": "staged"
-            }),
-        ),
-        put_fact(
-            "hr_import.ExtractedCandidate",
-            "cand_clean",
-            &json!({
-                "id": "cand_clean", "target_kind": "attendance_event",
-                "source_record_key": "spreadsheet_csv/BRANCH-01/EMP-003/2026-11-22",
-                "payload_digest": "sha256:bbbb", "confidence_bp": 9850, "source_span": "row:4-fix",
-                "extracted_at": "2026-11-23T09:00:00Z", "observed_at": "2026-11-22T21:00:00Z",
-                "effective_on": "2026-11-22", "dispute_state": "clean",
-                "review_receipt_digest": "sha256:rev_001",
-                "reviewed_by_user_id": "principal:hr_manager", "status": "staged"
-            }),
-        ),
-    ]);
+            put_fact(
+                "hr_import.SourceBatch",
+                "batch_1",
+                &json!({
+                    "id": "batch_1", "channel": "spreadsheet_csv",
+                    "document_uri": "evidence://imports/attendance.csv",
+                    "document_digest": digest, "media_type": "text/csv",
+                    "extractor": "norn-hr-import-worker", "extractor_version": "0.1.0",
+                    "raw_excerpt": "BRANCH-01,EMP-003,2026-11-22,14:05,",
+                    "captured_at": "2026-11-22T20:30:00Z", "status": "reviewing"
+                }),
+            ),
+            put_fact(
+                "hr_import.ExtractedCandidate",
+                "cand_disputed",
+                &json!({
+                    "id": "cand_disputed", "target_kind": "attendance_event",
+                    "source_record_key": "spreadsheet_csv/BRANCH-01/EMP-003/2026-11-22",
+                    "payload_digest": "sha256:aaaa", "confidence_bp": 6200, "source_span": "row:4",
+                    "extracted_at": "2026-11-23T08:05:00Z", "observed_at": "2026-11-22T20:30:00Z",
+                    "effective_on": "2026-11-22", "dispute_state": "disputed",
+                    "review_receipt_digest": "sha256:rev_disp",
+                    "reviewed_by_user_id": "principal:hr_manager", "status": "staged"
+                }),
+            ),
+            put_fact(
+                "hr_import.ExtractedCandidate",
+                "cand_open_finding",
+                &json!({
+                    "id": "cand_open_finding", "target_kind": "attendance_event",
+                    "source_record_key": "spreadsheet_csv/BRANCH-01/EMP-004/2026-11-22",
+                    "payload_digest": "sha256:cccc", "confidence_bp": 9400, "source_span": "row:5",
+                    "extracted_at": "2026-11-23T08:10:00Z", "observed_at": "2026-11-22T20:30:00Z",
+                    "effective_on": "2026-11-22", "dispute_state": "clean",
+                    "review_receipt_digest": "sha256:rev_open",
+                    "reviewed_by_user_id": "principal:hr_manager", "status": "staged"
+                }),
+            ),
+            put_fact(
+                "hr_import.ExtractedCandidate",
+                "cand_clean",
+                &json!({
+                    "id": "cand_clean", "target_kind": "attendance_event",
+                    "source_record_key": "spreadsheet_csv/BRANCH-01/EMP-003/2026-11-22",
+                    "payload_digest": "sha256:bbbb", "confidence_bp": 9850, "source_span": "row:4-fix",
+                    "extracted_at": "2026-11-23T09:00:00Z", "observed_at": "2026-11-22T21:00:00Z",
+                    "effective_on": "2026-11-22", "dispute_state": "clean",
+                    "review_receipt_digest": "sha256:rev_001",
+                    "reviewed_by_user_id": "principal:hr_manager", "status": "staged"
+                }),
+            ),
+        ]);
         seed.links.extend([
             add_link(
                 "hr_import.SourceBatch",
@@ -1717,6 +1895,13 @@ mod suite {
             add_link(
                 "hr_import.ExtractedCandidate",
                 "cand_disputed",
+                "batch",
+                "hr_import.SourceBatch",
+                "batch_1",
+            ),
+            add_link(
+                "hr_import.ExtractedCandidate",
+                "cand_open_finding",
                 "batch",
                 "hr_import.SourceBatch",
                 "batch_1",
@@ -1739,54 +1924,109 @@ mod suite {
         cell.commit(seed).expect("seed import batch and candidates");
     }
 
-    fn seed_import_evidence_and_finding(cell: &mut Cell, digest: &str) {
+    fn seed_import_evidence_and_reviews(cell: &mut Cell, digest: &str) {
+        let mut seed = CellCommit::empty();
+        for (ev_id, rev_id, cand_id, receipt) in [
+            (
+                "ev_disputed",
+                "rev_disputed",
+                "cand_disputed",
+                "sha256:rev_disp",
+            ),
+            (
+                "ev_open_finding",
+                "rev_open_finding",
+                "cand_open_finding",
+                "sha256:rev_open",
+            ),
+            ("ev_clean", "rev_clean", "cand_clean", "sha256:rev_001"),
+        ] {
+            seed.writes.push(put_fact(
+                "hr_import.FieldEvidence",
+                ev_id,
+                &json!({
+                    "id": ev_id, "subject_property": "clock_out_at",
+                    "subject_type": "hr.AttendanceEvent", "subject_key": cand_id,
+                    "document_uri": "evidence://imports/attendance.csv", "document_digest": digest,
+                    "media_type": "text/csv", "page": 1, "bbox_x": 0, "bbox_y": 0.25,
+                    "bbox_w": 1, "bbox_h": 0.1, "text": "row:4-fix 14:05-22:00",
+                    "extractor": "norn-hr-import-worker", "extractor_version": "0.1.0",
+                    "confidence_bp": 9850, "source_anchor": "row:4#bbbb", "record_digest": "sha256:ev01"
+                }),
+            ));
+            seed.writes.push(put_fact(
+                "hr_import.ReviewDecision",
+                rev_id,
+                &json!({
+                    "id": rev_id, "decision": "approve_promotion",
+                    "reviewer_user_id": "principal:hr_manager", "receipt_digest": receipt,
+                    "reason": "Verified against source batch evidence.",
+                    "decided_at": "2026-11-23T09:10:00Z", "status": "recorded"
+                }),
+            ));
+            seed.links.extend([
+                add_link(
+                    "hr_import.FieldEvidence",
+                    ev_id,
+                    "batch",
+                    "hr_import.SourceBatch",
+                    "batch_1",
+                ),
+                add_link(
+                    "hr_import.FieldEvidence",
+                    ev_id,
+                    "candidate",
+                    "hr_import.ExtractedCandidate",
+                    cand_id,
+                ),
+                add_link(
+                    "hr_import.ReviewDecision",
+                    rev_id,
+                    "candidate",
+                    "hr_import.ExtractedCandidate",
+                    cand_id,
+                ),
+            ]);
+        }
+        cell.commit(seed)
+            .expect("seed import evidence and review decisions");
+    }
+
+    fn seed_import_findings(cell: &mut Cell) {
         let mut seed = CellCommit::empty();
         seed.writes.extend([
-        put_fact(
-            "hr_import.FieldEvidence",
-            "ev_clean",
-            &json!({
-                "id": "ev_clean", "subject_property": "clock_out_at",
-                "subject_type": "hr.AttendanceEvent", "subject_key": "cand_clean",
-                "document_uri": "evidence://imports/attendance.csv", "document_digest": digest,
-                "media_type": "text/csv", "page": 1, "bbox_x": 0, "bbox_y": 0.25,
-                "bbox_w": 1, "bbox_h": 0.1, "text": "row:4-fix 14:05-22:00",
-                "extractor": "norn-hr-import-worker", "extractor_version": "0.1.0",
-                "confidence_bp": 9850, "source_anchor": "row:4#bbbb", "record_digest": "sha256:ev01"
-            }),
-        ),
-        put_fact(
-            "hr_import.DataQualityFinding",
-            "dqf_conflict",
-            &json!({
-                "id": "dqf_conflict", "code": "feed_conflict", "finding_kind": "feed_conflict",
-                "severity": "error", "quarantine_disposition": "disputed",
-                "field_path": "payload_digest", "law_pin": "core.boundary.import_finding",
-                "conflicting_payload_digest": "sha256:9999",
-                "message": "Duplicate source key arrived with conflicting digest.",
-                "resolution_action": "accept_second_as_correction",
-                "resolution_receipt_digest": "sha256:res_001",
-                "resolved_by_user_id": "principal:hr_manager",
-                "resolution_reason": "Supervisor verified corrected clock-out export.",
-                "status": "open"
-            }),
-        ),
-    ]);
+            put_fact(
+                "hr_import.DataQualityFinding",
+                "dqf_conflict",
+                &json!({
+                    "id": "dqf_conflict", "code": "feed_conflict", "finding_kind": "feed_conflict",
+                    "severity": "error", "quarantine_disposition": "disputed",
+                    "field_path": "payload_digest", "law_pin": "core.boundary.import_finding",
+                    "conflicting_payload_digest": "sha256:9999",
+                    "message": "Duplicate source key arrived with conflicting digest.",
+                    "resolution_action": "accept_second_as_correction",
+                    "resolution_receipt_digest": "sha256:res_001",
+                    "resolved_by_user_id": "principal:hr_manager",
+                    "resolution_reason": "Supervisor verified corrected clock-out export.",
+                    "status": "open"
+                }),
+            ),
+            put_fact(
+                "hr_import.DataQualityFinding",
+                "dqf_open_blocks_promo",
+                &json!({
+                    "id": "dqf_open_blocks_promo", "code": "feed_conflict",
+                    "finding_kind": "feed_conflict", "severity": "error",
+                    "quarantine_disposition": "disputed", "field_path": "payload_digest",
+                    "law_pin": "core.boundary.import_finding",
+                    "conflicting_payload_digest": "sha256:8888",
+                    "message": "Open conflict linked to clean-marked candidate blocks promotion.",
+                    "resolution_action": null, "resolution_receipt_digest": null,
+                    "resolved_by_user_id": null, "resolution_reason": null, "status": "open"
+                }),
+            ),
+        ]);
         seed.links.extend([
-            add_link(
-                "hr_import.FieldEvidence",
-                "ev_clean",
-                "batch",
-                "hr_import.SourceBatch",
-                "batch_1",
-            ),
-            add_link(
-                "hr_import.FieldEvidence",
-                "ev_clean",
-                "candidate",
-                "hr_import.ExtractedCandidate",
-                "cand_clean",
-            ),
             add_link(
                 "hr_import.DataQualityFinding",
                 "dqf_conflict",
@@ -1801,8 +2041,15 @@ mod suite {
                 "hr_import.ExtractedCandidate",
                 "cand_clean",
             ),
+            add_link(
+                "hr_import.DataQualityFinding",
+                "dqf_open_blocks_promo",
+                "candidate",
+                "hr_import.ExtractedCandidate",
+                "cand_open_finding",
+            ),
         ]);
-        cell.commit(seed).expect("seed import evidence and finding");
+        cell.commit(seed).expect("seed import findings");
     }
 
     fn assert_import_quarantine_and_guards(fixture: &HrVerticalFixture, cell: &mut Cell) {
@@ -1821,85 +2068,66 @@ mod suite {
         );
 
         assert_permission_denied(
-        fixture.invoke(
-            cell,
-            "hr_import.candidate.promote",
-            &json!({"candidateId": "cand_clean", "batchId": "batch_1", "evidenceId": "ev_clean"}),
-            "principal:hr_import_worker",
-            "imp-worker-promote-denied",
-        ),
-        "import worker must never promote candidates",
-    );
-        assert_precondition_false(
-        fixture.invoke(
-            cell,
-            "hr_import.candidate.promote",
-            &json!({"candidateId": "cand_disputed", "batchId": "batch_1", "evidenceId": "ev_clean"}),
-            "principal:hr_manager",
-            "imp-promote-disputed-refused",
-        ),
-        "disputed candidate cannot promote",
-    );
-    }
-
-    #[test]
-    fn hr_import_evidence_conflict_supersession_and_immutable_resolution() {
-        let fixture = HrVerticalFixture::load(HR_IMPORT_PACKS);
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("hr-import.sqlite");
-        let mut cell = fixture.open_installed_cell(&path);
-        let digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
-        seed_common_org_and_people(&mut cell);
-        seed_import_batch_and_candidates(&mut cell, digest);
-        seed_import_evidence_and_finding(&mut cell, digest);
-        assert_import_quarantine_and_guards(&fixture, &mut cell);
-
-        fixture
-        .invoke(
-            &mut cell,
-            "hr_import.finding.supersede",
-            &json!({"findingId": "dqf_conflict", "candidateId": "cand_disputed", "replacementCandidateId": "cand_clean"}),
-            "principal:hr_manager",
-            "imp-finding-supersede",
-        )
-        .expect("HR manager supersedes FEED-CONFLICT finding");
-        assert_eq!(
-            status_of(&cell, "hr_import.DataQualityFinding", "dqf_conflict"),
-            "superseded"
+            fixture.invoke(
+                cell,
+                "hr_import.candidate.promote",
+                &json!({
+                    "candidateId": "cand_clean", "batchId": "batch_1",
+                    "evidenceId": "ev_clean", "reviewDecisionId": "rev_clean"
+                }),
+                "principal:hr_import_worker",
+                "imp-worker-promote-denied",
+            ),
+            "import worker must never promote candidates",
         );
+
+        // `cand_disputed` has its OWN valid FieldEvidence (`ev_disputed`) and ReviewDecision
+        // (`rev_disputed`), so link preconditions pass and dispute/status guard genuinely refuses!
         assert_precondition_false(
             fixture.invoke(
-                &mut cell,
+                cell,
+                "hr_import.candidate.promote",
+                &json!({
+                    "candidateId": "cand_disputed", "batchId": "batch_1",
+                    "evidenceId": "ev_disputed", "reviewDecisionId": "rev_disputed"
+                }),
+                "principal:hr_manager",
+                "imp-promote-disputed-refused",
+            ),
+            "disputed/quarantined candidate with valid links cannot promote",
+        );
+
+        // LAW-LINK-MANY-1: even a staged `clean` candidate with valid evidence and review approval
+        // is REFUSED at commit time when an open linked DataQualityFinding exists!
+        assert_action_law_refusal(
+            fixture.invoke(
+                cell,
+                "hr_import.candidate.promote",
+                &json!({
+                    "candidateId": "cand_open_finding", "batchId": "batch_1",
+                    "evidenceId": "ev_open_finding", "reviewDecisionId": "rev_open_finding"
+                }),
+                "principal:hr_manager",
+                "imp-promote-open-finding-law-refused",
+            ),
+            "hr_import.ExtractedCandidate.promoted_requires_clean_review",
+            "open linked finding must block promotion via LAW-LINK-MANY-1",
+        );
+
+        // Non-overlapping resolution: `hr_import.finding.resolve` refuses supersession disposition.
+        assert_precondition_false(
+            fixture.invoke(
+                cell,
                 "hr_import.finding.resolve",
                 &json!({"findingId": "dqf_conflict", "candidateId": "cand_disputed"}),
                 "principal:hr_manager",
-                "imp-finding-re-resolve-refused",
+                "imp-resolve-cannot-bypass-supersede",
             ),
-            "immutable superseded finding must refuse re-resolution",
+            "finding.resolve must refuse accept_second_as_correction disposition",
         );
-        fixture
-        .invoke(
-            &mut cell,
-            "hr_import.candidate.supersede",
-            &json!({"candidateId": "cand_disputed", "replacementCandidateId": "cand_clean", "batchId": "batch_1"}),
-            "principal:hr_manager",
-            "imp-cand-supersede",
-        )
-        .expect("HR manager supersedes disputed candidate");
-        fixture
-        .invoke(
-            &mut cell,
-            "hr_import.candidate.promote",
-            &json!({"candidateId": "cand_clean", "batchId": "batch_1", "evidenceId": "ev_clean"}),
-            "principal:hr_manager",
-            "imp-cand-promote",
-        )
-        .expect("HR manager promotes evidence-anchored clean candidate");
-        assert_eq!(
-            status_of(&cell, "hr_import.ExtractedCandidate", "cand_clean"),
-            "promoted"
-        );
+    }
 
+    fn assert_reopened_cell_matches(fixture: &HrVerticalFixture, path: &Path, cell: Cell) {
         let dump = cell.store().read().dump().expect("dump");
         let head = cell
             .store()
@@ -1908,7 +2136,7 @@ mod suite {
             .expect("ledger verifies");
         drop(cell);
         let reopened = Cell::open(
-            &path,
+            path,
             fixture.model(),
             StoreOptions::default(),
             SCOPE_KEY,
@@ -1924,6 +2152,84 @@ mod suite {
                 .expect("reopened ledger"),
             head
         );
+    }
+
+    #[test]
+    fn hr_import_evidence_conflict_supersession_and_immutable_resolution() {
+        let fixture = HrVerticalFixture::load(HR_IMPORT_PACKS);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("hr-import.sqlite");
+        let mut cell = fixture.open_installed_cell(&path);
+        let digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        seed_common_org_and_people(&mut cell);
+        seed_import_batch_and_candidates(&mut cell, digest);
+        seed_import_evidence_and_reviews(&mut cell, digest);
+        seed_import_findings(&mut cell);
+        assert_import_quarantine_and_guards(&fixture, &mut cell);
+
+        fixture
+            .invoke(
+                &mut cell,
+                "hr_import.finding.supersede",
+                &json!({
+                    "findingId": "dqf_conflict", "candidateId": "cand_disputed",
+                    "replacementCandidateId": "cand_clean"
+                }),
+                "principal:hr_manager",
+                "imp-finding-supersede",
+            )
+            .expect("HR manager supersedes FEED-CONFLICT finding");
+        assert_eq!(
+            status_of(&cell, "hr_import.DataQualityFinding", "dqf_conflict"),
+            "superseded"
+        );
+        assert_immutable_state_write(
+            &fixture,
+            &cell,
+            "hr_import.DataQualityFinding",
+            "dqf_conflict",
+            "message",
+            "tampered after supersession",
+            "superseded",
+        );
+        fixture
+            .invoke(
+                &mut cell,
+                "hr_import.candidate.supersede",
+                &json!({
+                    "candidateId": "cand_disputed", "replacementCandidateId": "cand_clean",
+                    "batchId": "batch_1"
+                }),
+                "principal:hr_manager",
+                "imp-cand-supersede",
+            )
+            .expect("HR manager supersedes disputed candidate");
+        fixture
+            .invoke(
+                &mut cell,
+                "hr_import.candidate.promote",
+                &json!({
+                    "candidateId": "cand_clean", "batchId": "batch_1",
+                    "evidenceId": "ev_clean", "reviewDecisionId": "rev_clean"
+                }),
+                "principal:hr_manager",
+                "imp-cand-promote",
+            )
+            .expect("HR manager promotes evidence-anchored clean candidate");
+        assert_eq!(
+            status_of(&cell, "hr_import.ExtractedCandidate", "cand_clean"),
+            "promoted"
+        );
+        assert_immutable_state_write(
+            &fixture,
+            &cell,
+            "hr_import.ExtractedCandidate",
+            "cand_clean",
+            "source_span",
+            "tampered after promotion",
+            "promoted",
+        );
+        assert_reopened_cell_matches(&fixture, &path, cell);
     }
 
     // ---------------------------------------------------------------- Test 5: PII Markings & Reveal

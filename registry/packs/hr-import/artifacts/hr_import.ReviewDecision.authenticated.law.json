@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr_import.ReviewDecision.authenticated.law",
+  "dependencies": [
+    {
+      "artifactId": "hr_import.ReviewDecision.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Import review decisions require non-empty reviewer identity, receipt digest, and reason",
+  "namespace": "hr_import",
+  "payload": {
+    "id": "hr_import.ReviewDecision.authenticated",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr_import",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr-import/hr_import.ts"
+    },
+    "rationale": "Every recorded human import review decision must carry a non-empty reviewer identity, receipt digest, and justification.",
+    "response": {
+      "expression": "((self.reviewer_user_id != '') and (self.receipt_digest != '')) and (self.reason != '')",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr_import.ReviewDecision"
+      ],
+      "root": {
+        "id": "hr_import.ReviewDecision",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr_import.ReviewDecision"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.ReviewDecision.authenticated.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

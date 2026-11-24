@@ -40,7 +40,7 @@
                 "open"
               ],
               "guards": [
-                "(((self.resolution_action != null) and (self.resolution_receipt_digest != null)) and (self.resolved_by_user_id != null)) and (self.resolution_reason != null)"
+                "(((((self.resolution_action ?? '') == 'accept_first') or ((self.resolution_action ?? '') == 'revalidated_correction')) and (self.resolution_receipt_digest != null)) and (self.resolved_by_user_id != null)) and (self.resolution_reason != null)"
               ],
               "id": "resolve",
               "to": "resolved"
@@ -77,6 +77,7 @@
           },
           "description": "Extracted candidate quarantined or disputed by this finding.",
           "id": "candidate",
+          "inverse": "findings",
           "target": "hr_import.ExtractedCandidate"
         },
         {

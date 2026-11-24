@@ -6,12 +6,24 @@
       "kind": "entity",
       "required": true,
       "version": "0.1.0"
+    },
+    {
+      "artifactId": "hr_import.DataQualityFinding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "hr_import.ReviewDecision.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
     }
   ],
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Promoted candidates must be clean with an authenticated review receipt and reviewer",
+  "name": "Promoted candidates must be clean with zero open linked findings and an approval review decision",
   "namespace": "hr_import",
   "payload": {
     "condition": "self.status == 'promoted'",
@@ -25,9 +37,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/hr-import/hr_import.ts"
     },
-    "rationale": "Untrusted extracted candidates cannot be promoted into authoritative HR records while quarantined or disputed, or without an authenticated review receipt and reviewer identity.",
+    "rationale": "Untrusted extracted candidates cannot be promoted while quarantined/disputed, while any linked DataQualityFinding remains open (LAW-LINK-MANY-1), or without a linked approve_promotion ReviewDecision.",
     "response": {
-      "expression": "((self.dispute_state == 'clean') and (self.review_receipt_digest != null)) and (self.reviewed_by_user_id != null)",
+      "expression": "((((self.dispute_state == 'clean') and (self.review_receipt_digest != null)) and (self.reviewed_by_user_id != null)) and all(self.findings as f, f.status != 'open')) and some(self.reviews as r, r.decision == 'approve_promotion')",
       "kind": "predicate"
     },
     "scope": {

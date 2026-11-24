@@ -9,6 +9,13 @@
  * Raw chat/schedule excerpts carry `pii.raw_chat_media` (declared in
  * `registry/packs/hr/markings.ts`) so untrusted workers and unauthorized
  * readers never see raw personal media without audited reveal authority.
+ *
+ * Enforcement boundary note: lifecycle `immutable: [...]` states are enforced
+ * on the governed decision-commit and action paths (`prepare_decision` /
+ * `commit_action` -> `DecisionRefusal::ImmutableStateWrite`), whereas raw
+ * low-level `CellHost::commit` enforces type-level immutability and governing
+ * laws (including `LAW-LINK-MANY-1` inverse-link predicates) rather than
+ * lifecycle state locks or link deletion guards.
  */
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
@@ -157,7 +164,7 @@ export const ExtractedCandidate = Norn.type({
         { id: "quarantine", from: ["staged"], to: "quarantined" },
         {
           id: "promote",
-          from: ["staged", "quarantined"],
+          from: ["staged"],
           to: "promoted",
           guards: [
             Norn.expression(
@@ -294,6 +301,7 @@ export const DataQualityFinding = Norn.type({
       description: "Extracted candidate quarantined or disputed by this finding.",
       target: ExtractedCandidate,
       cardinality: { to: "one", from: "many", required: true },
+      inverse: "findings",
     },
     {
       id: "evidence",
@@ -323,7 +331,8 @@ export const DataQualityFinding = Norn.type({
             Norn.expression(
               DataQualityFindingSubject,
               (self) =>
-                self.resolution_action !== null &&
+                ((self.resolution_action ?? "") === "accept_first" ||
+                  (self.resolution_action ?? "") === "revalidated_correction") &&
                 self.resolution_receipt_digest !== null &&
                 self.resolved_by_user_id !== null &&
                 self.resolution_reason !== null,
@@ -361,6 +370,58 @@ export const DataQualityFinding = Norn.type({
           ],
         },
       ],
+    },
+  ],
+})
+
+// ---------------------------------------------------------------- Authenticated Human Review Decisions
+
+const ReviewDecisionKind = Schema.Literals([
+  "approve_promotion",
+  "reject_candidate",
+  "supersede_candidate",
+  "resolve_finding",
+])
+
+const ReviewDecisionStatus = Schema.Literals(["recorded"])
+
+const ReviewDecisionProps = Schema.Struct({
+  id: Schema.String,
+  decision: ReviewDecisionKind,
+  reviewer_user_id: Schema.String,
+  receipt_digest: Schema.String,
+  reason: Schema.String,
+  decided_at: Norn.timestamp("utc"),
+  status: ReviewDecisionStatus,
+})
+
+export const ReviewDecision = Norn.type({
+  name: "hr_import.ReviewDecision",
+  role: "happening",
+  title: "Authenticated import review decision",
+  version: "0.1.0",
+  description: "Immutable human review record linked to an ExtractedCandidate so promotion authenticates a real linked approval record rather than arbitrary non-null receipt strings.",
+  properties: ReviewDecisionProps,
+  identity: [{ name: "primary", properties: ["id"] }],
+  defaults: {
+    status: "recorded",
+  },
+  links: [
+    {
+      id: "candidate",
+      description: "Extracted candidate decided by this human review record.",
+      target: ExtractedCandidate,
+      cardinality: { to: "one", from: "many", required: true },
+      inverse: "reviews",
+    },
+  ],
+  lifecycles: [
+    {
+      property: "status",
+      initial: ["recorded"],
+      terminal: ["recorded"],
+      immutable: ["recorded"],
+      transitions: [],
     },
   ],
 })
@@ -705,19 +766,30 @@ export const CandidateBitemporalReversedViolated = Norn.example("observed_at aft
   expect: "violated",
 })
 
+const ExtractedCandidateReviewSubject = Schema.Struct({
+  status: CandidateStatus,
+  dispute_state: CandidateDisputeState,
+  review_receipt_digest: Schema.NullOr(Schema.String),
+  reviewed_by_user_id: Schema.NullOr(Schema.String),
+  findings: Schema.Array(Schema.Struct({ status: FindingStatus })),
+  reviews: Schema.Array(Schema.Struct({ decision: ReviewDecisionKind })),
+})
+
 export const PromotedCandidateRequiresCleanReview = Norn.law({
   id: "hr_import.ExtractedCandidate.promoted_requires_clean_review.law",
-  title: "Promoted candidates must be clean with an authenticated review receipt and reviewer",
+  title: "Promoted candidates must be clean with zero open linked findings and an approval review decision",
   version: "0.1.0",
   dependencies: [
     { artifactId: "hr_import.ExtractedCandidate.entity", kind: "entity", version: "0.1.0", required: true },
+    { artifactId: "hr_import.DataQualityFinding.entity", kind: "entity", version: "0.1.0", required: true },
+    { artifactId: "hr_import.ReviewDecision.entity", kind: "entity", version: "0.1.0", required: true },
   ],
   law: {
     lawVersion: "0.1",
     id: "hr_import.ExtractedCandidate.promoted_requires_clean_review",
     owner: "hr_import",
     severity: "error",
-    rationale: "Untrusted extracted candidates cannot be promoted into authoritative HR records while quarantined or disputed, or without an authenticated review receipt and reviewer identity.",
+    rationale: "Untrusted extracted candidates cannot be promoted while quarantined/disputed, while any linked DataQualityFinding remains open (LAW-LINK-MANY-1), or without a linked approve_promotion ReviewDecision.",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/hr-import/hr_import.ts" },
     subject: "hr_import.ExtractedCandidate",
     scope: {
@@ -729,11 +801,13 @@ export const PromotedCandidateRequiresCleanReview = Norn.law({
     response: {
       kind: "predicate",
       expression: Norn.expression(
-        ExtractedCandidateProps,
+        ExtractedCandidateReviewSubject,
         (self) =>
           self.dispute_state === "clean" &&
           self.review_receipt_digest !== null &&
-          self.reviewed_by_user_id !== null,
+          self.reviewed_by_user_id !== null &&
+          self.findings.every((f) => f.status !== "open") &&
+          self.reviews.some((r) => r.decision === "approve_promotion"),
       ),
     },
   },
@@ -755,11 +829,13 @@ export const StagedCandidateNotApplicable = Norn.example("staged disputed candid
     review_receipt_digest: null,
     reviewed_by_user_id: null,
     status: "staged",
+    findings: [{ status: "open" }],
+    reviews: [],
   },
   expect: "not_applicable",
 })
 
-export const PromotedCandidateCleanHolds = Norn.example("promoted clean candidate with receipt and reviewer holds", {
+export const PromotedCandidateCleanHolds = Norn.example("promoted clean candidate with zero open findings and approval review holds", {
   of: PromotedCandidateRequiresCleanReview,
   given: {
     id: "cand_promoted",
@@ -775,6 +851,8 @@ export const PromotedCandidateCleanHolds = Norn.example("promoted clean candidat
     review_receipt_digest: "sha256:rev001",
     reviewed_by_user_id: "principal:hr_manager",
     status: "promoted",
+    findings: [{ status: "resolved" }],
+    reviews: [{ decision: "approve_promotion" }],
   },
   expect: "holds",
 })
@@ -795,6 +873,113 @@ export const PromotedCandidateDisputedViolated = Norn.example("promoted disputed
     review_receipt_digest: "sha256:rev002",
     reviewed_by_user_id: "principal:hr_manager",
     status: "promoted",
+    findings: [],
+    reviews: [{ decision: "approve_promotion" }],
+  },
+  expect: "violated",
+})
+
+export const PromotedCandidateOpenFindingViolated = Norn.example("promoted clean candidate with an open linked finding is refused", {
+  of: PromotedCandidateRequiresCleanReview,
+  given: {
+    id: "cand_bad_open_finding",
+    target_kind: "attendance_event",
+    source_record_key: "spreadsheet_csv/row:5",
+    payload_digest: "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    confidence_bp: 9500,
+    source_span: "row:5",
+    extracted_at: "2026-11-23T10:15:00Z",
+    observed_at: "2026-11-22T20:30:00Z",
+    effective_on: "2026-11-22",
+    dispute_state: "clean",
+    review_receipt_digest: "sha256:rev003",
+    reviewed_by_user_id: "principal:hr_manager",
+    status: "promoted",
+    findings: [{ status: "open" }],
+    reviews: [{ decision: "approve_promotion" }],
+  },
+  expect: "violated",
+})
+
+export const PromotedCandidateMissingReviewViolated = Norn.example("promoted clean candidate without approve_promotion review record is refused", {
+  of: PromotedCandidateRequiresCleanReview,
+  given: {
+    id: "cand_bad_no_review",
+    target_kind: "attendance_event",
+    source_record_key: "spreadsheet_csv/row:6",
+    payload_digest: "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    confidence_bp: 9500,
+    source_span: "row:6",
+    extracted_at: "2026-11-23T10:15:00Z",
+    observed_at: "2026-11-22T20:30:00Z",
+    effective_on: "2026-11-22",
+    dispute_state: "clean",
+    review_receipt_digest: "sha256:rev004",
+    reviewed_by_user_id: "principal:hr_manager",
+    status: "promoted",
+    findings: [],
+    reviews: [],
+  },
+  expect: "violated",
+})
+
+export const ReviewDecisionAuthenticated = Norn.law({
+  id: "hr_import.ReviewDecision.authenticated.law",
+  title: "Import review decisions require non-empty reviewer identity, receipt digest, and reason",
+  version: "0.1.0",
+  dependencies: [
+    { artifactId: "hr_import.ReviewDecision.entity", kind: "entity", version: "0.1.0", required: true },
+  ],
+  law: {
+    lawVersion: "0.1",
+    id: "hr_import.ReviewDecision.authenticated",
+    owner: "hr_import",
+    severity: "error",
+    rationale: "Every recorded human import review decision must carry a non-empty reviewer identity, receipt digest, and justification.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/packs/hr-import/hr_import.ts" },
+    subject: "hr_import.ReviewDecision",
+    scope: {
+      root: { kind: "entity", id: "hr_import.ReviewDecision" },
+      objectTypes: ["hr_import.ReviewDecision"],
+    },
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: Norn.expression(
+        ReviewDecisionProps,
+        (self) =>
+          self.reviewer_user_id !== "" &&
+          self.receipt_digest !== "" &&
+          self.reason !== "",
+      ),
+    },
+  },
+})
+
+export const ReviewDecisionValidHolds = Norn.example("authenticated review decision holds", {
+  of: ReviewDecisionAuthenticated,
+  given: {
+    id: "rev_ok_1",
+    decision: "approve_promotion",
+    reviewer_user_id: "principal:hr_manager",
+    receipt_digest: "sha256:rev001",
+    reason: "Verified against source sheet and field evidence.",
+    decided_at: "2026-11-23T09:10:00Z",
+    status: "recorded",
+  },
+  expect: "holds",
+})
+
+export const ReviewDecisionBlankReceiptViolated = Norn.example("review decision with blank receipt digest is refused", {
+  of: ReviewDecisionAuthenticated,
+  given: {
+    id: "rev_bad_1",
+    decision: "approve_promotion",
+    reviewer_user_id: "principal:hr_manager",
+    receipt_digest: "",
+    reason: "Missing receipt",
+    decided_at: "2026-11-23T09:10:00Z",
+    status: "recorded",
   },
   expect: "violated",
 })
@@ -1005,6 +1190,7 @@ const CandidatePromoteInput = Schema.Struct({
   candidateId: Schema.String,
   batchId: Schema.String,
   evidenceId: Schema.String,
+  reviewDecisionId: Schema.String,
 })
 
 const CandidateSupersedeInput = Schema.Struct({
@@ -1035,6 +1221,7 @@ const PromoteEvidenceLinkSlice = Schema.Struct({
   slice: Schema.Struct({
     candidate: Schema.Struct({
       id: Schema.String,
+      status: CandidateStatus,
       dispute_state: CandidateDisputeState,
       review_receipt_digest: Schema.NullOr(Schema.String),
       reviewed_by_user_id: Schema.NullOr(Schema.String),
@@ -1047,9 +1234,16 @@ const PromoteEvidenceLinkSlice = Schema.Struct({
       id: Schema.String,
       document_digest: Schema.String,
     }),
+    review: Schema.Struct({
+      id: Schema.String,
+      decision: ReviewDecisionKind,
+      reviewer_user_id: Schema.String,
+      receipt_digest: Schema.String,
+    }),
     candidate_batch: Schema.Array(Schema.Struct({ id: Schema.String })),
     evidence_candidate: Schema.Array(Schema.Struct({ id: Schema.String })),
     evidence_batch: Schema.Array(Schema.Struct({ id: Schema.String })),
+    review_candidate: Schema.Array(Schema.Struct({ id: Schema.String })),
   }),
 })
 
@@ -1112,7 +1306,7 @@ export const PromoteCandidate = Norn.action({
   id: "hr_import.candidate.promote",
   title: "Promote extracted candidate",
   version: "0.1.0",
-  description: "Promote a clean reviewed candidate anchored to verified norn.SourceEvidence matching its SourceBatch document digest.",
+  description: "Promote a staged clean candidate anchored to verified norn.SourceEvidence matching its SourceBatch digest and an authenticated linked approve_promotion ReviewDecision (with zero open findings enforced by LAW-LINK-MANY-1).",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -1121,9 +1315,11 @@ export const PromoteCandidate = Norn.action({
     { name: "candidate", type: ExtractedCandidate, key: { property: { from: "input", property: "candidateId" } } },
     { name: "batch", type: SourceBatch, key: { property: { from: "input", property: "batchId" } } },
     { name: "evidence", type: FieldEvidence, key: { property: { from: "input", property: "evidenceId" } } },
+    { name: "review", type: ReviewDecision, key: { property: { from: "input", property: "reviewDecisionId" } } },
     { name: "candidate_batch", type: SourceBatch, key: { link: { from: "candidate", link: "batch" } } },
     { name: "evidence_candidate", type: ExtractedCandidate, key: { link: { from: "evidence", link: "candidate" } } },
     { name: "evidence_batch", type: SourceBatch, key: { link: { from: "evidence", link: "batch" } } },
+    { name: "review_candidate", type: ExtractedCandidate, key: { link: { from: "review", link: "candidate" } } },
   ],
   preconditions: [
     Norn.expression(
@@ -1131,15 +1327,18 @@ export const PromoteCandidate = Norn.action({
       (ctx) =>
         ctx.slice.candidate_batch.map((b) => b.id).includes(ctx.slice.batch.id) &&
         ctx.slice.evidence_candidate.map((c) => c.id).includes(ctx.slice.candidate.id) &&
-        ctx.slice.evidence_batch.map((b) => b.id).includes(ctx.slice.batch.id),
+        ctx.slice.evidence_batch.map((b) => b.id).includes(ctx.slice.batch.id) &&
+        ctx.slice.review_candidate.map((c) => c.id).includes(ctx.slice.candidate.id),
       { root: "context" },
     ),
     Norn.expression(
       PromoteEvidenceLinkSlice,
       (ctx) =>
+        ctx.slice.candidate.status === "staged" &&
         ctx.slice.candidate.dispute_state === "clean" &&
-        ctx.slice.candidate.review_receipt_digest !== null &&
-        ctx.slice.candidate.reviewed_by_user_id !== null &&
+        ctx.slice.review.decision === "approve_promotion" &&
+        (ctx.slice.candidate.review_receipt_digest ?? "") === ctx.slice.review.receipt_digest &&
+        (ctx.slice.candidate.reviewed_by_user_id ?? "") === ctx.slice.review.reviewer_user_id &&
         ctx.slice.evidence.document_digest === ctx.slice.batch.document_digest,
       { root: "context" },
     ),
@@ -1259,6 +1458,10 @@ const FindingCandidateSlice = Schema.Struct({
 })
 
 const FindingSupersedeSlice = Schema.Struct({
+  input: Schema.Struct({
+    candidateId: Schema.String,
+    replacementCandidateId: Schema.String,
+  }),
   slice: Schema.Struct({
     finding: Schema.Struct({
       status: FindingStatus,
@@ -1268,9 +1471,13 @@ const FindingSupersedeSlice = Schema.Struct({
       resolution_reason: Schema.NullOr(Schema.String),
     }),
     candidate: Schema.Struct({ id: Schema.String }),
-    replacement: Schema.Struct({ id: Schema.String }),
+    replacement: Schema.Struct({
+      id: Schema.String,
+      dispute_state: CandidateDisputeState,
+    }),
     finding_candidate: Schema.Array(Schema.Struct({ id: Schema.String })),
     finding_superseded_by: Schema.Array(Schema.Struct({ id: Schema.String })),
+    replacement_supersedes: Schema.Array(Schema.Struct({ id: Schema.String })),
   }),
 })
 
@@ -1278,7 +1485,7 @@ export const ResolveFinding = Norn.action({
   id: "hr_import.finding.resolve",
   title: "Resolve data quality finding",
   version: "0.1.0",
-  description: "Immutably resolve an open finding bound to its candidate after recording an audited resolution action, receipt digest, reviewer, and reason.",
+  description: "Immutably resolve an open finding bound to its candidate using non-superseding dispositions (`accept_first` or `revalidated_correction`) with audited receipt, reviewer, and reason.",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -1298,7 +1505,8 @@ export const ResolveFinding = Norn.action({
       FindingCandidateSlice,
       (ctx) =>
         ctx.slice.finding.status === "open" &&
-        ctx.slice.finding.resolution_action !== null &&
+        ((ctx.slice.finding.resolution_action ?? "") === "accept_first" ||
+          (ctx.slice.finding.resolution_action ?? "") === "revalidated_correction") &&
         ctx.slice.finding.resolution_receipt_digest !== null &&
         ctx.slice.finding.resolved_by_user_id !== null &&
         ctx.slice.finding.resolution_reason !== null,
@@ -1321,7 +1529,7 @@ export const SupersedeFinding = Norn.action({
   id: "hr_import.finding.supersede",
   title: "Supersede data quality finding",
   version: "0.1.0",
-  description: "Immutably supersede an open finding bound to its candidate and superseding correction candidate (`accept_second_as_correction`).",
+  description: "Immutably supersede an open finding bound to its candidate and clean superseding correction candidate (`accept_second_as_correction`, with `replacement.supersedes -> candidate`).",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -1332,13 +1540,17 @@ export const SupersedeFinding = Norn.action({
     { name: "replacement", type: ExtractedCandidate, key: { property: { from: "input", property: "replacementCandidateId" } } },
     { name: "finding_candidate", type: ExtractedCandidate, key: { link: { from: "finding", link: "candidate" } } },
     { name: "finding_superseded_by", type: ExtractedCandidate, key: { link: { from: "finding", link: "superseded_by" } } },
+    { name: "replacement_supersedes", type: ExtractedCandidate, key: { link: { from: "replacement", link: "supersedes" } } },
   ],
   preconditions: [
     Norn.expression(
       FindingSupersedeSlice,
       (ctx) =>
+        ctx.input.candidateId !== ctx.input.replacementCandidateId &&
         ctx.slice.finding_candidate.map((c) => c.id).includes(ctx.slice.candidate.id) &&
-        ctx.slice.finding_superseded_by.map((c) => c.id).includes(ctx.slice.replacement.id),
+        ctx.slice.finding_superseded_by.map((c) => c.id).includes(ctx.slice.replacement.id) &&
+        ctx.slice.replacement_supersedes.map((c) => c.id).includes(ctx.slice.candidate.id) &&
+        ctx.slice.replacement.dispute_state === "clean",
       { root: "context" },
     ),
     Norn.expression(

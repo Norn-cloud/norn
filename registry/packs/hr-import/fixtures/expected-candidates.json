@@ -31,7 +31,7 @@
   ],
   "candidates": [
     {
-      "id": "cand_shift_salma_20261125",
+      "id": "cand_1",
       "batch": "batch_wa_20261122",
       "target_kind": "shift_commitment",
       "source_record_key": "whatsapp_export/line:5-5",
@@ -81,12 +81,12 @@
   ],
   "evidence": [
     {
-      "id": "ev_shift_salma_20261125",
+      "id": "ev_1",
       "batch": "batch_wa_20261122",
-      "candidate": "cand_shift_salma_20261125",
+      "candidate": "cand_1",
       "subject_property": "role_code",
       "subject_type": "hr.ShiftCommitment",
-      "subject_key": "cand_shift_salma_20261125",
+      "subject_key": "cand_1",
       "document_uri": "evidence://registry/packs/hr-import/fixtures/whatsapp-cairo-shifts.txt",
       "document_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "media_type": "text/plain",

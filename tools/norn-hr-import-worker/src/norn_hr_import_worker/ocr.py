@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Protocol
 
 from norn_hr_import_worker.models import (
     EXTRACTOR_NAME,
     EXTRACTOR_VERSION,
+    CandidateStatus,
     DataQualityFindingRecord,
+    DisputeState,
     ExactValueError,
     ExtractedCandidateProposal,
     FieldEvidenceRecord,
@@ -30,8 +32,72 @@ from norn_hr_import_worker.models import (
 _ALLOWED_TARGET_KINDS: frozenset[str] = frozenset(
     {"person", "leave_request", "shift_commitment", "attendance_event"}
 )
-_NUMERIC_FIELDS: frozenset[str] = frozenset({"quantity_hours", "days", "base_salary"})
-_DATE_FIELDS: frozenset[str] = frozenset({"effective_on", "shift_date", "work_date", "starts_on"})
+_ALLOWED_FIELDS_BY_KIND: dict[TargetKind, frozenset[str]] = {
+    "shift_commitment": frozenset(
+        {
+            "branch_code",
+            "employee_code",
+            "employee_label",
+            "role_code",
+            "shift_date",
+            "start_time",
+            "end_time",
+            "quantity_hours",
+            "unit",
+        }
+    ),
+    "attendance_event": frozenset(
+        {
+            "branch_code",
+            "employee_code",
+            "employee_label",
+            "work_date",
+            "clock_in",
+            "clock_out",
+            "quantity_hours",
+            "unit",
+        }
+    ),
+    "leave_request": frozenset(
+        {
+            "employee_code",
+            "employee_label",
+            "leave_kind",
+            "starts_on",
+            "ends_on",
+            "days",
+            "unit",
+        }
+    ),
+    "person": frozenset(
+        {
+            "employee_code",
+            "display_name",
+            "jurisdiction_code",
+            "effective_from",
+            "effective_to",
+            "currency",
+            "base_salary",
+            "hourly_overtime_rate",
+            "max_weekly_hours",
+            "primary_skill",
+        }
+    ),
+}
+_NUMERIC_FIELDS: frozenset[str] = frozenset(
+    {"quantity_hours", "days", "base_salary", "hourly_overtime_rate", "max_weekly_hours"}
+)
+_DATE_FIELDS: frozenset[str] = frozenset(
+    {
+        "effective_on",
+        "effective_from",
+        "effective_to",
+        "shift_date",
+        "work_date",
+        "starts_on",
+        "ends_on",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,13 +283,14 @@ def extract_from_ocr(
     candidates: list[ExtractedCandidateProposal] = []
     evidence_records: list[FieldEvidenceRecord] = []
     findings: list[DataQualityFindingRecord] = []
-    seen_keys: dict[str, tuple[str, str]] = {}
+    seen_keys: dict[str, tuple[int, str, str | None, str]] = {}
     deduplicated_count = 0
 
     for rec_idx, record in enumerate(raw_response.records, start=1):
+        known_target_kind = record.target_kind in _ALLOWED_TARGET_KINDS
         target_kind: TargetKind = (
             record.target_kind  # type: ignore[assignment]
-            if record.target_kind in _ALLOWED_TARGET_KINDS
+            if known_target_kind
             else "shift_commitment"
         )
         cand_id = f"{batch_id}_ocr_{rec_idx}"
@@ -231,8 +298,10 @@ def extract_from_ocr(
         rec_findings: list[DataQualityFindingRecord] = []
         rec_evidence: list[FieldEvidenceRecord] = []
         confidences: list[int] = []
+        seen_field_names: dict[str, str] = {}
+        has_internal_conflict = False
 
-        if record.target_kind not in _ALLOWED_TARGET_KINDS:
+        if not known_target_kind:
             rec_findings.append(
                 DataQualityFindingRecord(
                     id=f"dqf_{cand_id}_target_kind",
@@ -245,14 +314,30 @@ def extract_from_ocr(
                     field_path="target_kind",
                     law_pin=None,
                     conflicting_payload_digest=None,
-                    message=f"Unsupported OCR target_kind {record.target_kind!r}; quarantined.",
+                    message=f"Record {rec_idx}: unsupported OCR target_kind; quarantined.",
                 )
             )
 
-        effective_on = captured_at[0:10]
-        if record.effective_on is not None:
+        effective_on = ""
+        if record.effective_on is None or not record.effective_on.strip():
+            rec_findings.append(
+                DataQualityFindingRecord(
+                    id=f"dqf_{cand_id}_missing_effective_on",
+                    candidate_id=cand_id,
+                    evidence_id=None,
+                    code="missing_required_field",
+                    finding_kind="schema_violation",
+                    severity="error",
+                    quarantine_disposition="quarantined",
+                    field_path="effective_on",
+                    law_pin=None,
+                    conflicting_payload_digest=None,
+                    message=f"Record {rec_idx}: missing required effective_on date; quarantined.",
+                )
+            )
+        else:
             try:
-                effective_on = validate_iso_date(record.effective_on)
+                effective_on = validate_iso_date(record.effective_on.strip())
             except ExactValueError as exc:
                 rec_findings.append(
                     DataQualityFindingRecord(
@@ -266,7 +351,7 @@ def extract_from_ocr(
                         field_path="effective_on",
                         law_pin=None,
                         conflicting_payload_digest=None,
-                        message=f"Invalid effective_on date: {exc}",
+                        message=f"Record {rec_idx}: invalid effective_on date ({exc}).",
                     )
                 )
 
@@ -283,10 +368,11 @@ def extract_from_ocr(
                     field_path="fields",
                     law_pin=None,
                     conflicting_payload_digest=None,
-                    message="OCR record has zero field observations; refusing to invent data.",
+                    message=f"Record {rec_idx}: zero field observations; refusing to invent data.",
                 )
             )
 
+        allowed_fields = _ALLOWED_FIELDS_BY_KIND[target_kind]
         first_anchor = "unanchored"
         for f_idx, f_obs in enumerate(record.fields, start=1):
             ev_id = f"{cand_id}_f{f_idx}"
@@ -299,6 +385,11 @@ def extract_from_ocr(
                     "value": f_obs.value,
                 }
             )
+            safe_field_path = (
+                f_obs.field_name
+                if f_obs.field_name in allowed_fields
+                else f"fields[{f_idx}]"
+            )
 
             if valid_box is None or not has_text:
                 rec_findings.append(
@@ -310,11 +401,11 @@ def extract_from_ocr(
                         finding_kind="missing_anchor",
                         severity="error",
                         quarantine_disposition="quarantined",
-                        field_path=f_obs.field_name or f"fields[{f_idx}]",
+                        field_path=safe_field_path,
                         law_pin="hr_import.FieldEvidence.valid_anchor",
                         conflicting_payload_digest=None,
                         message=(
-                            f"Field {f_obs.field_name!r} lacks a valid page/bbox/text anchor; "
+                            f"Record {rec_idx} field[{f_idx}] lacks a valid page/bbox/text anchor; "
                             "quarantined as needs_review."
                         ),
                     )
@@ -340,12 +431,12 @@ def extract_from_ocr(
                         finding_kind="low_confidence",
                         severity="error",
                         quarantine_disposition="quarantined",
-                        field_path=f_obs.field_name,
+                        field_path=safe_field_path,
                         law_pin="hr_import.FieldEvidence.valid_anchor",
                         conflicting_payload_digest=None,
                         message=(
-                            f"Field {f_obs.field_name!r} has missing or out-of-range confidence; "
-                            "quarantined as needs_review."
+                            f"Record {rec_idx} field[{f_idx}] has missing or out-of-range "
+                            "confidence; quarantined as needs_review."
                         ),
                     )
                 )
@@ -363,11 +454,11 @@ def extract_from_ocr(
                             finding_kind="low_confidence",
                             severity="error",
                             quarantine_disposition="quarantined",
-                            field_path=f_obs.field_name,
+                            field_path=safe_field_path,
                             law_pin=None,
                             conflicting_payload_digest=None,
                             message=(
-                                f"Field {f_obs.field_name!r} confidence {safe_conf} bp "
+                                f"Record {rec_idx} field[{f_idx}] confidence {safe_conf} bp "
                                 f"is below {min_confidence_bp} bp; quarantined as needs_review."
                             ),
                         )
@@ -378,7 +469,7 @@ def extract_from_ocr(
                     id=ev_id,
                     batch_id=batch_id,
                     candidate_id=cand_id,
-                    subject_property=f_obs.field_name,
+                    subject_property=safe_field_path,
                     subject_type=f"hr.{target_kind}",
                     subject_key=cand_id,
                     document_uri=document_uri,
@@ -398,6 +489,52 @@ def extract_from_ocr(
                 )
             )
 
+            # Fail-closed closed-allowlist field check (never accept unknown fields into proposal).
+            if f_obs.field_name not in allowed_fields:
+                rec_findings.append(
+                    DataQualityFindingRecord(
+                        id=f"dqf_{cand_id}_f{f_idx}_unknown_field",
+                        candidate_id=cand_id,
+                        evidence_id=ev_id,
+                        code="needs_review",
+                        finding_kind="schema_violation",
+                        severity="error",
+                        quarantine_disposition="quarantined",
+                        field_path=safe_field_path,
+                        law_pin=None,
+                        conflicting_payload_digest=None,
+                        message=(
+                            f"Record {rec_idx} field[{f_idx}] is not in the closed allowlist "
+                            f"for {target_kind}; quarantined as needs_review."
+                        ),
+                    )
+                )
+                continue
+
+            # Fail-closed duplicate field check within one record (never silently overwrite).
+            if f_obs.field_name in seen_field_names:
+                has_internal_conflict = True
+                rec_findings.append(
+                    DataQualityFindingRecord(
+                        id=f"dqf_{cand_id}_f{f_idx}_duplicate_field",
+                        candidate_id=cand_id,
+                        evidence_id=ev_id,
+                        code="feed_conflict",
+                        finding_kind="feed_conflict",
+                        severity="error",
+                        quarantine_disposition="disputed",
+                        field_path=f_obs.field_name,
+                        law_pin="core.boundary.import_finding",
+                        conflicting_payload_digest=field_digest,
+                        message=(
+                            f"Record {rec_idx} contains repeated observations for "
+                            f"{f_obs.field_name}; quarantined as feed_conflict."
+                        ),
+                    )
+                )
+                continue
+            seen_field_names[f_obs.field_name] = field_digest
+
             # Fail-closed value validation (never silently coerce or invent missing values).
             if f_obs.value is None or not f_obs.value.strip():
                 rec_findings.append(
@@ -412,7 +549,9 @@ def extract_from_ocr(
                         field_path=f_obs.field_name,
                         law_pin=None,
                         conflicting_payload_digest=None,
-                        message=f"Field {f_obs.field_name!r} extracted blank value.",
+                        message=(
+                            f"Record {rec_idx} field {f_obs.field_name} extracted a blank value."
+                        ),
                     )
                 )
                 continue
@@ -437,7 +576,10 @@ def extract_from_ocr(
                             field_path=f_obs.field_name,
                             law_pin="norn.values.property_validity",
                             conflicting_payload_digest=None,
-                            message=f"Field {f_obs.field_name!r} failed exact decimal check: {exc}",
+                            message=(
+                                f"Record {rec_idx} field {f_obs.field_name} failed exact "
+                                f"decimal check ({exc})."
+                            ),
                         )
                     )
             elif f_obs.field_name in _DATE_FIELDS:
@@ -456,7 +598,10 @@ def extract_from_ocr(
                             field_path=f_obs.field_name,
                             law_pin=None,
                             conflicting_payload_digest=None,
-                            message=f"Field {f_obs.field_name!r} failed ISO date check: {exc}",
+                            message=(
+                                f"Record {rec_idx} field {f_obs.field_name} failed ISO date "
+                                f"check ({exc})."
+                            ),
                         )
                     )
             else:
@@ -464,14 +609,30 @@ def extract_from_ocr(
 
         source_record_key = record.record_key or f"schedule_photo/record:{rec_idx}"
         payload_digest = sha256_prefixed(proposal)
+        key_digest = sha256_prefixed(source_record_key)[7:19]
         agg_confidence = min(confidences) if confidences else 0
 
         if source_record_key in seen_keys:
-            prev_cand_id, prev_digest = seen_keys[source_record_key]
+            prev_idx, prev_cand_id, prev_ev_id, prev_digest = seen_keys[source_record_key]
             if prev_digest == payload_digest:
                 deduplicated_count += 1
                 continue
+            # Core 07 FEED-CONFLICT: mark BOTH prior and incoming candidates disputed,
+            # and rebind every incoming evidence/finding record to `conflict_id`.
+            if candidates[prev_idx].dispute_state != "disputed":
+                candidates[prev_idx] = replace(
+                    candidates[prev_idx],
+                    dispute_state="disputed",
+                    status="quarantined",
+                )
             conflict_id = f"{cand_id}_conflict"
+            rebound_evidence = [
+                replace(ev, candidate_id=conflict_id, subject_key=conflict_id)
+                for ev in rec_evidence
+            ]
+            rebound_findings = [
+                replace(f, candidate_id=conflict_id) for f in rec_findings
+            ]
             candidates.append(
                 ExtractedCandidateProposal(
                     id=conflict_id,
@@ -489,12 +650,31 @@ def extract_from_ocr(
                     proposal=proposal,
                 )
             )
-            evidence_records.extend(rec_evidence)
+            evidence_records.extend(rebound_evidence)
+            findings.extend(rebound_findings)
+            findings.append(
+                DataQualityFindingRecord(
+                    id=f"dqf_{prev_cand_id}_feed_conflict_rec_{rec_idx}",
+                    candidate_id=prev_cand_id,
+                    evidence_id=prev_ev_id,
+                    code="feed_conflict",
+                    finding_kind="feed_conflict",
+                    severity="error",
+                    quarantine_disposition="disputed",
+                    field_path="payload_digest",
+                    law_pin="core.boundary.import_finding",
+                    conflicting_payload_digest=payload_digest,
+                    message=(
+                        f"Candidate {prev_cand_id} conflicts with OCR record {rec_idx} "
+                        f"({conflict_id}) on record key digest {key_digest}."
+                    ),
+                )
+            )
             findings.append(
                 DataQualityFindingRecord(
                     id=f"dqf_{conflict_id}_feed_conflict",
                     candidate_id=conflict_id,
-                    evidence_id=rec_evidence[0].id if rec_evidence else None,
+                    evidence_id=rebound_evidence[0].id if rebound_evidence else None,
                     code="feed_conflict",
                     finding_kind="feed_conflict",
                     severity="error",
@@ -503,15 +683,26 @@ def extract_from_ocr(
                     law_pin="core.boundary.import_finding",
                     conflicting_payload_digest=prev_digest,
                     message=(
-                        f"Conflicting OCR record for {source_record_key} "
-                        f"(prior candidate {prev_cand_id})."
+                        f"OCR record {rec_idx} conflicts with prior candidate {prev_cand_id} "
+                        f"on record key digest {key_digest}."
                     ),
                 )
             )
             continue
 
-        seen_keys[source_record_key] = (cand_id, payload_digest)
+        seen_keys[source_record_key] = (
+            len(candidates),
+            cand_id,
+            rec_evidence[0].id if rec_evidence else None,
+            payload_digest,
+        )
         is_quarantined = bool(rec_findings)
+        dispute_state: DisputeState = (
+            "disputed"
+            if has_internal_conflict
+            else ("quarantined" if is_quarantined else "clean")
+        )
+        cand_status: CandidateStatus = "quarantined" if is_quarantined else "staged"
         evidence_records.extend(rec_evidence)
         findings.extend(rec_findings)
         candidates.append(
@@ -526,8 +717,8 @@ def extract_from_ocr(
                 extracted_at=extracted_at,
                 observed_at=captured_at,
                 effective_on=effective_on,
-                dispute_state="quarantined" if is_quarantined else "clean",
-                status="quarantined" if is_quarantined else "staged",
+                dispute_state=dispute_state,
+                status=cand_status,
                 proposal=proposal,
             )
         )

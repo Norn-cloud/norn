@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "hr_import.finding.supersede",
-    "description": "Immutably supersede an open finding bound to its candidate and superseding correction candidate (`accept_second_as_correction`).",
+    "description": "Immutably supersede an open finding bound to its candidate and clean superseding correction candidate (`accept_second_as_correction`, with `replacement.supersedes -> candidate`).",
     "effectProgram": {
       "entityArtifactId": "hr_import.DataQualityFinding.entity",
       "entityArtifactVersion": "0.1.0",
@@ -61,7 +61,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(slice.candidate.id in map(slice.finding_candidate as c, c.id)) and (slice.replacement.id in map(slice.finding_superseded_by as c, c.id))",
+      "((((input.candidateId != input.replacementCandidateId) and (slice.candidate.id in map(slice.finding_candidate as c, c.id))) and (slice.replacement.id in map(slice.finding_superseded_by as c, c.id))) and (slice.candidate.id in map(slice.replacement_supersedes as c, c.id))) and (slice.replacement.dispute_state == 'clean')",
       "((((slice.finding.status == 'open') and ((slice.finding.resolution_action ?? '') == 'accept_second_as_correction')) and (slice.finding.resolution_receipt_digest != null)) and (slice.finding.resolved_by_user_id != null)) and (slice.finding.resolution_reason != null)"
     ],
     "scopeRequired": [
@@ -117,6 +117,16 @@
           }
         },
         "name": "finding_superseded_by",
+        "objectType": "hr_import.ExtractedCandidate"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "replacement",
+            "link": "supersedes"
+          }
+        },
+        "name": "replacement_supersedes",
         "objectType": "hr_import.ExtractedCandidate"
       }
     ],
