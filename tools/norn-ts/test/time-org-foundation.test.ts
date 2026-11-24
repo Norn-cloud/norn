@@ -197,14 +197,16 @@ describe("time & org foundation packs", () => {
       objectIdField: "id",
       writeMode: { kind: "create_only" },
     })
-    expect(action.preconditions).toHaveLength(4)
+    expect(action.preconditions).toHaveLength(6)
     const pre = (action.preconditions as string[]).join(" && ")
-    expect(pre).toContain("some(slice.window_calendar as cal, cal.id == slice.calendar.id)")
+    expect(pre).toContain("slice.calendar.id in map(slice.window_calendar as cal, cal.id)")
     expect(pre).toContain("input.timezone == slice.calendar.iana_timezone")
     expect(pre).toContain("input.dst_policy == slice.calendar.dst_policy")
     expect(pre).toContain("input.tzdb_version == slice.calendar.tzdb_version")
     expect(pre).toContain("slice.working_window.start_local")
     expect(pre).toContain("slice.working_window.end_local")
+    expect(pre).toContain("days_between(date('2024-01-01'), date(input.calendar_date))")
+    expect(pre).toContain("slice.working_window.weekday")
     expect(pre).toContain("resolve_local_timestamp(input.start_local_at, slice.calendar.iana_timezone, slice.calendar.dst_policy)")
     expect(pre).toContain("resolve_local_timestamp(input.end_local_at, slice.calendar.iana_timezone, slice.calendar.dst_policy)")
   })

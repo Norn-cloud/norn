@@ -11,10 +11,10 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Egypt Labor Law No. 14 of 2025 Art. 124 annual leave statutory floor on hr.LeaveAllocation",
+  "name": "Egypt Labor Law No. 14 of 2025 Art. 124 annual leave tier floors on Egyptian hr.LeaveAllocation",
   "namespace": "loc_eg",
   "payload": {
-    "condition": "self.leave_kind == 'annual'",
+    "condition": "(((self.jurisdiction_code ?? '') == 'EG') and (self.leave_kind == 'annual')) and (date(self.starts_on) >= date('2025-09-01'))",
     "id": "loc_eg.hr.LeaveAllocation.annual_floor",
     "lawVersion": "0.1",
     "modality": {
@@ -25,9 +25,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/loc-eg/egypt.ts"
     },
-    "rationale": "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Art. 124) overlay enforcing the statutory first-year minimum of 15 annual leave days (scaling to 21d in year 2+, 30d at 10+ years/age 50+, and 45d for persons with disabilities).",
+    "rationale": "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Art. 124) overlay on Egyptian annual leave allocations (jurisdiction_code == 'EG', leave_kind == 'annual', starts_on >= 2025-09-01): prorated_initial > 0d; first_year >= 15d (+7d hazardous/remote = 22d); standard >= 21d (+7d = 28d); senior >= 30d (+7d = 37d); protected_disability >= 45d (+7d = 52d).",
     "response": {
-      "expression": "self.allocated_days >= 15",
+      "expression": "(((((self.entitlement_tier == 'prorated_initial') and (self.allocated_days > 0)) or ((self.entitlement_tier == 'first_year') and (self.hazardous_or_remote ? (self.allocated_days >= 22) : (self.allocated_days >= 15)))) or ((self.entitlement_tier == 'standard') and (self.hazardous_or_remote ? (self.allocated_days >= 28) : (self.allocated_days >= 21)))) or ((self.entitlement_tier == 'senior') and (self.hazardous_or_remote ? (self.allocated_days >= 37) : (self.allocated_days >= 30)))) or ((self.entitlement_tier == 'protected_disability') and (self.hazardous_or_remote ? (self.allocated_days >= 52) : (self.allocated_days >= 45)))",
       "kind": "predicate"
     },
     "scope": {

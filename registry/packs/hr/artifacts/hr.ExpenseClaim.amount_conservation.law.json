@@ -1,0 +1,50 @@
+{
+  "artifactId": "hr.ExpenseClaim.amount_conservation.law",
+  "dependencies": [
+    {
+      "artifactId": "hr.ExpenseClaim.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Approved or paid expense claim core.Claim.amount equals positive sanctioned_amount",
+  "namespace": "hr",
+  "payload": {
+    "id": "hr.ExpenseClaim.amount_conservation",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "hr",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/hr/payroll_expenses.ts"
+    },
+    "rationale": "Once an ExpenseClaim is approved or paid, its canonical core.Claim.amount must exactly match its positive sanctioned_amount so settlement cannot diverge from approval (HR-EX-01, HR-EX-05).",
+    "response": {
+      "expression": "((self.status != 'approved') and (self.status != 'paid')) or ((self.amount == self.sanctioned_amount) and (self.sanctioned_amount > 0))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "hr.ExpenseClaim"
+      ],
+      "root": {
+        "id": "hr.ExpenseClaim",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "hr.ExpenseClaim"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.ExpenseClaim.amount_conservation.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

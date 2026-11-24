@@ -19,7 +19,38 @@
           {
             "role": {
               "anyOf": [
-                "employee",
+                "employee"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.LeaveRequest",
+        "ruleId": "employee_submit_or_cancel_own_leave",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.leave.submit",
+          "hr.leave.cancel"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
                 "branch_manager",
                 "hr_manager",
                 "hr_admin",
@@ -29,7 +60,7 @@
           }
         ],
         "resourceType": "hr.LeaveRequest",
-        "ruleId": "submit_or_cancel_leave",
+        "ruleId": "manager_submit_or_cancel_leave",
         "scope": {
           "dimensions": [
             "org",
@@ -106,7 +137,37 @@
           {
             "role": {
               "anyOf": [
-                "employee",
+                "employee"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.CompensatoryLeaveRequest",
+        "ruleId": "employee_submit_own_compensatory_leave",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.comp_leave.submit"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
                 "branch_manager",
                 "hr_manager",
                 "hr_admin",
@@ -116,7 +177,7 @@
           }
         ],
         "resourceType": "hr.CompensatoryLeaveRequest",
-        "ruleId": "submit_compensatory_leave",
+        "ruleId": "manager_submit_compensatory_leave",
         "scope": {
           "dimensions": [
             "org",
@@ -246,7 +307,8 @@
       },
       {
         "actions": [
-          "hr.attendance.record"
+          "hr.attendance.record",
+          "hr.attendance.reverse"
         ],
         "allOf": [
           {
@@ -261,7 +323,7 @@
           }
         ],
         "resourceType": "hr.AttendanceEvent",
-        "ruleId": "record_attendance",
+        "ruleId": "record_or_reverse_attendance",
         "scope": {
           "dimensions": [
             "org",
@@ -277,7 +339,37 @@
           {
             "role": {
               "anyOf": [
-                "employee",
+                "employee"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.AttendanceRequest",
+        "ruleId": "employee_submit_own_attendance_request",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.attendance_request.submit"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
                 "branch_manager",
                 "hr_manager",
                 "hr_admin",
@@ -287,7 +379,7 @@
           }
         ],
         "resourceType": "hr.AttendanceRequest",
-        "ruleId": "submit_attendance_request",
+        "ruleId": "manager_submit_attendance_request",
         "scope": {
           "dimensions": [
             "org",
@@ -419,7 +511,37 @@
           {
             "role": {
               "anyOf": [
-                "employee",
+                "employee"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "requester_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.ExpenseClaim",
+        "ruleId": "employee_submit_own_expense_claim",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.expense_claim.submit"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
                 "branch_manager",
                 "hr_manager",
                 "payroll_officer",
@@ -430,7 +552,7 @@
           }
         ],
         "resourceType": "hr.ExpenseClaim",
-        "ruleId": "submit_expense_claim",
+        "ruleId": "manager_submit_expense_claim",
         "scope": {
           "dimensions": [
             "org",
@@ -565,7 +687,37 @@
           {
             "role": {
               "anyOf": [
-                "employee",
+                "employee"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "applicant_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr.JobOffer",
+        "ruleId": "applicant_accept_own_job_offer",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "hr.job_offer.accept"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
                 "hr_manager",
                 "hr_admin",
                 "owner"
@@ -574,7 +726,7 @@
           }
         ],
         "resourceType": "hr.JobOffer",
-        "ruleId": "accept_job_offer",
+        "ruleId": "hr_accept_job_offer",
         "scope": {
           "dimensions": [
             "org",

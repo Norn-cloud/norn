@@ -106,6 +106,16 @@
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "jurisdiction_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
           "id": "leave_kind",
           "type": {
             "kind": "enum",
@@ -126,6 +136,37 @@
                 "value": "compensatory"
               }
             ]
+          }
+        },
+        {
+          "default": "standard",
+          "id": "entitlement_tier",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "prorated_initial"
+              },
+              {
+                "value": "first_year"
+              },
+              {
+                "value": "standard"
+              },
+              {
+                "value": "senior"
+              },
+              {
+                "value": "protected_disability"
+              }
+            ]
+          }
+        },
+        {
+          "default": false,
+          "id": "hazardous_or_remote",
+          "type": {
+            "kind": "boolean"
           }
         },
         {

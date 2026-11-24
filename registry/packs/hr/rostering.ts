@@ -1,12 +1,13 @@
 /**
  * HR Domain Pack — Slice 3: Labor Capacity, Shift Rostering, Business-Terms
- * Preference Profiles, Immutable Attendance Events, Attendance Regularization,
- * Laws, and Deterministic Stock Solver Handle (`norn.solver.rostering@1`) (#1593).
+ * Preference Profiles, Immutable Attendance Events, Attendance Reversals,
+ * Attendance Regularization, Laws, and Deterministic Stock Solver Handle
+ * (`norn.solver.rostering@1`) (#1593).
  *
  * Guided by `registry/packs/frappe-hr/ORACLE-CHECKLIST.md` (`HR-SH-01..06`, `HR-AT-01..05`)
  * and `registry/packs/PROJECTION.md` (`norn.link.frappe-hr.canon` canon gaps).
- * Strictly jurisdiction-agnostic: statutory rest floors, weekly hour ceilings,
- * and consecutive-day limits belong in `loc-*` conjunctive overlay packs.
+ * Strictly jurisdiction-agnostic: statutory daily/weekly hour caps, weekly rest
+ * floors, and consecutive-day limits belong in `loc-*` conjunctive overlay packs.
  */
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
@@ -22,7 +23,7 @@ export const LaborCapacity = Norn.type({
   role: "thing",
   title: "Labor capacity",
   version: "0.1.0",
-  description: "Conserved employee labor capacity in hours (implements core.Resource) backing shift commitments, attendance events, and salary slips.",
+  description: "Conserved employee labor capacity in hours (implements core.Resource) backing shift commitments and attendance events.",
   implements: [Resource],
   properties: Schema.Struct({
     id: Schema.String,
@@ -84,11 +85,14 @@ export const LaborCapacityNegativeViolated = Norn.example("negative labor capaci
 
 const PreferenceProfileProps = Schema.Struct({
   id: Schema.String,
+  jurisdiction_code: Schema.NullOr(Norn.ref("core.code")),
   label: Norn.ref("core.display_name"),
   currency: Schema.Literals(ISO_4217),
   weekly_overtime_budget: Norn.ref("core.money_amount"),
   min_rest_hours: Norn.decimal(2, { unit: { system: "ucum", code: "h" } }),
+  max_daily_hours: Norn.decimal(2, { unit: { system: "ucum", code: "h" } }),
   max_weekly_hours: Norn.decimal(2, { unit: { system: "ucum", code: "h" } }),
+  min_weekly_rest_hours: Norn.decimal(2, { unit: { system: "ucum", code: "h" } }),
   max_consecutive_days: Schema.Int,
   weekend_fairness_priority: Schema.Literals(["low", "medium", "high"]),
   staff_preference_priority: Schema.Literals(["low", "medium", "high"]),
@@ -101,7 +105,7 @@ export const PreferenceProfile = Norn.type({
   title: "Rostering preference profile",
   version: "0.1.0",
   dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
-  description: "Governed business-terms trade-offs for deterministic rostering (cost cap, weekend fairness, shift requests, split-shift avoidance).",
+  description: "Governed business-terms trade-offs for deterministic rostering (cost cap, daily/weekly hours, rest preferences, weekend fairness, split-shift avoidance).",
   properties: PreferenceProfileProps,
   identity: [{ name: "primary", properties: ["id"] }],
   defaults: {
@@ -290,7 +294,9 @@ export const AttendanceRequest = Norn.type({
 
 const PreferenceProfileBoundsSubject = Schema.Struct({
   min_rest_hours: Norn.decimal(2),
+  max_daily_hours: Norn.decimal(2),
   max_weekly_hours: Norn.decimal(2),
+  min_weekly_rest_hours: Norn.decimal(2),
   max_consecutive_days: Schema.Int,
   weekly_overtime_budget: Norn.decimal(6),
 })
@@ -305,7 +311,7 @@ export const PreferenceProfileValidBounds = Norn.law({
     id: "hr.PreferenceProfile.valid_bounds",
     owner: "hr",
     severity: "error",
-    rationale: "Rest floors, weekly hours, overtime budgets, and consecutive-day caps must stay inside universal operational bounds (jurisdictional floors compose via loc-* overlays).",
+    rationale: "Operational rest preferences, daily/weekly hour bounds, weekly rest floors, overtime budgets, and consecutive-day caps must stay inside universal physical bounds (statutory caps compose via loc-* overlays).",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/hr/rostering.ts" },
     subject: "hr.PreferenceProfile",
     scope: { root: { kind: "entity", id: "hr.PreferenceProfile" }, objectTypes: ["hr.PreferenceProfile"] },
@@ -316,7 +322,11 @@ export const PreferenceProfileValidBounds = Norn.law({
         PreferenceProfileBoundsSubject,
         (self) =>
           self.min_rest_hours >= 0 &&
+          self.max_daily_hours > 0 &&
+          self.max_daily_hours <= 24 &&
           self.max_weekly_hours > 0 &&
+          self.min_weekly_rest_hours >= 0 &&
+          self.min_weekly_rest_hours <= 168 &&
           self.max_consecutive_days >= 1 &&
           self.max_consecutive_days <= 7 &&
           self.weekly_overtime_budget >= 0,
@@ -329,11 +339,14 @@ export const PreferenceProfileValidExample = Norn.example("balanced generic pref
   of: PreferenceProfileValidBounds,
   given: {
     id: "prof_standard",
+    jurisdiction_code: null,
     label: "Standard Retail Balanced",
     currency: "USD",
     weekly_overtime_budget: 1500,
     min_rest_hours: 10,
+    max_daily_hours: 8,
     max_weekly_hours: 40,
+    min_weekly_rest_hours: 24,
     max_consecutive_days: 5,
     weekend_fairness_priority: "high",
     staff_preference_priority: "medium",
@@ -346,11 +359,14 @@ export const PreferenceProfileEightConsecutiveViolated = Norn.example("eight con
   of: PreferenceProfileValidBounds,
   given: {
     id: "prof_bad",
+    jurisdiction_code: null,
     label: "Malformed 8-day streak",
     currency: "USD",
     weekly_overtime_budget: 1500,
     min_rest_hours: 10,
+    max_daily_hours: 8,
     max_weekly_hours: 40,
+    min_weekly_rest_hours: 24,
     max_consecutive_days: 8,
     weekend_fairness_priority: "low",
     staff_preference_priority: "low",
@@ -495,6 +511,12 @@ const PublishRosterSlice = Schema.Struct({
   }),
 })
 
+/**
+ * Single-write engine boundary note: this action transitions `hr.Roster` once a
+ * non-null `solver_receipt_digest` is present; cryptographic receipt acceptance
+ * (`acceptReceipt`) and multi-object `hr.ShiftCommitment` materialization in one
+ * atomic commit wait on engine `#1586` (`synchronousRule` / receipt-effect wiring).
+ */
 export const PublishRoster = Norn.action({
   id: "hr.roster.publish",
   title: "Publish shift roster",
@@ -526,11 +548,30 @@ export const PublishRoster = Norn.action({
   },
 })
 
+const AttendanceQuantityContext = Schema.Struct({
+  input: Schema.Struct({
+    quantity: Norn.decimal(6),
+  }),
+})
+
+const RecordAttendanceLinksContext = Schema.Struct({
+  input: Schema.Struct({
+    providerId: Schema.String,
+    receiverId: Schema.String,
+    resourceId: Schema.String,
+  }),
+  slice: Schema.Struct({
+    commitment_provider: Schema.Array(Schema.Struct({ id: Schema.String })),
+    commitment_receiver: Schema.Array(Schema.Struct({ id: Schema.String })),
+    commitment_resource: Schema.Array(Schema.Struct({ id: Schema.String })),
+  }),
+})
+
 export const RecordAttendance = Norn.action({
   id: "hr.attendance.record",
   title: "Record immutable attendance event",
   version: "0.1.0",
-  description: "Post a create-only AttendanceEvent delivering hr.LaborCapacity and fulfilling a ShiftCommitment (never mutates posted history; HR-AT-01).",
+  description: "Post a create-only AttendanceEvent delivering hr.LaborCapacity and fulfilling a ShiftCommitment whose linked provider, receiver, and resource match the input (never mutates posted history; HR-AT-01).",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -556,12 +597,112 @@ export const RecordAttendance = Norn.action({
     { name: "receiver", type: OrgUnit, key: { property: { from: "input", property: "receiverId" } } },
     { name: "resource", type: LaborCapacity, key: { property: { from: "input", property: "resourceId" } } },
     { name: "commitment", type: ShiftCommitment, key: { property: { from: "input", property: "shiftCommitmentId" } } },
+    { name: "commitment_provider", type: Person, key: { link: { from: "commitment", link: "provider" } } },
+    { name: "commitment_receiver", type: OrgUnit, key: { link: { from: "commitment", link: "receiver" } } },
+    { name: "commitment_resource", type: LaborCapacity, key: { link: { from: "commitment", link: "resource" } } },
+  ],
+  preconditions: [
+    Norn.expression(
+      AttendanceQuantityContext,
+      (ctx) => ctx.input.quantity > 0,
+      { root: "context" },
+    ),
+    Norn.expression(
+      RecordAttendanceLinksContext,
+      (ctx) =>
+        ctx.slice.commitment_provider.map((p) => p.id).includes(ctx.input.providerId) &&
+        ctx.slice.commitment_receiver.map((r) => r.id).includes(ctx.input.receiverId) &&
+        ctx.slice.commitment_resource.map((c) => c.id).includes(ctx.input.resourceId),
+      { root: "context" },
+    ),
   ],
   createLinks: [
     { link: "provider", targetType: Person, targetIdField: "providerId" },
     { link: "receiver", targetType: OrgUnit, targetIdField: "receiverId" },
     { link: "resource", targetType: LaborCapacity, targetIdField: "resourceId" },
     { link: "fulfils", targetType: ShiftCommitment, targetIdField: "shiftCommitmentId" },
+  ],
+  writes: [{ type: AttendanceEvent, change: "created" }],
+  effect: {
+    kind: "upsert_input_object",
+    type: AttendanceEvent,
+    objectIdField: "id",
+    writeMode: { kind: "create_only" },
+  },
+})
+
+const ReverseAttendanceLinksContext = Schema.Struct({
+  input: Schema.Struct({
+    id: Schema.String,
+    providerId: Schema.String,
+    receiverId: Schema.String,
+    resourceId: Schema.String,
+    reversesEventId: Schema.String,
+  }),
+  slice: Schema.Struct({
+    original: Schema.Struct({ id: Schema.String }),
+    original_provider: Schema.Array(Schema.Struct({ id: Schema.String })),
+    original_receiver: Schema.Array(Schema.Struct({ id: Schema.String })),
+    original_resource: Schema.Array(Schema.Struct({ id: Schema.String })),
+  }),
+})
+
+export const ReverseAttendance = Norn.action({
+  id: "hr.attendance.reverse",
+  title: "Reverse posted attendance event",
+  version: "0.1.0",
+  description: "Post a create-only reversing AttendanceEvent linked via `reverses` to a prior AttendanceEvent with matching provider, receiver, and labor capacity (HR-AT-01, HR-AT-04).",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  access: { artifactId: "hr.access.policy", version: "0.1.0" },
+  input: Schema.Struct({
+    id: Schema.String,
+    action: Schema.String,
+    occurred_at: Schema.String,
+    quantity: Norn.decimal(6),
+    unit: Schema.NullOr(Schema.String),
+    currency: Schema.NullOr(Schema.String),
+    starts_at: Schema.String,
+    ends_at: Schema.String,
+    timezone: Schema.NullOr(Schema.String),
+    providerId: Schema.String,
+    receiverId: Schema.String,
+    resourceId: Schema.String,
+    reversesEventId: Schema.String,
+  }),
+  output: Schema.Struct({ id: Schema.String }),
+  slice: [
+    { name: "provider", type: Person, key: { property: { from: "input", property: "providerId" } } },
+    { name: "receiver", type: OrgUnit, key: { property: { from: "input", property: "receiverId" } } },
+    { name: "resource", type: LaborCapacity, key: { property: { from: "input", property: "resourceId" } } },
+    { name: "original", type: AttendanceEvent, key: { property: { from: "input", property: "reversesEventId" } } },
+    { name: "original_provider", type: Person, key: { link: { from: "original", link: "provider" } } },
+    { name: "original_receiver", type: OrgUnit, key: { link: { from: "original", link: "receiver" } } },
+    { name: "original_resource", type: LaborCapacity, key: { link: { from: "original", link: "resource" } } },
+  ],
+  preconditions: [
+    Norn.expression(
+      AttendanceQuantityContext,
+      (ctx) => ctx.input.quantity > 0,
+      { root: "context" },
+    ),
+    Norn.expression(
+      ReverseAttendanceLinksContext,
+      (ctx) =>
+        ctx.input.id !== ctx.input.reversesEventId &&
+        ctx.slice.original.id === ctx.input.reversesEventId &&
+        ctx.slice.original_provider.map((p) => p.id).includes(ctx.input.providerId) &&
+        ctx.slice.original_receiver.map((r) => r.id).includes(ctx.input.receiverId) &&
+        ctx.slice.original_resource.map((c) => c.id).includes(ctx.input.resourceId),
+      { root: "context" },
+    ),
+  ],
+  createLinks: [
+    { link: "provider", targetType: Person, targetIdField: "providerId" },
+    { link: "receiver", targetType: OrgUnit, targetIdField: "receiverId" },
+    { link: "resource", targetType: LaborCapacity, targetIdField: "resourceId" },
+    { link: "reverses", targetType: AttendanceEvent, targetIdField: "reversesEventId" },
   ],
   writes: [{ type: AttendanceEvent, change: "created" }],
   effect: {

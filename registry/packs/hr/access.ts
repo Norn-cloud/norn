@@ -3,10 +3,10 @@
  *
  * Compiles to `hr.access.policy` (referenced by `access: { artifactId: "hr.access.policy", version: "0.1.0" }`
  * on every HR action). Enforces explicit `(org, environment)` scope, role gates,
- * and separation-of-duties predicates (`requester_user_id != principal.id` and
- * `prepared_by_user_id != principal.id`) so no manager or payroll officer can
- * approve their own leave, attendance regularization, expense claim, advance,
- * or payroll run.
+ * self-service ownership predicates (`requester_user_id == principal.id` and
+ * `applicant_user_id == principal.id` for `employee` role), and separation-of-duties
+ * predicates (`requester_user_id != principal.id` and `prepared_by_user_id != principal.id`)
+ * so no manager or payroll officer can approve their own requests or payroll runs.
  */
 import { Norn } from "@norn/authoring"
 import {
@@ -33,6 +33,7 @@ import {
   PublishRoster,
   RecordAttendance,
   RejectAttendanceRequest,
+  ReverseAttendance,
   Roster,
   SubmitAttendanceRequest,
 } from "./rostering.ts"
@@ -66,11 +67,27 @@ export const HrAccess = Norn.access({
   rules: [
     // ---------------------------------------------------------------- Leave & Holds
     {
-      ruleId: "submit_or_cancel_leave",
+      ruleId: "employee_submit_or_cancel_own_leave",
       actions: [SubmitLeave, CancelLeave],
       resourceType: LeaveRequest,
       scope: { dimensions: ["org", "environment"] },
-      allOf: [{ role: { anyOf: ["employee", "branch_manager", "hr_manager", "hr_admin", "owner"] } }],
+      allOf: [
+        { role: { anyOf: ["employee"] } },
+        {
+          resource: {
+            name: "requester_user_id",
+            op: "eq",
+            value: { principalAttribute: "id" },
+          },
+        },
+      ],
+    },
+    {
+      ruleId: "manager_submit_or_cancel_leave",
+      actions: [SubmitLeave, CancelLeave],
+      resourceType: LeaveRequest,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [{ role: { anyOf: ["branch_manager", "hr_manager", "hr_admin", "owner"] } }],
     },
     {
       ruleId: "decide_leave_independent_approver",
@@ -96,11 +113,27 @@ export const HrAccess = Norn.access({
       allOf: [{ role: { anyOf: ["branch_manager", "hr_manager", "hr_admin", "owner"] } }],
     },
     {
-      ruleId: "submit_compensatory_leave",
+      ruleId: "employee_submit_own_compensatory_leave",
       actions: [SubmitCompensatoryLeave],
       resourceType: CompensatoryLeaveRequest,
       scope: { dimensions: ["org", "environment"] },
-      allOf: [{ role: { anyOf: ["employee", "branch_manager", "hr_manager", "hr_admin", "owner"] } }],
+      allOf: [
+        { role: { anyOf: ["employee"] } },
+        {
+          resource: {
+            name: "requester_user_id",
+            op: "eq",
+            value: { principalAttribute: "id" },
+          },
+        },
+      ],
+    },
+    {
+      ruleId: "manager_submit_compensatory_leave",
+      actions: [SubmitCompensatoryLeave],
+      resourceType: CompensatoryLeaveRequest,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [{ role: { anyOf: ["branch_manager", "hr_manager", "hr_admin", "owner"] } }],
     },
     {
       ruleId: "decide_compensatory_leave_independent_approver",
@@ -151,18 +184,34 @@ export const HrAccess = Norn.access({
       allOf: [{ role: { anyOf: ["branch_manager", "hr_manager", "hr_admin", "owner"] } }],
     },
     {
-      ruleId: "record_attendance",
-      actions: [RecordAttendance],
+      ruleId: "record_or_reverse_attendance",
+      actions: [RecordAttendance, ReverseAttendance],
       resourceType: AttendanceEvent,
       scope: { dimensions: ["org", "environment"] },
       allOf: [{ role: { anyOf: ["branch_manager", "hr_manager", "hr_admin", "owner"] } }],
     },
     {
-      ruleId: "submit_attendance_request",
+      ruleId: "employee_submit_own_attendance_request",
       actions: [SubmitAttendanceRequest],
       resourceType: AttendanceRequest,
       scope: { dimensions: ["org", "environment"] },
-      allOf: [{ role: { anyOf: ["employee", "branch_manager", "hr_manager", "hr_admin", "owner"] } }],
+      allOf: [
+        { role: { anyOf: ["employee"] } },
+        {
+          resource: {
+            name: "requester_user_id",
+            op: "eq",
+            value: { principalAttribute: "id" },
+          },
+        },
+      ],
+    },
+    {
+      ruleId: "manager_submit_attendance_request",
+      actions: [SubmitAttendanceRequest],
+      resourceType: AttendanceRequest,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [{ role: { anyOf: ["branch_manager", "hr_manager", "hr_admin", "owner"] } }],
     },
     {
       ruleId: "decide_attendance_request_independent_approver",
@@ -213,11 +262,27 @@ export const HrAccess = Norn.access({
       allOf: [{ role: { anyOf: ["payroll_officer", "hr_admin", "owner"] } }],
     },
     {
-      ruleId: "submit_expense_claim",
+      ruleId: "employee_submit_own_expense_claim",
       actions: [SubmitExpenseClaim],
       resourceType: ExpenseClaim,
       scope: { dimensions: ["org", "environment"] },
-      allOf: [{ role: { anyOf: ["employee", "branch_manager", "hr_manager", "payroll_officer", "hr_admin", "owner"] } }],
+      allOf: [
+        { role: { anyOf: ["employee"] } },
+        {
+          resource: {
+            name: "requester_user_id",
+            op: "eq",
+            value: { principalAttribute: "id" },
+          },
+        },
+      ],
+    },
+    {
+      ruleId: "manager_submit_expense_claim",
+      actions: [SubmitExpenseClaim],
+      resourceType: ExpenseClaim,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [{ role: { anyOf: ["branch_manager", "hr_manager", "payroll_officer", "hr_admin", "owner"] } }],
     },
     {
       ruleId: "decide_expense_claim_independent_approver",
@@ -268,11 +333,27 @@ export const HrAccess = Norn.access({
       allOf: [{ role: { anyOf: ["hr_manager", "hr_admin", "owner"] } }],
     },
     {
-      ruleId: "accept_job_offer",
+      ruleId: "applicant_accept_own_job_offer",
       actions: [AcceptJobOffer],
       resourceType: JobOffer,
       scope: { dimensions: ["org", "environment"] },
-      allOf: [{ role: { anyOf: ["employee", "hr_manager", "hr_admin", "owner"] } }],
+      allOf: [
+        { role: { anyOf: ["employee"] } },
+        {
+          resource: {
+            name: "applicant_user_id",
+            op: "eq",
+            value: { principalAttribute: "id" },
+          },
+        },
+      ],
+    },
+    {
+      ruleId: "hr_accept_job_offer",
+      actions: [AcceptJobOffer],
+      resourceType: JobOffer,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [{ role: { anyOf: ["hr_manager", "hr_admin", "owner"] } }],
     },
     {
       ruleId: "complete_onboarding",

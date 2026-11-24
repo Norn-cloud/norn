@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Conserved employee labor capacity in hours (implements core.Resource) backing shift commitments, attendance events, and salary slips.",
+      "description": "Conserved employee labor capacity in hours (implements core.Resource) backing shift commitments and attendance events.",
       "identity": [
         {
           "name": "primary",

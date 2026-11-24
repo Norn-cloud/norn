@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Employee expense reimbursement claim with strict claimed/sanctioned bounds and independent approval (implements core.Claim; HR-EX-01, HR-EX-02).",
+      "description": "Employee expense reimbursement claim with strict claimed/sanctioned bounds, canonical core.Claim.amount parity, and independent approval (implements core.Claim; HR-EX-01, HR-EX-02).",
       "identity": [
         {
           "name": "primary",

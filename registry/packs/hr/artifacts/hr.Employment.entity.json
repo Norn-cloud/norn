@@ -101,6 +101,16 @@
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "jurisdiction_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
           "id": "effective_from",
           "type": {
             "kind": "date"

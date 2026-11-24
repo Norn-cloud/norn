@@ -107,6 +107,7 @@ export const EgyptHrLabels = Norn.labels({
       label: { ar: "شروط التوظيف" },
       properties: {
         id: { ar: "المعرّف" },
+        jurisdiction_code: { ar: "كود الدولة / الاختصاص" },
         effective_from: { ar: "تاريخ السريان" },
         effective_to: { ar: "تاريخ الانتهاء" },
         currency: { ar: "العملة" },
@@ -146,7 +147,10 @@ export const EgyptHrLabels = Norn.labels({
       label: { ar: "تخصيص إجازة" },
       properties: {
         id: { ar: "المعرّف" },
+        jurisdiction_code: { ar: "كود الدولة / الاختصاص" },
         leave_kind: { ar: "نوع الإجازة" },
+        entitlement_tier: { ar: "فئة الاستحقاق" },
+        hazardous_or_remote: { ar: "أعمال خطرة أو مناطق نائية" },
         starts_on: { ar: "من تاريخ" },
         ends_on: { ar: "إلى تاريخ" },
         allocated_days: { ar: "الأيام المخصصة" },
@@ -160,6 +164,13 @@ export const EgyptHrLabels = Norn.labels({
           unpaid: { ar: "بدون أجر" },
           emergency: { ar: "عارضة" },
           compensatory: { ar: "تعويضية" },
+        },
+        entitlement_tier: {
+          prorated_initial: { ar: "نسبة وتناسب (أقل من سنة)" },
+          first_year: { ar: "السنة الأولى" },
+          standard: { ar: "اعتيادي (السنة الثانية فأكثر)" },
+          senior: { ar: "أقدمية (١٠ سنوات أو ٥٠ عاماً)" },
+          protected_disability: { ar: "ذوو الإعاقة / قصار القامة" },
         },
         status: {
           draft: { ar: "مسودة" },
@@ -247,6 +258,18 @@ export const EgyptHrLabels = Norn.labels({
         period_code: { ar: "الفترة" },
       },
     },
+    "hr.PreferenceProfile": {
+      label: { ar: "ملف تفضيلات الجدولة" },
+      properties: {
+        id: { ar: "المعرّف" },
+        jurisdiction_code: { ar: "كود الدولة / الاختصاص" },
+        label: { ar: "الاسم" },
+        max_daily_hours: { ar: "الحد الأقصى للساعات اليومية" },
+        max_weekly_hours: { ar: "الحد الأقصى للساعات الأسبوعية" },
+        min_weekly_rest_hours: { ar: "الحد الأدنى للراحة الأسبوعية" },
+        max_consecutive_days: { ar: "الحد الأقصى لأيام العمل المتتالية" },
+      },
+    },
     "hr.Roster": {
       label: { ar: "جدول الورديات" },
       properties: {
@@ -301,6 +324,15 @@ export const EgyptHrLabels = Norn.labels({
           approved: { ar: "موافق عليه" },
           rejected: { ar: "مرفوض" },
         },
+      },
+    },
+    "hr.PayrollFund": {
+      label: { ar: "صندوق الرواتب" },
+      properties: {
+        id: { ar: "المعرّف" },
+        resource_code: { ar: "كود الصندوق" },
+        quantity: { ar: "الرصيد" },
+        currency: { ar: "العملة" },
       },
     },
     "hr.SalaryStructure": {
@@ -450,6 +482,7 @@ export const EgyptHrLabels = Norn.labels({
       label: { ar: "عرض عمل" },
       properties: {
         id: { ar: "المعرّف" },
+        applicant_user_id: { ar: "معرّف المرشح" },
         currency: { ar: "العملة" },
         offered_ctc: { ar: "إجمالي العرض السنوي" },
         offer_date: { ar: "تاريخ العرض" },
@@ -506,12 +539,14 @@ export const EgyptHrLabels = Norn.labels({
         iana_timezone: { ar: "المنطقة الزمنية" },
         currency: { ar: "العملة" },
         max_regular_weekly_hours: { ar: "الحد الأقصى للساعات الأسبوعية" },
-        max_daily_hours: { ar: "الحد الأقصى لساعات التواجد اليومي" },
-        min_rest_between_shifts_hours: { ar: "الحد الأدنى للراحة بين الورديات" },
+        max_daily_hours: { ar: "الحد الأقصى لساعات العمل اليومي" },
+        max_workplace_presence_hours: { ar: "الحد الأقصى لساعات التواجد اليومي" },
+        min_weekly_rest_hours: { ar: "الحد الأدنى للراحة الأسبوعية" },
         first_year_annual_leave_days: { ar: "الإجازة السنوية للسنة الأولى" },
         standard_annual_leave_days: { ar: "الإجازة السنوية الاعتيادية" },
         senior_annual_leave_days: { ar: "الإجازة السنوية للأقدمية" },
         disability_annual_leave_days: { ar: "الإجازة السنوية لذوي الإعاقة" },
+        hazardous_remote_supplement_days: { ar: "الأيام الإضافية للأعمال الخطرة أو النائية" },
         seniority_threshold_years: { ar: "سنوات الأقدمية" },
         weekend_pattern: { ar: "نظام الراحة الأسبوعية" },
       },

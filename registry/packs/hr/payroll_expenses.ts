@@ -7,12 +7,84 @@
  */
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { Claim, Commitment } from "../../core/src/rea.ts"
+import { Claim, Commitment, Resource } from "../../core/src/rea.ts"
 import { TimeInterval } from "../../core/src/time.ts"
 import { ISO_4217 } from "../canon/records.ts"
 import { OrgUnit } from "../org/org.ts"
 import { Employment, Person } from "./people_leave.ts"
-import { LaborCapacity } from "./rostering.ts"
+
+// ---------------------------------------------------------------- Monetary Payroll Resource
+
+export const PayrollFund = Norn.type({
+  name: "hr.PayrollFund",
+  role: "thing",
+  title: "Payroll fund",
+  version: "0.1.0",
+  description: "Conserved employer monetary payroll disbursement resource in a declared currency (implements core.Resource; promised by SalarySlip).",
+  implements: [Resource],
+  properties: Schema.Struct({
+    id: Schema.String,
+    resource_code: Norn.ref("core.code"),
+    quantity: Norn.ref("core.quantity"),
+    unit: Schema.NullOr(Norn.ref("ucum.unit_code")),
+    currency: Schema.NullOr(Norn.ref("core.code")),
+    valuation_method: Schema.NullOr(Schema.Literals(["fifo", "moving_average"])),
+  }),
+  identity: [{ name: "primary", properties: ["id"] }],
+  links: [
+    { id: "owner", description: "Employer organizational unit owning this payroll disbursement fund.", target: OrgUnit, cardinality: { to: "one", from: "many", required: true } },
+    { id: "custodian", description: "Optional treasury or payroll custodian unit administering the fund.", target: OrgUnit, cardinality: { to: "one", from: "many" } },
+  ],
+})
+
+const PayrollFundSubject = Schema.Struct({
+  quantity: Norn.decimal(6),
+  unit: Schema.NullOr(Schema.String),
+  currency: Schema.NullOr(Schema.String),
+})
+
+export const PayrollFundNonNegative = Norn.law({
+  id: "hr.PayrollFund.non_negative.law",
+  title: "Payroll fund is a non-negative monetary resource denominated in currency without UCUM unit",
+  version: "0.1.0",
+  dependencies: [{ artifactId: "hr.PayrollFund.entity", kind: "entity", version: "0.1.0", required: true }],
+  law: {
+    lawVersion: "0.1",
+    id: "hr.PayrollFund.non_negative",
+    owner: "hr",
+    severity: "error",
+    rationale: "A payroll fund is a monetary core.Resource (unit == null, currency != null) with a non-negative available balance (HR-PR-06).",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/packs/hr/payroll_expenses.ts" },
+    subject: "hr.PayrollFund",
+    scope: { root: { kind: "entity", id: "hr.PayrollFund" }, objectTypes: ["hr.PayrollFund"] },
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: Norn.expression(
+        PayrollFundSubject,
+        (self) => self.quantity >= 0 && self.unit === null && self.currency !== null,
+      ),
+    },
+  },
+})
+
+export const PayrollFundValidHolds = Norn.example("funded USD payroll fund holds", {
+  of: PayrollFundNonNegative,
+  given: { id: "pf_usd", resource_code: "PAYROLL-USD", quantity: 100000, unit: null, currency: "USD", valuation_method: null },
+  expect: "holds",
+})
+
+export const PayrollFundNegativeViolated = Norn.example("negative payroll fund balance is refused", {
+  of: PayrollFundNonNegative,
+  given: { id: "pf_neg", resource_code: "PAYROLL-USD", quantity: -500, unit: null, currency: "USD", valuation_method: null },
+  expect: "violated",
+})
+
+export const PayrollFundWithUnitViolated = Norn.example("payroll fund carrying UCUM unit instead of pure currency is refused", {
+  of: PayrollFundNonNegative,
+  given: { id: "pf_unit", resource_code: "PAYROLL-BAD", quantity: 1000, unit: "h", currency: "USD", valuation_method: null },
+  expect: "violated",
+})
 
 // ---------------------------------------------------------------- Salary Structures & Assignments
 
@@ -241,7 +313,7 @@ export const SalarySlip = Norn.type({
   role: "happening",
   title: "Salary slip",
   version: "0.1.0",
-  description: "Individual employee pay commitment under a PayrollRun (implements core.Commitment; exact decimal conservation per HR-PR-01..05).",
+  description: "Individual employee monetary wage commitment promising disbursement from hr.PayrollFund under a PayrollRun (implements core.Commitment; exact decimal conservation per HR-PR-01..05).",
   implements: [Commitment],
   properties: Schema.Struct({
     id: Schema.String,
@@ -264,9 +336,9 @@ export const SalarySlip = Norn.type({
     status: "requested",
   },
   links: [
-    { id: "provider", description: "Employer unit promising compensation.", target: OrgUnit, cardinality: { to: "one", from: "many", required: true } },
-    { id: "receiver", description: "Employee receiving compensation.", target: Person, cardinality: { to: "one", from: "many", required: true } },
-    { id: "resource", description: "Employee labor capacity compensated by this slip.", target: LaborCapacity, cardinality: { to: "one", from: "many" } },
+    { id: "provider", description: "Employer unit promising monetary compensation.", target: OrgUnit, cardinality: { to: "one", from: "many", required: true } },
+    { id: "receiver", description: "Employee receiving monetary compensation.", target: Person, cardinality: { to: "one", from: "many", required: true } },
+    { id: "resource", description: "Employer monetary payroll fund promised by this salary slip.", target: PayrollFund, cardinality: { to: "one", from: "many" } },
     { id: "payroll_run", description: "Parent payroll run containing this salary slip.", target: PayrollRun, cardinality: { to: "one", from: "many", required: true } },
   ],
   lifecycles: [
@@ -326,8 +398,8 @@ export const SalarySlipBalancedHolds = Norn.example("balanced salary slip holds"
     id: "slip_1",
     status: "promised",
     due_at: "2026-11-30T17:00:00Z",
-    quantity: 160,
-    unit: "h",
+    quantity: 4150,
+    unit: null,
     currency: "USD",
     gross_pay: 5000,
     total_deductions: 850,
@@ -342,8 +414,8 @@ export const SalarySlipNegativeNetViolated = Norn.example("salary slip where ded
     id: "slip_bad",
     status: "requested",
     due_at: "2026-11-30T17:00:00Z",
-    quantity: 160,
-    unit: "h",
+    quantity: 1000,
+    unit: null,
     currency: "USD",
     gross_pay: 1000,
     total_deductions: 1200,
@@ -442,7 +514,7 @@ export const ExpenseClaim = Norn.type({
   role: "thing",
   title: "Expense claim",
   version: "0.1.0",
-  description: "Employee expense reimbursement claim with strict claimed/sanctioned bounds and independent approval (implements core.Claim; HR-EX-01, HR-EX-02).",
+  description: "Employee expense reimbursement claim with strict claimed/sanctioned bounds, canonical core.Claim.amount parity, and independent approval (implements core.Claim; HR-EX-01, HR-EX-02).",
   implements: [Claim],
   properties: Schema.Struct({
     id: Schema.String,
@@ -543,6 +615,87 @@ export const ExpenseClaimOverSanctionedViolated = Norn.example("expense claim wi
   expect: "violated",
 })
 
+const ExpenseClaimAmountSubject = Schema.Struct({
+  amount: Norn.decimal(6),
+  sanctioned_amount: Norn.decimal(6),
+  status: ExpenseClaimStatus,
+})
+
+export const ExpenseClaimAmountConservation = Norn.law({
+  id: "hr.ExpenseClaim.amount_conservation.law",
+  title: "Approved or paid expense claim core.Claim.amount equals positive sanctioned_amount",
+  version: "0.1.0",
+  dependencies: [{ artifactId: "hr.ExpenseClaim.entity", kind: "entity", version: "0.1.0", required: true }],
+  law: {
+    lawVersion: "0.1",
+    id: "hr.ExpenseClaim.amount_conservation",
+    owner: "hr",
+    severity: "error",
+    rationale: "Once an ExpenseClaim is approved or paid, its canonical core.Claim.amount must exactly match its positive sanctioned_amount so settlement cannot diverge from approval (HR-EX-01, HR-EX-05).",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/packs/hr/payroll_expenses.ts" },
+    subject: "hr.ExpenseClaim",
+    scope: { root: { kind: "entity", id: "hr.ExpenseClaim" }, objectTypes: ["hr.ExpenseClaim"] },
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: Norn.expression(
+        ExpenseClaimAmountSubject,
+        (self) =>
+          (self.status !== "approved" && self.status !== "paid") ||
+          (self.amount === self.sanctioned_amount && self.sanctioned_amount > 0),
+      ),
+    },
+  },
+})
+
+export const ExpenseClaimApprovedMatchingAmountHolds = Norn.example("approved expense claim with amount == sanctioned_amount holds", {
+  of: ExpenseClaimAmountConservation,
+  given: {
+    id: "exp_amt_ok",
+    amount: 220,
+    currency: "USD",
+    due_date: "2026-12-20",
+    requester_user_id: "usr_emp_1",
+    claimed_amount: 250,
+    sanctioned_amount: 220,
+    description: "Matched approved claim",
+    status: "approved",
+  },
+  expect: "holds",
+})
+
+export const ExpenseClaimDraftZeroSanctionedHolds = Norn.example("draft expense claim before sanctioning holds", {
+  of: ExpenseClaimAmountConservation,
+  given: {
+    id: "exp_draft",
+    amount: 250,
+    currency: "USD",
+    due_date: "2026-12-20",
+    requester_user_id: "usr_emp_1",
+    claimed_amount: 250,
+    sanctioned_amount: 0,
+    description: "Draft claim awaiting review",
+    status: "draft",
+  },
+  expect: "holds",
+})
+
+export const ExpenseClaimApprovedMismatchAmountViolated = Norn.example("approved expense claim where core.Claim.amount diverges from sanctioned_amount is refused", {
+  of: ExpenseClaimAmountConservation,
+  given: {
+    id: "exp_amt_bad",
+    amount: 250,
+    currency: "USD",
+    due_date: "2026-12-20",
+    requester_user_id: "usr_emp_1",
+    claimed_amount: 250,
+    sanctioned_amount: 220,
+    description: "Divergent claim amount",
+    status: "approved",
+  },
+  expect: "violated",
+})
+
 // ---------------------------------------------------------------- Governed Actions
 
 const PayrollRunInput = Schema.Struct({
@@ -630,11 +783,17 @@ export const ApprovePayroll = Norn.action({
   },
 })
 
+/**
+ * Single-write engine boundary note: this action locks `hr.PayrollRun` as posted
+ * after verifying positive gross and exact net conservation; atomic multi-object
+ * `hr.SalarySlip` aggregation, `hr.PayrollFund` debit, and ledger accrual posting
+ * in one commit wait on engine `#1586` (`synchronousRule` multi-object writer wiring).
+ */
 export const PostPayroll = Norn.action({
   id: "hr.payroll.post",
   title: "Post payroll run",
   version: "0.1.0",
-  description: "Permanently post an approved payroll run so its slips and totals become immutable (HR-PR-05, HR-PR-06).",
+  description: "Permanently post a non-empty approved payroll run so its totals become immutable (HR-PR-05, HR-PR-06).",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -645,7 +804,10 @@ export const PostPayroll = Norn.action({
   preconditions: [
     Norn.expression(
       PayrollRunSlice,
-      (ctx) => ctx.slice.run.status === "approved",
+      (ctx) =>
+        ctx.slice.run.status === "approved" &&
+        ctx.slice.run.total_gross > 0 &&
+        ctx.slice.run.total_net === ctx.slice.run.total_gross - ctx.slice.run.total_deductions,
       { root: "context" },
     ),
   ],
@@ -673,6 +835,7 @@ const ExpenseClaimOutput = Schema.Struct({
 const ExpenseClaimSlice = Schema.Struct({
   slice: Schema.Struct({
     claim: Schema.Struct({
+      amount: Norn.decimal(6),
       claimed_amount: Norn.decimal(6),
       sanctioned_amount: Norn.decimal(6),
       status: ExpenseClaimStatus,
@@ -728,8 +891,9 @@ export const ApproveExpenseClaim = Norn.action({
       ExpenseClaimSlice,
       (ctx) =>
         ctx.slice.claim.status === "submitted" &&
-        ctx.slice.claim.sanctioned_amount >= 0 &&
-        ctx.slice.claim.sanctioned_amount <= ctx.slice.claim.claimed_amount,
+        ctx.slice.claim.sanctioned_amount > 0 &&
+        ctx.slice.claim.sanctioned_amount <= ctx.slice.claim.claimed_amount &&
+        ctx.slice.claim.amount === ctx.slice.claim.sanctioned_amount,
       { root: "context" },
     ),
   ],

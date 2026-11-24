@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Formal compensation offer extended to a JobApplicant with exact CTC and expiry date (HR-LC-01).",
+      "description": "Formal compensation offer extended to a JobApplicant with exact CTC, applicant principal binding, and expiry date (HR-LC-01).",
       "identity": [
         {
           "name": "primary",
@@ -90,6 +90,12 @@
       "properties": [
         {
           "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "applicant_user_id",
           "type": {
             "kind": "text"
           }

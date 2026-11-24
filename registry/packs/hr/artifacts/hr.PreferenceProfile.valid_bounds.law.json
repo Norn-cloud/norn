@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/hr/rostering.ts"
     },
-    "rationale": "Rest floors, weekly hours, overtime budgets, and consecutive-day caps must stay inside universal operational bounds (jurisdictional floors compose via loc-* overlays).",
+    "rationale": "Operational rest preferences, daily/weekly hour bounds, weekly rest floors, overtime budgets, and consecutive-day caps must stay inside universal physical bounds (statutory caps compose via loc-* overlays).",
     "response": {
-      "expression": "((((self.min_rest_hours >= 0) and (self.max_weekly_hours > 0)) and (self.max_consecutive_days >= 1)) and (self.max_consecutive_days <= 7)) and (self.weekly_overtime_budget >= 0)",
+      "expression": "((((((((self.min_rest_hours >= 0) and (self.max_daily_hours > 0)) and (self.max_daily_hours <= 24)) and (self.max_weekly_hours > 0)) and (self.min_weekly_rest_hours >= 0)) and (self.min_weekly_rest_hours <= 168)) and (self.max_consecutive_days >= 1)) and (self.max_consecutive_days <= 7)) and (self.weekly_overtime_budget >= 0)",
       "kind": "predicate"
     },
     "scope": {

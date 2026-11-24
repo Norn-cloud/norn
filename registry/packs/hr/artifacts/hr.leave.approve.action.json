@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "hr.leave.approve",
-    "description": "Approve a pending leave request after verifying remaining balance under independent manager authority (HR-LV-04, HR-LV-05).",
+    "description": "Approve a pending leave request after verifying its linked leave balance under independent manager authority (HR-LV-04, HR-LV-05).",
     "effectProgram": {
       "entityArtifactId": "hr.LeaveRequest.entity",
       "entityArtifactVersion": "0.1.0",
@@ -57,6 +57,7 @@
       "type": "object"
     },
     "preconditions": [
+      "slice.balance.id in map(slice.request_balance as b, b.id)",
       "(slice.request.status == 'pending') and (slice.balance.quantity >= slice.request.days)"
     ],
     "scopeRequired": [
@@ -82,6 +83,16 @@
           }
         },
         "name": "balance",
+        "objectType": "hr.LeaveBalance"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "request",
+            "link": "balance"
+          }
+        },
+        "name": "request_balance",
         "objectType": "hr.LeaveBalance"
       }
     ],

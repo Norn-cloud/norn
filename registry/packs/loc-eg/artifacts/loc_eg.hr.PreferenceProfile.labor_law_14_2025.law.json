@@ -11,9 +11,10 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Egypt Labor Law No. 14 of 2025 rostering caps on hr.PreferenceProfile",
+  "name": "Egypt Labor Law No. 14 of 2025 rostering caps on Egyptian hr.PreferenceProfile",
   "namespace": "loc_eg",
   "payload": {
+    "condition": "(self.jurisdiction_code ?? '') == 'EG'",
     "id": "loc_eg.hr.PreferenceProfile.labor_law_14_2025",
     "lawVersion": "0.1",
     "modality": {
@@ -24,9 +25,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/loc-eg/egypt.ts"
     },
-    "rationale": "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-123) overlay on hr.PreferenceProfile: >= 11h rest between shifts, <= 48h regular weekly hours, and >= 24h weekly rest (max 6 consecutive working days).",
+    "rationale": "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-123) overlay on Egyptian hr.PreferenceProfile (jurisdiction_code == 'EG'): <= 48h regular weekly hours, <= 8h ordinary daily hours, >= 24h consecutive weekly rest, and max 6 consecutive working days.",
     "response": {
-      "expression": "((self.min_rest_hours >= 11) and (self.max_weekly_hours <= 48)) and (self.max_consecutive_days <= 6)",
+      "expression": "(((self.max_weekly_hours <= 48) and (self.max_daily_hours <= 8)) and (self.min_weekly_rest_hours >= 24)) and (self.max_consecutive_days <= 6)",
       "kind": "predicate"
     },
     "scope": {

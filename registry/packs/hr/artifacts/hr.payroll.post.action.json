@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "hr.payroll.post",
-    "description": "Permanently post an approved payroll run so its slips and totals become immutable (HR-PR-05, HR-PR-06).",
+    "description": "Permanently post a non-empty approved payroll run so its totals become immutable (HR-PR-05, HR-PR-06).",
     "effectProgram": {
       "entityArtifactId": "hr.PayrollRun.entity",
       "entityArtifactVersion": "0.1.0",
@@ -53,7 +53,7 @@
       "type": "object"
     },
     "preconditions": [
-      "slice.run.status == 'approved'"
+      "((slice.run.status == 'approved') and (slice.run.total_gross > 0)) and (slice.run.total_net == (slice.run.total_gross - slice.run.total_deductions))"
     ],
     "scopeRequired": [
       "orgId",

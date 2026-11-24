@@ -53,7 +53,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((slice.claim.status == 'submitted') and (slice.claim.sanctioned_amount >= 0)) and (slice.claim.sanctioned_amount <= slice.claim.claimed_amount)"
+      "(((slice.claim.status == 'submitted') and (slice.claim.sanctioned_amount > 0)) and (slice.claim.sanctioned_amount <= slice.claim.claimed_amount)) and (slice.claim.amount == slice.claim.sanctioned_amount)"
     ],
     "scopeRequired": [
       "orgId",

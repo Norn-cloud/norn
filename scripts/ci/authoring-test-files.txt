@@ -52,6 +52,7 @@ test/stress-purchase.test.ts
 test/studio-access.test.ts
 test/temporal-enum.test.ts
 test/temporal-intervals.test.ts
+test/time-org-foundation.test.ts
 test/transform.test.ts
 test/translation-validation.test.ts
 test/vertical-fixture.test.ts

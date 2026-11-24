@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Individual employee pay commitment under a PayrollRun (implements core.Commitment; exact decimal conservation per HR-PR-01..05).",
+      "description": "Individual employee monetary wage commitment promising disbursement from hr.PayrollFund under a PayrollRun (implements core.Commitment; exact decimal conservation per HR-PR-01..05).",
       "identity": [
         {
           "name": "primary",
@@ -75,7 +75,7 @@
             "required": true,
             "to": "one"
           },
-          "description": "Employer unit promising compensation.",
+          "description": "Employer unit promising monetary compensation.",
           "id": "provider",
           "target": "org.OrgUnit"
         },
@@ -85,7 +85,7 @@
             "required": true,
             "to": "one"
           },
-          "description": "Employee receiving compensation.",
+          "description": "Employee receiving monetary compensation.",
           "id": "receiver",
           "target": "hr.Person"
         },
@@ -94,9 +94,9 @@
             "from": "many",
             "to": "one"
           },
-          "description": "Employee labor capacity compensated by this slip.",
+          "description": "Employer monetary payroll fund promised by this salary slip.",
           "id": "resource",
-          "target": "hr.LaborCapacity"
+          "target": "hr.PayrollFund"
         },
         {
           "cardinality": {

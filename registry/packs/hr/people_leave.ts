@@ -77,6 +77,7 @@ export const Employment = Norn.type({
   description: "Effective-dated employment contract and compensation terms attached to an org.Membership.",
   properties: Schema.Struct({
     id: Schema.String,
+    jurisdiction_code: Schema.NullOr(Norn.ref("core.code")),
     effective_from: Norn.date(),
     effective_to: Schema.NullOr(Norn.date()),
     currency: Schema.Literals(ISO_4217),
@@ -120,25 +121,25 @@ export const EmploymentValidDateRange = Norn.law("valid_date_range", {
 
 export const EmploymentOpenEndedHolds = Norn.example("open-ended employment contract holds", {
   of: EmploymentValidDateRange,
-  given: { id: "emp_1", effective_from: "2026-01-01", effective_to: null, currency: "USD", base_salary: 5000, hourly_overtime_rate: 30, max_weekly_hours: 40, status: "active" },
+  given: { id: "emp_1", jurisdiction_code: null, effective_from: "2026-01-01", effective_to: null, currency: "USD", base_salary: 5000, hourly_overtime_rate: 30, max_weekly_hours: 40, status: "active" },
   expect: "holds",
 })
 
 export const EmploymentBoundedHolds = Norn.example("fixed-term employment with effective_from before effective_to holds", {
   of: EmploymentValidDateRange,
-  given: { id: "emp_2", effective_from: "2026-01-01", effective_to: "2026-12-31", currency: "USD", base_salary: 5000, hourly_overtime_rate: 30, max_weekly_hours: 40, status: "active" },
+  given: { id: "emp_2", jurisdiction_code: null, effective_from: "2026-01-01", effective_to: "2026-12-31", currency: "USD", base_salary: 5000, hourly_overtime_rate: 30, max_weekly_hours: 40, status: "active" },
   expect: "holds",
 })
 
 export const EmploymentEqualDatesViolated = Norn.example("employment with equal effective_from and effective_to is refused", {
   of: EmploymentValidDateRange,
-  given: { id: "emp_3", effective_from: "2026-06-01", effective_to: "2026-06-01", currency: "USD", base_salary: 5000, hourly_overtime_rate: 30, max_weekly_hours: 40, status: "active" },
+  given: { id: "emp_3", jurisdiction_code: null, effective_from: "2026-06-01", effective_to: "2026-06-01", currency: "USD", base_salary: 5000, hourly_overtime_rate: 30, max_weekly_hours: 40, status: "active" },
   expect: "violated",
 })
 
 export const EmploymentReversedDatesViolated = Norn.example("employment with effective_from after effective_to is refused", {
   of: EmploymentValidDateRange,
-  given: { id: "emp_4", effective_from: "2026-12-31", effective_to: "2026-01-01", currency: "USD", base_salary: 5000, hourly_overtime_rate: 30, max_weekly_hours: 40, status: "active" },
+  given: { id: "emp_4", jurisdiction_code: null, effective_from: "2026-12-31", effective_to: "2026-01-01", currency: "USD", base_salary: 5000, hourly_overtime_rate: 30, max_weekly_hours: 40, status: "active" },
   expect: "violated",
 })
 
@@ -270,6 +271,7 @@ export const LeaveBalance = Norn.type({
 })
 
 const LeaveAllocationStatus = Schema.Literals(["draft", "active", "expired", "cancelled"])
+const EntitlementTier = Schema.Literals(["prorated_initial", "first_year", "standard", "senior", "protected_disability"])
 
 export const LeaveAllocation = Norn.type({
   name: "hr.LeaveAllocation",
@@ -280,7 +282,10 @@ export const LeaveAllocation = Norn.type({
   description: "Period leave entitlement grant crediting an employee LeaveBalance under a LeavePolicy (HR-LV-01, HR-LV-06).",
   properties: Schema.Struct({
     id: Schema.String,
+    jurisdiction_code: Schema.NullOr(Norn.ref("core.code")),
     leave_kind: LeaveKind,
+    entitlement_tier: EntitlementTier,
+    hazardous_or_remote: Schema.Boolean,
     starts_on: Norn.date(),
     ends_on: Norn.date(),
     allocated_days: Norn.decimal(2, { unit: { system: "ucum", code: "d" } }),
@@ -289,6 +294,8 @@ export const LeaveAllocation = Norn.type({
   }),
   identity: [{ name: "primary", properties: ["id"] }],
   defaults: {
+    entitlement_tier: "standard",
+    hazardous_or_remote: false,
     status: "draft",
   },
   links: [
@@ -319,19 +326,19 @@ export const LeaveAllocationValid = Norn.law("valid_allocation", {
 
 export const LeaveAllocationValidHolds = Norn.example("valid annual leave allocation holds", {
   of: LeaveAllocationValid,
-  given: { id: "la_1", leave_kind: "annual", starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 20, carry_forward_days: 2, status: "active" },
+  given: { id: "la_1", jurisdiction_code: null, leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 20, carry_forward_days: 2, status: "active" },
   expect: "holds",
 })
 
 export const LeaveAllocationReversedDatesViolated = Norn.example("leave allocation with starts_on after ends_on is refused", {
   of: LeaveAllocationValid,
-  given: { id: "la_rev", leave_kind: "annual", starts_on: "2026-12-31", ends_on: "2026-01-01", allocated_days: 20, carry_forward_days: 0, status: "active" },
+  given: { id: "la_rev", jurisdiction_code: null, leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, starts_on: "2026-12-31", ends_on: "2026-01-01", allocated_days: 20, carry_forward_days: 0, status: "active" },
   expect: "violated",
 })
 
 export const LeaveAllocationZeroDaysViolated = Norn.example("leave allocation with zero allocated_days is refused", {
   of: LeaveAllocationValid,
-  given: { id: "la_zero", leave_kind: "annual", starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 0, carry_forward_days: 0, status: "active" },
+  given: { id: "la_zero", jurisdiction_code: null, leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 0, carry_forward_days: 0, status: "active" },
   expect: "violated",
 })
 
@@ -731,7 +738,18 @@ const LeaveTransitionOutput = Schema.Struct({
   status: Schema.String,
 })
 
-const LeaveBalanceActionSlice = Schema.Struct({
+const LeaveBalanceLinkSlice = Schema.Struct({
+  slice: Schema.Struct({
+    balance: Schema.Struct({
+      id: Schema.String,
+    }),
+    request_balance: Schema.Array(Schema.Struct({
+      id: Schema.String,
+    })),
+  }),
+})
+
+const LeaveBalanceAmountSlice = Schema.Struct({
   slice: Schema.Struct({
     request: Schema.Struct({
       days: Norn.decimal(6),
@@ -747,7 +765,7 @@ export const SubmitLeave = Norn.action({
   id: "hr.leave.submit",
   title: "Submit leave request",
   version: "0.1.0",
-  description: "Move a draft leave request into pending manager approval once sufficient leave balance exists.",
+  description: "Move a draft leave request into pending manager approval once its linked leave balance holds sufficient days.",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -755,10 +773,16 @@ export const SubmitLeave = Norn.action({
   slice: [
     { name: "request", type: LeaveRequest, key: { property: { from: "input", property: "leaveRequestId" } } },
     { name: "balance", type: LeaveBalance, key: { property: { from: "input", property: "balanceId" } } },
+    { name: "request_balance", type: LeaveBalance, key: { link: { from: "request", link: "balance" } } },
   ],
   preconditions: [
     Norn.expression(
-      LeaveBalanceActionSlice,
+      LeaveBalanceLinkSlice,
+      (ctx) => ctx.slice.request_balance.map((b) => b.id).includes(ctx.slice.balance.id),
+      { root: "context" },
+    ),
+    Norn.expression(
+      LeaveBalanceAmountSlice,
       (ctx) => ctx.slice.request.days > 0 && ctx.slice.balance.quantity >= ctx.slice.request.days,
       { root: "context" },
     ),
@@ -775,11 +799,17 @@ export const SubmitLeave = Norn.action({
   },
 })
 
+/**
+ * Single-write engine boundary note: this action transitions `hr.LeaveRequest`
+ * and checks the linked `hr.LeaveBalance` via `SliceKey::Link`, while atomic
+ * multi-object balance debit + `hr.LeaveHold` consumption in one commit waits on
+ * engine `#1586` (`synchronousRule` multi-object delta writer wiring).
+ */
 export const ApproveLeave = Norn.action({
   id: "hr.leave.approve",
   title: "Approve leave request",
   version: "0.1.0",
-  description: "Approve a pending leave request after verifying remaining balance under independent manager authority (HR-LV-04, HR-LV-05).",
+  description: "Approve a pending leave request after verifying its linked leave balance under independent manager authority (HR-LV-04, HR-LV-05).",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -787,10 +817,16 @@ export const ApproveLeave = Norn.action({
   slice: [
     { name: "request", type: LeaveRequest, key: { property: { from: "input", property: "leaveRequestId" } } },
     { name: "balance", type: LeaveBalance, key: { property: { from: "input", property: "balanceId" } } },
+    { name: "request_balance", type: LeaveBalance, key: { link: { from: "request", link: "balance" } } },
   ],
   preconditions: [
     Norn.expression(
-      LeaveBalanceActionSlice,
+      LeaveBalanceLinkSlice,
+      (ctx) => ctx.slice.request_balance.map((b) => b.id).includes(ctx.slice.balance.id),
+      { root: "context" },
+    ),
+    Norn.expression(
+      LeaveBalanceAmountSlice,
       (ctx) => ctx.slice.request.status === "pending" && ctx.slice.balance.quantity >= ctx.slice.request.days,
       { root: "context" },
     ),

@@ -118,9 +118,10 @@ export const JobOffer = Norn.type({
   role: "happening",
   title: "Job offer",
   version: "0.1.0",
-  description: "Formal compensation offer extended to a JobApplicant with exact CTC and expiry date (HR-LC-01).",
+  description: "Formal compensation offer extended to a JobApplicant with exact CTC, applicant principal binding, and expiry date (HR-LC-01).",
   properties: Schema.Struct({
     id: Schema.String,
+    applicant_user_id: Schema.String,
     currency: Schema.Literals(ISO_4217),
     offered_ctc: Norn.ref("core.money_amount", { additivity: { kind: "semi_additive" }, unitSource: ["currency"] }),
     offer_date: Norn.date(),
@@ -187,19 +188,19 @@ export const JobOfferValid = Norn.law({
 
 export const JobOfferValidHolds = Norn.example("valid job offer holds", {
   of: JobOfferValid,
-  given: { id: "off_1", currency: "USD", offered_ctc: 72000, offer_date: "2026-11-01", expiry_date: "2026-11-15", status: "sent" },
+  given: { id: "off_1", applicant_user_id: "usr_cand_1", currency: "USD", offered_ctc: 72000, offer_date: "2026-11-01", expiry_date: "2026-11-15", status: "sent" },
   expect: "holds",
 })
 
 export const JobOfferZeroCtcViolated = Norn.example("job offer with zero offered_ctc is refused", {
   of: JobOfferValid,
-  given: { id: "off_0", currency: "USD", offered_ctc: 0, offer_date: "2026-11-01", expiry_date: "2026-11-15", status: "draft" },
+  given: { id: "off_0", applicant_user_id: "usr_cand_1", currency: "USD", offered_ctc: 0, offer_date: "2026-11-01", expiry_date: "2026-11-15", status: "draft" },
   expect: "violated",
 })
 
 export const JobOfferReversedDatesViolated = Norn.example("job offer expiring before offer_date is refused", {
   of: JobOfferValid,
-  given: { id: "off_rev", currency: "USD", offered_ctc: 72000, offer_date: "2026-11-15", expiry_date: "2026-11-01", status: "draft" },
+  given: { id: "off_rev", applicant_user_id: "usr_cand_1", currency: "USD", offered_ctc: 72000, offer_date: "2026-11-15", expiry_date: "2026-11-01", status: "draft" },
   expect: "violated",
 })
 

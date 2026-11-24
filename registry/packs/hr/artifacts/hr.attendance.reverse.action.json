@@ -1,0 +1,229 @@
+{
+  "artifactId": "hr.attendance.reverse.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Reverse posted attendance event",
+  "namespace": "hr",
+  "payload": {
+    "access": {
+      "artifactId": "hr.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr.attendance.reverse",
+    "createLinks": [
+      {
+        "link": "provider",
+        "targetIdField": "providerId",
+        "targetType": "hr.Person"
+      },
+      {
+        "link": "receiver",
+        "targetIdField": "receiverId",
+        "targetType": "org.OrgUnit"
+      },
+      {
+        "link": "resource",
+        "targetIdField": "resourceId",
+        "targetType": "hr.LaborCapacity"
+      },
+      {
+        "link": "reverses",
+        "targetIdField": "reversesEventId",
+        "targetType": "hr.AttendanceEvent"
+      }
+    ],
+    "description": "Post a create-only reversing AttendanceEvent linked via `reverses` to a prior AttendanceEvent with matching provider, receiver, and labor capacity (HR-AT-01, HR-AT-04).",
+    "effectProgram": {
+      "entityArtifactId": "hr.AttendanceEvent.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "hr.AttendanceEvent",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ends_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "occurred_at": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "quantity": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "receiverId": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "reversesEventId": {
+          "type": "string"
+        },
+        "starts_at": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "occurred_at",
+        "quantity",
+        "unit",
+        "currency",
+        "starts_at",
+        "ends_at",
+        "timezone",
+        "providerId",
+        "receiverId",
+        "resourceId",
+        "reversesEventId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "input.quantity > 0",
+      "((((input.id != input.reversesEventId) and (slice.original.id == input.reversesEventId)) and (input.providerId in map(slice.original_provider as p, p.id))) and (input.receiverId in map(slice.original_receiver as r, r.id))) and (input.resourceId in map(slice.original_resource as c, c.id))"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "providerId"
+          }
+        },
+        "name": "provider",
+        "objectType": "hr.Person"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "receiverId"
+          }
+        },
+        "name": "receiver",
+        "objectType": "org.OrgUnit"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "resourceId"
+          }
+        },
+        "name": "resource",
+        "objectType": "hr.LaborCapacity"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "reversesEventId"
+          }
+        },
+        "name": "original",
+        "objectType": "hr.AttendanceEvent"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "original",
+            "link": "provider"
+          }
+        },
+        "name": "original_provider",
+        "objectType": "hr.Person"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "original",
+            "link": "receiver"
+          }
+        },
+        "name": "original_receiver",
+        "objectType": "org.OrgUnit"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "original",
+            "link": "resource"
+          }
+        },
+        "name": "original_resource",
+        "objectType": "hr.LaborCapacity"
+      }
+    ],
+    "title": "Reverse posted attendance event",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "hr.AttendanceEvent"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr/artifacts/hr.attendance.reverse.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

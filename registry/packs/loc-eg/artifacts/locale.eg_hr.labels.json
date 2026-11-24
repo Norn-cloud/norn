@@ -721,6 +721,19 @@
       },
       {
         "label": {
+          "ar": "كود الدولة / الاختصاص"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.Employment",
+          "property": "jurisdiction_code"
+        }
+      },
+      {
+        "label": {
           "ar": "تاريخ السريان"
         },
         "review": {
@@ -1023,6 +1036,19 @@
       },
       {
         "label": {
+          "ar": "كود الدولة / الاختصاص"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "jurisdiction_code"
+        }
+      },
+      {
+        "label": {
           "ar": "نوع الإجازة"
         },
         "review": {
@@ -1032,6 +1058,32 @@
           "kind": "property",
           "objectType": "hr.LeaveAllocation",
           "property": "leave_kind"
+        }
+      },
+      {
+        "label": {
+          "ar": "فئة الاستحقاق"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "entitlement_tier"
+        }
+      },
+      {
+        "label": {
+          "ar": "أعمال خطرة أو مناطق نائية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "hazardous_or_remote"
         }
       },
       {
@@ -1167,6 +1219,76 @@
           "objectType": "hr.LeaveAllocation",
           "property": "leave_kind",
           "value": "compensatory"
+        }
+      },
+      {
+        "label": {
+          "ar": "نسبة وتناسب (أقل من سنة)"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "entitlement_tier",
+          "value": "prorated_initial"
+        }
+      },
+      {
+        "label": {
+          "ar": "السنة الأولى"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "entitlement_tier",
+          "value": "first_year"
+        }
+      },
+      {
+        "label": {
+          "ar": "اعتيادي (السنة الثانية فأكثر)"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "entitlement_tier",
+          "value": "standard"
+        }
+      },
+      {
+        "label": {
+          "ar": "أقدمية (١٠ سنوات أو ٥٠ عاماً)"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "entitlement_tier",
+          "value": "senior"
+        }
+      },
+      {
+        "label": {
+          "ar": "ذوو الإعاقة / قصار القامة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "hr.LeaveAllocation",
+          "property": "entitlement_tier",
+          "value": "protected_disability"
         }
       },
       {
@@ -1865,6 +1987,109 @@
       },
       {
         "label": {
+          "ar": "ملف تفضيلات الجدولة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.PreferenceProfile"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PreferenceProfile",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود الدولة / الاختصاص"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PreferenceProfile",
+          "property": "jurisdiction_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الاسم"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PreferenceProfile",
+          "property": "label"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحد الأقصى للساعات اليومية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PreferenceProfile",
+          "property": "max_daily_hours"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحد الأقصى للساعات الأسبوعية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PreferenceProfile",
+          "property": "max_weekly_hours"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحد الأدنى للراحة الأسبوعية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PreferenceProfile",
+          "property": "min_weekly_rest_hours"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحد الأقصى لأيام العمل المتتالية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PreferenceProfile",
+          "property": "max_consecutive_days"
+        }
+      },
+      {
+        "label": {
           "ar": "جدول الورديات"
         },
         "review": {
@@ -2281,6 +2506,70 @@
           "objectType": "hr.AttendanceRequest",
           "property": "status",
           "value": "rejected"
+        }
+      },
+      {
+        "label": {
+          "ar": "صندوق الرواتب"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "hr.PayrollFund"
+        }
+      },
+      {
+        "label": {
+          "ar": "المعرّف"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollFund",
+          "property": "id"
+        }
+      },
+      {
+        "label": {
+          "ar": "كود الصندوق"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollFund",
+          "property": "resource_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "الرصيد"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollFund",
+          "property": "quantity"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.PayrollFund",
+          "property": "currency"
         }
       },
       {
@@ -3436,6 +3725,19 @@
       },
       {
         "label": {
+          "ar": "معرّف المرشح"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.JobOffer",
+          "property": "applicant_user_id"
+        }
+      },
+      {
+        "label": {
           "ar": "العملة"
         },
         "review": {
@@ -3860,7 +4162,7 @@
       },
       {
         "label": {
-          "ar": "الحد الأقصى لساعات التواجد اليومي"
+          "ar": "الحد الأقصى لساعات العمل اليومي"
         },
         "review": {
           "ar": "needs_review"
@@ -3873,7 +4175,7 @@
       },
       {
         "label": {
-          "ar": "الحد الأدنى للراحة بين الورديات"
+          "ar": "الحد الأقصى لساعات التواجد اليومي"
         },
         "review": {
           "ar": "needs_review"
@@ -3881,7 +4183,20 @@
         "target": {
           "kind": "property",
           "objectType": "loc_eg.LaborProfile",
-          "property": "min_rest_between_shifts_hours"
+          "property": "max_workplace_presence_hours"
+        }
+      },
+      {
+        "label": {
+          "ar": "الحد الأدنى للراحة الأسبوعية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "min_weekly_rest_hours"
         }
       },
       {
@@ -3934,6 +4249,19 @@
           "kind": "property",
           "objectType": "loc_eg.LaborProfile",
           "property": "disability_annual_leave_days"
+        }
+      },
+      {
+        "label": {
+          "ar": "الأيام الإضافية للأعمال الخطرة أو النائية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "hazardous_remote_supplement_days"
         }
       },
       {

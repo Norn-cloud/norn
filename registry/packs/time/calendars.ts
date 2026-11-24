@@ -91,19 +91,11 @@ export const WorkingWindow = Norn.type({
 export const workingWindowValidLocalTimes = Norn.law("valid_local_window", {
   on: WorkingWindow,
   must: (self) =>
-    (Norn.byteLength(self.start_local) === 5 || Norn.byteLength(self.start_local) === 8) &&
-    (Norn.byteLength(self.end_local) === 5 || Norn.byteLength(self.end_local) === 8) &&
+    [5, 8].includes(Norn.byteLength(self.start_local)) &&
+    [5, 8].includes(Norn.byteLength(self.end_local)) &&
     Norn.timestampBefore(
-      Norn.resolveLocalTimestamp(
-        "2026-01-01T" + (Norn.byteLength(self.start_local) === 5 ? self.start_local + ":00" : self.start_local),
-        "UTC",
-        "reject",
-      ),
-      Norn.resolveLocalTimestamp(
-        "2026-01-01T" + (Norn.byteLength(self.end_local) === 5 ? self.end_local + ":00" : self.end_local),
-        "UTC",
-        "reject",
-      ),
+      Norn.resolveLocalTimestamp("2026-01-01T" + Norn.take(Norn.take(self.start_local, 8) + ":00", 8), "UTC", "reject"),
+      Norn.resolveLocalTimestamp("2026-01-01T" + Norn.take(Norn.take(self.end_local, 8) + ":00", 8), "UTC", "reject"),
     ),
   because: "WorkingWindow start_local and end_local must be strict HH:MM or HH:MM:SS wall times with start_local strictly before end_local.",
 })
@@ -315,7 +307,7 @@ export const MaterializeInterval = Norn.action({
           window_calendar: Schema.Array(Schema.Struct({ id: Schema.String })),
         }),
       }),
-      (ctx) => ctx.slice.window_calendar.some((cal) => cal.id === ctx.slice.calendar.id),
+      (ctx) => ctx.slice.window_calendar.map((cal) => cal.id).includes(ctx.slice.calendar.id),
       { root: "context" },
     ),
     Norn.expression(
@@ -333,24 +325,61 @@ export const MaterializeInterval = Norn.action({
     ),
     Norn.expression(
       Schema.Struct({
-        input: Schema.Struct({ calendar_date: Schema.String, start_local_at: Schema.String, end_local_at: Schema.String }),
+        input: Schema.Struct({ calendar_date: Schema.String, start_local_at: Schema.String }),
         slice: Schema.Struct({
-          working_window: Schema.Struct({ start_local: Schema.String, end_local: Schema.String }),
+          working_window: Schema.Struct({ start_local: Schema.String }),
         }),
       }),
       (ctx) =>
         ctx.input.start_local_at ===
-          ctx.input.calendar_date +
-            "T" +
-            (Norn.byteLength(ctx.slice.working_window.start_local) === 5
-              ? ctx.slice.working_window.start_local + ":00"
-              : ctx.slice.working_window.start_local) &&
+        Norn.take(ctx.input.calendar_date, 10) +
+          "T" +
+          (Norn.byteLength(ctx.slice.working_window.start_local) === 5
+            ? Norn.take(ctx.slice.working_window.start_local, 5) + ":00"
+            : Norn.take(ctx.slice.working_window.start_local, 8)),
+      { root: "context" },
+    ),
+    Norn.expression(
+      Schema.Struct({
+        input: Schema.Struct({ calendar_date: Schema.String, end_local_at: Schema.String }),
+        slice: Schema.Struct({
+          working_window: Schema.Struct({ end_local: Schema.String }),
+        }),
+      }),
+      (ctx) =>
         ctx.input.end_local_at ===
-          ctx.input.calendar_date +
-            "T" +
-            (Norn.byteLength(ctx.slice.working_window.end_local) === 5
-              ? ctx.slice.working_window.end_local + ":00"
-              : ctx.slice.working_window.end_local),
+        Norn.take(ctx.input.calendar_date, 10) +
+          "T" +
+          (Norn.byteLength(ctx.slice.working_window.end_local) === 5
+            ? Norn.take(ctx.slice.working_window.end_local, 5) + ":00"
+            : Norn.take(ctx.slice.working_window.end_local, 8)),
+      { root: "context" },
+    ),
+    Norn.expression(
+      Schema.Struct({
+        input: Schema.Struct({ calendar_date: Schema.String }),
+        slice: Schema.Struct({
+          working_window: Schema.Struct({
+            weekday: Schema.Literals(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]),
+          }),
+        }),
+      }),
+      (ctx) =>
+        Norn.daysBetween("2024-01-01", ctx.input.calendar_date) -
+          Norn.floor(Norn.daysBetween("2024-01-01", ctx.input.calendar_date) / 7) * 7 ===
+        (ctx.slice.working_window.weekday === "monday"
+          ? 0
+          : ctx.slice.working_window.weekday === "tuesday"
+            ? 1
+            : ctx.slice.working_window.weekday === "wednesday"
+              ? 2
+              : ctx.slice.working_window.weekday === "thursday"
+                ? 3
+                : ctx.slice.working_window.weekday === "friday"
+                  ? 4
+                  : ctx.slice.working_window.weekday === "saturday"
+                    ? 5
+                    : 6),
       { root: "context" },
     ),
     Norn.expression(

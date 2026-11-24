@@ -106,9 +106,11 @@
       "type": "object"
     },
     "preconditions": [
-      "some(slice.window_calendar as cal, cal.id == slice.calendar.id)",
+      "slice.calendar.id in map(slice.window_calendar as cal, cal.id)",
       "((input.timezone == slice.calendar.iana_timezone) and (input.dst_policy == slice.calendar.dst_policy)) and (input.tzdb_version == slice.calendar.tzdb_version)",
-      "(input.start_local_at == ((input.calendar_date + 'T') + ((len(slice.working_window.start_local) == 5) ? (slice.working_window.start_local + ':00') : slice.working_window.start_local))) and (input.end_local_at == ((input.calendar_date + 'T') + ((len(slice.working_window.end_local) == 5) ? (slice.working_window.end_local + ':00') : slice.working_window.end_local)))",
+      "input.start_local_at == ((take(input.calendar_date, 10) + 'T') + ((len(slice.working_window.start_local) == 5) ? (take(slice.working_window.start_local, 5) + ':00') : take(slice.working_window.start_local, 8)))",
+      "input.end_local_at == ((take(input.calendar_date, 10) + 'T') + ((len(slice.working_window.end_local) == 5) ? (take(slice.working_window.end_local, 5) + ':00') : take(slice.working_window.end_local, 8)))",
+      "(days_between(date('2024-01-01'), date(input.calendar_date)) - (floor(days_between(date('2024-01-01'), date(input.calendar_date)) / 7) * 7)) == ((slice.working_window.weekday == 'monday') ? 0 : ((slice.working_window.weekday == 'tuesday') ? 1 : ((slice.working_window.weekday == 'wednesday') ? 2 : ((slice.working_window.weekday == 'thursday') ? 3 : ((slice.working_window.weekday == 'friday') ? 4 : ((slice.working_window.weekday == 'saturday') ? 5 : 6))))))",
       "((timestamp(input.starts_at) == resolve_local_timestamp(input.start_local_at, slice.calendar.iana_timezone, slice.calendar.dst_policy)) and (timestamp(input.ends_at) == resolve_local_timestamp(input.end_local_at, slice.calendar.iana_timezone, slice.calendar.dst_policy))) and (timestamp(input.starts_at) < timestamp(input.ends_at))"
     ],
     "scopeRequired": [

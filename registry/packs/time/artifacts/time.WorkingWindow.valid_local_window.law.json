@@ -26,7 +26,7 @@
     },
     "rationale": "WorkingWindow start_local and end_local must be strict HH:MM or HH:MM:SS wall times with start_local strictly before end_local.",
     "response": {
-      "expression": "(((len(self.start_local) == 5) or (len(self.start_local) == 8)) and ((len(self.end_local) == 5) or (len(self.end_local) == 8))) and (resolve_local_timestamp('2026-01-01T' + ((len(self.start_local) == 5) ? (self.start_local + ':00') : self.start_local), 'UTC', 'reject') < resolve_local_timestamp('2026-01-01T' + ((len(self.end_local) == 5) ? (self.end_local + ':00') : self.end_local), 'UTC', 'reject'))",
+      "expression": "((len(self.start_local) in [5, 8]) and (len(self.end_local) in [5, 8])) and (resolve_local_timestamp('2026-01-01T' + take(take(self.start_local, 8) + ':00', 8), 'UTC', 'reject') < resolve_local_timestamp('2026-01-01T' + take(take(self.end_local, 8) + ':00', 8), 'UTC', 'reject'))",
       "kind": "predicate"
     },
     "scope": {
