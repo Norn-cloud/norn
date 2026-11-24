@@ -925,13 +925,14 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    // `mkfifoat` is Linux-only in rustix; the open path under test is all Unix.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_fifo_artifact_is_refused_without_blocking() -> TestResult {
         let pack = scratch("fifo")?;
         let fifo = pack.join("a.json");
-        let made = std::process::Command::new("mkfifo").arg(&fifo).status()?;
-        assert!(made.success());
+        let mode = rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR;
+        rustix::fs::mkfifoat(rustix::fs::CWD, &fifo, mode)?;
         let Err(refused) = artifacts(std::slice::from_ref(&pack)) else {
             return Err("a FIFO artifact was read".into());
         };
